@@ -1,0 +1,28 @@
+agent_id = "linux-builder-01"
+server_url = "https://octacity.example.com"
+credential_file = "/etc/octacity/agent.token"
+work_root = "/var/lib/octacity/work"
+state_root = "/var/lib/octacity/state"
+octa_release_root = "/opt/octacity/octa"
+source_plugins_dir = "/opt/octacity/source-plugins"
+enabled_execution_backends = ["native"]
+allow_native_execution = true
+native_cgroup_root = "/sys/fs/cgroup/octacity"
+allowed_upload_origins = ["https://artifacts.example.com"]
+max_workspace_bytes = 10737418240
+max_spool_bytes = 1073741824
+poll_timeout_seconds = 30
+heartbeat_interval_seconds = 5
+lease_safety_margin_seconds = 15
+graceful_cancel_timeout_seconds = 10
+cleanup_timeout_seconds = 30
+
+# Replace this public key during agent enrollment. Multiple named keys permit
+# an explicit overlap while rotating the server signing key.
+[server_signing_keys]
+primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
+
+[labels]
+os = "linux"
+arch = "x86_64"
+trust = "internal"

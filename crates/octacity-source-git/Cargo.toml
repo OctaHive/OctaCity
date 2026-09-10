@@ -1,0 +1,20 @@
+[package]
+name = "octacity-source-git"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+http.workspace = true
+octacity-source-plugin = { path = "../octacity-source-plugin" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+octacity-agent = { path = "../octacity-agent" }
+tempfile.workspace = true

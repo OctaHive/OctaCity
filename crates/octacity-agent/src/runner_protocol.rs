@@ -1,0 +1,134 @@
+//! Async transport adapter for the shared `octa-runner-protocol` crate.
+
+pub use octa_runner_protocol::{
+  MAX_RUNNER_INPUT_FRAME_BYTES, RUNNER_EVENT_SCHEMA_VERSION, RUNNER_INPUT_SCHEMA_V1, RUNNER_OUTPUT_SCHEMA_V1,
+  RUNNER_PLUGIN_PROTOCOL_VERSION, RUNNER_PROTOCOL_VERSION, RunRequest, RunStatus, RunnerCommand,
+};
+use serde::Deserialize;
+use thiserror::Error;
+use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader};
+
+pub const MAX_RUNNER_OUTPUT_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+pub type RunnerMessage = octa_runner_protocol::RunnerMessage<String, RunnerEvent, Vec<serde_json::Value>>;
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerEvent {
+  pub schema_version: u16,
+  pub sequence: u64,
+  pub timestamp: String,
+  pub category: String,
+  pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Error)]
+pub enum RunnerProtocolError {
+  #[error("runner protocol I/O failed: {0}")]
+  Io(#[source] std::io::Error),
+  #[error("runner output frame exceeds the {MAX_RUNNER_OUTPUT_FRAME_BYTES}-byte limit")]
+  FrameTooLarge,
+  #[error("runner output frame is not terminated by a newline")]
+  UnterminatedFrame,
+  #[error("runner output is not valid protocol JSON: {0}")]
+  Json(#[source] Box<serde_json::Error>),
+  #[error("runner input frame exceeds the {MAX_RUNNER_INPUT_FRAME_BYTES}-byte limit")]
+  InputTooLarge,
+}
+
+pub async fn read_message<R: AsyncRead + Unpin>(
+  reader: &mut BufReader<R>,
+) -> Result<Option<RunnerMessage>, RunnerProtocolError> {
+  let mut frame = Vec::new();
+  let mut limited = (&mut *reader).take((MAX_RUNNER_OUTPUT_FRAME_BYTES + 1) as u64);
+  let read = limited
+    .read_until(b'\n', &mut frame)
+    .await
+    .map_err(RunnerProtocolError::Io)?;
+  if read == 0 {
+    return Ok(None);
+  }
+  if read > MAX_RUNNER_OUTPUT_FRAME_BYTES {
+    return Err(RunnerProtocolError::FrameTooLarge);
+  }
+  if !frame.ends_with(b"\n") {
+    return Err(RunnerProtocolError::UnterminatedFrame);
+  }
+  serde_json::from_slice(&frame)
+    .map(Some)
+    .map_err(|error| RunnerProtocolError::Json(Box::new(error)))
+}
+
+pub async fn write_command<W: AsyncWrite + Unpin>(
+  writer: &mut W,
+  command: &RunnerCommand,
+) -> Result<(), RunnerProtocolError> {
+  let mut frame = serde_json::to_vec(command).map_err(|error| RunnerProtocolError::Json(Box::new(error)))?;
+  frame.push(b'\n');
+  if frame.len() > MAX_RUNNER_INPUT_FRAME_BYTES {
+    return Err(RunnerProtocolError::InputTooLarge);
+  }
+  writer.write_all(&frame).await.map_err(RunnerProtocolError::Io)?;
+  writer.flush().await.map_err(RunnerProtocolError::Io)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn shared_schemas_match_the_supported_protocol_versions() {
+    let input: serde_json::Value = serde_json::from_str(RUNNER_INPUT_SCHEMA_V1).unwrap();
+    let output: serde_json::Value = serde_json::from_str(RUNNER_OUTPUT_SCHEMA_V1).unwrap();
+
+    assert_eq!(
+      input["$defs"]["start"]["properties"]["protocol_version"]["const"],
+      RUNNER_PROTOCOL_VERSION
+    );
+    assert_eq!(
+      output["$defs"]["hello"]["properties"]["protocol_version"]["const"],
+      RUNNER_PROTOCOL_VERSION
+    );
+    assert_eq!(
+      output["$defs"]["event"]["properties"]["event"]["properties"]["schema_version"]["const"],
+      RUNNER_EVENT_SCHEMA_VERSION
+    );
+  }
+
+  #[tokio::test]
+  async fn round_trips_a_bounded_command_and_message() {
+    let command = RunnerCommand::Cancel {
+      request_id: "job-1-attempt-1".to_owned(),
+    };
+    let mut encoded = Vec::new();
+    write_command(&mut encoded, &command).await.unwrap();
+    assert_eq!(encoded.last(), Some(&b'\n'));
+
+    let mut reader = BufReader::new(
+      &br#"{"type":"accepted","request_id":"job-1-attempt-1"}
+"#[..],
+    );
+    assert_eq!(
+      read_message(&mut reader).await.unwrap(),
+      Some(RunnerMessage::Accepted {
+        request_id: "job-1-attempt-1".to_owned()
+      })
+    );
+  }
+
+  #[tokio::test]
+  async fn rejects_unterminated_and_oversized_frames() {
+    let mut unterminated = BufReader::new(&b"{}"[..]);
+    assert!(matches!(
+      read_message(&mut unterminated).await,
+      Err(RunnerProtocolError::UnterminatedFrame)
+    ));
+
+    let oversized = vec![b'x'; MAX_RUNNER_OUTPUT_FRAME_BYTES + 1];
+    let mut oversized = BufReader::new(oversized.as_slice());
+    assert!(matches!(
+      read_message(&mut oversized).await,
+      Err(RunnerProtocolError::FrameTooLarge)
+    ));
+  }
+}
