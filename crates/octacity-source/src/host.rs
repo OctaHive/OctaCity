@@ -1,3 +1,18 @@
+//! Materializes one workspace through a previously verified source plugin.
+//!
+//! This module owns the dynamic side of source acquisition. It receives an
+//! [`InstalledSourcePlugin`] selected by `SourcePluginRegistry`, starts a fresh
+//! process with a cleared environment, checks
+//! its `Hello` identity, sends one `Materialize` request, validates the ordered
+//! JSONL lifecycle, enforces output and time limits, propagates cancellation,
+//! and reaps the plugin and its descendants. A successful result is accepted
+//! only when the plugin returns the exact requested immutable revision.
+//!
+//! Registry discovery, manifest trust, and executable digest verification stay
+//! in `SourcePluginRegistry`. Creation and final cleanup of the workspace and
+//! credential files belong to the higher-level job owner; this module only
+//! passes their already resolved paths to the plugin and supervises their use.
+
 use std::{collections::BTreeMap, future::pending, path::PathBuf, process::Stdio, time::Duration};
 
 use octacity_source_plugin::{
@@ -13,13 +28,14 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::source::InstalledSourcePlugin;
+use crate::registry::InstalledSourcePlugin;
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PLUGIN_STDERR_BYTES: usize = 64 * 1024;
 const MAX_LIFECYCLE_MESSAGES: usize = 4096;
 const MAX_LIFECYCLE_BYTES: usize = MAX_SOURCE_FRAME_BYTES;
 
+/// Host-side request with agent-resolved credential paths and destination.
 #[derive(Debug)]
 pub struct SourceMaterializationRequest {
   pub request_id: String,
@@ -31,6 +47,7 @@ pub struct SourceMaterializationRequest {
   pub max_workspace_bytes: u64,
 }
 
+/// Verified terminal data returned by a source plugin.
 #[derive(Debug, Eq, PartialEq)]
 pub struct MaterializedSource {
   pub revision: String,
@@ -63,6 +80,7 @@ pub enum SourceHostError {
 }
 
 impl InstalledSourcePlugin {
+  /// Materializes one exact source revision through this verified plugin.
   pub async fn materialize(
     &self,
     request: SourceMaterializationRequest,
@@ -81,6 +99,8 @@ impl InstalledSourcePlugin {
     wire_request.validate().map_err(SourceHostError::Invalid)?;
     info!(plugin = %plugin, request_id = %request.request_id, "starting source materialization");
 
+    // Plugins receive only explicit request fields and credential handles. In
+    // particular, agent or service credentials must not leak through env vars.
     let mut command = Command::new(&self.executable);
     command
       .env_clear()
@@ -153,9 +173,13 @@ impl InstalledSourcePlugin {
     let mut accepted = false;
     let mut progress = Vec::new();
     let mut diagnostics = Vec::new();
+    // Progress and diagnostic messages are bounded in aggregate as well as per
+    // frame so a valid-looking plugin cannot exhaust agent memory over time.
     let mut lifecycle_messages = 0_usize;
     let mut lifecycle_bytes = 0_usize;
 
+    // Once cancellation or timeout begins, keep reading only long enough for
+    // the plugin to acknowledge it; the original stop reason remains final.
     loop {
       tokio::select! {
         message = read_message(&plugin, &mut stdout) => {

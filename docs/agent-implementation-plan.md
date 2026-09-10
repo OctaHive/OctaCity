@@ -56,10 +56,12 @@ Windows and macOS agents can be designed after the Linux contract is proven.
 - Artifacts and reports are stored by the server in an S3-compatible object
   store. Agents receive short-lived upload instructions and never receive
   object-store credentials.
-- Stable interfaces are introduced only at real architectural boundaries:
-  coordinator transport, execution backend, source-plugin protocol, and
-  server-side artifact storage. SDK wrappers and internal modules remain
-  concrete until another behavior is required.
+- Crate dependencies point from composition and orchestration toward contracts;
+  concrete adapters never depend on their consumers or on sibling adapters.
+  Dynamic boundaries are the `CoordinatorClient`, `ExecutionBackend`, the
+  source-plugin process protocol, and server-side `ArtifactStore`. Shared wire
+  DTOs and configuration are leaf crates with data APIs, not artificial traits.
+  Private implementation details remain concrete.
 
 ## System boundary
 
@@ -101,14 +103,21 @@ runner. Untrusted jobs must require an isolated backend.
 
 ## Repository shape
 
-Start with one Cargo workspace and four crates:
+Use one Cargo workspace with dependencies directed from the agent composition
+root toward focused components and from adapters toward narrow execution
+ports:
 
 ```text
 octacity/
 |- Cargo.toml
 |- crates/
-|  |- octacity-agent/       # agent binary and concrete implementation
+|  |- octacity-agent/       # agent CLI and composition root
+|  |- octacity-config/      # configuration parsing and intrinsic validation
+|  |- octacity-execution/   # backend-neutral execution ports and DTOs
+|  |- octacity-execution-native/ # Linux NativeBackend adapter
 |  |- octacity-protocol/    # versioned server-agent DTOs and signatures
+|  |- octacity-runner/      # Octa inventory, protocol client, and supervisor
+|  |- octacity-source/      # trusted source registry and process host
 |  |- octacity-source-plugin/ # source-plugin protocol and plugin SDK
 |  `- octacity-source-git/  # first trusted source plugin
 |- protocol/
@@ -126,34 +135,34 @@ database models, scheduler logic, HTTP clients, or agent state.
 
 `octacity-source-plugin` is a separate contract because source acquisition
 happens before an Octafile exists. It contains bounded JSONL messages, manifest
-types, schema validation, and plugin-side helpers. It does not reuse the Octa
+types, strict validation, and plugin-side helpers. It does not reuse the Octa
 task-plugin protocol or import Octa internals.
 
-Keep the rest in `octacity-agent` until a second real implementation requires
-another crate. Internal modules are sufficient:
+`octacity-agent` is the composition root. Component crates never depend on it.
+`octacity-config` validates configuration-owned invariants but does not create
+source registries, runner inventories, or execution backends. The agent creates
+and connects those concrete components.
 
-```text
-config
-coordinator
-identity
-inventory
-lease
-job
-source
-execution
-native
-microsandbox
-runner
-spool
-artifacts
-shutdown
-```
+`octacity-execution` owns the narrow `ExecutionBackend` and
+`RunningExecution` ports. `octacity-runner` consumes those ports without
+knowing which backend implements them. Native and Microsandbox adapters depend
+on the execution port and never on each other. This keeps the dependency graph
+acyclic and makes an unavailable isolated backend an error rather than a reason
+to fall back to Native execution.
 
-The job owner depends on a narrow `CoordinatorClient` and `ExecutionBackend`.
-The HTTPS coordinator and both execution backends implement these contracts.
+The runner layer verifies the signed Octa requirement and converts its trusted
+installation inventory into a `RunnerProgram` containing only the executable,
+plugin directory, and lock-file paths required to start a process. An execution
+adapter receives that value through `ExecutionBackend::start`; it cannot reach
+back into runner inventory or protocol logic. Consequently
+`octacity-execution-native` depends only on `octacity-execution`, while
+`octacity-runner` also depends only on that same port rather than on any
+concrete backend.
+
 VCS extensibility is provided by the process-level source-plugin protocol, not
-one Rust trait implementation per VCS. The agent's source module remains one
-concrete client for that protocol.
+one Rust trait implementation per VCS. `octacity-source` is the single trusted
+host for that protocol; provider executables depend only on
+`octacity-source-plugin`.
 
 ## Server-agent protocol v1
 
@@ -196,8 +205,8 @@ job and reports:
 - installed `octa-runner` version, SHA-256, build commit, protocols, event
   schemas, Octafile versions, and features;
 - installed plugin names, versions, platforms, capabilities, and digests;
-- installed source-plugin names, versions, protocols, schemas, platforms, and
-  digests.
+- installed source-plugin names, versions, protocols, platforms, and digests;
+  schema descriptors may be added with a future manifest version.
 
 Registration does not make the server trust self-reported security properties.
 It supplies scheduling data. The agent independently validates every selected
@@ -237,6 +246,9 @@ without requiring a stateful WebSocket connection.
 
 ### Signed JobSpec
 
+The implemented signed payload contract is specified independently in
+[`docs/protocols/signed-job-spec-v1.md`](protocols/signed-job-spec-v1.md).
+
 Avoid JSON canonicalization. The server signs the exact serialized payload
 bytes and sends an envelope:
 
@@ -262,7 +274,7 @@ source
   required plugin version and digest
   immutable revision
   optional mutable ref used only as a bounded lookup hint
-  provider parameters validated by its published schema
+  provider parameters validated authoritatively by the selected plugin
 
 octa
   required version
@@ -308,10 +320,12 @@ The following are not allowed in `JobSpecV1`:
 - mutable source refs without an immutable resolved revision;
 - mutable OCI tags without a resolved digest.
 
-The server validates provider parameters against the source plugin's published
-schema before signing the job. The agent repeats validation, verifies the
-operator-installed manifest and binary digest, and invokes only the fixed
-entrypoint resolved from that manifest.
+The server validates the provider-independent source fields before signing the
+job. Provider-specific parameters remain subject to authoritative validation
+by the selected plugin. A future manifest version may publish schemas for
+earlier server and UI feedback, but those schemas do not replace plugin-side
+validation. The agent verifies the operator-installed manifest and binary
+digest and invokes only the fixed entrypoint resolved from that manifest.
 
 ## Agent configuration
 
@@ -388,11 +402,15 @@ There is no duplicate execution recovery path in v1.
 
 ## Source acquisition plugins
 
+The canonical source-plugin v1 process specification, message examples, and
+implementation checklist live in
+[`crates/octacity-source-plugin/README.md`](../crates/octacity-source-plugin/README.md).
+
 Primary workspace acquisition happens before an Octafile can be loaded, so it
 uses an OctaCity source-plugin protocol rather than the Octa task-plugin
 protocol. A source plugin is an operator-installed executable with a versioned
-manifest, protocol range, platform list, parameter schema, fixed entrypoint,
-and SHA-256 digest.
+manifest, protocol range, platform list, fixed entrypoint, SHA-256 digest, and
+provider-specific operator settings.
 
 `source_plugins_dir` is a self-contained, operator-managed registry:
 
@@ -408,13 +426,15 @@ source_plugins_dir/
 
 Each immediate child has one `plugin.toml` containing its logical name,
 version, protocol range, supported platforms, relative executable path,
-executable SHA-256, settings schema, and plugin-specific settings. The agent
-does not keep a second allowlist: installing a valid plugin below this
-operator-controlled directory authorizes it. Removing its directory disables
-it. Duplicate names, malformed manifests, path escapes, unsupported protocols,
-digest mismatches, and unsafe directory permissions make startup validation
-fail rather than silently hiding a broken plugin. Job content can select a
-logical name but cannot register, configure, replace, or locate a plugin.
+executable SHA-256, and plugin-specific settings. The v1 manifest does not
+publish provider JSON Schemas; the plugin validates provider-specific values.
+The agent does not keep a second allowlist: installing a valid plugin below
+this operator-controlled directory authorizes it. Removing its directory
+disables it. Duplicate names, malformed manifests, path escapes, unsupported
+protocols, digest mismatches, and unsafe directory permissions make startup
+validation fail rather than silently hiding a broken plugin. Job content can
+select a logical name but cannot register, configure, replace, or locate a
+plugin.
 
 The agent sends a bounded request containing the assigned empty destination,
 validated provider parameters, operator-controlled settings from the verified
@@ -457,6 +477,7 @@ Job orchestration always uses a narrow execution interface:
 trait ExecutionBackend: Send + Sync {
     async fn start(
         &self,
+        runner: &RunnerProgram,
         request: StartExecution,
     ) -> Result<Box<dyn RunningExecution>>;
     async fn cleanup_orphans(&self) -> Result<()>;
@@ -808,8 +829,9 @@ but the production daemon exposes no unauthenticated network listener.
 - Define signed `JobSpecV1`, lease, fencing, events, acknowledgements,
   completion, resource usage, host capacity, and artifact DTOs.
 - Define the `CoordinatorClient` and `ExecutionBackend` behavioral contracts.
-- Define source-plugin v1 manifests, messages, schemas, cancellation, and
-  terminal results.
+- Define source-plugin v1 manifests, messages, golden examples, cancellation,
+  and terminal results; defer provider schema publication to a future manifest
+  version.
 - Define the server-side `ArtifactStore` boundary and S3 object model.
 - Record the security and trust model in an ADR.
 - Pin Rust MSRV and dependency policy.
@@ -819,7 +841,8 @@ payloads, stale leases, and unknown fields are rejected by contract tests.
 
 ### Phase 1: agent process and inventory
 
-- Create the Cargo workspace and the four initial crates.
+- Create the Cargo workspace and focused protocol, configuration, source,
+  runner, execution-port, backend-adapter, and composition-root crates.
 - Implement strict TOML configuration and path/permission validation.
 - Implement structured tracing and secret-safe error types.
 - Calculate agent and installed release inventory.

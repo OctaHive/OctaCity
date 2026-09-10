@@ -1,3 +1,10 @@
+//! Secure Git implementation of the OctaCity source-plugin contract.
+//!
+//! The plugin invokes a configured Git executable directly, never through a
+//! shell. It fetches a constrained reference, verifies the exact lowercase
+//! commit object requested by the signed job, and checks workspace size both
+//! before and after checkout.
+
 use std::{
   collections::BTreeMap,
   fs,
@@ -58,12 +65,14 @@ struct GitParameters {
   url: String,
 }
 
+/// Exact revision and provenance returned after a successful checkout.
 #[derive(Debug)]
 pub struct MaterializedGitSource {
   pub revision: String,
   pub provenance: BTreeMap<String, String>,
 }
 
+/// Fetches and checks out the exact Git commit described by `request`.
 pub async fn materialize(
   request: &MaterializeRequest,
   cancellation: CancellationToken,
@@ -95,6 +104,8 @@ pub async fn materialize(
   )
   .await?;
 
+  // A friendly ref may narrow the fetch, but it never replaces the immutable
+  // commit identity that is verified below and used for checkout.
   let fetch_target = request.reference.as_deref().unwrap_or(&request.revision);
   if request.reference.is_some() {
     run_git(
@@ -118,6 +129,8 @@ pub async fn materialize(
   .await?;
   enforce_workspace_limit(destination, request.max_workspace_bytes)?;
 
+  // `^{commit}` rejects non-commit objects while `--end-of-options` prevents a
+  // revision beginning with '-' from being interpreted as a Git option.
   let object = format!("{}^{{commit}}", request.revision);
   let resolved = run_git(
     &settings,
@@ -309,6 +322,9 @@ async fn run_git<const N: usize>(
   }
   let protocol_file = if settings.allow_file { "always" } else { "never" };
   let mut command = Command::new(&settings.git_path);
+  // Git inherits no ambient credentials or user configuration. The operator
+  // may supply one reviewed config file, while protocols, hooks, LFS filters,
+  // and background maintenance are constrained explicitly below.
   command
     .env_clear()
     .env("GIT_CONFIG_NOSYSTEM", "1")

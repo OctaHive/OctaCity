@@ -1,6 +1,17 @@
+//! Supervises the complete lifecycle of one `octa-runner` invocation.
+//!
+//! This module joins the backend-neutral execution handle with the shared
+//! runner protocol. It validates message ordering, forwards events and resource
+//! samples, enforces cancellation deadlines, and always destroys the backend.
+
 use std::{future::pending, time::Duration};
 
-use octacity_protocol::ExecutionSpec;
+use octa_runner_protocol::{RUNNER_EVENT_SCHEMA_VERSION, RunRequest, RunStatus, RunnerCommand};
+use octacity_execution::{
+  ExecutionBackend, ExecutionError, ExecutionExit, ExecutionPaths, ExecutionReader, ExecutionWriter, ResourceUsage,
+  RunningExecution, StartExecution,
+};
+use octacity_protocol::{ExecutionSpec, OctaSpec};
 use thiserror::Error;
 use tokio::{
   io::{AsyncRead, AsyncReadExt as _, BufReader},
@@ -11,11 +22,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::{
-  execution::{ExecutionBackend, ExecutionError, ExecutionExit, ResourceUsage, RunningExecution, StartExecution},
-  runner_protocol::{
-    RUNNER_EVENT_SCHEMA_VERSION, RunRequest, RunStatus, RunnerCommand, RunnerEvent, RunnerMessage, RunnerProtocolError,
-    write_command,
-  },
+  installation::{RunnerInstallation, RunnerInstallationError},
+  protocol::{RunnerEvent, RunnerMessage, RunnerProtocolError, write_command},
 };
 
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -24,9 +32,11 @@ const RESOURCE_SAMPLE_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_ACCOUNTING_FAILURES: usize = 3;
 const MAX_RUNNER_STDERR_BYTES: usize = 64 * 1024;
 
+/// Inputs that bind a signed job to one backend execution and protocol request.
 #[derive(Clone, Debug)]
 pub struct RunnerJobRequest {
   pub request_id: String,
+  pub octa: OctaSpec,
   pub execution: StartExecution,
   pub spec: ExecutionSpec,
   pub timeout: Duration,
@@ -49,12 +59,14 @@ impl RunnerJobRequest {
   }
 }
 
+/// External reason that forced an otherwise active runner to stop.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminationReason {
   Cancelled,
   TimedOut,
 }
 
+/// Ordered information emitted to the future server-agent transport.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunnerStreamItem {
   Event(RunnerEvent),
@@ -62,6 +74,7 @@ pub enum RunnerStreamItem {
   AccountingUnavailable { consecutive_failures: usize },
 }
 
+/// Terminal runner result plus the final backend accounting snapshot.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunnerCompletion {
   pub status: RunStatus,
@@ -72,6 +85,8 @@ pub struct RunnerCompletion {
 
 #[derive(Debug, Error)]
 pub enum RunnerSupervisionError {
+  #[error(transparent)]
+  Installation(#[from] RunnerInstallationError),
   #[error(transparent)]
   Execution(#[from] ExecutionError),
   #[error(transparent)]
@@ -90,14 +105,18 @@ pub enum RunnerSupervisionError {
   CancellationTimeout,
 }
 
+/// Starts, drives, and unconditionally destroys one runner execution.
 pub async fn supervise(
+  runner: &RunnerInstallation,
   backend: &dyn ExecutionBackend,
   job: RunnerJobRequest,
   cancellation: CancellationToken,
   events: &mpsc::Sender<RunnerStreamItem>,
 ) -> Result<RunnerCompletion, RunnerSupervisionError> {
   job.validate()?;
-  let mut execution = backend.start(job.execution.clone()).await?;
+  runner.verify(&job.octa)?;
+  let program = runner.program();
+  let mut execution = backend.start(&program, job.execution.clone()).await?;
   let run = build_run_request(&job.spec, execution.paths());
   let io = match execution.take_io() {
     Ok(io) => io,
@@ -106,6 +125,8 @@ pub async fn supervise(
       return Err(error.into());
     }
   };
+  // stderr is diagnostic-only: protocol messages are accepted exclusively on
+  // stdout, and the bounded drain prevents a noisy runner from deadlocking.
   let stderr_task = tokio::spawn(read_bounded(io.stderr, MAX_RUNNER_STDERR_BYTES));
   let result = drive(&mut *execution, io.stdin, io.stdout, &job, run, cancellation, events).await;
   if result.is_err() {
@@ -127,25 +148,25 @@ pub async fn supervise(
 
 async fn drive(
   execution: &mut dyn RunningExecution,
-  mut stdin: crate::execution::ExecutionWriter,
-  stdout: crate::execution::ExecutionReader,
+  mut stdin: ExecutionWriter,
+  stdout: ExecutionReader,
   job: &RunnerJobRequest,
   run: RunRequest,
   cancellation: CancellationToken,
   events: &mpsc::Sender<RunnerStreamItem>,
 ) -> Result<RunnerCompletion, RunnerSupervisionError> {
   let mut stdout = BufReader::new(stdout);
-  let hello = timeout(HELLO_TIMEOUT, crate::runner_protocol::read_message(&mut stdout))
+  let hello = timeout(HELLO_TIMEOUT, crate::protocol::read_message(&mut stdout))
     .await
     .map_err(|_| protocol("hello timed out"))??
     .ok_or_else(|| protocol("stdout closed before hello"))?;
-  validate_hello(&hello, &job.execution.octa)?;
+  validate_hello(&hello, &job.octa)?;
   debug!(request_id = %job.request_id, "validated octa-runner hello");
 
   write_command(
     &mut stdin,
     &RunnerCommand::Start {
-      protocol_version: job.execution.octa.runner_protocol,
+      protocol_version: job.octa.runner_protocol,
       request_id: job.request_id.clone(),
       request: Box::new(run),
     },
@@ -164,9 +185,11 @@ async fn drive(
   sampler.tick().await;
   info!(request_id = %job.request_id, "started octa-runner request");
 
+  // Once stopping begins, resource sampling stops but the runner may still
+  // return its structured terminal result during the grace period.
   loop {
     tokio::select! {
-      message = crate::runner_protocol::read_message(&mut stdout) => {
+      message = crate::protocol::read_message(&mut stdout) => {
         let message = match message {
           Ok(Some(message)) => message,
           Ok(None) => return Err(protocol("stdout closed before a terminal message")),
@@ -301,7 +324,7 @@ async fn drive(
   }
 }
 
-fn build_run_request(spec: &ExecutionSpec, paths: &crate::execution::ExecutionPaths) -> RunRequest {
+fn build_run_request(spec: &ExecutionSpec, paths: &ExecutionPaths) -> RunRequest {
   RunRequest {
     workspace: paths.workspace.clone(),
     octafile: spec.octafile.as_ref().map(Into::into),
@@ -406,7 +429,7 @@ async fn begin_stop(
   stop_deadline: &mut Option<Instant>,
   reason: TerminationReason,
   grace: Duration,
-  stdin: &mut crate::execution::ExecutionWriter,
+  stdin: &mut ExecutionWriter,
   request_id: &str,
 ) {
   if stop_reason.is_some() {
@@ -483,7 +506,7 @@ mod tests {
   use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
 
   use super::*;
-  use crate::execution::{ExecutionIo, ExecutionPaths, ExecutionReader, ExecutionWriter};
+  use octacity_execution::{ExecutionIo, ExecutionPaths, ExecutionReader, ExecutionWriter, RunnerProgram};
 
   #[derive(Clone, Copy)]
   enum Scenario {
@@ -508,7 +531,11 @@ mod tests {
 
   #[async_trait]
   impl ExecutionBackend for FakeBackend {
-    async fn start(&self, request: StartExecution) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    async fn start(
+      &self,
+      runner: &RunnerProgram,
+      request: StartExecution,
+    ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
       let (agent_stdin, runner_input) = tokio::io::duplex(4096);
       let (runner_output, agent_stdout) = tokio::io::duplex(4096);
       let (agent_stderr, runner_stderr) = tokio::io::duplex(64);
@@ -523,8 +550,8 @@ mod tests {
         paths: ExecutionPaths {
           workspace: request.workspace,
           data_dir: request.data_dir,
-          plugins_dir: PathBuf::from("/opt/octa/plugins"),
-          plugin_lock: PathBuf::from("/opt/octa/Octa.lock"),
+          plugins_dir: runner.plugins_dir.clone(),
+          plugin_lock: runner.plugin_lock.clone(),
         },
         destroyed: self.destroyed.clone(),
         killed: self.killed.clone(),
@@ -629,18 +656,18 @@ mod tests {
     const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     RunnerJobRequest {
       request_id: "job-1-attempt-1".to_owned(),
+      octa: octacity_protocol::OctaSpec {
+        version: "0.3.0".to_owned(),
+        runner_sha256: DIGEST.to_owned(),
+        runner_protocol: 1,
+        event_schema: 3,
+        plugin_protocol: 1,
+        plugin_digests: BTreeMap::new(),
+      },
       execution: StartExecution {
         execution_id: "job-1-attempt-1".to_owned(),
         workspace: workspace.to_owned(),
         data_dir: workspace.join("data"),
-        octa: octacity_protocol::OctaSpec {
-          version: "0.3.0".to_owned(),
-          runner_sha256: DIGEST.to_owned(),
-          runner_protocol: 1,
-          event_schema: 3,
-          plugin_protocol: 1,
-          plugin_digests: BTreeMap::new(),
-        },
         cpu_millis: 1000,
         memory_bytes: 1024,
         writable_disk_bytes: 1024,
@@ -660,6 +687,28 @@ mod tests {
     }
   }
 
+  fn installation() -> RunnerInstallation {
+    const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    RunnerInstallation {
+      root: PathBuf::from("/opt/octa"),
+      executable: PathBuf::from("/opt/octa/octa-runner"),
+      plugins_dir: PathBuf::from("/opt/octa/plugins"),
+      default_plugin_lock: PathBuf::from("/opt/octa/Octa.lock"),
+      sha256: DIGEST.to_owned(),
+      capabilities: crate::RunnerCapabilities {
+        octa_version: "0.3.0".to_owned(),
+        runner_protocols: vec![1],
+        event_schemas: vec![3],
+        plugin_protocols: vec![1],
+        octafile_versions: vec![1],
+        platform: "any".to_owned(),
+        features: Vec::new(),
+        build_commit: None,
+      },
+      plugins: BTreeMap::new(),
+    }
+  }
+
   #[tokio::test]
   async fn supervises_the_published_runner_protocol_and_always_destroys() {
     let workspace = tempfile::tempdir().unwrap();
@@ -672,6 +721,7 @@ mod tests {
     };
     let (sender, mut receiver) = mpsc::channel(8);
     let completion = supervise(
+      &installation(),
       &backend,
       job(&workspace.path().canonicalize().unwrap()),
       CancellationToken::new(),
@@ -702,6 +752,7 @@ mod tests {
     cancellation.cancel();
 
     let completion = supervise(
+      &installation(),
       &backend,
       job(&workspace.path().canonicalize().unwrap()),
       cancellation,
@@ -729,6 +780,7 @@ mod tests {
     let (sender, _receiver) = mpsc::channel(8);
 
     let error = supervise(
+      &installation(),
       &backend,
       job(&workspace.path().canonicalize().unwrap()),
       CancellationToken::new(),
@@ -757,7 +809,7 @@ mod tests {
     request.timeout = Duration::ZERO;
     assert!(request.validate().unwrap_err().to_string().contains("timeouts"));
 
-    let expectation = &request.execution.octa;
+    let expectation = &request.octa;
     let hello = RunnerMessage::Hello {
       protocol_version: 1,
       octa_version: "0.3.0".to_owned(),

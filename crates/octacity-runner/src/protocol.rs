@@ -1,17 +1,25 @@
 //! Async transport adapter for the shared `octa-runner-protocol` crate.
+//!
+//! Wire DTOs and schema versions remain owned by Octa. OctaCity adds only
+//! bounded asynchronous framing and the event shape it must validate before
+//! forwarding data to the control plane.
 
-pub use octa_runner_protocol::{
-  MAX_RUNNER_INPUT_FRAME_BYTES, RUNNER_EVENT_SCHEMA_VERSION, RUNNER_INPUT_SCHEMA_V1, RUNNER_OUTPUT_SCHEMA_V1,
-  RUNNER_PLUGIN_PROTOCOL_VERSION, RUNNER_PROTOCOL_VERSION, RunRequest, RunStatus, RunnerCommand,
+use octa_runner_protocol::{MAX_RUNNER_INPUT_FRAME_BYTES, RunnerCommand};
+#[cfg(test)]
+use octa_runner_protocol::{
+  RUNNER_EVENT_SCHEMA_VERSION, RUNNER_INPUT_SCHEMA_V1, RUNNER_OUTPUT_SCHEMA_V1, RUNNER_PROTOCOL_VERSION,
 };
 use serde::Deserialize;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader};
 
+/// Agent-side upper bound for a single runner output frame.
 pub const MAX_RUNNER_OUTPUT_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
+/// Runner envelope specialized with the event and result payloads consumed by the agent.
 pub type RunnerMessage = octa_runner_protocol::RunnerMessage<String, RunnerEvent, Vec<serde_json::Value>>;
 
+/// Minimal event header retained before category-specific data reaches the server.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerEvent {
@@ -36,6 +44,7 @@ pub enum RunnerProtocolError {
   InputTooLarge,
 }
 
+/// Reads one newline-terminated, size-bounded runner message.
 pub async fn read_message<R: AsyncRead + Unpin>(
   reader: &mut BufReader<R>,
 ) -> Result<Option<RunnerMessage>, RunnerProtocolError> {
@@ -59,6 +68,7 @@ pub async fn read_message<R: AsyncRead + Unpin>(
     .map_err(|error| RunnerProtocolError::Json(Box::new(error)))
 }
 
+/// Serializes and flushes one bounded command to the runner.
 pub async fn write_command<W: AsyncWrite + Unpin>(
   writer: &mut W,
   command: &RunnerCommand,

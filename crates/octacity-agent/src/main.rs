@@ -1,7 +1,16 @@
+//! Thin command-line entry point for configuring diagnostics and invoking the
+//! agent's startup validation routines.
+//!
+//! Long-lived coordination is intentionally absent until the server-agent
+//! transport is implemented. This binary is the composition root: focused
+//! component crates contain reusable behavior and never depend on the agent.
+
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use octacity_agent::{config::AgentConfig, runner_installation::RunnerInstallation};
+use octacity_config::AgentConfig;
+use octacity_runner::RunnerInstallation;
+use octacity_source::SourcePluginRegistry;
 use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
@@ -57,6 +66,7 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     Command::Validate { config } => {
       info!(config = %config.display(), "validating agent configuration");
       let validated = AgentConfig::load(&config)?.validate()?;
+      let source_plugins = SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?;
       let runner = RunnerInstallation::load(&validated.config.octa_release_root).await?;
       println!(
         "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} backend(s), {} source plugin(s))",
@@ -64,13 +74,13 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
         runner.capabilities.octa_version,
         validated.signing_keys.len(),
         validated.config.enabled_execution_backends.len(),
-        validated.source_plugins.len()
+        source_plugins.len()
       );
       info!(
         agent_id = %validated.config.agent_id,
         signing_keys = validated.signing_keys.len(),
         execution_backends = validated.config.enabled_execution_backends.len(),
-        source_plugins = validated.source_plugins.len(),
+        source_plugins = source_plugins.len(),
         "agent configuration is valid"
       );
       Ok(())

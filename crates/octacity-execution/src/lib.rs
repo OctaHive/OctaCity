@@ -1,25 +1,41 @@
+//! Backend-neutral contract for starting and supervising one job execution.
+//!
+//! The runner supervisor depends only on these lifecycle and accounting
+//! operations. Native and sandboxed backends therefore expose identical I/O,
+//! cancellation, cleanup, and resource-usage semantics.
+
 use std::{path::PathBuf, pin::Pin};
 
 use async_trait::async_trait;
-use octacity_protocol::OctaSpec;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+/// Owned asynchronous stdout or stderr stream from an execution backend.
 pub type ExecutionReader = Pin<Box<dyn AsyncRead + Send>>;
+/// Owned asynchronous stdin stream into an execution backend.
 pub type ExecutionWriter = Pin<Box<dyn AsyncWrite + Send>>;
 
+/// Protocol streams connected to the isolated `octa-runner` process.
 pub struct ExecutionIo {
   pub stdin: ExecutionWriter,
   pub stdout: ExecutionReader,
   pub stderr: ExecutionReader,
 }
 
+/// Verified host paths required by a backend to start `octa-runner`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunnerProgram {
+  pub executable: PathBuf,
+  pub plugins_dir: PathBuf,
+  pub plugin_lock: PathBuf,
+}
+
+/// Resources and filesystem locations needed to start a job.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StartExecution {
   pub execution_id: String,
   pub workspace: PathBuf,
   pub data_dir: PathBuf,
-  pub octa: OctaSpec,
   pub cpu_millis: u32,
   pub memory_bytes: u64,
   pub writable_disk_bytes: u64,
@@ -51,6 +67,7 @@ impl StartExecution {
   }
 }
 
+/// Paths as seen by `octa-runner` inside the selected backend.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionPaths {
   pub workspace: PathBuf,
@@ -59,6 +76,7 @@ pub struct ExecutionPaths {
   pub plugin_lock: PathBuf,
 }
 
+/// Monotonic resource-accounting snapshot for a running job.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResourceUsage {
   pub elapsed_ms: u64,
@@ -73,6 +91,7 @@ pub struct ResourceUsage {
   pub network_transmitted_bytes: Option<u64>,
 }
 
+/// Process exit observed by the backend after the runner has stopped.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExecutionExit {
   pub code: Option<i32>,
@@ -94,12 +113,18 @@ pub enum ExecutionError {
   Reaped,
 }
 
+/// Creates executions while hiding native or sandbox-specific mechanics.
 #[async_trait]
 pub trait ExecutionBackend: Send + Sync {
-  async fn start(&self, request: StartExecution) -> Result<Box<dyn RunningExecution>, ExecutionError>;
+  async fn start(
+    &self,
+    runner: &RunnerProgram,
+    request: StartExecution,
+  ) -> Result<Box<dyn RunningExecution>, ExecutionError>;
   async fn cleanup_orphans(&self) -> Result<(), ExecutionError>;
 }
 
+/// Exclusive handle to one running execution and all resources it owns.
 #[async_trait]
 pub trait RunningExecution: Send {
   fn paths(&self) -> &ExecutionPaths;
@@ -121,14 +146,6 @@ mod tests {
       execution_id: "job-1-attempt-1".to_owned(),
       workspace: temporary.path().canonicalize().unwrap(),
       data_dir: temporary.path().canonicalize().unwrap().join("data"),
-      octa: OctaSpec {
-        version: "0.3.0".to_owned(),
-        runner_sha256: "0".repeat(64),
-        runner_protocol: 1,
-        event_schema: 3,
-        plugin_protocol: 1,
-        plugin_digests: std::collections::BTreeMap::new(),
-      },
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,

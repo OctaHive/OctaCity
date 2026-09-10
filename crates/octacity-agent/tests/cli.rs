@@ -1,3 +1,5 @@
+//! Black-box checks for the agent CLI contract and structured logging flags.
+
 use std::process::Command;
 
 #[test]

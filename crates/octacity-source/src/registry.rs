@@ -1,3 +1,19 @@
+//! Builds the agent's trusted inventory of operator-installed source plugins.
+//!
+//! This module owns the static side of source acquisition. At agent startup it
+//! scans `source_plugins_dir`, validates directory permissions and manifests,
+//! confines each entrypoint to its plugin directory, verifies its executable
+//! digest, and records the resulting [`InstalledSourcePlugin`] values in a
+//! [`SourcePluginRegistry`]. For a job, the registry resolves a signed
+//! [`SourceSpec`] only when its logical name, version, and digest exactly match
+//! the installed plugin.
+//!
+//! This module never starts a plugin or materializes a workspace. That dynamic
+//! lifecycle is exposed through [`InstalledSourcePlugin::materialize`].
+//! Repository content can select a verified logical plugin through signed job
+//! data, but cannot register a binary, supply its host path, or change
+//! operator-owned settings.
+
 use std::{
   collections::BTreeMap,
   fs::{self, File},
@@ -13,11 +29,13 @@ use tracing::{debug, info};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 
+/// Immutable source-plugin inventory constructed during agent startup.
 #[derive(Debug)]
 pub struct SourcePluginRegistry {
   plugins: BTreeMap<String, InstalledSourcePlugin>,
 }
 
+/// Manifest and canonical executable for one verified plugin.
 #[derive(Debug)]
 pub struct InstalledSourcePlugin {
   pub manifest: SourcePluginManifest,
@@ -46,8 +64,10 @@ pub enum RegistryError {
 }
 
 impl SourcePluginRegistry {
+  /// Scans and verifies every entry below the operator-owned registry root.
   pub fn discover(root: &Path) -> Result<Self, RegistryError> {
     debug!(registry = %root.display(), "discovering source plugins");
+    validate_permissions(root, false)?;
     let entries = fs::read_dir(root).map_err(|source| RegistryError::ReadDirectory {
       path: root.to_owned(),
       source,
@@ -96,6 +116,7 @@ impl SourcePluginRegistry {
     self.plugins.get(name)
   }
 
+  /// Resolves the exact plugin version and digest required by a signed job.
   pub fn resolve(&self, requirement: &SourceSpec) -> Result<&InstalledSourcePlugin, RegistryError> {
     let plugin = self
       .get(&requirement.provider)
@@ -144,6 +165,8 @@ fn load_plugin(directory: &Path) -> Result<InstalledSourcePlugin, RegistryError>
   })?;
   validate_manifest(directory, &manifest)?;
 
+  // Canonicalization plus the prefix check prevents a manifest symlink from
+  // selecting an executable outside its operator-reviewed plugin directory.
   let executable = directory.join(&manifest.executable);
   validate_regular_file(&executable, true)?;
   let canonical_directory = directory
@@ -333,6 +356,21 @@ platforms = ["{}-{}"]
     assert_eq!(
       registry.get("git").unwrap().executable,
       executable.canonicalize().unwrap()
+    );
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn rejects_a_group_writable_registry_root() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (root, _) = plugin_fixture();
+    fs::set_permissions(root.path(), fs::Permissions::from_mode(0o775)).unwrap();
+    assert!(
+      SourcePluginRegistry::discover(root.path())
+        .unwrap_err()
+        .to_string()
+        .contains("must not be writable by group or others")
     );
   }
 

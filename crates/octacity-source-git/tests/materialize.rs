@@ -1,3 +1,5 @@
+//! End-to-end Git materialization and agent/plugin lifecycle checks.
+
 use std::{
   collections::BTreeMap,
   fs,
@@ -6,7 +8,7 @@ use std::{
   time::Duration,
 };
 
-use octacity_agent::{source::InstalledSourcePlugin, source_host::SourceMaterializationRequest};
+use octacity_source::{InstalledSourcePlugin, SourceMaterializationRequest};
 use octacity_source_git::{GitSourceError, materialize};
 use octacity_source_plugin::{MaterializeRequest, SourcePluginManifest};
 use tokio_util::sync::CancellationToken;

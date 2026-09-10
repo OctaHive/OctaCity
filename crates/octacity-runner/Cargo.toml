@@ -1,0 +1,26 @@
+[package]
+name = "octacity-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Octa runner inventory, protocol client, and supervisor for OctaCity"
+
+[dependencies]
+libc.workspace = true
+octa-runner-protocol.workspace = true
+octacity-execution = { path = "../octacity-execution" }
+octacity-protocol = { path = "../octacity-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yml.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true

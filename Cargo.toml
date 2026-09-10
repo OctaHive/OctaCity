@@ -2,7 +2,12 @@
 resolver = "3"
 members = [
   "crates/octacity-agent",
+  "crates/octacity-config",
+  "crates/octacity-execution",
+  "crates/octacity-execution-native",
   "crates/octacity-protocol",
+  "crates/octacity-runner",
+  "crates/octacity-source",
   "crates/octacity-source-git",
   "crates/octacity-source-plugin",
 ]

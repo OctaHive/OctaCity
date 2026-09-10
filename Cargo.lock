@@ -486,26 +486,51 @@ dependencies = [
 name = "octacity-agent"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "base64",
  "clap",
+ "octacity-config",
+ "octacity-runner",
+ "octacity-source",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "octacity-config"
+version = "0.1.0"
+dependencies = [
+ "base64",
  "ed25519-dalek",
  "http",
- "libc",
- "octa-runner-protocol",
  "octacity-protocol",
- "octacity-source-plugin",
  "serde",
- "serde_json",
- "serde_yml",
- "sha2",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "octacity-execution"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
  "tempfile",
  "thiserror",
  "tokio",
- "tokio-util",
- "toml",
+]
+
+[[package]]
+name = "octacity-execution-native"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "libc",
+ "octacity-execution",
+ "sha2",
+ "tempfile",
+ "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -520,11 +545,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-runner"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "libc",
+ "octa-runner-protocol",
+ "octacity-execution",
+ "octacity-protocol",
+ "serde",
+ "serde_json",
+ "serde_yml",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "octacity-source"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "octacity-protocol",
+ "octacity-source-plugin",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "octacity-source-git"
 version = "0.1.0"
 dependencies = [
  "http",
- "octacity-agent",
+ "octacity-source",
  "octacity-source-plugin",
  "serde",
  "serde_json",

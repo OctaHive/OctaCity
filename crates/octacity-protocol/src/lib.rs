@@ -1,7 +1,13 @@
 //! Versioned wire types shared by the OctaCity agent and server.
 //!
 //! This crate deliberately contains no HTTP, persistence, scheduler, or agent
-//! implementation details.
+//! implementation details. Signed payload validation is kept here so both ends
+//! agree on one canonical security boundary before a job reaches an agent.
+//!
+//! The language-neutral wire specification is documented in
+//! [Signed JobSpec protocol v1].
+//!
+//! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/signed-job-spec-v1.md
 
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
@@ -10,26 +16,40 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// Signed JobSpec wire version supported by this crate.
 pub const AGENT_PROTOCOL_VERSION: u16 = 1;
+/// Exact signature algorithm identifier accepted in a v1 envelope.
 pub const SIGNATURE_ALGORITHM: &str = "ed25519";
+/// Maximum decoded size of an authenticated JobSpec JSON payload.
 pub const MAX_SIGNED_JOB_SPEC_BYTES: usize = 1024 * 1024;
 
+/// Detached signature and encoded canonical job payload received by an agent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignedEnvelope {
+  /// Identifier of an agent-configured server verification key.
   pub key_id: String,
+  /// Signature algorithm; v1 accepts only [`SIGNATURE_ALGORITHM`].
   pub algorithm: String,
+  /// Standard-base64 encoding of the exact signed JobSpec JSON bytes.
   pub payload: String,
+  /// Standard-base64 encoding of the Ed25519 signature over `payload` bytes.
   pub signature: String,
 }
 
+/// Immutable job description covered by the server signature.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobSpecV1 {
+  /// Wire version; must equal [`AGENT_PROTOCOL_VERSION`].
   pub protocol_version: u16,
+  /// Stable identity of the job bound to the surrounding lease.
   pub job_id: String,
+  /// Positive execution attempt bound to the surrounding lease.
   pub attempt: u32,
+  /// First Unix second in which this specification is valid.
   pub issued_at: u64,
+  /// First Unix second in which this specification is no longer valid.
   pub expires_at: u64,
   pub source: SourceSpec,
   pub octa: OctaSpec,
@@ -38,6 +58,7 @@ pub struct JobSpecV1 {
   pub outputs: OutputLimits,
 }
 
+/// Exact source-plugin and revision requirement for a job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSpec {
@@ -51,6 +72,7 @@ pub struct SourceSpec {
   pub parameters: BTreeMap<String, serde_json::Value>,
 }
 
+/// Exact Octa release and plugin set authorized to execute a job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OctaSpec {
@@ -63,6 +85,7 @@ pub struct OctaSpec {
   pub plugin_digests: BTreeMap<String, String>,
 }
 
+/// Commands and runtime values passed to `octa-runner` after checkout.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionSpec {
@@ -83,6 +106,7 @@ pub struct ExecutionSpec {
   pub secrets_profile: Option<String>,
 }
 
+/// Execution isolation selected by the server and allowed by the agent.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendKind {
@@ -90,6 +114,7 @@ pub enum BackendKind {
   Microsandbox,
 }
 
+/// Resource and network boundaries enforced around one runner process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeSpec {
@@ -104,6 +129,7 @@ pub struct RuntimeSpec {
   pub workload_identity_profile: String,
 }
 
+/// Network access granted to the job runtime.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetworkPolicy {
@@ -111,6 +137,7 @@ pub enum NetworkPolicy {
   Restricted { allowed_hosts: Vec<String> },
 }
 
+/// Bounds for report and artifact data returned by a job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputLimits {
@@ -120,6 +147,7 @@ pub struct OutputLimits {
   pub report_bytes: u64,
 }
 
+/// Lease identity supplied out of band and bound to the signed payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobBinding<'a> {
   pub job_id: &'a str,
@@ -149,7 +177,8 @@ pub enum JobSpecError {
   Validation(String),
 }
 
-/// Verifies the exact payload bytes before deserializing and validating them.
+/// Verifies the signature over the exact payload bytes, then decodes and
+/// validates the job and its lease binding.
 pub fn verify_job_spec(
   envelope: &SignedEnvelope,
   keys: &BTreeMap<String, VerifyingKey>,
@@ -175,12 +204,15 @@ pub fn verify_job_spec(
     .verify_strict(&payload, &signature)
     .map_err(|_| JobSpecError::InvalidSignature)?;
 
+  // Parsing only authenticated bytes avoids acting on fields that were not
+  // covered by the server signature.
   let spec: JobSpecV1 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
   spec.validate(&binding).map_err(JobSpecError::Validation)?;
   Ok(spec)
 }
 
 impl JobSpecV1 {
+  /// Validates the authenticated job against its lease identity and current time.
   pub fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
     if self.protocol_version != AGENT_PROTOCOL_VERSION {
       return Err(format!("unsupported protocol version {}", self.protocol_version));
@@ -388,6 +420,30 @@ mod tests {
       payload: BASE64.encode(&payload),
       signature: BASE64.encode(signing_key.sign(&payload).to_bytes()),
     }
+  }
+
+  #[test]
+  fn documented_job_spec_example_matches_the_wire_type() {
+    let specification = include_str!("../../../docs/protocols/signed-job-spec-v1.md");
+    let section = specification
+      .split_once("## Complete JobSpec shape")
+      .expect("specification must contain the complete example")
+      .1;
+    let json = section
+      .split_once("```json\n")
+      .expect("complete example must be a JSON block")
+      .1
+      .split_once("\n```")
+      .expect("complete example JSON block must terminate")
+      .0;
+    let spec: JobSpecV1 = serde_json::from_str(json).expect("documented JobSpec must deserialize");
+    spec
+      .validate(&JobBinding {
+        job_id: &spec.job_id,
+        attempt: spec.attempt,
+        now: spec.issued_at,
+      })
+      .expect("documented JobSpec must pass semantic validation");
   }
 
   #[test]

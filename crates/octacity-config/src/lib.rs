@@ -1,10 +1,16 @@
+//! Loads and validates operator-owned agent configuration.
+//!
+//! Validation happens once at startup and turns filesystem paths, signing
+//! keys, and backend choices into trusted runtime inputs. It validates only
+//! configuration-owned invariants; construction of source, runner, and
+//! execution components belongs to the agent composition root.
+
 use std::{
   collections::{BTreeMap, BTreeSet},
   fs,
   path::{Path, PathBuf},
 };
 
-use crate::source::{RegistryError, SourcePluginRegistry};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::VerifyingKey;
 use http::Uri;
@@ -15,6 +21,7 @@ use tracing::{debug, info};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 
+/// Configuration read from the agent's TOML file.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
@@ -43,11 +50,11 @@ pub struct AgentConfig {
   pub cleanup_timeout_seconds: u64,
 }
 
+/// Startup configuration after cryptographic and filesystem validation.
 #[derive(Debug)]
 pub struct ValidatedConfig {
   pub config: AgentConfig,
   pub signing_keys: BTreeMap<String, VerifyingKey>,
-  pub source_plugins: SourcePluginRegistry,
 }
 
 #[derive(Debug, Error)]
@@ -65,11 +72,10 @@ pub enum ConfigError {
   },
   #[error("invalid agent configuration: {0}")]
   Invalid(String),
-  #[error(transparent)]
-  SourcePlugins(#[from] RegistryError),
 }
 
 impl AgentConfig {
+  /// Reads a size-bounded TOML file without applying environmental defaults.
   pub fn load(path: &Path) -> Result<Self, ConfigError> {
     debug!(config = %path.display(), "loading agent configuration");
     let metadata = fs::metadata(path).map_err(|source| ConfigError::Inspect {
@@ -90,6 +96,7 @@ impl AgentConfig {
     })
   }
 
+  /// Resolves and validates every operator-controlled trust boundary.
   pub fn validate(mut self) -> Result<ValidatedConfig, ConfigError> {
     non_empty("agent_id", &self.agent_id)?;
     validate_server_url(&self.server_url)?;
@@ -109,6 +116,8 @@ impl AgentConfig {
       .map(|(id, encoded)| decode_signing_key(id, encoded))
       .collect::<Result<_, _>>()?;
 
+    // Overlapping roots would let job cleanup or workspace writes reach agent
+    // state, installed Octa binaries, or source-plugin executables.
     let roots = [
       ("work_root", canonical_directory("work_root", &self.work_root)?),
       ("state_root", canonical_directory("state_root", &self.state_root)?),
@@ -126,8 +135,6 @@ impl AgentConfig {
     self.state_root = roots[1].1.clone();
     self.octa_release_root = roots[2].1.clone();
     self.source_plugins_dir = roots[3].1.clone();
-    validate_plugin_directory_permissions(&self.source_plugins_dir)?;
-    let source_plugins = SourcePluginRegistry::discover(&self.source_plugins_dir)?;
 
     for (name, value) in &self.labels {
       non_empty("label name", name)?;
@@ -185,13 +192,11 @@ impl AgentConfig {
     info!(
       agent_id = %self.agent_id,
       backends = self.enabled_execution_backends.len(),
-      source_plugins = source_plugins.len(),
       "validated agent configuration"
     );
     Ok(ValidatedConfig {
       config: self,
       signing_keys,
-      source_plugins,
     })
   }
 }
@@ -314,28 +319,6 @@ fn non_empty(name: &str, value: &str) -> Result<(), ConfigError> {
   } else {
     Ok(())
   }
-}
-
-#[cfg(unix)]
-fn validate_plugin_directory_permissions(path: &Path) -> Result<(), ConfigError> {
-  use std::os::unix::fs::PermissionsExt as _;
-
-  let mode = fs::metadata(path)
-    .map_err(|error| ConfigError::Invalid(format!("source_plugins_dir '{}': {error}", path.display())))?
-    .permissions()
-    .mode();
-  if mode & 0o022 != 0 {
-    return invalid(format!(
-      "source_plugins_dir '{}' must not be writable by group or others",
-      path.display()
-    ));
-  }
-  Ok(())
-}
-
-#[cfg(not(unix))]
-fn validate_plugin_directory_permissions(_path: &Path) -> Result<(), ConfigError> {
-  Ok(())
 }
 
 fn invalid<T>(message: impl Into<String>) -> Result<T, ConfigError> {
@@ -569,23 +552,6 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("must use https")
-    );
-  }
-
-  #[cfg(unix)]
-  #[test]
-  fn rejects_a_group_writable_source_plugin_registry() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let fixture = Fixture::new();
-    fs::set_permissions(&fixture.config.source_plugins_dir, fs::Permissions::from_mode(0o775)).unwrap();
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("must not be writable by group or others")
     );
   }
 

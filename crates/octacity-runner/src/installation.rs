@@ -1,3 +1,9 @@
+//! Inventories an operator-installed Octa release before it can execute jobs.
+//!
+//! The inventory binds the runner binary, its advertised protocol support, and
+//! every locked plugin to immutable digests. A signed job is accepted only if
+//! its exact Octa requirement matches this local inventory.
+
 use std::{
   collections::BTreeMap,
   fs,
@@ -6,6 +12,7 @@ use std::{
   time::Duration,
 };
 
+use octacity_execution::RunnerProgram;
 use octacity_protocol::OctaSpec;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -17,7 +24,7 @@ use tokio::{
 };
 use tracing::{debug, info};
 
-use crate::runner_protocol::RunnerMessage;
+use crate::protocol::RunnerMessage;
 
 const CAPABILITIES_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CAPABILITIES_BYTES: usize = 1024 * 1024;
@@ -25,6 +32,7 @@ const MAX_CAPABILITIES_STDERR_BYTES: usize = 64 * 1024;
 const MAX_PLUGIN_LOCK_BYTES: u64 = 1024 * 1024;
 const PLUGIN_LOCK_VERSION: u8 = 1;
 
+/// Capabilities reported by the installed `octa-runner` executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnerCapabilities {
   pub octa_version: String,
@@ -37,6 +45,7 @@ pub struct RunnerCapabilities {
   pub build_commit: Option<String>,
 }
 
+/// Verified runner executable and plugin bundle available to the agent.
 #[derive(Clone, Debug)]
 pub struct RunnerInstallation {
   pub root: PathBuf,
@@ -48,6 +57,7 @@ pub struct RunnerInstallation {
   pub plugins: BTreeMap<String, RunnerPlugin>,
 }
 
+/// One plugin verified against the installed `Octa.lock`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnerPlugin {
   pub version: String,
@@ -81,6 +91,7 @@ pub enum RunnerInstallationError {
 }
 
 impl RunnerInstallation {
+  /// Builds a trusted inventory from an operator-controlled release directory.
   pub async fn load(root: &Path) -> Result<Self, RunnerInstallationError> {
     let root = canonical_directory("octa_release_root", root)?;
     let executable = root.join(runner_filename());
@@ -113,6 +124,7 @@ impl RunnerInstallation {
     })
   }
 
+  /// Matches the inventory against the exact requirement signed by the server.
   pub fn verify(&self, requirement: &OctaSpec) -> Result<(), RunnerInstallationError> {
     if self.capabilities.octa_version != requirement.version {
       return requirement_error(format!(
@@ -163,6 +175,16 @@ impl RunnerInstallation {
       }
     }
     Ok(())
+  }
+
+  /// Returns the verified host paths that an execution backend may expose to
+  /// the runner. Protocol requirements remain owned by this inventory.
+  pub fn program(&self) -> RunnerProgram {
+    RunnerProgram {
+      executable: self.executable.clone(),
+      plugins_dir: self.plugins_dir.clone(),
+      plugin_lock: self.default_plugin_lock.clone(),
+    }
   }
 }
 
@@ -655,6 +677,14 @@ mod tests {
     };
     installation.verify(&requirement).unwrap();
     assert_eq!(installation.plugins.len(), 1);
+    assert_eq!(
+      installation.program(),
+      RunnerProgram {
+        executable: installation.executable.clone(),
+        plugins_dir: installation.plugins_dir.clone(),
+        plugin_lock: installation.default_plugin_lock.clone(),
+      }
+    );
 
     let mut wrong = requirement;
     wrong.event_schema = 2;

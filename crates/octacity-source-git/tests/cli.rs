@@ -1,3 +1,5 @@
+//! Black-box checks for the Git source-plugin process interface.
+
 use std::{
   io::Write as _,
   process::{Command, Stdio},

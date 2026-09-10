@@ -1,3 +1,9 @@
+//! Process entry point for the Git source plugin.
+//!
+//! stdout is reserved for bounded JSONL protocol frames. A dedicated blocking
+//! stdin reader feeds commands into the async materialization loop so Cancel
+//! can be observed while Git is running.
+
 use std::{
   io::{BufRead as _, Read as _, Write as _},
   process::ExitCode,
@@ -89,6 +95,8 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
 
 fn command_stream() -> tokio::sync::mpsc::UnboundedReceiver<Result<SourceCommand, String>> {
   let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+  // Standard input has a blocking API here; isolating it prevents a stalled
+  // controller from occupying the async runtime thread.
   std::thread::spawn(move || {
     let stdin = std::io::stdin();
     read_commands(std::io::BufReader::new(stdin.lock()), &sender);

@@ -1,16 +1,17 @@
 //! Native Linux execution through a dedicated cgroup v2 and workspace mount.
+//!
+//! Native execution is an explicit operator choice, not a sandbox. It still
+//! enforces CPU and memory through cgroup v2 and requires workspace storage on
+//! a dedicated quota-sized mount so disk limits cannot silently be advisory.
 
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use crate::{
-  execution::{ExecutionBackend, ExecutionError, RunningExecution, StartExecution},
-  runner_installation::RunnerInstallation,
-};
+use octacity_execution::{ExecutionBackend, ExecutionError, RunnerProgram, RunningExecution, StartExecution};
 
 #[cfg(target_os = "linux")]
 mod linux {
@@ -29,20 +30,22 @@ mod linux {
   use tracing::{debug, info};
 
   use super::*;
-  use crate::execution::{ExecutionExit, ExecutionIo, ExecutionPaths, ResourceUsage};
+  use octacity_execution::{ExecutionExit, ExecutionIo, ExecutionPaths, ResourceUsage};
 
   const CPU_PERIOD_MICROS: u64 = 100_000;
   const DEFAULT_PIDS_LIMIT: u32 = 4096;
   const CGROUP_CLEANUP_ATTEMPTS: usize = 100;
   const CGROUP_CLEANUP_INTERVAL: Duration = Duration::from_millis(50);
 
+  /// Linux backend that confines the verified runner to a dedicated cgroup
+  /// and a quota-sized workspace filesystem.
   pub struct NativeBackend {
-    runner: Arc<RunnerInstallation>,
     cgroup_root: PathBuf,
   }
 
   impl NativeBackend {
-    pub fn new(runner: Arc<RunnerInstallation>, cgroup_root: &Path) -> Result<Self, ExecutionError> {
+    /// Opens an operator-delegated cgroup-v2 root used exclusively by OctaCity.
+    pub fn new(cgroup_root: &Path) -> Result<Self, ExecutionError> {
       let cgroup_root = cgroup_root
         .canonicalize()
         .map_err(|error| unavailable(format!("native cgroup root '{}': {error}", cgroup_root.display())))?;
@@ -52,18 +55,18 @@ mod linux {
           cgroup_root.display()
         )));
       }
-      Ok(Self { runner, cgroup_root })
+      Ok(Self { cgroup_root })
     }
   }
 
   #[async_trait]
   impl ExecutionBackend for NativeBackend {
-    async fn start(&self, request: StartExecution) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    async fn start(
+      &self,
+      runner: &RunnerProgram,
+      request: StartExecution,
+    ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
       request.validate()?;
-      self
-        .runner
-        .verify(&request.octa)
-        .map_err(|error| ExecutionError::Unavailable(error.to_string()))?;
       validate_workspace_mount(&request.workspace, request.writable_disk_bytes)?;
 
       let cgroup = self.cgroup_root.join(cgroup_name(&request.execution_id));
@@ -74,7 +77,7 @@ mod linux {
         return Err(error);
       }
 
-      let mut command = Command::new(&self.runner.executable);
+      let mut command = Command::new(&runner.executable);
       command
         .env_clear()
         .current_dir(&request.workspace)
@@ -125,8 +128,8 @@ mod linux {
         paths: ExecutionPaths {
           workspace: request.workspace.clone(),
           data_dir: request.data_dir,
-          plugins_dir: self.runner.plugins_dir.clone(),
-          plugin_lock: self.runner.default_plugin_lock.clone(),
+          plugins_dir: runner.plugins_dir.clone(),
+          plugin_lock: runner.plugin_lock.clone(),
         },
         cgroup,
         workspace: request.workspace,
@@ -153,6 +156,8 @@ mod linux {
           continue;
         }
         let name = entry.file_name();
+        // Refuse to touch an unknown directory: the configured root may be
+        // wrong, and orphan cleanup must never kill an operator-owned cgroup.
         if !name.to_string_lossy().starts_with("execution-") {
           return Err(backend(format!(
             "unexpected directory '{}' in the dedicated native cgroup root",
@@ -449,7 +454,8 @@ pub struct NativeBackend;
 
 #[cfg(not(target_os = "linux"))]
 impl NativeBackend {
-  pub fn new(_runner: Arc<RunnerInstallation>, _cgroup_root: &Path) -> Result<Self, ExecutionError> {
+  /// Reports Native execution as unavailable on non-Linux platforms.
+  pub fn new(_cgroup_root: &Path) -> Result<Self, ExecutionError> {
     Err(ExecutionError::Unavailable(
       "NativeBackend v1 requires Linux cgroup v2 and a quota-backed workspace mount".to_owned(),
     ))
@@ -459,7 +465,11 @@ impl NativeBackend {
 #[cfg(not(target_os = "linux"))]
 #[async_trait]
 impl ExecutionBackend for NativeBackend {
-  async fn start(&self, _request: StartExecution) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+  async fn start(
+    &self,
+    _runner: &RunnerProgram,
+    _request: StartExecution,
+  ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
     Err(ExecutionError::Unavailable(
       "NativeBackend v1 is available only on Linux".to_owned(),
     ))

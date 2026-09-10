@@ -1,4 +1,4 @@
-//! Bounded process protocol used to materialize job sources before Octa starts.
+#![doc = include_str!("../README.md")]
 
 use std::{collections::BTreeMap, io, path::Path};
 
@@ -6,11 +6,16 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 
+/// Process protocol version implemented by this wire crate.
 pub const SOURCE_PLUGIN_PROTOCOL_VERSION: u16 = 1;
+/// Manifest format version understood by this wire crate.
 pub const SOURCE_PLUGIN_MANIFEST_VERSION: u16 = 1;
+/// Maximum encoded size of one newline-terminated command or message.
 pub const MAX_SOURCE_FRAME_BYTES: usize = 1024 * 1024;
+/// Maximum UTF-8 byte length of a request identifier.
 pub const MAX_SOURCE_REQUEST_ID_BYTES: usize = 256;
 
+/// Rejects request identifiers that are unsafe for logs and protocol routing.
 pub fn validate_request_id(request_id: &str) -> Result<(), String> {
   if request_id.is_empty() || request_id.len() > MAX_SOURCE_REQUEST_ID_BYTES || request_id.chars().any(char::is_control)
   {
@@ -21,40 +26,53 @@ pub fn validate_request_id(request_id: &str) -> Result<(), String> {
   Ok(())
 }
 
+/// Operator-installed source-plugin metadata.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourcePluginManifest {
+  /// Version of the `plugin.toml` structure.
   pub manifest_version: u16,
+  /// Stable logical provider name used by jobs and the registry directory.
   pub name: String,
+  /// Plugin release version reported during the handshake.
   pub version: String,
+  /// Oldest process protocol implemented by the executable.
   pub protocol_min: u16,
+  /// Newest process protocol implemented by the executable.
   pub protocol_max: u16,
+  /// Normalized path to the binary, relative to the plugin directory.
   pub executable: String,
+  /// Lowercase SHA-256 digest of the executable.
   pub sha256: String,
+  /// Supported targets in `os-arch` form.
   pub platforms: Vec<String>,
+  /// Provider configuration owned by the agent operator.
   #[serde(default)]
   pub settings: BTreeMap<String, serde_json::Value>,
 }
 
 impl SourcePluginManifest {
+  /// Deserializes a strict manifest, rejecting unknown fields.
   pub fn from_toml(contents: &str) -> Result<Self, toml::de::Error> {
     toml::from_str(contents)
   }
 }
 
+/// Commands sent by the agent to a source-plugin process.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SourceCommand {
+  /// Starts the single materialization owned by this process.
   Materialize {
     protocol_version: u16,
     request_id: String,
     request: MaterializeRequest,
   },
-  Cancel {
-    request_id: String,
-  },
+  /// Requests cooperative termination of the correlated materialization.
+  Cancel { request_id: String },
 }
 
+/// Provider-independent materialization request carried over the process protocol.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaterializeRequest {
@@ -62,19 +80,24 @@ pub struct MaterializeRequest {
   pub destination: String,
   /// Immutable provider-native revision expected after materialization.
   pub revision: String,
+  /// Optional provider-native fetch hint; never the source identity.
   #[serde(default)]
   pub reference: Option<String>,
+  /// Provider-specific values covered by the signed job.
   #[serde(default)]
   pub parameters: BTreeMap<String, serde_json::Value>,
   /// Operator-controlled settings copied from the verified plugin manifest.
   #[serde(default)]
   pub settings: BTreeMap<String, serde_json::Value>,
+  /// Named paths to agent-provisioned credential files.
   #[serde(default)]
   pub credential_files: BTreeMap<String, String>,
+  /// Maximum allowed size of the resulting workspace.
   pub max_workspace_bytes: u64,
 }
 
 impl MaterializeRequest {
+  /// Validates provider-independent path, revision, credential, and size rules.
   pub fn validate(&self) -> Result<(), String> {
     if !Path::new(&self.destination).is_absolute() {
       return Err("destination must be an absolute path".to_owned());
@@ -96,39 +119,38 @@ impl MaterializeRequest {
   }
 }
 
+/// Lifecycle messages emitted by a source-plugin process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SourceMessage {
+  /// Declares process identity before the agent sends a request.
   Hello {
     protocol_version: u16,
     plugin_name: String,
     plugin_version: String,
   },
-  Accepted {
-    request_id: String,
-  },
-  Progress {
-    request_id: String,
-    message: String,
-  },
-  Diagnostic {
-    request_id: String,
-    message: String,
-  },
+  /// Confirms ownership of a valid materialization request.
+  Accepted { request_id: String },
+  /// Reports a non-terminal lifecycle milestone.
+  Progress { request_id: String, message: String },
+  /// Reports a non-terminal warning or troubleshooting detail.
+  Diagnostic { request_id: String, message: String },
+  /// Reports successful materialization of the exact requested revision.
   Finished {
     request_id: String,
     revision: String,
     provenance: BTreeMap<String, String>,
   },
-  Cancelled {
-    request_id: String,
-  },
+  /// Confirms cooperative cancellation.
+  Cancelled { request_id: String },
+  /// Reports a terminal provider or request failure.
   Error {
     request_id: Option<String>,
     message: String,
   },
 }
 
+/// Failure while reading one bounded source-protocol frame.
 #[derive(Debug, Error)]
 pub enum ReadFrameError {
   #[error("failed to read source-plugin frame: {0}")]
@@ -139,7 +161,7 @@ pub enum ReadFrameError {
   Unterminated,
 }
 
-/// Reads one newline-delimited frame while preventing unbounded buffering.
+/// Reads one newline-delimited source-protocol frame without unbounded allocation.
 pub async fn read_frame<R: AsyncRead + Unpin>(
   reader: &mut BufReader<R>,
   frame: &mut String,
