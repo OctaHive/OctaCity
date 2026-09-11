@@ -34,7 +34,7 @@ mod security;
 
 use cgroup::{
   attach_to_cgroup_before_exec, cgroup_name, configure_cgroup, is_cgroup_name, kill_cgroup, kill_process_group,
-  read_cpu_time, read_io, read_number, remove_cgroup,
+  read_cpu_time, read_io, read_number, remove_cgroup, validate_cgroup_root,
 };
 use filesystem::{filesystem_usage, validate_workspace_filesystem, validate_workspace_root};
 use security::{

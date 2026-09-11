@@ -1,6 +1,7 @@
 //! Runner release inventory and trust-boundary tests.
 
 use super::*;
+#[cfg(unix)]
 use std::collections::BTreeMap;
 
 fn capabilities() -> RunnerCapabilities {

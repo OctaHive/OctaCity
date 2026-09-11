@@ -406,6 +406,10 @@ fn validate_regular_file(name: &str, path: &Path, executable: bool) -> Result<()
       return Err(invalid(format!("{name} '{}' has no execute bit", path.display())));
     }
   }
+  // Windows determines executability from the file type and association; it
+  // has no Unix execute bit to validate for an installed runner or plugin.
+  #[cfg(not(unix))]
+  let _ = executable;
   Ok(())
 }
 

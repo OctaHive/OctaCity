@@ -1,5 +1,6 @@
 //! Portable validation and naming tests for the Linux Native backend.
 
+use super::security::denied_syscalls;
 use super::*;
 
 #[test]
