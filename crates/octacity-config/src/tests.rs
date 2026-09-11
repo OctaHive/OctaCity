@@ -191,7 +191,7 @@ fn requires_explicit_non_duplicate_oci_engines() {
   fixture.config.native_linux_pids_limit = 0;
   fixture.config.native_environment.clear();
   fixture.config.oci_engines = vec![OciEngineConfig::Containerd {
-    endpoint: PathBuf::from("/run/containerd/containerd.sock"),
+    endpoint: fixture._temp.path().join("containerd.sock"),
     namespace: "octacity".to_owned(),
     snapshotter: "overlayfs".to_owned(),
     runtime: "io.containerd.runc.v2".to_owned(),
