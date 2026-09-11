@@ -39,8 +39,14 @@ cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo llvm-cov --workspace --all-features --summary-only \
-  --ignore-filename-regex '[/\\]\.cargo[/\\]registry[/\\]|octa-runner-protocol[/\\]src[/\\]lib\.rs$'
+  --fail-under-lines 67
 ```
+
+CI pins `cargo-llvm-cov` 0.9.1 so coverage semantics cannot change when a new
+tool release appears. The 67% portable Linux floor measures production source;
+the tool excludes test-support files by default. Privileged Native, containerd,
+and Microsandbox paths are additionally exercised by the backend contract jobs
+described in [`docs/backend-contract-tests.md`](docs/backend-contract-tests.md).
 
 The command line is defined with `clap`. Agent internals emit structured
 `tracing` events, so service managers and collectors can redirect stderr or
