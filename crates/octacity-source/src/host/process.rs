@@ -67,11 +67,9 @@ pub(super) async fn write_command<W: tokio::io::AsyncWrite + Unpin>(
   if frame.len() > MAX_SOURCE_FRAME_BYTES {
     return Err(protocol(plugin, "outgoing command exceeds the bounded frame limit"));
   }
+  // Child stdin writes directly to an OS pipe. Flushing it separately is
+  // unnecessary and can race with a plugin that consumes the frame and exits.
   stdin.write_all(&frame).await.map_err(|source| SourceHostError::Io {
-    plugin: plugin.to_owned(),
-    source,
-  })?;
-  stdin.flush().await.map_err(|source| SourceHostError::Io {
     plugin: plugin.to_owned(),
     source,
   })

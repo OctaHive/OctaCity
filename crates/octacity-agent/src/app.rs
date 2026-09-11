@@ -321,12 +321,51 @@ mod tests {
   }
 
   #[test]
-  fn maps_all_lifecycle_limits_from_validated_agent_configuration() {
-    let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
-    let validated = AgentConfig::load(&fixture.config).unwrap().validate().unwrap();
-    let lifecycle = lifecycle_config(&validated.config);
+  fn maps_all_lifecycle_limits_from_agent_configuration() {
+    let state = tempfile::tempdir().unwrap();
+    let config = AgentConfig {
+      agent_id: "agent-lifecycle-test".to_owned(),
+      server_url: "https://coordinator.example".to_owned(),
+      credential_file: state.path().join("credential"),
+      server_signing_keys: std::collections::BTreeMap::new(),
+      labels: std::collections::BTreeMap::new(),
+      work_root: state.path().join("work"),
+      state_root: state.path().join("state"),
+      octa_release_root: state.path().join("octa"),
+      source_plugins_dir: state.path().join("sources"),
+      enabled_runtime_modes: Vec::new(),
+      allow_native_execution: false,
+      native_linux_cgroup_root: None,
+      native_linux_bubblewrap_executable: None,
+      native_linux_readonly_paths: Vec::new(),
+      native_linux_pids_limit: 0,
+      native_environment: std::collections::BTreeMap::new(),
+      oci_engines: Vec::new(),
+      allowed_upload_origins: Vec::new(),
+      max_workspace_bytes: 1,
+      max_spool_bytes: 1_048_576,
+      max_spool_records: 32,
+      event_batch_max_bytes: 16_384,
+      event_batch_max_records: 8,
+      event_channel_capacity: 8,
+      poll_timeout_seconds: 1,
+      coordinator_request_timeout_seconds: 1,
+      coordinator_max_body_bytes: 1,
+      retry_initial_delay_milliseconds: 1,
+      retry_max_delay_seconds: 1,
+      retry_max_attempts: 1,
+      heartbeat_interval_seconds: 1,
+      lease_safety_margin_seconds: 2,
+      graceful_cancel_timeout_seconds: 1,
+      cleanup_timeout_seconds: 1,
+      runner_hello_timeout_seconds: 1,
+      resource_sample_interval_seconds: 1,
+      resource_sample_timeout_seconds: 1,
+      max_accounting_failures: 1,
+    };
+    let lifecycle = lifecycle_config(&config);
 
-    assert_eq!(lifecycle.state_root, validated.config.state_root);
+    assert_eq!(lifecycle.state_root, config.state_root);
     assert_eq!(lifecycle.event_channel_capacity, 8);
     assert_eq!(lifecycle.event_retry_delay, Duration::from_millis(1));
     assert_eq!(lifecycle.spool.max_bytes, 1_048_576);

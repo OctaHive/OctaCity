@@ -138,10 +138,6 @@ fn source_plugin_with_body(body: &str) -> (tempfile::TempDir, InstalledSourcePlu
     "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"fixture\",\"plugin_version\":\"1.0.0\"}'\nIFS= read -r request\n",
   );
   script.push_str(body);
-  // Keep stdin open briefly after the terminal frame. Otherwise a tiny fixture
-  // can exit between the host's write and flush, producing an irrelevant
-  // BrokenPipe race that real source plugins do not have.
-  script.push_str("/bin/sleep 0.05\n");
   std::fs::write(&executable, script).unwrap();
   let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
   permissions.set_mode(0o700);
