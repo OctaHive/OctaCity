@@ -83,7 +83,7 @@ fn binding(spec: &JobSpecV1) -> JobBinding<'_> {
 
 #[test]
 fn documented_job_spec_example_matches_the_wire_type() {
-  let specification = include_str!("../../../docs/protocols/signed-job-spec-v1.md");
+  let specification = include_str!("../../../docs/protocols/signed-job-spec-v1.md").replace("\r\n", "\n");
   let section = specification
     .split_once("## Complete JobSpec shape")
     .expect("specification must contain the complete example")
