@@ -93,8 +93,11 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
   }
 }
 
-fn command_stream() -> tokio::sync::mpsc::UnboundedReceiver<Result<SourceCommand, String>> {
-  let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+fn command_stream() -> tokio::sync::mpsc::Receiver<Result<SourceCommand, String>> {
+  // The protocol permits one active materialization and one cancellation, so
+  // two buffered commands are sufficient and prevent a malformed controller
+  // from growing plugin memory without bound.
+  let (sender, receiver) = tokio::sync::mpsc::channel(2);
   // Standard input has a blocking API here; isolating it prevents a stalled
   // controller from occupying the async runtime thread.
   std::thread::spawn(move || {
@@ -104,10 +107,7 @@ fn command_stream() -> tokio::sync::mpsc::UnboundedReceiver<Result<SourceCommand
   receiver
 }
 
-fn read_commands<R: std::io::BufRead>(
-  mut input: R,
-  sender: &tokio::sync::mpsc::UnboundedSender<Result<SourceCommand, String>>,
-) {
+fn read_commands<R: std::io::BufRead>(mut input: R, sender: &tokio::sync::mpsc::Sender<Result<SourceCommand, String>>) {
   loop {
     let mut frame = Vec::new();
     let read = match (&mut input)
@@ -116,28 +116,28 @@ fn read_commands<R: std::io::BufRead>(
     {
       Ok(read) => read,
       Err(error) => {
-        let _ = sender.send(Err(format!("failed to read source-plugin command: {error}")));
+        let _ = sender.blocking_send(Err(format!("failed to read source-plugin command: {error}")));
         return;
       }
     };
     if read == 0 {
-      let _ = sender.send(Err("source-plugin input closed".to_owned()));
+      let _ = sender.blocking_send(Err("source-plugin input closed".to_owned()));
       return;
     }
     if frame.len() > MAX_SOURCE_FRAME_BYTES || !frame.ends_with(b"\n") {
-      let _ = sender.send(Err(format!(
+      let _ = sender.blocking_send(Err(format!(
         "source-plugin command exceeds the {MAX_SOURCE_FRAME_BYTES}-byte frame limit"
       )));
       return;
     }
     match serde_json::from_slice(&frame) {
       Ok(command) => {
-        if sender.send(Ok(command)).is_err() {
+        if sender.blocking_send(Ok(command)).is_err() {
           return;
         }
       }
       Err(error) => {
-        let _ = sender.send(Err(format!("invalid source-plugin command: {error}")));
+        let _ = sender.blocking_send(Err(format!("invalid source-plugin command: {error}")));
         return;
       }
     }
@@ -178,7 +178,7 @@ mod tests {
 
   #[test]
   fn reads_commands_until_eof() {
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
     read_commands(
       &br#"{"type":"cancel","request_id":"request-1"}
 "#[..],
@@ -196,7 +196,7 @@ mod tests {
 
   #[test]
   fn rejects_malformed_and_oversized_input_frames() {
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
     read_commands(&b"not-json\n"[..], &sender);
     assert!(
       receiver
@@ -206,7 +206,7 @@ mod tests {
         .contains("invalid source-plugin command")
     );
 
-    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
     read_commands(vec![b'a'; MAX_SOURCE_FRAME_BYTES + 1].as_slice(), &sender);
     assert!(receiver.blocking_recv().unwrap().unwrap_err().contains("frame limit"));
   }

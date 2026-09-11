@@ -8,8 +8,8 @@ repository.workspace = true
 description = "Octa runner inventory, protocol client, and supervisor for OctaCity"
 
 [dependencies]
-libc.workspace = true
 octa-runner-protocol.workspace = true
+octa-plugin-lock.workspace = true
 octacity-execution = { path = "../octacity-execution" }
 octacity-protocol = { path = "../octacity-protocol" }
 serde.workspace = true

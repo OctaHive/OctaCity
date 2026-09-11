@@ -22,6 +22,9 @@ pub const AGENT_PROTOCOL_VERSION: u16 = 1;
 pub const SIGNATURE_ALGORITHM: &str = "ed25519";
 /// Maximum decoded size of an authenticated JobSpec JSON payload.
 pub const MAX_SIGNED_JOB_SPEC_BYTES: usize = 1024 * 1024;
+const MAX_ENCODED_JOB_SPEC_BYTES: usize = MAX_SIGNED_JOB_SPEC_BYTES.div_ceil(3) * 4;
+const ED25519_SIGNATURE_BYTES: usize = 64;
+const MAX_ENCODED_SIGNATURE_BYTES: usize = ED25519_SIGNATURE_BYTES.div_ceil(3) * 4;
 
 /// Detached signature and encoded canonical job payload received by an agent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -51,10 +54,15 @@ pub struct JobSpecV1 {
   pub issued_at: u64,
   /// First Unix second in which this specification is no longer valid.
   pub expires_at: u64,
+  /// Exact source provider and immutable revision to materialize.
   pub source: SourceSpec,
+  /// Exact Octa release and plugin set authorized to run.
   pub octa: OctaSpec,
+  /// Octafile tasks and values passed to the runner.
   pub execution: ExecutionSpec,
+  /// Platform, isolation, resources, and network policy.
   pub runtime: RuntimeSpec,
+  /// Upper bounds for outputs accepted from the job.
   pub outputs: OutputLimits,
 }
 
@@ -62,12 +70,18 @@ pub struct JobSpecV1 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSpec {
+  /// Logical source-plugin name resolved by the agent registry.
   pub provider: String,
+  /// Exact source-plugin package version.
   pub plugin_version: String,
+  /// SHA-256 digest of the installed source-plugin executable.
   pub plugin_sha256: String,
+  /// Immutable provider revision that must be materialized.
   pub revision: String,
+  /// Optional mutable lookup hint, never accepted as the final revision.
   #[serde(default)]
   pub reference: Option<String>,
+  /// Provider-specific values interpreted by the selected plugin.
   #[serde(default)]
   pub parameters: BTreeMap<String, serde_json::Value>,
 }
@@ -76,11 +90,17 @@ pub struct SourceSpec {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OctaSpec {
+  /// Exact Octa release version.
   pub version: String,
+  /// SHA-256 digest of the `octa-runner` executable.
   pub runner_sha256: String,
+  /// Required runner process-protocol version.
   pub runner_protocol: u16,
+  /// Required structured event schema version.
   pub event_schema: u16,
+  /// Required Octa task-plugin protocol version.
   pub plugin_protocol: u16,
+  /// Authorized task plugins indexed by name and SHA-256 digest.
   #[serde(default)]
   pub plugin_digests: BTreeMap<String, String>,
 }
@@ -89,90 +109,192 @@ pub struct OctaSpec {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionSpec {
+  /// Optional workspace-relative Octafile path.
   #[serde(default)]
   pub octafile: Option<String>,
+  /// Non-empty task names to execute.
   pub commands: Vec<String>,
+  /// Explicit Octafile variable overrides.
   #[serde(default)]
   pub variables: BTreeMap<String, String>,
+  /// Positional values supplied to runtime task templates.
   #[serde(default)]
   pub arguments: Vec<String>,
+  /// Optional maximum task concurrency.
   #[serde(default)]
   pub concurrency: Option<NonZeroUsize>,
+  /// Whether independent root commands may run concurrently.
   #[serde(default)]
   pub parallel: bool,
+  /// Whether the runner stops scheduling after the first failure.
   #[serde(default)]
   pub failfast: bool,
+  /// Optional workspace-relative secrets profile selected for this run.
   #[serde(default)]
   pub secrets_profile: Option<String>,
 }
 
-/// Execution isolation selected by the server and allowed by the agent.
+/// Top-level execution mode selected by the server and allowed by the agent.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BackendKind {
+pub enum RuntimeMode {
+  /// Execute against the agent host platform.
   Native,
-  Microsandbox,
+  /// Execute an immutable OCI image.
+  Oci,
+}
+
+/// Guest operating system required by a Native or OCI execution.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformOs {
+  /// Linux platform.
+  Linux,
+  /// Windows platform.
+  Windows,
+  /// macOS platform.
+  Macos,
+}
+
+/// Guest CPU architecture using OCI platform names on the wire.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlatformArchitecture {
+  /// 64-bit x86 (`amd64`).
+  Amd64,
+  /// 64-bit ARM (`arm64`).
+  Arm64,
+}
+
+/// Exact operating-system and architecture requirement for an execution.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlatformSpec {
+  /// Required operating system.
+  pub os: PlatformOs,
+  /// Required CPU architecture.
+  pub architecture: PlatformArchitecture,
+}
+
+/// Isolation boundary required around an OCI image.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OciIsolation {
+  /// Share the agent kernel behind OCI namespaces and cgroups.
+  Process,
+  /// Run with a separate guest kernel behind a hypervisor boundary.
+  Hypervisor,
+}
+
+/// Environment in which the released runner must execute.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RuntimeTarget {
+  /// Execute directly against a matching agent host.
+  Native {
+    /// Exact host platform required by the signed job.
+    platform: PlatformSpec,
+  },
+  /// Execute an immutable OCI image using the requested isolation tier.
+  Oci {
+    /// Exact guest platform.
+    platform: PlatformSpec,
+    /// Minimum isolation tier that must be enforced.
+    isolation: OciIsolation,
+    /// Immutable `repository@sha256:digest` image reference.
+    image: String,
+  },
 }
 
 /// Resource and network boundaries enforced around one runner process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeSpec {
-  pub backend: BackendKind,
-  #[serde(default)]
-  pub image: Option<String>,
+  /// Native host or OCI guest selected for the execution.
+  pub target: RuntimeTarget,
+  /// CPU allocation in thousandths of one logical CPU.
   pub cpu_millis: u32,
+  /// Maximum memory in bytes.
   pub memory_bytes: u64,
+  /// Maximum writable workspace capacity in bytes.
   pub writable_disk_bytes: u64,
+  /// Complete preparation and execution deadline in seconds.
   pub timeout_seconds: u64,
+  /// Network access the selected backend must enforce.
   pub network: NetworkPolicy,
-  pub workload_identity_profile: String,
+  /// Optional operator-provisioned workload identity profile.
+  #[serde(default)]
+  pub workload_identity_profile: Option<String>,
 }
 
 /// Network access granted to the job runtime.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum NetworkPolicy {
+  /// Preserve normal network access inside the execution.
+  Unrestricted,
+  /// Disable external network access.
   Disabled,
-  Restricted { allowed_hosts: Vec<String> },
+  /// Permit connections only to explicit hosts.
+  Restricted {
+    /// Non-empty host names authorized by the server.
+    allowed_hosts: Vec<String>,
+  },
 }
 
 /// Bounds for report and artifact data returned by a job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputLimits {
+  /// Maximum number of registered artifacts.
   pub artifact_count: u32,
+  /// Maximum aggregate artifact bytes.
   pub artifact_bytes: u64,
+  /// Maximum number of registered reports.
   pub report_count: u32,
+  /// Maximum aggregate report bytes.
   pub report_bytes: u64,
 }
 
 /// Lease identity supplied out of band and bound to the signed payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobBinding<'a> {
+  /// Job identity from the lease transport.
   pub job_id: &'a str,
+  /// Attempt number from the lease transport.
   pub attempt: u32,
+  /// Current Unix time used for validity checks.
   pub now: u64,
 }
 
+/// Authentication, decoding, or validation failure for a signed JobSpec.
 #[derive(Debug, Error)]
 pub enum JobSpecError {
+  /// Envelope selected an unsupported signature algorithm.
   #[error("unsupported signature algorithm '{0}'")]
   Algorithm(String),
+  /// Envelope refers to a key absent from agent configuration.
   #[error("unknown server signing key '{0}'")]
   UnknownKey(String),
+  /// Payload is not valid standard base64.
   #[error("signed JobSpec payload is not valid base64: {0}")]
   PayloadEncoding(#[source] base64::DecodeError),
+  /// Encoded or decoded payload exceeds the protocol limit.
   #[error("signed JobSpec payload exceeds the {MAX_SIGNED_JOB_SPEC_BYTES}-byte limit")]
   PayloadTooLarge,
+  /// Signature is not valid standard base64.
   #[error("JobSpec signature is not valid base64: {0}")]
   SignatureEncoding(#[source] base64::DecodeError),
+  /// Decoded signature length is not valid for Ed25519.
   #[error("JobSpec signature has an invalid length")]
   SignatureLength,
+  /// Signature does not authenticate the exact payload bytes.
   #[error("JobSpec signature verification failed")]
   InvalidSignature,
+  /// Authenticated payload is not a valid JobSpec JSON document.
   #[error("signed JobSpec is not valid JSON: {0}")]
   Json(#[source] serde_json::Error),
+  /// Authenticated fields violate a JobSpec or lease invariant.
   #[error("invalid JobSpec: {0}")]
   Validation(String),
 }
@@ -190,11 +312,19 @@ pub fn verify_job_spec(
   let key = keys
     .get(&envelope.key_id)
     .ok_or_else(|| JobSpecError::UnknownKey(envelope.key_id.clone()))?;
+  // Reject by encoded length before decoding so the advertised payload bound
+  // also bounds attacker-controlled allocation.
+  if envelope.payload.len() > MAX_ENCODED_JOB_SPEC_BYTES {
+    return Err(JobSpecError::PayloadTooLarge);
+  }
   let payload = BASE64
     .decode(&envelope.payload)
     .map_err(JobSpecError::PayloadEncoding)?;
   if payload.len() > MAX_SIGNED_JOB_SPEC_BYTES {
     return Err(JobSpecError::PayloadTooLarge);
+  }
+  if envelope.signature.len() > MAX_ENCODED_SIGNATURE_BYTES {
+    return Err(JobSpecError::SignatureLength);
   }
   let signature_bytes = BASE64
     .decode(&envelope.signature)
@@ -284,22 +414,40 @@ impl ExecutionSpec {
 }
 
 impl RuntimeSpec {
+  /// Returns the top-level backend key without exposing engine details.
+  pub const fn mode(&self) -> RuntimeMode {
+    match &self.target {
+      RuntimeTarget::Native { .. } => RuntimeMode::Native,
+      RuntimeTarget::Oci { .. } => RuntimeMode::Oci,
+    }
+  }
+
+  /// Returns the exact host or guest platform required by the job.
+  pub const fn platform(&self) -> PlatformSpec {
+    match &self.target {
+      RuntimeTarget::Native { platform } | RuntimeTarget::Oci { platform, .. } => *platform,
+    }
+  }
+
   fn validate(&self) -> Result<(), String> {
     if self.cpu_millis == 0 || self.memory_bytes == 0 || self.writable_disk_bytes == 0 || self.timeout_seconds == 0 {
       return Err("runtime limits must be greater than zero".to_owned());
     }
-    non_empty("runtime.workload_identity_profile", &self.workload_identity_profile)?;
+    if let Some(profile) = &self.workload_identity_profile {
+      non_empty("runtime.workload_identity_profile", profile)?;
+    }
     if let NetworkPolicy::Restricted { allowed_hosts } = &self.network
       && (allowed_hosts.is_empty() || allowed_hosts.iter().any(|host| host.trim().is_empty()))
     {
       return Err("a restricted network policy requires non-empty allowed_hosts".to_owned());
     }
-    match (self.backend, self.image.as_deref()) {
-      (BackendKind::Native, None) => Ok(()),
-      (BackendKind::Native, Some(_)) => Err("runtime.image is not allowed for native execution".to_owned()),
-      (BackendKind::Microsandbox, Some(image)) if image.starts_with("sha256:") => sha256("runtime.image", &image[7..]),
-      (BackendKind::Microsandbox, _) => {
-        Err("microsandbox execution requires an immutable sha256 image digest".to_owned())
+    match &self.target {
+      RuntimeTarget::Native { .. } => Ok(()),
+      RuntimeTarget::Oci { platform, image, .. } => {
+        if platform.os == PlatformOs::Macos {
+          return Err("OCI execution does not support a macOS guest platform".to_owned());
+        }
+        immutable_oci_reference("runtime.target.image", image)
       }
     }
   }
@@ -337,6 +485,22 @@ fn sha256(name: &str, value: &str) -> Result<(), String> {
   }
 }
 
+fn immutable_oci_reference(name: &str, value: &str) -> Result<(), String> {
+  let Some((repository, digest)) = value.rsplit_once("@sha256:") else {
+    return Err(format!(
+      "{name} must be an immutable OCI reference ending in @sha256:<digest>"
+    ));
+  };
+  if repository.is_empty()
+    || repository.contains('@')
+    || repository.contains("://")
+    || repository.chars().any(char::is_whitespace)
+  {
+    return Err(format!("{name} contains an invalid OCI repository reference"));
+  }
+  sha256(name, digest)
+}
+
 /// Validates a platform-independent path represented with `/` separators.
 fn relative_wire_path(name: &str, value: &str) -> Result<(), String> {
   if value.is_empty()
@@ -354,186 +518,4 @@ fn relative_wire_path(name: &str, value: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use ed25519_dalek::{Signer as _, SigningKey};
-
-  const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-  fn spec() -> JobSpecV1 {
-    JobSpecV1 {
-      protocol_version: AGENT_PROTOCOL_VERSION,
-      job_id: "job-1".to_owned(),
-      attempt: 1,
-      issued_at: 100,
-      expires_at: 200,
-      source: SourceSpec {
-        provider: "git".to_owned(),
-        plugin_version: "0.1.0".to_owned(),
-        plugin_sha256: DIGEST.to_owned(),
-        revision: "abc123".to_owned(),
-        reference: None,
-        parameters: BTreeMap::new(),
-      },
-      octa: OctaSpec {
-        version: "0.3.0".to_owned(),
-        runner_sha256: DIGEST.to_owned(),
-        runner_protocol: 1,
-        event_schema: 1,
-        plugin_protocol: 1,
-        plugin_digests: BTreeMap::new(),
-      },
-      execution: ExecutionSpec {
-        octafile: Some("ci/Octafile.yml".to_owned()),
-        commands: vec!["test".to_owned()],
-        variables: BTreeMap::new(),
-        arguments: Vec::new(),
-        concurrency: NonZeroUsize::new(2),
-        parallel: true,
-        failfast: true,
-        secrets_profile: Some("ci/secrets.yml".to_owned()),
-      },
-      runtime: RuntimeSpec {
-        backend: BackendKind::Microsandbox,
-        image: Some(format!("sha256:{DIGEST}")),
-        cpu_millis: 1000,
-        memory_bytes: 512 * 1024 * 1024,
-        writable_disk_bytes: 1024 * 1024 * 1024,
-        timeout_seconds: 600,
-        network: NetworkPolicy::Disabled,
-        workload_identity_profile: "ci".to_owned(),
-      },
-      outputs: OutputLimits {
-        artifact_count: 10,
-        artifact_bytes: 1024,
-        report_count: 10,
-        report_bytes: 1024,
-      },
-    }
-  }
-
-  fn envelope(spec: &JobSpecV1, signing_key: &SigningKey) -> SignedEnvelope {
-    let payload = serde_json::to_vec(spec).unwrap();
-    SignedEnvelope {
-      key_id: "test-key".to_owned(),
-      algorithm: SIGNATURE_ALGORITHM.to_owned(),
-      payload: BASE64.encode(&payload),
-      signature: BASE64.encode(signing_key.sign(&payload).to_bytes()),
-    }
-  }
-
-  #[test]
-  fn documented_job_spec_example_matches_the_wire_type() {
-    let specification = include_str!("../../../docs/protocols/signed-job-spec-v1.md");
-    let section = specification
-      .split_once("## Complete JobSpec shape")
-      .expect("specification must contain the complete example")
-      .1;
-    let json = section
-      .split_once("```json\n")
-      .expect("complete example must be a JSON block")
-      .1
-      .split_once("\n```")
-      .expect("complete example JSON block must terminate")
-      .0;
-    let spec: JobSpecV1 = serde_json::from_str(json).expect("documented JobSpec must deserialize");
-    spec
-      .validate(&JobBinding {
-        job_id: &spec.job_id,
-        attempt: spec.attempt,
-        now: spec.issued_at,
-      })
-      .expect("documented JobSpec must pass semantic validation");
-  }
-
-  #[test]
-  fn verifies_exact_signed_payload_and_lease_binding() {
-    let signing_key = SigningKey::from_bytes(&[7; 32]);
-    let keys = BTreeMap::from([("test-key".to_owned(), signing_key.verifying_key())]);
-    let verified = verify_job_spec(
-      &envelope(&spec(), &signing_key),
-      &keys,
-      JobBinding {
-        job_id: "job-1",
-        attempt: 1,
-        now: 150,
-      },
-    )
-    .unwrap();
-    assert_eq!(verified, spec());
-  }
-
-  #[test]
-  fn rejects_a_payload_changed_after_signing() {
-    let signing_key = SigningKey::from_bytes(&[7; 32]);
-    let keys = BTreeMap::from([("test-key".to_owned(), signing_key.verifying_key())]);
-    let mut envelope = envelope(&spec(), &signing_key);
-    let mut payload = BASE64.decode(&envelope.payload).unwrap();
-    payload.push(b' ');
-    envelope.payload = BASE64.encode(payload);
-
-    assert!(matches!(
-      verify_job_spec(
-        &envelope,
-        &keys,
-        JobBinding {
-          job_id: "job-1",
-          attempt: 1,
-          now: 150
-        }
-      ),
-      Err(JobSpecError::InvalidSignature)
-    ));
-  }
-
-  #[test]
-  fn rejects_cross_platform_unsafe_paths() {
-    for path in [
-      "/Octafile",
-      "../Octafile",
-      "ci//Octafile",
-      "ci\\Octafile",
-      "C:/Octafile",
-    ] {
-      let mut value = spec();
-      value.execution.octafile = Some(path.to_owned());
-      assert!(
-        value
-          .validate(&JobBinding {
-            job_id: "job-1",
-            attempt: 1,
-            now: 150,
-          })
-          .unwrap_err()
-          .contains("normalized relative")
-      );
-    }
-  }
-
-  #[test]
-  fn requires_an_image_only_for_microsandbox() {
-    let mut value = spec();
-    value.runtime.image = None;
-    assert!(
-      value
-        .validate(&JobBinding {
-          job_id: "job-1",
-          attempt: 1,
-          now: 150,
-        })
-        .unwrap_err()
-        .contains("immutable sha256 image")
-    );
-
-    value.runtime.backend = BackendKind::Native;
-    assert!(
-      value
-        .validate(&JobBinding {
-          job_id: "job-1",
-          attempt: 1,
-          now: 150,
-        })
-        .is_ok()
-    );
-  }
-}
+mod tests;

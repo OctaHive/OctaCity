@@ -9,44 +9,65 @@ use std::{
   collections::BTreeMap,
   fs,
   path::{Path, PathBuf},
-  process::Stdio,
 };
 
 use http::Uri;
 use octacity_source_plugin::MaterializeRequest;
+use processkit::{Command, ErrorReason, OutputBufferPolicy, OverflowMode};
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::{
-  io::{AsyncRead, AsyncReadExt as _},
-  process::Command,
-};
 use tokio_util::sync::CancellationToken;
 
 const DEFAULT_DIAGNOSTIC_BYTES: usize = 64 * 1024;
 const MAX_DIAGNOSTIC_BYTES: usize = 512 * 1024;
 
+/// Validation, process, or workspace failure reported by the Git provider.
 #[derive(Debug, Error)]
 pub enum GitSourceError {
+  /// Provider settings or signed parameters are invalid.
   #[error("invalid Git source request: {0}")]
   Invalid(String),
+  /// Cancellation won while a Git subprocess was active.
   #[error("Git source materialization was cancelled")]
   Cancelled,
-  #[error("failed to start Git during {step}: {source}")]
-  Spawn { step: &'static str, source: std::io::Error },
-  #[error("failed to wait for Git during {step}: {source}")]
-  Wait { step: &'static str, source: std::io::Error },
+  /// The configured Git executable could not be started or observed.
+  #[error("failed to run Git during {step}: {source}")]
+  Process {
+    /// Materialization step that failed.
+    step: &'static str,
+    /// Underlying process I/O failure.
+    source: std::io::Error,
+  },
+  /// Git exited unsuccessfully.
   #[error("Git {step} failed with status {status}: {diagnostic}")]
   Command {
+    /// Materialization step that failed.
     step: &'static str,
+    /// Portable description of Git's exit status.
     status: String,
+    /// Sanitized bounded stderr/stdout tail.
     diagnostic: String,
   },
+  /// Git produced more diagnostic output than operator policy allows.
   #[error("Git {step} exceeded its diagnostic output limit")]
-  OutputLimit { step: &'static str },
+  OutputLimit {
+    /// Materialization step that exceeded the bound.
+    step: &'static str,
+  },
+  /// Materialized files exceed the signed workspace limit.
   #[error("workspace exceeds the configured {limit}-byte limit")]
-  WorkspaceLimit { limit: u64 },
+  WorkspaceLimit {
+    /// Maximum permitted workspace bytes.
+    limit: u64,
+  },
+  /// Filesystem inspection of the workspace failed.
   #[error("failed to inspect workspace '{path}': {source}")]
-  Workspace { path: PathBuf, source: std::io::Error },
+  Workspace {
+    /// Path that could not be inspected.
+    path: PathBuf,
+    /// Underlying filesystem failure.
+    source: std::io::Error,
+  },
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,7 +89,9 @@ struct GitParameters {
 /// Exact revision and provenance returned after a successful checkout.
 #[derive(Debug)]
 pub struct MaterializedGitSource {
+  /// Exact lowercase commit object ID checked out by Git.
   pub revision: String,
+  /// Provider metadata recorded for audit and display.
   pub provenance: BTreeMap<String, String>,
 }
 
@@ -196,9 +219,10 @@ fn validate_settings(settings: &mut GitSettings) -> Result<(), GitSourceError> {
   #[cfg(unix)]
   {
     use std::os::unix::fs::PermissionsExt as _;
-    if metadata.permissions().mode() & 0o111 == 0 {
+    let mode = metadata.permissions().mode();
+    if mode & 0o111 == 0 || mode & 0o022 != 0 {
       return Err(GitSourceError::Invalid(
-        "settings.git_path has no execute bit".to_owned(),
+        "settings.git_path must be executable and not writable by group or other users".to_owned(),
       ));
     }
   }
@@ -321,11 +345,10 @@ async fn run_git<const N: usize>(
     return Err(GitSourceError::Cancelled);
   }
   let protocol_file = if settings.allow_file { "always" } else { "never" };
-  let mut command = Command::new(&settings.git_path);
-  // Git inherits no ambient credentials or user configuration. The operator
-  // may supply one reviewed config file, while protocols, hooks, LFS filters,
-  // and background maintenance are constrained explicitly below.
-  command
+  let command = Command::new(&settings.git_path)
+    // Git inherits no ambient credentials or user configuration. The operator
+    // may supply one reviewed config file, while protocols, hooks, LFS filters,
+    // and background maintenance are constrained explicitly below.
     .env_clear()
     .env("GIT_CONFIG_NOSYSTEM", "1")
     .env("GIT_TERMINAL_PROMPT", "0")
@@ -348,83 +371,48 @@ async fn run_git<const N: usize>(
     .arg("fetch.writeCommitGraph=false")
     .args(arguments)
     .current_dir(directory)
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true);
-  command.env(
-    "GIT_ALLOW_PROTOCOL",
-    if settings.allow_file { "file:https" } else { "https" },
-  );
-  command.env(
-    "GIT_CONFIG_GLOBAL",
-    git_config.unwrap_or_else(|| Path::new(null_device())),
-  );
-  let mut child = command
-    .spawn()
-    .map_err(|source| GitSourceError::Spawn { step, source })?;
-  let stdout = child.stdout.take().expect("Git stdout was configured as piped");
-  let stderr = child.stderr.take().expect("Git stderr was configured as piped");
-  let limit = settings.max_diagnostic_bytes;
-  let stdout_task = tokio::spawn(read_bounded(stdout, limit));
-  let stderr_task = tokio::spawn(read_bounded(stderr, limit));
-
-  let status = tokio::select! {
-    status = child.wait() => status.map_err(|source| GitSourceError::Wait { step, source })?,
-    () = cancellation.cancelled() => {
-      kill_process_tree(&mut child);
-      let _ = child.wait().await;
-      let _ = stdout_task.await;
-      let _ = stderr_task.await;
-      return Err(GitSourceError::Cancelled);
-    }
-  };
-  let stdout = stdout_task
-    .await
-    .map_err(|error| GitSourceError::Wait {
+    .env(
+      "GIT_ALLOW_PROTOCOL",
+      if settings.allow_file { "file:https" } else { "https" },
+    )
+    .env(
+      "GIT_CONFIG_GLOBAL",
+      git_config.unwrap_or_else(|| Path::new(null_device())),
+    )
+    .cancel_on(cancellation.clone())
+    .output_buffer(
+      OutputBufferPolicy::unbounded()
+        .with_max_bytes(settings.max_diagnostic_bytes)
+        .with_overflow(OverflowMode::Error),
+    );
+  let result = command.output_bytes().await.map_err(|source| match source.reason() {
+    ErrorReason::Cancelled { .. } => GitSourceError::Cancelled,
+    ErrorReason::OutputTooLarge { .. } => GitSourceError::OutputLimit { step },
+    _ => GitSourceError::Process {
       step,
-      source: std::io::Error::other(error),
-    })?
-    .map_err(|source| GitSourceError::Wait { step, source })?;
-  let stderr = stderr_task
-    .await
-    .map_err(|error| GitSourceError::Wait {
-      step,
-      source: std::io::Error::other(error),
-    })?
-    .map_err(|source| GitSourceError::Wait { step, source })?;
-  if stdout.truncated || stderr.truncated {
-    return Err(GitSourceError::OutputLimit { step });
-  }
-  if !status.success() {
+      source: std::io::Error::other(source),
+    },
+  })?;
+  if !result.is_success() {
+    let status = describe_outcome(result.outcome());
     return Err(GitSourceError::Command {
       step,
-      status: status.to_string(),
-      diagnostic: sanitize_diagnostic(&stderr.bytes),
+      status,
+      diagnostic: sanitize_diagnostic(result.stderr().as_bytes()),
     });
   }
-  String::from_utf8(stdout.bytes).map_err(|_| GitSourceError::Invalid(format!("Git {step} returned non-UTF-8 output")))
+  String::from_utf8(result.into_stdout())
+    .map_err(|_| GitSourceError::Invalid(format!("Git {step} returned non-UTF-8 output")))
 }
 
-struct BoundedOutput {
-  bytes: Vec<u8>,
-  truncated: bool,
-}
-
-async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, limit: usize) -> Result<BoundedOutput, std::io::Error> {
-  let mut bytes = Vec::with_capacity(limit.min(8192));
-  let mut buffer = [0_u8; 8192];
-  let mut truncated = false;
-  loop {
-    let read = reader.read(&mut buffer).await?;
-    if read == 0 {
-      break;
-    }
-    let remaining = limit.saturating_sub(bytes.len());
-    bytes.extend_from_slice(&buffer[..read.min(remaining)]);
-    truncated |= read > remaining;
+fn describe_outcome(outcome: processkit::Outcome) -> String {
+  if let Some(code) = outcome.code() {
+    format!("exit code {code}")
+  } else if let Some(signal) = outcome.signal() {
+    format!("signal {signal}")
+  } else {
+    outcome.name().replace('_', " ")
   }
-  Ok(BoundedOutput { bytes, truncated })
 }
 
 fn sanitize_diagnostic(bytes: &[u8]) -> String {
@@ -488,97 +476,5 @@ fn null_device() -> &'static str {
   "NUL"
 }
 
-fn kill_process_tree(child: &mut tokio::process::Child) {
-  let _ = child.start_kill();
-}
-
 #[cfg(test)]
-mod tests {
-  use std::io::Write as _;
-
-  use super::*;
-
-  #[test]
-  fn validates_remote_transport_policy() {
-    assert!(validate_remote("https://example.com/repository.git", false).is_ok());
-    assert!(validate_remote("http://example.com/repository.git", false).is_err());
-    assert!(validate_remote("https://user@example.com/repository.git", false).is_err());
-    assert!(validate_remote("https://example.com/repository.git?token=secret", false).is_err());
-
-    let local = std::env::current_dir().unwrap();
-    let local = local.to_str().unwrap();
-    assert!(validate_remote(local, false).is_err());
-    assert!(validate_remote(local, true).is_ok());
-  }
-
-  #[test]
-  fn recognizes_only_full_lowercase_object_ids() {
-    assert!(is_object_id(&"a".repeat(40)));
-    assert!(is_object_id(&"b".repeat(64)));
-    assert!(!is_object_id(&"a".repeat(39)));
-    assert!(!is_object_id(&"A".repeat(40)));
-    assert!(!is_object_id(&"z".repeat(40)));
-  }
-
-  #[test]
-  fn enforces_workspace_size_without_following_special_entries() {
-    let workspace = tempfile::tempdir().unwrap();
-    fs::write(workspace.path().join("large"), [0_u8; 32]).unwrap();
-    assert!(enforce_workspace_limit(workspace.path(), 32).is_ok());
-    assert!(matches!(
-      enforce_workspace_limit(workspace.path(), 31),
-      Err(GitSourceError::WorkspaceLimit { limit: 31 })
-    ));
-  }
-
-  #[tokio::test]
-  async fn bounded_reader_drains_but_marks_truncated_output() {
-    let output = read_bounded(&b"abcdef"[..], 3).await.unwrap();
-    assert_eq!(output.bytes, b"abc");
-    assert!(output.truncated);
-    assert_eq!(sanitize_diagnostic(b"bad\0 message\n"), "bad message");
-  }
-
-  #[test]
-  fn validates_operator_settings_and_credential_handles() {
-    let temp = tempfile::tempdir().unwrap();
-    let executable = temp.path().join(if cfg!(windows) { "git.exe" } else { "git" });
-    create_executable(&executable);
-    let mut settings = GitSettings {
-      git_path: executable,
-      allow_file: false,
-      max_diagnostic_bytes: DEFAULT_DIAGNOSTIC_BYTES,
-    };
-    assert!(validate_settings(&mut settings).is_ok());
-    settings.max_diagnostic_bytes = 0;
-    assert!(validate_settings(&mut settings).is_err());
-
-    assert_eq!(validate_credentials(&BTreeMap::new()).unwrap(), None);
-    let unknown = BTreeMap::from([("token".to_owned(), "/credential".to_owned())]);
-    assert!(validate_credentials(&unknown).is_err());
-    let relative = BTreeMap::from([("git_config".to_owned(), "credential".to_owned())]);
-    assert!(validate_credentials(&relative).is_err());
-
-    let credential = temp.path().join("credential");
-    fs::write(&credential, "[credential]\nhelper =\n").unwrap();
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt as _;
-      fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let configured = BTreeMap::from([("git_config".to_owned(), credential.to_string_lossy().into_owned())]);
-    assert_eq!(
-      validate_credentials(&configured).unwrap(),
-      Some(credential.canonicalize().unwrap())
-    );
-  }
-
-  fn create_executable(path: &Path) {
-    fs::File::create(path).unwrap().write_all(b"executable").unwrap();
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt as _;
-      fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-  }
-}
+mod tests;

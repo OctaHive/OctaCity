@@ -145,8 +145,15 @@ an actual job must use values resolved from installed artifacts and source.
     "secrets_profile": "ci/secrets.yml"
   },
   "runtime": {
-    "backend": "microsandbox",
-    "image": "sha256:3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012",
+    "target": {
+      "mode": "oci",
+      "platform": {
+        "os": "linux",
+        "architecture": "amd64"
+      },
+      "isolation": "hypervisor",
+      "image": "registry.example.com/octacity/build@sha256:3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012"
+    },
     "cpu_millis": 4000,
     "memory_bytes": 4294967296,
     "writable_disk_bytes": 10737418240,
@@ -155,8 +162,7 @@ an actual job must use values resolved from installed artifacts and source.
       "restricted": {
         "allowed_hosts": ["proxy.example.com"]
       }
-    },
-    "workload_identity_profile": "build-readonly"
+    }
   },
   "outputs": {
     "artifact_count": 100,
@@ -262,14 +268,13 @@ through the selected secrets profile and workload identity.
 
 | Field | Validation and semantics |
 | --- | --- |
-| `backend` | Exactly `native` or `microsandbox` |
-| `image` | Forbidden for Native; required as `sha256:<64 lowercase hex>` for Microsandbox |
+| `target` | Tagged `native` or `oci` execution target described below |
 | `cpu_millis` | Positive CPU allocation where 1000 represents one CPU |
 | `memory_bytes` | Positive memory limit |
 | `writable_disk_bytes` | Positive writable-workspace limit |
 | `timeout_seconds` | Positive wall-clock execution timeout |
-| `network` | `disabled` or a non-empty restricted host list |
-| `workload_identity_profile` | Non-blank operator-known identity profile name |
+| `network` | `unrestricted`, `disabled`, or a non-empty restricted host list; the selected backend must enforce it or reject the job |
+| `workload_identity_profile` | Optional non-blank operator-known identity profile name; rejected until workload identity is enabled |
 
 Restricted network policy serializes as:
 
@@ -281,11 +286,40 @@ Restricted network policy serializes as:
 }
 ```
 
+`target` has exactly one of these shapes:
+
+```json
+{
+  "mode": "native",
+  "platform": { "os": "linux", "architecture": "amd64" }
+}
+```
+
+```json
+{
+  "mode": "oci",
+  "platform": { "os": "windows", "architecture": "amd64" },
+  "isolation": "hypervisor",
+  "image": "registry.example.com/build/windows@sha256:3456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef012"
+}
+```
+
+Supported operating-system names are `linux`, `windows`, and `macos` for
+Native targets. OCI targets currently accept only `linux` and `windows`.
+Architectures are `amd64` and `arm64`. OCI isolation is exactly `process` or
+`hypervisor`. The tagged target makes image and isolation fields mandatory for
+OCI and impossible for Native. The image is an immutable
+`repository@sha256:<64 lowercase hex>` reference.
+
 The shared validator guarantees only the rules above. The agent must reject a
-backend that is disabled locally and must never fall back from
-`microsandbox` to `native`. The selected backend is responsible for enforcing
-resource and network limits. The agent maps a workload identity profile name
-to operator-owned configuration; the job cannot provide raw credentials.
+runtime mode or OCI isolation tier that is disabled locally and must never fall
+back between OCI tiers or from OCI to Native. The selected backend is
+responsible for enforcing resource and network limits. Engine-specific numeric
+representability belongs to the engine adapter rather than this wire contract.
+Until workload identity provisioning is enabled,
+the agent rejects a requested profile before source acquisition. Once enabled,
+it maps the name to operator-owned configuration; the job can never provide raw
+credentials.
 
 ## Output limits
 
@@ -307,9 +341,10 @@ After `verify_job_spec` succeeds, the agent still must verify that:
 - the source plugin name, version, platform, and executable digest are installed;
 - the exact Octa runner and task-plugin digests are installed;
 - required runner, event, and plugin protocol versions are supported;
-- the requested execution backend is enabled and healthy;
+- the requested runtime mode, guest platform, architecture, and OCI isolation
+  tier are enabled and healthy;
 - native execution was explicitly allowed by the operator;
-- the Microsandbox image digest is available and trusted;
+- the OCI image digest is available and trusted by the selected engine;
 - requested resources fit agent capacity and configured maxima;
 - network hosts and workload identity profile are locally permitted;
 - workspace paths remain inside the assigned execution root;

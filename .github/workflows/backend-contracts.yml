@@ -1,0 +1,56 @@
+name: backend contracts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-native:
+    runs-on: [self-hosted, linux, octacity-native]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: octacity
+      - uses: actions/checkout@v4
+        with:
+          repository: OctaHive/octa
+          path: octa
+      - uses: dtolnay/rust-toolchain@stable
+      - run: >-
+          cargo test -p octacity-job --test backend_contract
+          native_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+        working-directory: octacity
+
+  linux-containerd:
+    runs-on: [self-hosted, linux, octacity-containerd]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: octacity
+      - uses: actions/checkout@v4
+        with:
+          repository: OctaHive/octa
+          path: octa
+      - uses: dtolnay/rust-toolchain@stable
+      - run: >-
+          cargo test -p octacity-job --test backend_contract
+          containerd_process_engine_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+        working-directory: octacity
+
+  macos-microsandbox:
+    runs-on: [self-hosted, macOS, ARM64, octacity-microsandbox]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: octacity
+      - uses: actions/checkout@v4
+        with:
+          repository: OctaHive/octa
+          path: octa
+      - uses: dtolnay/rust-toolchain@stable
+      - run: >-
+          cargo test -p octacity-job --test backend_contract
+          microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+        working-directory: octacity

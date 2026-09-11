@@ -319,6 +319,67 @@ async fn agent_rejects_a_handshake_that_differs_from_the_manifest() {
   assert!(error.to_string().contains("hello does not match"));
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn source_deadline_includes_the_plugin_handshake() {
+  use std::{os::unix::fs::PermissionsExt as _, time::Instant};
+
+  let fixture = RepositoryFixture::new();
+  let silent_plugin = fixture._temp.path().join("silent-plugin");
+  fs::write(&silent_plugin, "#!/bin/sh\nsleep 30\n").unwrap();
+  fs::set_permissions(&silent_plugin, fs::Permissions::from_mode(0o755)).unwrap();
+  let mut plugin = fixture.installed_plugin();
+  plugin.executable = silent_plugin;
+  let started = Instant::now();
+  let error = plugin
+    .materialize(
+      fixture.host_request("handshake-timeout"),
+      Duration::from_millis(80),
+      Duration::from_millis(200),
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+
+  assert!(error.to_string().contains("execution timeout"));
+  assert!(started.elapsed() < Duration::from_secs(1));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn terminal_plugin_cannot_leave_a_descendant_holding_stderr_open() {
+  use std::{os::unix::fs::PermissionsExt as _, time::Instant};
+
+  let fixture = RepositoryFixture::new();
+  let plugin_script = fixture._temp.path().join("background-plugin");
+  let script = format!(
+    "#!/bin/sh\n\
+     printf '%s\\n' '{{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"git\",\"plugin_version\":\"{}\"}}'\n\
+     IFS= read -r request\n\
+     printf '%s\\n' '{{\"type\":\"accepted\",\"request_id\":\"background-source\"}}'\n\
+     (sleep 30) >&2 &\n\
+     printf '%s\\n' '{{\"type\":\"finished\",\"request_id\":\"background-source\",\"revision\":\"{}\",\"provenance\":{{}}}}'\n",
+    env!("CARGO_PKG_VERSION"),
+    fixture.revision,
+  );
+  fs::write(&plugin_script, script).unwrap();
+  fs::set_permissions(&plugin_script, fs::Permissions::from_mode(0o755)).unwrap();
+  let mut plugin = fixture.installed_plugin();
+  plugin.executable = plugin_script;
+  let started = Instant::now();
+  let result = plugin
+    .materialize(
+      fixture.host_request("background-source"),
+      Duration::from_secs(2),
+      Duration::from_millis(200),
+      CancellationToken::new(),
+    )
+    .await;
+
+  assert!(result.is_ok(), "terminal plugin should be reaped cleanly: {result:?}");
+  assert!(started.elapsed() < Duration::from_secs(1));
+}
+
 #[tokio::test]
 async fn agent_rejects_zero_lifecycle_timeouts_without_starting_a_plugin() {
   let fixture = RepositoryFixture::new();

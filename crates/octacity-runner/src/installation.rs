@@ -1,98 +1,119 @@
 //! Inventories an operator-installed Octa release before it can execute jobs.
 //!
-//! The inventory binds the runner binary, its advertised protocol support, and
-//! every locked plugin to immutable digests. A signed job is accepted only if
-//! its exact Octa requirement matches this local inventory.
+//! The inventory binds the runner binary, its release-time capabilities
+//! manifest, and every locked plugin to immutable digests. Reading a manifest
+//! is essential when the host and execution guest use different binary formats,
+//! as on macOS with a Linux Microsandbox guest. A signed job is accepted only
+//! if its exact Octa requirement matches this local inventory; the live runner
+//! confirms protocol compatibility again during its `Hello` handshake.
 
 use std::{
   collections::BTreeMap,
   fs,
   path::{Path, PathBuf},
-  process::Stdio,
-  time::Duration,
 };
 
+use octa_plugin_lock::{PLUGIN_LOCK_VERSION, PluginLock};
 use octacity_execution::RunnerProgram;
 use octacity_protocol::OctaSpec;
-use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
-use tokio::{
-  io::{AsyncRead, AsyncReadExt as _},
-  process::Command,
-  time::timeout,
-};
 use tracing::{debug, info};
 
 use crate::protocol::RunnerMessage;
 
-const CAPABILITIES_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_CAPABILITIES_BYTES: usize = 1024 * 1024;
-const MAX_CAPABILITIES_STDERR_BYTES: usize = 64 * 1024;
 const MAX_PLUGIN_LOCK_BYTES: u64 = 1024 * 1024;
-const PLUGIN_LOCK_VERSION: u8 = 1;
+const RUNNER_CAPABILITIES_FILE: &str = "octa-runner-capabilities.json";
 
-/// Capabilities reported by the installed `octa-runner` executable.
+/// Capabilities recorded alongside the installed `octa-runner` executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnerCapabilities {
+  /// Octa release version.
   pub octa_version: String,
+  /// Supported runner protocol versions.
   pub runner_protocols: Vec<u16>,
+  /// Supported event schema versions.
   pub event_schemas: Vec<u16>,
+  /// Supported task-plugin protocol versions.
   pub plugin_protocols: Vec<u16>,
+  /// Supported Octafile schema versions.
   pub octafile_versions: Vec<u8>,
+  /// Guest platform for which the runner was built.
   pub platform: String,
+  /// Optional compiled feature identifiers.
   pub features: Vec<String>,
+  /// Optional source commit recorded at build time.
   pub build_commit: Option<String>,
 }
 
 /// Verified runner executable and plugin bundle available to the agent.
 #[derive(Clone, Debug)]
 pub struct RunnerInstallation {
+  /// Canonical release root.
   pub root: PathBuf,
+  /// Verified runner executable.
   pub executable: PathBuf,
+  /// Verified plugin directory.
   pub plugins_dir: PathBuf,
+  /// Default shared-schema `Octa.lock` path.
   pub default_plugin_lock: PathBuf,
+  /// Runner executable SHA-256 digest.
   pub sha256: String,
+  /// Verified release capability manifest.
   pub capabilities: RunnerCapabilities,
+  /// Plugins verified from the default lock file.
   pub plugins: BTreeMap<String, RunnerPlugin>,
 }
 
 /// One plugin verified against the installed `Octa.lock`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunnerPlugin {
+  /// Locked plugin version.
   pub version: String,
+  /// Locked process-protocol version.
   pub protocol: u16,
+  /// Host platforms declared by the lock file.
   pub platforms: Vec<String>,
+  /// Canonical executable path.
   pub executable: PathBuf,
+  /// Verified executable digest.
   pub sha256: String,
+  /// Semantic plugin capabilities.
   pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Error)]
+/// Failure while inventorying or matching an installed Octa release.
 pub enum RunnerInstallationError {
   #[error("invalid Octa installation: {0}")]
+  /// The on-disk release layout violates an installation invariant.
   Invalid(String),
-  #[error("failed to hash octa-runner '{path}': {source}")]
-  Hash { path: PathBuf, source: std::io::Error },
-  #[error("failed to start octa-runner capabilities: {0}")]
-  Spawn(#[source] std::io::Error),
-  #[error("octa-runner capabilities timed out")]
-  TimedOut,
-  #[error("octa-runner capabilities I/O failed: {0}")]
-  Io(#[source] std::io::Error),
-  #[error("octa-runner capabilities returned invalid JSON: {0}")]
+  /// An installed release file could not be hashed.
+  #[error("failed to hash installed file '{path}': {source}")]
+  Hash {
+    /// Installed file whose digest could not be computed.
+    path: PathBuf,
+    /// Underlying filesystem error.
+    source: std::io::Error,
+  },
+  #[error("Octa runner capabilities manifest contains invalid JSON: {0}")]
+  /// The capabilities manifest is not valid JSON.
   Json(#[source] Box<serde_json::Error>),
   #[error("failed to parse the installed Octa.lock: {0}")]
+  /// The default plugin lock is not valid YAML.
   PluginLock(#[source] Box<serde_yml::Error>),
-  #[error("octa-runner capabilities failed: {0}")]
+  #[error("Octa runner capabilities manifest is invalid: {0}")]
+  /// The decoded capabilities violate a release invariant.
   Capabilities(String),
   #[error("installed Octa does not satisfy the signed job: {0}")]
+  /// The installed release differs from the version or digests in the job.
   Requirement(String),
 }
 
 impl RunnerInstallation {
   /// Builds a trusted inventory from an operator-controlled release directory.
-  pub async fn load(root: &Path) -> Result<Self, RunnerInstallationError> {
+  pub fn load(root: &Path) -> Result<Self, RunnerInstallationError> {
     let root = canonical_directory("octa_release_root", root)?;
     let executable = root.join(runner_filename());
     validate_regular_file("octa-runner", &executable, true)?;
@@ -104,8 +125,10 @@ impl RunnerInstallation {
       .canonicalize()
       .map_err(|error| invalid(format!("default plugin lock: {error}")))?;
     let sha256 = file_sha256(&executable)?;
-    debug!(runner = %executable.display(), sha256 = %sha256, "inspecting Octa runner capabilities");
-    let capabilities = inspect_capabilities(&executable, &root).await?;
+    let capabilities_path = root.join(RUNNER_CAPABILITIES_FILE);
+    validate_regular_file("runner capabilities manifest", &capabilities_path, false)?;
+    debug!(runner = %executable.display(), sha256 = %sha256, manifest = %capabilities_path.display(), "inventorying Octa runner");
+    let capabilities = load_capabilities(&capabilities_path)?;
     let plugins = load_plugins(&default_plugin_lock, &plugins_dir, &capabilities)?;
     info!(
       version = %capabilities.octa_version,
@@ -181,31 +204,12 @@ impl RunnerInstallation {
   /// the runner. Protocol requirements remain owned by this inventory.
   pub fn program(&self) -> RunnerProgram {
     RunnerProgram {
+      release_root: self.root.clone(),
       executable: self.executable.clone(),
       plugins_dir: self.plugins_dir.clone(),
       plugin_lock: self.default_plugin_lock.clone(),
     }
   }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PluginLock {
-  version: u8,
-  plugins: BTreeMap<String, LockedPlugin>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LockedPlugin {
-  version: String,
-  protocol: u16,
-  platforms: Vec<String>,
-  entrypoint: PathBuf,
-  sha256: String,
-  #[serde(default)]
-  capabilities: Vec<String>,
-  source: String,
 }
 
 fn load_plugins(
@@ -288,66 +292,16 @@ fn load_plugins(
   Ok(plugins)
 }
 
-async fn inspect_capabilities(executable: &Path, root: &Path) -> Result<RunnerCapabilities, RunnerInstallationError> {
-  let mut command = Command::new(executable);
-  command
-    .arg("capabilities")
-    .env_clear()
-    .current_dir(root)
-    .stdin(Stdio::null())
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .kill_on_drop(true);
-  #[cfg(unix)]
-  command.process_group(0);
-  let mut child = command.spawn().map_err(RunnerInstallationError::Spawn)?;
-  let stdout = child
-    .stdout
-    .take()
-    .ok_or_else(|| invalid("capabilities stdout was not piped"))?;
-  let stderr = child
-    .stderr
-    .take()
-    .ok_or_else(|| invalid("capabilities stderr was not piped"))?;
-  let stdout_task = tokio::spawn(read_bounded(stdout, MAX_CAPABILITIES_BYTES));
-  let stderr_task = tokio::spawn(read_bounded(stderr, MAX_CAPABILITIES_STDERR_BYTES));
-
-  let status = match timeout(CAPABILITIES_TIMEOUT, child.wait()).await {
-    Ok(status) => status.map_err(RunnerInstallationError::Io)?,
-    Err(_) => {
-      kill_process_group(&mut child);
-      let _ = child.wait().await;
-      return Err(RunnerInstallationError::TimedOut);
-    }
-  };
-  let stdout = join_output(stdout_task).await?;
-  let stderr = join_output(stderr_task).await?;
-  if stdout.truncated || stderr.truncated {
-    return Err(RunnerInstallationError::Capabilities(
-      "output exceeded its bounded limit".to_owned(),
-    ));
-  }
-  if !status.success() {
-    return Err(RunnerInstallationError::Capabilities(format!(
-      "process exited with {status}: {}",
-      sanitize(&stderr.bytes)
+fn load_capabilities(path: &Path) -> Result<RunnerCapabilities, RunnerInstallationError> {
+  let metadata = fs::metadata(path).map_err(|error| invalid(format!("runner capabilities manifest: {error}")))?;
+  if metadata.len() > MAX_CAPABILITIES_BYTES as u64 {
+    return Err(invalid(format!(
+      "runner capabilities manifest exceeds the {MAX_CAPABILITIES_BYTES}-byte limit"
     )));
   }
-
-  let mut frames = stdout
-    .bytes
-    .split(|byte| *byte == b'\n')
-    .filter(|frame| !frame.is_empty());
-  let first = frames
-    .next()
-    .ok_or_else(|| RunnerInstallationError::Capabilities("no protocol message was emitted".to_owned()))?;
-  if frames.next().is_some() {
-    return Err(RunnerInstallationError::Capabilities(
-      "more than one protocol message was emitted".to_owned(),
-    ));
-  }
+  let bytes = fs::read(path).map_err(|error| invalid(format!("runner capabilities manifest: {error}")))?;
   let message: RunnerMessage =
-    serde_json::from_slice(first).map_err(|error| RunnerInstallationError::Json(Box::new(error)))?;
+    serde_json::from_slice(&bytes).map_err(|error| RunnerInstallationError::Json(Box::new(error)))?;
   match message {
     RunnerMessage::Capabilities {
       octa_version,
@@ -373,7 +327,7 @@ async fn inspect_capabilities(executable: &Path, root: &Path) -> Result<RunnerCa
       Ok(capabilities)
     }
     _ => Err(RunnerInstallationError::Capabilities(
-      "first message was not capabilities".to_owned(),
+      "document is not a capabilities message".to_owned(),
     )),
   }
 }
@@ -488,45 +442,6 @@ fn file_sha256(path: &Path) -> Result<String, RunnerInstallationError> {
   Ok(format!("{:x}", hasher.finalize()))
 }
 
-struct BoundedOutput {
-  bytes: Vec<u8>,
-  truncated: bool,
-}
-
-async fn read_bounded<R: AsyncRead + Unpin>(mut reader: R, limit: usize) -> Result<BoundedOutput, std::io::Error> {
-  let mut bytes = Vec::with_capacity(limit.min(8192));
-  let mut buffer = [0_u8; 8192];
-  let mut truncated = false;
-  loop {
-    let read = reader.read(&mut buffer).await?;
-    if read == 0 {
-      return Ok(BoundedOutput { bytes, truncated });
-    }
-    let remaining = limit.saturating_sub(bytes.len());
-    bytes.extend_from_slice(&buffer[..read.min(remaining)]);
-    truncated |= read > remaining;
-  }
-}
-
-async fn join_output(
-  task: tokio::task::JoinHandle<Result<BoundedOutput, std::io::Error>>,
-) -> Result<BoundedOutput, RunnerInstallationError> {
-  task
-    .await
-    .map_err(|error| RunnerInstallationError::Io(std::io::Error::other(error)))?
-    .map_err(RunnerInstallationError::Io)
-}
-
-fn sanitize(bytes: &[u8]) -> String {
-  String::from_utf8_lossy(bytes)
-    .chars()
-    .filter(|character| *character == '\n' || *character == '\t' || !character.is_control())
-    .take(MAX_CAPABILITIES_STDERR_BYTES)
-    .collect::<String>()
-    .trim_end()
-    .to_owned()
-}
-
 fn runner_filename() -> &'static str {
   if cfg!(windows) {
     "octa-runner.exe"
@@ -569,145 +484,6 @@ fn requirement_error<T>(message: impl Into<String>) -> Result<T, RunnerInstallat
   Err(RunnerInstallationError::Requirement(message.into()))
 }
 
-fn kill_process_group(child: &mut tokio::process::Child) {
-  #[cfg(unix)]
-  if let Some(id) = child.id().and_then(|id| i32::try_from(id).ok()) {
-    // SAFETY: capabilities starts as leader of a new process group.
-    unsafe {
-      libc::kill(-id, libc::SIGKILL);
-    }
-  }
-  let _ = child.start_kill();
-}
-
 #[cfg(test)]
-mod tests {
-  use super::*;
-  use std::collections::BTreeMap;
-
-  fn capabilities() -> RunnerCapabilities {
-    RunnerCapabilities {
-      octa_version: "0.3.0".to_owned(),
-      runner_protocols: vec![1],
-      event_schemas: vec![3],
-      plugin_protocols: vec![1],
-      octafile_versions: vec![1],
-      platform: "linux-x86_64".to_owned(),
-      features: vec!["versioned-events".to_owned()],
-      build_commit: None,
-    }
-  }
-
-  #[test]
-  fn validates_capability_sets() {
-    assert!(validate_capabilities(&capabilities()).is_ok());
-    let mut invalid = capabilities();
-    invalid.runner_protocols = vec![1, 1];
-    assert!(validate_capabilities(&invalid).is_err());
-    invalid = capabilities();
-    invalid.features = vec![String::new()];
-    assert!(validate_capabilities(&invalid).is_err());
-    invalid = capabilities();
-    invalid.octafile_versions = vec![0];
-    assert!(validate_capabilities(&invalid).is_err());
-  }
-
-  #[test]
-  fn validates_distribution_identifiers_and_paths() {
-    assert!(logical_name("shell_2"));
-    assert!(!logical_name("Shell"));
-    assert!(relative_path(Path::new("bin/shell")));
-    assert!(!relative_path(Path::new("../shell")));
-    assert!(!relative_path(Path::new("bin\\shell")));
-    assert!(sha256_digest(&"a".repeat(64)));
-    assert!(!sha256_digest(&"A".repeat(64)));
-  }
-
-  #[cfg(unix)]
-  #[test]
-  fn rejects_operator_files_writable_by_other_users() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let temporary = tempfile::tempdir().unwrap();
-    let file = temporary.path().join("runner");
-    fs::write(&file, "runner").unwrap();
-    fs::set_permissions(&file, fs::Permissions::from_mode(0o777)).unwrap();
-    assert!(
-      validate_regular_file("runner", &file, true)
-        .unwrap_err()
-        .to_string()
-        .contains("writable by group")
-    );
-  }
-
-  #[cfg(unix)]
-  #[tokio::test]
-  async fn inventories_and_matches_a_release_without_importing_octa() {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let release = tempfile::tempdir().unwrap();
-    fs::create_dir(release.path().join("plugins")).unwrap();
-    let plugin = release.path().join("plugins/shell");
-    fs::write(&plugin, "fixture plugin").unwrap();
-    fs::set_permissions(&plugin, fs::Permissions::from_mode(0o755)).unwrap();
-    let plugin_digest = file_sha256(&plugin).unwrap();
-    fs::write(
-      release.path().join("Octa.lock"),
-      format!(
-        "version: 1\nplugins:\n  shell:\n    version: '0.3.0'\n    protocol: 1\n    platforms: [linux-x86_64]\n    entrypoint: shell\n    sha256: {plugin_digest}\n    capabilities: [shell]\n    source: shell.plugin.yml\n"
-      ),
-    )
-    .unwrap();
-    let runner = release.path().join(runner_filename());
-    fs::write(
-      &runner,
-      "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"capabilities\",\"octa_version\":\"0.3.0\",\"runner_protocols\":[1],\"event_schemas\":[3],\"plugin_protocols\":[1],\"octafile_versions\":[1],\"platform\":\"linux-x86_64\",\"features\":[\"versioned-events\"]}'\n",
-    )
-    .unwrap();
-    fs::set_permissions(&runner, fs::Permissions::from_mode(0o755)).unwrap();
-
-    let installation = RunnerInstallation::load(release.path()).await.unwrap();
-    let requirement = OctaSpec {
-      version: "0.3.0".to_owned(),
-      runner_sha256: installation.sha256.clone(),
-      runner_protocol: 1,
-      event_schema: 3,
-      plugin_protocol: 1,
-      plugin_digests: BTreeMap::from([("shell".to_owned(), plugin_digest.clone())]),
-    };
-    installation.verify(&requirement).unwrap();
-    assert_eq!(installation.plugins.len(), 1);
-    assert_eq!(
-      installation.program(),
-      RunnerProgram {
-        executable: installation.executable.clone(),
-        plugins_dir: installation.plugins_dir.clone(),
-        plugin_lock: installation.default_plugin_lock.clone(),
-      }
-    );
-
-    let mut wrong = requirement;
-    wrong.event_schema = 2;
-    assert!(installation.verify(&wrong).is_err());
-    wrong = OctaSpec {
-      version: "0.2.0".to_owned(),
-      runner_sha256: installation.sha256.clone(),
-      runner_protocol: 1,
-      event_schema: 3,
-      plugin_protocol: 1,
-      plugin_digests: BTreeMap::from([("shell".to_owned(), plugin_digest.clone())]),
-    };
-    assert!(installation.verify(&wrong).is_err());
-    wrong.version = "0.3.0".to_owned();
-    wrong.runner_sha256 = "f".repeat(64);
-    assert!(installation.verify(&wrong).is_err());
-    wrong.runner_sha256 = installation.sha256.clone();
-    wrong.plugin_digests.clear();
-    assert!(installation.verify(&wrong).is_err());
-    wrong.plugin_digests.insert("shell".to_owned(), "f".repeat(64));
-    assert!(installation.verify(&wrong).is_err());
-    wrong.plugin_digests.insert("shell".to_owned(), plugin_digest);
-    wrong.plugin_protocol = 2;
-    assert!(installation.verify(&wrong).is_err());
-  }
-}
+#[path = "installation_tests.rs"]
+mod tests;

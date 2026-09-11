@@ -1,0 +1,17 @@
+[package]
+name = "octacity-execution-oci"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "OCI execution dispatch for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+octacity-execution = { path = "../octacity-execution" }
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true

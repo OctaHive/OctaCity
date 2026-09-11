@@ -1,0 +1,26 @@
+[package]
+name = "octacity-execution-containerd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Containerd OCI process engine for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+containerd-client.workspace = true
+libc.workspace = true
+octacity-execution = { path = "../octacity-execution" }
+octacity-execution-oci = { path = "../octacity-execution-oci" }
+prost.workspace = true
+prost-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

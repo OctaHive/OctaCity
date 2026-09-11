@@ -1,0 +1,21 @@
+[package]
+name = "octacity-execution-microsandbox"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Microsandbox OCI hypervisor engine for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+microsandbox.workspace = true
+octacity-execution = { path = "../octacity-execution" }
+octacity-execution-oci = { path = "../octacity-execution-oci" }
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

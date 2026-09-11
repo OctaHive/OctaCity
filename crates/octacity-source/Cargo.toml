@@ -8,9 +8,10 @@ repository.workspace = true
 description = "Trusted source-plugin registry and process host for OctaCity"
 
 [dependencies]
-libc.workspace = true
+async-trait.workspace = true
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-source-plugin = { path = "../octacity-source-plugin" }
+processkit.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

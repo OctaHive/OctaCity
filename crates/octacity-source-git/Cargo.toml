@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 http.workspace = true
 octacity-source-plugin = { path = "../octacity-source-plugin" }
+processkit.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -64,12 +64,18 @@ impl SourcePluginManifest {
 pub enum SourceCommand {
   /// Starts the single materialization owned by this process.
   Materialize {
+    /// Protocol version selected by the agent.
     protocol_version: u16,
+    /// Correlation identifier used by every lifecycle message.
     request_id: String,
+    /// Provider-independent request and provider-owned maps.
     request: MaterializeRequest,
   },
   /// Requests cooperative termination of the correlated materialization.
-  Cancel { request_id: String },
+  Cancel {
+    /// Correlation identifier of the active request.
+    request_id: String,
+  },
 }
 
 /// Provider-independent materialization request carried over the process protocol.
@@ -125,27 +131,51 @@ impl MaterializeRequest {
 pub enum SourceMessage {
   /// Declares process identity before the agent sends a request.
   Hello {
+    /// Highest process-protocol version selected by this executable.
     protocol_version: u16,
+    /// Logical provider name matching the verified manifest.
     plugin_name: String,
+    /// Package version matching the verified manifest.
     plugin_version: String,
   },
   /// Confirms ownership of a valid materialization request.
-  Accepted { request_id: String },
+  Accepted {
+    /// Correlation identifier of the accepted request.
+    request_id: String,
+  },
   /// Reports a non-terminal lifecycle milestone.
-  Progress { request_id: String, message: String },
+  Progress {
+    /// Correlation identifier of the active request.
+    request_id: String,
+    /// Human-readable progress description.
+    message: String,
+  },
   /// Reports a non-terminal warning or troubleshooting detail.
-  Diagnostic { request_id: String, message: String },
+  Diagnostic {
+    /// Correlation identifier of the active request.
+    request_id: String,
+    /// Bounded human-readable diagnostic.
+    message: String,
+  },
   /// Reports successful materialization of the exact requested revision.
   Finished {
+    /// Correlation identifier of the completed request.
     request_id: String,
+    /// Immutable revision actually materialized by the plugin.
     revision: String,
+    /// Provider metadata suitable for audit and UI display.
     provenance: BTreeMap<String, String>,
   },
   /// Confirms cooperative cancellation.
-  Cancelled { request_id: String },
+  Cancelled {
+    /// Correlation identifier of the cancelled request.
+    request_id: String,
+  },
   /// Reports a terminal provider or request failure.
   Error {
+    /// Related request, or `None` for a pre-request process failure.
     request_id: Option<String>,
+    /// Bounded human-readable failure description.
     message: String,
   },
 }
@@ -153,10 +183,13 @@ pub enum SourceMessage {
 /// Failure while reading one bounded source-protocol frame.
 #[derive(Debug, Error)]
 pub enum ReadFrameError {
+  /// Reading the underlying stream failed.
   #[error("failed to read source-plugin frame: {0}")]
   Io(#[source] io::Error),
+  /// The frame exceeded the protocol allocation bound.
   #[error("source-plugin frame exceeds the {MAX_SOURCE_FRAME_BYTES}-byte limit")]
   TooLarge,
+  /// A non-empty final frame was not newline terminated.
   #[error("source-plugin frame is not terminated by a newline")]
   Unterminated,
 }

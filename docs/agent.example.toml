@@ -5,9 +5,14 @@ work_root = "/var/lib/octacity/work"
 state_root = "/var/lib/octacity/state"
 octa_release_root = "/opt/octacity/octa"
 source_plugins_dir = "/opt/octacity/source-plugins"
-enabled_execution_backends = ["native"]
+enabled_runtime_modes = ["native"]
 allow_native_execution = true
-native_cgroup_root = "/sys/fs/cgroup/octacity"
+native_linux_cgroup_root = "/sys/fs/cgroup/octacity"
+native_linux_bubblewrap_executable = "/usr/bin/bwrap"
+# Toolchains outside /usr must be exposed explicitly and referenced by PATH.
+native_linux_readonly_paths = []
+native_linux_pids_limit = 4096
+native_environment = { PATH = "/usr/local/bin:/usr/bin:/bin" }
 allowed_upload_origins = ["https://artifacts.example.com"]
 max_workspace_bytes = 10737418240
 max_spool_bytes = 1073741824
@@ -16,6 +21,31 @@ heartbeat_interval_seconds = 5
 lease_safety_margin_seconds = 15
 graceful_cancel_timeout_seconds = 10
 cleanup_timeout_seconds = 30
+runner_hello_timeout_seconds = 5
+resource_sample_interval_seconds = 5
+resource_sample_timeout_seconds = 1
+max_accounting_failures = 3
+
+# OCI engines are enabled explicitly. To use them, include "oci" in
+# enabled_runtime_modes and add one or both engine tables below. Containerd
+# currently provides Linux process isolation with networking disabled;
+# Microsandbox provides Linux hypervisor isolation on supported hosts.
+#
+# [[oci_engines]]
+# engine = "containerd"
+# endpoint = "/run/containerd/containerd.sock"
+# namespace = "octacity"
+# snapshotter = "overlayfs"
+# runtime = "io.containerd.runc.v2"
+# registry_config_dir = "/etc/containerd/certs.d"
+# pids_limit = 4096
+# open_files_limit = 65536
+#
+# [[oci_engines]]
+# engine = "microsandbox"
+# executable = "/opt/microsandbox/bin/msb"
+# libkrunfw = "/opt/microsandbox/lib/libkrunfw.so"
+# metrics_sample_interval_seconds = 1
 
 # Replace this public key during agent enrollment. Multiple named keys permit
 # an explicit overlap while rotating the server signing key.

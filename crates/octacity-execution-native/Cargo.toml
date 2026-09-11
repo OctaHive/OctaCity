@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Native Linux execution backend for OctaCity"
+description = "Native host execution backend for OctaCity"
 
 [dependencies]
 async-trait.workspace = true
@@ -13,7 +13,11 @@ libc.workspace = true
 octacity-execution = { path = "../octacity-execution" }
 sha2.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+seccompiler.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

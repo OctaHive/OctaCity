@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: octacity
+      - uses: actions/checkout@v4
+        with:
+          repository: OctaHive/octa
+          path: octa
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+        working-directory: octacity
+      - name: Check warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        working-directory: octacity
+      - name: Check public API documentation
+        env:
+          RUSTDOCFLAGS: -D missing_docs
+        run: cargo doc --workspace --all-features --no-deps
+        working-directory: octacity
+      - name: Run portable tests
+        run: cargo test --workspace --all-features
+        working-directory: octacity
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: octacity
+      - uses: actions/checkout@v4
+        with:
+          repository: OctaHive/octa
+          path: octa
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Measure workspace coverage
+        run: >-
+          cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+          --fail-under-lines 75
+        working-directory: octacity
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: octacity/lcov.info

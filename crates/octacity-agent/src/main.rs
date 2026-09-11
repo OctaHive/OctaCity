@@ -5,12 +5,20 @@
 //! transport is implemented. This binary is the composition root: focused
 //! component crates contain reusable behavior and never depend on the agent.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{collections::BTreeMap, path::PathBuf, process::ExitCode, sync::Arc, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use octacity_config::AgentConfig;
+use octacity_config::{AgentConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
+use octacity_execution::ExecutionBackend;
+use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
+use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
+use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
+use octacity_execution_oci::{OciBackend, OciEngine};
+use octacity_job::{JobExecutor, JobExecutorConfig};
+use octacity_protocol::RuntimeMode;
 use octacity_runner::RunnerInstallation;
-use octacity_source::SourcePluginRegistry;
+use octacity_runner::RunnerSupervisionPolicy;
+use octacity_source::{SourceMaterializer, SourcePluginRegistry};
 use tracing::{debug, error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
@@ -66,26 +74,130 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
     Command::Validate { config } => {
       info!(config = %config.display(), "validating agent configuration");
       let validated = AgentConfig::load(&config)?.validate()?;
-      let source_plugins = SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?;
-      let runner = RunnerInstallation::load(&validated.config.octa_release_root).await?;
+      let runner = RunnerInstallation::load(&validated.config.octa_release_root)?;
+      let octa_version = runner.capabilities.octa_version.clone();
+      let source_plugins = Arc::new(SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?);
+      let source_plugin_count = source_plugins.len();
+      let agent_id = validated.config.agent_id.clone();
+      let signing_key_count = validated.signing_keys.len();
+      let runtime_count = validated.config.enabled_runtime_modes.len();
+      let _executor = build_executor(validated, runner, source_plugins).await?;
       println!(
-        "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} backend(s), {} source plugin(s))",
-        validated.config.agent_id,
-        runner.capabilities.octa_version,
-        validated.signing_keys.len(),
-        validated.config.enabled_execution_backends.len(),
-        source_plugins.len()
+        "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} runtime mode(s), {} source plugin(s))",
+        agent_id, octa_version, signing_key_count, runtime_count, source_plugin_count
       );
       info!(
-        agent_id = %validated.config.agent_id,
-        signing_keys = validated.signing_keys.len(),
-        execution_backends = validated.config.enabled_execution_backends.len(),
-        source_plugins = source_plugins.len(),
+        agent_id = %agent_id,
+        signing_keys = signing_key_count,
+        runtime_modes = runtime_count,
+        source_plugins = source_plugin_count,
         "agent configuration is valid"
       );
       Ok(())
     }
   }
+}
+
+async fn build_executor(
+  validated: ValidatedConfig,
+  runner: RunnerInstallation,
+  source_plugins: Arc<SourcePluginRegistry>,
+) -> Result<JobExecutor, Box<dyn std::error::Error>> {
+  let mut backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>> = BTreeMap::new();
+  for runtime in &validated.runtimes {
+    let (mode, backend): (RuntimeMode, Arc<dyn ExecutionBackend>) = match runtime {
+      ValidatedRuntimeConfig::Native {
+        cgroup_root,
+        bubblewrap,
+        readonly_paths,
+        pids_limit,
+        environment,
+      } => (
+        RuntimeMode::Native,
+        Arc::new(NativeBackend::new(LinuxNativeConfig {
+          cgroup_root: cgroup_root.clone(),
+          work_root: validated.config.work_root.clone(),
+          bubblewrap: bubblewrap.clone(),
+          readonly_paths: readonly_paths.clone(),
+          runner_platform: runner.capabilities.platform.clone(),
+          max_workspace_bytes: validated.config.max_workspace_bytes,
+          cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+          pids_limit: *pids_limit,
+          environment: environment.clone(),
+        })?),
+      ),
+      ValidatedRuntimeConfig::Oci {
+        engines: configured_engines,
+      } => {
+        let mut engines: Vec<Arc<dyn OciEngine>> = Vec::new();
+        for configured in configured_engines {
+          let engine: Arc<dyn OciEngine> = match configured {
+            OciEngineConfig::Microsandbox {
+              executable,
+              libkrunfw,
+              metrics_sample_interval_seconds,
+            } => Arc::new(MicrosandboxEngine::new(MicrosandboxEngineConfig {
+              agent_id: validated.config.agent_id.clone(),
+              state_root: validated.config.state_root.clone(),
+              work_root: validated.config.work_root.clone(),
+              runner_platform: runner.capabilities.platform.clone(),
+              executable: executable.clone(),
+              libkrunfw: libkrunfw.clone(),
+              cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+              metrics_sample_interval: Duration::from_secs(*metrics_sample_interval_seconds),
+            })?),
+            OciEngineConfig::Containerd {
+              endpoint,
+              namespace,
+              snapshotter,
+              runtime,
+              registry_config_dir,
+              pids_limit,
+              open_files_limit,
+            } => {
+              let engine = ContainerdEngine::new(ContainerdEngineConfig {
+                agent_id: validated.config.agent_id.clone(),
+                endpoint: endpoint.clone(),
+                namespace: namespace.clone(),
+                snapshotter: snapshotter.clone(),
+                runtime: runtime.clone(),
+                registry_config_dir: registry_config_dir.clone(),
+                state_root: validated.config.state_root.clone(),
+                work_root: validated.config.work_root.clone(),
+                max_workspace_bytes: validated.config.max_workspace_bytes,
+                cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+                pids_limit: *pids_limit,
+                open_files_limit: *open_files_limit,
+              })?;
+              engine.validate_connection().await?;
+              Arc::new(engine)
+            }
+          };
+          engines.push(engine);
+        }
+        (RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?))
+      }
+    };
+    backends.insert(mode, backend);
+  }
+  let source: Arc<dyn SourceMaterializer> = source_plugins;
+  Ok(JobExecutor::new(
+    validated.signing_keys,
+    runner,
+    source,
+    backends,
+    JobExecutorConfig {
+      work_root: validated.config.work_root,
+      max_workspace_bytes: validated.config.max_workspace_bytes,
+      cancellation_grace: Duration::from_secs(validated.config.graceful_cancel_timeout_seconds),
+      runner_supervision: RunnerSupervisionPolicy {
+        hello_timeout: Duration::from_secs(validated.config.runner_hello_timeout_seconds),
+        resource_sample_interval: Duration::from_secs(validated.config.resource_sample_interval_seconds),
+        resource_sample_timeout: Duration::from_secs(validated.config.resource_sample_timeout_seconds),
+        max_accounting_failures: validated.config.max_accounting_failures,
+      },
+    },
+  )?)
 }
 
 fn init_tracing(filter: Option<&str>, format: LogFormat) -> Result<(), Box<dyn std::error::Error>> {

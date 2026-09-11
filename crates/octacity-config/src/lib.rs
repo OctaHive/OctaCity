@@ -11,66 +11,192 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::VerifyingKey;
-use http::Uri;
-use octacity_protocol::BackendKind;
+use octacity_protocol::RuntimeMode;
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::{debug, info};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 
+mod validation;
+
+use validation::*;
+
 /// Configuration read from the agent's TOML file.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentConfig {
+  /// Stable identity used for leases and owned resource names.
   pub agent_id: String,
+  /// Coordinator HTTPS origin.
   pub server_url: String,
+  /// Private agent-enrollment credential file.
   pub credential_file: PathBuf,
+  /// Trusted server signature keys indexed by key identifier.
   pub server_signing_keys: BTreeMap<String, String>,
+  /// Scheduler-visible operator labels.
   #[serde(default)]
   pub labels: BTreeMap<String, String>,
+  /// Dedicated root for ephemeral job workspaces.
   pub work_root: PathBuf,
+  /// Dedicated root for persistent agent and backend state.
   pub state_root: PathBuf,
+  /// Operator-installed immutable Octa release root.
   pub octa_release_root: PathBuf,
+  /// Operator-installed source-plugin registry root.
   pub source_plugins_dir: PathBuf,
-  pub enabled_execution_backends: Vec<BackendKind>,
+  /// Runtime modes this agent may advertise.
+  pub enabled_runtime_modes: Vec<RuntimeMode>,
+  /// Explicit opt-in for host-native execution.
   #[serde(default)]
   pub allow_native_execution: bool,
+  /// Delegated cgroup-v2 root for Linux Native jobs.
   #[serde(default)]
-  pub native_cgroup_root: Option<PathBuf>,
+  pub native_linux_cgroup_root: Option<PathBuf>,
+  /// Exact Bubblewrap executable for Linux Native jobs.
+  #[serde(default)]
+  pub native_linux_bubblewrap_executable: Option<PathBuf>,
+  /// Additional host paths exposed read-only to Native jobs.
+  #[serde(default)]
+  pub native_linux_readonly_paths: Vec<PathBuf>,
+  /// Maximum descendant processes in one Native job.
+  pub native_linux_pids_limit: u32,
+  /// Explicit clean process environment for Native jobs.
+  #[serde(default)]
+  pub native_environment: BTreeMap<String, String>,
+  /// Explicit OCI lifecycle engines and their policies.
+  #[serde(default)]
+  pub oci_engines: Vec<OciEngineConfig>,
+  /// HTTPS origins allowed for output uploads.
   pub allowed_upload_origins: Vec<String>,
+  /// Maximum accepted workspace allocation.
   pub max_workspace_bytes: u64,
+  /// Maximum local event and upload spool allocation.
   pub max_spool_bytes: u64,
+  /// Coordinator long-poll duration.
   pub poll_timeout_seconds: u64,
+  /// Interval between heartbeats.
   pub heartbeat_interval_seconds: u64,
+  /// Time reserved to stop before lease expiry.
   pub lease_safety_margin_seconds: u64,
+  /// Grace between cooperative and forced cancellation.
   pub graceful_cancel_timeout_seconds: u64,
+  /// Bound for backend cleanup operations.
   pub cleanup_timeout_seconds: u64,
+  /// Bound for the runner protocol handshake.
+  pub runner_hello_timeout_seconds: u64,
+  /// Interval between resource-accounting samples.
+  pub resource_sample_interval_seconds: u64,
+  /// Bound for one resource-accounting call.
+  pub resource_sample_timeout_seconds: u64,
+  /// Consecutive accounting failures tolerated per job.
+  pub max_accounting_failures: usize,
+}
+
+/// One explicitly configured OCI lifecycle implementation.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "engine", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OciEngineConfig {
+  /// Hypervisor-isolated Linux guest supplied by Microsandbox.
+  Microsandbox {
+    /// Exact `msb` executable.
+    executable: PathBuf,
+    /// Exact libkrun firmware library.
+    libkrunfw: PathBuf,
+    /// Interval at which the microVM backend collects accounting samples.
+    metrics_sample_interval_seconds: u64,
+  },
+  /// Linux OCI process isolation supplied by containerd.
+  Containerd {
+    /// Absolute containerd Unix socket.
+    endpoint: PathBuf,
+    /// Dedicated containerd namespace.
+    namespace: String,
+    /// Snapshotter for job root filesystems.
+    snapshotter: String,
+    /// OCI runtime-v2 implementation.
+    runtime: String,
+    /// Optional registry-host configuration root.
+    #[serde(default)]
+    registry_config_dir: Option<PathBuf>,
+    /// Maximum descendant processes in a container.
+    pids_limit: u32,
+    /// Per-process `RLIMIT_NOFILE` inside the container.
+    open_files_limit: u64,
+  },
 }
 
 /// Startup configuration after cryptographic and filesystem validation.
 #[derive(Debug)]
 pub struct ValidatedConfig {
+  /// Canonicalized general configuration.
   pub config: AgentConfig,
+  /// Decoded server signature-verification keys.
   pub signing_keys: BTreeMap<String, VerifyingKey>,
+  /// Mode-specific configuration with required values present.
+  pub runtimes: Vec<ValidatedRuntimeConfig>,
+}
+
+/// Runtime configuration whose required paths and mode-specific invariants
+/// have already been validated.
+#[derive(Clone, Debug)]
+pub enum ValidatedRuntimeConfig {
+  /// Complete Linux Native configuration.
+  Native {
+    /// Canonical delegated cgroup root.
+    cgroup_root: PathBuf,
+    /// Canonical Bubblewrap executable.
+    bubblewrap: PathBuf,
+    /// Canonical extra read-only host paths.
+    readonly_paths: Vec<PathBuf>,
+    /// Enforced descendant-process ceiling.
+    pids_limit: u32,
+    /// Explicit clean process environment.
+    environment: BTreeMap<String, String>,
+  },
+  /// Validated OCI engine configurations.
+  Oci {
+    /// Engines in deterministic operator order.
+    engines: Vec<OciEngineConfig>,
+  },
 }
 
 #[derive(Debug, Error)]
+/// Failure to load or validate the agent configuration.
 pub enum ConfigError {
+  /// The configuration file metadata could not be inspected.
   #[error("failed to inspect configuration '{path}': {source}")]
-  Inspect { path: PathBuf, source: std::io::Error },
+  Inspect {
+    /// Configuration path being inspected.
+    path: PathBuf,
+    /// Underlying filesystem error.
+    source: std::io::Error,
+  },
+  /// The configuration file exceeds the bounded parser input size.
   #[error("configuration '{path}' exceeds the {MAX_CONFIG_BYTES}-byte limit")]
-  TooLarge { path: PathBuf },
+  TooLarge {
+    /// Configuration path that exceeded the input limit.
+    path: PathBuf,
+  },
+  /// The configuration file contents could not be read.
   #[error("failed to read configuration '{path}': {source}")]
-  Read { path: PathBuf, source: std::io::Error },
+  Read {
+    /// Configuration path being read.
+    path: PathBuf,
+    /// Underlying filesystem error.
+    source: std::io::Error,
+  },
+  /// The configuration file is not valid TOML for [`AgentConfig`].
   #[error("failed to parse configuration '{path}': {source}")]
   Parse {
+    /// Configuration path being parsed.
     path: PathBuf,
+    /// TOML syntax or deserialization error.
     source: Box<toml::de::Error>,
   },
   #[error("invalid agent configuration: {0}")]
+  /// Configuration values violate an agent invariant.
   Invalid(String),
 }
 
@@ -140,25 +266,57 @@ impl AgentConfig {
       non_empty("label name", name)?;
       non_empty("label value", value)?;
     }
-    if self.enabled_execution_backends.is_empty() {
-      return invalid("enabled_execution_backends must contain at least one backend");
+    if self.enabled_runtime_modes.is_empty() {
+      return invalid("enabled_runtime_modes must contain at least one mode");
     }
-    let backends: BTreeSet<_> = self.enabled_execution_backends.iter().copied().collect();
-    if backends.len() != self.enabled_execution_backends.len() {
-      return invalid("enabled_execution_backends must not contain duplicates");
+    let modes: BTreeSet<_> = self.enabled_runtime_modes.iter().copied().collect();
+    if modes.len() != self.enabled_runtime_modes.len() {
+      return invalid("enabled_runtime_modes must not contain duplicates");
     }
-    if backends.contains(&BackendKind::Native) && !self.allow_native_execution {
+    if modes.contains(&RuntimeMode::Native) && !self.allow_native_execution {
       return invalid("NativeBackend requires allow_native_execution = true");
     }
-    if backends.contains(&BackendKind::Native) {
-      let root = self
-        .native_cgroup_root
+    let native_runtime = if modes.contains(&RuntimeMode::Native) {
+      let configured_root = self
+        .native_linux_cgroup_root
         .as_deref()
-        .ok_or_else(|| ConfigError::Invalid("NativeBackend requires native_cgroup_root".to_owned()))?;
-      self.native_cgroup_root = Some(canonical_directory("native_cgroup_root", root)?);
-    } else if self.native_cgroup_root.is_some() {
-      return invalid("native_cgroup_root is only valid when NativeBackend is enabled");
-    }
+        .ok_or_else(|| ConfigError::Invalid("NativeBackend requires native_linux_cgroup_root".to_owned()))?;
+      let cgroup_root = canonical_directory("native_linux_cgroup_root", configured_root)?;
+      self.native_linux_cgroup_root = Some(cgroup_root.clone());
+      let configured_bubblewrap = self
+        .native_linux_bubblewrap_executable
+        .as_deref()
+        .ok_or_else(|| ConfigError::Invalid("NativeBackend requires native_linux_bubblewrap_executable".to_owned()))?;
+      let bubblewrap = canonical_regular_file("native_linux_bubblewrap_executable", configured_bubblewrap)?;
+      self.native_linux_bubblewrap_executable = Some(bubblewrap.clone());
+      self.native_linux_readonly_paths = self
+        .native_linux_readonly_paths
+        .iter()
+        .map(|path| canonical_path("native_linux_readonly_paths", path))
+        .collect::<Result<_, _>>()?;
+      if self.native_linux_pids_limit == 0 {
+        return invalid("native_linux_pids_limit must be greater than zero");
+      }
+      validate_native_environment(&self.native_environment)?;
+      Some(ValidatedRuntimeConfig::Native {
+        cgroup_root,
+        bubblewrap,
+        readonly_paths: self.native_linux_readonly_paths.clone(),
+        pids_limit: self.native_linux_pids_limit,
+        environment: self.native_environment.clone(),
+      })
+    } else if self.native_linux_cgroup_root.is_some()
+      || self.native_linux_bubblewrap_executable.is_some()
+      || !self.native_linux_readonly_paths.is_empty()
+      || self.native_linux_pids_limit != 0
+    {
+      return invalid("native Linux settings are only valid when NativeBackend is enabled");
+    } else if !self.native_environment.is_empty() {
+      return invalid("native_environment is only valid when NativeBackend is enabled");
+    } else {
+      None
+    };
+    validate_oci_engines(&mut self.oci_engines, modes.contains(&RuntimeMode::Oci))?;
 
     if self.allowed_upload_origins.is_empty() {
       return invalid("allowed_upload_origins must contain at least one origin");
@@ -180,10 +338,19 @@ impl AgentConfig {
       ("lease_safety_margin_seconds", self.lease_safety_margin_seconds),
       ("graceful_cancel_timeout_seconds", self.graceful_cancel_timeout_seconds),
       ("cleanup_timeout_seconds", self.cleanup_timeout_seconds),
+      ("runner_hello_timeout_seconds", self.runner_hello_timeout_seconds),
+      (
+        "resource_sample_interval_seconds",
+        self.resource_sample_interval_seconds,
+      ),
+      ("resource_sample_timeout_seconds", self.resource_sample_timeout_seconds),
     ] {
       if value == 0 {
         return invalid(format!("{name} must be greater than zero"));
       }
+    }
+    if self.max_accounting_failures == 0 {
+      return invalid("max_accounting_failures must be greater than zero");
     }
     if self.heartbeat_interval_seconds >= self.lease_safety_margin_seconds {
       return invalid("heartbeat_interval_seconds must be shorter than lease_safety_margin_seconds");
@@ -191,379 +358,25 @@ impl AgentConfig {
 
     info!(
       agent_id = %self.agent_id,
-      backends = self.enabled_execution_backends.len(),
+      runtime_modes = self.enabled_runtime_modes.len(),
       "validated agent configuration"
     );
+    let mut runtimes = Vec::with_capacity(self.enabled_runtime_modes.len());
+    if let Some(native_runtime) = native_runtime {
+      runtimes.push(native_runtime);
+    }
+    if modes.contains(&RuntimeMode::Oci) {
+      runtimes.push(ValidatedRuntimeConfig::Oci {
+        engines: self.oci_engines.clone(),
+      });
+    }
     Ok(ValidatedConfig {
       config: self,
       signing_keys,
+      runtimes,
     })
   }
 }
 
-fn validate_server_url(value: &str) -> Result<(), ConfigError> {
-  let url = parse_absolute_url("server_url", value)?;
-  if url.scheme_str() != Some("https") {
-    return invalid("server_url must use https");
-  }
-  Ok(())
-}
-
-fn validate_upload_origin(value: &str) -> Result<(), ConfigError> {
-  let url = parse_absolute_url("upload origin", value)?;
-  let local_http = url.scheme_str() == Some("http") && matches!(url.host(), Some("127.0.0.1" | "::1" | "localhost"));
-  if url.scheme_str() != Some("https") && !local_http {
-    return invalid(format!(
-      "upload origin '{value}' must use https (or loopback http for development)"
-    ));
-  }
-  if url.path_and_query().is_some_and(|path| path.as_str() != "/") {
-    return invalid(format!(
-      "upload origin '{value}' must contain only scheme, host, and optional port"
-    ));
-  }
-  Ok(())
-}
-
-fn parse_absolute_url(name: &str, value: &str) -> Result<Uri, ConfigError> {
-  let uri: Uri = value
-    .parse()
-    .map_err(|_| ConfigError::Invalid(format!("{name} '{value}' is not a valid absolute URL")))?;
-  let authority = uri
-    .authority()
-    .ok_or_else(|| ConfigError::Invalid(format!("{name} '{value}' has no authority")))?;
-  if uri.scheme().is_none() || uri.host().is_none() || authority.as_str().contains('@') {
-    return invalid(format!("{name} '{value}' must not contain user information"));
-  }
-  Ok(uri)
-}
-
-fn decode_signing_key(id: &str, encoded: &str) -> Result<(String, VerifyingKey), ConfigError> {
-  non_empty("server signing key id", id)?;
-  let bytes = BASE64
-    .decode(encoded)
-    .map_err(|_| ConfigError::Invalid(format!("server signing key '{id}' is not valid base64")))?;
-  let bytes: [u8; 32] = bytes
-    .try_into()
-    .map_err(|_| ConfigError::Invalid(format!("server signing key '{id}' must contain 32 bytes")))?;
-  let key = VerifyingKey::from_bytes(&bytes)
-    .map_err(|_| ConfigError::Invalid(format!("server signing key '{id}' is not a valid Ed25519 public key")))?;
-  Ok((id.to_owned(), key))
-}
-
-fn canonical_directory(name: &str, path: &Path) -> Result<PathBuf, ConfigError> {
-  if !path.is_absolute() {
-    return invalid(format!("{name} must be absolute"));
-  }
-  let canonical = path
-    .canonicalize()
-    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))?;
-  if !canonical.is_dir() {
-    return invalid(format!("{name} '{}' is not a directory", path.display()));
-  }
-  Ok(canonical)
-}
-
-fn validate_distinct_roots(roots: &[(&str, PathBuf)]) -> Result<(), ConfigError> {
-  for (index, (left_name, left)) in roots.iter().enumerate() {
-    for (right_name, right) in &roots[index + 1..] {
-      if left.starts_with(right) || right.starts_with(left) {
-        return invalid(format!(
-          "{left_name} '{}' and {right_name} '{}' must not overlap",
-          left.display(),
-          right.display()
-        ));
-      }
-    }
-  }
-  Ok(())
-}
-
-fn validate_regular_file(name: &str, path: &Path) -> Result<(), ConfigError> {
-  if !path.is_absolute() {
-    return invalid(format!("{name} must be absolute"));
-  }
-  let metadata = fs::symlink_metadata(path)
-    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))?;
-  if !metadata.file_type().is_file() {
-    return invalid(format!("{name} '{}' must be a regular file", path.display()));
-  }
-  Ok(())
-}
-
-#[cfg(unix)]
-fn validate_credential_permissions(path: &Path) -> Result<(), ConfigError> {
-  use std::os::unix::fs::PermissionsExt as _;
-
-  let mode = fs::metadata(path)
-    .map_err(|error| ConfigError::Invalid(format!("credential_file '{}': {error}", path.display())))?
-    .permissions()
-    .mode();
-  if mode & 0o077 != 0 {
-    return invalid(format!(
-      "credential_file '{}' must not be accessible by group or others",
-      path.display()
-    ));
-  }
-  Ok(())
-}
-
-#[cfg(not(unix))]
-fn validate_credential_permissions(_path: &Path) -> Result<(), ConfigError> {
-  Ok(())
-}
-
-fn non_empty(name: &str, value: &str) -> Result<(), ConfigError> {
-  if value.trim().is_empty() {
-    invalid(format!("{name} must not be empty"))
-  } else {
-    Ok(())
-  }
-}
-
-fn invalid<T>(message: impl Into<String>) -> Result<T, ConfigError> {
-  Err(ConfigError::Invalid(message.into()))
-}
-
 #[cfg(test)]
-mod tests {
-  use std::{fs::File, io::Write as _};
-
-  use super::*;
-  use tempfile::TempDir;
-
-  struct Fixture {
-    _temp: TempDir,
-    config: AgentConfig,
-  }
-
-  impl Fixture {
-    fn new() -> Self {
-      let temp = tempfile::tempdir().unwrap();
-      let credential = temp.path().join("credential");
-      File::create(&credential).unwrap().write_all(b"token").unwrap();
-      #[cfg(unix)]
-      {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
-      }
-      let directory = |name: &str| {
-        let path = temp.path().join(name);
-        fs::create_dir(&path).unwrap();
-        path
-      };
-      let signing_key = ed25519_dalek::SigningKey::from_bytes(&[9; 32]);
-      let config = AgentConfig {
-        agent_id: "agent-1".to_owned(),
-        server_url: "https://octacity.example".to_owned(),
-        credential_file: credential,
-        server_signing_keys: BTreeMap::from([(
-          "primary".to_owned(),
-          BASE64.encode(signing_key.verifying_key().as_bytes()),
-        )]),
-        labels: BTreeMap::from([("region".to_owned(), "test".to_owned())]),
-        work_root: directory("work"),
-        state_root: directory("state"),
-        octa_release_root: directory("octa"),
-        source_plugins_dir: directory("sources"),
-        enabled_execution_backends: vec![BackendKind::Native],
-        allow_native_execution: true,
-        native_cgroup_root: Some(directory("cgroup")),
-        allowed_upload_origins: vec!["https://objects.example".to_owned()],
-        max_workspace_bytes: 1024,
-        max_spool_bytes: 1024,
-        poll_timeout_seconds: 30,
-        heartbeat_interval_seconds: 5,
-        lease_safety_margin_seconds: 15,
-        graceful_cancel_timeout_seconds: 5,
-        cleanup_timeout_seconds: 10,
-      };
-      Self { _temp: temp, config }
-    }
-  }
-
-  #[test]
-  fn validates_a_provisioned_agent() {
-    let fixture = Fixture::new();
-    let validated = fixture.config.validate().unwrap();
-    assert_eq!(validated.signing_keys.len(), 1);
-  }
-
-  #[test]
-  fn rejects_native_execution_without_explicit_consent() {
-    let mut fixture = Fixture::new();
-    fixture.config.allow_native_execution = false;
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("allow_native_execution")
-    );
-  }
-
-  #[test]
-  fn validates_backend_configuration_as_one_explicit_mode() {
-    let mut fixture = Fixture::new();
-    fixture.config.native_cgroup_root = None;
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("native_cgroup_root")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture.config.enabled_execution_backends = vec![BackendKind::Native, BackendKind::Native];
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("duplicates")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture.config.enabled_execution_backends = vec![BackendKind::Microsandbox];
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("only valid")
-    );
-  }
-
-  #[test]
-  fn rejects_overlapping_roots() {
-    let mut fixture = Fixture::new();
-    fixture.config.state_root = fixture.config.work_root.join("state");
-    fs::create_dir(&fixture.config.state_root).unwrap();
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("must not overlap")
-    );
-  }
-
-  #[test]
-  fn rejects_non_origin_upload_urls() {
-    let mut fixture = Fixture::new();
-    fixture.config.allowed_upload_origins = vec!["https://objects.example/bucket".to_owned()];
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("only scheme")
-    );
-  }
-
-  #[test]
-  fn validates_upload_origins_limits_and_lease_timing() {
-    let mut fixture = Fixture::new();
-    fixture.config.allowed_upload_origins.clear();
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("at least one")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture.config.allowed_upload_origins = vec!["https://objects.example".to_owned(); 2];
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("duplicates")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture.config.max_workspace_bytes = 0;
-    assert!(fixture.config.validate().unwrap_err().to_string().contains("limits"));
-
-    let mut fixture = Fixture::new();
-    fixture.config.poll_timeout_seconds = 0;
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("poll_timeout_seconds")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture.config.heartbeat_interval_seconds = fixture.config.lease_safety_margin_seconds;
-    assert!(fixture.config.validate().unwrap_err().to_string().contains("shorter"));
-  }
-
-  #[test]
-  fn rejects_invalid_identity_and_server_material() {
-    let mut fixture = Fixture::new();
-    fixture.config.labels.insert(String::new(), "value".to_owned());
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("label name")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture.config.server_signing_keys.clear();
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("at least one")
-    );
-
-    let mut fixture = Fixture::new();
-    fixture
-      .config
-      .server_signing_keys
-      .insert("primary".to_owned(), "not-base64".to_owned());
-    assert!(fixture.config.validate().unwrap_err().to_string().contains("base64"));
-
-    let mut fixture = Fixture::new();
-    fixture.config.server_url = "http://octacity.example".to_owned();
-    assert!(
-      fixture
-        .config
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("must use https")
-    );
-  }
-
-  #[test]
-  fn rejects_unknown_configuration_fields() {
-    assert!(toml::from_str::<AgentConfig>("agent_id = 'a'\nunknown = true").is_err());
-  }
-
-  #[test]
-  fn example_configuration_stays_parseable() {
-    let config: AgentConfig = toml::from_str(include_str!("../../../docs/agent.example.toml")).unwrap();
-    assert_eq!(config.agent_id, "linux-builder-01");
-    assert!(decode_signing_key("primary", &config.server_signing_keys["primary"]).is_ok());
-  }
-}
+mod tests;

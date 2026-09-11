@@ -6,7 +6,7 @@ Status: in progress
 
 Build a small self-hosted agent that receives one leased job from OctaCity,
 materializes an exact source revision through a trusted source plugin, executes
-the released `octa-runner` through an explicitly selected native or isolated
+the released `octa-runner` through an explicitly selected Native or OCI
 backend, delivers an ordered and replayable event stream, uploads declared
 artifacts and reports, and completely removes the job after completion.
 
@@ -14,9 +14,12 @@ The agent is a supervisor and transport client. It does not parse Octafiles,
 build DAGs, execute Octa plugins itself, resolve secret values, or contain a
 second implementation of the Octa runtime.
 
-The first production target is Linux on `x86_64` and `aarch64`. Microsandbox
-agents require hardware virtualization; explicitly native-only agents do not.
-Windows and macOS agents can be designed after the Linux contract is proven.
+The agent binary is portable across Linux, Windows, and macOS, but execution
+support is capability-driven: an agent advertises only the guest platforms,
+runtime modes, and isolation tiers its configured backends can actually
+enforce. The initial strict matrix is Linux Native, Linux OCI process execution
+through containerd, and Linux OCI hypervisor execution through Microsandbox on
+supported Linux and Apple Silicon macOS hosts.
 
 ## Fixed decisions
 
@@ -33,9 +36,10 @@ Windows and macOS agents can be designed after the Linux contract is proven.
   first agent protocol.
 - The first agent executes one job at a time.
 - Runner execution always goes through one narrow `ExecutionBackend` contract.
-  Version 1 includes `NativeBackend` and `MicrosandboxBackend` as real product
-  modes. A requested backend is explicit and there is never an automatic
-  fallback from isolated to native execution.
+  The two product modes are `Native` and `OCI`. An OCI request additionally
+  selects `process` or `hypervisor` isolation and an immutable image digest.
+  The requested mode and isolation tier are signed and explicit; there is no
+  automatic fallback between OCI isolation tiers or from OCI to Native.
 - Primary workspace acquisition uses a versioned OctaCity source-plugin
   protocol. The first trusted plugin is `octacity-source-git`; source plugins
   are distinct from Octa task plugins and are never loaded from a repository.
@@ -43,6 +47,10 @@ Windows and macOS agents can be designed after the Linux contract is proven.
   commands.
 - Installed Octa and plugin bundles are provisioned by the operator. The first
   agent is not a package manager or self-updater.
+- Each Octa bundle includes the bounded output of `octa-runner capabilities`
+  as `octa-runner-capabilities.json`. Inventory reads the manifest so a macOS
+  host can validate a Linux guest release without executing it. The live runner
+  still confirms its protocol versions through `Hello` after backend startup.
 - Event delivery is at-least-once and idempotent. A bounded local spool allows
   replay after transient network failure.
 - The agent reports host capacity separately from per-job resource usage. Job
@@ -56,12 +64,19 @@ Windows and macOS agents can be designed after the Linux contract is proven.
 - Artifacts and reports are stored by the server in an S3-compatible object
   store. Agents receive short-lived upload instructions and never receive
   object-store credentials.
+- Machine provisioning and job execution are separate boundaries. Server-side
+  `AgentProvider` implementations create or retire ready agent machines through
+  VMware vSphere, Proxmox, or cloud APIs; statically enrolled agents require no
+  provider adapter. Agent-side
+  `ExecutionBackend` implementations execute one job inside an already-running
+  agent machine. Neither boundary depends on or calls back into the other.
 - Crate dependencies point from composition and orchestration toward contracts;
   concrete adapters never depend on their consumers or on sibling adapters.
-  Dynamic boundaries are the `CoordinatorClient`, `ExecutionBackend`, the
-  source-plugin process protocol, and server-side `ArtifactStore`. Shared wire
-  DTOs and configuration are leaf crates with data APIs, not artificial traits.
-  Private implementation details remain concrete.
+  Dynamic boundaries are the `CoordinatorClient`, `ExecutionBackend`, the OCI
+  engine boundary, the source-plugin process protocol, and server-side
+  `AgentProvider` and `ArtifactStore`. Shared wire DTOs and configuration are
+  leaf crates with data APIs, not artificial traits. Private implementation
+  details remain concrete.
 
 ## System boundary
 
@@ -75,7 +90,7 @@ OctaCity Agent
     |- inventories the installed Octa release
     |- verifies signed JobSpec and lease fencing
     |- invokes a trusted source plugin for an exact revision
-    |- selects Native or Microsandbox execution without fallback
+    |- selects Native or OCI execution without fallback
     |- supervises the octa-runner protocol
     |- spools and forwards events
     `- validates and uploads artifacts/reports
@@ -83,15 +98,15 @@ OctaCity Agent
             v
       ExecutionBackend
           |- NativeBackend
-          |   |- materialized workspace and per-job identity
-          |   `- verified octa-runner and plugins on the agent host
-          `- MicrosandboxBackend
-              `- microVM
-                  |- prepared workspace
-                  |- read-only Octa release and plugins
-                  |- workload identity
-                  `- octa-runner
-                        `- plugin manager and plugin processes
+          |   `- platform-native process sandbox and resource controls
+          `- OciBackend
+              |- process-isolated OCI container
+              `- hypervisor-isolated OCI container or microVM
+                    |- prepared workspace
+                    |- read-only Octa release and plugins
+                    |- workload identity
+                    `- octa-runner
+                          `- plugin manager and plugin processes
 ```
 
 The host agent must never execute an arbitrary command taken from the
@@ -99,7 +114,71 @@ repository or `JobSpec`. On the host it may run only configured agent
 components, operator-installed source plugins, the selected execution backend,
 and the verified `octa-runner` when native execution is explicitly allowed.
 Octa tasks and plugins run wherever the selected execution backend places the
-runner. Untrusted jobs must require an isolated backend.
+runner. Untrusted jobs must require OCI `hypervisor` isolation or a disposable
+agent machine; OCI `process` and Native remain lower trust tiers.
+
+## Provisioning and execution modes
+
+The server provisions capacity; the agent executes jobs. These are deliberately
+different interfaces even when both happen to use virtualization:
+
+```text
+OctaCity Server
+`- AgentProvider
+   |- VsphereAgentProvider
+   |- ProxmoxAgentProvider
+   `- future cloud providers
+          |
+          `- ready VM or machine containing OctaCity Agent
+                 |
+                 `- ExecutionBackend
+                    |- NativeBackend
+                    `- OciBackend(process | hypervisor)
+```
+
+An `AgentProvider` starts a prepared machine image whose agent connects outbound
+to the server. Pool policy decides whether the machine is persistent, retired
+after an idle timeout, or restricted to one job and destroyed. Provisioners do
+not execute Octafiles and are not part of the job sandbox. This permits a
+disposable Windows VM to execute one Native job without pretending that the
+vSphere or Proxmox API is an agent runtime.
+
+`NativeBackend` executes against the host toolchain without a guest OS:
+
+| Host | Native containment | Initial status |
+|---|---|---|
+| Linux | cgroup v2 for limits/accounting, Bubblewrap namespaces, seccomp, and quota-backed writable storage | supported |
+| Windows | no backend until one implementation enforces the complete signed resource and isolation contract | unavailable |
+| macOS | no backend until one implementation enforces the complete signed resource and isolation contract | unavailable |
+
+MXC may later be one implementation detail for Windows or macOS host process
+containment, but its public ProcessContainer and Seatbelt policies alone do not
+enforce every v1 CPU, memory, writable-disk, and network requirement. OctaCity
+therefore does not advertise an MXC-backed Native capability or fall back to an
+unrestricted host process. Windows and macOS builds currently require a
+prepared or disposable machine whose advertised backend really supports the
+requested workload.
+
+`OciBackend` executes an immutable OCI image and treats isolation as an
+independent required property:
+
+| Agent host | `process` | `hypervisor` |
+|---|---|---|
+| Linux | containerd with runc/crun | a configured microVM-capable OCI engine, initially Microsandbox and later optionally containerd with a VM runtime |
+| Windows | planned containerd with process-isolated runhcs | planned containerd with Hyper-V-isolated runhcs |
+| macOS | unsupported as a native container boundary | a Linux guest through a supported virtualization backend, initially Microsandbox on Apple Silicon |
+
+Podman may be added as another OCI engine where it can satisfy the same
+contract. Podman Machine on Windows or macOS is a Linux VM and must advertise
+Linux guest capability; it cannot advertise a Windows or macOS guest. A macOS
+agent can run a Linux guest through Microsandbox, but a macOS build needs a
+future strict Native backend or a disposable macOS machine because there is no
+macOS OCI guest mode.
+
+The scheduler matches the signed guest platform, architecture, runtime mode,
+OCI isolation tier, and backend capabilities. A request for `hypervisor` can
+never run through runc/crun or process-isolated runhcs, and an unavailable OCI
+backend can never fall back to Native.
 
 ## Repository shape
 
@@ -114,7 +193,9 @@ octacity/
 |  |- octacity-agent/       # agent CLI and composition root
 |  |- octacity-config/      # configuration parsing and intrinsic validation
 |  |- octacity-execution/   # backend-neutral execution ports and DTOs
-|  |- octacity-execution-native/ # Linux NativeBackend adapter
+|  |- octacity-execution-native/ # strict Linux Native adapter
+|  |- octacity-execution-oci/ # OCI process/hypervisor adapter and engine boundary
+|  |- octacity-execution-microsandbox/ # Microsandbox OCI hypervisor engine
 |  |- octacity-protocol/    # versioned server-agent DTOs and signatures
 |  |- octacity-runner/      # Octa inventory, protocol client, and supervisor
 |  |- octacity-source/      # trusted source registry and process host
@@ -145,10 +226,11 @@ and connects those concrete components.
 
 `octacity-execution` owns the narrow `ExecutionBackend` and
 `RunningExecution` ports. `octacity-runner` consumes those ports without
-knowing which backend implements them. Native and Microsandbox adapters depend
-on the execution port and never on each other. This keeps the dependency graph
-acyclic and makes an unavailable isolated backend an error rather than a reason
-to fall back to Native execution.
+knowing which backend implements them. Native and OCI adapters depend on the
+execution port and never on each other. Concrete OCI engines depend inward on
+the OCI engine contract, not on orchestration or sibling engines. This keeps
+the dependency graph acyclic and makes an unavailable isolation tier an error
+rather than a reason to fall back to Native execution.
 
 The runner layer verifies the signed Octa requirement and converts its trusted
 installation inventory into a `RunnerProgram` containing only the executable,
@@ -295,13 +377,15 @@ execution
   secrets profile path
 
 runtime
-  backend: native or microsandbox
-  OCI image by immutable digest when microsandbox is selected
+  mode: native or oci
+  guest platform and architecture
+  isolation: process or hypervisor when OCI is selected
+  OCI image by immutable digest when OCI is selected
   CPU and memory limits
   writable disk limit
   wall-clock timeout
   network policy
-  workload identity profile
+  optional workload identity profile (rejected until identity provisioning is enabled)
 
 outputs
   artifact size/count limits
@@ -345,17 +429,26 @@ work_root
 state_root
 octa_release_root
 source_plugins_dir
-enabled_execution_backends
+enabled_runtime_modes
 allow_native_execution
-native_cgroup_root
+native_environment
+native_linux_cgroup_root
+native_linux_bubblewrap_executable
+native_linux_readonly_paths
+native_linux_pids_limit
+oci_engines
 allowed_upload_origins
 max_workspace_bytes
 max_spool_bytes
-poll_timeout
-heartbeat_interval
-lease_safety_margin
-graceful_cancel_timeout
-cleanup_timeout
+poll_timeout_seconds
+heartbeat_interval_seconds
+lease_safety_margin_seconds
+graceful_cancel_timeout_seconds
+cleanup_timeout_seconds
+runner_hello_timeout_seconds
+resource_sample_interval_seconds
+resource_sample_timeout_seconds
+max_accounting_failures
 ```
 
 At startup the agent canonicalizes roots, rejects overlapping unsafe paths,
@@ -366,9 +459,28 @@ requirement is not met. Enabling `NativeBackend` requires the explicit
 `allow_native_execution = true` setting; its presence is never inferred from a
 missing or unavailable sandbox.
 
-The process environment is not a hidden configuration layer. A minimal set of
-deployment-specific overrides may be added only when an operational need is
-demonstrated.
+Linux Native settings are required only when Native is enabled. OCI engine
+settings are likewise explicit: containerd and Microsandbox are never
+discovered from an ambient socket, environment variable, home directory, or
+executable search path. Microsandbox configuration includes exact `msb` and
+`libkrunfw` paths and its metrics sampling interval. Containerd configuration
+includes its process and open-file ceilings. Startup capability probes
+determine the exact guest platforms and isolation tiers the configured engines
+can enforce.
+
+Operational supervision limits belong to agent configuration: runner
+handshake and accounting intervals, accounting-call timeouts, tolerated
+accounting failures, process ceilings, and OCI file-descriptor ceilings are
+operator policy. Wire framing and decoded-payload limits remain versioned
+protocol constants because changing them changes interoperability and memory
+safety rather than deployment tuning.
+
+The process environment is not a hidden configuration layer. Native execution
+starts with an empty environment and receives only the operator-owned
+`native_environment` map. That map must define `PATH` so normal Octa tools can
+be discovered without inheriting the agent service's credentials or ambient
+deployment state. Job variables remain separate and are passed only through
+the signed runner request.
 
 ## Single-job state machine
 
@@ -497,54 +609,74 @@ trait RunningExecution: Send {
 `RunningExecution` is the backend-neutral interface returned to orchestration.
 It owns the runner stdin, stdout, and stderr channels and returns paths mapped
 into that execution environment. This lets one supervisor construct the same
-runner request for host paths and microVM paths without knowing which backend
+runner request for host paths and OCI guest paths without knowing which backend
 it received. It also provides resource sampling plus bounded `wait`, `kill`,
 and `destroy` operations while keeping its concrete native
-or Microsandbox handle private. Orchestration must not inspect
-`tokio::process::Child`, Microsandbox SDK handles, cgroups, or backend-specific
+or OCI-engine handle private. Orchestration must not inspect
+`tokio::process::Child`, containerd tasks, Microsandbox SDK handles, cgroups, or backend-specific
 path construction.
 The concrete Rust signatures may use pinned boxed I/O types, but the lifecycle
 above is the complete behavioral boundary.
 
-Version 1 includes:
+The product includes:
 
 - `NativeBackend`, which starts only the configured and digest-verified
-  `octa-runner` and plugin bundle directly on a trusted agent host;
-- `MicrosandboxBackend`, which starts the same release inside a microVM created
-  through the pinned official Microsandbox Rust SDK.
+  `octa-runner` and plugin bundle through the host platform's Native containment;
+- `OciBackend`, which starts the same release from an immutable OCI image using
+  the exact signed `process` or `hypervisor` isolation tier.
 
 The signed JobSpec selects one backend. The agent rejects a disabled,
-unavailable, or incompatible backend. It never falls back from Microsandbox to
-Native. Server scheduling must reserve Native for trusted projects and agents;
-untrusted jobs require Microsandbox regardless of labels supplied by the
-repository.
+unavailable, or incompatible backend. It never falls back between OCI
+isolation tiers or from OCI to Native. Server scheduling must reserve Native
+for trusted projects and agents; untrusted jobs require hypervisor-isolated OCI
+execution or a disposable machine regardless of labels supplied by the repository.
+
+Linux Native relies on the one-job-per-agent invariant and requires `work_root`
+itself to be quota-backed. It combines cgroup v2 limits and accounting with
+Bubblewrap namespaces, seccomp, and explicit filesystem/network policy. No
+Windows or macOS Native implementation is advertised in v1: adding one
+requires a real adapter and the same retained contract, not a
+lowest-common-denominator wrapper or an advisory policy.
+
+`OciBackend` owns the OCI lifecycle while engine adapters translate that
+lifecycle to containerd, Microsandbox, or a later Podman integration. This
+boundary is justified by multiple real engines; orchestration never depends on
+an engine API. Engine capability discovery records guest platform, architecture,
+and effective isolation. Merely accepting an OCI image or running inside Podman
+Machine is not evidence of hypervisor isolation for the individual job.
 
 Every backend advertises which limits and isolation properties it can enforce.
 It must either enforce each signed runtime requirement or reject the job; a
 Native backend must never silently ignore a requested CPU, memory, filesystem,
 identity, or network restriction.
 
-Both implementations must expose the same runner lifecycle: bidirectional
+All implementations must expose the same runner lifecycle: bidirectional
 non-PTY JSONL, bounded stderr, graceful cancellation, forced termination,
 terminal status, resource sampling, and verified cleanup. A shared backend
-contract suite runs against both. Native cleanup proves that no runner or
-plugin process remains; Microsandbox cleanup additionally proves that no VM or
-persisted sandbox state remains.
+contract suite runs against every supported host/isolation combination. Native
+cleanup proves that no runner or plugin process remains; OCI cleanup additionally
+proves that no container, VM, snapshot, or persisted engine state remains.
 
-The microVM layout is fixed:
+The OCI guest layout is fixed:
 
 ```text
 /workspace             materialized source tree, read-write
-/opt/octa               runner and plugins, read-only
-/var/lib/octa           per-job execution state, read-write
-/run/octa-identity      short-lived workload identity, read-only
+/opt/octacity/octa      runner and plugins, read-only
+/workspace/.octacity    per-job execution state under the same disk quota
+/run/octa-identity      future short-lived workload identity, read-only
 ```
 
-If the high-level Microsandbox SDK does not expose the required bidirectional
-process channel, use its official low-level agent client. Failure to provide
-the contract makes Microsandbox unavailable; it must never select Native as a
-fallback. Backend configuration defines CPU, memory, disk, wall-clock timeout,
-image digest, and DNS/network policy where the backend can enforce them.
+The Microsandbox engine uses a RAM-backed OCI root overlay capped within the
+VM memory allocation. This prevents writes to `/tmp`, `/root`, or another image
+path from bypassing the signed disk boundary: `/workspace` is the only
+disk-backed writable mount and its guest writes are quota-limited.
+
+If an OCI engine does not expose the required bidirectional process channel,
+resource enforcement, accounting, or cleanup lifecycle, that engine/isolation
+combination is unavailable. Backend configuration defines CPU, memory, disk,
+wall-clock timeout, immutable OCI image reference, and DNS/network policy. A
+backend must never pretend that cgroups alone enforce filesystem or network
+policy, or that a process container provides hypervisor isolation.
 
 ## Resource accounting
 
@@ -578,12 +710,14 @@ and I/O are required. Network counters are optional in protocol v1 because a
 backend may enforce a network policy without obtaining accurate per-job byte
 counts. Missing counters are represented as unavailable, never as zero.
 
-`NativeBackend` accounts for the entire job cgroup rather than the runner PID,
-so plugin processes and all descendants are included. `MicrosandboxBackend`
-accounts for the whole microVM through its runtime boundary. Disk usage covers
-all writable job-owned storage, including workspace and Octa state, and should
-come from enforced quota or backend accounting rather than repeated recursive
-directory walks.
+Linux Native accounts for the entire job cgroup rather than the runner PID, so
+plugin processes and all descendants are included. OCI process isolation
+accounts for the whole container, and OCI hypervisor isolation accounts for the
+whole utility VM or microVM. Disk usage covers all disk-backed writable
+job-owned storage, including workspace and Octa state. RAM-backed filesystems
+are charged to memory instead. Quota or backend accounting is preferred where
+the backend exposes live usage; an off-thread workspace traversal is the
+fallback for an enforced bind-mount quota that exposes no public usage counter.
 
 While a job is running, the agent samples usage every five seconds. Each sample
 is an agent lifecycle event with the job, attempt, lease fencing data, and event
@@ -667,7 +801,7 @@ The server and agent never resolve application secret values. A job references
 an Octa secrets profile and logical secret names. The agent provides:
 
 - a short-lived workload identity file at a backend-mapped runtime path
-  (`/run/octa-identity` inside Microsandbox and a restricted per-job path for
+  (`/run/octa-identity` inside an OCI guest and a restricted per-job path for
   Native);
 - a secrets profile containing provider addresses, roles, mounts, and identity
   paths but no resolved values;
@@ -855,7 +989,83 @@ payloads, stale leases, and unknown fields are rejected by contract tests.
 Completion gate: an operator can validate a machine without contacting the
 server or executing repository code.
 
-### Phase 2: coordinator transport and lease loop
+### Phase 2: source-plugin host and Git provider
+
+- Implement source-plugin registry discovery, manifest and settings validation,
+  permission checks, digest verification, bounded JSONL transport,
+  cancellation, and terminal results.
+- Implement `octacity-source-git` with the fixed safe checkout sequence.
+- Isolate Git configuration and credentials.
+- Enforce exact revisions, path rules, timeouts, output limits, and quotas.
+
+Completion gate: the Git plugin materializes an exact fixture revision through
+the published source protocol; malformed or untrusted plugins are rejected;
+malicious fixture repositories cannot execute host hooks, filters, submodules,
+or helpers; and credentials are absent from arguments, protocol output, and
+logs.
+
+### Phase 3: local job lifecycle and execution backends
+
+- Define one retained backend contract suite before adding platform and OCI
+  implementations.
+- Implement one backend-neutral job owner that verifies the signed request
+  before filesystem or plugin activity, materializes source, starts the exact
+  selected backend, supervises `octa-runner`, and owns cleanup.
+- Complete Linux `NativeBackend` with cgroup v2, Bubblewrap namespaces,
+  seccomp, quota-backed storage, and enforceable network modes.
+- Implement `OciBackend` with explicit `process` and `hypervisor` isolation.
+- Implement containerd process isolation on Linux and Microsandbox hypervisor
+  isolation for Linux guests on supported Linux and Apple Silicon macOS agents.
+- Keep every engine's agent-owned journals, FIFOs, and metadata below the
+  validated `state_root`. An explicitly configured containerd daemon owns its
+  content and snapshot stores; OctaCity labels and removes only its own runtime
+  objects. Never select a cloud backend, Podman Machine, ambient socket, or home
+  directory implicitly.
+- Prove the same bidirectional non-PTY runner protocol transport through every
+  supported Native and OCI combination.
+- For OCI, mount the workspace/state tree and complete Octa release bundle with
+  the required permissions and apply image, resource, timeout, and network
+  policies. Add the identity mount only with real identity provisioning.
+- Execute the same real Octafile through Native and both OCI isolation tiers.
+- Collect cumulative CPU, memory, disk, and I/O usage for the complete job
+  boundary in every backend; report network counters only where accurate.
+- Implement graceful cancellation, forced termination, orphan cleanup, and
+  complete destroy for all supported combinations.
+- Remove abandoned backend resources and only recognizably agent-owned job
+  directories before accepting work after restart.
+
+Completion gate: the same leased fixture succeeds through Native and the
+supported OCI process/hypervisor matrix using the shared contract. Runtime and
+isolation selection are signed and explicit, an unavailable isolation tier
+never falls back, and no mode leaves a runner, plugin process, container, VM,
+or job filesystem state behind. CPU, memory, disk, and I/O accounting includes
+child plugin processes and terminal totals agree with the backend's
+authoritative counters.
+
+Implementation status: complete for the initial strict matrix. The signed
+request and execution dispatch use the final top-level `native | oci` model.
+OCI routes by an exact guest platform and `process | hypervisor` capability;
+Microsandbox is an OCI hypervisor engine rather than a third top-level mode.
+The backend-neutral job owner, Linux Native backend, Linux containerd process
+engine, and Microsandbox hypervisor engine all implement the same retained
+runner lifecycle.
+
+The real contract has passed for Linux Native, Linux containerd with overlayfs
+and runc v2, and a Linux Microsandbox guest on Apple Silicon macOS. Every run
+used a signed job, digest-pinned image where applicable, the complete Octa
+release, bidirectional runner JSONL, terminal resource accounting, graceful
+cancellation, backend destruction, workspace removal, and a second orphan
+cleanup pass. Exploratory warm success-and-cancel measurements were about 3.7
+seconds for Native, 5.1 seconds for containerd, and 0.9 seconds for
+Microsandbox with its RAM-backed root overlay; dedicated release workers must retain their
+own comparable measurements. Exact provisioning and combined coverage commands
+are documented in [`backend-contract-tests.md`](backend-contract-tests.md).
+
+Windows Native/containerd/Hyper-V and host-native macOS execution are future
+matrix extensions. They are not Phase 3 claims and must pass this same contract
+on dedicated workers before being advertised.
+
+### Phase 4: coordinator transport and lease loop
 
 - Implement the HTTPS `CoordinatorClient` without exposing HTTP types to the
   job state machine.
@@ -868,46 +1078,6 @@ server or executing repository code.
 Completion gate: protocol integration tests cover disconnects, retries,
 timeouts, duplicate responses, lease expiry, fencing, and shutdown while
 polling.
-
-### Phase 3: source-plugin host and Git provider
-
-- Implement source-plugin registry discovery, manifest and settings validation,
-  permission checks, digest verification, bounded JSONL transport,
-  cancellation, and terminal results.
-- Implement `octacity-source-git` with the fixed safe checkout sequence.
-- Isolate Git configuration and credentials.
-- Enforce exact revisions, path rules, timeouts, output limits, and quotas.
-- Create the per-job journal and source cleanup procedure.
-
-Completion gate: the Git plugin materializes an exact fixture revision through
-the published source protocol; malformed or untrusted plugins are rejected;
-malicious fixture repositories cannot execute host hooks, filters, submodules,
-or helpers; and credentials are absent from arguments, protocol output, and
-logs.
-
-### Phase 4: execution backends and runner vertical slice
-
-- Define one retained backend contract suite before implementing either
-  backend.
-- Implement `NativeBackend` with explicit enablement and no ambient environment
-  or credential inheritance.
-- Implement `MicrosandboxBackend` through the pinned official Rust SDK.
-- Prove the same bidirectional non-PTY runner protocol transport through both.
-- For Microsandbox, mount workspace, Octa release, state, plugins, and identity
-  with the required permissions and apply image, resource, timeout, and network
-  policies.
-- Execute the same real Octafile through both backends.
-- Collect cumulative CPU, memory, disk, and I/O usage for the complete job
-  boundary in both backends; report network counters only where accurate.
-- Implement graceful cancellation, forced termination, orphan cleanup, and
-  complete destroy for both.
-
-Completion gate: the same leased fixture succeeds through Native and
-Microsandbox using the shared contract. Backend selection is signed and
-explicit, an unavailable Microsandbox never falls back to Native, and neither
-mode leaves a runner, plugin process, VM, or job filesystem state behind. CPU,
-memory, disk, and I/O accounting includes child plugin processes and terminal
-totals agree with the backend's authoritative counters.
 
 ### Phase 5: durable events and complete lifecycle
 
@@ -944,8 +1114,11 @@ or uploaded metadata.
 
 ### Phase 7: hardening and packaging
 
-- Add systemd service and hardened unit settings.
-- Build signed Linux `x86_64` and `aarch64` release artifacts with checksums.
+- Add hardened service definitions for systemd, Windows Service Control
+  Manager, and macOS launchd.
+- Build signed Linux, Windows, and macOS Octa release artifacts with capability
+  manifests and checksums; package the agent and host-native source plugins for
+  every supported agent platform.
 - Add startup orphan cleanup and disk-pressure behavior.
 - Run dependency audit, fuzz protocol parsers, and test corrupt local state.
 - Document installation, enrollment, rotation, upgrades, draining, and
@@ -979,9 +1152,33 @@ v1 and a released Octa bundle:
 - transient and repeated resource-sampling failures;
 - duplicate resource samples after reconnect and final peak/cumulative totals.
 
-The KVM end-to-end suite runs on dedicated Linux CI runners. Unit and protocol
-tests run on normal Linux CI. Windows and macOS may compile shared protocol
-code but are not advertised as supported agents in v1.
+The initial end-to-end matrix covers Linux Native, Linux OCI process isolation,
+and Linux OCI hypervisor guests on supported Linux and Apple Silicon macOS
+agents. Future Windows and host-native macOS combinations enter the matrix only
+after their implementations pass the same suite on dedicated workers. A
+platform/isolation pair is not advertised merely because its code
+cross-compiles.
+
+### Phase 9: server-side agent providers
+
+- Define the narrow `AgentProvider` lifecycle around provision, observe, and
+  terminate operations. Draining remains scheduler state, not a provider API.
+- Implement `VsphereAgentProvider` and `ProxmoxAgentProvider`; statically
+  enrolled agents bypass this boundary, and cloud providers are independent
+  adapters.
+- Keep provider credentials and APIs on the server. A provisioned machine gets
+  a short-lived enrollment token and initiates its own authenticated outbound
+  connection.
+- Learn scheduling capabilities only from an authenticated agent registration,
+  not from template labels supplied by a provider.
+- Support persistent, idle-retired, and single-job disposable pool policies.
+- Fence a lost machine before requeueing its job, and make termination
+  idempotent without treating a timeout as proof that a VM is gone.
+
+Completion gate: vSphere and Proxmox can each create a prepared Linux or
+Windows agent from an immutable template, run one fenced job, return its
+artifacts and events, and destroy the disposable machine without coupling
+provider APIs to `ExecutionBackend` or the job state machine.
 
 ## Performance tests
 
@@ -992,8 +1189,9 @@ not committed result files. Measure at least:
 - long-poll request rate while idle;
 - lease-to-source-start latency;
 - source materialization latency;
-- Native and Microsandbox start/destroy latency;
-- agent overhead around the same `octa-runner` fixture on both backends;
+- Native and OCI process/hypervisor start/destroy latency by platform;
+- agent overhead around the same `octa-runner` fixture across the supported
+  runtime matrix;
 - sustained event throughput and peak memory with large output;
 - event replay after a simulated outage;
 - CPU and allocation overhead of five-second resource sampling;
@@ -1015,7 +1213,7 @@ external server can:
 - materialize an exact revision through a digest-verified, operator-installed
   source plugin without executing repository-controlled code on the host;
 - run the required Octa release and locked plugins through explicitly selected
-  Native and Microsandbox backends without fallback;
+  Native and OCI process/hypervisor modes without fallback;
 - receive durable per-job resource samples and authoritative terminal CPU,
   memory, disk, and I/O totals for the complete execution boundary;
 - receive ordered replayable events and exactly one terminal completion;
@@ -1029,11 +1227,13 @@ external server can:
 
 ## Explicitly deferred
 
-- server queue and scheduler implementation beyond the protocol test server;
+- server queue and scheduler implementation beyond the protocol test server
+  until the Agent Ready gate; they are the next implementation milestone;
 - Web UI;
 - multiple simultaneous jobs per agent;
-- agent pools and autoscaling;
-- Windows and macOS execution backends;
+- additional dynamic agent providers beyond vSphere and Proxmox;
+- Podman OCI integration until it can satisfy the same lifecycle and isolation
+  contract as the initial containerd and Microsandbox engines;
 - Kubernetes executor;
 - Docker socket passthrough;
 - submodules and Git LFS;
@@ -1046,9 +1246,9 @@ external server can:
 - multipart artifact upload until object-size requirements justify it;
 - arbitrary server-to-agent administration commands.
 
-These features require real product demand. They must not complicate the first
-Linux agent or weaken the explicit trust boundary between Native and isolated
-execution.
+These features require real product demand. They must not weaken the explicit
+trust boundary between Native, OCI process isolation, and OCI hypervisor
+isolation.
 
 ## First coding milestone
 
@@ -1060,13 +1260,13 @@ signed fixture lease
   -> exact fixture revision through octacity-source-git
   -> selected ExecutionBackend
       -> NativeBackend
-      `-> MicrosandboxBackend by image digest
+      `-> OciBackend(process | hypervisor) by image digest
   -> identical octa-runner hello/start/events/finished contract
   -> graceful backend destroy
   -> verified empty process, VM, credential, and workspace state
 ```
 
-The milestone is complete only when both backends pass the retained contract
-suite and Microsandbox failure never selects Native. Then add the real
-long-poll lease loop, durable delivery, S3-compatible uploads, and operational
-packaging around the same path.
+The milestone is complete only when the runtime matrix passes the retained
+contract suite and an unavailable OCI mode or isolation tier never selects a
+weaker alternative. Then add the real long-poll lease loop, durable delivery,
+S3-compatible uploads, and operational packaging around the same path.
