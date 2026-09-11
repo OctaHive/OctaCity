@@ -103,6 +103,9 @@ pub(super) fn validate_server_url(value: &str) -> Result<(), ConfigError> {
   if url.scheme_str() != Some("https") {
     return invalid("server_url must use https");
   }
+  if url.path_and_query().is_some_and(|path| path.as_str() != "/") {
+    return invalid("server_url must contain only scheme, host, and optional port");
+  }
   Ok(())
 }
 

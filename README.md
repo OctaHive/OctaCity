@@ -1,14 +1,16 @@
 # OctaCity
 
 OctaCity is the control plane and self-hosted agent for running
-[Octa](https://github.com/OctaHive/octa) jobs. The repository is at the first
-local-execution milestone; coordinator transport and the production daemon are
-the next phase, and no server is available yet.
+[Octa](https://github.com/OctaHive/octa) jobs. The repository now includes the
+local-execution and coordinator-transport milestones. Durable event delivery
+and the production daemon are the next phase, and no server is available yet.
 
 The current workspace contains:
 
 - `octacity-protocol`: strict, signed server-agent job types;
 - `octacity-config`: parsing and intrinsic validation of agent configuration;
+- `octacity-coordinator`: bounded HTTPS, idempotent retry, lease polling, and
+  independent fenced heartbeats;
 - `octacity-execution`: backend-neutral execution ports and shared types;
 - `octacity-execution-oci`: fail-closed OCI platform/isolation dispatch;
 - `octacity-execution-containerd`: Linux OCI process engine through containerd's
@@ -16,6 +18,8 @@ The current workspace contains:
 - `octacity-execution-microsandbox`: OCI hypervisor engine through the pinned
   official Microsandbox SDK;
 - `octacity-execution-native`: Linux cgroup-v2 Native backend;
+- `octacity-inventory`: verified registration inventory and advisory host
+  snapshots;
 - `octacity-job`: signed source-to-runner lifecycle and cleanup owner;
 - `octacity-runner`: verified Octa inventory, runner protocol, and supervision;
 - `octacity-source`: trusted source-plugin registry and process host;
@@ -25,6 +29,10 @@ The current workspace contains:
 - `octacity-agent`: the CLI and composition root that wires these components.
 
 Run all checks with:
+
+Clean builds require `protoc` because `containerd-client` generates its Rust
+gRPC bindings during compilation. CI installs the compiler explicitly on every
+supported runner OS.
 
 ```shell
 cargo fmt --all -- --check
@@ -69,6 +77,8 @@ The implementation sequence and security boundaries are documented in
 [`docs/agent-implementation-plan.md`](docs/agent-implementation-plan.md).
 Language-neutral wire specifications are indexed in
 [`docs/protocols/README.md`](docs/protocols/README.md).
+The implemented coordinator transport is specified in
+[`docs/protocols/server-agent-v1.md`](docs/protocols/server-agent-v1.md).
 The source-plugin process model and complete protocol v1 lifecycle are
 documented in
 [`crates/octacity-source-plugin/README.md`](crates/octacity-source-plugin/README.md).

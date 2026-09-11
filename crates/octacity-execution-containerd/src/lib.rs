@@ -8,6 +8,9 @@
 
 use std::{path::PathBuf, time::Duration};
 
+/// Stable scheduler and diagnostics identifier for this execution engine.
+pub const CONTAINERD_ENGINE_NAME: &str = "containerd";
+
 /// Explicit operator-owned containerd settings.
 #[derive(Clone, Debug)]
 pub struct ContainerdEngineConfig {

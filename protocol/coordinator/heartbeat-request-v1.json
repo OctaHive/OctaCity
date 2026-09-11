@@ -1,0 +1,34 @@
+{
+  "protocol_version": 1,
+  "request_id": "heartbeat-20260911-1",
+  "registration_id": "registration-7",
+  "lease": {
+    "lease_id": "lease-42",
+    "job_id": "job-42",
+    "attempt": 1,
+    "fencing_token": "fence-42-1"
+  },
+  "snapshot": {
+    "available_cpu_millis": 4500,
+    "available_memory_bytes": 8589934592,
+    "work_disk_free_bytes": 75161927680,
+    "state_disk_free_bytes": 32212254720,
+    "active_job": {
+      "job_id": "job-42",
+      "attempt": 1,
+      "lease_id": "lease-42"
+    },
+    "backends": [
+      {
+        "backend": "native",
+        "status": "ready",
+        "message": null
+      },
+      {
+        "backend": "microsandbox",
+        "status": "ready",
+        "message": null
+      }
+    ]
+  }
+}

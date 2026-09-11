@@ -15,6 +15,9 @@ use tokio_util::sync::CancellationToken;
 
 use octacity_execution::{ExecutionBackend, ExecutionError, RunnerProgram, RunningExecution, StartExecution};
 
+/// Stable scheduler and diagnostics identifier for Native execution.
+pub const NATIVE_BACKEND_NAME: &str = "native";
+
 #[cfg(target_os = "linux")]
 use octacity_execution::{ExecutionTarget, NetworkAccess};
 

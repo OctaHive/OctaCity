@@ -1,0 +1,8 @@
+{
+  "protocol_version": 1,
+  "request_id": "heartbeat-20260911-1",
+  "directive": {
+    "action": "continue",
+    "expires_at": 1789056360
+  }
+}

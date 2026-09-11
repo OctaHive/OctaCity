@@ -56,6 +56,11 @@ impl Fixture {
       max_workspace_bytes: 1024,
       max_spool_bytes: 1024,
       poll_timeout_seconds: 30,
+      coordinator_request_timeout_seconds: 10,
+      coordinator_max_body_bytes: 4 * 1024 * 1024,
+      retry_initial_delay_milliseconds: 100,
+      retry_max_delay_seconds: 10,
+      retry_max_attempts: 4,
       heartbeat_interval_seconds: 5,
       lease_safety_margin_seconds: 15,
       graceful_cancel_timeout_seconds: 5,
@@ -351,6 +356,28 @@ fn validates_upload_origins_limits_and_lease_timing() {
   );
 
   let mut fixture = Fixture::new();
+  fixture.config.coordinator_max_body_bytes = 0;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("coordinator body")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.retry_initial_delay_milliseconds = fixture.config.retry_max_delay_seconds * 1000 + 1;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("retry_initial_delay_milliseconds")
+  );
+
+  let mut fixture = Fixture::new();
   fixture.config.heartbeat_interval_seconds = fixture.config.lease_safety_margin_seconds;
   assert!(fixture.config.validate().unwrap_err().to_string().contains("shorter"));
 }
@@ -395,6 +422,17 @@ fn rejects_invalid_identity_and_server_material() {
       .unwrap_err()
       .to_string()
       .contains("must use https")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.server_url = "https://octacity.example/api".to_owned();
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("only scheme")
   );
 }
 

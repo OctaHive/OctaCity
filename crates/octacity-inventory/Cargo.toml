@@ -1,0 +1,18 @@
+[package]
+name = "octacity-inventory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agent inventory and advisory host metrics for OctaCity"
+
+[dependencies]
+octacity-protocol = { path = "../octacity-protocol" }
+octacity-runner = { path = "../octacity-runner" }
+octacity-source = { path = "../octacity-source" }
+sysinfo.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

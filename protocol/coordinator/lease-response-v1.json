@@ -1,0 +1,19 @@
+{
+  "outcome": "lease",
+  "protocol_version": 1,
+  "request_id": "poll-20260911-1",
+  "lease": {
+    "lease_id": "lease-42",
+    "job_id": "job-42",
+    "attempt": 1,
+    "fencing_token": "fence-42-1",
+    "issued_at": 1789056000,
+    "expires_at": 1789056300,
+    "signed_job_spec": {
+      "key_id": "server-key-2026-09",
+      "algorithm": "ed25519",
+      "payload": "cGF5bG9hZA==",
+      "signature": "c2lnbmF0dXJl"
+    }
+  }
+}

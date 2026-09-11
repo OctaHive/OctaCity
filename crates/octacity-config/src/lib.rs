@@ -76,6 +76,16 @@ pub struct AgentConfig {
   pub max_spool_bytes: u64,
   /// Coordinator long-poll duration.
   pub poll_timeout_seconds: u64,
+  /// Timeout for coordinator requests other than the long-poll wait itself.
+  pub coordinator_request_timeout_seconds: u64,
+  /// Maximum serialized coordinator request or response body.
+  pub coordinator_max_body_bytes: usize,
+  /// Base delay for idempotent coordinator retries.
+  pub retry_initial_delay_milliseconds: u64,
+  /// Local ceiling for coordinator retry delays.
+  pub retry_max_delay_seconds: u64,
+  /// Total attempts for one idempotent coordinator operation.
+  pub retry_max_attempts: usize,
   /// Interval between heartbeats.
   pub heartbeat_interval_seconds: u64,
   /// Time reserved to stop before lease expiry.
@@ -334,6 +344,15 @@ impl AgentConfig {
     }
     for (name, value) in [
       ("poll_timeout_seconds", self.poll_timeout_seconds),
+      (
+        "coordinator_request_timeout_seconds",
+        self.coordinator_request_timeout_seconds,
+      ),
+      (
+        "retry_initial_delay_milliseconds",
+        self.retry_initial_delay_milliseconds,
+      ),
+      ("retry_max_delay_seconds", self.retry_max_delay_seconds),
       ("heartbeat_interval_seconds", self.heartbeat_interval_seconds),
       ("lease_safety_margin_seconds", self.lease_safety_margin_seconds),
       ("graceful_cancel_timeout_seconds", self.graceful_cancel_timeout_seconds),
@@ -351,6 +370,12 @@ impl AgentConfig {
     }
     if self.max_accounting_failures == 0 {
       return invalid("max_accounting_failures must be greater than zero");
+    }
+    if self.coordinator_max_body_bytes == 0 || self.retry_max_attempts == 0 {
+      return invalid("coordinator body and retry-attempt limits must be greater than zero");
+    }
+    if self.retry_initial_delay_milliseconds > self.retry_max_delay_seconds.saturating_mul(1000) {
+      return invalid("retry_initial_delay_milliseconds must not exceed retry_max_delay_seconds");
     }
     if self.heartbeat_interval_seconds >= self.lease_safety_margin_seconds {
       return invalid("heartbeat_interval_seconds must be shorter than lease_safety_margin_seconds");

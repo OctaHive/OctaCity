@@ -1,21 +1,26 @@
 //! Thin command-line entry point for configuring diagnostics and invoking the
 //! agent's startup validation routines.
 //!
-//! Long-lived coordination is intentionally absent until the server-agent
-//! transport is implemented. This binary is the composition root: focused
-//! component crates contain reusable behavior and never depend on the agent.
+//! Long-lived coordination is intentionally absent until durable event and
+//! completion delivery exists in phase 5. This binary is the composition
+//! root: focused component crates contain reusable behavior and never depend
+//! on the agent.
 
 use std::{collections::BTreeMap, path::PathBuf, process::ExitCode, sync::Arc, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use octacity_config::{AgentConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
-use octacity_execution::ExecutionBackend;
-use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
-use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
-use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
-use octacity_execution_oci::{OciBackend, OciEngine};
+use octacity_coordinator::{HttpCoordinatorClient, HttpCoordinatorConfig, RetryPolicy};
+use octacity_execution::{ExecutionArchitecture, ExecutionBackend, ExecutionOs, ExecutionPlatform, OciIsolation};
+use octacity_execution_containerd::{CONTAINERD_ENGINE_NAME, ContainerdEngine, ContainerdEngineConfig};
+use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngine, MicrosandboxEngineConfig};
+use octacity_execution_native::{LinuxNativeConfig, NATIVE_BACKEND_NAME, NativeBackend};
+use octacity_execution_oci::{OciBackend, OciCapability, OciEngine};
+use octacity_inventory::{HostMonitor, build_inventory, host_platform};
 use octacity_job::{JobExecutor, JobExecutorConfig};
-use octacity_protocol::RuntimeMode;
+use octacity_protocol::{
+  BackendHealth, BackendHealthStatus, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode,
+};
 use octacity_runner::RunnerInstallation;
 use octacity_runner::RunnerSupervisionPolicy;
 use octacity_source::{SourceMaterializer, SourcePluginRegistry};
@@ -81,10 +86,45 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
       let agent_id = validated.config.agent_id.clone();
       let signing_key_count = validated.signing_keys.len();
       let runtime_count = validated.config.enabled_runtime_modes.len();
-      let _executor = build_executor(validated, runner, source_plugins).await?;
+      let (_executor, runtimes, backend_health) =
+        build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
+      let virtualization_available = runtimes
+        .iter()
+        .any(|capability| capability.isolation == Some(octacity_protocol::OciIsolation::Hypervisor));
+      let mut host = HostMonitor::new(
+        validated.config.work_root.clone(),
+        validated.config.state_root.clone(),
+        virtualization_available,
+      )?;
+      let inventory = build_inventory(
+        agent_id.clone(),
+        env!("CARGO_PKG_VERSION").to_owned(),
+        validated.config.labels.clone(),
+        runtimes,
+        &runner,
+        &source_plugins,
+        host.capacity().clone(),
+      )?;
+      let _snapshot = host.snapshot(None, backend_health)?;
+      let _coordinator = HttpCoordinatorClient::new(HttpCoordinatorConfig {
+        server_url: validated.config.server_url.clone(),
+        credential_file: validated.config.credential_file.clone(),
+        request_timeout: Duration::from_secs(validated.config.coordinator_request_timeout_seconds),
+        max_body_bytes: validated.config.coordinator_max_body_bytes,
+        retry: RetryPolicy {
+          max_attempts: validated.config.retry_max_attempts,
+          initial_delay: Duration::from_millis(validated.config.retry_initial_delay_milliseconds),
+          max_delay: Duration::from_secs(validated.config.retry_max_delay_seconds),
+        },
+      })?;
       println!(
-        "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} runtime mode(s), {} source plugin(s))",
-        agent_id, octa_version, signing_key_count, runtime_count, source_plugin_count
+        "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} runtime mode(s), {} runtime route(s), {} source plugin(s))",
+        agent_id,
+        octa_version,
+        signing_key_count,
+        runtime_count,
+        inventory.runtimes.len(),
+        source_plugin_count
       );
       info!(
         agent_id = %agent_id,
@@ -99,11 +139,13 @@ async fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn build_executor(
-  validated: ValidatedConfig,
+  validated: &ValidatedConfig,
   runner: RunnerInstallation,
   source_plugins: Arc<SourcePluginRegistry>,
-) -> Result<JobExecutor, Box<dyn std::error::Error>> {
+) -> Result<(JobExecutor, Vec<RuntimeCapability>, Vec<BackendHealth>), Box<dyn std::error::Error>> {
   let mut backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>> = BTreeMap::new();
+  let mut runtime_capabilities = Vec::new();
+  let mut backend_health = Vec::new();
   for runtime in &validated.runtimes {
     let (mode, backend): (RuntimeMode, Arc<dyn ExecutionBackend>) = match runtime {
       ValidatedRuntimeConfig::Native {
@@ -112,9 +154,8 @@ async fn build_executor(
         readonly_paths,
         pids_limit,
         environment,
-      } => (
-        RuntimeMode::Native,
-        Arc::new(NativeBackend::new(LinuxNativeConfig {
+      } => {
+        let backend = Arc::new(NativeBackend::new(LinuxNativeConfig {
           cgroup_root: cgroup_root.clone(),
           work_root: validated.config.work_root.clone(),
           bubblewrap: bubblewrap.clone(),
@@ -124,28 +165,39 @@ async fn build_executor(
           cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
           pids_limit: *pids_limit,
           environment: environment.clone(),
-        })?),
-      ),
+        })?);
+        runtime_capabilities.push(RuntimeCapability {
+          backend: NATIVE_BACKEND_NAME.to_owned(),
+          mode: RuntimeMode::Native,
+          platform: host_platform()?,
+          isolation: None,
+        });
+        backend_health.push(ready_backend(NATIVE_BACKEND_NAME));
+        (RuntimeMode::Native, backend)
+      }
       ValidatedRuntimeConfig::Oci {
         engines: configured_engines,
       } => {
         let mut engines: Vec<Arc<dyn OciEngine>> = Vec::new();
         for configured in configured_engines {
-          let engine: Arc<dyn OciEngine> = match configured {
+          let (name, engine): (&str, Arc<dyn OciEngine>) = match configured {
             OciEngineConfig::Microsandbox {
               executable,
               libkrunfw,
               metrics_sample_interval_seconds,
-            } => Arc::new(MicrosandboxEngine::new(MicrosandboxEngineConfig {
-              agent_id: validated.config.agent_id.clone(),
-              state_root: validated.config.state_root.clone(),
-              work_root: validated.config.work_root.clone(),
-              runner_platform: runner.capabilities.platform.clone(),
-              executable: executable.clone(),
-              libkrunfw: libkrunfw.clone(),
-              cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
-              metrics_sample_interval: Duration::from_secs(*metrics_sample_interval_seconds),
-            })?),
+            } => (
+              MICROSANDBOX_ENGINE_NAME,
+              Arc::new(MicrosandboxEngine::new(MicrosandboxEngineConfig {
+                agent_id: validated.config.agent_id.clone(),
+                state_root: validated.config.state_root.clone(),
+                work_root: validated.config.work_root.clone(),
+                runner_platform: runner.capabilities.platform.clone(),
+                executable: executable.clone(),
+                libkrunfw: libkrunfw.clone(),
+                cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+                metrics_sample_interval: Duration::from_secs(*metrics_sample_interval_seconds),
+              })?),
+            ),
             OciEngineConfig::Containerd {
               endpoint,
               namespace,
@@ -170,9 +222,16 @@ async fn build_executor(
                 open_files_limit: *open_files_limit,
               })?;
               engine.validate_connection().await?;
-              Arc::new(engine)
+              (CONTAINERD_ENGINE_NAME, Arc::new(engine))
             }
           };
+          runtime_capabilities.extend(
+            engine
+              .capabilities()
+              .into_iter()
+              .map(|capability| advertised_oci_capability(name, capability)),
+          );
+          backend_health.push(ready_backend(name));
           engines.push(engine);
         }
         (RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?))
@@ -181,13 +240,13 @@ async fn build_executor(
     backends.insert(mode, backend);
   }
   let source: Arc<dyn SourceMaterializer> = source_plugins;
-  Ok(JobExecutor::new(
-    validated.signing_keys,
+  let executor = JobExecutor::new(
+    validated.signing_keys.clone(),
     runner,
     source,
     backends,
     JobExecutorConfig {
-      work_root: validated.config.work_root,
+      work_root: validated.config.work_root.clone(),
       max_workspace_bytes: validated.config.max_workspace_bytes,
       cancellation_grace: Duration::from_secs(validated.config.graceful_cancel_timeout_seconds),
       runner_supervision: RunnerSupervisionPolicy {
@@ -197,7 +256,42 @@ async fn build_executor(
         max_accounting_failures: validated.config.max_accounting_failures,
       },
     },
-  )?)
+  )?;
+  Ok((executor, runtime_capabilities, backend_health))
+}
+
+fn advertised_oci_capability(backend: &str, capability: OciCapability) -> RuntimeCapability {
+  RuntimeCapability {
+    backend: backend.to_owned(),
+    mode: RuntimeMode::Oci,
+    platform: protocol_platform(capability.platform),
+    isolation: Some(match capability.isolation {
+      OciIsolation::Process => octacity_protocol::OciIsolation::Process,
+      OciIsolation::Hypervisor => octacity_protocol::OciIsolation::Hypervisor,
+    }),
+  }
+}
+
+fn protocol_platform(platform: ExecutionPlatform) -> octacity_protocol::PlatformSpec {
+  octacity_protocol::PlatformSpec {
+    os: match platform.os {
+      ExecutionOs::Linux => PlatformOs::Linux,
+      ExecutionOs::Windows => PlatformOs::Windows,
+      ExecutionOs::Macos => PlatformOs::Macos,
+    },
+    architecture: match platform.architecture {
+      ExecutionArchitecture::Amd64 => PlatformArchitecture::Amd64,
+      ExecutionArchitecture::Arm64 => PlatformArchitecture::Arm64,
+    },
+  }
+}
+
+fn ready_backend(backend: &str) -> BackendHealth {
+  BackendHealth {
+    backend: backend.to_owned(),
+    status: BackendHealthStatus::Ready,
+    message: None,
+  }
 }
 
 fn init_tracing(filter: Option<&str>, format: LogFormat) -> Result<(), Box<dyn std::error::Error>> {

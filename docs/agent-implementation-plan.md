@@ -441,6 +441,11 @@ allowed_upload_origins
 max_workspace_bytes
 max_spool_bytes
 poll_timeout_seconds
+coordinator_request_timeout_seconds
+coordinator_max_body_bytes
+retry_initial_delay_milliseconds
+retry_max_delay_seconds
+retry_max_attempts
 heartbeat_interval_seconds
 lease_safety_margin_seconds
 graceful_cancel_timeout_seconds
@@ -1078,6 +1083,21 @@ on dedicated workers before being advertised.
 Completion gate: protocol integration tests cover disconnects, retries,
 timeouts, duplicate responses, lease expiry, fencing, and shutdown while
 polling.
+
+Implementation status: complete. `octacity-protocol` owns strict registration,
+inventory, lease, fencing, heartbeat, host-snapshot, directive, and structured
+error DTOs with checked golden examples. `octacity-coordinator` provides the
+transport-independent client boundary, a bounded Reqwest HTTPS adapter,
+same-key idempotent retries, signed lease polling, sticky drain handling, and
+an independent heartbeat monitor that cancels on explicit cancellation,
+fencing, shutdown, or the monotonic lease safety deadline. `octacity-inventory`
+collects verified component inventory and cross-platform advisory host
+capacity without coupling transport to runner, source, or backend adapters.
+Integration tests exercise real TCP disconnects, retryable responses, response
+correlation, body and time bounds, cancellation while polling, invalid
+signatures, drain, fencing, and renewal failure. Production job acquisition is
+not exposed by the binary until phase 5 can durably spool events and complete a
+lease; executing unreportable jobs would be an unsafe intermediate daemon.
 
 ### Phase 5: durable events and complete lifecycle
 

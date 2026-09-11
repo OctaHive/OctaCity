@@ -159,6 +159,11 @@ impl SourcePluginRegistry {
     self.plugins.get(name)
   }
 
+  /// Iterates over verified plugins in deterministic logical-name order.
+  pub fn iter(&self) -> impl Iterator<Item = (&str, &InstalledSourcePlugin)> {
+    self.plugins.iter().map(|(name, plugin)| (name.as_str(), plugin))
+  }
+
   /// Resolves the exact plugin version and digest required by a signed job.
   pub fn resolve(&self, requirement: &SourceSpec) -> Result<&InstalledSourcePlugin, RegistryError> {
     let plugin = self

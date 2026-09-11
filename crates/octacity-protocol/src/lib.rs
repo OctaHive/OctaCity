@@ -16,6 +16,10 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod coordinator;
+
+pub use coordinator::*;
+
 /// Signed JobSpec wire version supported by this crate.
 pub const AGENT_PROTOCOL_VERSION: u16 = 1;
 /// Exact signature algorithm identifier accepted in a v1 envelope.

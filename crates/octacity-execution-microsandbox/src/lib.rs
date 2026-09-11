@@ -34,6 +34,9 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+/// Stable scheduler and diagnostics identifier for this execution engine.
+pub const MICROSANDBOX_ENGINE_NAME: &str = "microsandbox";
+
 mod execution;
 mod plan;
 
