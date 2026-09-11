@@ -192,72 +192,80 @@ fn lifecycle_config(config: &AgentConfig) -> JobLifecycleConfig {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use async_trait::async_trait;
-  use octacity_coordinator::{CoordinatorClient, CoordinatorError, Registration};
-  use octacity_protocol::{
-    AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, CompleteLeaseRequest,
-    HeartbeatDirective, HostCapacity, HostSnapshot, LeaseAssignment,
-  };
 
-  struct DrainCoordinator;
+  #[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(target_os = "macos", target_arch = "aarch64")
+  ))]
+  mod installed_agent {
+    use super::*;
+    use async_trait::async_trait;
+    use octacity_coordinator::{CoordinatorClient, CoordinatorError, Registration};
+    use octacity_protocol::{
+      AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, CompleteLeaseRequest,
+      HeartbeatDirective, HostCapacity, HostSnapshot, LeaseAssignment,
+    };
 
-  #[async_trait]
-  impl CoordinatorClient for DrainCoordinator {
-    async fn register(
-      &self,
-      inventory: &AgentInventory,
-      _cancellation: CancellationToken,
-    ) -> Result<Registration, CoordinatorError> {
-      Ok(Registration {
-        agent_id: inventory.agent_id.clone(),
-        registration_id: "registration-coverage".to_owned(),
-        max_retry_delay: Duration::from_secs(1),
-      })
-    }
+    pub(super) struct DrainCoordinator;
 
-    async fn acquire_lease(
-      &self,
-      _registration: &Registration,
-      _wait: Duration,
-      _lease_safety_margin: Duration,
-      _cancellation: CancellationToken,
-    ) -> Result<AcquireLeaseResponse, CoordinatorError> {
-      Ok(AcquireLeaseResponse::Drain {
-        protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
-        request_id: "request-coverage".to_owned(),
-      })
-    }
+    #[async_trait]
+    impl CoordinatorClient for DrainCoordinator {
+      async fn register(
+        &self,
+        inventory: &AgentInventory,
+        _cancellation: CancellationToken,
+      ) -> Result<Registration, CoordinatorError> {
+        Ok(Registration {
+          agent_id: inventory.agent_id.clone(),
+          registration_id: "registration-coverage".to_owned(),
+          max_retry_delay: Duration::from_secs(1),
+        })
+      }
 
-    async fn heartbeat(
-      &self,
-      _registration: &Registration,
-      _lease: &LeaseAssignment,
-      _snapshot: &HostSnapshot,
-      _capacity: &HostCapacity,
-      _lease_safety_margin: Duration,
-      _cancellation: CancellationToken,
-    ) -> Result<HeartbeatDirective, CoordinatorError> {
-      unreachable!("a drained worker has no active lease")
-    }
+      async fn acquire_lease(
+        &self,
+        _registration: &Registration,
+        _wait: Duration,
+        _lease_safety_margin: Duration,
+        _cancellation: CancellationToken,
+      ) -> Result<AcquireLeaseResponse, CoordinatorError> {
+        Ok(AcquireLeaseResponse::Drain {
+          protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
+          request_id: "request-coverage".to_owned(),
+        })
+      }
 
-    async fn append_events(
-      &self,
-      _registration: &Registration,
-      _lease: &LeaseAssignment,
-      _events: &[AttemptEventEnvelope],
-      _cancellation: CancellationToken,
-    ) -> Result<AppendEventsResponse, CoordinatorError> {
-      unreachable!("a drained worker has no event stream")
-    }
+      async fn heartbeat(
+        &self,
+        _registration: &Registration,
+        _lease: &LeaseAssignment,
+        _snapshot: &HostSnapshot,
+        _capacity: &HostCapacity,
+        _lease_safety_margin: Duration,
+        _cancellation: CancellationToken,
+      ) -> Result<HeartbeatDirective, CoordinatorError> {
+        unreachable!("a drained worker has no active lease")
+      }
 
-    async fn complete_lease(
-      &self,
-      _registration: &Registration,
-      _lease: &LeaseAssignment,
-      _completion: &CompleteLeaseRequest,
-      _cancellation: CancellationToken,
-    ) -> Result<(), CoordinatorError> {
-      unreachable!("a drained worker cannot complete a lease")
+      async fn append_events(
+        &self,
+        _registration: &Registration,
+        _lease: &LeaseAssignment,
+        _events: &[AttemptEventEnvelope],
+        _cancellation: CancellationToken,
+      ) -> Result<AppendEventsResponse, CoordinatorError> {
+        unreachable!("a drained worker has no event stream")
+      }
+
+      async fn complete_lease(
+        &self,
+        _registration: &Registration,
+        _lease: &LeaseAssignment,
+        _completion: &CompleteLeaseRequest,
+        _cancellation: CancellationToken,
+      ) -> Result<(), CoordinatorError> {
+        unreachable!("a drained worker cannot complete a lease")
+      }
     }
   }
 
@@ -404,7 +412,7 @@ mod tests {
   async fn cleans_registers_and_honors_an_idle_drain() {
     let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
     let mut components = Components::load(&fixture.config).await.unwrap();
-    components.coordinator = Arc::new(DrainCoordinator);
+    components.coordinator = Arc::new(installed_agent::DrainCoordinator);
 
     run_loaded(&mut components, CancellationToken::new()).await.unwrap();
     assert!(!components.validated.config.state_root.join("jobs").exists());
