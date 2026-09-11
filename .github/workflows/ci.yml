@@ -25,6 +25,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@v2
+        with:
+          tool: protoc
+          fallback: none
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
@@ -54,7 +59,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install coverage and protobuf tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,protoc
+          fallback: none
       - name: Measure workspace coverage
         run: >-
           cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
