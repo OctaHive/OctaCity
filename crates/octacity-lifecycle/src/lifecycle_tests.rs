@@ -668,6 +668,8 @@ fn stable_completion_identity_contains_no_server_controlled_text() {
 
 #[tokio::test]
 async fn network_failure_replays_without_loss_or_reordering() {
+  const EVENT_COUNT: u64 = 12;
+
   let directory = tempfile::tempdir().unwrap();
   let attempt_root = directory.path().join("attempt");
   fs::create_dir(&attempt_root).unwrap();
@@ -727,8 +729,10 @@ async fn network_failure_replays_without_loss_or_reordering() {
     stop: stop.clone(),
   }
   .spawn();
-  tokio::time::timeout(Duration::from_secs(10), async {
-    for runner_sequence in 1..=100 {
+  // More than three spool capacities exercises repeated backpressure and
+  // batching without making this correctness test a durable-disk benchmark.
+  tokio::time::timeout(Duration::from_secs(30), async {
+    for runner_sequence in 1..=EVENT_COUNT {
       append(
         &spool,
         &work_available,
@@ -756,19 +760,16 @@ async fn network_failure_replays_without_loss_or_reordering() {
   delivery.await.unwrap().unwrap();
 
   let calls = coordinator.calls.lock().unwrap();
-  assert!(calls.len() >= 51);
+  let minimum_calls = EVENT_COUNT.div_ceil(2) as usize + 1;
+  assert!(calls.len() >= minimum_calls);
   assert_eq!(calls[1], calls[0]);
   assert!(
     calls
       .iter()
       .all(|batch| batch.windows(2).all(|pair| pair[1] == pair[0] + 1))
   );
-  let unique = calls
-    .iter()
-    .flatten()
-    .copied()
-    .collect::<std::collections::BTreeSet<_>>();
-  assert_eq!(unique.into_iter().collect::<Vec<_>>(), (1..=100).collect::<Vec<_>>());
+  let delivered = calls.iter().skip(1).flatten().copied().collect::<Vec<_>>();
+  assert_eq!(delivered, (1..=EVENT_COUNT).collect::<Vec<_>>());
 }
 
 #[tokio::test]
