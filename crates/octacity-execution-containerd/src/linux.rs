@@ -50,9 +50,7 @@ use crate::ContainerdEngineConfig;
 #[path = "image.rs"]
 mod image;
 
-use image::{
-  chain_id, containerd_platform, execution_architecture, execution_os, image_configuration, pull_and_unpack,
-};
+use image::{image_configuration, pull_and_unpack};
 
 #[path = "client.rs"]
 mod client;
@@ -69,12 +67,17 @@ mod spec;
 
 use client::{before_deadline, elapsed_millis, grpc, grpc_before, namespaced, operation_deadline};
 use execution::{PreparedExecution, destroy_resources, start_prepared};
+#[cfg(test)]
+use filesystem::agent_resource_prefix;
 use filesystem::{
-  agent_resource_prefix, canonical_directory, create_fifo, filesystem_usage, map_path, remove_abandoned_io_directories,
-  resource_id, set_private_permissions, validate_work_root, validate_workspace_filesystem,
+  canonical_directory, create_fifo, filesystem_usage, map_path, remove_abandoned_io_directories, resource_id,
+  set_private_permissions, validate_work_root, validate_workspace_filesystem,
 };
 #[cfg(test)]
-use image::{ImagePlatform, is_index_media_type, is_manifest_media_type, process_environment, validate_digest};
+use image::{
+  ImagePlatform, chain_id, containerd_platform, execution_architecture, execution_os, is_index_media_type,
+  is_manifest_media_type, process_environment, validate_digest,
+};
 use io::ContainerIo;
 use metrics::decode_cgroup_v2_metrics;
 #[cfg(test)]

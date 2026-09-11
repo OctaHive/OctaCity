@@ -30,6 +30,9 @@ jobs:
         with:
           tool: protoc
           fallback: none
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
       - name: Check formatting
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
@@ -64,6 +67,8 @@ jobs:
         with:
           tool: cargo-llvm-cov,protoc
           fallback: none
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
       - name: Measure workspace coverage
         run: >-
           cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
