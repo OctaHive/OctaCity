@@ -9,7 +9,7 @@ use octa_runner_protocol::{MAX_RUNNER_INPUT_FRAME_BYTES, RunnerCommand};
 use octa_runner_protocol::{
   RUNNER_EVENT_SCHEMA_VERSION, RUNNER_INPUT_SCHEMA_V1, RUNNER_OUTPUT_SCHEMA_V1, RUNNER_PROTOCOL_VERSION,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader};
 
@@ -20,7 +20,7 @@ pub const MAX_RUNNER_OUTPUT_FRAME_BYTES: usize = 16 * 1024 * 1024;
 pub type RunnerMessage = octa_runner_protocol::RunnerMessage<String, RunnerEvent, Vec<serde_json::Value>>;
 
 /// Minimal event header retained before category-specific data reaches the server.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunnerEvent {
   /// Version of the structured event schema.

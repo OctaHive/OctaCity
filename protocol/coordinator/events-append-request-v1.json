@@ -1,0 +1,44 @@
+{
+  "protocol_version": 1,
+  "request_id": "events-20260911-1",
+  "registration_id": "registration-7",
+  "lease": {
+    "lease_id": "lease-42",
+    "job_id": "job-42",
+    "attempt": 1,
+    "fencing_token": "fence-42-1"
+  },
+  "events": [
+    {
+      "job_id": "job-42",
+      "attempt": 1,
+      "lease_id": "lease-42",
+      "fencing_token": "fence-42-1",
+      "stream_sequence": 1,
+      "kind": {
+        "source": "agent",
+        "event": {
+          "type": "state_changed",
+          "state": "preparing"
+        }
+      }
+    },
+    {
+      "job_id": "job-42",
+      "attempt": 1,
+      "lease_id": "lease-42",
+      "fencing_token": "fence-42-1",
+      "stream_sequence": 2,
+      "kind": {
+        "source": "runner",
+        "event": {
+          "schema_version": 3,
+          "sequence": 1,
+          "timestamp": "2026-09-11T12:00:00Z",
+          "category": "job_started",
+          "data": {}
+        }
+      }
+    }
+  ]
+}

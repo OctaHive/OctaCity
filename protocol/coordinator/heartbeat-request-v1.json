@@ -16,7 +16,8 @@
     "active_job": {
       "job_id": "job-42",
       "attempt": 1,
-      "lease_id": "lease-42"
+      "lease_id": "lease-42",
+      "resource_usage": null
     },
     "backends": [
       {

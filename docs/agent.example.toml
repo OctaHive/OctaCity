@@ -16,6 +16,10 @@ native_environment = { PATH = "/usr/local/bin:/usr/bin:/bin" }
 allowed_upload_origins = ["https://artifacts.example.com"]
 max_workspace_bytes = 10737418240
 max_spool_bytes = 1073741824
+max_spool_records = 100000
+event_batch_max_bytes = 1048576
+event_batch_max_records = 256
+event_channel_capacity = 128
 poll_timeout_seconds = 30
 coordinator_request_timeout_seconds = 10
 coordinator_max_body_bytes = 4194304

@@ -55,6 +55,10 @@ impl Fixture {
       allowed_upload_origins: vec!["https://objects.example".to_owned()],
       max_workspace_bytes: 1024,
       max_spool_bytes: 1024,
+      max_spool_records: 32,
+      event_batch_max_bytes: 512,
+      event_batch_max_records: 16,
+      event_channel_capacity: 8,
       poll_timeout_seconds: 30,
       coordinator_request_timeout_seconds: 10,
       coordinator_max_body_bytes: 4 * 1024 * 1024,
@@ -364,6 +368,18 @@ fn validates_upload_origins_limits_and_lease_timing() {
       .unwrap_err()
       .to_string()
       .contains("coordinator body")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.coordinator_max_body_bytes =
+    fixture.config.event_batch_max_bytes + octacity_protocol::MAX_APPEND_REQUEST_OVERHEAD_BYTES - 1;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("protocol metadata")
   );
 
   let mut fixture = Fixture::new();

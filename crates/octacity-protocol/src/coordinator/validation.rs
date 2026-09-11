@@ -256,6 +256,129 @@ impl ActiveJob {
     if self.attempt == 0 {
       return invalid("active job attempt must be greater than zero");
     }
+    if let Some(usage) = &self.resource_usage {
+      usage.validate()?;
+    }
+    Ok(())
+  }
+}
+
+impl ResourceUsageSnapshot {
+  /// Validates monotonic relationships within one cumulative sample.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    if self.observed_at_unix_ms == 0 {
+      return invalid("resource sample timestamp must be greater than zero");
+    }
+    if self.memory_current_bytes > self.memory_peak_bytes || self.disk_current_bytes > self.disk_peak_bytes {
+      return invalid("current resource usage must not exceed its recorded peak");
+    }
+    Ok(())
+  }
+}
+
+impl AttemptEventEnvelope {
+  /// Validates fencing, stream ordering metadata, and event-local invariants.
+  pub fn validate(&self, expected: &LeaseFence) -> Result<(), CoordinatorProtocolError> {
+    expected.validate()?;
+    if self.job_id != expected.job_id
+      || self.attempt != expected.attempt
+      || self.lease_id != expected.lease_id
+      || self.fencing_token != expected.fencing_token
+    {
+      return invalid("event does not match its lease fence");
+    }
+    if self.stream_sequence == 0 {
+      return invalid("event stream_sequence must be greater than zero");
+    }
+    match &self.kind {
+      AttemptEventKind::Runner { event } => {
+        if event.schema_version == 0 || event.sequence == 0 || event.timestamp.is_empty() || event.category.is_empty() {
+          return invalid("runner event header is invalid");
+        }
+      }
+      AttemptEventKind::Agent { event } => match event {
+        AgentLifecycleEvent::ResourceUsage { usage } => usage.validate()?,
+        AgentLifecycleEvent::AccountingUnavailable { consecutive_failures } if *consecutive_failures == 0 => {
+          return invalid("accounting failure count must be greater than zero");
+        }
+        AgentLifecycleEvent::StateChanged { .. } | AgentLifecycleEvent::AccountingUnavailable { .. } => {}
+      },
+    }
+    Ok(())
+  }
+}
+
+impl AppendEventsRequest {
+  /// Validates a non-empty contiguous batch for exactly one lease fence.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    if self.events.is_empty() || self.events.len() > MAX_EVENT_BATCH_RECORDS {
+      return invalid("event batch size is outside the protocol bounds");
+    }
+    let mut expected_sequence = self.events[0].stream_sequence;
+    for event in &self.events {
+      event.validate(&self.lease)?;
+      if event.stream_sequence != expected_sequence {
+        return invalid("event batch stream_sequence values must be contiguous");
+      }
+      expected_sequence = expected_sequence
+        .checked_add(1)
+        .ok_or_else(|| CoordinatorProtocolError::new("event sequence overflowed"))?;
+    }
+    Ok(())
+  }
+}
+
+impl AppendEventsResponse {
+  /// Correlates an acknowledgement and bounds it to the submitted batch.
+  pub fn validate(
+    &self,
+    expected_request_id: &str,
+    first_sequence: u64,
+    last_sequence: u64,
+  ) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    if first_sequence == 0 || last_sequence < first_sequence {
+      return invalid("submitted event sequence range is invalid");
+    }
+    if self.acknowledged_sequence < first_sequence || self.acknowledged_sequence > last_sequence {
+      return invalid("event acknowledgement is outside the submitted sequence range");
+    }
+    Ok(())
+  }
+}
+
+impl CompleteLeaseRequest {
+  /// Validates a fenced, stable completion document.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    identifier("completion_id", &self.completion_id)?;
+    if self.last_event_sequence == 0 {
+      return invalid("completion requires at least one acknowledged event");
+    }
+    if let Some(usage) = &self.final_usage {
+      usage.validate()?;
+    }
+    Ok(())
+  }
+}
+
+impl CompleteLeaseResponse {
+  /// Correlates a completion acknowledgement to its stable identity.
+  pub fn validate(
+    &self,
+    expected_request_id: &str,
+    expected_completion_id: &str,
+  ) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    identifier("completion_id", &self.completion_id)?;
+    if self.completion_id != expected_completion_id {
+      return invalid("completion response does not match completion_id");
+    }
     Ok(())
   }
 }

@@ -1,9 +1,9 @@
 # Server-agent transport protocol v1
 
-Status: implemented by `octacity-protocol` and `octacity-coordinator` for
-registration, lease acquisition, and active-lease heartbeat. Durable events,
-completion, and upload operations are added in the following phases without
-changing the fencing rules defined here.
+Status: implemented by `octacity-protocol`, `octacity-coordinator`, and
+`octacity-lifecycle` for registration, lease acquisition, heartbeat, durable
+events, and terminal completion. Artifact upload operations are added in the
+following phase without changing the fencing rules defined here.
 
 ## Boundary
 
@@ -25,11 +25,13 @@ Every request contains a unique `request_id`; the same value is sent in the
 uses the same identifier. Servers must retain an idempotency record long enough
 to return the same logical result when a response was lost.
 
-The v1 client retries only these idempotent phase-4 operations:
+The v1 client retries only idempotent operations:
 
 - agent registration;
 - lease acquisition;
-- fenced lease heartbeat.
+- fenced lease heartbeat;
+- fenced event append;
+- fenced terminal completion.
 
 Retries are bounded by an operator-configured attempt count and exponential
 delay with jitter. `RegisterAgentResponse.max_retry_delay_ms` supplies an
@@ -113,6 +115,49 @@ capacity, and hypervisor availability. Heartbeats report estimated available
 CPU, available memory, filesystem free space, active job identity, and backend
 health. Snapshot values are bounded by registered capacity. They are advisory
 and never replace cgroup, quota, container, or VM enforcement.
+
+While a job is active, `active_job.resource_usage` carries the latest
+cumulative sample for live scheduling and diagnostics. The same sample is an
+ordered durable agent event; heartbeat is not its storage channel.
+
+## Durable attempt events
+
+```text
+POST /api/v1/leases/{lease_id}/events:append
+```
+
+Every envelope repeats `job_id`, `attempt`, `lease_id`, and `fencing_token`,
+then adds a positive `stream_sequence`. A batch is non-empty, bounded, and
+strictly contiguous. Runner events retain their original event-schema version,
+timestamp, category, data, and runner sequence inside the envelope. Agent
+lifecycle and resource events use a separate tagged type and cannot be
+mistaken for Octa events.
+
+The agent syncs each immutable spool record before it is eligible to send. The
+server inserts idempotently by `(job_id, attempt, stream_sequence)` and returns
+the largest contiguous sequence accepted from the submitted batch. A lost
+response therefore causes a harmless duplicate replay, not a gap. The agent
+syncs this acknowledgement before reclaiming record files. Byte and record
+limits apply to the unacknowledged prefix; once full, runner consumption pauses
+through its bounded channel while heartbeat remains independent.
+
+## Terminal completion
+
+```text
+POST /api/v1/leases/{lease_id}/complete
+```
+
+Completion repeats the lease fence and registration epoch and carries a stable
+`completion_id`, the last acknowledged event sequence, terminal status,
+runner results, and the final cumulative resource snapshot when available.
+The agent persists this exact document before sending it. The server must
+validate current fencing and treat repeated `completion_id` values
+idempotently.
+
+The operation starts only after every event is acknowledged and local cleanup
+has succeeded. On restart the agent does not resume execution: it first asks
+all configured backends to destroy orphans, then removes only state directories
+whose valid journal proves agent ownership. Unknown files are left untouched.
 
 ## Error response
 

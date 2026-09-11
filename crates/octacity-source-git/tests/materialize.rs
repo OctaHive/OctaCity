@@ -342,7 +342,7 @@ async fn source_deadline_includes_the_plugin_handshake() {
     .unwrap_err();
 
   assert!(error.to_string().contains("execution timeout"));
-  assert!(started.elapsed() < Duration::from_secs(1));
+  assert!(started.elapsed() < Duration::from_secs(3));
 }
 
 #[cfg(unix)]
@@ -377,7 +377,10 @@ async fn terminal_plugin_cannot_leave_a_descendant_holding_stderr_open() {
     .await;
 
   assert!(result.is_ok(), "terminal plugin should be reaped cleanly: {result:?}");
-  assert!(started.elapsed() < Duration::from_secs(1));
+  // Coverage instrumentation and loaded CI hosts can make process-group
+  // teardown noticeably slower, but it must still be bounded far below the
+  // descendant's 30-second sleep.
+  assert!(started.elapsed() < Duration::from_secs(3));
 }
 
 #[tokio::test]

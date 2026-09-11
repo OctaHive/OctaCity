@@ -9,9 +9,11 @@ use std::{
   process::ExitCode,
 };
 
-use octacity_source_git::{GitSourceError, materialize};
-use octacity_source_plugin::validate_request_id;
-use octacity_source_plugin::{MAX_SOURCE_FRAME_BYTES, SOURCE_PLUGIN_PROTOCOL_VERSION, SourceCommand, SourceMessage};
+use octacity_source_git::{GitSourceError, MaterializedGitSource, materialize};
+use octacity_source_plugin::{
+  MAX_SOURCE_FRAME_BYTES, MaterializeRequest, SOURCE_PLUGIN_PROTOCOL_VERSION, SourceCommand, SourceMessage,
+  validate_request_id,
+};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -42,19 +44,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
   write_hello()?;
   let mut input = command_stream();
   let command = input.recv().await.ok_or("source-plugin input reader stopped")??;
-  let SourceCommand::Materialize {
-    protocol_version,
-    request_id,
-    request,
-  } = command
-  else {
-    return Err("the first source-plugin command must be materialize".into());
-  };
-  if protocol_version != SOURCE_PLUGIN_PROTOCOL_VERSION {
-    return Err(format!("unsupported source protocol version {protocol_version}").into());
-  }
-  validate_request_id(&request_id)?;
-  request.validate()?;
+  let (request_id, request) = validate_materialize_command(command)?;
   write_message(&SourceMessage::Accepted {
     request_id: request_id.clone(),
   })?;
@@ -69,18 +59,7 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
   loop {
     tokio::select! {
       result = &mut operation => {
-        match result {
-          Ok(source) => write_message(&SourceMessage::Finished {
-            request_id,
-            revision: source.revision,
-            provenance: source.provenance,
-          })?,
-          Err(GitSourceError::Cancelled) => write_message(&SourceMessage::Cancelled { request_id })?,
-          Err(error) => write_message(&SourceMessage::Error {
-            request_id: Some(request_id),
-            message: error.to_string(),
-          })?,
-        }
+        write_message(&terminal_message(request_id, result))?;
         return Ok(());
       }
       command = input.recv() => {
@@ -93,6 +72,44 @@ async fn serve() -> Result<(), Box<dyn std::error::Error>> {
   }
 }
 
+/// Validates the one command allowed to begin a plugin process. Keeping this
+/// boundary separate makes malformed controller input rejectable before Git or
+/// any credentials are touched.
+fn validate_materialize_command(
+  command: SourceCommand,
+) -> Result<(String, MaterializeRequest), Box<dyn std::error::Error>> {
+  let SourceCommand::Materialize {
+    protocol_version,
+    request_id,
+    request,
+  } = command
+  else {
+    return Err("the first source-plugin command must be materialize".into());
+  };
+  if protocol_version != SOURCE_PLUGIN_PROTOCOL_VERSION {
+    return Err(format!("unsupported source protocol version {protocol_version}").into());
+  }
+  validate_request_id(&request_id)?;
+  request.validate()?;
+  Ok((request_id, request))
+}
+
+/// Maps the provider result to exactly one terminal protocol message.
+fn terminal_message(request_id: String, result: Result<MaterializedGitSource, GitSourceError>) -> SourceMessage {
+  match result {
+    Ok(source) => SourceMessage::Finished {
+      request_id,
+      revision: source.revision,
+      provenance: source.provenance,
+    },
+    Err(GitSourceError::Cancelled) => SourceMessage::Cancelled { request_id },
+    Err(error) => SourceMessage::Error {
+      request_id: Some(request_id),
+      message: error.to_string(),
+    },
+  }
+}
+
 fn command_stream() -> tokio::sync::mpsc::Receiver<Result<SourceCommand, String>> {
   // The protocol permits one active materialization and one cancellation, so
   // two buffered commands are sufficient and prevent a malformed controller
@@ -102,15 +119,16 @@ fn command_stream() -> tokio::sync::mpsc::Receiver<Result<SourceCommand, String>
   // controller from occupying the async runtime thread.
   std::thread::spawn(move || {
     let stdin = std::io::stdin();
-    read_commands(std::io::BufReader::new(stdin.lock()), &sender);
+    let mut input = std::io::BufReader::new(stdin.lock());
+    read_commands(&mut input, &sender);
   });
   receiver
 }
 
-fn read_commands<R: std::io::BufRead>(mut input: R, sender: &tokio::sync::mpsc::Sender<Result<SourceCommand, String>>) {
+fn read_commands(input: &mut dyn std::io::BufRead, sender: &tokio::sync::mpsc::Sender<Result<SourceCommand, String>>) {
   loop {
     let mut frame = Vec::new();
-    let read = match (&mut input)
+    let read = match input
       .take((MAX_SOURCE_FRAME_BYTES + 1) as u64)
       .read_until(b'\n', &mut frame)
     {
@@ -168,46 +186,5 @@ fn write_message(message: &SourceMessage) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn exposes_the_source_protocol_version() {
-    assert_eq!(SOURCE_PLUGIN_PROTOCOL_VERSION, 1);
-  }
-
-  #[test]
-  fn reads_commands_until_eof() {
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
-    read_commands(
-      &br#"{"type":"cancel","request_id":"request-1"}
-"#[..],
-      &sender,
-    );
-    assert!(matches!(
-      receiver.blocking_recv().unwrap().unwrap(),
-      SourceCommand::Cancel { request_id } if request_id == "request-1"
-    ));
-    assert_eq!(
-      receiver.blocking_recv().unwrap().unwrap_err(),
-      "source-plugin input closed"
-    );
-  }
-
-  #[test]
-  fn rejects_malformed_and_oversized_input_frames() {
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
-    read_commands(&b"not-json\n"[..], &sender);
-    assert!(
-      receiver
-        .blocking_recv()
-        .unwrap()
-        .unwrap_err()
-        .contains("invalid source-plugin command")
-    );
-
-    let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
-    read_commands(vec![b'a'; MAX_SOURCE_FRAME_BYTES + 1].as_slice(), &sender);
-    assert!(receiver.blocking_recv().unwrap().unwrap_err().contains("frame limit"));
-  }
-}
+#[path = "main_tests.rs"]
+mod tests;

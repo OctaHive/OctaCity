@@ -82,5 +82,5 @@ jobs:
           path: octacity/lcov.info
           if-no-files-found: ignore
       - name: Enforce production line coverage
-        run: cargo llvm-cov report --summary-only --fail-under-lines 67
+        run: cargo llvm-cov report --summary-only --fail-under-lines 80
         working-directory: octacity

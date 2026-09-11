@@ -3434,6 +3434,7 @@ dependencies = [
 name = "octacity-agent"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "clap",
  "octacity-config",
  "octacity-coordinator",
@@ -3444,10 +3445,13 @@ dependencies = [
  "octacity-execution-oci",
  "octacity-inventory",
  "octacity-job",
+ "octacity-lifecycle",
  "octacity-protocol",
  "octacity-runner",
  "octacity-source",
+ "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3575,8 +3579,6 @@ name = "octacity-job"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
- "ed25519-dalek",
  "octacity-execution",
  "octacity-execution-containerd",
  "octacity-execution-microsandbox",
@@ -3592,6 +3594,30 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "octacity-lifecycle"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "octacity-coordinator",
+ "octacity-execution",
+ "octacity-job",
+ "octacity-protocol",
+ "octacity-runner",
+ "octacity-source",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

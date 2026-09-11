@@ -17,9 +17,15 @@ octacity-execution-native = { path = "../octacity-execution-native" }
 octacity-execution-oci = { path = "../octacity-execution-oci" }
 octacity-inventory = { path = "../octacity-inventory" }
 octacity-job = { path = "../octacity-job" }
+octacity-lifecycle = { path = "../octacity-lifecycle" }
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true

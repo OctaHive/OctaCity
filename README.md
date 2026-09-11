@@ -2,8 +2,8 @@
 
 OctaCity is the control plane and self-hosted agent for running
 [Octa](https://github.com/OctaHive/octa) jobs. The repository now includes the
-local-execution and coordinator-transport milestones. Durable event delivery
-and the production daemon are the next phase, and no server is available yet.
+local-execution, coordinator-transport, and durable job-lifecycle milestones.
+No server is available yet.
 
 The current workspace contains:
 
@@ -20,7 +20,9 @@ The current workspace contains:
 - `octacity-execution-native`: Linux cgroup-v2 Native backend;
 - `octacity-inventory`: verified registration inventory and advisory host
   snapshots;
-- `octacity-job`: signed source-to-runner lifecycle and cleanup owner;
+- `octacity-job`: verified source-to-runner lifecycle and cleanup owner;
+- `octacity-lifecycle`: fenced lease ownership, append-only event spooling,
+  replay, completion, and interrupted-attempt recovery;
 - `octacity-runner`: verified Octa inventory, runner protocol, and supervision;
 - `octacity-source`: trusted source-plugin registry and process host;
 - `octacity-source-plugin`: the bounded pre-Octa source protocol;
@@ -39,7 +41,7 @@ cargo fmt --all -- --check
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo llvm-cov --workspace --all-features --summary-only \
-  --fail-under-lines 67
+  --fail-under-lines 80
 ```
 
 CI pins `cargo-llvm-cov` 0.9.1 so coverage semantics cannot change when a new
@@ -55,6 +57,9 @@ consume JSON without coupling the implementation to a logging backend:
 ```shell
 octacity-agent --log-filter octacity_agent=debug --log-format json \
   validate /etc/octacity/agent.toml
+
+octacity-agent --log-filter octacity_agent=info --log-format json \
+  run /etc/octacity/agent.toml
 ```
 
 Native execution is deliberately Linux-only. It requires a delegated cgroup

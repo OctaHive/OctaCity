@@ -1,28 +1,30 @@
 [package]
-name = "octacity-job"
+name = "octacity-lifecycle"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Single-owner lifecycle orchestration for one OctaCity job"
+description = "Single-owner leased-job lifecycle and durable event delivery for OctaCity"
 
 [dependencies]
+octacity-coordinator = { path = "../octacity-coordinator" }
 octacity-execution = { path = "../octacity-execution" }
+octacity-job = { path = "../octacity-job" }
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
-octacity-source = { path = "../octacity-source" }
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
-octacity-execution-containerd = { path = "../octacity-execution-containerd" }
-octacity-execution-microsandbox = { path = "../octacity-execution-microsandbox" }
-octacity-execution-native = { path = "../octacity-execution-native" }
-octacity-execution-oci = { path = "../octacity-execution-oci" }
-serde_json.workspace = true
+base64.workspace = true
+ed25519-dalek.workspace = true
+octacity-source = { path = "../octacity-source" }
 tempfile.workspace = true

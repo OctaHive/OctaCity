@@ -74,6 +74,14 @@ pub struct AgentConfig {
   pub max_workspace_bytes: u64,
   /// Maximum local event and upload spool allocation.
   pub max_spool_bytes: u64,
+  /// Maximum unacknowledged records retained for one attempt.
+  pub max_spool_records: usize,
+  /// Maximum encoded event bytes selected for one append call.
+  pub event_batch_max_bytes: usize,
+  /// Maximum events selected for one append call.
+  pub event_batch_max_records: usize,
+  /// In-memory runner-to-spool backpressure boundary.
+  pub event_channel_capacity: usize,
   /// Coordinator long-poll duration.
   pub poll_timeout_seconds: u64,
   /// Timeout for coordinator requests other than the long-poll wait itself.
@@ -339,8 +347,27 @@ impl AgentConfig {
       validate_upload_origin(origin)?;
     }
 
-    if self.max_workspace_bytes == 0 || self.max_spool_bytes == 0 {
-      return invalid("workspace and spool limits must be greater than zero");
+    if self.max_workspace_bytes == 0
+      || self.max_spool_bytes == 0
+      || self.max_spool_records == 0
+      || self.event_batch_max_bytes == 0
+      || self.event_batch_max_records == 0
+      || self.event_channel_capacity == 0
+    {
+      return invalid("workspace, spool, event batch, and channel limits must be greater than zero");
+    }
+    if self.coordinator_max_body_bytes == 0 || self.retry_max_attempts == 0 {
+      return invalid("coordinator body and retry-attempt limits must be greater than zero");
+    }
+    if self.event_batch_max_records > self.max_spool_records
+      || self.event_batch_max_records > octacity_protocol::MAX_EVENT_BATCH_RECORDS
+      || self.event_batch_max_bytes as u64 > self.max_spool_bytes
+      || self
+        .event_batch_max_bytes
+        .checked_add(octacity_protocol::MAX_APPEND_REQUEST_OVERHEAD_BYTES)
+        .is_none_or(|maximum| maximum > self.coordinator_max_body_bytes)
+    {
+      return invalid("event batch limits plus protocol metadata must fit the spool and coordinator bounds");
     }
     for (name, value) in [
       ("poll_timeout_seconds", self.poll_timeout_seconds),
@@ -370,9 +397,6 @@ impl AgentConfig {
     }
     if self.max_accounting_failures == 0 {
       return invalid("max_accounting_failures must be greater than zero");
-    }
-    if self.coordinator_max_body_bytes == 0 || self.retry_max_attempts == 0 {
-      return invalid("coordinator body and retry-attempt limits must be greater than zero");
     }
     if self.retry_initial_delay_milliseconds > self.retry_max_delay_seconds.saturating_mul(1000) {
       return invalid("retry_initial_delay_milliseconds must not exceed retry_max_delay_seconds");

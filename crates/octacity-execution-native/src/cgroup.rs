@@ -3,7 +3,6 @@
 use super::*;
 
 /// Programs the complete cgroup-v2 resource boundary before the runner starts.
-/// Programs the complete cgroup-v2 resource boundary before the runner starts.
 pub(super) fn configure_cgroup(cgroup: &Path, request: &StartExecution, pids_limit: u32) -> Result<(), ExecutionError> {
   let quota = u64::from(request.cpu_millis)
     .checked_mul(CPU_PERIOD_MICROS)
@@ -23,7 +22,6 @@ pub(super) fn configure_cgroup(cgroup: &Path, request: &StartExecution, pids_lim
   Ok(())
 }
 
-/// Verifies that the operator delegated every controller required by Native v1.
 /// Verifies that the operator delegated every controller required by Native v1.
 pub(super) fn validate_cgroup_root(root: &Path) -> Result<(), ExecutionError> {
   if !root.is_dir() {
@@ -55,10 +53,6 @@ pub(super) fn validate_cgroup_root(root: &Path) -> Result<(), ExecutionError> {
   Ok(())
 }
 
-/// Places the child in its job cgroup in the fork-to-exec window.
-///
-/// Doing this in `pre_exec` prevents the runner from creating descendants on
-/// the agent cgroup before an asynchronous parent-side move can occur.
 /// Places the child in its job cgroup in the fork-to-exec window.
 ///
 /// Doing this in `pre_exec` prevents the runner from creating descendants on
@@ -109,7 +103,6 @@ pub(super) fn write_control(cgroup: &Path, name: &str, value: impl AsRef<[u8]>) 
 }
 
 /// Reads cumulative CPU time for the complete process tree in milliseconds.
-/// Reads cumulative CPU time for the complete process tree in milliseconds.
 pub(super) fn read_cpu_time(cgroup: &Path) -> Result<u64, ExecutionError> {
   let contents = read_control(cgroup.join("cpu.stat"))?;
   let usage = contents
@@ -119,7 +112,6 @@ pub(super) fn read_cpu_time(cgroup: &Path) -> Result<u64, ExecutionError> {
   parse_number("cpu.stat usage_usec", usage).map(|value| value / 1000)
 }
 
-/// Aggregates block I/O counters across every device used by the job cgroup.
 /// Aggregates block I/O counters across every device used by the job cgroup.
 pub(super) fn read_io(cgroup: &Path) -> Result<(u64, u64), ExecutionError> {
   let contents = read_control(cgroup.join("io.stat"))?;
@@ -159,7 +151,6 @@ pub(super) fn parse_number(name: &str, value: &str) -> Result<u64, ExecutionErro
 }
 
 /// Terminates all processes in a job cgroup; absence is already-clean success.
-/// Terminates all processes in a job cgroup; absence is already-clean success.
 pub(super) fn kill_cgroup(cgroup: &Path) -> Result<(), ExecutionError> {
   match fs::write(cgroup.join("cgroup.kill"), "1") {
     Ok(()) => Ok(()),
@@ -171,7 +162,6 @@ pub(super) fn kill_cgroup(cgroup: &Path) -> Result<(), ExecutionError> {
   }
 }
 
-/// Waits for kernel cgroup references to disappear within the cleanup bound.
 /// Waits for kernel cgroup references to disappear within the cleanup bound.
 pub(super) async fn remove_cgroup(cgroup: &Path, timeout: Duration) -> Result<(), ExecutionError> {
   let deadline = Instant::now() + timeout;
@@ -200,14 +190,12 @@ pub(super) async fn remove_cgroup(cgroup: &Path, timeout: Duration) -> Result<()
 }
 
 /// Creates a stable, filesystem-safe cgroup name without exposing the job ID.
-/// Creates a stable, filesystem-safe cgroup name without exposing the job ID.
 pub(super) fn cgroup_name(execution_id: &str) -> String {
   let digest = format!("{:x}", Sha256::digest(execution_id.as_bytes()));
   format!("execution-{}", &digest[..32])
 }
 
 /// Restricts orphan cleanup to names that could have been created by this backend.
-/// Restricts orphan cleanup to names that could have been created here.
 pub(super) fn is_cgroup_name(name: &std::ffi::OsStr) -> bool {
   let Some(name) = name.to_str() else {
     return false;
@@ -220,7 +208,6 @@ pub(super) fn is_cgroup_name(name: &std::ffi::OsStr) -> bool {
 }
 
 /// Signals the complete runner process group, with a direct-child kill fallback.
-/// Signals the complete runner process group, with a direct-child fallback.
 pub(super) fn kill_process_group(child: &mut Child, signal: i32) {
   if let Some(id) = child.id().and_then(|id| i32::try_from(id).ok()) {
     // SAFETY: the runner is the leader of a process group created at spawn.

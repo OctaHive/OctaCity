@@ -21,6 +21,13 @@ pub const MAX_COORDINATOR_IDENTIFIER_BYTES: usize = 256;
 pub const MAX_INVENTORY_ENTRIES: usize = 1024;
 /// Maximum UTF-8 length of an advisory health message.
 pub const MAX_HEALTH_MESSAGE_BYTES: usize = 1024;
+/// Maximum number of ordered attempt events accepted in one append call.
+pub const MAX_EVENT_BATCH_RECORDS: usize = 256;
+/// Reserved JSON bytes for append metadata outside the encoded event records.
+///
+/// This covers maximally escaped bounded registration and lease identifiers,
+/// field names, punctuation, and the generated request identifier.
+pub const MAX_APPEND_REQUEST_OVERHEAD_BYTES: usize = 4096;
 
 /// Complete scheduler-visible inventory sent during registration.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -280,6 +287,204 @@ pub struct ActiveJob {
   pub attempt: u32,
   /// Opaque current lease identity.
   pub lease_id: String,
+  /// Latest cumulative sample, when execution accounting has started.
+  pub resource_usage: Option<ResourceUsageSnapshot>,
+}
+
+/// Backend-neutral cumulative resource values carried on the coordinator wire.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceUsageSnapshot {
+  /// Unix time at which the agent observed this sample.
+  pub observed_at_unix_ms: u64,
+  /// Monotonic elapsed execution time.
+  pub elapsed_ms: u64,
+  /// Cumulative CPU time used by the complete execution tree.
+  pub cpu_time_ms: u64,
+  /// Currently accounted memory in bytes.
+  pub memory_current_bytes: u64,
+  /// Highest accounted memory usage in bytes.
+  pub memory_peak_bytes: u64,
+  /// Current writable storage consumption in bytes.
+  pub disk_current_bytes: u64,
+  /// Highest writable storage consumption in bytes.
+  pub disk_peak_bytes: u64,
+  /// Cumulative bytes read from accounted block devices.
+  pub io_read_bytes: u64,
+  /// Cumulative bytes written to accounted block devices.
+  pub io_written_bytes: u64,
+  /// Cumulative received bytes when the backend exposes network accounting.
+  pub network_received_bytes: Option<u64>,
+  /// Cumulative transmitted bytes when the backend exposes network accounting.
+  pub network_transmitted_bytes: Option<u64>,
+}
+
+/// Complete runner event retained without rewriting its schema or sequence.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerEventPayload {
+  /// Runner-owned event schema version.
+  pub schema_version: u16,
+  /// Sequence in the runner's own event stream.
+  pub sequence: u64,
+  /// Runner-generated RFC 3339 timestamp.
+  pub timestamp: String,
+  /// Semantic event category defined by the runner schema.
+  pub category: String,
+  /// Category-specific data preserved without interpretation by the agent.
+  pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Agent-owned lifecycle information kept separate from Octa runner events.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AgentLifecycleEvent {
+  /// The agent durably entered another attempt lifecycle phase.
+  StateChanged {
+    /// Newly entered phase.
+    state: JobLifecycleState,
+  },
+  /// One cumulative resource-accounting sample.
+  ResourceUsage {
+    /// Backend-neutral cumulative counters.
+    usage: ResourceUsageSnapshot,
+  },
+  /// Resource accounting failed but remains below the configured failure limit.
+  AccountingUnavailable {
+    /// Number of adjacent failed samples including this one.
+    consecutive_failures: usize,
+  },
+}
+
+/// Persisted phases owned by the one-job agent state machine.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobLifecycleState {
+  /// Validating dependencies and materializing the source workspace.
+  Preparing,
+  /// The runner is active or has begun emitting events.
+  Running,
+  /// Runner execution ended and immutable outputs are being established.
+  Freezing,
+  /// Backend resources and workspace state are being removed.
+  Cleaning,
+  /// All events are being flushed before the terminal result is recorded.
+  Completing,
+}
+
+/// One item in a job-attempt stream.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AttemptEventKind {
+  /// Event emitted by `octa-runner`, preserving its original inner envelope.
+  Runner {
+    /// Original runner event.
+    event: RunnerEventPayload,
+  },
+  /// Event emitted by the agent's attempt lifecycle.
+  Agent {
+    /// Agent-owned event.
+    event: AgentLifecycleEvent,
+  },
+}
+
+/// Durable, globally ordered envelope for one fenced attempt.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptEventEnvelope {
+  /// Stable job identity.
+  pub job_id: String,
+  /// Positive attempt number.
+  pub attempt: u32,
+  /// Lease that owned the attempt when this event was persisted.
+  pub lease_id: String,
+  /// Fencing value authorizing this event.
+  pub fencing_token: String,
+  /// Global contiguous sequence across runner and agent events for the attempt.
+  pub stream_sequence: u64,
+  /// Producer-specific event kept inside the common ordered envelope.
+  pub kind: AttemptEventKind,
+}
+
+/// Idempotent append of one contiguous event range.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppendEventsRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Lease fencing copied onto the append operation.
+  pub lease: LeaseFence,
+  /// Non-empty contiguous event range in ascending sequence order.
+  pub events: Vec<AttemptEventEnvelope>,
+}
+
+/// Largest contiguous attempt sequence durably accepted by the server.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppendEventsResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Largest contiguous attempt sequence durably stored by the coordinator.
+  pub acknowledged_sequence: u64,
+}
+
+/// Terminal status of one fenced attempt.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobCompletionStatus {
+  /// Every requested task completed successfully.
+  Succeeded,
+  /// The runner returned a normal task failure.
+  Failed,
+  /// The control plane or local shutdown cancelled execution.
+  Cancelled,
+  /// The signed execution deadline elapsed.
+  TimedOut,
+  /// Source, runner, backend, protocol, or cleanup infrastructure failed.
+  InfrastructureFailed,
+}
+
+/// Durable terminal result sent only after cleanup and event acknowledgement.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteLeaseRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Lease fencing authorizing terminal completion.
+  pub lease: LeaseFence,
+  /// Stable retry-safe identity derived from the fenced attempt.
+  pub completion_id: String,
+  /// Last event sequence that must already be durably acknowledged.
+  pub last_event_sequence: u64,
+  /// Terminal attempt outcome.
+  pub status: JobCompletionStatus,
+  /// Final cumulative resource totals, when the backend supplied them.
+  pub final_usage: Option<ResourceUsageSnapshot>,
+  /// Runner-produced structured task results.
+  #[serde(default)]
+  pub results: Vec<serde_json::Value>,
+}
+
+/// Acknowledgement of an idempotently recorded terminal result.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteLeaseResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Echo of the stable completion identity.
+  pub completion_id: String,
 }
 
 /// Advisory state of one concrete execution implementation.

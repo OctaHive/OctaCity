@@ -16,6 +16,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use super::*;
 use crate::{
   protocol::RunnerMessage,
+  supervisor::lifecycle::{DeliveryOutcome, begin_stop, deliver, handle_delivery, wait_for_deadline},
   supervisor::validation::{validate_event, validate_exit, validate_hello},
 };
 use octacity_execution::{
@@ -30,6 +31,11 @@ enum Scenario {
   BadHello,
   Silent,
   HelloThenSilent,
+  AcceptedThenSilent,
+  EofAfterAccepted,
+  RunnerError,
+  AccountingFails,
+  AccountingHangs,
 }
 
 struct FakeBackend {
@@ -46,6 +52,7 @@ struct FakeExecution {
   killed: Arc<AtomicBool>,
   exit_code: i32,
   cleanup_fails: bool,
+  scenario: Scenario,
 }
 
 #[async_trait]
@@ -77,9 +84,18 @@ impl ExecutionBackend for FakeBackend {
       killed: self.killed.clone(),
       exit_code: match self.scenario {
         Scenario::Cancelled => 130,
-        Scenario::Success | Scenario::BadHello | Scenario::Silent | Scenario::HelloThenSilent => 0,
+        Scenario::Success
+        | Scenario::BadHello
+        | Scenario::Silent
+        | Scenario::HelloThenSilent
+        | Scenario::AcceptedThenSilent
+        | Scenario::EofAfterAccepted
+        | Scenario::RunnerError
+        | Scenario::AccountingFails
+        | Scenario::AccountingHangs => 0,
       },
       cleanup_fails: self.cleanup_fails,
+      scenario: self.scenario,
     }))
   }
 
@@ -99,6 +115,12 @@ impl RunningExecution for FakeExecution {
   }
 
   async fn sample_usage(&mut self) -> Result<ResourceUsage, ExecutionError> {
+    if matches!(self.scenario, Scenario::AccountingHangs) {
+      pending::<()>().await;
+    }
+    if matches!(self.scenario, Scenario::AccountingFails) {
+      return Err(ExecutionError::Backend("fixture accounting failure".to_owned()));
+    }
     Ok(ResourceUsage {
       elapsed_ms: 10,
       cpu_time_ms: 2,
@@ -161,6 +183,23 @@ async fn fake_runner(input: tokio::io::DuplexStream, mut output: tokio::io::Dupl
   let mut input = BufReader::new(input);
   let mut command = String::new();
   input.read_line(&mut command).await.unwrap();
+  if matches!(scenario, Scenario::RunnerError) {
+    output
+      .write_all(b"{\"type\":\"error\",\"request_id\":\"job-1-attempt-1\",\"message\":\"fixture failure\"}\n")
+      .await
+      .unwrap();
+    return;
+  }
+  if matches!(scenario, Scenario::AcceptedThenSilent | Scenario::EofAfterAccepted) {
+    output
+      .write_all(b"{\"type\":\"accepted\",\"request_id\":\"job-1-attempt-1\"}\n")
+      .await
+      .unwrap();
+    if matches!(scenario, Scenario::AcceptedThenSilent) {
+      pending::<()>().await;
+    }
+    return;
+  }
   if matches!(scenario, Scenario::Cancelled) {
     output
       .write_all(b"{\"type\":\"accepted\",\"request_id\":\"job-1-attempt-1\"}\n")
@@ -178,11 +217,18 @@ async fn fake_runner(input: tokio::io::DuplexStream, mut output: tokio::io::Dupl
     return;
   }
   output
-      .write_all(
-        b"{\"type\":\"accepted\",\"request_id\":\"job-1-attempt-1\"}\n{\"type\":\"event\",\"request_id\":\"job-1-attempt-1\",\"event\":{\"schema_version\":3,\"sequence\":0,\"timestamp\":\"2026-09-10T00:00:00Z\",\"category\":\"execution\",\"data\":{\"type\":\"run_started\"}}}\n{\"type\":\"finished\",\"request_id\":\"job-1-attempt-1\",\"status\":\"succeeded\",\"results\":[]}\n",
-      )
-      .await
-      .unwrap();
+    .write_all(
+      b"{\"type\":\"accepted\",\"request_id\":\"job-1-attempt-1\"}\n{\"type\":\"event\",\"request_id\":\"job-1-attempt-1\",\"event\":{\"schema_version\":3,\"sequence\":0,\"timestamp\":\"2026-09-10T00:00:00Z\",\"category\":\"execution\",\"data\":{\"type\":\"run_started\"}}}\n",
+    )
+    .await
+    .unwrap();
+  if matches!(scenario, Scenario::AccountingFails | Scenario::AccountingHangs) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+  }
+  output
+    .write_all(b"{\"type\":\"finished\",\"request_id\":\"job-1-attempt-1\",\"status\":\"succeeded\",\"results\":[]}\n")
+    .await
+    .unwrap();
 }
 
 fn job(workspace: &std::path::Path) -> RunnerJobRequest {
@@ -524,6 +570,122 @@ async fn preserves_protocol_and_cleanup_failures() {
   assert!(error.to_string().contains("fixture cleanup failure"));
 }
 
+#[tokio::test]
+async fn rejects_runner_errors_and_eof_before_terminal_result() {
+  for (scenario, expected) in [
+    (Scenario::RunnerError, "fixture failure"),
+    (Scenario::EofAfterAccepted, "stdout closed"),
+  ] {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("data")).unwrap();
+    let destroyed = Arc::new(AtomicBool::new(false));
+    let killed = Arc::new(AtomicBool::new(false));
+    let backend = FakeBackend {
+      destroyed: destroyed.clone(),
+      killed: killed.clone(),
+      scenario,
+      cleanup_fails: false,
+    };
+    let (sender, _receiver) = mpsc::channel(8);
+
+    let error = supervise(
+      &installation(),
+      &backend,
+      job(&workspace.path().canonicalize().unwrap()),
+      CancellationToken::new(),
+      &sender,
+      &RunnerSupervisionPolicy::default(),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.to_string().contains(expected));
+    assert!(killed.load(Ordering::SeqCst));
+    assert!(destroyed.load(Ordering::SeqCst));
+  }
+}
+
+#[tokio::test]
+async fn forces_a_runner_that_outlives_its_execution_deadline() {
+  let workspace = tempfile::tempdir().unwrap();
+  std::fs::create_dir(workspace.path().join("data")).unwrap();
+  let destroyed = Arc::new(AtomicBool::new(false));
+  let killed = Arc::new(AtomicBool::new(false));
+  let backend = FakeBackend {
+    destroyed: destroyed.clone(),
+    killed: killed.clone(),
+    scenario: Scenario::AcceptedThenSilent,
+    cleanup_fails: false,
+  };
+  let mut request = job(&workspace.path().canonicalize().unwrap());
+  request.execution.max_duration = Duration::from_millis(20);
+  request.cancellation_grace = Duration::from_millis(10);
+  let (sender, _receiver) = mpsc::channel(8);
+
+  let error = supervise(
+    &installation(),
+    &backend,
+    request,
+    CancellationToken::new(),
+    &sender,
+    &RunnerSupervisionPolicy::default(),
+  )
+  .await
+  .unwrap_err();
+
+  assert!(matches!(error, RunnerSupervisionError::CancellationTimeout));
+  assert!(killed.load(Ordering::SeqCst));
+  assert!(destroyed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn fails_after_bounded_resource_accounting_errors_and_timeouts() {
+  for scenario in [Scenario::AccountingFails, Scenario::AccountingHangs] {
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::create_dir(workspace.path().join("data")).unwrap();
+    let destroyed = Arc::new(AtomicBool::new(false));
+    let killed = Arc::new(AtomicBool::new(false));
+    let backend = FakeBackend {
+      destroyed: destroyed.clone(),
+      killed: killed.clone(),
+      scenario,
+      cleanup_fails: false,
+    };
+    let (sender, mut receiver) = mpsc::channel(8);
+    let policy = RunnerSupervisionPolicy {
+      hello_timeout: Duration::from_secs(1),
+      resource_sample_interval: Duration::from_millis(1),
+      resource_sample_timeout: Duration::from_millis(2),
+      max_accounting_failures: 1,
+    };
+
+    let error = supervise(
+      &installation(),
+      &backend,
+      job(&workspace.path().canonicalize().unwrap()),
+      CancellationToken::new(),
+      &sender,
+      &policy,
+    )
+    .await
+    .unwrap_err();
+
+    assert!(matches!(error, RunnerSupervisionError::AccountingUnavailable(1)));
+    let mut accounting_event = false;
+    while let Ok(item) = receiver.try_recv() {
+      accounting_event |= matches!(
+        item,
+        RunnerStreamItem::AccountingUnavailable {
+          consecutive_failures: 1
+        }
+      );
+    }
+    assert!(accounting_event);
+    assert!(killed.load(Ordering::SeqCst));
+    assert!(destroyed.load(Ordering::SeqCst));
+  }
+}
+
 #[test]
 fn validates_job_events_and_terminal_exit_codes() {
   let workspace = tempfile::tempdir().unwrap();
@@ -591,4 +753,146 @@ fn validates_job_events_and_terminal_exit_codes() {
   assert!(validate_exit(RunStatus::Failed, ExecutionExit { code: Some(1) }).is_ok());
   assert!(validate_exit(RunStatus::Cancelled, ExecutionExit { code: Some(130) }).is_ok());
   assert!(validate_exit(RunStatus::Succeeded, ExecutionExit { code: None }).is_err());
+}
+
+#[tokio::test]
+async fn bounds_event_delivery_by_consumer_cancellation_and_deadline() {
+  let (sender, mut receiver) = mpsc::channel(1);
+  let cancellation = CancellationToken::new();
+  assert_eq!(
+    deliver(
+      &sender,
+      RunnerStreamItem::AccountingUnavailable {
+        consecutive_failures: 1,
+      },
+      &cancellation,
+      Instant::now() + Duration::from_secs(1),
+    )
+    .await
+    .unwrap(),
+    DeliveryOutcome::Delivered
+  );
+  assert!(receiver.recv().await.is_some());
+
+  drop(receiver);
+  assert!(matches!(
+    deliver(
+      &sender,
+      RunnerStreamItem::AccountingUnavailable {
+        consecutive_failures: 2,
+      },
+      &cancellation,
+      Instant::now() + Duration::from_secs(1),
+    )
+    .await,
+    Err(RunnerSupervisionError::EventConsumerStopped)
+  ));
+
+  let (sender, _receiver) = mpsc::channel(1);
+  sender
+    .send(RunnerStreamItem::AccountingUnavailable {
+      consecutive_failures: 1,
+    })
+    .await
+    .unwrap();
+  cancellation.cancel();
+  assert_eq!(
+    deliver(
+      &sender,
+      RunnerStreamItem::AccountingUnavailable {
+        consecutive_failures: 2,
+      },
+      &cancellation,
+      Instant::now() + Duration::from_secs(1),
+    )
+    .await
+    .unwrap(),
+    DeliveryOutcome::Cancelled
+  );
+
+  assert_eq!(
+    deliver(
+      &sender,
+      RunnerStreamItem::AccountingUnavailable {
+        consecutive_failures: 3,
+      },
+      &CancellationToken::new(),
+      Instant::now(),
+    )
+    .await
+    .unwrap(),
+    DeliveryOutcome::TimedOut
+  );
+}
+
+#[tokio::test]
+async fn maps_delivery_stop_reasons_and_keeps_the_first_reason() {
+  let workspace = tempfile::tempdir().unwrap();
+  std::fs::create_dir(workspace.path().join("data")).unwrap();
+  let request = job(&workspace.path().canonicalize().unwrap());
+  let (writer, mut reader) = tokio::io::duplex(4096);
+  let mut stdin: ExecutionWriter = Box::pin(writer);
+  let mut reason = None;
+  let mut deadline = None;
+
+  handle_delivery(
+    DeliveryOutcome::Delivered,
+    &mut reason,
+    &mut deadline,
+    &request,
+    &mut stdin,
+  )
+  .await
+  .unwrap();
+  assert_eq!(reason, None);
+
+  handle_delivery(
+    DeliveryOutcome::Cancelled,
+    &mut reason,
+    &mut deadline,
+    &request,
+    &mut stdin,
+  )
+  .await
+  .unwrap();
+  assert_eq!(reason, Some(TerminationReason::Cancelled));
+  assert!(deadline.is_some());
+  let mut command = String::new();
+  BufReader::new(&mut reader).read_line(&mut command).await.unwrap();
+  assert!(command.contains("\"type\":\"cancel\""));
+
+  let original_deadline = deadline;
+  begin_stop(
+    &mut reason,
+    &mut deadline,
+    TerminationReason::TimedOut,
+    request.cancellation_grace,
+    &mut stdin,
+    &request.request_id,
+  )
+  .await;
+  assert_eq!(reason, Some(TerminationReason::Cancelled));
+  assert_eq!(deadline, original_deadline);
+
+  let (writer, _reader) = tokio::io::duplex(4096);
+  let mut stdin: ExecutionWriter = Box::pin(writer);
+  reason = None;
+  deadline = None;
+  handle_delivery(
+    DeliveryOutcome::TimedOut,
+    &mut reason,
+    &mut deadline,
+    &request,
+    &mut stdin,
+  )
+  .await
+  .unwrap();
+  assert_eq!(reason, Some(TerminationReason::TimedOut));
+
+  wait_for_deadline(Some(Instant::now())).await;
+  assert!(
+    tokio::time::timeout(Duration::from_millis(1), wait_for_deadline(None))
+      .await
+      .is_err()
+  );
 }

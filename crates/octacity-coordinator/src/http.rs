@@ -4,9 +4,10 @@ use std::{fs, io::Read as _, path::PathBuf, time::Duration};
 
 use async_trait::async_trait;
 use octacity_protocol::{
-  AcquireLeaseRequest, AcquireLeaseResponse, AgentInventory, COORDINATOR_PROTOCOL_VERSION, CoordinatorErrorResponse,
-  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, LeaseAssignment,
-  RegisterAgentRequest, RegisterAgentResponse,
+  AcquireLeaseRequest, AcquireLeaseResponse, AgentInventory, AppendEventsRequest, AppendEventsResponse,
+  AttemptEventEnvelope, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse,
+  CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot,
+  LeaseAssignment, RegisterAgentRequest, RegisterAgentResponse,
 };
 use reqwest::{StatusCode, Url, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -184,6 +185,7 @@ impl HttpCoordinatorClient {
               status: status.as_u16(),
               code: error.code,
               message: error.message,
+              retryable,
             });
             if !retryable {
               return Err(last.expect("rejection was recorded"));
@@ -346,6 +348,79 @@ impl CoordinatorClient for HttpCoordinatorClient {
       .await?;
     response.validate(&request_id, unix_now()?, lease_safety_margin.as_secs())?;
     Ok(response.directive)
+  }
+
+  async fn append_events(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    events: &[AttemptEventEnvelope],
+    cancellation: CancellationToken,
+  ) -> Result<AppendEventsResponse, CoordinatorError> {
+    registration.validate()?;
+    let request_id = request_id();
+    let request = AppendEventsRequest {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: request_id.clone(),
+      registration_id: registration.registration_id.clone(),
+      lease: lease.into(),
+      events: events.to_vec(),
+    };
+    request.validate()?;
+    let first = request
+      .events
+      .first()
+      .expect("validated non-empty batch")
+      .stream_sequence;
+    let last = request
+      .events
+      .last()
+      .expect("validated non-empty batch")
+      .stream_sequence;
+    let response: AppendEventsResponse = self
+      .post(
+        PostCall {
+          operation: "append job events",
+          path: &["api", "v1", "leases", &lease.lease_id, "events:append"],
+          request_id: &request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        &request,
+      )
+      .await?;
+    response.validate(&request_id, first, last)?;
+    Ok(response)
+  }
+
+  async fn complete_lease(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    completion: &CompleteLeaseRequest,
+    cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    registration.validate()?;
+    completion.validate()?;
+    if completion.registration_id != registration.registration_id || completion.lease != lease.into() {
+      return Err(invalid("completion does not match its registration and lease"));
+    }
+    let response: CompleteLeaseResponse = self
+      .post(
+        PostCall {
+          operation: "complete lease",
+          path: &["api", "v1", "leases", &lease.lease_id, "complete"],
+          request_id: &completion.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        completion,
+      )
+      .await?;
+    response.validate(&completion.request_id, &completion.completion_id)?;
+    Ok(())
   }
 }
 

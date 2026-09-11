@@ -1,7 +1,7 @@
 //! Owns the complete, backend-neutral lifecycle of one verified job.
 //!
-//! This crate is orchestration rather than infrastructure. It verifies the
-//! signed intent before touching the filesystem, creates one private workspace,
+//! This crate is orchestration rather than infrastructure. It accepts an
+//! already verified intent, creates one private workspace,
 //! materializes the exact source revision, selects the requested execution
 //! backend without fallback, drives `octa-runner`, and either removes failed
 //! workspaces or transfers ownership of a successful workspace for output
@@ -16,14 +16,13 @@ use std::{
   time::Duration,
 };
 
-use ed25519_dalek::VerifyingKey;
 use octacity_execution::{
   ExecutionArchitecture, ExecutionBackend, ExecutionError, ExecutionOs, ExecutionPlatform, ExecutionTarget,
   NetworkAccess, OciIsolation as ExecutionOciIsolation, StartExecution,
 };
 use octacity_protocol::{
-  JobBinding, JobSpecError, JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, PlatformArchitecture,
-  PlatformOs, RuntimeMode, RuntimeTarget, SignedEnvelope, verify_job_spec,
+  JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, PlatformArchitecture, PlatformOs, RuntimeMode,
+  RuntimeTarget,
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerStreamItem,
@@ -36,17 +35,11 @@ use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-/// Authenticated lease fields and source credentials required to run one job.
+/// Verified execution intent and agent-resolved source credentials for one job.
 #[derive(Debug)]
 pub struct ExecuteJobRequest {
-  /// Signed, versioned job payload received from the control plane.
-  pub envelope: SignedEnvelope,
-  /// Lease job identifier expected inside the signed payload.
-  pub job_id: String,
-  /// Lease attempt expected inside the signed payload.
-  pub attempt: u32,
-  /// Current Unix timestamp used for signature-validity checks.
-  pub now: u64,
+  /// JobSpec verified against the active lease before this layer is called.
+  pub spec: JobSpecV1,
   /// Agent-resolved credential files keyed by source-plugin handle.
   pub source_credentials: BTreeMap<String, PathBuf>,
 }
@@ -120,9 +113,6 @@ pub enum JobError {
   #[error("invalid job executor configuration: {0}")]
   /// Executor construction or request data violates a local invariant.
   Invalid(String),
-  #[error("signed job verification failed: {0}")]
-  /// The job envelope, signature, binding, or validity interval is invalid.
-  Verification(#[source] Box<JobSpecError>),
   #[error("installed Octa does not satisfy the job: {0}")]
   /// The installed runner or plugin set differs from the signed requirement.
   RunnerInstallation(#[source] Box<RunnerInstallationError>),
@@ -180,7 +170,6 @@ pub enum JobError {
 
 /// Immutable dependencies and policy limits used for every job on an agent.
 pub struct JobExecutor {
-  signing_keys: BTreeMap<String, VerifyingKey>,
   runner: RunnerInstallation,
   source: Arc<dyn SourceMaterializer>,
   backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
@@ -193,15 +182,11 @@ pub struct JobExecutor {
 impl JobExecutor {
   /// Validates immutable agent dependencies and constructs a job orchestrator.
   pub fn new(
-    signing_keys: BTreeMap<String, VerifyingKey>,
     runner: RunnerInstallation,
     source: Arc<dyn SourceMaterializer>,
     backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
     config: JobExecutorConfig,
   ) -> Result<Self, JobError> {
-    if signing_keys.is_empty() {
-      return Err(JobError::Invalid("at least one signing key is required".to_owned()));
-    }
     if backends.is_empty() {
       return Err(JobError::Invalid(
         "at least one execution backend is required".to_owned(),
@@ -224,7 +209,6 @@ impl JobExecutor {
       return Err(JobError::Invalid("work_root must be a directory".to_owned()));
     }
     Ok(Self {
-      signing_keys,
       runner,
       source,
       backends,
@@ -235,7 +219,7 @@ impl JobExecutor {
     })
   }
 
-  /// Runs one signed job and retains its workspace for output processing.
+  /// Runs one verified job and retains its workspace for output processing.
   /// The caller must finish by invoking [`JobCompletion::cleanup`].
   pub async fn execute(
     &self,
@@ -243,16 +227,7 @@ impl JobExecutor {
     cancellation: CancellationToken,
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobError> {
-    let spec = verify_job_spec(
-      &request.envelope,
-      &self.signing_keys,
-      JobBinding {
-        job_id: &request.job_id,
-        attempt: request.attempt,
-        now: request.now,
-      },
-    )
-    .map_err(|error| JobError::Verification(Box::new(error)))?;
+    let spec = request.spec;
 
     // Verify every immutable dependency before creating a workspace or
     // starting a source plugin.

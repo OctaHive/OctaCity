@@ -4,7 +4,7 @@ use super::*;
 
 /// Capacity and current usage of the filesystem enforcing a job's disk limit.
 pub(super) struct FilesystemUsage {
-  capacity_bytes: u64,
+  pub(super) capacity_bytes: u64,
   pub(super) used_bytes: u64,
 }
 

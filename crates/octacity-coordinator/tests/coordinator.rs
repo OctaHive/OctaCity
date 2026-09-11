@@ -15,11 +15,12 @@ use octacity_coordinator::{
   LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, Registration, RetryPolicy,
 };
 use octacity_protocol::{
-  AcquireLeaseResponse, ActiveJob, AgentInventory, BackendHealth, BackendHealthStatus, COORDINATOR_PROTOCOL_VERSION,
-  CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecV1, LeaseAssignment,
-  NetworkPolicy, OciIsolation, OctaInventory, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec,
-  RegisterAgentResponse, RuntimeCapability, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM,
-  SignedEnvelope, SourceSpec,
+  AcquireLeaseResponse, ActiveJob, AgentInventory, AgentLifecycleEvent, AppendEventsResponse, AttemptEventEnvelope,
+  AttemptEventKind, BackendHealth, BackendHealthStatus, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
+  CompleteLeaseResponse, CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot,
+  JobCompletionStatus, JobLifecycleState, JobSpecV1, LeaseAssignment, NetworkPolicy, OciIsolation, OctaInventory,
+  OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RegisterAgentResponse, RuntimeCapability,
+  RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM, SignedEnvelope, SourceSpec,
 };
 use serde_json::json;
 use tokio::{
@@ -40,6 +41,8 @@ enum Action {
   Register { request_id: Option<String> },
   Acquire(LeaseAssignment),
   Heartbeat(HeartbeatDirective),
+  AppendEvents(u64),
+  Complete,
   Oversized(usize),
 }
 
@@ -199,6 +202,26 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
         write_response(stream, 200, &body).await;
         return;
       }
+      Action::AppendEvents(acknowledged_sequence) => {
+        let body = serde_json::to_vec(&AppendEventsResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          acknowledged_sequence,
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
+      Action::Complete => {
+        let body = serde_json::to_vec(&CompleteLeaseResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          completion_id: request.body["completion_id"].as_str().unwrap().to_owned(),
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
       Action::Oversized(size) => {
         write_response(stream, 200, &vec![b'x'; size]).await;
         return;
@@ -273,6 +296,7 @@ fn snapshot() -> HostSnapshot {
       job_id: "job-1".to_owned(),
       attempt: 1,
       lease_id: "lease-1".to_owned(),
+      resource_usage: None,
     }),
     backends: vec![BackendHealth {
       backend: "native".to_owned(),
@@ -503,6 +527,54 @@ async fn sends_fenced_lease_and_heartbeat_documents_to_exact_endpoints() {
   assert_eq!(records[1].body["lease"]["fencing_token"], "fence-1");
 }
 
+#[tokio::test]
+async fn appends_fenced_events_and_completes_with_stable_idempotency() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let lease = signed_lease(&signing_key, unix_now());
+  let server = MockServer::start(vec![Action::AppendEvents(1), Action::Complete]).await;
+  let client = client(&server, 1, Duration::from_secs(1), 16 * 1024);
+  let fence = (&lease).into();
+  let events = vec![AttemptEventEnvelope {
+    job_id: lease.job_id.clone(),
+    attempt: lease.attempt,
+    lease_id: lease.lease_id.clone(),
+    fencing_token: lease.fencing_token.clone(),
+    stream_sequence: 1,
+    kind: AttemptEventKind::Agent {
+      event: AgentLifecycleEvent::StateChanged {
+        state: JobLifecycleState::Preparing,
+      },
+    },
+  }];
+  let response = client
+    .append_events(&registration(), &lease, &events, CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!(response.acknowledged_sequence, 1);
+  let completion = CompleteLeaseRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "complete-request-1".to_owned(),
+    registration_id: registration().registration_id,
+    lease: fence,
+    completion_id: "completion-1".to_owned(),
+    last_event_sequence: 1,
+    status: JobCompletionStatus::Succeeded,
+    final_usage: None,
+    results: Vec::new(),
+  };
+  client
+    .complete_lease(&registration(), &lease, &completion, CancellationToken::new())
+    .await
+    .unwrap();
+
+  let records = server.records.lock().unwrap();
+  assert_eq!(records[0].path, "/api/v1/leases/lease-1/events:append");
+  assert_eq!(records[0].body["events"][0]["stream_sequence"], 1);
+  assert_eq!(records[1].path, "/api/v1/leases/lease-1/complete");
+  assert_eq!(records[1].request_id, "complete-request-1");
+  assert_eq!(records[1].idempotency_key, "complete-request-1");
+}
+
 struct ScriptedClient {
   leases: Mutex<VecDeque<Result<AcquireLeaseResponse, CoordinatorError>>>,
   heartbeats: Mutex<VecDeque<Result<HeartbeatDirective, CoordinatorError>>>,
@@ -546,6 +618,26 @@ impl CoordinatorClient for ScriptedClient {
     }
     cancellation.cancelled().await;
     Err(CoordinatorError::Cancelled)
+  }
+
+  async fn append_events(
+    &self,
+    _registration: &Registration,
+    _lease: &LeaseAssignment,
+    _events: &[AttemptEventEnvelope],
+    _cancellation: CancellationToken,
+  ) -> Result<AppendEventsResponse, CoordinatorError> {
+    unreachable!("event delivery is not used by lease-monitor tests")
+  }
+
+  async fn complete_lease(
+    &self,
+    _registration: &Registration,
+    _lease: &LeaseAssignment,
+    _completion: &CompleteLeaseRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    unreachable!("completion is not used by lease-monitor tests")
   }
 }
 
@@ -738,6 +830,7 @@ async fn heartbeat_failure_cancels_at_the_lease_safety_deadline() {
         status: 503,
         code: "unavailable".to_owned(),
         message: "retry".to_owned(),
+        retryable: true,
       })
     })
     .collect();

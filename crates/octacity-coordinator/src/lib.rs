@@ -10,7 +10,8 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{
-  AcquireLeaseResponse, AgentInventory, HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecError, LeaseAssignment,
+  AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, CompleteLeaseRequest,
+  HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecError, LeaseAssignment,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -135,6 +136,8 @@ pub enum CoordinatorError {
     code: String,
     /// Bounded human-readable diagnostic.
     message: String,
+    /// Whether the server explicitly permits retrying the same operation.
+    retryable: bool,
   },
   /// Retryable failures exhausted the bounded attempt policy.
   #[error("coordinator operation '{operation}' failed after {attempts} attempts: {last}")]
@@ -148,7 +151,25 @@ pub enum CoordinatorError {
   },
 }
 
-/// Transport-independent operations required by the phase-4 lease lifecycle.
+impl CoordinatorError {
+  /// Returns whether repeating an idempotent coordinator operation can make progress.
+  ///
+  /// HTTP adapters already exhaust their bounded per-request retry policy. A
+  /// long-lived owner such as the event spool may begin another bounded retry
+  /// cycle after transport failures, server-approved rejections, or an
+  /// exhausted cycle. Validation, authentication, fencing, and protocol errors
+  /// are permanent and must be surfaced instead of retried forever.
+  pub fn is_retryable(&self) -> bool {
+    match self {
+      Self::TimedOut { .. } | Self::Transport { .. } => true,
+      Self::Rejected { retryable, .. } => *retryable,
+      Self::RetriesExhausted { last, .. } => last.is_retryable(),
+      _ => false,
+    }
+  }
+}
+
+/// Transport-independent operations required by the agent lifecycle.
 #[async_trait]
 pub trait CoordinatorClient: Send + Sync {
   /// Registers validated inventory and starts a new registration epoch.
@@ -184,6 +205,24 @@ pub trait CoordinatorClient: Send + Sync {
     lease_safety_margin: Duration,
     cancellation: CancellationToken,
   ) -> Result<HeartbeatDirective, CoordinatorError>;
+
+  /// Durably appends a contiguous batch and returns the server's contiguous cursor.
+  async fn append_events(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    events: &[AttemptEventEnvelope],
+    cancellation: CancellationToken,
+  ) -> Result<AppendEventsResponse, CoordinatorError>;
+
+  /// Records the terminal result after events and cleanup are complete.
+  async fn complete_lease(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    completion: &CompleteLeaseRequest,
+    cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError>;
 }
 
 pub(crate) fn verify_assignment(
@@ -218,3 +257,39 @@ pub(crate) fn invalid(message: impl Into<String>) -> CoordinatorError {
 }
 
 pub(crate) type SharedCoordinator = Arc<dyn CoordinatorClient>;
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn exposes_only_failures_safe_for_an_outer_idempotent_retry_cycle() {
+    let rejection = |retryable| CoordinatorError::Rejected {
+      operation: "append job events",
+      status: 503,
+      code: "unavailable".to_owned(),
+      message: "try again".to_owned(),
+      retryable,
+    };
+    assert!(rejection(true).is_retryable());
+    assert!(!rejection(false).is_retryable());
+    assert!(CoordinatorError::TimedOut { operation: "test" }.is_retryable());
+    assert!(
+      CoordinatorError::RetriesExhausted {
+        operation: "test",
+        attempts: 1,
+        last: Box::new(rejection(true)),
+      }
+      .is_retryable()
+    );
+    assert!(
+      !CoordinatorError::RetriesExhausted {
+        operation: "test",
+        attempts: 1,
+        last: Box::new(rejection(false)),
+      }
+      .is_retryable()
+    );
+    assert!(!CoordinatorError::Invalid("invalid request".to_owned()).is_retryable());
+  }
+}

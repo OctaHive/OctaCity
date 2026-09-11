@@ -234,13 +234,13 @@ async fn final_usage(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DeliveryOutcome {
+pub(super) enum DeliveryOutcome {
   Delivered,
   Cancelled,
   TimedOut,
 }
 
-async fn deliver(
+pub(super) async fn deliver(
   events: &mpsc::Sender<RunnerStreamItem>,
   item: RunnerStreamItem,
   cancellation: &CancellationToken,
@@ -256,7 +256,7 @@ async fn deliver(
   }
 }
 
-async fn handle_delivery(
+pub(super) async fn handle_delivery(
   outcome: DeliveryOutcome,
   stop_reason: &mut Option<TerminationReason>,
   stop_deadline: &mut Option<Instant>,
@@ -292,7 +292,7 @@ async fn handle_delivery(
   }
 }
 
-async fn begin_stop(
+pub(super) async fn begin_stop(
   stop_reason: &mut Option<TerminationReason>,
   stop_deadline: &mut Option<Instant>,
   reason: TerminationReason,
@@ -324,7 +324,7 @@ async fn begin_stop(
   }
 }
 
-async fn wait_for_deadline(deadline: Option<Instant>) {
+pub(super) async fn wait_for_deadline(deadline: Option<Instant>) {
   match deadline {
     Some(deadline) => sleep_until(deadline).await,
     None => pending().await,

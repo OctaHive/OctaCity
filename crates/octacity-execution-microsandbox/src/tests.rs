@@ -1,5 +1,6 @@
 //! Sandbox planning and configuration boundary tests.
 
+use super::plan::{directory_size, exact_mib, guest_path};
 use super::*;
 
 fn runner(root: &Path) -> RunnerProgram {
@@ -267,4 +268,115 @@ fn constructs_exact_network_policies() {
     })
     .is_ok()
   );
+}
+
+#[tokio::test]
+async fn enforces_deadlines_cancellation_and_capability_selection() {
+  let temporary = tempfile::tempdir().unwrap();
+  let oci_request = request(temporary.path());
+  assert_eq!(requested_capability(&oci_request).unwrap(), test_capability());
+
+  let mut native_request = oci_request;
+  native_request.root = ExecutionTarget::Native {
+    platform: test_capability().platform,
+  };
+  assert!(matches!(
+    requested_capability(&native_request),
+    Err(ExecutionError::Unavailable(message)) if message.contains("OCI root image")
+  ));
+
+  let cancellation = CancellationToken::new();
+  assert_eq!(
+    before_deadline(
+      Instant::now() + Duration::from_secs(1),
+      &cancellation,
+      "fixture",
+      async { 7 }
+    )
+    .await
+    .unwrap(),
+    7
+  );
+
+  cancellation.cancel();
+  assert!(matches!(
+    before_deadline(
+      Instant::now() + Duration::from_secs(1),
+      &cancellation,
+      "fixture",
+      async { std::future::pending::<()>().await }
+    )
+    .await,
+    Err(ExecutionError::Cancelled)
+  ));
+
+  assert!(matches!(
+    before_deadline(Instant::now(), &CancellationToken::new(), "fixture timeout", async {
+      std::future::pending::<()>().await
+    })
+    .await,
+    Err(ExecutionError::TimedOut {
+      operation: "fixture timeout"
+    })
+  ));
+}
+
+#[test]
+fn converts_sdk_durations_without_losing_limits() {
+  assert_eq!(duration_seconds_ceil(Duration::ZERO), 0);
+  assert_eq!(duration_seconds_ceil(Duration::from_nanos(1)), 1);
+  assert_eq!(duration_seconds_ceil(Duration::from_secs(2)), 2);
+  assert_eq!(millis(Duration::from_millis(123)), 123);
+  assert_eq!(millis(Duration::MAX), u64::MAX);
+
+  assert!(matches!(invalid("invalid"), ExecutionError::Invalid(message) if message == "invalid"));
+  assert!(matches!(
+    unavailable("unavailable"),
+    ExecutionError::Unavailable(message) if message == "unavailable"
+  ));
+  assert!(matches!(backend("backend"), ExecutionError::Backend(message) if message == "backend"));
+}
+
+#[tokio::test]
+async fn rejects_exhausted_workspace_quotas_and_invalid_mappings() {
+  let temporary = tempfile::tempdir().unwrap();
+  let release = temporary.path().join("release");
+  let workspace = temporary.path().join("workspace");
+  fs::create_dir(&release).unwrap();
+  fs::create_dir(&workspace).unwrap();
+  fs::create_dir(workspace.join(".octacity")).unwrap();
+  fs::write(workspace.join("existing.bin"), vec![0; (MEBIBYTE + 1) as usize]).unwrap();
+
+  let mut value = request(&workspace);
+  value.writable_disk_bytes = MEBIBYTE;
+  assert!(matches!(
+    SandboxPlan::build("agent-1", &runner(&release), &value).await,
+    Err(ExecutionError::Unavailable(message)) if message.contains("already exceeds")
+  ));
+  assert!(canonical_runtime_file("runtime", Path::new("relative")).is_err());
+  assert_eq!(guest_path("/guest", &workspace, &workspace).unwrap(), "/guest");
+  assert!(guest_path("/guest", &workspace, temporary.path()).is_err());
+  assert!(exact_mib("memory", MEBIBYTE + 1).is_err());
+  assert!(directory_size(&temporary.path().join("missing")).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn accounts_for_nested_files_without_following_symlinks() {
+  use std::{os::unix::fs::symlink, os::unix::net::UnixListener};
+
+  let temporary = tempfile::tempdir().unwrap();
+  let nested = temporary.path().join("nested");
+  fs::create_dir(&nested).unwrap();
+  fs::write(nested.join("one"), b"1234").unwrap();
+  symlink(temporary.path().join("missing-target"), nested.join("ignored-link")).unwrap();
+
+  assert_eq!(directory_size(temporary.path()).unwrap(), 4);
+
+  let socket_root = tempfile::tempdir().unwrap();
+  let _listener = UnixListener::bind(socket_root.path().join("socket")).unwrap();
+  assert!(matches!(
+    directory_size(socket_root.path()),
+    Err(ExecutionError::Backend(message)) if message.contains("unsupported special file")
+  ));
 }

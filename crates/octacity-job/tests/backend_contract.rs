@@ -14,8 +14,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use ed25519_dalek::{Signer as _, SigningKey};
 use octacity_execution::ExecutionBackend;
 use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
@@ -24,8 +22,7 @@ use octacity_execution_oci::{OciBackend, OciEngine};
 use octacity_job::{ExecuteJobRequest, JobExecutor, JobExecutorConfig};
 use octacity_protocol::{
   AGENT_PROTOCOL_VERSION, ExecutionSpec, JobSpecV1, NetworkPolicy, OciIsolation, OctaSpec, OutputLimits,
-  PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM,
-  SignedEnvelope, SourceSpec,
+  PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeMode, RuntimeSpec, RuntimeTarget, SourceSpec,
 };
 use octacity_runner::{RunStatus, RunnerInstallation, RunnerStreamItem, RunnerSupervisionPolicy};
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
@@ -189,9 +186,7 @@ async fn run_contract(
   };
   let release_root = required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT");
   let runner = RunnerInstallation::load(&release_root).expect("the configured Octa release must be valid");
-  let key = SigningKey::from_bytes(&[23; 32]);
   let executor = JobExecutor::new(
-    BTreeMap::from([("backend-contract".to_owned(), key.verifying_key())]),
     runner.clone(),
     Arc::new(FixtureSource),
     BTreeMap::from([(mode, backend)]),
@@ -213,16 +208,12 @@ async fn run_contract(
     .expect("system clock must be after the Unix epoch")
     .as_secs();
   let spec = specification(target.clone(), workspace_bytes, now, &runner);
-  let envelope = sign(&spec, &key);
   let (sender, mut receiver) = mpsc::channel(128);
   let started = Instant::now();
   let completion = executor
     .execute(
       ExecuteJobRequest {
-        envelope,
-        job_id: spec.job_id.clone(),
-        attempt: spec.attempt,
-        now,
+        spec,
         source_credentials: BTreeMap::new(),
       },
       CancellationToken::new(),
@@ -273,15 +264,11 @@ async fn run_cancellation_contract(
   let mut spec = specification(target, workspace_bytes, now, runner);
   spec.job_id.push_str("-cancel");
   spec.execution.commands = vec!["wait".to_owned()];
-  let envelope = sign(&spec, &SigningKey::from_bytes(&[23; 32]));
   let cancellation = CancellationToken::new();
   let (sender, mut receiver) = mpsc::channel(128);
   let execution = executor.execute(
     ExecuteJobRequest {
-      envelope,
-      job_id: spec.job_id,
-      attempt: spec.attempt,
-      now,
+      spec,
       source_credentials: BTreeMap::new(),
     },
     cancellation.clone(),
@@ -394,16 +381,6 @@ fn linux_platform() -> PlatformSpec {
     } else {
       PlatformArchitecture::Amd64
     },
-  }
-}
-
-fn sign(spec: &JobSpecV1, key: &SigningKey) -> SignedEnvelope {
-  let payload = serde_json::to_vec(spec).expect("fixture JobSpec must serialize");
-  SignedEnvelope {
-    key_id: "backend-contract".to_owned(),
-    algorithm: SIGNATURE_ALGORITHM.to_owned(),
-    payload: BASE64.encode(&payload),
-    signature: BASE64.encode(key.sign(&payload).to_bytes()),
   }
 }
 

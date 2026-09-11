@@ -158,3 +158,121 @@ fn rejects_a_plugin_for_another_platform() {
       .contains("does not support platform")
   );
 }
+
+#[test]
+fn rejects_each_invalid_manifest_identity_boundary() {
+  let (root, _) = plugin_fixture();
+  let directory = root.path().join("git");
+  let source = fs::read_to_string(directory.join("plugin.toml")).unwrap();
+  let valid = SourcePluginManifest::from_toml(&source).unwrap();
+
+  let mut invalid = valid.clone();
+  invalid.manifest_version += 1;
+  assert!(
+    validate_manifest(&directory, &invalid)
+      .unwrap_err()
+      .to_string()
+      .contains("version")
+  );
+  invalid = valid.clone();
+  invalid.name = "other".to_owned();
+  assert!(
+    validate_manifest(&directory, &invalid)
+      .unwrap_err()
+      .to_string()
+      .contains("name")
+  );
+  invalid = valid.clone();
+  invalid.version.clear();
+  assert!(
+    validate_manifest(&directory, &invalid)
+      .unwrap_err()
+      .to_string()
+      .contains("version")
+  );
+  invalid = valid.clone();
+  invalid.protocol_min = 0;
+  assert!(
+    validate_manifest(&directory, &invalid)
+      .unwrap_err()
+      .to_string()
+      .contains("protocol")
+  );
+  invalid = valid.clone();
+  invalid.executable = "../git".to_owned();
+  assert!(
+    validate_manifest(&directory, &invalid)
+      .unwrap_err()
+      .to_string()
+      .contains("relative path")
+  );
+  invalid = valid;
+  invalid.sha256 = "A".repeat(64);
+  assert!(
+    validate_manifest(&directory, &invalid)
+      .unwrap_err()
+      .to_string()
+      .contains("lowercase")
+  );
+
+  assert!(logical_name("git_2"));
+  assert!(!logical_name("Git"));
+  assert!(relative_wire_path("bin/source-git"));
+  assert!(!relative_wire_path("bin//source-git"));
+  assert!(sha256_digest(&"a".repeat(64)));
+  assert!(!sha256_digest(&"z".repeat(64)));
+}
+
+#[test]
+fn rejects_missing_malformed_oversized_and_non_regular_plugin_files() {
+  let missing = tempfile::tempdir().unwrap().path().join("missing");
+  assert!(matches!(
+    SourcePluginRegistry::discover(&missing),
+    Err(RegistryError::InvalidEntry { .. })
+  ));
+
+  let root = tempfile::tempdir().unwrap();
+  let directory = root.path().join("git");
+  fs::create_dir(&directory).unwrap();
+  fs::write(directory.join("plugin.toml"), "not = [valid").unwrap();
+  assert!(matches!(
+    SourcePluginRegistry::discover(root.path()),
+    Err(RegistryError::ParseManifest { .. })
+  ));
+
+  fs::write(
+    directory.join("plugin.toml"),
+    vec![b'x'; MAX_MANIFEST_BYTES as usize + 1],
+  )
+  .unwrap();
+  assert!(
+    SourcePluginRegistry::discover(root.path())
+      .unwrap_err()
+      .to_string()
+      .contains("exceeds")
+  );
+
+  fs::remove_file(directory.join("plugin.toml")).unwrap();
+  fs::create_dir(directory.join("plugin.toml")).unwrap();
+  assert!(
+    SourcePluginRegistry::discover(root.path())
+      .unwrap_err()
+      .to_string()
+      .contains("regular file")
+  );
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_a_non_executable_plugin_binary() {
+  use std::os::unix::fs::PermissionsExt as _;
+
+  let (root, executable) = plugin_fixture();
+  fs::set_permissions(executable, fs::Permissions::from_mode(0o644)).unwrap();
+  assert!(
+    SourcePluginRegistry::discover(root.path())
+      .unwrap_err()
+      .to_string()
+      .contains("execute bit")
+  );
+}

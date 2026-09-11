@@ -152,6 +152,7 @@ fn bounds_host_snapshots_by_registered_capacity() {
       job_id: "job-1".to_owned(),
       attempt: 1,
       lease_id: "lease-1".to_owned(),
+      resource_usage: None,
     }),
     backends: vec![BackendHealth {
       backend: "microsandbox".to_owned(),
@@ -207,4 +208,385 @@ fn golden_coordinator_documents_match_the_wire_types() {
   ))
   .unwrap();
   heartbeat.validate("heartbeat-20260911-1", 1_789_056_100, 10).unwrap();
+
+  let events: AppendEventsRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/events-append-request-v1.json"
+  ))
+  .unwrap();
+  events.validate().unwrap();
+
+  let events_response: AppendEventsResponse = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/events-append-response-v1.json"
+  ))
+  .unwrap();
+  events_response.validate("events-20260911-1", 1, 2).unwrap();
+
+  let completion: CompleteLeaseRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/complete-request-v1.json"
+  ))
+  .unwrap();
+  completion.validate().unwrap();
+
+  let completion_response: CompleteLeaseResponse = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/complete-response-v1.json"
+  ))
+  .unwrap();
+  completion_response
+    .validate("complete-20260911-1", "completion-42-1")
+    .unwrap();
+}
+
+#[test]
+fn event_batches_are_fenced_contiguous_and_resource_samples_are_sane() {
+  let lease = LeaseFence::from(&lease());
+  let mut request = AppendEventsRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "events-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease: lease.clone(),
+    events: vec![AttemptEventEnvelope {
+      job_id: lease.job_id.clone(),
+      attempt: lease.attempt,
+      lease_id: lease.lease_id.clone(),
+      fencing_token: lease.fencing_token.clone(),
+      stream_sequence: 1,
+      kind: AttemptEventKind::Agent {
+        event: AgentLifecycleEvent::ResourceUsage {
+          usage: ResourceUsageSnapshot {
+            observed_at_unix_ms: 1,
+            elapsed_ms: 2,
+            cpu_time_ms: 1,
+            memory_current_bytes: 3,
+            memory_peak_bytes: 4,
+            disk_current_bytes: 5,
+            disk_peak_bytes: 6,
+            io_read_bytes: 7,
+            io_written_bytes: 8,
+            network_received_bytes: None,
+            network_transmitted_bytes: None,
+          },
+        },
+      },
+    }],
+  };
+  request.validate().unwrap();
+  let mut duplicate = request.events[0].clone();
+  duplicate.stream_sequence = 3;
+  request.events.push(duplicate);
+  assert!(request.validate().unwrap_err().to_string().contains("contiguous"));
+  request.events[1].stream_sequence = 2;
+  request.events[1].fencing_token = "stale-fence".to_owned();
+  assert!(request.validate().unwrap_err().to_string().contains("fence"));
+}
+
+#[test]
+fn append_metadata_reserve_covers_maximally_escaped_bounded_identifiers() {
+  // Quotes are valid identifier bytes and have the largest common JSON escape
+  // expansion. Use every allowed record so DTO growth cannot silently make the
+  // configuration preflight underestimate a real append request.
+  let identifier = "\"".repeat(MAX_COORDINATOR_IDENTIFIER_BYTES);
+  let fence = LeaseFence {
+    lease_id: identifier.clone(),
+    job_id: identifier.clone(),
+    attempt: u32::MAX,
+    fencing_token: identifier.clone(),
+  };
+  let events = (1..=MAX_EVENT_BATCH_RECORDS as u64)
+    .map(|stream_sequence| AttemptEventEnvelope {
+      job_id: fence.job_id.clone(),
+      attempt: fence.attempt,
+      lease_id: fence.lease_id.clone(),
+      fencing_token: fence.fencing_token.clone(),
+      stream_sequence,
+      kind: AttemptEventKind::Agent {
+        event: AgentLifecycleEvent::StateChanged {
+          state: JobLifecycleState::Running,
+        },
+      },
+    })
+    .collect::<Vec<_>>();
+  let request = AppendEventsRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: identifier.clone(),
+    registration_id: identifier,
+    lease: fence,
+    events,
+  };
+  request.validate().unwrap();
+  let encoded_event_bytes = request
+    .events
+    .iter()
+    .map(|event| serde_json::to_vec(event).unwrap().len() + 1)
+    .sum::<usize>();
+  let encoded_request_bytes = serde_json::to_vec(&request).unwrap().len();
+
+  assert!(encoded_request_bytes.saturating_sub(encoded_event_bytes) <= MAX_APPEND_REQUEST_OVERHEAD_BYTES);
+}
+
+#[test]
+fn rejects_invalid_inventory_and_registration_boundaries() {
+  let valid = inventory();
+  let mut invalid = valid.clone();
+  invalid.coordinator_protocols = vec![2];
+  assert!(invalid.validate().unwrap_err().to_string().contains("protocol v1"));
+  invalid = valid.clone();
+  invalid.host_capacity.logical_cpu_count = 0;
+  assert!(invalid.validate().unwrap_err().to_string().contains("capacity"));
+  invalid = valid.clone();
+  invalid.runtimes.clear();
+  assert!(invalid.validate().unwrap_err().to_string().contains("runtime"));
+  invalid = valid.clone();
+  invalid.runtimes.push(invalid.runtimes[0].clone());
+  assert!(invalid.validate().unwrap_err().to_string().contains("duplicates"));
+  invalid = valid.clone();
+  invalid.runtimes[0].mode = RuntimeMode::Native;
+  assert!(invalid.validate().unwrap_err().to_string().contains("Native"));
+  invalid = valid.clone();
+  invalid.octa.octafile_versions.clear();
+  assert!(
+    invalid
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("octafile_versions")
+  );
+  invalid = valid.clone();
+  invalid.octa.plugins.push(invalid.octa.plugins[0].clone());
+  assert!(
+    invalid
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("task plugin names")
+  );
+  invalid = valid.clone();
+  invalid.source_plugins.push(invalid.source_plugins[0].clone());
+  assert!(
+    invalid
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("source plugin names")
+  );
+
+  let mut task = valid.octa.plugins[0].clone();
+  task.protocol = 0;
+  assert!(task.validate().unwrap_err().to_string().contains("protocol"));
+  task = valid.octa.plugins[0].clone();
+  task.platforms.clear();
+  assert!(task.validate().unwrap_err().to_string().contains("must not be empty"));
+  let mut source = valid.source_plugins[0].clone();
+  source.protocol_min = 2;
+  source.protocol_max = 1;
+  assert!(source.validate().unwrap_err().to_string().contains("range"));
+
+  let mut registration = RegisterAgentResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    max_retry_delay_ms: 1,
+  };
+  registration.validate("request-1").unwrap();
+  registration.max_retry_delay_ms = 0;
+  assert!(
+    registration
+      .validate("request-1")
+      .unwrap_err()
+      .to_string()
+      .contains("greater")
+  );
+  registration.max_retry_delay_ms = 1;
+  registration.protocol_version += 1;
+  assert!(
+    registration
+      .validate("request-1")
+      .unwrap_err()
+      .to_string()
+      .contains("unsupported")
+  );
+
+  let mut acquire = AcquireLeaseRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    wait_seconds: 0,
+  };
+  assert!(acquire.validate().unwrap_err().to_string().contains("wait_seconds"));
+  acquire.wait_seconds = 1;
+  acquire.validate().unwrap();
+}
+
+#[test]
+fn validates_no_work_drain_fences_and_resource_boundaries() {
+  let no_work = AcquireLeaseResponse::NoWork {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    retry_after_ms: 1,
+  };
+  no_work.validate("request-1", 100, 10).unwrap();
+  let invalid_no_work = AcquireLeaseResponse::NoWork {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    retry_after_ms: 0,
+  };
+  assert!(invalid_no_work.validate("request-1", 100, 10).is_err());
+  AcquireLeaseResponse::Drain {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+  }
+  .validate("request-1", 100, 10)
+  .unwrap();
+
+  let mut invalid_lease = lease();
+  invalid_lease.issued_at = 121;
+  assert!(
+    invalid_lease
+      .validate(120, 10)
+      .unwrap_err()
+      .to_string()
+      .contains("interval")
+  );
+  invalid_lease = lease();
+  invalid_lease.attempt = 0;
+  assert!(
+    invalid_lease
+      .validate(120, 10)
+      .unwrap_err()
+      .to_string()
+      .contains("attempt")
+  );
+  assert!(lease().validate(u64::MAX, 1).is_err());
+
+  let valid_usage = ResourceUsageSnapshot {
+    observed_at_unix_ms: 1,
+    elapsed_ms: 2,
+    cpu_time_ms: 1,
+    memory_current_bytes: 3,
+    memory_peak_bytes: 4,
+    disk_current_bytes: 5,
+    disk_peak_bytes: 6,
+    io_read_bytes: 7,
+    io_written_bytes: 8,
+    network_received_bytes: None,
+    network_transmitted_bytes: None,
+  };
+  let mut invalid_usage = valid_usage.clone();
+  invalid_usage.observed_at_unix_ms = 0;
+  assert!(invalid_usage.validate().unwrap_err().to_string().contains("timestamp"));
+  invalid_usage = valid_usage.clone();
+  invalid_usage.memory_current_bytes = 5;
+  assert!(invalid_usage.validate().unwrap_err().to_string().contains("peak"));
+
+  let mut active = ActiveJob {
+    job_id: "job-1".to_owned(),
+    attempt: 1,
+    lease_id: "lease-1".to_owned(),
+    resource_usage: Some(valid_usage),
+  };
+  active.validate().unwrap();
+  active.attempt = 0;
+  assert!(active.validate().unwrap_err().to_string().contains("attempt"));
+}
+
+#[test]
+fn rejects_invalid_event_completion_health_and_error_responses() {
+  let mut append: AppendEventsRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/events-append-request-v1.json"
+  ))
+  .unwrap();
+  let fence = append.lease.clone();
+  append.events[0].stream_sequence = 0;
+  assert!(
+    append.events[0]
+      .validate(&fence)
+      .unwrap_err()
+      .to_string()
+      .contains("stream_sequence")
+  );
+  append.events[0].stream_sequence = 1;
+  append.events[0].kind = AttemptEventKind::Runner {
+    event: RunnerEventPayload {
+      schema_version: 0,
+      sequence: 1,
+      timestamp: "now".to_owned(),
+      category: "stdout".to_owned(),
+      data: serde_json::Map::new(),
+    },
+  };
+  assert!(
+    append.events[0]
+      .validate(&fence)
+      .unwrap_err()
+      .to_string()
+      .contains("header")
+  );
+  append.events[0].kind = AttemptEventKind::Agent {
+    event: AgentLifecycleEvent::AccountingUnavailable {
+      consecutive_failures: 0,
+    },
+  };
+  assert!(
+    append.events[0]
+      .validate(&fence)
+      .unwrap_err()
+      .to_string()
+      .contains("failure count")
+  );
+  append.events.clear();
+  assert!(append.validate().unwrap_err().to_string().contains("batch size"));
+
+  let response = AppendEventsResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    acknowledged_sequence: 2,
+  };
+  assert!(response.validate("request-1", 0, 2).is_err());
+  assert!(response.validate("request-1", 1, 1).is_err());
+
+  let mut completion: CompleteLeaseRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/complete-request-v1.json"
+  ))
+  .unwrap();
+  completion.last_event_sequence = 0;
+  assert!(
+    completion
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("acknowledged event")
+  );
+  let completion_response = CompleteLeaseResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    completion_id: "completion-1".to_owned(),
+  };
+  assert!(completion_response.validate("request-1", "completion-2").is_err());
+
+  let mut health = BackendHealth {
+    backend: "native".to_owned(),
+    status: BackendHealthStatus::Degraded,
+    message: Some(String::new()),
+  };
+  assert!(health.validate().unwrap_err().to_string().contains("health message"));
+  health.message = Some("recovering".to_owned());
+  health.validate().unwrap();
+
+  let mut error = CoordinatorErrorResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    code: "unavailable".to_owned(),
+    message: "retry".to_owned(),
+    retryable: true,
+    retry_after_ms: Some(0),
+  };
+  assert!(
+    error
+      .validate("request-1")
+      .unwrap_err()
+      .to_string()
+      .contains("retry_after")
+  );
+  error.retry_after_ms = Some(1);
+  error.message = "bad\nmessage".to_owned();
+  assert!(error.validate("request-1").unwrap_err().to_string().contains("message"));
 }

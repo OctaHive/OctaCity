@@ -440,6 +440,10 @@ oci_engines
 allowed_upload_origins
 max_workspace_bytes
 max_spool_bytes
+max_spool_records
+event_batch_max_bytes
+event_batch_max_records
+event_channel_capacity
 poll_timeout_seconds
 coordinator_request_timeout_seconds
 coordinator_max_body_bytes
@@ -513,8 +517,11 @@ Preparing | Running | Freezing | Uploading
 
 Every transition is persisted in a small local job journal before its external
 side effect. On agent restart, active jobs are not resumed: the agent destroys
-orphaned backend state and workspaces, retains enough diagnostics to report the
-abandonment, and lets the server's lease TTL and fencing create a new attempt.
+orphaned backend state and workspaces, emits a structured operator diagnostic
+containing the safe local attempt identifier, last valid phase, unacknowledged
+event count, and completion-presence flag, and then lets the server's lease TTL
+and fencing create a new attempt. Raw event payloads and server-controlled job
+text are never copied into that recovery diagnostic.
 There is no duplicate execution recovery path in v1.
 
 ## Source acquisition plugins
@@ -1013,9 +1020,10 @@ logs.
 
 - Define one retained backend contract suite before adding platform and OCI
   implementations.
-- Implement one backend-neutral job owner that verifies the signed request
-  before filesystem or plugin activity, materializes source, starts the exact
-  selected backend, supervises `octa-runner`, and owns cleanup.
+- Verify the signed request and its lease binding at the coordinator boundary,
+  then pass the verified `JobSpec` to one backend-neutral job owner before any
+  filesystem or plugin activity. That owner materializes source, starts the
+  exact selected backend, supervises `octa-runner`, and owns cleanup.
 - Complete Linux `NativeBackend` with cgroup v2, Bubblewrap namespaces,
   seccomp, quota-backed storage, and enforceable network modes.
 - Implement `OciBackend` with explicit `process` and `hypervisor` isolation.
@@ -1096,8 +1104,8 @@ capacity without coupling transport to runner, source, or backend adapters.
 Integration tests exercise real TCP disconnects, retryable responses, response
 correlation, body and time bounds, cancellation while polling, invalid
 signatures, drain, fencing, and renewal failure. Production job acquisition is
-not exposed by the binary until phase 5 can durably spool events and complete a
-lease; executing unreportable jobs would be an unsafe intermediate daemon.
+exposed by the binary through the phase-5 durable lifecycle; phase 4 alone did
+not execute leases because unreportable jobs would have been unsafe.
 
 ### Phase 5: durable events and complete lifecycle
 
@@ -1114,6 +1122,25 @@ Completion gate: killing the network during a large-output job produces no
 loss or reordering; reconnection replays duplicates safely; lost leases cancel
 the selected backend. Resource samples obey the same ordering, replay, and
 deduplication guarantees as other agent lifecycle events.
+
+Implementation status: complete. `octacity-lifecycle` owns the one-attempt
+state machine above `octacity-job` and `octacity-coordinator`, while its
+concrete spool uses synced immutable per-sequence records and a synced
+contiguous acknowledgement cursor. Byte, record, batch, and in-memory channel
+limits are explicit configuration. Runner events retain their original schema
+and sequence inside fenced attempt envelopes; lifecycle and cumulative
+resource samples remain separate agent events, and the latest sample is also
+published through heartbeat snapshots. Event append and terminal completion
+use bounded idempotent coordinator calls, completion waits for all event
+acknowledgements and confirmed cleanup, and startup destroys backend/workspace
+orphans before removing only journal-proven interrupted state. The production
+`run` command now performs registration, cancellable polling, one-job
+execution, drain, durable completion, and graceful signal handling. Protocol,
+real-HTTP, spool-pressure, disconnect/replay, ordering, fencing, and recovery
+tests enforce these boundaries. Fencing or expiry ends and cleans only the
+current attempt; the long-lived daemon continues polling. Event delivery
+retries only failures explicitly safe for another idempotent retry cycle and
+surfaces permanent rejection to the lifecycle owner.
 
 ### Phase 6: secrets, artifacts, and reports
 
