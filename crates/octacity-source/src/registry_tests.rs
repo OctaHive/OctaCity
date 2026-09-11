@@ -231,6 +231,14 @@ fn rejects_missing_malformed_oversized_and_non_regular_plugin_files() {
     Err(RegistryError::InvalidEntry { .. })
   ));
 
+  let non_directory_root = tempfile::NamedTempFile::new().unwrap();
+  assert!(
+    SourcePluginRegistry::discover(non_directory_root.path())
+      .unwrap_err()
+      .to_string()
+      .contains("real directory")
+  );
+
   let root = tempfile::tempdir().unwrap();
   let directory = root.path().join("git");
   fs::create_dir(&directory).unwrap();

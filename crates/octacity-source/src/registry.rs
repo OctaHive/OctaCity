@@ -107,6 +107,7 @@ impl SourcePluginRegistry {
   /// Scans and verifies every entry below the operator-owned registry root.
   pub fn discover(root: &Path) -> Result<Self, RegistryError> {
     debug!(registry = %root.display(), "discovering source plugins");
+    validate_directory(root)?;
     validate_permissions(root, false)?;
     let entries = fs::read_dir(root).map_err(|source| RegistryError::ReadDirectory {
       path: root.to_owned(),
@@ -188,6 +189,18 @@ impl SourcePluginRegistry {
     }
     Ok(plugin)
   }
+}
+
+/// Requires a real directory independently of platform permission support.
+fn validate_directory(path: &Path) -> Result<(), RegistryError> {
+  let metadata = fs::symlink_metadata(path).map_err(|error| invalid_entry(path, error.to_string()))?;
+  if !metadata.file_type().is_dir() {
+    return Err(invalid_entry(
+      path,
+      "expected a real directory, not a symlink or special file",
+    ));
+  }
+  Ok(())
 }
 
 fn load_plugin(directory: &Path) -> Result<InstalledSourcePlugin, RegistryError> {
