@@ -114,7 +114,8 @@ pub(super) fn validate_trusted_directory_chain(path: &Path) -> std::io::Result<(
         "path chain contains a directory with an untrusted owner",
       ));
     }
-    validate_ancestor_acl(owner, dacl)?;
+    validate_ancestor_acl(owner, dacl)
+      .map_err(|error| std::io::Error::new(error.kind(), format!("directory '{}': {error}", directory.display())))?;
   }
   Ok(())
 }

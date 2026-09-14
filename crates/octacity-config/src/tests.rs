@@ -13,7 +13,7 @@ struct Fixture {
 
 impl Fixture {
   fn new() -> Self {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = fixture_tempdir();
     let credential_root = temp.path().join("credentials");
     octacity_private_fs::create_private_directory(&credential_root).unwrap();
     let credential = credential_root.join("credential");
@@ -89,6 +89,25 @@ impl Fixture {
       max_accounting_failures: 3,
     };
     Self { _temp: temp, config }
+  }
+}
+
+fn fixture_tempdir() -> TempDir {
+  #[cfg(windows)]
+  {
+    // `%TEMP%` is allowed to be a shared scratch location and may grant local
+    // service groups the right to delete its children. That is exactly the
+    // unsafe ancestry production validation must reject, so a valid-config
+    // fixture belongs under the current user's protected profile instead.
+    let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
+    tempfile::Builder::new()
+      .prefix(".octacity-test-")
+      .tempdir_in(profile)
+      .unwrap()
+  }
+  #[cfg(not(windows))]
+  {
+    tempfile::tempdir().unwrap()
   }
 }
 

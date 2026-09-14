@@ -98,7 +98,7 @@ mod tests {
 
   #[test]
   fn creates_and_validates_a_private_directory() {
-    let temporary = tempfile::tempdir().unwrap();
+    let temporary = fixture_tempdir();
     let directory = temporary.path().join("private");
 
     create_private_directory(&directory).unwrap();
@@ -108,6 +108,24 @@ mod tests {
     // delete or replace this protected directory.
     validate_trusted_directory_chain(&directory.canonicalize().unwrap()).unwrap();
     assert!(create_private_directory(&directory).is_err());
+  }
+
+  fn fixture_tempdir() -> tempfile::TempDir {
+    #[cfg(windows)]
+    {
+      // A shared `%TEMP%` tree can intentionally be replaceable by local
+      // service identities. Use the protected user profile when this test
+      // asserts that the complete ancestry is trusted.
+      let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
+      tempfile::Builder::new()
+        .prefix(".octacity-private-fs-test-")
+        .tempdir_in(profile)
+        .unwrap()
+    }
+    #[cfg(not(windows))]
+    {
+      tempfile::tempdir().unwrap()
+    }
   }
 
   #[test]
