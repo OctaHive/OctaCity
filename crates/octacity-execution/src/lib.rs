@@ -5,7 +5,7 @@
 //! cancellation, cleanup, and resource-usage semantics.
 
 use std::{
-  path::{Path, PathBuf},
+  path::{Component, Path, PathBuf},
   pin::Pin,
   time::Duration,
 };
@@ -243,11 +243,15 @@ fn canonical_directory(path: &Path, name: &str) -> Result<PathBuf, ExecutionErro
 }
 
 fn is_canonical_path(path: &Path) -> bool {
-  // `Path` equality compares normalized components. In particular, Windows
-  // may consider a path containing `..` equal to the canonical path returned
-  // by the filesystem. This boundary requires the caller to provide the
-  // canonical spelling itself, so compare the underlying OS strings exactly.
-  path.is_absolute() && std::fs::canonicalize(path).is_ok_and(|canonical| canonical.as_os_str() == path.as_os_str())
+  // Windows may preserve `..` in the extended-length path returned by
+  // `canonicalize`, so reject lexical aliases before consulting the
+  // filesystem. The exact comparison then rejects symlink aliases and other
+  // spellings that differ from the filesystem's canonical name.
+  path.is_absolute()
+    && !path
+      .components()
+      .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    && std::fs::canonicalize(path).is_ok_and(|canonical| canonical.as_os_str() == path.as_os_str())
 }
 
 fn is_immutable_oci_reference(value: &str) -> bool {
@@ -511,7 +515,23 @@ mod tests {
     };
     assert!(request.validate().is_ok());
 
-    request.workload_identity = Some(identity_directory.join("..").join("identities/job.identity"));
+    // `PathBuf::push` normalizes `..` when the base has the verbatim `\\?\`
+    // prefix returned by Windows canonicalization. Build the spelling as an
+    // `OsString` so this test actually reaches the boundary with a parent
+    // component on every supported platform.
+    let mut noncanonical_identity = identity_directory.into_os_string();
+    for component in ["..", "identities", "job.identity"] {
+      noncanonical_identity.push(std::path::MAIN_SEPARATOR_STR);
+      noncanonical_identity.push(component);
+    }
+    let noncanonical_identity = PathBuf::from(noncanonical_identity);
+    assert!(
+      noncanonical_identity
+        .components()
+        .any(|component| component == Component::ParentDir),
+      "test fixture must preserve its parent component"
+    );
+    request.workload_identity = Some(noncanonical_identity);
     assert!(request.validate().is_err());
   }
 
