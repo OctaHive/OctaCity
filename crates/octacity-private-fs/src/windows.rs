@@ -458,10 +458,11 @@ mod tests {
     let temporary = tempfile::tempdir().unwrap();
     let directory = temporary.path().join("replaceable");
     fs::create_dir(&directory).unwrap();
-    // `WD` is Everyone and `DC` is DELETE_CHILD. The descriptor deliberately
-    // models an ancestor that an untrusted local account can use to replace a
-    // protected descendant without reading its final file.
-    let sddl = "D:P(A;;DC;;;WD)".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    // `WD` is Everyone. SDDL has no mnemonic for the filesystem-specific
+    // FILE_DELETE_CHILD right; its `DC` token means the unrelated Active
+    // Directory mask 0x2. Use the exact filesystem mask so this descriptor
+    // models an ancestor able to replace a protected descendant.
+    let sddl = "D:P(A;;0x40;;;WD)".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
     // SAFETY: the SDDL input is NUL-terminated and the returned descriptor is
     // owned by the guard through the SetFileSecurityW call.
