@@ -64,6 +64,12 @@ supported Linux and Apple Silicon macOS hosts.
 - Artifacts and reports are stored by the server in an S3-compatible object
   store. Agents receive short-lived upload instructions and never receive
   object-store credentials.
+- Task-result cache semantics remain entirely inside Octa. The agent supplies
+  a job-scoped runner cache session: an operator-bounded persistent local L1,
+  a server-authorized namespace and access mode, and optional short-lived
+  credentials for the remote HTTP L2. Local and remote caches operate together;
+  the agent never computes action keys, interprets cache records, or proxies
+  cache blobs.
 - Machine provisioning and job execution are separate boundaries. Server-side
   `AgentProvider` implementations create or retire ready agent machines through
   VMware vSphere, Proxmox, or cloud APIs; statically enrolled agents require no
@@ -403,6 +409,10 @@ outputs
   artifact size/count limits
   report size/count limits
   per-output byte limit
+
+cache (optional)
+  server-authorized namespace
+  independent lookup and publication permission
 ```
 
 The following are not allowed in `JobSpecV1`:
@@ -412,6 +422,7 @@ The following are not allowed in `JobSpecV1`:
 - arbitrary host mounts;
 - arbitrary environment inheritance;
 - server credentials;
+- cache bearer credentials, endpoints, or physical cache paths;
 - resolved secret values;
 - source-plugin executable paths or unregistered plugin names;
 - mutable source refs without an immutable resolved revision;
@@ -443,6 +454,14 @@ state_root
 octa_release_root
 source_plugins_dir
 workload_identity_profiles
+cache_root
+cache_max_bytes
+cache_high_watermark_bytes
+cache_low_watermark_bytes
+allowed_cache_origins
+native_cache_environment_identities
+cache_request_timeout_seconds
+cache_max_parallel_transfers
 enabled_runtime_modes
 allow_native_execution
 native_environment
@@ -484,6 +503,11 @@ a signed job must also appear in `allowed_network_hosts`; the job cannot widen
 the operator-owned egress policy. Likewise, every signed `OutputLimits` value
 must fit within `max_output_limits`, so a compromised coordinator cannot spend
 more local staging space than the agent operator authorized.
+
+Cache capacity and transport limits are operator policy. The signed job selects
+only a namespace and a subset of locally allowed read/write access. Native
+environment identities are configured by the operator; OCI identities are
+derived from the already verified immutable guest image.
 
 At startup the agent canonicalizes roots, rejects overlapping unsafe paths,
 checks permissions, verifies that credentials are not world-readable, checks
@@ -923,6 +947,39 @@ only when required, but its eventual parts and completion remain hidden behind
 the same begin/complete protocol. Local development and integration tests use
 MinIO rather than a separate filesystem storage behavior.
 
+## Octa task-result cache integration
+
+Octa owns the complete cache engine: filesystem contracts, input snapshots,
+action identity, local CAS, transactional restore, output publication, and the
+layered local-first policy. OctaCity must use the published runner protocol and
+HTTP cache protocol rather than duplicating any of those semantics.
+
+For a cache-enabled job, the server authorizes only a logical namespace and
+independent read/write permissions. The agent narrows that grant through local
+policy, obtains a short-lived fenced cache credential, writes it to a private
+per-job file, and builds the runner's `CacheSessionSpec`. The session contains:
+
+- the authorized cache mode and namespace;
+- an absolute agent-owned L1 directory outside the repository workspace;
+- the immutable OCI image identity or operator-configured Native environment
+  identity;
+- an optional HTTPS remote endpoint, private token-file path, optional CA
+  certificate path, request deadline, and transfer limit.
+
+The remote endpoint must match an operator-configured origin. The token value
+never enters `JobSpec`, command arguments, environment variables, runner
+events, spool records, or logs. It is mounted read-only into OCI execution and
+removed after the runner stops. A restricted job network policy must explicitly
+permit the cache endpoint.
+
+The persistent L1 is shared only within the same server-authorized trust
+domain, project, platform, and runtime identity. Its filesystem capacity is
+operator-bounded independently of workspace limits. Octa verifies all cache
+metadata and content digests, so a corrupt entry is a miss or quarantine event,
+never trusted output. A repository process may at worst evict or corrupt cache
+data in its own authorized scope; it cannot write a trusted namespace belonging
+to another scope.
+
 ## Local state and cleanup
 
 Use distinct roots:
@@ -935,12 +992,16 @@ state_root/
 
 work_root/
   jobs/<lease-id>/workspace
-  cache/<trust-domain>/<project>/<platform>/
+
+cache_root/
+  v1/<opaque-authorized-scope>/
 ```
 
-The first version shares persistent Octa state only inside the same project and
-trust domain. Pull requests from untrusted forks receive an isolated cache
-namespace. Do not add remote-cache code until the server has a real backend.
+The cache root is persistent agent state, not job workspace state, and normal
+job cleanup never removes it. Pull requests from untrusted forks receive an
+isolated read-only or untrusted-write namespace. Physical directory names are
+derived from bounded validated scope identities rather than using namespace
+text as an unchecked filesystem path.
 
 Cleanup is idempotent and ordered. Freezing after runner completion performs
 steps 1 through 3 before artifact validation; final cleanup performs the
@@ -1218,11 +1279,44 @@ against MinIO, then checks retained job state and uploaded metadata for
 protected bytes.
 
 The Phase 6 HTTP server is deliberately a contract fixture, not a production
-server or durability claim. Phase 8 must persist begin/complete upload records
-and their idempotency keys in PostgreSQL before the server is considered real;
-the S3 adapter remains unchanged behind `ArtifactStore`.
+server or durability claim. The server roadmap must persist begin/complete
+upload records and their idempotency keys in PostgreSQL before the server is
+considered real; the S3 adapter remains unchanged behind `ArtifactStore`.
 
-### Phase 7: hardening and packaging
+### Phase 7: Octa local and remote cache session
+
+- Add a strict optional cache policy to the signed job contract containing
+  only namespace and independent read/write permission; cache endpoints and
+  bearer credentials are not repository-controlled inputs.
+- Add agent configuration for the persistent cache root, local capacity,
+  allowed remote origins, Native environment identities, request deadlines,
+  and transfer limits. Signed jobs may narrow but never enlarge these values.
+- Add a fenced coordinator operation that returns a short-lived cache session
+  credential. Store it in a private per-job file and revoke/remove it after
+  runner shutdown without placing its value in serialized state.
+- Construct the published Octa runner-protocol `CacheSessionSpec`. Use its
+  mandatory local L1 and optional HTTP L2 simultaneously; do not introduce an
+  OctaCity cache engine or S3 client in the agent.
+- Map the L1, token, and optional CA paths into Native, OCI process, and OCI
+  hypervisor execution without exposing host paths in the guest request.
+- Extend inventory checks so an agent advertises cache support only when the
+  installed runner declares the required runner and cache protocol versions.
+- Forward Octa's semantic cache events and terminal cache outcome unchanged;
+  do not emit per-blob agent events.
+- Test a local hit, a remote hit across two isolated agent instances, remote
+  degradation with a working L1, read-only and write-only grants, namespace
+  isolation, corrupt remote content, token expiry, cancellation, and cleanup.
+
+If the current runner protocol cannot carry an operator-selected L1 capacity,
+extend that protocol before enabling the feature rather than relying on an
+implicit agent hardcode.
+
+Completion gate: agent A publishes one cacheable build through Octa; agent B,
+with an empty L1 but the same authorized namespace and runtime identity,
+restores it from the remote L2 without executing the task. Both agents retain
+verified local L1 copies, and neither observes the cache bearer value.
+
+### Phase 8: hardening and packaging
 
 - Add hardened service definitions for systemd, Windows Service Control
   Manager, and macOS launchd.
@@ -1237,13 +1331,12 @@ the S3 adapter remains unchanged behind `ArtifactStore`.
 Completion gate: a clean machine can install, validate, run, restart, drain,
 upgrade, and remove the agent using documented commands.
 
-### Phase 8: Agent Ready test matrix
+### Phase 9: Agent Ready test matrix
 
-Run black-box tests against a minimal real server implementation of protocol
-v1 and a released Octa bundle:
-
-- persist fenced upload records and idempotency keys in PostgreSQL so a server
-  restart cannot lose or duplicate an in-flight artifact publication;
+Run black-box tests against a released Octa bundle and a server vertical slice
+provided by the separate server roadmap. The server fixture must persist fenced
+upload and cache authorization records in PostgreSQL, but implementing that
+server persistence is not an agent-phase task:
 
 - successful job and failed task;
 - malformed or incompatible runner;
@@ -1263,7 +1356,10 @@ v1 and a released Octa bundle:
 - disk exhaustion and artifact quota violation;
 - CPU, memory, disk, and I/O accounting for descendant processes;
 - transient and repeated resource-sampling failures;
-- duplicate resource samples after reconnect and final peak/cumulative totals.
+- duplicate resource samples after reconnect and final peak/cumulative totals;
+- local cache hit and remote cache hit across separate agents;
+- remote-cache outage, corrupt content, expired credential, namespace
+  isolation, and read-only/write-only cache grants.
 
 The initial end-to-end matrix covers Linux Native, Linux OCI process isolation,
 and Linux OCI hypervisor guests on supported Linux and Apple Silicon macOS
@@ -1272,26 +1368,16 @@ after their implementations pass the same suite on dedicated workers. A
 platform/isolation pair is not advertised merely because its code
 cross-compiles.
 
-### Phase 9: server-side agent providers
+## Server roadmap handoff
 
-- Define the narrow `AgentProvider` lifecycle around provision, observe, and
-  terminate operations. Draining remains scheduler state, not a provider API.
-- Implement `VsphereAgentProvider` and `ProxmoxAgentProvider`; statically
-  enrolled agents bypass this boundary, and cloud providers are independent
-  adapters.
-- Keep provider credentials and APIs on the server. A provisioned machine gets
-  a short-lived enrollment token and initiates its own authenticated outbound
-  connection.
-- Learn scheduling capabilities only from an authenticated agent registration,
-  not from template labels supplied by a provider.
-- Support persistent, idle-retired, and single-job disposable pool policies.
-- Fence a lost machine before requeueing its job, and make termination
-  idempotent without treating a timeout as proof that a VM is gone.
-
-Completion gate: vSphere and Proxmox can each create a prepared Linux or
-Windows agent from an immutable template, run one fenced job, return its
-artifacts and events, and destroy the disposable machine without coupling
-provider APIs to `ExecutionBackend` or the job state machine.
+Dynamic machine provisioning is deliberately not an agent phase. The future
+server owns the narrow `AgentProvider` lifecycle (`provision`, `observe`, and
+`terminate`) and adapters for vSphere, Proxmox, and cloud APIs. A provider
+creates a prepared machine with a short-lived enrollment token; the agent then
+connects outbound through the same protocol as a statically enrolled agent.
+Provider credentials, pool policy, template selection, machine fencing, and
+idempotent VM termination remain server concerns and never enter
+`ExecutionBackend` or the agent job state machine.
 
 ## Performance tests
 
@@ -1333,6 +1419,9 @@ external server can:
 - cancel at any lifecycle phase and observe bounded cleanup;
 - receive validated artifacts and arbitrary-format reports through an
   S3-compatible object store without exposing storage credentials to agents;
+- run Octa's local L1 and optional remote L2 task-result cache through a
+  bounded, namespace-isolated, short-lived cache session without reimplementing
+  cache semantics in the agent;
 - let Octa resolve Vault secrets through workload identity without leakage;
 - survive agent, server, and network failures without accepting stale results;
 - confirm that no backend state, process, credential, or workspace remains
@@ -1344,7 +1433,7 @@ external server can:
   until the Agent Ready gate; they are the next implementation milestone;
 - Web UI;
 - multiple simultaneous jobs per agent;
-- additional dynamic agent providers beyond vSphere and Proxmox;
+- all dynamic agent providers, including vSphere, Proxmox, and cloud APIs;
 - Podman OCI integration until it can satisfy the same lifecycle and isolation
   contract as the initial containerd and Microsandbox engines;
 - Kubernetes executor;
@@ -1354,7 +1443,9 @@ external server can:
 - task-time VCS plugins and remote Octafile sources in Octa;
 - agent-managed plugin or Octa downloads;
 - automatic self-update;
-- remote cache backend;
+- production remote cache API, authorization persistence, retention, and
+  S3-compatible backing store, which belong to the server roadmap; the agent
+  is verified against a protocol contract server;
 - non-S3-compatible artifact stores;
 - multipart artifact upload until object-size requirements justify it;
 - arbitrary server-to-agent administration commands.
