@@ -21,7 +21,7 @@ use microsandbox::{Backend, ExecControl, ExecEvent, LocalBackend, NetworkPolicy,
 use octacity_execution::{
   ExecutionArchitecture, ExecutionError, ExecutionExit, ExecutionIo, ExecutionOs, ExecutionPaths, ExecutionPlatform,
   ExecutionReader, ExecutionTarget, ExecutionWriter, NetworkAccess, OciIsolation, ResourceUsage, RunnerProgram,
-  RunningExecution, StartExecution,
+  RunningExecution, StartExecution, WORKLOAD_IDENTITY_PATH,
 };
 use octacity_execution_oci::{OciCapability, OciEngine};
 use sha2::{Digest as _, Sha256};
@@ -236,6 +236,11 @@ impl OciEngine for MicrosandboxEngine {
           .volume(&plan.guest_release, |mount| {
             mount.bind(&runner.release_root).readonly().nosuid().nodev()
           });
+        if let Some(identity) = &plan.workload_identity {
+          builder = builder.volume(WORKLOAD_IDENTITY_PATH, |mount| {
+            mount.bind(identity).readonly().nosuid().nodev()
+          });
+        }
         builder = match network {
           Some(policy) => builder.network(|configuration| configuration.policy(policy)),
           None => builder.disable_network(),

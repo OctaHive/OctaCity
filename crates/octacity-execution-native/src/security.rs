@@ -1,6 +1,7 @@
 //! Builds the Bubblewrap filesystem and seccomp security profile.
 
 use super::*;
+use octacity_execution::WORKLOAD_IDENTITY_PATH;
 
 /// Converts the signed network policy into Bubblewrap namespace arguments.
 pub(super) fn network_arguments(network: &NetworkAccess) -> &'static [&'static str] {
@@ -93,7 +94,15 @@ pub(super) fn add_native_filesystem(
     expose_host_path(command, path)?;
   }
   ro_bind(command, &runner.release_root, &runner.release_root);
-  bind(command, &request.workspace_root, &request.workspace_root);
+  // The backend-wide work root may contain identity material, abandoned state,
+  // and eventually concurrent jobs. Expose only this job's writable workspace;
+  // quota accounting can still inspect `workspace_root` from the host.
+  command.arg("--dir").arg(&request.workspace);
+  bind(command, &request.workspace, &request.workspace);
+  if let Some(identity) = &request.workload_identity {
+    command.arg("--dir").arg("/run");
+    ro_bind(command, identity, Path::new(WORKLOAD_IDENTITY_PATH));
+  }
   bind(command, temporary_directory, Path::new("/tmp"));
   bind(command, home_directory, Path::new("/home/octacity"));
   command

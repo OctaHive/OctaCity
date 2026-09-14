@@ -28,6 +28,14 @@ pub const MAX_EVENT_BATCH_RECORDS: usize = 256;
 /// This covers maximally escaped bounded registration and lease identifiers,
 /// field names, punctuation, and the generated request identifier.
 pub const MAX_APPEND_REQUEST_OVERHEAD_BYTES: usize = 4096;
+/// Maximum number of required headers on one presigned upload target.
+pub const MAX_UPLOAD_HEADERS: usize = 32;
+/// Maximum UTF-8 bytes in one presigned upload URL.
+pub const MAX_PRESIGNED_UPLOAD_URL_BYTES: usize = 8192;
+/// Maximum UTF-8 bytes in one server-required upload header name.
+pub const MAX_UPLOAD_HEADER_NAME_BYTES: usize = 256;
+/// Maximum UTF-8 bytes in one server-required upload header value.
+pub const MAX_UPLOAD_HEADER_VALUE_BYTES: usize = 4096;
 
 /// Complete scheduler-visible inventory sent during registration.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -357,7 +365,7 @@ pub enum AgentLifecycleEvent {
 }
 
 /// Persisted phases owned by the one-job agent state machine.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JobLifecycleState {
   /// Validating dependencies and materializing the source workspace.
@@ -366,6 +374,8 @@ pub enum JobLifecycleState {
   Running,
   /// Runner execution ended and immutable outputs are being established.
   Freezing,
+  /// Frozen artifacts and reports are being published.
+  Uploading,
   /// Backend resources and workspace state are being removed.
   Cleaning,
   /// All events are being flushed before the terminal result is recorded.
@@ -485,6 +495,124 @@ pub struct CompleteLeaseResponse {
   pub request_id: String,
   /// Echo of the stable completion identity.
   pub completion_id: String,
+}
+
+/// Semantic kind of one runner-declared output.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputKind {
+  /// User-visible build artifact.
+  Artifact,
+  /// Machine-readable report with a plugin-owned format identifier.
+  Report,
+}
+
+/// Logical and physical metadata used to authorize one immutable upload.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputUploadMetadata {
+  /// Runner execution containing the declaration.
+  pub run_id: u64,
+  /// Runner task containing the declaration.
+  pub task_id: u64,
+  /// Artifact or report semantics.
+  pub kind: OutputKind,
+  /// User-visible registration name.
+  pub name: String,
+  /// Plugin-provided media type for an artifact.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub content_type: Option<String>,
+  /// Opaque plugin-owned format for a report.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub report_format: Option<String>,
+  /// Stable transport media type, including the directory archive version.
+  pub transport_content_type: String,
+  /// Exact bytes sent by the agent.
+  pub size_bytes: u64,
+  /// Lowercase SHA-256 of those exact bytes.
+  pub sha256: String,
+}
+
+/// Fenced request for one short-lived presigned upload target.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginOutputUploadRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Fenced lease identity.
+  pub lease: LeaseFence,
+  /// Stable agent-generated identity for this logical output.
+  pub upload_key: String,
+  /// Validated output metadata.
+  pub output: OutputUploadMetadata,
+}
+
+/// Server-authorized upload destination without object-store credentials.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginOutputUploadResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Opaque server-side upload record identity.
+  pub upload_id: String,
+  /// Short-lived presigned HTTP PUT URL.
+  pub put_url: String,
+  /// Exact non-credential headers covered by the presigned request.
+  #[serde(default)]
+  pub required_headers: BTreeMap<String, String>,
+  /// Unix second at which the target expires.
+  pub expires_at: u64,
+}
+
+impl std::fmt::Debug for BeginOutputUploadResponse {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("BeginOutputUploadResponse")
+      .field("protocol_version", &self.protocol_version)
+      .field("request_id", &self.request_id)
+      .field("upload_id", &self.upload_id)
+      .field("put_url", &"<redacted>")
+      .field(
+        "required_header_names",
+        &self.required_headers.keys().collect::<Vec<_>>(),
+      )
+      .field("expires_at", &self.expires_at)
+      .finish()
+  }
+}
+
+/// Idempotent notification that all expected object bytes were uploaded.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteOutputUploadRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Fenced lease identity.
+  pub lease: LeaseFence,
+  /// Opaque upload identity returned by begin.
+  pub upload_id: String,
+}
+
+/// Acknowledgement that the server verified and published one object.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompleteOutputUploadResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Echo of the completed upload identity.
+  pub upload_id: String,
 }
 
 /// Advisory state of one concrete execution implementation.

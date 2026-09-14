@@ -5,7 +5,8 @@ use std::{fs, io::Read as _, path::PathBuf, time::Duration};
 use async_trait::async_trait;
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentInventory, AppendEventsRequest, AppendEventsResponse,
-  AttemptEventEnvelope, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse,
+  AttemptEventEnvelope, BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION,
+  CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse,
   CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot,
   LeaseAssignment, RegisterAgentRequest, RegisterAgentResponse,
 };
@@ -16,7 +17,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use crate::{CoordinatorClient, CoordinatorError, Registration, RetryPolicy, invalid, unix_now};
+use crate::{
+  CoordinatorClient, CoordinatorError, OutputUploadCoordinator, Registration, RetryPolicy, invalid, unix_now,
+};
 
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
@@ -420,6 +423,67 @@ impl CoordinatorClient for HttpCoordinatorClient {
       )
       .await?;
     response.validate(&completion.request_id, &completion.completion_id)?;
+    Ok(())
+  }
+}
+
+#[async_trait]
+impl OutputUploadCoordinator for HttpCoordinatorClient {
+  async fn begin_output_upload(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &BeginOutputUploadRequest,
+    cancellation: CancellationToken,
+  ) -> Result<BeginOutputUploadResponse, CoordinatorError> {
+    registration.validate()?;
+    request.validate()?;
+    if request.registration_id != registration.registration_id || request.lease != lease.into() {
+      return Err(invalid("output upload does not match its registration and lease"));
+    }
+    let response: BeginOutputUploadResponse = self
+      .post(
+        PostCall {
+          operation: "begin output upload",
+          path: &["api", "v1", "leases", &lease.lease_id, "artifacts:begin"],
+          request_id: &request.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        request,
+      )
+      .await?;
+    response.validate(&request.request_id, unix_now()?)?;
+    Ok(response)
+  }
+
+  async fn complete_output_upload(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &CompleteOutputUploadRequest,
+    cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    registration.validate()?;
+    request.validate()?;
+    if request.registration_id != registration.registration_id || request.lease != lease.into() {
+      return Err(invalid("output completion does not match its registration and lease"));
+    }
+    let response: CompleteOutputUploadResponse = self
+      .post(
+        PostCall {
+          operation: "complete output upload",
+          path: &["api", "v1", "leases", &lease.lease_id, "artifacts:complete"],
+          request_id: &request.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        request,
+      )
+      .await?;
+    response.validate(&request.request_id, &request.upload_id)?;
     Ok(())
   }
 }

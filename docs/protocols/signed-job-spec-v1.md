@@ -168,7 +168,8 @@ an actual job must use values resolved from installed artifacts and source.
     "artifact_count": 100,
     "artifact_bytes": 1073741824,
     "report_count": 100,
-    "report_bytes": 268435456
+    "report_bytes": 268435456,
+    "single_output_bytes": 268435456
   }
 }
 ```
@@ -274,7 +275,7 @@ through the selected secrets profile and workload identity.
 | `writable_disk_bytes` | Positive writable-workspace limit |
 | `timeout_seconds` | Positive wall-clock execution timeout |
 | `network` | `unrestricted`, `disabled`, or a non-empty restricted host list; the selected backend must enforce it or reject the job |
-| `workload_identity_profile` | Optional non-blank operator-known identity profile name; rejected until workload identity is enabled |
+| `workload_identity_profile` | Optional non-blank operator-known identity profile name provisioned locally by the agent |
 
 Restricted network policy serializes as:
 
@@ -316,10 +317,12 @@ runtime mode or OCI isolation tier that is disabled locally and must never fall
 back between OCI tiers or from OCI to Native. The selected backend is
 responsible for enforcing resource and network limits. Engine-specific numeric
 representability belongs to the engine adapter rather than this wire contract.
-Until workload identity provisioning is enabled,
-the agent rejects a requested profile before source acquisition. Once enabled,
-it maps the name to operator-owned configuration; the job can never provide raw
-credentials.
+The agent rejects an unknown workload identity profile before source
+acquisition. For a configured profile it snapshots the current operator-owned
+identity into the private job root, exposes it read-only at
+`/run/octa-identity` in both Native and OCI execution, and removes it after the
+backend is destroyed. A secrets profile may use that fixed path as a Vault JWT
+`jwt_path`. The job can never provide raw credentials or host source paths.
 
 ## Output limits
 
@@ -329,6 +332,7 @@ credentials.
 | --- | --- |
 | `artifact_count`, `artifact_bytes` | Both zero to disable artifacts, or both positive |
 | `report_count`, `report_bytes` | Both zero to disable reports, or both positive |
+| `single_output_bytes` | Positive exactly when either output kind is enabled, and no larger than either enabled aggregate byte limit |
 
 The protocol validator enforces pair consistency, not deployment-wide maxima.
 The agent and server must additionally apply operator and project limits before

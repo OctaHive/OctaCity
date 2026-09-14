@@ -1,0 +1,20 @@
+[package]
+name = "octacity-identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Job-scoped workload identity provisioning for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+octacity-private-fs = { path = "../octacity-private-fs" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

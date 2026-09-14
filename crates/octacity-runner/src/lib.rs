@@ -14,6 +14,6 @@ pub use installation::{RunnerCapabilities, RunnerInstallation, RunnerInstallatio
 pub use octa_runner_protocol::RunStatus;
 pub use protocol::{RunnerEvent, RunnerMessage, RunnerProtocolError};
 pub use supervisor::{
-  RunnerCompletion, RunnerJobRequest, RunnerStreamItem, RunnerSupervisionError, RunnerSupervisionPolicy,
-  TerminationReason, supervise,
+  RunnerCompletion, RunnerJobRequest, RunnerRedactions, RunnerStreamItem, RunnerSupervisionError,
+  RunnerSupervisionPolicy, TerminationReason, supervise,
 };

@@ -3,6 +3,7 @@
 use std::os::{fd::FromRawFd as _, unix::net::UnixListener};
 
 use super::*;
+use octacity_execution::WORKLOAD_IDENTITY_PATH;
 
 fn platform() -> ExecutionPlatform {
   ExecutionPlatform {
@@ -57,6 +58,7 @@ impl Fixture {
       workspace_root: self.config.work_root.canonicalize().unwrap(),
       workspace: self.workspace.canonicalize().unwrap(),
       data_dir: self.workspace.join("data").canonicalize().unwrap(),
+      workload_identity: None,
       cpu_millis: 1000,
       memory_bytes: 64 * 1024 * 1024,
       writable_disk_bytes: u64::MAX,
@@ -180,11 +182,14 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
     plugins_dir: release.join("plugins"),
     plugin_lock: release.join("plugins.lock"),
   };
+  let identity = temporary.path().join("identity-token");
+  fs::write(&identity, "signed-jwt").unwrap();
   let request = StartExecution {
     execution_id: "job-1".to_owned(),
     workspace_root: workspace.clone(),
     workspace: workspace.clone(),
     data_dir: workspace.join("data"),
+    workload_identity: Some(identity.clone()),
     cpu_millis: 2000,
     memory_bytes: 1024,
     writable_disk_bytes: 2048,
@@ -214,6 +219,20 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
     SECURITY_PROFILE_VERSION
   );
   assert_eq!(spec["linux"]["seccomp"]["defaultAction"], "SCMP_ACT_ALLOW");
+  let identity_mount = spec["mounts"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|mount| mount["destination"] == WORKLOAD_IDENTITY_PATH)
+    .unwrap();
+  assert_eq!(identity_mount["source"], identity.to_string_lossy().as_ref());
+  assert!(
+    identity_mount["options"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|value| value == "ro")
+  );
 }
 
 #[test]

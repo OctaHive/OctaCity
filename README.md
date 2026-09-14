@@ -7,6 +7,8 @@ No server is available yet.
 
 The current workspace contains:
 
+- `octacity-artifact-store`: server-side artifact persistence port and the
+  S3-compatible adapter used by the Phase 6 contract server;
 - `octacity-protocol`: strict, signed server-agent job types;
 - `octacity-config`: parsing and intrinsic validation of agent configuration;
 - `octacity-coordinator`: bounded HTTPS, idempotent retry, lease polling, and
@@ -20,14 +22,21 @@ The current workspace contains:
 - `octacity-execution-native`: Linux cgroup-v2 Native backend;
 - `octacity-inventory`: verified registration inventory and advisory host
   snapshots;
+- `octacity-identity`: private per-job workload identity leases and revocation;
 - `octacity-job`: verified source-to-runner lifecycle and cleanup owner;
 - `octacity-lifecycle`: fenced lease ownership, append-only event spooling,
   replay, completion, and interrupted-attempt recovery;
+- `octacity-output`: host-side validation, immutable snapshots, and fenced
+  artifact/report uploads;
+- `octacity-private-fs`: cross-platform private filesystem and no-follow
+  primitives shared by security-sensitive state owners;
 - `octacity-runner`: verified Octa inventory, runner protocol, and supervision;
 - `octacity-source`: trusted source-plugin registry and process host;
 - `octacity-source-plugin`: the bounded pre-Octa source protocol;
 - `octacity-source-git`: exact, detached Git revision materialization through
   the source-plugin protocol;
+- `octacity-phase6-contract-tests`: real Vault, Octa runner, HTTP upload, and
+  MinIO completion contract;
 - `octacity-agent`: the CLI and composition root that wires these components.
 
 Run all checks with:
@@ -45,7 +54,7 @@ cargo llvm-cov --workspace --all-features --summary-only \
 ```
 
 CI pins `cargo-llvm-cov` 0.9.1 so coverage semantics cannot change when a new
-tool release appears. The 67% portable Linux floor measures production source;
+tool release appears. The 80% portable Linux floor measures production source;
 the tool excludes test-support files by default. Privileged Native, containerd,
 and Microsandbox paths are additionally exercised by the backend contract jobs
 described in [`docs/backend-contract-tests.md`](docs/backend-contract-tests.md).

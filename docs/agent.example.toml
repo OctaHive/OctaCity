@@ -5,6 +5,9 @@ work_root = "/var/lib/octacity/work"
 state_root = "/var/lib/octacity/state"
 octa_release_root = "/opt/octacity/octa"
 source_plugins_dir = "/opt/octacity/source-plugins"
+# Logical names are selected by signed jobs; values are operator-owned files
+# refreshed by an OIDC, SPIFFE, or platform identity service.
+workload_identity_profiles = { ci = "/run/octacity-identities/ci.jwt" }
 enabled_runtime_modes = ["native"]
 allow_native_execution = true
 native_linux_cgroup_root = "/sys/fs/cgroup/octacity"
@@ -13,7 +16,12 @@ native_linux_bubblewrap_executable = "/usr/bin/bwrap"
 native_linux_readonly_paths = []
 native_linux_pids_limit = 4096
 native_environment = { PATH = "/usr/local/bin:/usr/bin:/bin" }
+allow_unrestricted_network = false
+allowed_network_hosts = ["vault.example.com", "identity.example.com"]
 allowed_upload_origins = ["https://artifacts.example.com"]
+max_archive_entries = 100000
+upload_timeout_seconds = 300
+max_output_limits = { artifact_count = 100, artifact_bytes = 5368709120, report_count = 100, report_bytes = 1073741824, single_output_bytes = 1073741824 }
 max_workspace_bytes = 10737418240
 max_spool_bytes = 1073741824
 max_spool_records = 100000

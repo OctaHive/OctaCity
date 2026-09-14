@@ -109,8 +109,8 @@ pub(super) fn validate_server_url(value: &str) -> Result<(), ConfigError> {
   Ok(())
 }
 
-/// Accepts only origins, preventing signed upload URLs from widening authority.
-pub(super) fn validate_upload_origin(value: &str) -> Result<(), ConfigError> {
+/// Accepts and canonicalizes one origin used by the runtime upload allowlist.
+pub(super) fn canonical_upload_origin(value: &str) -> Result<String, ConfigError> {
   let url = parse_absolute_url("upload origin", value)?;
   let local_http = url.scheme_str() == Some("http") && matches!(url.host(), Some("127.0.0.1" | "::1" | "localhost"));
   if url.scheme_str() != Some("https") && !local_http {
@@ -123,7 +123,20 @@ pub(super) fn validate_upload_origin(value: &str) -> Result<(), ConfigError> {
       "upload origin '{value}' must contain only scheme, host, and optional port"
     ));
   }
-  Ok(())
+  let scheme = url.scheme_str().expect("absolute URL validation requires a scheme");
+  let host = url.host().expect("absolute URL validation requires a host");
+  let host = if host.contains(':') {
+    format!("[{}]", host.to_ascii_lowercase())
+  } else {
+    host.to_ascii_lowercase()
+  };
+  let port = url
+    .port_u16()
+    .filter(|port| !matches!((scheme, *port), ("https", 443) | ("http", 80)));
+  Ok(match port {
+    Some(port) => format!("{}://{host}:{port}", scheme.to_ascii_lowercase()),
+    None => format!("{}://{host}", scheme.to_ascii_lowercase()),
+  })
 }
 
 fn parse_absolute_url(name: &str, value: &str) -> Result<Uri, ConfigError> {
@@ -210,27 +223,47 @@ pub(super) fn validate_regular_file(name: &str, path: &Path) -> Result<(), Confi
   Ok(())
 }
 
+/// Ensures a private operator file is readable only by its owner.
+pub(super) fn validate_private_file_permissions(name: &str, path: &Path) -> Result<(), ConfigError> {
+  octacity_private_fs::validate_private_access(path)
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))
+}
+
+/// Ensures a credential object belongs to the agent account or the operating system.
+pub(super) fn validate_trusted_owner(name: &str, path: &Path) -> Result<(), ConfigError> {
+  octacity_private_fs::validate_trusted_owner(path)
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))
+}
+
+/// Ensures no untrusted owner can replace the protected identity directory.
+pub(super) fn validate_trusted_directory_chain(name: &str, path: &Path) -> Result<(), ConfigError> {
+  octacity_private_fs::validate_trusted_directory_chain(path)
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))
+}
+
 #[cfg(unix)]
-/// Ensures enrollment credentials are readable only by their owner.
-pub(super) fn validate_credential_permissions(path: &Path) -> Result<(), ConfigError> {
+/// Prevents another local user from replacing a configured rotating identity.
+pub(super) fn validate_private_directory_permissions(name: &str, path: &Path) -> Result<(), ConfigError> {
   use std::os::unix::fs::PermissionsExt as _;
 
   let mode = fs::metadata(path)
-    .map_err(|error| ConfigError::Invalid(format!("credential_file '{}': {error}", path.display())))?
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))?
     .permissions()
     .mode();
-  if mode & 0o077 != 0 {
+  if mode & 0o022 != 0 {
     return invalid(format!(
-      "credential_file '{}' must not be accessible by group or others",
+      "{name} '{}' must not be writable by group or others",
       path.display()
     ));
   }
   Ok(())
 }
 
-#[cfg(not(unix))]
-pub(super) fn validate_credential_permissions(_path: &Path) -> Result<(), ConfigError> {
-  Ok(())
+#[cfg(windows)]
+/// Prevents an untrusted Windows principal from replacing a rotating identity.
+pub(super) fn validate_private_directory_permissions(name: &str, path: &Path) -> Result<(), ConfigError> {
+  octacity_private_fs::validate_private_access(path)
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))
 }
 
 pub(super) fn non_empty(name: &str, value: &str) -> Result<(), ConfigError> {

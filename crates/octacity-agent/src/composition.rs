@@ -10,14 +10,18 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use octacity_config::{AgentConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
-use octacity_coordinator::{CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, RetryPolicy};
+use octacity_coordinator::{
+  CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, OutputUploadCoordinator, RetryPolicy,
+};
 use octacity_execution::{ExecutionArchitecture, ExecutionBackend, ExecutionOs, ExecutionPlatform, OciIsolation};
 use octacity_execution_containerd::{CONTAINERD_ENGINE_NAME, ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NATIVE_BACKEND_NAME, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciCapability, OciEngine};
+use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_inventory::{HostMonitor, build_inventory, host_platform};
 use octacity_job::{JobExecutor, JobExecutorConfig};
+use octacity_output::{OutputPublisher, PresignedOutputPublisher, PresignedOutputPublisherConfig};
 use octacity_protocol::{
   AgentInventory, BackendHealth, BackendHealthStatus, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode,
 };
@@ -29,6 +33,7 @@ pub(crate) struct Components {
   pub(crate) runner: RunnerInstallation,
   pub(crate) executor: Arc<JobExecutor>,
   pub(crate) coordinator: Arc<dyn CoordinatorClient>,
+  pub(crate) outputs: Arc<dyn OutputPublisher>,
   pub(crate) inventory: AgentInventory,
   pub(crate) host: HostMonitor,
   pub(crate) backend_health: Vec<BackendHealth>,
@@ -60,22 +65,35 @@ impl Components {
       &source_plugins,
       host.capacity().clone(),
     )?;
-    let coordinator: Arc<dyn CoordinatorClient> = Arc::new(HttpCoordinatorClient::new(HttpCoordinatorConfig {
+    let retry = RetryPolicy {
+      max_attempts: validated.config.retry_max_attempts,
+      initial_delay: Duration::from_millis(validated.config.retry_initial_delay_milliseconds),
+      max_delay: Duration::from_secs(validated.config.retry_max_delay_seconds),
+    };
+    let http_coordinator = Arc::new(HttpCoordinatorClient::new(HttpCoordinatorConfig {
       server_url: validated.config.server_url.clone(),
       credential_file: validated.config.credential_file.clone(),
       request_timeout: Duration::from_secs(validated.config.coordinator_request_timeout_seconds),
       max_body_bytes: validated.config.coordinator_max_body_bytes,
-      retry: RetryPolicy {
-        max_attempts: validated.config.retry_max_attempts,
-        initial_delay: Duration::from_millis(validated.config.retry_initial_delay_milliseconds),
-        max_delay: Duration::from_secs(validated.config.retry_max_delay_seconds),
-      },
+      retry: retry.clone(),
     })?);
+    let coordinator: Arc<dyn CoordinatorClient> = http_coordinator.clone();
+    let output_coordinator: Arc<dyn OutputUploadCoordinator> = http_coordinator;
+    let outputs: Arc<dyn OutputPublisher> = Arc::new(PresignedOutputPublisher::new(
+      output_coordinator,
+      PresignedOutputPublisherConfig {
+        allowed_origins: validated.config.allowed_upload_origins.clone(),
+        max_archive_entries: validated.config.max_archive_entries,
+        upload_timeout: Duration::from_secs(validated.config.upload_timeout_seconds),
+        retry,
+      },
+    )?);
     Ok(Self {
       validated,
       runner,
       executor: Arc::new(executor),
       coordinator,
+      outputs,
       inventory,
       host,
       backend_health,
@@ -184,13 +202,20 @@ async fn build_executor(
     backends.insert(mode, backend);
   }
   let source: Arc<dyn SourceMaterializer> = source_plugins;
+  let identity = Arc::new(FileWorkloadIdentityProvider::new(
+    validated.config.workload_identity_profiles.clone(),
+  ));
   let executor = JobExecutor::new(
     runner,
     source,
+    identity,
     backends,
     JobExecutorConfig {
       work_root: validated.config.work_root.clone(),
       max_workspace_bytes: validated.config.max_workspace_bytes,
+      allow_unrestricted_network: validated.config.allow_unrestricted_network,
+      allowed_network_hosts: validated.config.allowed_network_hosts.clone(),
+      max_output_limits: validated.config.max_output_limits.clone(),
       cancellation_grace: Duration::from_secs(validated.config.graceful_cancel_timeout_seconds),
       runner_supervision: RunnerSupervisionPolicy {
         hello_timeout: Duration::from_secs(validated.config.runner_hello_timeout_seconds),
@@ -314,10 +339,16 @@ work_root = "{}"
 state_root = "{}"
 octa_release_root = "{}"
 source_plugins_dir = "{}"
+workload_identity_profiles = {{}}
 enabled_runtime_modes = ["oci"]
 allow_native_execution = false
 native_linux_pids_limit = 0
+allow_unrestricted_network = false
+allowed_network_hosts = []
 allowed_upload_origins = ["https://objects.example"]
+max_archive_entries = 1000
+upload_timeout_seconds = 1
+max_output_limits = {{ artifact_count = 1, artifact_bytes = 1, report_count = 1, report_bytes = 1, single_output_bytes = 1 }}
 max_workspace_bytes = 1048576
 max_spool_bytes = 1048576
 max_spool_records = 32

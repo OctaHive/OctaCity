@@ -383,6 +383,97 @@ impl CompleteLeaseResponse {
   }
 }
 
+impl OutputUploadMetadata {
+  /// Validates bounded semantic metadata and the kind-specific fields.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    identifier("output name", &self.name)?;
+    identifier("output transport content type", &self.transport_content_type)?;
+    sha256("output sha256", &self.sha256)?;
+    if let Some(content_type) = &self.content_type {
+      identifier("artifact content type", content_type)?;
+    }
+    if let Some(format) = &self.report_format {
+      identifier("report format", format)?;
+    }
+    match self.kind {
+      OutputKind::Artifact if self.report_format.is_none() => Ok(()),
+      OutputKind::Report if self.report_format.is_some() && self.content_type.is_none() => Ok(()),
+      OutputKind::Artifact => invalid("artifact upload must not declare a report format"),
+      OutputKind::Report => invalid("report upload requires a format and no artifact content type"),
+    }
+  }
+}
+
+impl BeginOutputUploadRequest {
+  /// Validates fencing, stable upload identity, and immutable metadata.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    identifier("upload_key", &self.upload_key)?;
+    self.output.validate()
+  }
+}
+
+impl BeginOutputUploadResponse {
+  /// Correlates and bounds an upload authorization before network use.
+  pub fn validate(&self, expected_request_id: &str, now: u64) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    identifier("upload_id", &self.upload_id)?;
+    if self.put_url.is_empty()
+      || self.put_url.len() > MAX_PRESIGNED_UPLOAD_URL_BYTES
+      || self.put_url.chars().any(char::is_control)
+    {
+      return invalid(format!(
+        "presigned upload URL is empty, contains controls, or exceeds {MAX_PRESIGNED_UPLOAD_URL_BYTES} bytes"
+      ));
+    }
+    if self.expires_at <= now {
+      return invalid("presigned upload target is expired");
+    }
+    if self.required_headers.len() > MAX_UPLOAD_HEADERS {
+      return invalid("presigned upload target has too many required headers");
+    }
+    for (name, value) in &self.required_headers {
+      if name.is_empty()
+        || name.len() > MAX_UPLOAD_HEADER_NAME_BYTES
+        || value.len() > MAX_UPLOAD_HEADER_VALUE_BYTES
+        || name.chars().any(char::is_control)
+        || value.chars().any(char::is_control)
+        || matches!(
+          name.to_ascii_lowercase().as_str(),
+          "authorization" | "cookie" | "proxy-authorization"
+        )
+      {
+        return invalid("presigned upload target contains an unsafe required header");
+      }
+    }
+    Ok(())
+  }
+}
+
+impl CompleteOutputUploadRequest {
+  /// Validates fencing and the opaque upload record identity.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    identifier("upload_id", &self.upload_id)
+  }
+}
+
+impl CompleteOutputUploadResponse {
+  /// Correlates publication acknowledgement to the completed upload.
+  pub fn validate(&self, expected_request_id: &str, expected_upload_id: &str) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    identifier("upload_id", &self.upload_id)?;
+    if self.upload_id != expected_upload_id {
+      return invalid("output completion response does not match upload_id");
+    }
+    Ok(())
+  }
+}
+
 impl BackendHealth {
   /// Validates backend identity and bounds its optional diagnostic.
   pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {

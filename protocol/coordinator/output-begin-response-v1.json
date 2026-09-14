@@ -1,0 +1,11 @@
+{
+  "protocol_version": 1,
+  "request_id": "upload-begin-20260911-1",
+  "upload_id": "upload-42-artifact-1",
+  "put_url": "https://objects.example/octacity/upload-42-artifact-1?signature=opaque",
+  "required_headers": {
+    "content-type": "application/octet-stream",
+    "x-octacity-upload": "upload-42-artifact-1"
+  },
+  "expires_at": 1789056400
+}

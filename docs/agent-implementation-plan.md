@@ -191,23 +191,35 @@ octacity/
 |- Cargo.toml
 |- crates/
 |  |- octacity-agent/       # agent CLI and composition root
+|  |- octacity-artifact-store/ # server storage port and S3-compatible adapter
 |  |- octacity-config/      # configuration parsing and intrinsic validation
+|  |- octacity-coordinator/ # bounded coordinator transport and lease client
 |  |- octacity-execution/   # backend-neutral execution ports and DTOs
+|  |- octacity-execution-containerd/ # Linux containerd process engine
 |  |- octacity-execution-native/ # strict Linux Native adapter
 |  |- octacity-execution-oci/ # OCI process/hypervisor adapter and engine boundary
 |  |- octacity-execution-microsandbox/ # Microsandbox OCI hypervisor engine
+|  |- octacity-identity/    # private per-job workload identity lifecycle
+|  |- octacity-inventory/   # verified registration and host capacity snapshot
+|  |- octacity-job/         # source, identity, runtime, and cleanup ownership
+|  |- octacity-lifecycle/   # durable fenced attempt lifecycle and event spool
+|  |- octacity-output/      # immutable output validation and upload pipeline
+|  |- octacity-phase6-contract-tests/ # Vault/runner/MinIO integration contract
+|  |- octacity-private-fs/  # private cross-platform filesystem primitives
 |  |- octacity-protocol/    # versioned server-agent DTOs and signatures
 |  |- octacity-runner/      # Octa inventory, protocol client, and supervisor
 |  |- octacity-source/      # trusted source registry and process host
 |  |- octacity-source-plugin/ # source-plugin protocol and plugin SDK
 |  `- octacity-source-git/  # first trusted source plugin
 |- protocol/
-|  |- agent/v1/             # server-agent JSON Schemas and examples
-|  `- source/v1/            # source-plugin JSON Schemas and examples
+|  `- coordinator/          # server-agent golden JSON documents
 |- tests/
 |  `- fixtures/             # fake runner and Git repositories for tests
 `- docs/
 ```
+
+The source-plugin wire contract remains owned and documented by
+`octacity-source-plugin`; it is not duplicated under `protocol/`.
 
 `octacity-protocol` is justified because both the real agent and the upcoming
 server consume the same wire contract. It contains only serializable protocol
@@ -385,11 +397,12 @@ runtime
   writable disk limit
   wall-clock timeout
   network policy
-  optional workload identity profile (rejected until identity provisioning is enabled)
+  optional workload identity profile resolved from operator configuration
 
 outputs
   artifact size/count limits
   report size/count limits
+  per-output byte limit
 ```
 
 The following are not allowed in `JobSpecV1`:
@@ -429,6 +442,7 @@ work_root
 state_root
 octa_release_root
 source_plugins_dir
+workload_identity_profiles
 enabled_runtime_modes
 allow_native_execution
 native_environment
@@ -437,7 +451,12 @@ native_linux_bubblewrap_executable
 native_linux_readonly_paths
 native_linux_pids_limit
 oci_engines
+allow_unrestricted_network
+allowed_network_hosts
 allowed_upload_origins
+max_archive_entries
+upload_timeout_seconds
+max_output_limits
 max_workspace_bytes
 max_spool_bytes
 max_spool_records
@@ -459,6 +478,12 @@ resource_sample_interval_seconds
 resource_sample_timeout_seconds
 max_accounting_failures
 ```
+
+`allow_unrestricted_network` defaults to false. A restricted host requested by
+a signed job must also appear in `allowed_network_hosts`; the job cannot widen
+the operator-owned egress policy. Likewise, every signed `OutputLimits` value
+must fit within `max_output_limits`, so a compromised coordinator cannot spend
+more local staging space than the agent operator authorized.
 
 At startup the agent canonicalizes roots, rejects overlapping unsafe paths,
 checks permissions, verifies that credentials are not world-readable, checks
@@ -675,7 +700,7 @@ The OCI guest layout is fixed:
 /workspace             materialized source tree, read-write
 /opt/octacity/octa      runner and plugins, read-only
 /workspace/.octacity    per-job execution state under the same disk quota
-/run/octa-identity      future short-lived workload identity, read-only
+/run/octa-identity      short-lived workload identity, read-only
 ```
 
 The Microsandbox engine uses a RAM-backed OCI root overlay capped within the
@@ -812,19 +837,34 @@ idempotent.
 The server and agent never resolve application secret values. A job references
 an Octa secrets profile and logical secret names. The agent provides:
 
-- a short-lived workload identity file at a backend-mapped runtime path
-  (`/run/octa-identity` inside an OCI guest and a restricted per-job path for
-  Native);
+- a short-lived workload identity file copied into a private per-job host
+  directory and exposed to the workload at the fixed runtime path
+  `/run/octa-identity` in Native and OCI execution;
 - a secrets profile containing provider addresses, roles, mounts, and identity
   paths but no resolved values;
 - an outbound network policy allowing only the required identity and Vault
   endpoints.
 
-The identity source is configured on the agent host and copied or mounted with
-restrictive permissions for one job. Native execution does not inherit the
-agent's complete environment or credentials. Identity material is removed
-during cleanup and never appears in event payloads, diagnostics, command
-arguments, or persistent job metadata.
+The identity source is configured on the agent host. Startup validation checks
+its owner, private access policy, and the ownership chain of its protected
+parent before the provider creates a private copy for one job. Native execution
+does not inherit the agent's complete environment or credentials. Identity
+material is removed during cleanup and its verbatim value is redacted at the
+runner-supervisor boundary before event payloads, diagnostics, results, or
+persistent job metadata can observe it. Binary output redaction retains only a
+bounded suffix per command stream, so an identity split across adjacent output
+frames is matched before either part can become reconstructable durable data.
+
+Redaction protects against accidental verbatim disclosure; it is not a sandbox
+for a malicious workload that deliberately transforms a credential before
+printing it. A job granted workload identity is therefore trusted to use that
+identity, while runtime network policy and Vault policy limit what it can reach
+and what the identity can authorize.
+
+Agent-owned job, identity, lifecycle, and output-staging directories use mode
+`0700` on Unix. On Windows they are created with a protected inheritable DACL
+limited to the object owner, LocalSystem, and built-in administrators; config
+validation rejects credential and identity paths granting access elsewhere.
 
 Octa performs Vault login, renewal, secret reads, redaction, and revoke through
 the already published secret-provider contract.
@@ -1159,6 +1199,29 @@ Completion gate: a real job uses Vault, publishes an arbitrary-format report
 and an artifact, and no secret appears in logs, events, results, spool, journal,
 or uploaded metadata.
 
+Implementation status: complete. A local profile
+is resolved into a bounded private identity lease, revoked after backend
+destruction, and exposed read-only at the same fixed path in Native,
+containerd, and Microsandbox execution. Runner declarations are rebound to
+their `run_id` and `task_id`, host-revalidated, frozen into private staging,
+and uploaded through fenced begin/PUT/complete operations before workspace and
+terminal completion. Directory artifacts have a bounded, cross-platform,
+deterministic tar format; upload URLs, headers, redirects, deadlines, retries,
+digests, count limits, and byte limits are independently enforced by the
+agent. The narrow server-side `ArtifactStore` boundary has an S3-compatible
+implementation that keeps credentials, buckets, and physical keys private,
+verifies uploaded bytes instead of trusting ETags, and publishes them under
+immutable keys. Unit, lifecycle, protocol-golden, and loopback transport tests
+cover local boundaries. The phase-six contract test additionally runs the
+real Octa runner against Vault and the real HTTP begin/PUT/complete flow
+against MinIO, then checks retained job state and uploaded metadata for
+protected bytes.
+
+The Phase 6 HTTP server is deliberately a contract fixture, not a production
+server or durability claim. Phase 8 must persist begin/complete upload records
+and their idempotency keys in PostgreSQL before the server is considered real;
+the S3 adapter remains unchanged behind `ArtifactStore`.
+
 ### Phase 7: hardening and packaging
 
 - Add hardened service definitions for systemd, Windows Service Control
@@ -1178,6 +1241,9 @@ upgrade, and remove the agent using documented commands.
 
 Run black-box tests against a minimal real server implementation of protocol
 v1 and a released Octa bundle:
+
+- persist fenced upload records and idempotency keys in PostgreSQL so a server
+  restart cannot lose or duplicate an in-flight artifact publication;
 
 - successful job and failed task;
 - malformed or incompatible runner;

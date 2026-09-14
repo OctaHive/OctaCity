@@ -207,6 +207,7 @@ fn request(workspace: &Path) -> StartExecution {
     workspace_root: workspace.to_owned(),
     workspace: workspace.to_owned(),
     data_dir: workspace.join(".octacity"),
+    workload_identity: None,
     cpu_millis: 2000,
     memory_bytes: 512 * MEBIBYTE,
     writable_disk_bytes: 1024 * MEBIBYTE,
@@ -225,12 +226,18 @@ fn request(workspace: &Path) -> StartExecution {
 #[tokio::test]
 async fn maps_verified_host_paths_into_the_guest() {
   let temporary = tempfile::tempdir().unwrap();
-  let release = temporary.path().join("release");
-  let workspace = temporary.path().join("workspace");
+  let root = temporary.path().canonicalize().unwrap();
+  let release = root.join("release");
+  let workspace = root.join("workspace");
   fs::create_dir(&release).unwrap();
   fs::create_dir(&workspace).unwrap();
   fs::create_dir(workspace.join(".octacity")).unwrap();
-  let plan = SandboxPlan::build("agent-1", &runner(&release), &request(&workspace))
+  let identity = root.join("identity-token");
+  fs::write(&identity, "signed-jwt").unwrap();
+  let mut request = request(&workspace);
+  request.workspace_root = root;
+  request.workload_identity = Some(identity.clone());
+  let plan = SandboxPlan::build("agent-1", &runner(&release), &request)
     .await
     .unwrap();
   assert_eq!(plan.guest_executable, "/opt/octacity/octa/octa-runner");
@@ -238,6 +245,7 @@ async fn maps_verified_host_paths_into_the_guest() {
   assert_eq!(plan.guest_data_dir, Path::new("/workspace/.octacity"));
   assert_eq!(plan.root_tmpfs_mib, 256);
   assert_eq!(plan.workspace_quota_mib, 1024);
+  assert_eq!(plan.workload_identity, Some(identity));
 }
 
 #[tokio::test]

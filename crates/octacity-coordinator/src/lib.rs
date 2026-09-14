@@ -10,8 +10,9 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{
-  AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, CompleteLeaseRequest,
-  HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecError, LeaseAssignment,
+  AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, BeginOutputUploadRequest,
+  BeginOutputUploadResponse, CompleteLeaseRequest, CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity,
+  HostSnapshot, JobSpecError, LeaseAssignment,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -167,6 +168,19 @@ impl CoordinatorError {
       _ => false,
     }
   }
+
+  /// Returns the authoritative lease-loss reason encoded by a fenced endpoint.
+  ///
+  /// The coordinator protocol reserves these exact stable codes. Callers must
+  /// not infer lease ownership from human-readable messages or HTTP status.
+  pub fn lease_loss(&self) -> Option<LeaseMonitorOutcome> {
+    match self {
+      Self::Rejected { code, .. } if code == "lease_fenced" => Some(LeaseMonitorOutcome::Fenced),
+      Self::Rejected { code, .. } if code == "lease_expired" => Some(LeaseMonitorOutcome::Expired),
+      Self::RetriesExhausted { last, .. } => last.lease_loss(),
+      _ => None,
+    }
+  }
 }
 
 /// Transport-independent operations required by the agent lifecycle.
@@ -221,6 +235,31 @@ pub trait CoordinatorClient: Send + Sync {
     registration: &Registration,
     lease: &LeaseAssignment,
     completion: &CompleteLeaseRequest,
+    cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError>;
+}
+
+/// Narrow coordinator interface used only by immutable output publication.
+///
+/// Keeping these operations separate prevents lease polling, heartbeat, and
+/// event-only adapters from inheriting upload behavior they cannot implement.
+#[async_trait]
+pub trait OutputUploadCoordinator: Send + Sync {
+  /// Authorizes one immutable output and returns a short-lived upload target.
+  async fn begin_output_upload(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &BeginOutputUploadRequest,
+    cancellation: CancellationToken,
+  ) -> Result<BeginOutputUploadResponse, CoordinatorError>;
+
+  /// Publishes an uploaded object after server-side size and digest checks.
+  async fn complete_output_upload(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &CompleteOutputUploadRequest,
     cancellation: CancellationToken,
   ) -> Result<(), CoordinatorError>;
 }

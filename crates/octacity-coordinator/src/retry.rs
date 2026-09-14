@@ -32,7 +32,8 @@ impl RetryPolicy {
     Ok(())
   }
 
-  pub(crate) fn delay(&self, request_id: &str, failed_attempt: usize, server_max: Duration) -> Duration {
+  /// Returns a capped deterministic-jitter delay after one failed idempotent attempt.
+  pub fn delay(&self, request_id: &str, failed_attempt: usize, server_max: Duration) -> Duration {
     let exponent = u32::try_from(failed_attempt.saturating_sub(1))
       .unwrap_or(u32::MAX)
       .min(MAX_BACKOFF_SHIFT);

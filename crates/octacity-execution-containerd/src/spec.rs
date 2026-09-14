@@ -1,6 +1,7 @@
 //! Builds the fixed OCI runtime specification and guest path mapping.
 
 use super::*;
+use octacity_execution::WORKLOAD_IDENTITY_PATH;
 
 /// Maps verified host paths into fixed paths inside the OCI root filesystem.
 pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> Result<ExecutionPaths, ExecutionError> {
@@ -32,7 +33,7 @@ pub(super) fn oci_spec(
     / 1000;
   let temporary_bytes = (request.memory_bytes / 8).min(1024 * 1024 * 1024);
   let temporary_size = format!("size={temporary_bytes}");
-  Ok(serde_json::json!({
+  let mut spec = serde_json::json!({
     "ociVersion": "1.1.0",
     "process": {
       "terminal": false,
@@ -92,5 +93,17 @@ pub(super) fn oci_spec(
       }
     },
     "annotations": { "com.octacity.security-profile": SECURITY_PROFILE_VERSION }
-  }))
+  });
+  if let Some(identity) = &request.workload_identity {
+    spec["mounts"]
+      .as_array_mut()
+      .expect("the static OCI specification always contains a mounts array")
+      .push(serde_json::json!({
+        "destination": WORKLOAD_IDENTITY_PATH,
+        "type": "bind",
+        "source": identity,
+        "options": ["bind", "ro", "nosuid", "nodev", "noexec"]
+      }));
+  }
+  Ok(spec)
 }

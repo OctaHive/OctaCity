@@ -7,7 +7,7 @@
 //! mutate job state. This module deliberately uses private concrete helpers
 //! instead of extension traits because there is one lifecycle implementation.
 
-use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, fs, future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use octacity_coordinator::{
   CoordinatorClient, CoordinatorError, LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, Registration,
@@ -15,6 +15,7 @@ use octacity_coordinator::{
 };
 use octacity_execution::ResourceUsage;
 use octacity_job::{ExecuteJobRequest, JobError, JobExecutor};
+use octacity_output::{FreezeOutputs, OutputError, OutputPublisher, PublishOutputs};
 use octacity_protocol::{
   ActiveJob, AgentLifecycleEvent, AttemptEventKind, CompleteLeaseRequest, HostCapacity, HostSnapshot,
   JobCompletionStatus, JobLifecycleState, LeaseFence, ResourceUsageSnapshot, RunnerEventPayload,
@@ -24,6 +25,7 @@ use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use tokio::sync::{Notify, mpsc, watch};
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 #[path = "attempt_events.rs"]
 mod attempt_events;
@@ -121,6 +123,9 @@ pub enum JobLifecycleError {
   /// Backend or workspace cleanup could not be confirmed.
   #[error("job cleanup was not confirmed: {0}")]
   Cleanup(String),
+  /// Declared outputs could not be validated or published.
+  #[error(transparent)]
+  Output(#[from] OutputError),
 }
 
 /// Dependencies that run one verified lease without exposing transport to the executor.
@@ -128,6 +133,7 @@ pub struct JobLifecycle {
   coordinator: Arc<dyn CoordinatorClient>,
   registration: Registration,
   executor: Arc<JobExecutor>,
+  outputs: Arc<dyn OutputPublisher>,
   capacity: HostCapacity,
   config: JobLifecycleConfig,
 }
@@ -138,6 +144,7 @@ impl JobLifecycle {
     coordinator: Arc<dyn CoordinatorClient>,
     registration: Registration,
     executor: Arc<JobExecutor>,
+    outputs: Arc<dyn OutputPublisher>,
     capacity: HostCapacity,
     config: JobLifecycleConfig,
   ) -> Result<Self, JobLifecycleError> {
@@ -148,6 +155,7 @@ impl JobLifecycle {
       coordinator,
       registration,
       executor,
+      outputs,
       capacity,
       config,
     })
@@ -284,40 +292,87 @@ impl JobLifecycle {
         {
           lifecycle_error = Some(error);
         }
-        let status = runner_status(completion.runner().status);
+        let mut status = runner_status(completion.runner().status);
         let usage = Some(resource_snapshot(&completion.runner().final_usage));
-        let results = completion.runner().results.clone();
-        (
-          status,
-          usage,
-          results,
-          completion.cleanup().await.map_err(|error| error.to_string()),
-        )
-      }
-      Some(Err(error)) => (
-        job_error_status(&error),
-        None,
-        Vec::new(),
-        if cleanup_confirmed(&error) {
-          Ok(())
+        let mut results = completion.runner().results.clone();
+        let mut frozen = None;
+        if lifecycle_error.is_none() {
+          let staging_root = attempt_root.join("outputs");
+          let cancellation = CancellationToken::new();
+          let freeze = self.outputs.freeze(
+            FreezeOutputs {
+              workspace: completion.workspace(),
+              results: &results,
+              limits: completion.output_limits(),
+              staging_root: &staging_root,
+            },
+            cancellation.clone(),
+          );
+          frozen = accept_output_result(
+            run_output_while_owned(freeze, cancellation, &mut monitor_task, &mut lease_outcome).await,
+            &mut status,
+            &mut results,
+            &mut lifecycle_error,
+          );
+        }
+        if lifecycle_error.is_none()
+          && frozen.is_some()
+          && let Err(error) = attempt_events
+            .transition(JobLifecycleState::Uploading, &delivery_stop)
+            .await
+        {
+          lifecycle_error = Some(error);
+        }
+        if lifecycle_error.is_none()
+          && let Some(frozen) = frozen
+        {
+          let cancellation = CancellationToken::new();
+          let publish = self.outputs.publish(
+            PublishOutputs {
+              registration: &self.registration,
+              lease: &lease,
+              frozen,
+            },
+            cancellation.clone(),
+          );
+          accept_output_result(
+            run_output_while_owned(publish, cancellation, &mut monitor_task, &mut lease_outcome).await,
+            &mut status,
+            &mut results,
+            &mut lifecycle_error,
+          );
+        }
+        // The journal is synced before deleting job state. If persistence
+        // fails, retain the workspace so startup recovery can inspect the last
+        // durable phase instead of making an unrecorded destructive change.
+        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+        let cleanup = if cleaning_recorded {
+          completion.cleanup().await.map_err(|error| error.to_string())
         } else {
-          Err(error.to_string())
-        },
-      ),
-      None => (
-        JobCompletionStatus::InfrastructureFailed,
-        None,
-        Vec::new(),
-        self.executor.cleanup_orphans().await.map_err(|error| error.to_string()),
-      ),
+          Ok(())
+        };
+        (status, usage, results, cleanup)
+      }
+      Some(Err(failure)) => {
+        let status = job_error_status(failure.error());
+        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+        let cleanup = if cleaning_recorded {
+          failure.cleanup().await.map_err(|error| error.to_string())
+        } else {
+          Ok(())
+        };
+        (status, None, Vec::new(), cleanup)
+      }
+      None => {
+        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+        let cleanup = if cleaning_recorded {
+          self.executor.cleanup_orphans().await.map_err(|error| error.to_string())
+        } else {
+          Ok(())
+        };
+        (JobCompletionStatus::InfrastructureFailed, None, Vec::new(), cleanup)
+      }
     };
-    if lifecycle_error.is_none()
-      && let Err(error) = attempt_events
-        .transition(JobLifecycleState::Cleaning, &delivery_stop)
-        .await
-    {
-      lifecycle_error = Some(error);
-    }
     if let Err(error) = cleanup {
       lifecycle_error = Some(JobLifecycleError::Cleanup(error));
     }
@@ -349,6 +404,84 @@ impl JobLifecycle {
     }
     .complete(status, final_usage, results)
     .await
+  }
+}
+
+/// Runs one output phase while preserving the lease monitor's authoritative
+/// terminal reason. Execution cancellation and output cancellation are
+/// intentionally distinct: a coordinator `Cancel` still permits the agent to
+/// freeze and upload outputs already produced by the cancelled command, while
+/// fencing, expiry, or shutdown revoke the current phase immediately.
+async fn run_output_while_owned<T>(
+  operation: impl Future<Output = Result<T, OutputError>>,
+  cancellation: CancellationToken,
+  monitor: &mut tokio::task::JoinHandle<Result<LeaseMonitorOutcome, CoordinatorError>>,
+  lease_outcome: &mut Option<LeaseMonitorOutcome>,
+) -> Result<T, JobLifecycleError> {
+  if let Some(outcome) = *lease_outcome {
+    return if fatal_lease(&outcome) {
+      Err(JobLifecycleError::LeaseLost(outcome))
+    } else {
+      operation.await.map_err(output_failure)
+    };
+  }
+
+  tokio::pin!(operation);
+  tokio::select! {
+    biased;
+    outcome = &mut *monitor => {
+      let outcome = outcome.map_err(JobLifecycleError::Join)??;
+      *lease_outcome = Some(outcome);
+      if fatal_lease(&outcome) {
+        cancellation.cancel();
+        // The output phase owns private staging cleanup. Let it observe
+        // cancellation before returning the lease-specific error instead of
+        // dropping the future with partially written immutable state.
+        let _ = operation.await;
+        Err(JobLifecycleError::LeaseLost(outcome))
+      } else {
+        operation.await.map_err(output_failure)
+      }
+    }
+    result = &mut operation => result.map_err(output_failure),
+  }
+}
+
+/// Converts a job-local output failure into a terminal infrastructure status.
+/// Lease, durability, and cleanup failures remain lifecycle errors because the
+/// agent cannot safely claim terminal completion for those cases.
+fn accept_output_result<T>(
+  result: Result<T, JobLifecycleError>,
+  status: &mut JobCompletionStatus,
+  results: &mut Vec<serde_json::Value>,
+  lifecycle_error: &mut Option<JobLifecycleError>,
+) -> Option<T> {
+  match result {
+    Ok(value) => Some(value),
+    Err(JobLifecycleError::Output(error)) => {
+      warn!(%error, "job output validation or publication failed");
+      *status = JobCompletionStatus::InfrastructureFailed;
+      results.clear();
+      None
+    }
+    Err(error) => {
+      *lifecycle_error = Some(error);
+      None
+    }
+  }
+}
+
+fn output_failure(error: OutputError) -> JobLifecycleError {
+  if let OutputError::Coordinator(coordinator) = &error
+    && let Some(outcome) = coordinator.lease_loss()
+  {
+    return JobLifecycleError::LeaseLost(outcome);
+  }
+  match error {
+    OutputError::Cleanup { .. } | OutputError::OperationAndCleanup { .. } => {
+      JobLifecycleError::Cleanup(error.to_string())
+    }
+    error => JobLifecycleError::Output(error),
   }
 }
 
@@ -417,6 +550,20 @@ fn resource_snapshot(usage: &ResourceUsage) -> ResourceUsageSnapshot {
   }
 }
 
+async fn record_cleaning(
+  events: &mut AttemptEventState,
+  cancellation: &CancellationToken,
+  lifecycle_error: &mut Option<JobLifecycleError>,
+) -> bool {
+  match events.transition(JobLifecycleState::Cleaning, cancellation).await {
+    Ok(()) => true,
+    Err(error) => {
+      lifecycle_error.get_or_insert(error);
+      false
+    }
+  }
+}
+
 fn runner_status(status: RunStatus) -> JobCompletionStatus {
   match status {
     RunStatus::Succeeded => JobCompletionStatus::Succeeded,
@@ -431,13 +578,6 @@ fn job_error_status(error: &JobError) -> JobCompletionStatus {
     JobError::TimedOut => JobCompletionStatus::TimedOut,
     _ => JobCompletionStatus::InfrastructureFailed,
   }
-}
-
-fn cleanup_confirmed(error: &JobError) -> bool {
-  !matches!(
-    error,
-    JobError::OperationAndCleanup { .. } | JobError::Cleanup(_) | JobError::OrphanCleanup(_)
-  )
 }
 
 fn fatal_lease(outcome: &LeaseMonitorOutcome) -> bool {
@@ -456,14 +596,10 @@ fn create_attempt_root(state_root: &std::path::Path, fence: &LeaseFence) -> Resu
 }
 
 fn create_private_directory(path: &std::path::Path, exclusive: bool) -> Result<(), JobLifecycleError> {
-  let mut builder = fs::DirBuilder::new();
-  builder.recursive(!exclusive);
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::DirBuilderExt as _;
-    builder.mode(0o700);
+  if !exclusive && path.is_dir() {
+    return octacity_private_fs::validate_private_access(path).map_err(JobLifecycleError::StateIo);
   }
-  builder.create(path).map_err(JobLifecycleError::StateIo)
+  octacity_private_fs::create_private_directory(path).map_err(JobLifecycleError::StateIo)
 }
 
 fn attempt_directory(fence: &LeaseFence) -> String {

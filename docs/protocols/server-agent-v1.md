@@ -2,8 +2,7 @@
 
 Status: implemented by `octacity-protocol`, `octacity-coordinator`, and
 `octacity-lifecycle` for registration, lease acquisition, heartbeat, durable
-events, and terminal completion. Artifact upload operations are added in the
-following phase without changing the fencing rules defined here.
+events, artifact/report upload authorization, and terminal completion.
 
 ## Boundary
 
@@ -31,6 +30,7 @@ The v1 client retries only idempotent operations:
 - lease acquisition;
 - fenced lease heartbeat;
 - fenced event append;
+- fenced artifact/report upload begin and completion;
 - fenced terminal completion.
 
 Retries are bounded by an operator-configured attempt count and exponential
@@ -159,6 +159,36 @@ has succeeded. On restart the agent does not resume execution: it first asks
 all configured backends to destroy orphans, then removes only state directories
 whose valid journal proves agent ownership. Unknown files are left untouched.
 
+## Artifact and report uploads
+
+```text
+POST /api/v1/leases/{lease_id}/artifacts:begin
+PUT  <short-lived presigned object URL>
+POST /api/v1/leases/{lease_id}/artifacts:complete
+```
+
+After the runner and its complete process boundary have stopped, the agent
+copies each declared output into private immutable staging. It independently
+normalizes the workspace-relative path, rejects escapes and unsafe filesystem
+types, applies the signed count and aggregate-byte limits while writing, and
+computes SHA-256 over the exact bytes that will be sent. Directory artifacts
+use the versioned deterministic format described in
+[`directory-artifact-format-v1.md`](../directory-artifact-format-v1.md).
+
+The fenced begin request carries a stable `upload_key`, logical artifact or
+report metadata with its runner `run_id` and `task_id`, exact size, transport
+media type, and digest. Its response
+contains an opaque `upload_id`, an expiring presigned PUT URL, and bounded
+required headers. The agent accepts only an operator-allowlisted origin,
+disables redirects, rejects credential-bearing or transport-owned headers, and
+retries by reopening the same staged file. It never receives an object-store
+access key or secret key.
+
+The fenced complete call names only the opaque upload record. The server must
+verify the object size and digest recorded by begin before making it visible.
+Terminal lease completion cannot start until every output has been confirmed
+and local staging and workspace cleanup have succeeded.
+
 ## Error response
 
 Non-success HTTP responses use `CoordinatorErrorResponse` with an echoed
@@ -166,3 +196,8 @@ Non-success HTTP responses use `CoordinatorErrorResponse` with an echoed
 and optional `retry_after_ms`. Both the HTTP status and the flag must permit a
 retry. Error bodies obey the same body-size and operation-deadline bounds as
 successful bodies.
+
+Every fenced endpoint uses `lease_fenced` when a newer fencing token owns the
+attempt and `lease_expired` when the lease has expired. These two codes are
+permanent and authoritative; the agent preserves them as lease-loss outcomes
+even when the rejection arrives before the next heartbeat.

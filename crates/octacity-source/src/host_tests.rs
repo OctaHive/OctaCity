@@ -7,6 +7,14 @@ use octacity_source_plugin::SourcePluginManifest;
 use std::os::unix::fs::PermissionsExt as _;
 use tokio::io::AsyncReadExt as _;
 
+// Lifecycle-classification tests deliberately do not exercise timeout policy.
+// Keep both deadlines above parallel CI scheduling delays; timeout behavior
+// has dedicated millisecond-scale tests below.
+#[cfg(unix)]
+const LIFECYCLE_TEST_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(unix)]
+const LIFECYCLE_TEST_GRACE: Duration = Duration::from_secs(2);
+
 #[tokio::test]
 async fn reads_one_bounded_protocol_message() {
   let input = br#"{"type":"accepted","request_id":"request-1"}
@@ -185,8 +193,8 @@ async fn supervises_a_complete_source_plugin_lifecycle() {
   let result = plugin
     .materialize(
       materialization_request(directory.path().to_owned()),
-      Duration::from_secs(2),
-      Duration::from_millis(200),
+      LIFECYCLE_TEST_TIMEOUT,
+      LIFECYCLE_TEST_GRACE,
       CancellationToken::new(),
     )
     .await
@@ -231,8 +239,8 @@ async fn rejects_invalid_terminal_source_plugin_lifecycles() {
     let error = plugin
       .materialize(
         materialization_request(directory.path().to_owned()),
-        Duration::from_secs(2),
-        Duration::from_millis(200),
+        LIFECYCLE_TEST_TIMEOUT,
+        LIFECYCLE_TEST_GRACE,
         CancellationToken::new(),
       )
       .await
@@ -257,8 +265,8 @@ async fn cooperatively_cancels_a_running_source_plugin() {
   let error = plugin
     .materialize(
       materialization_request(directory.path().to_owned()),
-      Duration::from_secs(2),
-      Duration::from_millis(200),
+      LIFECYCLE_TEST_TIMEOUT,
+      LIFECYCLE_TEST_GRACE,
       cancellation,
     )
     .await
@@ -303,18 +311,13 @@ async fn preserves_cancellation_across_late_terminal_plugin_messages() {
     let request = materialization_request(directory.path().to_owned());
     let operation = tokio::spawn(async move {
       plugin
-        .materialize(
-          request,
-          Duration::from_secs(5),
-          Duration::from_millis(200),
-          cancellation,
-        )
+        .materialize(request, LIFECYCLE_TEST_TIMEOUT, LIFECYCLE_TEST_GRACE, cancellation)
         .await
     });
 
     // Synchronize on the plugin reaching its post-Accepted read. A fixed sleep
     // makes this lifecycle assertion depend on CI scheduling speed.
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(LIFECYCLE_TEST_TIMEOUT, async {
       while !marker.exists() {
         tokio::time::sleep(Duration::from_millis(1)).await;
       }
@@ -376,8 +379,8 @@ async fn reports_spawn_and_post_handshake_protocol_failures() {
     let error = plugin
       .materialize(
         materialization_request(directory.path().to_owned()),
-        Duration::from_secs(5),
-        Duration::from_millis(100),
+        LIFECYCLE_TEST_TIMEOUT,
+        LIFECYCLE_TEST_GRACE,
         CancellationToken::new(),
       )
       .await

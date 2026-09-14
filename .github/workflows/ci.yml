@@ -72,6 +72,34 @@ jobs:
       - name: Measure workspace coverage
         run: cargo llvm-cov --workspace --all-features --no-report
         working-directory: octacity
+      - name: Start pinned MinIO service
+        run: |
+          docker run --detach --rm --name octacity-coverage-minio \
+            -p 127.0.0.1:19000:9000 \
+            -e MINIO_ROOT_USER=octacity \
+            -e MINIO_ROOT_PASSWORD=octacity-secret \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs octacity-coverage-minio
+          exit 1
+      - name: Cover the S3-compatible storage adapter
+        env:
+          OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
+          OCTACITY_MINIO_ACCESS_KEY: octacity
+          OCTACITY_MINIO_SECRET_KEY: octacity-secret
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-artifact-store --test minio --
+          s3_store_satisfies_the_minio_contract --ignored --exact
+        working-directory: octacity
+      - name: Stop coverage service
+        if: always()
+        run: docker rm --force octacity-coverage-minio || true
       - name: Generate LCOV report
         run: cargo llvm-cov report --lcov --output-path lcov.info
         working-directory: octacity

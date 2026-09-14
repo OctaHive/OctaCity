@@ -19,6 +19,7 @@ use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciEngine};
+use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_job::{ExecuteJobRequest, JobExecutor, JobExecutorConfig};
 use octacity_protocol::{
   AGENT_PROTOCOL_VERSION, ExecutionSpec, JobSpecV1, NetworkPolicy, OciIsolation, OctaSpec, OutputLimits,
@@ -41,7 +42,15 @@ fn expected_microsandbox_runner_platform() -> &'static str {
   }
 }
 
-struct FixtureSource;
+struct FixtureSource {
+  network_probe: Option<NetworkProbe>,
+}
+
+#[derive(Clone)]
+struct NetworkProbe {
+  allowed_host: String,
+  denied_host: String,
+}
 
 #[async_trait]
 impl SourceMaterializer for FixtureSource {
@@ -53,7 +62,15 @@ impl SourceMaterializer for FixtureSource {
     _cancellation_grace: Duration,
     _cancellation: CancellationToken,
   ) -> Result<MaterializedSource, SourceError> {
-    std::fs::write(request.destination.join("Octafile.yml"), FIXTURE_OCTAFILE).map_err(|source| {
+    let octafile = if let Some(probe) = &self.network_probe {
+      format!(
+        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      curl --fail --silent --show-error --max-time 10 https://{}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{}/ > /dev/null 2>&1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n",
+        probe.allowed_host, probe.denied_host
+      )
+    } else {
+      FIXTURE_OCTAFILE.to_owned()
+    };
+    std::fs::write(request.destination.join("Octafile.yml"), octafile).map_err(|source| {
       SourceError::Host(octacity_source::SourceHostError::Io {
         plugin: "backend-contract-fixture".to_owned(),
         source,
@@ -97,6 +114,7 @@ async fn native_backend_satisfies_the_real_runner_contract() {
     work_root,
     workspace_bytes,
     backend,
+    false,
   )
   .await;
 }
@@ -131,6 +149,7 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
     work_root,
     workspace_bytes,
     backend,
+    true,
   )
   .await;
 }
@@ -170,6 +189,7 @@ async fn containerd_process_engine_satisfies_the_real_runner_contract() {
     work_root,
     workspace_bytes,
     backend,
+    false,
   )
   .await;
 }
@@ -179,6 +199,7 @@ async fn run_contract(
   work_root: PathBuf,
   workspace_bytes: u64,
   backend: Arc<dyn ExecutionBackend>,
+  secure_oci_contract: bool,
 ) {
   let mode = match &target {
     RuntimeTarget::Native { .. } => RuntimeMode::Native,
@@ -186,13 +207,46 @@ async fn run_contract(
   };
   let release_root = required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT");
   let runner = RunnerInstallation::load(&release_root).expect("the configured Octa release must be valid");
+  let network_probe = secure_oci_contract.then(|| NetworkProbe {
+    allowed_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST"),
+    denied_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST"),
+  });
+  let identity_source = network_probe.as_ref().map(|_| {
+    let source = tempfile::NamedTempFile::new().expect("identity fixture must be creatable");
+    std::fs::write(source.path(), "backend-contract-identity").expect("identity fixture must be writable");
+    source
+  });
+  let identity = identity_source
+    .as_ref()
+    .map_or_else(FileWorkloadIdentityProvider::default, |source| {
+      FileWorkloadIdentityProvider::new(BTreeMap::from([(
+        "backend-contract".to_owned(),
+        source.path().to_owned(),
+      )]))
+    });
   let executor = JobExecutor::new(
     runner.clone(),
-    Arc::new(FixtureSource),
+    Arc::new(FixtureSource {
+      network_probe: network_probe.clone(),
+    }),
+    Arc::new(identity),
     BTreeMap::from([(mode, backend)]),
     JobExecutorConfig {
       work_root,
       max_workspace_bytes: workspace_bytes,
+      allow_unrestricted_network: false,
+      allowed_network_hosts: network_probe
+        .as_ref()
+        .map(|probe| probe.allowed_host.clone())
+        .into_iter()
+        .collect(),
+      max_output_limits: OutputLimits {
+        artifact_count: 0,
+        artifact_bytes: 0,
+        report_count: 0,
+        report_bytes: 0,
+        single_output_bytes: 0,
+      },
       cancellation_grace: Duration::from_secs(5),
       runner_supervision: RunnerSupervisionPolicy::default(),
     },
@@ -207,7 +261,13 @@ async fn run_contract(
     .duration_since(UNIX_EPOCH)
     .expect("system clock must be after the Unix epoch")
     .as_secs();
-  let spec = specification(target.clone(), workspace_bytes, now, &runner);
+  let mut spec = specification(target.clone(), workspace_bytes, now, &runner);
+  if let Some(probe) = &network_probe {
+    spec.runtime.network = NetworkPolicy::Restricted {
+      allowed_hosts: vec![probe.allowed_host.clone()],
+    };
+    spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
+  }
   let (sender, mut receiver) = mpsc::channel(128);
   let started = Instant::now();
   let completion = executor
@@ -369,6 +429,7 @@ fn specification(target: RuntimeTarget, workspace_bytes: u64, now: u64, runner: 
       artifact_bytes: 0,
       report_count: 0,
       report_bytes: 0,
+      single_output_bytes: 0,
     },
   }
 }
@@ -405,6 +466,19 @@ fn required_string(name: &str) -> String {
     .unwrap_or_else(|_| panic!("{name} must be set for this explicit backend contract test"))
     .trim()
     .to_owned()
+}
+
+fn required_network_host(name: &str) -> String {
+  let host = required_string(name);
+  assert!(
+    !host.starts_with('-')
+      && !host.contains("..")
+      && host
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-')),
+    "{name} must be one DNS hostname without a scheme, port, path, or shell metacharacters"
+  );
+  host
 }
 
 fn required_u64(name: &str) -> u64 {

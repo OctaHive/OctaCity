@@ -1,6 +1,6 @@
 //! Builds runner requests and validates protocol lifecycle values.
 
-use octa_runner_protocol::{RUNNER_EVENT_SCHEMA_VERSION, RunRequest, RunStatus};
+use octa_runner_protocol::{RunRequest, RunStatus};
 use octacity_execution::{ExecutionExit, ExecutionPaths};
 use octacity_protocol::ExecutionSpec;
 
@@ -18,6 +18,7 @@ pub(super) fn build_run_request(spec: &ExecutionSpec, paths: &ExecutionPaths) ->
     plugins_dir: paths.plugins_dir.clone(),
     plugin_lock: Some(paths.plugin_lock.clone()),
     secrets_profile: spec.secrets_profile.as_ref().map(Into::into),
+    cache: None,
     plugins: Vec::new(),
     default_plugin: None,
     commands: spec.commands.clone(),
@@ -59,8 +60,12 @@ pub(super) fn validate_hello(
 
 /// Enforces the event schema and a gap-free monotonic sequence before an event
 /// can be forwarded to the server.
-pub(super) fn validate_event(event: &RunnerEvent, previous: &mut Option<u64>) -> Result<(), RunnerSupervisionError> {
-  if event.schema_version != RUNNER_EVENT_SCHEMA_VERSION || event.timestamp.is_empty() {
+pub(super) fn validate_event(
+  event: &RunnerEvent,
+  expected_schema: u16,
+  previous: &mut Option<u64>,
+) -> Result<(), RunnerSupervisionError> {
+  if event.schema_version != expected_schema || event.timestamp.is_empty() {
     return Err(protocol("runner event has an invalid schema version or timestamp"));
   }
   if !matches!(event.category.as_str(), "execution" | "diagnostic" | "document") {

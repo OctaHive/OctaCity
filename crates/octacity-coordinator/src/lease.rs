@@ -119,7 +119,7 @@ impl LeaseMonitorPolicy {
 }
 
 /// Reason the heartbeat task stopped owning an active lease.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LeaseMonitorOutcome {
   /// The coordinator explicitly cancelled the attempt.
   Cancelled,
@@ -238,13 +238,18 @@ impl MonitorTask {
     };
     let mut interval = tokio::time::interval(self.policy.heartbeat_interval);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut cancelled = false;
     loop {
       tokio::select! {
         () = self.shutdown.cancelled() => {
           self.job_cancellation.cancel();
           return LeaseMonitorOutcome::Shutdown;
         }
-        () = self.stop.cancelled() => return LeaseMonitorOutcome::Stopped,
+        () = self.stop.cancelled() => return if cancelled {
+          LeaseMonitorOutcome::Cancelled
+        } else {
+          LeaseMonitorOutcome::Stopped
+        },
         () = tokio::time::sleep_until(safety_deadline) => {
           warn!(lease_id = %self.lease.lease_id, "lease reached its safety deadline");
           self.job_cancellation.cancel();
@@ -265,7 +270,11 @@ impl MonitorTask {
               self.job_cancellation.cancel();
               return LeaseMonitorOutcome::Shutdown;
             }
-            () = self.stop.cancelled() => return LeaseMonitorOutcome::Stopped,
+            () = self.stop.cancelled() => return if cancelled {
+              LeaseMonitorOutcome::Cancelled
+            } else {
+              LeaseMonitorOutcome::Stopped
+            },
             () = tokio::time::sleep_until(safety_deadline) => {
               self.job_cancellation.cancel();
               return LeaseMonitorOutcome::Expired;
@@ -290,7 +299,7 @@ impl MonitorTask {
             }
             Ok(HeartbeatDirective::Cancel) => {
               self.job_cancellation.cancel();
-              return LeaseMonitorOutcome::Cancelled;
+              cancelled = true;
             }
             Ok(HeartbeatDirective::Fenced) => {
               self.job_cancellation.cancel();

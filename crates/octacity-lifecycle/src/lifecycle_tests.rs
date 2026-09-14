@@ -10,7 +10,9 @@ use octacity_execution::{
   ExecutionBackend, ExecutionError, ExecutionExit, ExecutionIo, ExecutionPaths, ExecutionReader, ExecutionWriter,
   ResourceUsage, RunnerProgram, RunningExecution, StartExecution,
 };
+use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_job::JobExecutorConfig;
+use octacity_output::{FreezeOutputs, FrozenOutputs, OutputError, OutputPublisher, PublishOutputs};
 use octacity_protocol::{
   AGENT_PROTOCOL_VERSION, AcquireLeaseResponse, AgentInventory, AppendEventsResponse, COORDINATOR_PROTOCOL_VERSION,
   ExecutionSpec, HeartbeatDirective, JobSpecV1, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture,
@@ -31,6 +33,148 @@ use crate::{
   spool::EventSpool,
 };
 
+struct NoopOutputPublisher;
+
+#[async_trait]
+impl OutputPublisher for NoopOutputPublisher {
+  async fn freeze(
+    &self,
+    _request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    Ok(FrozenOutputs::empty())
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, _cancellation: CancellationToken) -> Result<(), OutputError> {
+    Ok(())
+  }
+}
+
+struct RecordingOutputPublisher {
+  called: AtomicBool,
+}
+
+struct CancellationAwareOutputPublisher {
+  called: AtomicBool,
+}
+
+struct BlockingOutputPublisher {
+  started: Arc<AtomicBool>,
+}
+
+struct FailingOutputPublisher;
+
+struct FailingUploadPublisher;
+
+struct FencedOutputPublisher;
+
+#[async_trait]
+impl OutputPublisher for FailingOutputPublisher {
+  async fn freeze(
+    &self,
+    _request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    Err(OutputError::Invalid("fixture rejected output".to_owned()))
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, _cancellation: CancellationToken) -> Result<(), OutputError> {
+    unreachable!("failed freeze must not reach publication")
+  }
+}
+
+#[async_trait]
+impl OutputPublisher for FailingUploadPublisher {
+  async fn freeze(
+    &self,
+    _request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    Ok(FrozenOutputs::empty())
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, _cancellation: CancellationToken) -> Result<(), OutputError> {
+    Err(OutputError::Upload("fixture exhausted retries".to_owned()))
+  }
+}
+
+#[async_trait]
+impl OutputPublisher for FencedOutputPublisher {
+  async fn freeze(
+    &self,
+    _request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    Ok(FrozenOutputs::empty())
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, _cancellation: CancellationToken) -> Result<(), OutputError> {
+    Err(OutputError::Coordinator(CoordinatorError::Rejected {
+      operation: "begin output upload",
+      status: 409,
+      code: "lease_fenced".to_owned(),
+      message: "the attempt no longer owns this lease".to_owned(),
+      retryable: false,
+    }))
+  }
+}
+
+#[async_trait]
+impl OutputPublisher for RecordingOutputPublisher {
+  async fn freeze(
+    &self,
+    request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    assert!(
+      request.workspace.is_dir(),
+      "workspace was removed before output freezing"
+    );
+    Ok(FrozenOutputs::empty())
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, _cancellation: CancellationToken) -> Result<(), OutputError> {
+    self.called.store(true, Ordering::SeqCst);
+    Ok(())
+  }
+}
+
+#[async_trait]
+impl OutputPublisher for CancellationAwareOutputPublisher {
+  async fn freeze(
+    &self,
+    _request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    Ok(FrozenOutputs::empty())
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, cancellation: CancellationToken) -> Result<(), OutputError> {
+    if cancellation.is_cancelled() {
+      return Err(OutputError::Cancelled);
+    }
+    self.called.store(true, Ordering::SeqCst);
+    Ok(())
+  }
+}
+
+#[async_trait]
+impl OutputPublisher for BlockingOutputPublisher {
+  async fn freeze(
+    &self,
+    _request: FreezeOutputs<'_>,
+    _cancellation: CancellationToken,
+  ) -> Result<FrozenOutputs, OutputError> {
+    Ok(FrozenOutputs::empty())
+  }
+
+  async fn publish(&self, _request: PublishOutputs<'_>, cancellation: CancellationToken) -> Result<(), OutputError> {
+    self.started.store(true, Ordering::SeqCst);
+    cancellation.cancelled().await;
+    Err(OutputError::Cancelled)
+  }
+}
+
 struct ReplayCoordinator {
   fail_first: AtomicBool,
   reject_permanently: bool,
@@ -39,6 +183,8 @@ struct ReplayCoordinator {
 
 struct LifecycleCoordinator {
   fence_on_heartbeat: bool,
+  fence_after_output_starts: Option<Arc<AtomicBool>>,
+  cancel_on_heartbeat: bool,
   events: StdMutex<Vec<octacity_protocol::AttemptEventEnvelope>>,
   completions: StdMutex<Vec<CompleteLeaseRequest>>,
   heartbeat_snapshots: StdMutex<Vec<HostSnapshot>>,
@@ -49,12 +195,26 @@ impl Default for LifecycleCoordinator {
   fn default() -> Self {
     Self {
       fence_on_heartbeat: false,
+      fence_after_output_starts: None,
+      cancel_on_heartbeat: false,
       events: StdMutex::new(Vec::new()),
       completions: StdMutex::new(Vec::new()),
       heartbeat_snapshots: StdMutex::new(Vec::new()),
       usage_observed: Arc::new(Notify::new()),
     }
   }
+}
+
+fn lifecycle_states(events: &[octacity_protocol::AttemptEventEnvelope]) -> Vec<JobLifecycleState> {
+  events
+    .iter()
+    .filter_map(|event| match &event.kind {
+      AttemptEventKind::Agent {
+        event: AgentLifecycleEvent::StateChanged { state },
+      } => Some(*state),
+      _ => None,
+    })
+    .collect()
 }
 
 #[async_trait]
@@ -94,8 +254,16 @@ impl CoordinatorClient for LifecycleCoordinator {
     {
       self.usage_observed.notify_one();
     }
-    if self.fence_on_heartbeat {
+    if self.fence_on_heartbeat
+      || self
+        .fence_after_output_starts
+        .as_ref()
+        .is_some_and(|started| started.load(Ordering::SeqCst))
+    {
       return Ok(HeartbeatDirective::Fenced);
+    }
+    if self.cancel_on_heartbeat {
+      return Ok(HeartbeatDirective::Cancel);
     }
     Ok(HeartbeatDirective::Continue {
       expires_at: lease.expires_at,
@@ -346,6 +514,7 @@ fn lifecycle_spec(now: u64) -> JobSpecV1 {
       artifact_bytes: 0,
       report_count: 0,
       report_bytes: 0,
+      single_output_bytes: 0,
     },
   }
 }
@@ -385,6 +554,7 @@ fn lifecycle_runner_installation() -> RunnerInstallation {
 
 fn lifecycle_fixture(
   coordinator: Arc<LifecycleCoordinator>,
+  outputs: Arc<dyn OutputPublisher>,
   state_root: &std::path::Path,
   work_root: &std::path::Path,
   wait_for_cancel: bool,
@@ -407,6 +577,7 @@ fn lifecycle_fixture(
     JobExecutor::new(
       lifecycle_runner_installation(),
       Arc::new(LifecycleSource),
+      Arc::new(FileWorkloadIdentityProvider::default()),
       BTreeMap::from([(
         RuntimeMode::Native,
         Arc::new(LifecycleBackend {
@@ -417,6 +588,9 @@ fn lifecycle_fixture(
       JobExecutorConfig {
         work_root: work_root.to_owned(),
         max_workspace_bytes: 2 * 1024 * 1024,
+        allow_unrestricted_network: true,
+        allowed_network_hosts: Vec::new(),
+        max_output_limits: spec.outputs.clone(),
         cancellation_grace: Duration::from_secs(1),
         runner_supervision: RunnerSupervisionPolicy {
           resource_sample_interval: Duration::from_millis(1),
@@ -449,6 +623,7 @@ fn lifecycle_fixture(
       max_retry_delay: Duration::from_secs(1),
     },
     executor,
+    outputs,
     capacity,
     JobLifecycleConfig {
       state_root: state_root.to_owned(),
@@ -475,11 +650,21 @@ async fn completes_a_verified_job_after_durable_ordered_delivery_and_cleanup() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(coordinator.clone(), state_root.path(), work_root.path(), false);
+  let outputs = Arc::new(RecordingOutputPublisher {
+    called: AtomicBool::new(false),
+  });
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    outputs.clone(),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
   let outcome = lifecycle.run(lease, snapshot, CancellationToken::new()).await.unwrap();
 
   assert_eq!(outcome.status, JobCompletionStatus::Succeeded);
   assert!(!outcome.drain);
+  assert!(outputs.called.load(Ordering::SeqCst));
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
   assert!(!state_root.path().join("jobs").read_dir().unwrap().any(|_| true));
   let events = coordinator.events.lock().unwrap();
@@ -498,6 +683,17 @@ async fn completes_a_verified_job_after_durable_ordered_delivery_and_cleanup() {
       event: AgentLifecycleEvent::ResourceUsage { .. }
     }
   )));
+  assert_eq!(
+    lifecycle_states(&events),
+    [
+      JobLifecycleState::Preparing,
+      JobLifecycleState::Running,
+      JobLifecycleState::Freezing,
+      JobLifecycleState::Uploading,
+      JobLifecycleState::Cleaning,
+      JobLifecycleState::Completing,
+    ]
+  );
   drop(events);
   let completions = coordinator.completions.lock().unwrap();
   assert_eq!(completions.len(), 1);
@@ -512,6 +708,98 @@ async fn completes_a_verified_job_after_durable_ordered_delivery_and_cleanup() {
 }
 
 #[tokio::test]
+async fn invalid_output_completes_as_infrastructure_failure_without_entering_uploading() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator::default());
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(FailingOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+
+  let outcome = lifecycle.run(lease, snapshot, CancellationToken::new()).await.unwrap();
+
+  assert_eq!(outcome.status, JobCompletionStatus::InfrastructureFailed);
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+  assert!(!state_root.path().join("jobs").read_dir().unwrap().any(|_| true));
+  let completions = coordinator.completions.lock().unwrap();
+  assert_eq!(completions.len(), 1);
+  assert_eq!(completions[0].status, JobCompletionStatus::InfrastructureFailed);
+  assert!(completions[0].results.is_empty());
+  drop(completions);
+  assert_eq!(
+    lifecycle_states(&coordinator.events.lock().unwrap()),
+    [
+      JobLifecycleState::Preparing,
+      JobLifecycleState::Running,
+      JobLifecycleState::Freezing,
+      JobLifecycleState::Cleaning,
+      JobLifecycleState::Completing,
+    ]
+  );
+}
+
+#[tokio::test]
+async fn upload_failure_completes_as_infrastructure_failure_after_uploading() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator::default());
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(FailingUploadPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+
+  let outcome = lifecycle.run(lease, snapshot, CancellationToken::new()).await.unwrap();
+
+  assert_eq!(outcome.status, JobCompletionStatus::InfrastructureFailed);
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+  assert_eq!(coordinator.completions.lock().unwrap().len(), 1);
+  assert_eq!(
+    lifecycle_states(&coordinator.events.lock().unwrap()),
+    [
+      JobLifecycleState::Preparing,
+      JobLifecycleState::Running,
+      JobLifecycleState::Freezing,
+      JobLifecycleState::Uploading,
+      JobLifecycleState::Cleaning,
+      JobLifecycleState::Completing,
+    ]
+  );
+}
+
+#[tokio::test]
+async fn fenced_output_endpoint_preserves_the_lease_loss_reason() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator::default());
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(FencedOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+
+  let error = lifecycle
+    .run(lease, snapshot, CancellationToken::new())
+    .await
+    .unwrap_err();
+
+  assert!(matches!(
+    error,
+    JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced)
+  ));
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+  assert!(coordinator.completions.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn fencing_cancels_execution_and_retains_recoverable_attempt_state() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
@@ -519,7 +807,13 @@ async fn fencing_cancels_execution_and_retains_recoverable_attempt_state() {
     fence_on_heartbeat: true,
     ..LifecycleCoordinator::default()
   });
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(coordinator.clone(), state_root.path(), work_root.path(), true);
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(NoopOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    true,
+  );
 
   let error = tokio::time::timeout(
     Duration::from_secs(5),
@@ -537,7 +831,77 @@ async fn fencing_cancels_execution_and_retains_recoverable_attempt_state() {
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
   let recovered = cleanup_incomplete_attempts(state_root.path()).unwrap();
   assert_eq!(recovered.len(), 1);
+  // Cleaning is synced before the workspace is removed, even when fencing
+  // prevents the terminal acknowledgement from reaching the coordinator.
   assert_eq!(recovered[0].last_state, JobLifecycleState::Cleaning);
+}
+
+#[tokio::test]
+async fn cancellation_does_not_discard_outputs_produced_before_runner_exit() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator {
+    cancel_on_heartbeat: true,
+    ..LifecycleCoordinator::default()
+  });
+  let outputs = Arc::new(CancellationAwareOutputPublisher {
+    called: AtomicBool::new(false),
+  });
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    outputs.clone(),
+    state_root.path(),
+    work_root.path(),
+    true,
+  );
+
+  let outcome = tokio::time::timeout(
+    Duration::from_secs(5),
+    lifecycle.run(lease, snapshot, CancellationToken::new()),
+  )
+  .await
+  .unwrap()
+  .unwrap();
+
+  assert_eq!(outcome.status, JobCompletionStatus::Cancelled);
+  assert!(outputs.called.load(Ordering::SeqCst));
+  assert_eq!(coordinator.completions.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn fencing_during_output_publication_keeps_the_lease_loss_reason() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let started = Arc::new(AtomicBool::new(false));
+  let coordinator = Arc::new(LifecycleCoordinator {
+    fence_after_output_starts: Some(started.clone()),
+    ..LifecycleCoordinator::default()
+  });
+  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(BlockingOutputPublisher { started }),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+
+  let error = tokio::time::timeout(
+    Duration::from_secs(5),
+    lifecycle.run(lease, snapshot, CancellationToken::new()),
+  )
+  .await
+  .unwrap()
+  .unwrap_err();
+
+  assert_eq!(
+    error.to_string(),
+    JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced).to_string()
+  );
+  assert!(matches!(
+    error,
+    JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced)
+  ));
+  assert!(coordinator.completions.lock().unwrap().is_empty());
 }
 
 #[async_trait]
@@ -898,14 +1262,6 @@ fn maps_runner_items_and_terminal_statuses_without_losing_meaning() {
     job_error_status(&JobError::Invalid("broken".to_owned())),
     JobCompletionStatus::InfrastructureFailed
   );
-  assert!(cleanup_confirmed(&JobError::Cancelled));
-  assert!(!cleanup_confirmed(&JobError::Cleanup(std::io::Error::other("cleanup"))));
-  assert!(!cleanup_confirmed(&JobError::OrphanCleanup("cleanup".to_owned())));
-  assert!(!cleanup_confirmed(&JobError::OperationAndCleanup {
-    operation: Box::new(JobError::Cancelled),
-    cleanup: std::io::Error::other("cleanup"),
-  }));
-
   assert!(matches!(
     stream_kind(RunnerStreamItem::AccountingUnavailable {
       consecutive_failures: 3,

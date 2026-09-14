@@ -9,6 +9,8 @@ description = "Single-owner lifecycle orchestration for one OctaCity job"
 
 [dependencies]
 octacity-execution = { path = "../octacity-execution" }
+octacity-identity = { path = "../octacity-identity" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }

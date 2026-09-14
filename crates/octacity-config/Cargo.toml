@@ -12,6 +12,7 @@ base64.workspace = true
 ed25519-dalek.workspace = true
 http.workspace = true
 octacity-protocol = { path = "../octacity-protocol" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 serde.workspace = true
 thiserror.workspace = true
 toml.workspace = true

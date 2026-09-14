@@ -1,0 +1,38 @@
+[package]
+name = "octacity-phase6-contract-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Opt-in end-to-end contracts for OctaCity phase six"
+
+[[test]]
+name = "protocol_minio"
+path = "tests/protocol_minio.rs"
+
+[dev-dependencies]
+async-trait.workspace = true
+aws-sdk-s3.workspace = true
+axum.workspace = true
+base64.workspace = true
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+octacity-artifact-store = { path = "../octacity-artifact-store" }
+octacity-coordinator = { path = "../octacity-coordinator" }
+octacity-identity = { path = "../octacity-identity" }
+octacity-execution = { path = "../octacity-execution" }
+octacity-job = { path = "../octacity-job" }
+octacity-lifecycle = { path = "../octacity-lifecycle" }
+octacity-output = { path = "../octacity-output" }
+octacity-protocol = { path = "../octacity-protocol" }
+octacity-runner = { path = "../octacity-runner" }
+octacity-source = { path = "../octacity-source" }
+reqwest.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true

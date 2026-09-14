@@ -1,0 +1,26 @@
+[package]
+name = "octacity-output"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Validated immutable output publication for OctaCity jobs"
+
+[dependencies]
+async-trait.workspace = true
+octacity-coordinator = { path = "../octacity-coordinator" }
+octacity-private-fs = { path = "../octacity-private-fs" }
+octacity-protocol = { path = "../octacity-protocol" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

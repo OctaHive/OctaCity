@@ -60,7 +60,14 @@ Use a Linux (`x86_64` or `aarch64`) or Apple Silicon macOS host supported by the
 pinned Microsandbox SDK. Intel macOS is unsupported. The image must be an
 immutable OCI digest containing the runtime libraries needed by the installed
 Linux Octa release. The work and state roots must be separate, operator-owned
-directories.
+directories. This contract also provisions a per-job identity, requires it at
+the fixed read-only `/run/octa-identity` guest path, and probes one allowed and
+one denied HTTPS host through a restricted network policy. It therefore
+exercises actual Microsandbox identity mounting and egress enforcement rather
+than only checking the adapter's SDK request. The guest image must contain
+`curl`. The allowed endpoint must answer HTTPS; the denied endpoint should
+answer without the sandbox policy so the negative assertion distinguishes
+isolation from an unrelated outage.
 
 ```shell
 export OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=/absolute/path/to/micro-work
@@ -68,6 +75,8 @@ export OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=/absolute/path/to/micro-state
 export OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=/opt/microsandbox/bin/msb
 export OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=/opt/microsandbox/lib/libkrunfw.so
 export OCTACITY_CONTRACT_MICROSANDBOX_IMAGE='registry.example/build@sha256:<64-lowercase-hex>'
+export OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST=allowed.contract.example
+export OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=denied.contract.example
 cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
@@ -100,7 +109,11 @@ runner JSONL, structured events, terminal resource accounting, graceful
 cancellation of a second long-running job, workspace removal after both jobs,
 and a final orphan-cleanup pass. It also prints end-to-end latency for the
 success-and-cancel contract. The dedicated release pipeline should run all
-commands and preserve their output as the backend performance baseline.
+commands and preserve their output as the backend performance baseline. The
+Microsandbox variant additionally verifies the fixed workload-identity mount
+and allows/denies real network probes according to its restricted egress
+policy; the service-backed Phase 6 contract proves the actual Vault login and
+secret-redaction path.
 
 ## Including a real backend in Linux coverage
 

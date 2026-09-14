@@ -79,6 +79,7 @@ async fn run_loaded(
     coordinator,
     registration,
     components.executor.clone(),
+    components.outputs.clone(),
     components.host.capacity().clone(),
     lifecycle_config(&components.validated.config),
   )?;
@@ -316,7 +317,7 @@ mod tests {
     assert_eq!(
       handle_lifecycle_result(
         Ok(JobLifecycleOutcome {
-          status: octacity_protocol::JobCompletionStatus::Failed,
+          status: octacity_protocol::JobCompletionStatus::InfrastructureFailed,
           drain: false,
           last_event_sequence: 4,
         }),
@@ -341,6 +342,7 @@ mod tests {
       state_root: state.path().join("state"),
       octa_release_root: state.path().join("octa"),
       source_plugins_dir: state.path().join("sources"),
+      workload_identity_profiles: Default::default(),
       enabled_runtime_modes: Vec::new(),
       allow_native_execution: false,
       native_linux_cgroup_root: None,
@@ -349,7 +351,18 @@ mod tests {
       native_linux_pids_limit: 0,
       native_environment: std::collections::BTreeMap::new(),
       oci_engines: Vec::new(),
+      allow_unrestricted_network: false,
+      allowed_network_hosts: Vec::new(),
       allowed_upload_origins: Vec::new(),
+      max_archive_entries: 1,
+      upload_timeout_seconds: 1,
+      max_output_limits: octacity_protocol::OutputLimits {
+        artifact_count: 1,
+        artifact_bytes: 1,
+        report_count: 1,
+        report_bytes: 1,
+        single_output_bytes: 1,
+      },
       max_workspace_bytes: 1,
       max_spool_bytes: 1_048_576,
       max_spool_records: 32,

@@ -8,6 +8,8 @@ repository.workspace = true
 description = "Octa runner inventory, protocol client, and supervisor for OctaCity"
 
 [dependencies]
+base64.workspace = true
+memchr.workspace = true
 octa-runner-protocol.workspace = true
 octa-plugin-lock.workspace = true
 octacity-execution = { path = "../octacity-execution" }
@@ -20,6 +22,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

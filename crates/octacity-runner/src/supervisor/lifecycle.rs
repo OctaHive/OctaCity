@@ -22,7 +22,7 @@ use crate::protocol::{RunnerMessage, write_command};
 pub(super) async fn drive(
   execution: &mut dyn RunningExecution,
   protocol_io: (ExecutionWriter, ExecutionReader),
-  job: &RunnerJobRequest,
+  job: &mut RunnerJobRequest,
   operation_deadline: Instant,
   cancellation: CancellationToken,
   events: &mpsc::Sender<RunnerStreamItem>,
@@ -84,41 +84,48 @@ pub(super) async fn drive(
             debug!(request_id = %job.request_id, "octa-runner accepted request");
           },
           RunnerMessage::Event { request_id, event } if request_id == job.request_id && accepted => {
-            validate_event(&event, &mut last_event_sequence)?;
-            match deliver(
-              events,
-              RunnerStreamItem::Event(event),
-              &cancellation,
-              stop_deadline.unwrap_or(deadline),
-            ).await? {
-              DeliveryOutcome::Delivered => {}
-              DeliveryOutcome::Cancelled => {
-                begin_stop(
-                  &mut stop_reason,
-                  &mut stop_deadline,
-                  TerminationReason::Cancelled,
-                  job.cancellation_grace,
-                  &mut stdin,
-                  &job.request_id,
-                ).await;
-              }
-              DeliveryOutcome::TimedOut if stop_reason.is_some() => {
-                execution.kill().await?;
-                return Err(RunnerSupervisionError::CancellationTimeout);
-              }
-              DeliveryOutcome::TimedOut => {
-                begin_stop(
-                  &mut stop_reason,
-                  &mut stop_deadline,
-                  TerminationReason::TimedOut,
-                  job.cancellation_grace,
-                  &mut stdin,
-                  &job.request_id,
-                ).await;
+            validate_event(&event, job.octa.event_schema, &mut last_event_sequence)?;
+            for event in job.redactions.events(event)? {
+              match deliver(
+                events,
+                RunnerStreamItem::Event(event),
+                &cancellation,
+                stop_deadline.unwrap_or(deadline),
+              ).await? {
+                DeliveryOutcome::Delivered => {}
+                DeliveryOutcome::Cancelled => {
+                  begin_stop(
+                    &mut stop_reason,
+                    &mut stop_deadline,
+                    TerminationReason::Cancelled,
+                    job.cancellation_grace,
+                    &mut stdin,
+                    &job.request_id,
+                  ).await;
+                }
+                DeliveryOutcome::TimedOut if stop_reason.is_some() => {
+                  execution.kill().await?;
+                  return Err(RunnerSupervisionError::CancellationTimeout);
+                }
+                DeliveryOutcome::TimedOut => {
+                  begin_stop(
+                    &mut stop_reason,
+                    &mut stop_deadline,
+                    TerminationReason::TimedOut,
+                    job.cancellation_grace,
+                    &mut stdin,
+                    &job.request_id,
+                  ).await;
+                }
               }
             }
           },
-          RunnerMessage::Finished { request_id, status, results } if request_id == job.request_id && accepted => {
+          RunnerMessage::Finished { request_id, status, mut results } if request_id == job.request_id && accepted => {
+            // A conforming runner emits run-finished first. Flushing here also
+            // keeps the security boundary fail-safe for an otherwise valid
+            // terminal message that omitted that semantic event.
+            deliver_terminal_events(job, events, &cancellation, stop_deadline.unwrap_or(deadline)).await?;
+            job.redactions.results(&mut results);
             let final_usage = final_usage(
               execution,
               policy.resource_sample_timeout,
@@ -146,7 +153,10 @@ pub(super) async fn drive(
           },
           RunnerMessage::Error { request_id, message }
             if request_id.as_deref().is_none_or(|request_id| request_id == job.request_id) => {
-              return Err(RunnerSupervisionError::Runner(message));
+              // Preserve safe output that preceded the error. The redactor
+              // still withholds or replaces any complete identity value.
+              deliver_terminal_events(job, events, &cancellation, stop_deadline.unwrap_or(deadline)).await?;
+              return Err(RunnerSupervisionError::Runner(job.redactions.message(message)));
             },
           _ => return Err(protocol("unexpected, duplicate, or incorrectly correlated message")),
         }
@@ -220,6 +230,21 @@ pub(super) async fn drive(
       },
     }
   }
+}
+
+async fn deliver_terminal_events(
+  job: &mut RunnerJobRequest,
+  events: &mpsc::Sender<RunnerStreamItem>,
+  cancellation: &CancellationToken,
+  deadline: Instant,
+) -> Result<(), RunnerSupervisionError> {
+  for event in job.redactions.finish_events()? {
+    match deliver(events, RunnerStreamItem::Event(event), cancellation, deadline).await? {
+      DeliveryOutcome::Delivered | DeliveryOutcome::Cancelled => {}
+      DeliveryOutcome::TimedOut => return Err(RunnerSupervisionError::CancellationTimeout),
+    }
+  }
+  Ok(())
 }
 
 async fn final_usage(

@@ -258,6 +258,8 @@ pub struct OutputLimits {
   pub report_count: u32,
   /// Maximum aggregate report bytes.
   pub report_bytes: u64,
+  /// Maximum bytes in one uploaded file or deterministic directory archive.
+  pub single_output_bytes: u64,
 }
 
 /// Lease identity supplied out of band and bound to the signed payload.
@@ -458,14 +460,39 @@ impl RuntimeSpec {
 }
 
 impl OutputLimits {
-  fn validate(&self) -> Result<(), String> {
+  /// Validates the internally consistent wire shape of one output quota.
+  ///
+  /// This does not apply deployment policy. Agents and servers must separately
+  /// compare a valid signed quota with their own configured maxima.
+  pub fn validate(&self) -> Result<(), String> {
     if (self.artifact_count == 0) != (self.artifact_bytes == 0) {
       return Err("artifact count and byte limits must both be zero or both be greater than zero".to_owned());
     }
     if (self.report_count == 0) != (self.report_bytes == 0) {
       return Err("report count and byte limits must both be zero or both be greater than zero".to_owned());
     }
+    let outputs_enabled = self.artifact_count > 0 || self.report_count > 0;
+    if outputs_enabled != (self.single_output_bytes > 0) {
+      return Err("single_output_bytes must be positive exactly when outputs are enabled".to_owned());
+    }
+    if (self.artifact_count > 0 && self.single_output_bytes > self.artifact_bytes)
+      || (self.report_count > 0 && self.single_output_bytes > self.report_bytes)
+    {
+      return Err("single_output_bytes must not exceed an enabled aggregate output byte limit".to_owned());
+    }
     Ok(())
+  }
+
+  /// Returns whether every requested dimension fits within `maximum`.
+  ///
+  /// The comparison is deliberately component-wise: aggregate byte limits do
+  /// not compensate for excessive counts or an excessive single-output limit.
+  pub fn is_within(&self, maximum: &Self) -> bool {
+    self.artifact_count <= maximum.artifact_count
+      && self.artifact_bytes <= maximum.artifact_bytes
+      && self.report_count <= maximum.report_count
+      && self.report_bytes <= maximum.report_bytes
+      && self.single_output_bytes <= maximum.single_output_bytes
   }
 }
 

@@ -36,6 +36,8 @@ pub(super) struct SandboxPlan {
   pub(super) guest_plugins_dir: PathBuf,
   /// Plugin lock path translated into the guest release mount.
   pub(super) guest_plugin_lock: PathBuf,
+  /// Optional job-private identity source exposed read-only in the guest.
+  pub(super) workload_identity: Option<PathBuf>,
 }
 
 impl SandboxPlan {
@@ -84,6 +86,7 @@ impl SandboxPlan {
       guest_data_dir: guest_path_buf(&guest_workspace, &request.workspace, &request.data_dir)?,
       guest_plugins_dir: guest_path_buf(&guest_release, &runner.release_root, &runner.plugins_dir)?,
       guest_plugin_lock: guest_path_buf(&guest_release, &runner.release_root, &runner.plugin_lock)?,
+      workload_identity: request.workload_identity.clone(),
       guest_workspace,
       guest_release,
     })

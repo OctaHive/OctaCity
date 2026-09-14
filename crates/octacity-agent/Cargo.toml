@@ -16,8 +16,10 @@ octacity-execution-microsandbox = { path = "../octacity-execution-microsandbox" 
 octacity-execution-native = { path = "../octacity-execution-native" }
 octacity-execution-oci = { path = "../octacity-execution-oci" }
 octacity-inventory = { path = "../octacity-inventory" }
+octacity-identity = { path = "../octacity-identity" }
 octacity-job = { path = "../octacity-job" }
 octacity-lifecycle = { path = "../octacity-lifecycle" }
+octacity-output = { path = "../octacity-output" }
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }

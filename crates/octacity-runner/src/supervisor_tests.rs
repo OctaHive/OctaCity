@@ -248,6 +248,7 @@ fn job(workspace: &std::path::Path) -> RunnerJobRequest {
       workspace_root: workspace.to_owned(),
       workspace: workspace.to_owned(),
       data_dir: workspace.join("data"),
+      workload_identity: None,
       cpu_millis: 1000,
       memory_bytes: 1024,
       writable_disk_bytes: 1024,
@@ -270,6 +271,7 @@ fn job(workspace: &std::path::Path) -> RunnerJobRequest {
       parallel: false,
       failfast: true,
     },
+    redactions: RunnerRedactions::default(),
     cancellation_grace: Duration::from_secs(1),
   }
 }
@@ -733,17 +735,17 @@ fn validates_job_events_and_terminal_exit_codes() {
     category: "diagnostic".to_owned(),
     data: serde_json::Map::from_iter([("type".to_owned(), serde_json::json!("message"))]),
   };
-  assert!(validate_event(&event, &mut sequence).is_ok());
+  assert!(validate_event(&event, expectation.event_schema, &mut sequence).is_ok());
   event.sequence = 3;
-  assert!(validate_event(&event, &mut sequence).is_err());
+  assert!(validate_event(&event, expectation.event_schema, &mut sequence).is_err());
   event.sequence = 2;
   event.category = "unknown".to_owned();
-  assert!(validate_event(&event, &mut sequence).is_err());
+  assert!(validate_event(&event, expectation.event_schema, &mut sequence).is_err());
   event.category = "diagnostic".to_owned();
   event.sequence = 0;
   sequence = Some(u64::MAX);
   assert!(
-    validate_event(&event, &mut sequence)
+    validate_event(&event, expectation.event_schema, &mut sequence)
       .unwrap_err()
       .to_string()
       .contains("overflowed")

@@ -207,6 +207,7 @@ mod tests {
       workspace_root: workspace.clone(),
       workspace: workspace.clone(),
       data_dir: workspace.join("data"),
+      workload_identity: None,
       cpu_millis: 1000,
       memory_bytes: 1024,
       writable_disk_bytes: 1024,

@@ -51,13 +51,14 @@ impl JobJournal {
 }
 
 fn valid_transition(current: Option<JobLifecycleState>, next: JobLifecycleState) -> bool {
-  use JobLifecycleState::{Cleaning, Completing, Freezing, Preparing, Running};
+  use JobLifecycleState::{Cleaning, Completing, Freezing, Preparing, Running, Uploading};
   matches!(
     (current, next),
     (None, Preparing)
       | (Some(Preparing), Running | Cleaning)
       | (Some(Running), Freezing | Cleaning)
-      | (Some(Freezing), Cleaning)
+      | (Some(Freezing), Uploading | Cleaning)
+      | (Some(Uploading), Cleaning)
       | (Some(Cleaning), Completing)
   )
 }
@@ -99,6 +100,7 @@ mod tests {
     journal.transition(JobLifecycleState::Running).unwrap();
     assert!(journal.transition(JobLifecycleState::Preparing).is_err());
     journal.transition(JobLifecycleState::Freezing).unwrap();
+    journal.transition(JobLifecycleState::Uploading).unwrap();
     journal.transition(JobLifecycleState::Cleaning).unwrap();
     journal.transition(JobLifecycleState::Completing).unwrap();
     assert_eq!(

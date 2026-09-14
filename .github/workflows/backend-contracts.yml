@@ -7,6 +7,60 @@ permissions:
   contents: read
 
 jobs:
+  phase6-vault-minio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: octacity
+      - uses: actions/checkout@v4
+        with:
+          repository: OctaHive/octa
+          path: octa
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the real Octa runner and required plugins
+        run: cargo build -p octa-runner -p octa_plugin_shell -p octa_plugin_tpl
+        working-directory: octa
+      - name: Start pinned Vault and MinIO services
+        run: |
+          docker run --detach --rm --name octacity-phase6-vault --cap-add=IPC_LOCK \
+            -p 127.0.0.1:18200:8200 \
+            -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
+            -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+            hashicorp/vault:1.20.4
+          docker run --detach --rm --name octacity-phase6-minio \
+            -p 127.0.0.1:19000:9000 \
+            -e MINIO_ROOT_USER=octacity \
+            -e MINIO_ROOT_PASSWORD=octacity-secret \
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:18200/v1/sys/health >/dev/null \
+              && curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs octacity-phase6-vault
+          docker logs octacity-phase6-minio
+          exit 1
+      - name: Run the phase-six Vault and S3 completion gate
+        env:
+          OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
+          OCTACITY_MINIO_ACCESS_KEY: octacity
+          OCTACITY_MINIO_SECRET_KEY: octacity-secret
+          OCTACITY_VAULT_ENDPOINT: http://127.0.0.1:18200
+          OCTACITY_VAULT_ROOT_TOKEN: octacity-root
+          OCTACITY_PHASE6_OCTA_RUNNER: ${{ github.workspace }}/octa/target/debug/octa-runner
+          OCTACITY_PHASE6_OCTA_PLUGINS_DIR: ${{ github.workspace }}/octa/target/debug
+        run: >-
+          cargo test -p octacity-phase6-contract-tests --test protocol_minio
+          real_octa_vault_job_publishes_outputs_without_leaking_secrets
+          -- --ignored --exact --nocapture
+        working-directory: octacity
+      - name: Stop test services
+        if: always()
+        run: docker rm --force octacity-phase6-vault octacity-phase6-minio || true
+
   linux-native:
     runs-on: [self-hosted, linux, octacity-native]
     steps:

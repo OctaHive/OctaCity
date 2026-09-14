@@ -5,6 +5,7 @@ use super::{
   cgroup::{parse_number, read_control},
   security::denied_syscalls,
 };
+use octacity_execution::WORKLOAD_IDENTITY_PATH;
 
 fn execution_request(root: &Path) -> StartExecution {
   let workspace = root.join("workspace");
@@ -15,6 +16,7 @@ fn execution_request(root: &Path) -> StartExecution {
     workspace_root: root.to_owned(),
     workspace,
     data_dir,
+    workload_identity: None,
     cpu_millis: 1500,
     memory_bytes: 64 * 1024 * 1024,
     writable_disk_bytes: u64::MAX,
@@ -284,7 +286,10 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
   use std::os::unix::fs::symlink;
 
   let root = tempfile::tempdir().unwrap();
-  let request = execution_request(root.path());
+  let mut request = execution_request(root.path());
+  let identity = root.path().join("identity-token");
+  fs::write(&identity, "signed-jwt").unwrap();
+  request.workload_identity = Some(identity);
   let runner = runner(root.path());
   let temporary = request.data_dir.join("tmp");
   let home = request.data_dir.join("home");
@@ -315,6 +320,20 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
   assert!(arguments.iter().any(|argument| argument == "--symlink"));
   assert!(arguments.iter().any(|argument| argument == "--remount-ro"));
   assert!(arguments.iter().any(|argument| argument == "/home/octacity"));
+  assert!(arguments.iter().any(|argument| argument == WORKLOAD_IDENTITY_PATH));
+  let work_root = root.path().to_string_lossy();
+  let workspace = request.workspace.to_string_lossy();
+  assert!(
+    arguments
+      .windows(2)
+      .any(|values| values == ["--bind", workspace.as_ref()])
+  );
+  assert!(
+    !arguments
+      .windows(2)
+      .any(|values| values == ["--bind", work_root.as_ref()]),
+    "the backend-wide work root must not be visible inside a job"
+  );
   assert!(
     std::panic::catch_unwind(|| network_arguments(&NetworkAccess::Restricted {
       allowed_hosts: vec!["example.com".to_owned()]

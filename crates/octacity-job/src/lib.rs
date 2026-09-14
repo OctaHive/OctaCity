@@ -3,13 +3,13 @@
 //! This crate is orchestration rather than infrastructure. It accepts an
 //! already verified intent, creates one private workspace,
 //! materializes the exact source revision, selects the requested execution
-//! backend without fallback, drives `octa-runner`, and either removes failed
-//! workspaces or transfers ownership of a successful workspace for output
-//! processing and explicit cleanup. Concrete VCS, process, microVM, and
+//! backend without fallback, drives `octa-runner`, and transfers every created
+//! workspace to its caller for explicitly ordered cleanup. Concrete VCS,
+//! process, microVM, and
 //! transport mechanics remain behind their respective component interfaces.
 
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, BTreeSet},
   fs,
   path::{Path, PathBuf},
   sync::Arc,
@@ -20,12 +20,13 @@ use octacity_execution::{
   ExecutionArchitecture, ExecutionBackend, ExecutionError, ExecutionOs, ExecutionPlatform, ExecutionTarget,
   NetworkAccess, OciIsolation as ExecutionOciIsolation, StartExecution,
 };
+use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
-  JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, PlatformArchitecture, PlatformOs, RuntimeMode,
-  RuntimeTarget,
+  JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OutputLimits, PlatformArchitecture, PlatformOs,
+  RuntimeMode, RuntimeTarget,
 };
 use octacity_runner::{
-  RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerStreamItem,
+  RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
   RunnerSupervisionError, RunnerSupervisionPolicy, supervise,
 };
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
@@ -52,6 +53,80 @@ pub struct JobCompletion {
   output_limits: octacity_protocol::OutputLimits,
   workspace: PathBuf,
   job_root: Option<PathBuf>,
+}
+
+/// Failed execution plus any workspace that must be cleaned by the caller.
+///
+/// Keeping the retained path with the failure lets the outer durable lifecycle
+/// record `Cleaning` before it invokes the destructive operation. A failure
+/// raised before workspace creation carries no cleanup responsibility.
+#[derive(Debug)]
+pub struct JobFailure {
+  error: JobError,
+  job_root: Option<PathBuf>,
+}
+
+impl JobFailure {
+  fn without_workspace(error: JobError) -> Self {
+    Self { error, job_root: None }
+  }
+
+  fn with_workspace(error: JobError, job_root: PathBuf) -> Self {
+    Self {
+      error,
+      job_root: Some(job_root),
+    }
+  }
+
+  /// Returns the operation failure independently of cleanup state.
+  pub fn error(&self) -> &JobError {
+    &self.error
+  }
+
+  /// Removes retained filesystem state after the caller durably records its
+  /// cleaning phase. Absence is valid for preflight failures.
+  pub async fn cleanup(mut self) -> Result<(), JobError> {
+    let Some(job_root) = self.job_root.as_ref() else {
+      return Ok(());
+    };
+    match tokio::fs::remove_dir_all(job_root).await {
+      Ok(()) => {
+        self.job_root = None;
+        Ok(())
+      }
+      Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        self.job_root = None;
+        Ok(())
+      }
+      Err(error) => Err(JobError::Cleanup(error)),
+    }
+  }
+}
+
+impl Drop for JobFailure {
+  fn drop(&mut self) {
+    if let Some(job_root) = &self.job_root {
+      warn!(path = %job_root.display(), "job failure dropped before workspace cleanup");
+    }
+  }
+}
+
+impl std::fmt::Display for JobFailure {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    self.error.fmt(formatter)
+  }
+}
+
+impl std::error::Error for JobFailure {
+  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    self.error.source()
+  }
+}
+
+impl From<JobError> for JobFailure {
+  fn from(error: JobError) -> Self {
+    Self::without_workspace(error)
+  }
 }
 
 impl JobCompletion {
@@ -101,6 +176,12 @@ pub struct JobExecutorConfig {
   pub work_root: PathBuf,
   /// Agent-side upper bound for a signed job's writable workspace request.
   pub max_workspace_bytes: u64,
+  /// Allows a signed job to select unrestricted network access.
+  pub allow_unrestricted_network: bool,
+  /// Complete local allowlist from which restricted jobs may select hosts.
+  pub allowed_network_hosts: Vec<String>,
+  /// Agent-owned maxima applied to signed artifact and report quotas.
+  pub max_output_limits: OutputLimits,
   /// Time allowed for source plugins and the runner to stop gracefully.
   pub cancellation_grace: Duration,
   /// Runner protocol and resource-accounting timing policy.
@@ -119,9 +200,17 @@ pub enum JobError {
   #[error("runtime mode '{0:?}' is not enabled")]
   /// No configured execution backend implements the requested runtime mode.
   RuntimeUnavailable(RuntimeMode),
-  #[error("workload identity is not available in this agent milestone")]
-  /// The job requests workload identity before the agent supports it.
-  WorkloadIdentityUnavailable,
+  #[error("workload identity failed: {0}")]
+  /// Local workload identity selection, provisioning, or revocation failed.
+  WorkloadIdentity(#[source] Box<WorkloadIdentityError>),
+  #[error("job failed ({operation}) and workload identity revocation also failed: {revocation}")]
+  /// Both execution and mandatory identity revocation failed.
+  OperationAndIdentityRevocation {
+    /// Original job lifecycle failure.
+    operation: Box<JobError>,
+    /// Additional identity revocation failure.
+    revocation: Box<WorkloadIdentityError>,
+  },
   #[error("job requests {requested} workspace bytes, exceeding the agent limit {maximum}")]
   /// The signed writable-disk request exceeds local agent policy.
   WorkspaceLimit {
@@ -130,6 +219,12 @@ pub enum JobError {
     /// Maximum bytes allowed by the agent.
     maximum: u64,
   },
+  #[error("job network policy exceeds the agent's local policy: {0}")]
+  /// The signed network request is broader than local operator policy.
+  NetworkPolicy(String),
+  #[error("job output limits exceed the agent's local maxima")]
+  /// At least one signed artifact or report quota exceeds local policy.
+  OutputLimit,
   #[error("job was cancelled before runner execution")]
   /// Cancellation stopped the job lifecycle.
   Cancelled,
@@ -155,14 +250,6 @@ pub enum JobError {
   #[error("workspace cleanup failed: {0}")]
   /// Explicit successful-job cleanup failed.
   Cleanup(#[source] std::io::Error),
-  #[error("job failed ({operation}) and workspace cleanup also failed: {cleanup}")]
-  /// Both the primary lifecycle operation and mandatory cleanup failed.
-  OperationAndCleanup {
-    /// Original job lifecycle failure.
-    operation: Box<JobError>,
-    /// Subsequent workspace cleanup failure.
-    cleanup: std::io::Error,
-  },
   #[error("orphan cleanup failed: {0}")]
   /// One or more backend resources or abandoned workspaces could not be removed.
   OrphanCleanup(String),
@@ -172,9 +259,13 @@ pub enum JobError {
 pub struct JobExecutor {
   runner: RunnerInstallation,
   source: Arc<dyn SourceMaterializer>,
+  identity: Arc<dyn WorkloadIdentityProvider>,
   backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
   work_root: PathBuf,
   max_workspace_bytes: u64,
+  allow_unrestricted_network: bool,
+  allowed_network_hosts: BTreeSet<String>,
+  max_output_limits: OutputLimits,
   cancellation_grace: Duration,
   runner_supervision: RunnerSupervisionPolicy,
 }
@@ -184,6 +275,7 @@ impl JobExecutor {
   pub fn new(
     runner: RunnerInstallation,
     source: Arc<dyn SourceMaterializer>,
+    identity: Arc<dyn WorkloadIdentityProvider>,
     backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
     config: JobExecutorConfig,
   ) -> Result<Self, JobError> {
@@ -201,6 +293,22 @@ impl JobExecutor {
       .runner_supervision
       .validate()
       .map_err(|error| JobError::Invalid(error.to_string()))?;
+    config.max_output_limits.validate().map_err(JobError::Invalid)?;
+    let configured_network_host_count = config.allowed_network_hosts.len();
+    let allowed_network_hosts = config.allowed_network_hosts.into_iter().collect::<BTreeSet<_>>();
+    if allowed_network_hosts.len() != configured_network_host_count {
+      return Err(JobError::Invalid(
+        "allowed network hosts must not contain duplicates".to_owned(),
+      ));
+    }
+    if allowed_network_hosts
+      .iter()
+      .any(|host| host.trim() != host || host.is_empty() || host.chars().any(char::is_control))
+    {
+      return Err(JobError::Invalid(
+        "allowed network hosts must be non-empty trimmed values without control characters".to_owned(),
+      ));
+    }
     let work_root = config
       .work_root
       .canonicalize()
@@ -211,9 +319,13 @@ impl JobExecutor {
     Ok(Self {
       runner,
       source,
+      identity,
       backends,
       work_root,
       max_workspace_bytes: config.max_workspace_bytes,
+      allow_unrestricted_network: config.allow_unrestricted_network,
+      allowed_network_hosts,
+      max_output_limits: config.max_output_limits,
       cancellation_grace: config.cancellation_grace,
       runner_supervision: config.runner_supervision,
     })
@@ -226,7 +338,7 @@ impl JobExecutor {
     request: ExecuteJobRequest,
     cancellation: CancellationToken,
     events: &mpsc::Sender<RunnerStreamItem>,
-  ) -> Result<JobCompletion, JobError> {
+  ) -> Result<JobCompletion, JobFailure> {
     let spec = request.spec;
 
     // Verify every immutable dependency before creating a workspace or
@@ -240,16 +352,25 @@ impl JobExecutor {
       .get(&spec.runtime.mode())
       .ok_or(JobError::RuntimeUnavailable(spec.runtime.mode()))?;
     if spec.runtime.writable_disk_bytes > self.max_workspace_bytes {
-      return Err(JobError::WorkspaceLimit {
-        requested: spec.runtime.writable_disk_bytes,
-        maximum: self.max_workspace_bytes,
-      });
+      return Err(
+        JobError::WorkspaceLimit {
+          requested: spec.runtime.writable_disk_bytes,
+          maximum: self.max_workspace_bytes,
+        }
+        .into(),
+      );
     }
-    if spec.runtime.workload_identity_profile.is_some() {
-      return Err(JobError::WorkloadIdentityUnavailable);
+    if !spec.outputs.is_within(&self.max_output_limits) {
+      return Err(JobError::OutputLimit.into());
+    }
+    let network = self.authorize_network(&spec.runtime.network)?;
+    if let Some(profile) = &spec.runtime.workload_identity_profile
+      && !self.identity.supports(profile)
+    {
+      return Err(JobError::WorkloadIdentity(Box::new(WorkloadIdentityError::UnknownProfile(profile.clone()))).into());
     }
     if cancellation.is_cancelled() {
-      return Err(JobError::Cancelled);
+      return Err(JobError::Cancelled.into());
     }
 
     let execution_id = execution_id(&spec);
@@ -286,34 +407,50 @@ impl JobExecutor {
       }
       let data_dir = workspace.join(".octacity");
       create_private_directory(&data_dir)?;
-      let (root, network) = execution_environment(&spec);
-      let runner = supervise(
-        &self.runner,
-        backend.as_ref(),
-        RunnerJobRequest {
-          request_id: execution_id.clone(),
-          octa: spec.octa.clone(),
-          execution: StartExecution {
-            execution_id,
-            workspace_root: self.work_root.clone(),
-            workspace: workspace.clone(),
-            data_dir,
-            cpu_millis: spec.runtime.cpu_millis,
-            memory_bytes: spec.runtime.memory_bytes,
-            writable_disk_bytes: spec.runtime.writable_disk_bytes,
-            max_duration: remaining(deadline)?,
-            root,
-            network,
+      let identity = match &spec.runtime.workload_identity_profile {
+        Some(profile) => Some(
+          self
+            .identity
+            .provision(profile, &job_root, &cancellation)
+            .await
+            .map_err(|error| JobError::WorkloadIdentity(Box::new(error)))?,
+        ),
+        None => None,
+      };
+      let root = execution_target(&spec);
+      let operation = async {
+        supervise(
+          &self.runner,
+          backend.as_ref(),
+          RunnerJobRequest {
+            request_id: execution_id.clone(),
+            octa: spec.octa.clone(),
+            execution: StartExecution {
+              execution_id,
+              workspace_root: self.work_root.clone(),
+              workspace: workspace.clone(),
+              data_dir,
+              workload_identity: identity.as_ref().map(|lease| lease.path().to_owned()),
+              cpu_millis: spec.runtime.cpu_millis,
+              memory_bytes: spec.runtime.memory_bytes,
+              writable_disk_bytes: spec.runtime.writable_disk_bytes,
+              max_duration: remaining(deadline)?,
+              root,
+              network,
+            },
+            spec: spec.execution.clone(),
+            redactions: RunnerRedactions::new(identity.iter().map(|lease| lease.sensitive_value())),
+            cancellation_grace: self.cancellation_grace,
           },
-          spec: spec.execution.clone(),
-          cancellation_grace: self.cancellation_grace,
-        },
-        cancellation,
-        events,
-        &self.runner_supervision,
-      )
-      .await
-      .map_err(map_runner_error)?;
+          cancellation,
+          events,
+          &self.runner_supervision,
+        )
+        .await
+        .map_err(map_runner_error)
+      }
+      .await;
+      let runner = finish_identity(operation, identity).await?;
 
       info!(job_id = %spec.job_id, attempt = spec.attempt, status = ?runner.status, "finished job");
       Ok((source, runner, workspace))
@@ -327,13 +464,7 @@ impl JobExecutor {
         workspace,
         job_root: Some(job_root),
       }),
-      Err(operation) => match tokio::fs::remove_dir_all(&job_root).await {
-        Ok(()) => Err(operation),
-        Err(cleanup) => Err(JobError::OperationAndCleanup {
-          operation: Box::new(operation),
-          cleanup,
-        }),
-      },
+      Err(operation) => Err(JobFailure::with_workspace(operation, job_root)),
     }
   }
 
@@ -377,10 +508,52 @@ impl JobExecutor {
       Err(JobError::OrphanCleanup(failures.join("; ")))
     }
   }
+
+  /// Narrows a signed request through the operator-owned network policy.
+  fn authorize_network(&self, requested: &NetworkPolicy) -> Result<NetworkAccess, JobError> {
+    match requested {
+      NetworkPolicy::Disabled => Ok(NetworkAccess::Disabled),
+      NetworkPolicy::Unrestricted if self.allow_unrestricted_network => Ok(NetworkAccess::Unrestricted),
+      NetworkPolicy::Unrestricted => Err(JobError::NetworkPolicy("unrestricted access is disabled".to_owned())),
+      NetworkPolicy::Restricted { allowed_hosts } => {
+        if let Some(host) = allowed_hosts
+          .iter()
+          .find(|host| !self.allowed_network_hosts.contains(host.as_str()))
+        {
+          return Err(JobError::NetworkPolicy(format!(
+            "host '{host}' is absent from the local allowlist"
+          )));
+        }
+        Ok(NetworkAccess::Restricted {
+          allowed_hosts: allowed_hosts.clone(),
+        })
+      }
+    }
+  }
 }
 
-fn execution_environment(spec: &JobSpecV1) -> (ExecutionTarget, NetworkAccess) {
-  let root = match &spec.runtime.target {
+/// Makes identity revocation authoritative without hiding an execution error.
+async fn finish_identity<T>(
+  operation: Result<T, JobError>,
+  identity: Option<WorkloadIdentityLease>,
+) -> Result<T, JobError> {
+  let revocation = match identity {
+    Some(identity) => identity.revoke().await,
+    None => Ok(()),
+  };
+  match (operation, revocation) {
+    (Ok(value), Ok(())) => Ok(value),
+    (Err(operation), Ok(())) => Err(operation),
+    (Ok(_), Err(revocation)) => Err(JobError::WorkloadIdentity(Box::new(revocation))),
+    (Err(operation), Err(revocation)) => Err(JobError::OperationAndIdentityRevocation {
+      operation: Box::new(operation),
+      revocation: Box::new(revocation),
+    }),
+  }
+}
+
+fn execution_target(spec: &JobSpecV1) -> ExecutionTarget {
+  match &spec.runtime.target {
     RuntimeTarget::Native { platform } => ExecutionTarget::Native {
       platform: execution_platform(*platform),
     },
@@ -396,15 +569,7 @@ fn execution_environment(spec: &JobSpecV1) -> (ExecutionTarget, NetworkAccess) {
         ProtocolOciIsolation::Hypervisor => ExecutionOciIsolation::Hypervisor,
       },
     },
-  };
-  let network = match &spec.runtime.network {
-    NetworkPolicy::Unrestricted => NetworkAccess::Unrestricted,
-    NetworkPolicy::Disabled => NetworkAccess::Disabled,
-    NetworkPolicy::Restricted { allowed_hosts } => NetworkAccess::Restricted {
-      allowed_hosts: allowed_hosts.clone(),
-    },
-  };
-  (root, network)
+  }
 }
 
 fn execution_platform(platform: octacity_protocol::PlatformSpec) -> ExecutionPlatform {
@@ -444,20 +609,7 @@ fn is_execution_directory(name: &str) -> bool {
 }
 
 fn create_private_directory(path: &Path) -> Result<(), JobError> {
-  #[cfg(unix)]
-  let builder = {
-    use std::os::unix::fs::DirBuilderExt as _;
-
-    let mut builder = fs::DirBuilder::new();
-    builder.mode(0o700);
-    builder
-  };
-  #[cfg(not(unix))]
-  let builder = fs::DirBuilder::new();
-
-  builder
-    .create(path)
-    .map_err(|source| filesystem("create directory", path, source))
+  octacity_private_fs::create_private_directory(path).map_err(|source| filesystem("create directory", path, source))
 }
 
 fn filesystem(action: &'static str, path: &Path, source: std::io::Error) -> JobError {

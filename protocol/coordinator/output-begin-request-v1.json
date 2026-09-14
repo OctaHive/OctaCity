@@ -1,0 +1,22 @@
+{
+  "protocol_version": 1,
+  "request_id": "upload-begin-20260911-1",
+  "registration_id": "registration-7",
+  "lease": {
+    "lease_id": "lease-42",
+    "job_id": "job-42",
+    "attempt": 1,
+    "fencing_token": "fence-42-1"
+  },
+  "upload_key": "0c7bfdde707110f750228b58fb68e0f7f6afdeac343919b4d118f08407e2d736",
+  "output": {
+    "run_id": 17,
+    "task_id": 23,
+    "kind": "artifact",
+    "name": "application",
+    "content_type": "application/octet-stream",
+    "transport_content_type": "application/octet-stream",
+    "size_bytes": 12,
+    "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  }
+}

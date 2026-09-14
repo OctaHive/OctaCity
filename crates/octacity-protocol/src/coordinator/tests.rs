@@ -180,6 +180,64 @@ fn rejects_unknown_transport_fields() {
 }
 
 #[test]
+fn validates_and_correlates_fenced_output_uploads() {
+  let lease = LeaseFence {
+    lease_id: "lease-1".to_owned(),
+    job_id: "job-1".to_owned(),
+    attempt: 1,
+    fencing_token: "fence-1".to_owned(),
+  };
+  let request = BeginOutputUploadRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease: lease.clone(),
+    upload_key: "upload-key".to_owned(),
+    output: OutputUploadMetadata {
+      run_id: 17,
+      task_id: 23,
+      kind: OutputKind::Report,
+      name: "tests".to_owned(),
+      content_type: None,
+      report_format: Some("junit".to_owned()),
+      transport_content_type: "application/octet-stream".to_owned(),
+      size_bytes: 12,
+      sha256: "0".repeat(64),
+    },
+  };
+  request.validate().unwrap();
+  let response = BeginOutputUploadResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: request.request_id.clone(),
+    upload_id: "output-1".to_owned(),
+    put_url: "https://objects.example/upload?signature=opaque".to_owned(),
+    required_headers: BTreeMap::from([("x-amz-checksum-sha256".to_owned(), "opaque".to_owned())]),
+    expires_at: 200,
+  };
+  response.validate(&request.request_id, 100).unwrap();
+
+  let mut unsafe_response = response;
+  unsafe_response.required_headers = BTreeMap::from([("authorization".to_owned(), "secret".to_owned())]);
+  assert!(unsafe_response.validate(&request.request_id, 100).is_err());
+
+  let complete = CompleteOutputUploadRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-2".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease,
+    upload_id: "output-1".to_owned(),
+  };
+  complete.validate().unwrap();
+  CompleteOutputUploadResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: complete.request_id.clone(),
+    upload_id: complete.upload_id.clone(),
+  }
+  .validate(&complete.request_id, &complete.upload_id)
+  .unwrap();
+}
+
+#[test]
 fn golden_coordinator_documents_match_the_wire_types() {
   let registration: RegisterAgentRequest = serde_json::from_str(include_str!(
     "../../../../protocol/coordinator/register-request-v1.json"
@@ -220,6 +278,34 @@ fn golden_coordinator_documents_match_the_wire_types() {
   ))
   .unwrap();
   events_response.validate("events-20260911-1", 1, 2).unwrap();
+
+  let upload: BeginOutputUploadRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/output-begin-request-v1.json"
+  ))
+  .unwrap();
+  upload.validate().unwrap();
+
+  let upload_response: BeginOutputUploadResponse = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/output-begin-response-v1.json"
+  ))
+  .unwrap();
+  upload_response
+    .validate("upload-begin-20260911-1", 1_789_056_100)
+    .unwrap();
+
+  let upload_complete: CompleteOutputUploadRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/output-complete-request-v1.json"
+  ))
+  .unwrap();
+  upload_complete.validate().unwrap();
+
+  let upload_complete_response: CompleteOutputUploadResponse = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/output-complete-response-v1.json"
+  ))
+  .unwrap();
+  upload_complete_response
+    .validate("upload-complete-20260911-1", "upload-42-artifact-1")
+    .unwrap();
 
   let completion: CompleteLeaseRequest = serde_json::from_str(include_str!(
     "../../../../protocol/coordinator/complete-request-v1.json"
@@ -589,4 +675,21 @@ fn rejects_invalid_event_completion_health_and_error_responses() {
   error.retry_after_ms = Some(1);
   error.message = "bad\nmessage".to_owned();
   assert!(error.validate("request-1").unwrap_err().to_string().contains("message"));
+}
+
+#[test]
+fn upload_response_debug_redacts_the_presigned_capability() {
+  let response = BeginOutputUploadResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "request-1".to_owned(),
+    upload_id: "upload-1".to_owned(),
+    put_url: "https://storage.example/object?signature=url-secret".to_owned(),
+    required_headers: BTreeMap::from([("x-private".to_owned(), "header-secret".to_owned())]),
+    expires_at: 1,
+  };
+
+  let rendered = format!("{response:?}");
+  assert!(!rendered.contains("url-secret"));
+  assert!(!rendered.contains("header-secret"));
+  assert!(rendered.contains("x-private"));
 }

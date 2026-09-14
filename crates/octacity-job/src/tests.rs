@@ -7,6 +7,7 @@ use octacity_execution::{
   ExecutionError, ExecutionExit, ExecutionIo, ExecutionPaths, ExecutionReader, ExecutionWriter, ResourceUsage,
   RunnerProgram, RunningExecution,
 };
+use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_protocol::{
   AGENT_PROTOCOL_VERSION, ExecutionSpec, NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpec, SourceSpec,
 };
@@ -80,12 +81,19 @@ impl ExecutionBackend for FakeBackend {
       }
     );
     assert_eq!(request.network, NetworkAccess::Unrestricted);
+    let exposed_identity = request
+      .workload_identity
+      .as_ref()
+      .map(|identity| fs::read_to_string(identity).unwrap());
+    if let Some(identity) = &exposed_identity {
+      assert_eq!(identity, "signed-jwt");
+    }
     let request_id = request.execution_id.clone();
     let (agent_stdin, runner_input) = tokio::io::duplex(4096);
     let (runner_output, agent_stdout) = tokio::io::duplex(4096);
     let (agent_stderr, runner_stderr) = tokio::io::duplex(64);
     drop(agent_stderr);
-    tokio::spawn(fake_runner(request_id, runner_input, runner_output));
+    tokio::spawn(fake_runner(request_id, runner_input, runner_output, exposed_identity));
     Ok(Box::new(FakeExecution {
       io: Some(ExecutionIo {
         stdin: Box::pin(agent_stdin) as ExecutionWriter,
@@ -146,7 +154,12 @@ impl RunningExecution for FakeExecution {
   }
 }
 
-async fn fake_runner(request_id: String, input: tokio::io::DuplexStream, mut output: tokio::io::DuplexStream) {
+async fn fake_runner(
+  request_id: String,
+  input: tokio::io::DuplexStream,
+  mut output: tokio::io::DuplexStream,
+  exposed_identity: Option<String>,
+) {
   output
       .write_all(
         b"{\"type\":\"hello\",\"protocol_version\":1,\"octa_version\":\"0.3.0\",\"event_schema_version\":3,\"plugin_protocol_version\":1}\n",
@@ -157,16 +170,30 @@ async fn fake_runner(request_id: String, input: tokio::io::DuplexStream, mut out
   let mut command = String::new();
   input.read_line(&mut command).await.unwrap();
   assert!(command.contains(&request_id));
-  output
-      .write_all(
-        format!(
-          "{{\"type\":\"accepted\",\"request_id\":{id}}}\n{{\"type\":\"finished\",\"request_id\":{id},\"status\":\"succeeded\",\"results\":[]}}\n",
-          id = serde_json::to_string(&request_id).unwrap()
-        )
-        .as_bytes(),
-      )
-      .await
-      .unwrap();
+  let id = serde_json::to_string(&request_id).unwrap();
+  let mut messages = format!("{{\"type\":\"accepted\",\"request_id\":{id}}}\n");
+  let results = if let Some(identity) = exposed_identity {
+    let event = serde_json::json!({
+      "type": "event",
+      "request_id": request_id,
+      "event": {
+        "schema_version": 3,
+        "sequence": 0,
+        "timestamp": "2026-09-14T00:00:00Z",
+        "category": "diagnostic",
+        "data": {"message": identity.clone()}
+      }
+    });
+    messages.push_str(&event.to_string());
+    messages.push('\n');
+    serde_json::to_string(&vec![serde_json::json!({"identity": identity})]).unwrap()
+  } else {
+    "[]".to_owned()
+  };
+  messages.push_str(&format!(
+    "{{\"type\":\"finished\",\"request_id\":{id},\"status\":\"succeeded\",\"results\":{results}}}\n"
+  ));
+  output.write_all(messages.as_bytes()).await.unwrap();
 }
 
 fn specification(mode: RuntimeMode) -> JobSpecV1 {
@@ -234,6 +261,7 @@ fn specification(mode: RuntimeMode) -> JobSpecV1 {
       artifact_bytes: 0,
       report_count: 0,
       report_bytes: 0,
+      single_output_bytes: 0,
     },
   }
 }
@@ -264,6 +292,20 @@ fn executor(
   source: Arc<dyn SourceMaterializer>,
   backend: Option<Arc<dyn ExecutionBackend>>,
 ) -> JobExecutor {
+  executor_with_identity(
+    work_root,
+    source,
+    Arc::new(FileWorkloadIdentityProvider::default()),
+    backend,
+  )
+}
+
+fn executor_with_identity(
+  work_root: &Path,
+  source: Arc<dyn SourceMaterializer>,
+  identity: Arc<dyn WorkloadIdentityProvider>,
+  backend: Option<Arc<dyn ExecutionBackend>>,
+) -> JobExecutor {
   let backends = backend
     .map(|backend| BTreeMap::from([(RuntimeMode::Native, backend)]))
     .unwrap_or_else(|| {
@@ -278,10 +320,20 @@ fn executor(
   JobExecutor::new(
     runner(),
     source,
+    identity,
     backends,
     JobExecutorConfig {
       work_root: work_root.to_owned(),
       max_workspace_bytes: 2 * 1024 * 1024 * 1024,
+      allow_unrestricted_network: true,
+      allowed_network_hosts: vec!["vault.example.com".to_owned()],
+      max_output_limits: OutputLimits {
+        artifact_count: 16,
+        artifact_bytes: 16 * 1024 * 1024,
+        report_count: 16,
+        report_bytes: 16 * 1024 * 1024,
+        single_output_bytes: 16 * 1024 * 1024,
+      },
       cancellation_grace: Duration::from_secs(1),
       runner_supervision: RunnerSupervisionPolicy::default(),
     },
@@ -332,7 +384,7 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
 }
 
 #[tokio::test]
-async fn rejects_unavailable_workload_identity_before_source_activity() {
+async fn rejects_unknown_workload_identity_before_source_activity() {
   let work_root = tempfile::tempdir().unwrap();
   let source_calls = Arc::new(AtomicUsize::new(0));
   let executor = executor(
@@ -361,9 +413,59 @@ async fn rejects_unavailable_workload_identity_before_source_activity() {
     .await
     .unwrap_err();
 
-  assert!(matches!(error, JobError::WorkloadIdentityUnavailable));
+  assert!(matches!(
+    error.error(),
+    JobError::WorkloadIdentity(error) if matches!(**error, WorkloadIdentityError::UnknownProfile(_))
+  ));
   assert_eq!(source_calls.load(Ordering::SeqCst), 0);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn provisions_identity_for_execution_and_revokes_it_before_completion() {
+  let work_root = tempfile::tempdir().unwrap();
+  let identity_source = tempfile::NamedTempFile::new().unwrap();
+  fs::write(identity_source.path(), "signed-jwt").unwrap();
+  let provider = Arc::new(FileWorkloadIdentityProvider::new(BTreeMap::from([(
+    "ci".to_owned(),
+    identity_source.path().to_owned(),
+  )])));
+  let executor = executor_with_identity(
+    work_root.path(),
+    Arc::new(FakeSource {
+      calls: Arc::new(AtomicUsize::new(0)),
+      fail: false,
+    }),
+    provider,
+    Some(Arc::new(FakeBackend {
+      starts: Arc::new(AtomicUsize::new(0)),
+      destroyed: Arc::new(AtomicBool::new(false)),
+    })),
+  );
+  let mut spec = specification(RuntimeMode::Native);
+  spec.runtime.workload_identity_profile = Some("ci".to_owned());
+  let (events, mut receiver) = mpsc::channel(8);
+
+  let completion = executor
+    .execute(
+      ExecuteJobRequest {
+        spec,
+        source_credentials: BTreeMap::new(),
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap();
+  let job_root = completion.workspace().parent().unwrap();
+  assert!(!job_root.join("identity").exists());
+  let event = receiver.recv().await.unwrap();
+  let RunnerStreamItem::Event(event) = event else {
+    panic!("expected the redacted runner event");
+  };
+  assert_eq!(event.data["message"], "[redacted]");
+  assert_eq!(completion.runner().results[0]["identity"], "[redacted]");
+  completion.cleanup().await.unwrap();
 }
 
 #[tokio::test]
@@ -391,13 +493,16 @@ async fn rejects_an_unavailable_backend_without_materializing_source() {
     )
     .await
     .unwrap_err();
-  assert!(matches!(error, JobError::RuntimeUnavailable(RuntimeMode::Native)));
+  assert!(matches!(
+    error.error(),
+    JobError::RuntimeUnavailable(RuntimeMode::Native)
+  ));
   assert_eq!(source_calls.load(Ordering::SeqCst), 0);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
 #[tokio::test]
-async fn removes_the_workspace_after_source_failure() {
+async fn retains_a_failed_workspace_for_ordered_caller_cleanup() {
   let work_root = tempfile::tempdir().unwrap();
   let executor = executor(
     work_root.path(),
@@ -412,19 +517,19 @@ async fn removes_the_workspace_after_source_failure() {
   );
   let spec = specification(RuntimeMode::Native);
   let (events, _receiver) = mpsc::channel(1);
-  assert!(
-    executor
-      .execute(
-        ExecuteJobRequest {
-          spec,
-          source_credentials: BTreeMap::new(),
-        },
-        CancellationToken::new(),
-        &events,
-      )
-      .await
-      .is_err()
-  );
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        spec,
+        source_credentials: BTreeMap::new(),
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_some());
+  failure.cleanup().await.unwrap();
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
@@ -488,10 +593,28 @@ fn rejects_invalid_executor_policies() {
   let config = JobExecutorConfig {
     work_root: work_root.path().to_owned(),
     max_workspace_bytes: 1024,
+    allow_unrestricted_network: true,
+    allowed_network_hosts: Vec::new(),
+    max_output_limits: OutputLimits {
+      artifact_count: 0,
+      artifact_bytes: 0,
+      report_count: 0,
+      report_bytes: 0,
+      single_output_bytes: 0,
+    },
     cancellation_grace: Duration::from_secs(1),
     runner_supervision: RunnerSupervisionPolicy::default(),
   };
-  assert!(JobExecutor::new(runner(), source.clone(), BTreeMap::new(), config.clone()).is_err());
+  assert!(
+    JobExecutor::new(
+      runner(),
+      source.clone(),
+      Arc::new(FileWorkloadIdentityProvider::default()),
+      BTreeMap::new(),
+      config.clone()
+    )
+    .is_err()
+  );
 
   let backend = Arc::new(FakeBackend {
     starts: Arc::new(AtomicUsize::new(0)),
@@ -503,6 +626,7 @@ fn rejects_invalid_executor_policies() {
     JobExecutor::new(
       runner(),
       source,
+      Arc::new(FileWorkloadIdentityProvider::default()),
       BTreeMap::from([(RuntimeMode::Native, backend)]),
       invalid
     )
@@ -539,7 +663,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
         &events,
       )
       .await,
-    Err(JobError::WorkspaceLimit { .. })
+    Err(error) if matches!(error.error(), JobError::WorkspaceLimit { .. })
   ));
 
   let cancelled = CancellationToken::new();
@@ -555,21 +679,77 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
         &events,
       )
       .await,
-    Err(JobError::Cancelled)
+    Err(error) if matches!(error.error(), JobError::Cancelled)
+  ));
+  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rejects_network_and_output_policy_before_source_activity() {
+  let work_root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let executor = executor(
+    work_root.path(),
+    Arc::new(FakeSource {
+      calls: source_calls.clone(),
+      fail: false,
+    }),
+    Some(Arc::new(FakeBackend {
+      starts: Arc::new(AtomicUsize::new(0)),
+      destroyed: Arc::new(AtomicBool::new(false)),
+    })),
+  );
+  let (events, _receiver) = mpsc::channel(8);
+
+  let mut network = specification(RuntimeMode::Native);
+  network.runtime.network = NetworkPolicy::Restricted {
+    allowed_hosts: vec!["exfiltration.example.com".to_owned()],
+  };
+  assert!(matches!(
+    executor
+      .execute(
+        ExecuteJobRequest {
+          spec: network,
+          source_credentials: BTreeMap::new(),
+        },
+        CancellationToken::new(),
+        &events,
+      )
+      .await,
+    Err(error) if matches!(error.error(), JobError::NetworkPolicy(_))
+  ));
+
+  let mut outputs = specification(RuntimeMode::Native);
+  outputs.outputs = OutputLimits {
+    artifact_count: 1,
+    artifact_bytes: 17 * 1024 * 1024,
+    report_count: 0,
+    report_bytes: 0,
+    single_output_bytes: 17 * 1024 * 1024,
+  };
+  assert!(matches!(
+    executor
+      .execute(
+        ExecuteJobRequest {
+          spec: outputs,
+          source_credentials: BTreeMap::new(),
+        },
+        CancellationToken::new(),
+        &events,
+      )
+      .await,
+    Err(error) if matches!(error.error(), JobError::OutputLimit)
   ));
   assert_eq!(source_calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
-fn translates_every_runtime_and_network_variant() {
+fn translates_every_runtime_target_variant() {
   let native = specification(RuntimeMode::Native);
-  assert!(matches!(
-    execution_environment(&native).0,
-    ExecutionTarget::Native { .. }
-  ));
+  assert!(matches!(execution_target(&native), ExecutionTarget::Native { .. }));
 
   let mut oci = specification(RuntimeMode::Oci);
-  let (root, network) = execution_environment(&oci);
+  let root = execution_target(&oci);
   assert!(matches!(
     root,
     ExecutionTarget::Oci {
@@ -577,8 +757,6 @@ fn translates_every_runtime_and_network_variant() {
       ..
     }
   ));
-  assert_eq!(network, NetworkAccess::Disabled);
-
   if let RuntimeTarget::Oci {
     platform, isolation, ..
   } = &mut oci.runtime.target
@@ -587,10 +765,7 @@ fn translates_every_runtime_and_network_variant() {
     platform.architecture = PlatformArchitecture::Arm64;
     *isolation = ProtocolOciIsolation::Process;
   }
-  oci.runtime.network = NetworkPolicy::Restricted {
-    allowed_hosts: vec!["packages.example".to_owned()],
-  };
-  let (root, network) = execution_environment(&oci);
+  let root = execution_target(&oci);
   assert!(matches!(
     root,
     ExecutionTarget::Oci {
@@ -602,10 +777,4 @@ fn translates_every_runtime_and_network_variant() {
       ..
     }
   ));
-  assert_eq!(
-    network,
-    NetworkAccess::Restricted {
-      allowed_hosts: vec!["packages.example".to_owned()]
-    }
-  );
 }

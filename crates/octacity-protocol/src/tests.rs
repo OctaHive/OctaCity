@@ -59,6 +59,7 @@ fn spec() -> JobSpecV1 {
       artifact_bytes: 1024,
       report_count: 10,
       report_bytes: 1024,
+      single_output_bytes: 1024,
     },
   }
 }
@@ -103,6 +104,24 @@ fn documented_job_spec_example_matches_the_wire_type() {
       now: spec.issued_at,
     })
     .expect("documented JobSpec must pass semantic validation");
+}
+
+#[test]
+fn validates_per_output_limits_against_each_enabled_output_kind() {
+  let mut spec = spec();
+  spec.outputs.single_output_bytes = 1025;
+  assert!(spec.validate(&binding(&spec)).is_err());
+
+  spec.outputs.artifact_count = 0;
+  spec.outputs.artifact_bytes = 0;
+  spec.outputs.single_output_bytes = 1024;
+  assert!(spec.validate(&binding(&spec)).is_ok());
+
+  spec.outputs.report_count = 0;
+  spec.outputs.report_bytes = 0;
+  assert!(spec.validate(&binding(&spec)).is_err());
+  spec.outputs.single_output_bytes = 0;
+  assert!(spec.validate(&binding(&spec)).is_ok());
 }
 
 #[test]
@@ -220,6 +239,35 @@ fn rejects_a_macos_oci_guest() {
   platform.os = PlatformOs::Macos;
 
   assert!(value.validate(&binding(&value)).unwrap_err().contains("macOS guest"));
+}
+
+#[test]
+fn compares_signed_output_limits_component_by_component() {
+  let maximum = OutputLimits {
+    artifact_count: 4,
+    artifact_bytes: 1024,
+    report_count: 2,
+    report_bytes: 512,
+    single_output_bytes: 256,
+  };
+  let mut requested = maximum.clone();
+  assert!(requested.validate().is_ok());
+  assert!(requested.is_within(&maximum));
+
+  requested.artifact_count += 1;
+  assert!(!requested.is_within(&maximum));
+  requested = maximum.clone();
+  requested.artifact_bytes += 1;
+  assert!(!requested.is_within(&maximum));
+  requested = maximum.clone();
+  requested.report_count += 1;
+  assert!(!requested.is_within(&maximum));
+  requested = maximum.clone();
+  requested.report_bytes += 1;
+  assert!(!requested.is_within(&maximum));
+  requested = maximum.clone();
+  requested.single_output_bytes += 1;
+  assert!(!requested.is_within(&maximum));
 }
 
 #[test]

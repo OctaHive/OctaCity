@@ -11,6 +11,8 @@ description = "Single-owner leased-job lifecycle and durable event delivery for 
 octacity-coordinator = { path = "../octacity-coordinator" }
 octacity-execution = { path = "../octacity-execution" }
 octacity-job = { path = "../octacity-job" }
+octacity-output = { path = "../octacity-output" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 serde.workspace = true
@@ -26,5 +28,6 @@ uuid.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 ed25519-dalek.workspace = true
+octacity-identity = { path = "../octacity-identity" }
 octacity-source = { path = "../octacity-source" }
 tempfile.workspace = true

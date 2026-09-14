@@ -4,7 +4,11 @@
 //! operations. Native and sandboxed backends therefore expose identical I/O,
 //! cancellation, cleanup, and resource-usage semantics.
 
-use std::{path::PathBuf, pin::Pin, time::Duration};
+use std::{
+  path::{Path, PathBuf},
+  pin::Pin,
+  time::Duration,
+};
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -15,6 +19,9 @@ use tokio_util::sync::CancellationToken;
 pub type ExecutionReader = Pin<Box<dyn AsyncRead + Send>>;
 /// Owned asynchronous stdin stream into an execution backend.
 pub type ExecutionWriter = Pin<Box<dyn AsyncWrite + Send>>;
+
+/// Stable read-only path at which every backend exposes job identity.
+pub const WORKLOAD_IDENTITY_PATH: &str = "/run/octa-identity";
 
 /// Protocol streams connected to the isolated `octa-runner` process.
 pub struct ExecutionIo {
@@ -140,6 +147,9 @@ pub struct StartExecution {
   pub workspace: PathBuf,
   /// Existing Octa state directory contained by `workspace`.
   pub data_dir: PathBuf,
+  /// Optional job-private identity file mounted read-only at
+  /// [`WORKLOAD_IDENTITY_PATH`].
+  pub workload_identity: Option<PathBuf>,
   /// CPU allocation in thousandths of one logical CPU.
   pub cpu_millis: u32,
   /// Maximum addressable memory in bytes.
@@ -167,15 +177,44 @@ impl StartExecution {
         "workspace_root must be an existing absolute directory".to_owned(),
       ));
     }
-    if !self.workspace.is_absolute() || !self.workspace.is_dir() || !self.workspace.starts_with(&self.workspace_root) {
+    if !self.workspace.is_absolute() || !self.workspace.is_dir() {
       return Err(ExecutionError::Invalid(
         "workspace must be an existing absolute directory inside workspace_root".to_owned(),
       ));
     }
-    if !self.data_dir.is_absolute() || !self.data_dir.is_dir() || !self.data_dir.starts_with(&self.workspace) {
+    if !self.data_dir.is_absolute() || !self.data_dir.is_dir() {
       return Err(ExecutionError::Invalid(
         "data_dir must be an existing absolute directory inside workspace".to_owned(),
       ));
+    }
+    let canonical_root = canonical_directory(&self.workspace_root, "workspace_root")?;
+    let canonical_workspace = canonical_directory(&self.workspace, "workspace")?;
+    let canonical_data = canonical_directory(&self.data_dir, "data_dir")?;
+    if !canonical_workspace.starts_with(&canonical_root) {
+      return Err(ExecutionError::Invalid(
+        "workspace must resolve inside workspace_root".to_owned(),
+      ));
+    }
+    if !canonical_data.starts_with(&canonical_workspace) {
+      return Err(ExecutionError::Invalid(
+        "data_dir must resolve inside workspace".to_owned(),
+      ));
+    }
+    if let Some(identity) = &self.workload_identity {
+      let metadata = std::fs::symlink_metadata(identity).map_err(|error| {
+        ExecutionError::Invalid(format!("workload identity must be an existing regular file: {error}"))
+      })?;
+      if !identity.is_absolute()
+        || !metadata.file_type().is_file()
+        || !is_canonical_path(identity)
+        || !identity.starts_with(&canonical_root)
+        || identity.starts_with(&canonical_workspace)
+      {
+        return Err(ExecutionError::Invalid(
+          "workload identity must be a canonical absolute regular file inside workspace_root and outside workspace"
+            .to_owned(),
+        ));
+      }
     }
     if self.cpu_millis == 0 || self.memory_bytes == 0 || self.writable_disk_bytes == 0 || self.max_duration.is_zero() {
       return Err(ExecutionError::Invalid(
@@ -197,6 +236,14 @@ impl StartExecution {
     }
     Ok(())
   }
+}
+
+fn canonical_directory(path: &Path, name: &str) -> Result<PathBuf, ExecutionError> {
+  std::fs::canonicalize(path).map_err(|error| ExecutionError::Invalid(format!("failed to resolve {name}: {error}")))
+}
+
+fn is_canonical_path(path: &Path) -> bool {
+  path.is_absolute() && std::fs::canonicalize(path).is_ok_and(|canonical| canonical == path)
 }
 
 fn is_immutable_oci_reference(value: &str) -> bool {
@@ -364,6 +411,7 @@ mod tests {
       workspace_root: temporary.path().canonicalize().unwrap(),
       workspace: temporary.path().canonicalize().unwrap(),
       data_dir: temporary.path().canonicalize().unwrap().join("data"),
+      workload_identity: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -397,6 +445,7 @@ mod tests {
       workspace_root: temporary.path().canonicalize().unwrap(),
       workspace: temporary.path().canonicalize().unwrap(),
       data_dir: data_dir.canonicalize().unwrap(),
+      workload_identity: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -424,5 +473,79 @@ mod tests {
       isolation: OciIsolation::Hypervisor,
     };
     assert!(request.validate().is_ok());
+  }
+
+  #[test]
+  fn rejects_noncanonical_identity_paths_before_a_backend_sees_them() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let workspace = root.join("workspace");
+    let identity_directory = root.join("identities");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(&identity_directory).unwrap();
+    let data_dir = workspace.join("data");
+    std::fs::create_dir(&data_dir).unwrap();
+    let identity = identity_directory.join("job.identity");
+    std::fs::write(&identity, b"identity").unwrap();
+    let mut request = StartExecution {
+      execution_id: "job-1-attempt-1".to_owned(),
+      workspace_root: root,
+      workspace,
+      data_dir,
+      workload_identity: Some(identity.clone()),
+      cpu_millis: 1000,
+      memory_bytes: 512 * 1024 * 1024,
+      writable_disk_bytes: 1024 * 1024 * 1024,
+      max_duration: Duration::from_secs(600),
+      root: ExecutionTarget::Native {
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
+      },
+      network: NetworkAccess::Disabled,
+    };
+    assert!(request.validate().is_ok());
+
+    request.workload_identity = Some(identity_directory.join("..").join("identities/job.identity"));
+    assert!(request.validate().is_err());
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn rejects_identity_paths_through_an_intermediate_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let workspace = root.join("workspace");
+    let identity_directory = root.join("identities");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(&identity_directory).unwrap();
+    let data_dir = workspace.join("data");
+    std::fs::create_dir(&data_dir).unwrap();
+    std::fs::write(identity_directory.join("job.identity"), b"identity").unwrap();
+    let alias = root.join("identity-alias");
+    symlink(&identity_directory, &alias).unwrap();
+    let request = StartExecution {
+      execution_id: "job-1-attempt-1".to_owned(),
+      workspace_root: root,
+      workspace,
+      data_dir,
+      workload_identity: Some(alias.join("job.identity")),
+      cpu_millis: 1000,
+      memory_bytes: 512 * 1024 * 1024,
+      writable_disk_bytes: 1024 * 1024 * 1024,
+      max_duration: Duration::from_secs(600),
+      root: ExecutionTarget::Native {
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
+      },
+      network: NetworkAccess::Disabled,
+    };
+
+    assert!(request.validate().is_err());
   }
 }

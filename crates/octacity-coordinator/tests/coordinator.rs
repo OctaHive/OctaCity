@@ -12,14 +12,15 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use octacity_coordinator::{
   CoordinatorClient, CoordinatorError, HttpCoordinatorClient, HttpCoordinatorConfig, LeaseMonitor, LeaseMonitorOutcome,
-  LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, Registration, RetryPolicy,
+  LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, OutputUploadCoordinator, Registration, RetryPolicy,
 };
 use octacity_protocol::{
   AcquireLeaseResponse, ActiveJob, AgentInventory, AgentLifecycleEvent, AppendEventsResponse, AttemptEventEnvelope,
   AttemptEventKind, BackendHealth, BackendHealthStatus, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
-  CompleteLeaseResponse, CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot,
-  JobCompletionStatus, JobLifecycleState, JobSpecV1, LeaseAssignment, NetworkPolicy, OciIsolation, OctaInventory,
-  OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RegisterAgentResponse, RuntimeCapability,
+  CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse,
+  ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState, JobSpecV1,
+  LeaseAssignment, NetworkPolicy, OciIsolation, OctaInventory, OctaSpec, OutputKind, OutputLimits,
+  OutputUploadMetadata, PlatformArchitecture, PlatformOs, PlatformSpec, RegisterAgentResponse, RuntimeCapability,
   RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM, SignedEnvelope, SourceSpec,
 };
 use serde_json::json;
@@ -42,6 +43,8 @@ enum Action {
   Acquire(LeaseAssignment),
   Heartbeat(HeartbeatDirective),
   AppendEvents(u64),
+  BeginOutput,
+  CompleteOutput,
   Complete,
   Oversized(usize),
 }
@@ -207,6 +210,29 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
           protocol_version: COORDINATOR_PROTOCOL_VERSION,
           request_id: request.request_id.clone(),
           acknowledged_sequence,
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
+      Action::BeginOutput => {
+        let body = serde_json::to_vec(&octacity_protocol::BeginOutputUploadResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          upload_id: "upload-1".to_owned(),
+          put_url: "https://objects.example/upload-1?signature=opaque".to_owned(),
+          required_headers: BTreeMap::new(),
+          expires_at: unix_now() + 60,
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
+      Action::CompleteOutput => {
+        let body = serde_json::to_vec(&CompleteOutputUploadResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          upload_id: request.body["upload_id"].as_str().unwrap().to_owned(),
         })
         .unwrap();
         write_response(stream, 200, &body).await;
@@ -575,6 +601,53 @@ async fn appends_fenced_events_and_completes_with_stable_idempotency() {
   assert_eq!(records[1].idempotency_key, "complete-request-1");
 }
 
+#[tokio::test]
+async fn authorizes_and_completes_outputs_on_exact_fenced_endpoints() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let lease = signed_lease(&signing_key, unix_now());
+  let server = MockServer::start(vec![Action::BeginOutput, Action::CompleteOutput]).await;
+  let client = client(&server, 1, Duration::from_secs(1), 16 * 1024);
+  let begin = octacity_protocol::BeginOutputUploadRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "begin-output-1".to_owned(),
+    registration_id: registration().registration_id,
+    lease: (&lease).into(),
+    upload_key: "upload-key-1".to_owned(),
+    output: OutputUploadMetadata {
+      run_id: 17,
+      task_id: 23,
+      kind: OutputKind::Artifact,
+      name: "application".to_owned(),
+      content_type: None,
+      report_format: None,
+      transport_content_type: "application/octet-stream".to_owned(),
+      size_bytes: 7,
+      sha256: "a".repeat(64),
+    },
+  };
+  let target = client
+    .begin_output_upload(&registration(), &lease, &begin, CancellationToken::new())
+    .await
+    .unwrap();
+  let complete = CompleteOutputUploadRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "complete-output-1".to_owned(),
+    registration_id: registration().registration_id,
+    lease: (&lease).into(),
+    upload_id: target.upload_id,
+  };
+  client
+    .complete_output_upload(&registration(), &lease, &complete, CancellationToken::new())
+    .await
+    .unwrap();
+
+  let records = server.records.lock().unwrap();
+  assert_eq!(records[0].path, "/api/v1/leases/lease-1/artifacts:begin");
+  assert_eq!(records[0].body["lease"]["fencing_token"], "fence-1");
+  assert_eq!(records[1].path, "/api/v1/leases/lease-1/artifacts:complete");
+  assert_eq!(records[1].body["upload_id"], "upload-1");
+}
+
 struct ScriptedClient {
   leases: Mutex<VecDeque<Result<AcquireLeaseResponse, CoordinatorError>>>,
   heartbeats: Mutex<VecDeque<Result<HeartbeatDirective, CoordinatorError>>>,
@@ -692,6 +765,7 @@ fn signed_lease(signing_key: &SigningKey, now: u64) -> LeaseAssignment {
       artifact_bytes: 1024,
       report_count: 1,
       report_bytes: 1024,
+      single_output_bytes: 1024,
     },
   };
   let payload = serde_json::to_vec(&spec).unwrap();

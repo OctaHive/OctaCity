@@ -24,8 +24,11 @@ use crate::{
 };
 
 mod lifecycle;
+mod redaction;
 #[path = "supervisor_validation.rs"]
 mod validation;
+
+pub use redaction::RunnerRedactions;
 
 const MAX_RUNNER_STDERR_BYTES: usize = 64 * 1024;
 
@@ -71,7 +74,7 @@ impl Default for RunnerSupervisionPolicy {
 }
 
 /// Inputs that bind a signed job to one backend execution and protocol request.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RunnerJobRequest {
   /// Identifier shared by the backend execution and runner protocol.
   pub request_id: String,
@@ -81,6 +84,11 @@ pub struct RunnerJobRequest {
   pub execution: StartExecution,
   /// Runner tasks, environment, and output configuration.
   pub spec: ExecutionSpec,
+  /// Sensitive byte strings removed from untrusted runner messages.
+  ///
+  /// This is agent-local policy and is deliberately absent from the runner
+  /// wire request, JobSpec, and every persisted lifecycle record.
+  pub redactions: RunnerRedactions,
   /// Time allowed for graceful runner cancellation before a forced kill.
   pub cancellation_grace: Duration,
 }
@@ -225,7 +233,7 @@ pub async fn supervise(
   let result = lifecycle::drive(
     &mut *execution,
     (io.stdin, io.stdout),
-    &job,
+    &mut job,
     deadline,
     cancellation,
     events,

@@ -14,7 +14,9 @@ struct Fixture {
 impl Fixture {
   fn new() -> Self {
     let temp = tempfile::tempdir().unwrap();
-    let credential = temp.path().join("credential");
+    let credential_root = temp.path().join("credentials");
+    octacity_private_fs::create_private_directory(&credential_root).unwrap();
+    let credential = credential_root.join("credential");
     File::create(&credential).unwrap().write_all(b"token").unwrap();
     #[cfg(unix)]
     {
@@ -40,6 +42,7 @@ impl Fixture {
       state_root: directory("state"),
       octa_release_root: directory("octa"),
       source_plugins_dir: directory("sources"),
+      workload_identity_profiles: BTreeMap::new(),
       enabled_runtime_modes: vec![RuntimeMode::Native],
       allow_native_execution: true,
       native_linux_cgroup_root: Some(directory("cgroup")),
@@ -52,7 +55,18 @@ impl Fixture {
       native_linux_pids_limit: 4096,
       native_environment: BTreeMap::from([("PATH".to_owned(), "/usr/bin:/bin".to_owned())]),
       oci_engines: Vec::new(),
+      allow_unrestricted_network: false,
+      allowed_network_hosts: vec!["vault.example.com".to_owned()],
       allowed_upload_origins: vec!["https://objects.example".to_owned()],
+      max_archive_entries: 10_000,
+      upload_timeout_seconds: 30,
+      max_output_limits: OutputLimits {
+        artifact_count: 10,
+        artifact_bytes: 1024,
+        report_count: 10,
+        report_bytes: 1024,
+        single_output_bytes: 1024,
+      },
       max_workspace_bytes: 1024,
       max_spool_bytes: 1024,
       max_spool_records: 32,
@@ -83,6 +97,80 @@ fn validates_a_provisioned_agent() {
   let fixture = Fixture::new();
   let validated = fixture.config.validate().unwrap();
   assert_eq!(validated.signing_keys.len(), 1);
+}
+
+#[test]
+fn validates_local_network_and_output_policy() {
+  let mut fixture = Fixture::new();
+  assert!(fixture.config.clone().validate().is_ok());
+
+  fixture
+    .config
+    .allowed_network_hosts
+    .push("vault.example.com".to_owned());
+  assert!(fixture.config.clone().validate().is_err());
+  fixture.config.allowed_network_hosts.pop();
+  fixture.config.allowed_network_hosts.push(" bad.example.com".to_owned());
+  assert!(fixture.config.clone().validate().is_err());
+  fixture.config.allowed_network_hosts.pop();
+
+  fixture.config.max_output_limits.single_output_bytes = 2048;
+  assert!(fixture.config.validate().is_err());
+}
+
+#[test]
+fn validates_restricted_workload_identity_profiles() {
+  let mut fixture = Fixture::new();
+  let identity_root = fixture._temp.path().join("identities");
+  octacity_private_fs::create_private_directory(&identity_root).unwrap();
+  let identity = identity_root.join("identity");
+  File::create(&identity).unwrap().write_all(b"signed-jwt").unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&identity, fs::Permissions::from_mode(0o600)).unwrap();
+  }
+  fixture
+    .config
+    .workload_identity_profiles
+    .insert("ci".to_owned(), identity.clone());
+  let validated = fixture.config.validate().unwrap();
+  assert_eq!(
+    validated.config.workload_identity_profiles["ci"],
+    identity.canonicalize().unwrap()
+  );
+
+  let mut fixture = Fixture::new();
+  fixture
+    .config
+    .workload_identity_profiles
+    .insert("ci\ninvalid".to_owned(), identity);
+  assert!(fixture.config.validate().unwrap_err().to_string().contains("control"));
+
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mut fixture = Fixture::new();
+    let identity_directory = fixture._temp.path().join("replaceable-identity");
+    fs::create_dir(&identity_directory).unwrap();
+    fs::set_permissions(&identity_directory, fs::Permissions::from_mode(0o777)).unwrap();
+    let identity = identity_directory.join("token");
+    File::create(&identity).unwrap().write_all(b"signed-jwt").unwrap();
+    fs::set_permissions(&identity, fs::Permissions::from_mode(0o600)).unwrap();
+    fixture
+      .config
+      .workload_identity_profiles
+      .insert("ci".to_owned(), identity);
+    assert!(
+      fixture
+        .config
+        .validate()
+        .unwrap_err()
+        .to_string()
+        .contains("must not be writable")
+    );
+  }
 }
 
 #[test]
@@ -334,7 +422,10 @@ fn validates_upload_origins_limits_and_lease_timing() {
   );
 
   let mut fixture = Fixture::new();
-  fixture.config.allowed_upload_origins = vec!["https://objects.example".to_owned(); 2];
+  fixture.config.allowed_upload_origins = vec![
+    "https://OBJECTS.example:443".to_owned(),
+    "https://objects.example".to_owned(),
+  ];
   assert!(
     fixture
       .config

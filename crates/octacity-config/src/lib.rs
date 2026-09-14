@@ -12,7 +12,7 @@ use std::{
 };
 
 use ed25519_dalek::VerifyingKey;
-use octacity_protocol::RuntimeMode;
+use octacity_protocol::{OutputLimits, RuntimeMode};
 use serde::Deserialize;
 use thiserror::Error;
 use tracing::{debug, info};
@@ -46,6 +46,9 @@ pub struct AgentConfig {
   pub octa_release_root: PathBuf,
   /// Operator-installed source-plugin registry root.
   pub source_plugins_dir: PathBuf,
+  /// Workload identity profile names mapped to restricted rotating token files.
+  #[serde(default)]
+  pub workload_identity_profiles: BTreeMap<String, PathBuf>,
   /// Runtime modes this agent may advertise.
   pub enabled_runtime_modes: Vec<RuntimeMode>,
   /// Explicit opt-in for host-native execution.
@@ -68,11 +71,23 @@ pub struct AgentConfig {
   /// Explicit OCI lifecycle engines and their policies.
   #[serde(default)]
   pub oci_engines: Vec<OciEngineConfig>,
+  /// Allows a signed job to request unrestricted network access.
+  #[serde(default)]
+  pub allow_unrestricted_network: bool,
+  /// Complete set of hosts that a restricted signed job may request.
+  #[serde(default)]
+  pub allowed_network_hosts: Vec<String>,
   /// HTTPS origins allowed for output uploads.
   pub allowed_upload_origins: Vec<String>,
+  /// Maximum filesystem entries traversed in one directory artifact.
+  pub max_archive_entries: usize,
+  /// Wall-clock limit for one presigned object upload attempt.
+  pub upload_timeout_seconds: u64,
+  /// Agent-owned maxima applied in addition to every signed output quota.
+  pub max_output_limits: OutputLimits,
   /// Maximum accepted workspace allocation.
   pub max_workspace_bytes: u64,
-  /// Maximum local event and upload spool allocation.
+  /// Maximum local unacknowledged event-spool allocation.
   pub max_spool_bytes: u64,
   /// Maximum unacknowledged records retained for one attempt.
   pub max_spool_records: usize,
@@ -88,11 +103,11 @@ pub struct AgentConfig {
   pub coordinator_request_timeout_seconds: u64,
   /// Maximum serialized coordinator request or response body.
   pub coordinator_max_body_bytes: usize,
-  /// Base delay for idempotent coordinator retries.
+  /// Base delay for idempotent coordinator and object-upload retries.
   pub retry_initial_delay_milliseconds: u64,
-  /// Local ceiling for coordinator retry delays.
+  /// Local ceiling for coordinator and object-upload retry delays.
   pub retry_max_delay_seconds: u64,
-  /// Total attempts for one idempotent coordinator operation.
+  /// Total attempts for one idempotent outbound operation.
   pub retry_max_attempts: usize,
   /// Interval between heartbeats.
   pub heartbeat_interval_seconds: u64,
@@ -245,11 +260,18 @@ impl AgentConfig {
     non_empty("agent_id", &self.agent_id)?;
     validate_server_url(&self.server_url)?;
     validate_regular_file("credential_file", &self.credential_file)?;
-    validate_credential_permissions(&self.credential_file)?;
+    validate_private_file_permissions("credential_file", &self.credential_file)?;
     self.credential_file = self
       .credential_file
       .canonicalize()
       .map_err(|error| ConfigError::Invalid(format!("credential_file: {error}")))?;
+    validate_trusted_owner("credential_file", &self.credential_file)?;
+    let credential_parent = self
+      .credential_file
+      .parent()
+      .ok_or_else(|| ConfigError::Invalid("credential_file has no parent".to_owned()))?;
+    validate_private_directory_permissions("credential_file parent", credential_parent)?;
+    validate_trusted_directory_chain("credential_file parent", credential_parent)?;
 
     if self.server_signing_keys.is_empty() {
       return invalid("server_signing_keys must contain at least one key");
@@ -279,6 +301,25 @@ impl AgentConfig {
     self.state_root = roots[1].1.clone();
     self.octa_release_root = roots[2].1.clone();
     self.source_plugins_dir = roots[3].1.clone();
+
+    for (profile, source) in &mut self.workload_identity_profiles {
+      non_empty("workload identity profile", profile)?;
+      if profile.chars().any(char::is_control) {
+        return invalid("workload identity profile names must not contain control characters");
+      }
+      *source = canonical_regular_file("workload identity source", source)?;
+      validate_private_file_permissions("workload identity source", source)?;
+      validate_trusted_owner("workload identity source", source)?;
+      let parent = source
+        .parent()
+        .ok_or_else(|| ConfigError::Invalid("workload identity source has no parent".to_owned()))?;
+      canonical_directory("workload identity source parent", parent)?;
+      validate_private_directory_permissions("workload identity source parent", parent)?;
+      validate_trusted_directory_chain("workload identity source parent", parent)?;
+      if source.starts_with(&self.work_root) {
+        return invalid("workload identity sources must be outside work_root");
+      }
+    }
 
     for (name, value) in &self.labels {
       non_empty("label name", name)?;
@@ -336,25 +377,36 @@ impl AgentConfig {
     };
     validate_oci_engines(&mut self.oci_engines, modes.contains(&RuntimeMode::Oci))?;
 
+    let mut network_hosts = BTreeSet::new();
+    for host in &self.allowed_network_hosts {
+      non_empty("allowed network host", host)?;
+      if host.trim() != host || host.chars().any(char::is_control) || !network_hosts.insert(host) {
+        return invalid("allowed network hosts must be unique trimmed values without control characters");
+      }
+    }
+
     if self.allowed_upload_origins.is_empty() {
       return invalid("allowed_upload_origins must contain at least one origin");
     }
-    let unique_origins: BTreeSet<_> = self.allowed_upload_origins.iter().collect();
-    if unique_origins.len() != self.allowed_upload_origins.len() {
-      return invalid("allowed_upload_origins must not contain duplicates");
+    let mut unique_origins = BTreeSet::new();
+    for origin in &mut self.allowed_upload_origins {
+      *origin = canonical_upload_origin(origin)?;
+      if !unique_origins.insert(origin.clone()) {
+        return invalid("allowed_upload_origins must not contain duplicates or equivalent origins");
+      }
     }
-    for origin in &self.allowed_upload_origins {
-      validate_upload_origin(origin)?;
-    }
+    self.max_output_limits.validate().map_err(ConfigError::Invalid)?;
 
-    if self.max_workspace_bytes == 0
+    if self.max_archive_entries == 0
+      || self.upload_timeout_seconds == 0
+      || self.max_workspace_bytes == 0
       || self.max_spool_bytes == 0
       || self.max_spool_records == 0
       || self.event_batch_max_bytes == 0
       || self.event_batch_max_records == 0
       || self.event_channel_capacity == 0
     {
-      return invalid("workspace, spool, event batch, and channel limits must be greater than zero");
+      return invalid("output, workspace, spool, event batch, and channel limits must be greater than zero");
     }
     if self.coordinator_max_body_bytes == 0 || self.retry_max_attempts == 0 {
       return invalid("coordinator body and retry-attempt limits must be greater than zero");
