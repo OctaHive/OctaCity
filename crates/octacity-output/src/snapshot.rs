@@ -514,10 +514,15 @@ mod tests {
     fs::write(&replacement, b"different").unwrap();
     let original_file = octacity_private_fs::open_regular_file_no_follow(&original).unwrap();
     let modified = original_file.metadata().unwrap().modified().unwrap();
-    let replacement_file = octacity_private_fs::open_regular_file_no_follow(&replacement).unwrap();
-    replacement_file
+    // The production helper intentionally returns a read-only handle. Windows
+    // requires write-attributes access for `SetFileTime`, so align the test
+    // metadata through a separate writable handle before taking the snapshot.
+    let replacement_writer = fs::OpenOptions::new().write(true).open(&replacement).unwrap();
+    replacement_writer
       .set_times(FileTimes::new().set_modified(modified))
       .unwrap();
+    drop(replacement_writer);
+    let replacement_file = octacity_private_fs::open_regular_file_no_follow(&replacement).unwrap();
 
     let original_stamp = FileStamp::read(&original_file, &original).unwrap();
     let replacement_stamp = FileStamp::read(&replacement_file, &replacement).unwrap();

@@ -201,7 +201,17 @@ async fn transport_errors_never_expose_presigned_query_credentials() {
 async fn retry_does_not_outlive_the_presigned_target() {
   let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
   let address = listener.local_addr().unwrap();
-  drop(listener);
+  // A connection to a closed port can consume the entire connect timeout on
+  // Windows. Return one immediate retryable response so the test measures the
+  // retry-deadline decision rather than platform TCP behavior.
+  let server = tokio::spawn(async move {
+    let (mut stream, _) = listener.accept().await.unwrap();
+    let _ = read_request(&mut stream).await;
+    stream
+      .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+      .await
+      .unwrap();
+  });
   let coordinator = Arc::new(UploadCoordinator {
     put_url: format!("http://{address}/object"),
     expires_at: unix_now() + 2,
@@ -220,6 +230,7 @@ async fn retry_does_not_outlive_the_presigned_target() {
   let started = tokio::time::Instant::now();
 
   let error = publish_fixture(&publisher).await.unwrap_err();
+  server.await.unwrap();
 
   assert!(started.elapsed() < Duration::from_secs(1));
   assert!(error.to_string().contains("expired before retry"));
