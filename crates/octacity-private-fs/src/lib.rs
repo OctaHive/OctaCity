@@ -46,8 +46,8 @@ pub fn validate_trusted_owner(path: &Path) -> std::io::Result<()> {
 /// On Unix, a world-writable sticky directory such as `/tmp` remains valid,
 /// because the sticky bit prevents another user from renaming an agent-owned
 /// child. A writable non-sticky ancestor is rejected. On Windows, untrusted
-/// allow-ACEs may retain read/traverse rights but not create, delete-child,
-/// ownership, or DACL mutation rights.
+/// allow-ACEs may retain read, traverse, and sibling-creation rights, but not
+/// deletion, ownership, or DACL mutation rights on the existing path chain.
 pub fn validate_trusted_directory_chain(path: &Path) -> std::io::Result<()> {
   platform::validate_trusted_directory_chain(path)
 }
@@ -103,6 +103,10 @@ mod tests {
 
     create_private_directory(&directory).unwrap();
     validate_private_access(&directory).unwrap();
+    // This exercises the real temporary-directory ancestry used by CI. Such
+    // ancestors may let local users create siblings without letting them
+    // delete or replace this protected directory.
+    validate_trusted_directory_chain(&directory.canonicalize().unwrap()).unwrap();
     assert!(create_private_directory(&directory).is_err());
   }
 

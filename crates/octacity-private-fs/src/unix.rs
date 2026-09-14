@@ -6,6 +6,11 @@ use std::{
   path::Path,
 };
 
+// `MetadataExt::mode` uses a portable `u32` representation. Naming the POSIX
+// sticky-directory bit here avoids a target-dependent libc integer cast:
+// `S_ISVTX` is `u32` on Linux but a signed integer on macOS.
+const STICKY_DIRECTORY_BIT: u32 = 0o1000;
+
 pub(super) fn create_private_directory(path: &Path) -> std::io::Result<()> {
   let mut builder = fs::DirBuilder::new();
   builder.mode(0o700).create(path)
@@ -51,7 +56,7 @@ pub(super) fn validate_trusted_directory_chain(path: &Path) -> std::io::Result<(
     }
     validate_trusted_owner(directory)?;
     let mode = metadata.mode();
-    if mode & 0o022 != 0 && mode & libc::S_ISVTX as u32 == 0 {
+    if mode & 0o022 != 0 && mode & STICKY_DIRECTORY_BIT == 0 {
       return Err(std::io::Error::new(
         std::io::ErrorKind::PermissionDenied,
         "trusted path chain contains a writable non-sticky directory",

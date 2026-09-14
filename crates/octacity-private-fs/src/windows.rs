@@ -18,9 +18,10 @@ use windows_sys::Win32::{
     Authorization::{
       ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
     },
-    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetTokenInformation, IsWellKnownSid,
-    OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
-    WinBuiltinAdministratorsSid, WinCreatorOwnerRightsSid, WinCreatorOwnerSid, WinLocalSystemSid,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetTokenInformation, INHERIT_ONLY_ACE,
+    IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY,
+    TOKEN_USER, TokenUser, WinBuiltinAdministratorsSid, WinCreatorOwnerRightsSid, WinCreatorOwnerSid,
+    WinLocalSystemSid,
   },
   Storage::FileSystem::{
     CreateDirectoryW, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FileIdInfo,
@@ -40,26 +41,17 @@ use crate::FileIdentity;
 // access without granting interactive users access to job material.
 const PRIVATE_DIRECTORY_SDDL: &str = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
 
-// Rights that let an untrusted principal replace a protected descendant even
-// when it cannot read that descendant's final file. Keep the masks local: the
-// Windows headers expose the same stable access-mask values across SDKs, while
-// windows-sys groups several of them under unrelated feature modules.
-const FILE_ADD_FILE: u32 = 0x0000_0002;
-const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+// Rights that let an untrusted principal delete an ancestor, delete one of its
+// children, or rewrite the ACL which protects the path. Creating a sibling is
+// deliberately absent: Windows create/write access does not replace an
+// existing protected child. Keep the masks local because windows-sys groups
+// several of them under unrelated feature modules.
 const FILE_DELETE_CHILD: u32 = 0x0000_0040;
 const DELETE: u32 = 0x0001_0000;
 const WRITE_DAC: u32 = 0x0004_0000;
 const WRITE_OWNER: u32 = 0x0008_0000;
 const GENERIC_ALL: u32 = 0x1000_0000;
-const GENERIC_WRITE: u32 = 0x4000_0000;
-const ANCESTOR_MUTATION_RIGHTS: u32 = FILE_ADD_FILE
-  | FILE_ADD_SUBDIRECTORY
-  | FILE_DELETE_CHILD
-  | DELETE
-  | WRITE_DAC
-  | WRITE_OWNER
-  | GENERIC_ALL
-  | GENERIC_WRITE;
+const ANCESTOR_REPLACEMENT_RIGHTS: u32 = FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
 
 pub(super) fn create_private_directory(path: &Path) -> std::io::Result<()> {
   let path = wide(path)?;
@@ -157,7 +149,7 @@ fn security(path: &Path) -> std::io::Result<(PSID, *mut ACL, SecurityDescriptor)
 }
 
 fn validate_acl(owner: PSID, dacl: *mut ACL) -> std::io::Result<()> {
-  for_each_allowed_ace(dacl, |mask, sid| {
+  for_each_allowed_ace(dacl, |mask, _flags, sid| {
     let _ = mask;
     if trusted_sid(sid, owner) {
       Ok(())
@@ -170,8 +162,12 @@ fn validate_acl(owner: PSID, dacl: *mut ACL) -> std::io::Result<()> {
 }
 
 fn validate_ancestor_acl(owner: PSID, dacl: *mut ACL) -> std::io::Result<()> {
-  for_each_allowed_ace(dacl, |mask, sid| {
-    if mask & ANCESTOR_MUTATION_RIGHTS != 0 && !trusted_sid(sid, owner) {
+  for_each_allowed_ace(dacl, |mask, flags, sid| {
+    // An inherit-only ACE does not grant rights on this directory. If it is
+    // inherited by a child and becomes applicable there, that child's own
+    // iteration catches it. The protected credential directory does not
+    // inherit untrusted grants at all.
+    if ace_grants_replacement(mask, flags) && !trusted_sid(sid, owner) {
       Err(private_access_error(
         "path chain grants replacement rights to an untrusted local principal",
       ))
@@ -181,9 +177,13 @@ fn validate_ancestor_acl(owner: PSID, dacl: *mut ACL) -> std::io::Result<()> {
   })
 }
 
+fn ace_grants_replacement(mask: u32, flags: u8) -> bool {
+  u32::from(flags) & INHERIT_ONLY_ACE == 0 && mask & ANCESTOR_REPLACEMENT_RIGHTS != 0
+}
+
 fn for_each_allowed_ace(
   dacl: *mut ACL,
-  mut inspect: impl FnMut(u32, PSID) -> std::io::Result<()>,
+  mut inspect: impl FnMut(u32, u8, PSID) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
   let mut information = ACL_SIZE_INFORMATION::default();
   // SAFETY: `dacl` points inside the live descriptor and the destination has
@@ -225,7 +225,7 @@ fn for_each_allowed_ace(
     let sid = unsafe { ptr::addr_of!((*ace).SidStart).cast_mut().cast::<c_void>() };
     // SAFETY: the fixed mask precedes the variable-length SID in the validated
     // ACCESS_ALLOWED_ACE returned by Windows.
-    inspect(unsafe { (*ace).Mask }, sid)?;
+    inspect(unsafe { (*ace).Mask }, unsafe { (*ace).Header.AceFlags }, sid)?;
   }
   Ok(())
 }
@@ -378,6 +378,25 @@ impl Drop for Handle {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn distinguishes_sibling_creation_from_path_replacement() {
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_ADD_FILE: u32 = 0x0000_0002;
+    const FILE_ADD_SUBDIRECTORY: u32 = 0x0000_0004;
+
+    assert!(!ace_grants_replacement(
+      GENERIC_WRITE | FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY,
+      0
+    ));
+    assert!(ace_grants_replacement(FILE_DELETE_CHILD, 0));
+    assert!(ace_grants_replacement(DELETE, 0));
+  }
+
+  #[test]
+  fn ignores_replacement_rights_which_do_not_apply_to_the_directory() {
+    assert!(!ace_grants_replacement(FILE_DELETE_CHILD, INHERIT_ONLY_ACE as u8));
+  }
 
   #[test]
   fn rejects_an_untrusted_delete_child_grant_on_an_ancestor() {
