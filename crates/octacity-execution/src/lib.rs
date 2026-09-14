@@ -243,7 +243,11 @@ fn canonical_directory(path: &Path, name: &str) -> Result<PathBuf, ExecutionErro
 }
 
 fn is_canonical_path(path: &Path) -> bool {
-  path.is_absolute() && std::fs::canonicalize(path).is_ok_and(|canonical| canonical == path)
+  // `Path` equality compares normalized components. In particular, Windows
+  // may consider a path containing `..` equal to the canonical path returned
+  // by the filesystem. This boundary requires the caller to provide the
+  // canonical spelling itself, so compare the underlying OS strings exactly.
+  path.is_absolute() && std::fs::canonicalize(path).is_ok_and(|canonical| canonical.as_os_str() == path.as_os_str())
 }
 
 fn is_immutable_oci_reference(value: &str) -> bool {
