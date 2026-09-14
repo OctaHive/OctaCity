@@ -109,12 +109,18 @@ impl FixtureRoot {
 fn fixture_tempdir() -> FixtureRoot {
   #[cfg(windows)]
   {
-    // A directory created by `tempfile` inherits an object-applicable delete
-    // ACE on GitHub's Windows workers. Create the fixture atomically with the
-    // same protected DACL as production agent state instead.
+    // The GitHub runner profile itself grants an object-applicable delete ACE
+    // to another local principal. A real installation must start below a safe
+    // operator-owned ancestor, so model that by placing the protected fixture
+    // directly below the profile's volume root.
     let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
+    let profile = fs::canonicalize(profile).expect("Windows tests require a canonical USERPROFILE");
+    let volume_root = profile
+      .ancestors()
+      .last()
+      .expect("Windows USERPROFILE must have a volume root");
     for _ in 0..WINDOWS_FIXTURE_CREATE_ATTEMPTS {
-      let path = PathBuf::from(&profile).join(format!(".octacity-test-{}", uuid::Uuid::new_v4().simple()));
+      let path = volume_root.join(format!(".octacity-test-{}", uuid::Uuid::new_v4().simple()));
       match octacity_private_fs::create_private_directory(&path) {
         Ok(()) => return FixtureRoot { path },
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}

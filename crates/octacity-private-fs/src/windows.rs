@@ -169,8 +169,11 @@ fn validate_ancestor_acl(owner: PSID, dacl: *mut ACL) -> std::io::Result<()> {
     // iteration catches it. The protected credential directory does not
     // inherit untrusted grants at all.
     if ace_grants_replacement(mask, flags) && !trusted_sid(sid, owner) {
-      Err(private_access_error(
-        "path chain grants replacement rights to an untrusted local principal",
+      Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        format!(
+          "path chain grants replacement rights to an untrusted local principal (mask 0x{mask:08x}, flags 0x{flags:02x})"
+        ),
       ))
     } else {
       Ok(())
