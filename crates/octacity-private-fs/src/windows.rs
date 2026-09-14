@@ -16,7 +16,8 @@ use windows_sys::Win32::{
   Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
     Authorization::{
-      ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
+      ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW,
+      SDDL_REVISION_1, SE_FILE_OBJECT,
     },
     DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, GetTokenInformation, INHERIT_ONLY_ACE,
     IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY,
@@ -40,6 +41,11 @@ use crate::FileIdentity;
 // policy. LocalSystem and administrators retain machine-service recovery
 // access without granting interactive users access to job material.
 const PRIVATE_DIRECTORY_SDDL: &str = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+// Fixed service SID of Windows Modules Installer. Windows uses this principal
+// as the owner of protected operating-system paths, including volume roots on
+// some supported installations. Trust the exact SID, never the broader
+// `NT SERVICE` authority.
+const TRUSTED_INSTALLER_SID: &str = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
 // Rights that let an untrusted principal delete an ancestor, delete one of its
 // children, or rewrite the ACL which protects the path. Creating a sibling is
@@ -94,9 +100,7 @@ pub(super) fn validate_trusted_owner(path: &Path) -> std::io::Result<()> {
   if trusted_object_owner(owner)? {
     Ok(())
   } else {
-    Err(private_access_error(
-      "path is not owned by the agent account, LocalSystem, or administrators",
-    ))
+    Err(untrusted_owner_error("path", owner))
   }
 }
 
@@ -110,9 +114,7 @@ pub(super) fn validate_trusted_directory_chain(path: &Path) -> std::io::Result<(
     }
     let (owner, dacl, _descriptor) = security(directory)?;
     if !trusted_object_owner(owner)? {
-      return Err(private_access_error(
-        "path chain contains a directory with an untrusted owner",
-      ));
+      return Err(untrusted_owner_error("path chain contains a directory", owner));
     }
     validate_ancestor_acl(owner, dacl)
       .map_err(|error| std::io::Error::new(error.kind(), format!("directory '{}': {error}", directory.display())))?;
@@ -241,6 +243,9 @@ fn trusted_object_owner(owner: PSID) -> std::io::Result<bool> {
   {
     return Ok(true);
   }
+  if is_trusted_installer(owner)? {
+    return Ok(true);
+  }
   let mut token = ptr::null_mut();
   // SAFETY: the pseudo process handle is valid for the duration of the call
   // and `token` receives one owned handle on success.
@@ -320,6 +325,38 @@ fn trusted_sid(sid: PSID, owner: PSID) -> bool {
   }
 }
 
+fn is_trusted_installer(sid: PSID) -> std::io::Result<bool> {
+  Ok(sid_string(sid)? == TRUSTED_INSTALLER_SID)
+}
+
+fn sid_string(sid: PSID) -> std::io::Result<String> {
+  let mut value = ptr::null_mut();
+  // SAFETY: `sid` points into a live security descriptor. Windows allocates a
+  // NUL-terminated string and transfers it to the returned local-memory guard.
+  if unsafe { ConvertSidToStringSidW(sid, &mut value) } == 0 {
+    return Err(last_error());
+  }
+  let value = LocalWideString(value);
+  let mut length = 0;
+  // SAFETY: ConvertSidToStringSidW guarantees a NUL-terminated UTF-16 string
+  // which remains live until `value` is dropped below.
+  while unsafe { *value.0.add(length) } != 0 {
+    length += 1;
+  }
+  // SAFETY: the preceding scan found the terminator inside the Windows-owned
+  // allocation, so these `length` code units are initialized and readable.
+  String::from_utf16(unsafe { std::slice::from_raw_parts(value.0, length) })
+    .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+}
+
+fn untrusted_owner_error(context: &str, owner: PSID) -> std::io::Error {
+  let owner = sid_string(owner).unwrap_or_else(|error| format!("unavailable SID: {error}"));
+  std::io::Error::new(
+    std::io::ErrorKind::PermissionDenied,
+    format!("{context} has untrusted owner {owner}"),
+  )
+}
+
 fn is_complex_allowed_ace(ace_type: u32) -> bool {
   matches!(
     ace_type,
@@ -360,6 +397,20 @@ impl Drop for SecurityDescriptor {
       // descriptor and ownership is transferred exactly once to this guard.
       unsafe {
         LocalFree(self.0);
+      }
+    }
+  }
+}
+
+struct LocalWideString(*mut u16);
+
+impl Drop for LocalWideString {
+  fn drop(&mut self) {
+    if !self.0.is_null() {
+      // SAFETY: ConvertSidToStringSidW returned this LocalAlloc-owned buffer
+      // and ownership is released exactly once by this guard.
+      unsafe {
+        LocalFree(self.0.cast());
       }
     }
   }
