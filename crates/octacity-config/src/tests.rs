@@ -1,13 +1,15 @@
 //! Agent configuration parsing and invariant tests.
 
-use std::{fs::File, io::Write as _};
+use std::{fs::File, io::Write as _, path::Path};
 
 use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use tempfile::TempDir;
+
+#[cfg(windows)]
+const WINDOWS_FIXTURE_CREATE_ATTEMPTS: usize = 16;
 
 struct Fixture {
-  _temp: TempDir,
+  _temp: FixtureRoot,
   config: AgentConfig,
 }
 
@@ -92,22 +94,49 @@ impl Fixture {
   }
 }
 
-fn fixture_tempdir() -> TempDir {
+struct FixtureRoot {
+  path: PathBuf,
+  #[cfg(not(windows))]
+  _temporary: tempfile::TempDir,
+}
+
+impl FixtureRoot {
+  fn path(&self) -> &Path {
+    &self.path
+  }
+}
+
+fn fixture_tempdir() -> FixtureRoot {
   #[cfg(windows)]
   {
-    // `%TEMP%` is allowed to be a shared scratch location and may grant local
-    // service groups the right to delete its children. That is exactly the
-    // unsafe ancestry production validation must reject, so a valid-config
-    // fixture belongs under the current user's protected profile instead.
+    // A directory created by `tempfile` inherits an object-applicable delete
+    // ACE on GitHub's Windows workers. Create the fixture atomically with the
+    // same protected DACL as production agent state instead.
     let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
-    tempfile::Builder::new()
-      .prefix(".octacity-test-")
-      .tempdir_in(profile)
-      .unwrap()
+    for _ in 0..WINDOWS_FIXTURE_CREATE_ATTEMPTS {
+      let path = PathBuf::from(&profile).join(format!(".octacity-test-{}", uuid::Uuid::new_v4().simple()));
+      match octacity_private_fs::create_private_directory(&path) {
+        Ok(()) => return FixtureRoot { path },
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => panic!("failed to create protected Windows fixture root: {error}"),
+      }
+    }
+    panic!("failed to allocate a unique protected Windows fixture root")
   }
   #[cfg(not(windows))]
   {
-    tempfile::tempdir().unwrap()
+    let temporary = tempfile::tempdir().unwrap();
+    FixtureRoot {
+      path: temporary.path().to_owned(),
+      _temporary: temporary,
+    }
+  }
+}
+
+#[cfg(windows)]
+impl Drop for FixtureRoot {
+  fn drop(&mut self) {
+    let _ = fs::remove_dir_all(&self.path);
   }
 }
 
