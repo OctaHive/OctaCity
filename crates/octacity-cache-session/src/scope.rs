@@ -515,7 +515,7 @@ fn remove_tree(path: &Path, cancellation: Option<&CancellationToken>) -> Result<
     Visit(PathBuf),
     Children {
       directory: PathBuf,
-      entries: std::fs::ReadDir,
+      entries: Box<std::fs::ReadDir>,
     },
   }
 
@@ -543,7 +543,7 @@ fn remove_tree(path: &Path, cancellation: Option<&CancellationToken>) -> Result<
             std::fs::read_dir(&path).map_err(|source| io("read inactive cache directory", &path, source))?;
           stack.push(Frame::Children {
             directory: path,
-            entries,
+            entries: Box::new(entries),
           });
         } else {
           remove_file_if_present(&path)?;
