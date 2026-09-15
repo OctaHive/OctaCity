@@ -9,6 +9,8 @@ The current workspace contains:
 
 - `octacity-artifact-store`: server-side artifact persistence port and the
   S3-compatible adapter used by the Phase 6 contract server;
+- `octacity-cache-session`: agent-owned L1 placement and short-lived remote
+  cache authority preparation without implementing cache semantics;
 - `octacity-protocol`: strict, signed server-agent job types;
 - `octacity-config`: parsing and intrinsic validation of agent configuration;
 - `octacity-coordinator`: bounded HTTPS, idempotent retry, lease polling, and

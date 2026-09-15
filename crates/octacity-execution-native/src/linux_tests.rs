@@ -5,7 +5,9 @@ use super::{
   cgroup::{parse_number, read_control},
   security::denied_syscalls,
 };
-use octacity_execution::WORKLOAD_IDENTITY_PATH;
+use octacity_execution::{
+  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionCacheMounts, WORKLOAD_IDENTITY_PATH,
+};
 
 fn execution_request(root: &Path) -> StartExecution {
   let workspace = root.join("workspace");
@@ -17,6 +19,7 @@ fn execution_request(root: &Path) -> StartExecution {
     workspace,
     data_dir,
     workload_identity: None,
+    cache: None,
     cpu_millis: 1500,
     memory_bytes: 64 * 1024 * 1024,
     writable_disk_bytes: u64::MAX,
@@ -290,6 +293,20 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
   let identity = root.path().join("identity-token");
   fs::write(&identity, "signed-jwt").unwrap();
   request.workload_identity = Some(identity);
+  let cache = root.path().join("cache");
+  let cache_token = root.path().join("cache-token");
+  let cache_ca = root.path().join("cache-ca.pem");
+  fs::create_dir(&cache).unwrap();
+  fs::write(&cache_token, "cache-secret").unwrap();
+  fs::write(&cache_ca, "fixture-ca").unwrap();
+  request.cache = Some(ExecutionCacheMounts {
+    capacity_root: cache.clone(),
+    local_directory: cache,
+    local_capacity: octa_cache_protocol::LocalCacheCapacity::new(2 * 1024 * 1024, 1_900_000, 1_800_000).unwrap(),
+    aggregate_max_bytes: 4 * 1024 * 1024,
+    token_file: Some(cache_token),
+    ca_certificate_file: Some(cache_ca),
+  });
   let runner = runner(root.path());
   let temporary = request.data_dir.join("tmp");
   let home = request.data_dir.join("home");
@@ -321,6 +338,9 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
   assert!(arguments.iter().any(|argument| argument == "--remount-ro"));
   assert!(arguments.iter().any(|argument| argument == "/home/octacity"));
   assert!(arguments.iter().any(|argument| argument == WORKLOAD_IDENTITY_PATH));
+  assert!(arguments.iter().any(|argument| argument == CACHE_DIRECTORY_PATH));
+  assert!(arguments.iter().any(|argument| argument == CACHE_TOKEN_PATH));
+  assert!(arguments.iter().any(|argument| argument == CACHE_CA_CERTIFICATE_PATH));
   let work_root = root.path().to_string_lossy();
   let workspace = request.workspace.to_string_lossy();
   assert!(
@@ -428,6 +448,7 @@ async fn reports_native_usage_and_one_shot_process_state() {
       data_dir: root.path().to_owned(),
       plugins_dir: root.path().to_owned(),
       plugin_lock: root.path().join("Octa.lock"),
+      cache: None,
     },
     cgroup,
     filesystem_root: root.path().to_owned(),

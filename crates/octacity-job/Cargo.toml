@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Single-owner lifecycle orchestration for one OctaCity job"
 
 [dependencies]
+octacity-cache-session = { path = "../octacity-cache-session" }
 octacity-execution = { path = "../octacity-execution" }
 octacity-identity = { path = "../octacity-identity" }
 octacity-private-fs = { path = "../octacity-private-fs" }

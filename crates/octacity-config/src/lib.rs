@@ -14,6 +14,8 @@ use std::{
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{OutputLimits, RuntimeMode};
 use serde::Deserialize;
+
+pub use octa_cache_protocol::LocalCacheCapacity;
 use thiserror::Error;
 use tracing::{debug, info};
 
@@ -49,6 +51,8 @@ pub struct AgentConfig {
   /// Workload identity profile names mapped to restricted rotating token files.
   #[serde(default)]
   pub workload_identity_profiles: BTreeMap<String, PathBuf>,
+  /// Persistent local cache and optional remote-cache transport policy.
+  pub cache: CacheConfig,
   /// Runtime modes this agent may advertise.
   pub enabled_runtime_modes: Vec<RuntimeMode>,
   /// Explicit opt-in for host-native execution.
@@ -125,6 +129,36 @@ pub struct AgentConfig {
   pub resource_sample_timeout_seconds: u64,
   /// Consecutive accounting failures tolerated per job.
   pub max_accounting_failures: usize,
+}
+
+/// Operator-owned task-result cache policy shared by all jobs on this agent.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheConfig {
+  /// Dedicated persistent root for Octa's verified local L1 stores.
+  pub root: PathBuf,
+  /// Capacity and collection watermarks for each authorized local scope.
+  pub capacity: LocalCacheCapacity,
+  /// Maximum persistent trust scopes; aggregate cache data is bounded by this
+  /// value multiplied by `max_bytes`.
+  pub max_scopes: usize,
+  /// Whether signed jobs may read cached results.
+  pub allow_read: bool,
+  /// Whether signed jobs may publish cache results.
+  pub allow_write: bool,
+  /// Remote cache origins the coordinator may select.
+  #[serde(default)]
+  pub allowed_remote_origins: Vec<String>,
+  /// Optional private CA passed to Octa for cache HTTPS connections.
+  #[serde(default)]
+  pub ca_certificate_file: Option<PathBuf>,
+  /// Stable environment identity strings keyed by `os-architecture` for Native jobs.
+  #[serde(default)]
+  pub native_environment_identities: BTreeMap<String, String>,
+  /// Whole-operation deadline applied by Octa's remote client.
+  pub request_timeout_seconds: u64,
+  /// Maximum simultaneous cache blob transfers within one job.
+  pub max_parallel_transfers: usize,
 }
 
 /// One explicitly configured OCI lifecycle implementation.
@@ -233,6 +267,73 @@ pub enum ConfigError {
   Invalid(String),
 }
 
+impl CacheConfig {
+  /// Canonicalizes cache-owned paths and validates limits and trust inputs.
+  fn validate(&mut self) -> Result<(), ConfigError> {
+    self
+      .capacity
+      .validate()
+      .map_err(|error| ConfigError::Invalid(error.to_string()))?;
+    if self.max_scopes == 0 {
+      return invalid("cache max_scopes must be greater than zero");
+    }
+    if !self.allow_read && !self.allow_write {
+      return invalid("cache policy must allow reading, writing, or both");
+    }
+    if u64::try_from(self.max_scopes)
+      .ok()
+      .and_then(|scopes| self.capacity.max_bytes.checked_mul(scopes))
+      .is_none()
+    {
+      return invalid("aggregate cache capacity is not representable");
+    }
+    if self.request_timeout_seconds == 0
+      || self.request_timeout_seconds > octa_cache_protocol::MAX_REMOTE_CACHE_REQUEST_TIMEOUT_SECONDS
+    {
+      return invalid("cache request timeout is outside Octa's supported bounds");
+    }
+    if self.max_parallel_transfers == 0
+      || self.max_parallel_transfers > octa_cache_protocol::MAX_REMOTE_CACHE_PARALLEL_TRANSFERS
+    {
+      return invalid("cache transfer concurrency is outside Octa's supported bounds");
+    }
+
+    let mut origins = BTreeSet::new();
+    for origin in &mut self.allowed_remote_origins {
+      *origin = canonical_cache_origin(origin)?;
+      if !origins.insert(origin.clone()) {
+        return invalid("cache remote origins must not contain duplicates or equivalent origins");
+      }
+    }
+    if let Some(certificate) = &mut self.ca_certificate_file {
+      *certificate = canonical_regular_file("cache.ca_certificate_file", certificate)?;
+      validate_trusted_owner("cache.ca_certificate_file", certificate)?;
+      validate_private_file_permissions("cache.ca_certificate_file", certificate)?;
+      let parent = certificate
+        .parent()
+        .ok_or_else(|| ConfigError::Invalid("cache.ca_certificate_file has no parent".to_owned()))?;
+      validate_trusted_directory_chain("cache.ca_certificate_file parent", parent)?;
+    }
+    for (platform, identity) in &self.native_environment_identities {
+      if !matches!(
+        platform.as_str(),
+        "linux-amd64" | "linux-arm64" | "windows-amd64" | "windows-arm64" | "macos-amd64" | "macos-arm64"
+      ) {
+        return invalid(format!("unsupported Native cache platform identity '{platform}'"));
+      }
+      // The string validation is platform-independent. The runtime module
+      // supplies the selected platform to the same shared constructor.
+      octa_cache_protocol::RuntimeIdentity::native(
+        octa_cache_protocol::PlatformOs::Linux,
+        octa_cache_protocol::PlatformArchitecture::Amd64,
+        identity,
+      )
+      .map_err(|error| ConfigError::Invalid(format!("Native cache environment identity '{platform}': {error}")))?;
+    }
+    Ok(())
+  }
+}
+
 impl AgentConfig {
   /// Reads a size-bounded TOML file without applying environmental defaults.
   pub fn load(path: &Path) -> Result<Self, ConfigError> {
@@ -295,12 +396,18 @@ impl AgentConfig {
         "source_plugins_dir",
         canonical_directory("source_plugins_dir", &self.source_plugins_dir)?,
       ),
+      ("cache.root", canonical_directory("cache.root", &self.cache.root)?),
     ];
     validate_distinct_roots(&roots)?;
     self.work_root = roots[0].1.clone();
     self.state_root = roots[1].1.clone();
     self.octa_release_root = roots[2].1.clone();
     self.source_plugins_dir = roots[3].1.clone();
+    self.cache.root = roots[4].1.clone();
+
+    validate_private_directory_permissions("cache.root", &self.cache.root)?;
+    validate_trusted_directory_chain("cache.root", &self.cache.root)?;
+    self.cache.validate()?;
 
     for (profile, source) in &mut self.workload_identity_profiles {
       non_empty("workload identity profile", profile)?;

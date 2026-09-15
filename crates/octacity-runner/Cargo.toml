@@ -11,6 +11,7 @@ description = "Octa runner inventory, protocol client, and supervisor for OctaCi
 base64.workspace = true
 memchr.workspace = true
 octa-runner-protocol.workspace = true
+octa-cache-protocol.workspace = true
 octa-plugin-lock.workspace = true
 octacity-execution = { path = "../octacity-execution" }
 octacity-protocol = { path = "../octacity-protocol" }

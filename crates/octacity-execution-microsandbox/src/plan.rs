@@ -38,6 +38,17 @@ pub(super) struct SandboxPlan {
   pub(super) guest_plugin_lock: PathBuf,
   /// Optional job-private identity source exposed read-only in the guest.
   pub(super) workload_identity: Option<PathBuf>,
+  /// Canonical cache mount plus the remaining VM-enforced growth quota.
+  pub(super) cache: Option<SandboxCachePlan>,
+}
+
+/// Persistent cache projection with a Microsandbox-enforced byte boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SandboxCachePlan {
+  /// Canonical host paths and semantic capacity.
+  pub(super) mounts: ExecutionCacheMounts,
+  /// Additional MiB the guest may allocate in the persistent scope.
+  pub(super) quota_mib: u32,
 }
 
 impl SandboxPlan {
@@ -72,6 +83,25 @@ impl SandboxPlan {
     let existing_mib = existing_bytes.div_ceil(MEBIBYTE);
     let workspace_quota_mib = u32::try_from(u64::from(workspace_limit_mib).saturating_sub(existing_mib))
       .map_err(|_| unavailable("Microsandbox workspace quota is not representable"))?;
+    let cache = match &request.cache {
+      Some(cache) => {
+        let limit_mib = exact_mib("cache", cache.local_capacity.max_bytes)?;
+        let existing_bytes = directory_size_async(cache.local_directory.clone()).await?;
+        if existing_bytes > cache.local_capacity.max_bytes {
+          return Err(unavailable(
+            "persistent cache scope already exceeds its configured capacity",
+          ));
+        }
+        let existing_mib = existing_bytes.div_ceil(MEBIBYTE);
+        let quota_mib = u32::try_from(u64::from(limit_mib).saturating_sub(existing_mib))
+          .map_err(|_| unavailable("Microsandbox cache quota is not representable"))?;
+        Some(SandboxCachePlan {
+          mounts: cache.clone(),
+          quota_mib,
+        })
+      }
+      None => None,
+    };
 
     let guest_release = "/opt/octacity/octa".to_owned();
     let guest_workspace = "/workspace".to_owned();
@@ -87,6 +117,7 @@ impl SandboxPlan {
       guest_plugins_dir: guest_path_buf(&guest_release, &runner.release_root, &runner.plugins_dir)?,
       guest_plugin_lock: guest_path_buf(&guest_release, &runner.release_root, &runner.plugin_lock)?,
       workload_identity: request.workload_identity.clone(),
+      cache,
       guest_workspace,
       guest_release,
     })

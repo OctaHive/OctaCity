@@ -62,7 +62,7 @@ fn generated_runtime_capabilities_obey_the_wire_contract() {
 fn builds_registration_data_from_verified_component_inventories() {
   let temporary = tempfile::tempdir().unwrap();
   let sources = SourcePluginRegistry::discover(temporary.path()).unwrap();
-  let runner = RunnerInstallation {
+  let mut runner = RunnerInstallation {
     root: temporary.path().to_owned(),
     executable: temporary.path().join("octa-runner"),
     plugins_dir: temporary.path().join("plugins"),
@@ -100,10 +100,13 @@ fn builds_registration_data_from_verified_component_inventories() {
   let monitor = HostMonitor::new(root.clone(), root, false).unwrap();
 
   let inventory = build_inventory(
-    "agent-1".to_owned(),
-    "agent-release".to_owned(),
-    BTreeMap::new(),
-    vec![runtime],
+    AgentInventoryConfig {
+      agent_id: "agent-1".to_owned(),
+      agent_version: "agent-release".to_owned(),
+      labels: BTreeMap::new(),
+      remote_cache_configured: false,
+    },
+    vec![runtime.clone()],
     &runner,
     &sources,
     monitor.capacity().clone(),
@@ -113,4 +116,23 @@ fn builds_registration_data_from_verified_component_inventories() {
   assert_eq!(inventory.agent_version, "agent-release");
   assert_eq!(inventory.octa.plugins[0].name, "shell");
   assert!(inventory.source_plugins.is_empty());
+  assert!(inventory.cache.is_none());
+
+  runner.capabilities.runner_protocols = vec![octa_runner_protocol::RUNNER_PROTOCOL_VERSION];
+  runner.capabilities.features = vec![CACHE_FEATURE_V1.to_owned(), CACHE_HTTP_FEATURE_V1.to_owned()];
+  let inventory = build_inventory(
+    AgentInventoryConfig {
+      agent_id: "agent-1".to_owned(),
+      agent_version: "agent-release".to_owned(),
+      labels: BTreeMap::new(),
+      remote_cache_configured: true,
+    },
+    vec![runtime],
+    &runner,
+    &sources,
+    monitor.capacity().clone(),
+  )
+  .unwrap();
+  assert_eq!(inventory.cache.as_ref().unwrap().runner_protocol, 3);
+  assert!(inventory.cache.unwrap().remote_http);
 }

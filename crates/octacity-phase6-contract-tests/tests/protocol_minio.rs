@@ -199,6 +199,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
   let capacity = phase6_capacity();
   let lifecycle = JobLifecycle::new(
     lifecycle_coordinator.clone(),
+    lifecycle_coordinator.clone(),
     registration,
     executor,
     outputs,

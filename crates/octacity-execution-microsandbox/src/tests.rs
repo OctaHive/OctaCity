@@ -2,6 +2,7 @@
 
 use super::plan::{directory_size, exact_mib, guest_path};
 use super::*;
+use octacity_execution::LocalCacheCapacity;
 
 fn runner(root: &Path) -> RunnerProgram {
   RunnerProgram {
@@ -208,6 +209,7 @@ fn request(workspace: &Path) -> StartExecution {
     workspace: workspace.to_owned(),
     data_dir: workspace.join(".octacity"),
     workload_identity: None,
+    cache: None,
     cpu_millis: 2000,
     memory_bytes: 512 * MEBIBYTE,
     writable_disk_bytes: 1024 * MEBIBYTE,
@@ -228,15 +230,31 @@ async fn maps_verified_host_paths_into_the_guest() {
   let temporary = tempfile::tempdir().unwrap();
   let root = temporary.path().canonicalize().unwrap();
   let release = root.join("release");
-  let workspace = root.join("workspace");
+  let work_root = root.join("work");
+  let workspace = work_root.join("workspace");
   fs::create_dir(&release).unwrap();
+  fs::create_dir(&work_root).unwrap();
   fs::create_dir(&workspace).unwrap();
   fs::create_dir(workspace.join(".octacity")).unwrap();
-  let identity = root.join("identity-token");
+  let identity = work_root.join("identity-token");
   fs::write(&identity, "signed-jwt").unwrap();
+  let cache = root.join("cache");
+  let cache_token = root.join("cache-token");
+  let cache_ca = root.join("cache-ca.pem");
+  fs::create_dir(&cache).unwrap();
+  fs::write(&cache_token, "cache-secret").unwrap();
+  fs::write(&cache_ca, "fixture-ca").unwrap();
   let mut request = request(&workspace);
-  request.workspace_root = root;
+  request.workspace_root = work_root;
   request.workload_identity = Some(identity.clone());
+  request.cache = Some(ExecutionCacheMounts {
+    capacity_root: cache.clone(),
+    local_directory: cache.clone(),
+    local_capacity: LocalCacheCapacity::new(2 * 1024 * 1024, 1_900_000, 1_800_000).unwrap(),
+    aggregate_max_bytes: 4 * 1024 * 1024,
+    token_file: Some(cache_token.clone()),
+    ca_certificate_file: Some(cache_ca.clone()),
+  });
   let plan = SandboxPlan::build("agent-1", &runner(&release), &request)
     .await
     .unwrap();
@@ -246,6 +264,11 @@ async fn maps_verified_host_paths_into_the_guest() {
   assert_eq!(plan.root_tmpfs_mib, 256);
   assert_eq!(plan.workspace_quota_mib, 1024);
   assert_eq!(plan.workload_identity, Some(identity));
+  let cache_plan = plan.cache.unwrap();
+  assert_eq!(cache_plan.mounts.capacity_root, cache);
+  assert_eq!(cache_plan.mounts.token_file, Some(cache_token));
+  assert_eq!(cache_plan.mounts.ca_certificate_file, Some(cache_ca));
+  assert_eq!(cache_plan.quota_mib, 2);
 }
 
 #[tokio::test]

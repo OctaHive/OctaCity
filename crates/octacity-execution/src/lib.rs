@@ -11,6 +11,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+pub use octa_cache_protocol::LocalCacheCapacity;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
@@ -22,6 +23,46 @@ pub type ExecutionWriter = Pin<Box<dyn AsyncWrite + Send>>;
 
 /// Stable read-only path at which every backend exposes job identity.
 pub const WORKLOAD_IDENTITY_PATH: &str = "/run/octa-identity";
+/// Stable writable path at which isolated runners observe their local L1.
+pub const CACHE_DIRECTORY_PATH: &str = "/var/cache/octa";
+/// Stable read-only path at which isolated runners read a cache bearer.
+pub const CACHE_TOKEN_PATH: &str = "/run/octa-cache/token";
+/// Stable read-only path for an optional private cache CA certificate.
+pub const CACHE_CA_CERTIFICATE_PATH: &str = "/run/octa-cache/ca.pem";
+
+/// Canonical host paths that a backend must project into an execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionCacheMounts {
+  /// Dedicated host filesystem containing every persistent cache scope.
+  pub capacity_root: PathBuf,
+  /// Persistent writable L1 directory outside the job workspace.
+  pub local_directory: PathBuf,
+  /// Per-scope capacity enforced by the selected execution backend.
+  pub local_capacity: LocalCacheCapacity,
+  /// Maximum physical size of the complete dedicated cache filesystem.
+  pub aggregate_max_bytes: u64,
+  /// Optional private bearer file for remote L2 access.
+  pub token_file: Option<PathBuf>,
+  /// Optional operator-owned public CA certificate.
+  pub ca_certificate_file: Option<PathBuf>,
+}
+
+impl ExecutionCacheMounts {
+  /// Produces the fixed paths visible to an isolated Octa runner.
+  ///
+  /// Every current backend uses the same guest contract; keeping the mapping
+  /// here prevents a new credential or cache path from drifting by backend.
+  pub fn projected_paths(&self) -> ExecutionCachePaths {
+    ExecutionCachePaths {
+      local_directory: PathBuf::from(CACHE_DIRECTORY_PATH),
+      token_file: self.token_file.as_ref().map(|_| PathBuf::from(CACHE_TOKEN_PATH)),
+      ca_certificate_file: self
+        .ca_certificate_file
+        .as_ref()
+        .map(|_| PathBuf::from(CACHE_CA_CERTIFICATE_PATH)),
+    }
+  }
+}
 
 /// Protocol streams connected to the isolated `octa-runner` process.
 pub struct ExecutionIo {
@@ -150,6 +191,8 @@ pub struct StartExecution {
   /// Optional job-private identity file mounted read-only at
   /// [`WORKLOAD_IDENTITY_PATH`].
   pub workload_identity: Option<PathBuf>,
+  /// Optional cache paths mounted with backend-appropriate permissions.
+  pub cache: Option<ExecutionCacheMounts>,
   /// CPU allocation in thousandths of one logical CPU.
   pub cpu_millis: u32,
   /// Maximum addressable memory in bytes.
@@ -216,6 +259,43 @@ impl StartExecution {
         ));
       }
     }
+    if let Some(cache) = &self.cache {
+      cache
+        .local_capacity
+        .validate()
+        .map_err(|error| ExecutionError::Invalid(error.to_string()))?;
+      let capacity_root = canonical_directory(&cache.capacity_root, "cache capacity_root")?;
+      let local = canonical_directory(&cache.local_directory, "cache local_directory")?;
+      if !local.starts_with(&capacity_root) {
+        return Err(ExecutionError::Invalid(
+          "cache local_directory must be below cache capacity_root".to_owned(),
+        ));
+      }
+      if capacity_root.starts_with(&canonical_root) || local.starts_with(&canonical_root) {
+        return Err(ExecutionError::Invalid(
+          "cache capacity_root and local_directory must be outside workspace_root".to_owned(),
+        ));
+      }
+      if cache.aggregate_max_bytes < cache.local_capacity.max_bytes {
+        return Err(ExecutionError::Invalid(
+          "cache aggregate capacity must cover one local scope".to_owned(),
+        ));
+      }
+      for (name, path) in [
+        ("cache token_file", cache.token_file.as_ref()),
+        ("cache ca_certificate_file", cache.ca_certificate_file.as_ref()),
+      ] {
+        if let Some(path) = path {
+          let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| ExecutionError::Invalid(format!("{name} must be an existing regular file: {error}")))?;
+          if !path.is_absolute() || !metadata.file_type().is_file() || !is_canonical_path(path) {
+            return Err(ExecutionError::Invalid(format!(
+              "{name} must be a canonical absolute regular file"
+            )));
+          }
+        }
+      }
+    }
     if self.cpu_millis == 0 || self.memory_bytes == 0 || self.writable_disk_bytes == 0 || self.max_duration.is_zero() {
       return Err(ExecutionError::Invalid(
         "CPU, memory, and writable disk limits must be greater than zero".to_owned(),
@@ -236,6 +316,63 @@ impl StartExecution {
     }
     Ok(())
   }
+}
+
+/// Requires a process-isolated cache to live on its own bounded filesystem.
+///
+/// Native and container runtimes expose a host bind mount directly to job
+/// code, so Octa's cooperative GC cannot be the physical disk boundary. A
+/// dedicated filesystem keeps arbitrary writes away from agent state. VM
+/// adapters instead apply their own per-volume quota and need not call this.
+#[cfg(unix)]
+pub fn validate_process_cache_filesystem(cache: &ExecutionCacheMounts) -> Result<(), ExecutionError> {
+  validate_process_cache_capacity_root(&cache.capacity_root, cache.aggregate_max_bytes)
+}
+
+/// Validates the persistent cache filesystem before process backends advertise
+/// themselves as ready.
+///
+/// The composition root can call this once at startup, while each backend
+/// repeats it against the concrete job projection before exposing the bind
+/// mount. Hypervisor backends instead enforce a per-volume quota.
+#[cfg(unix)]
+pub fn validate_process_cache_capacity_root(
+  capacity_root: &Path,
+  aggregate_max_bytes: u64,
+) -> Result<(), ExecutionError> {
+  use std::{ffi::CString, mem::MaybeUninit, os::unix::ffi::OsStrExt as _, os::unix::fs::MetadataExt as _};
+
+  let root = capacity_root.canonicalize().map_err(ExecutionError::Io)?;
+  let parent = root
+    .parent()
+    .ok_or_else(|| ExecutionError::Unavailable("cache capacity_root has no parent directory".to_owned()))?;
+  if std::fs::metadata(&root).map_err(ExecutionError::Io)?.dev()
+    == std::fs::metadata(parent).map_err(ExecutionError::Io)?.dev()
+  {
+    return Err(ExecutionError::Unavailable(
+      "process-isolated cache capacity_root must be a dedicated filesystem mount".to_owned(),
+    ));
+  }
+  let path = CString::new(root.as_os_str().as_bytes())
+    .map_err(|_| ExecutionError::Invalid("cache capacity_root contains a NUL byte".to_owned()))?;
+  let mut stats = MaybeUninit::<libc::statvfs>::uninit();
+  // SAFETY: `path` is NUL-terminated and `stats` points to writable memory.
+  if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+    return Err(ExecutionError::Io(std::io::Error::last_os_error()));
+  }
+  // SAFETY: statvfs initialized `stats` after returning success.
+  let stats = unsafe { stats.assume_init() };
+  #[cfg(target_os = "macos")]
+  let blocks = u64::from(stats.f_blocks);
+  #[cfg(not(target_os = "macos"))]
+  let blocks = stats.f_blocks;
+  let capacity = blocks.saturating_mul(stats.f_frsize);
+  if capacity > aggregate_max_bytes {
+    return Err(ExecutionError::Unavailable(format!(
+      "cache filesystem capacity {capacity} exceeds configured aggregate limit {aggregate_max_bytes}"
+    )));
+  }
+  Ok(())
 }
 
 fn canonical_directory(path: &Path, name: &str) -> Result<PathBuf, ExecutionError> {
@@ -279,6 +416,19 @@ pub struct ExecutionPaths {
   pub plugins_dir: PathBuf,
   /// Plugin lock path as observed by the runner.
   pub plugin_lock: PathBuf,
+  /// Cache paths after backend-specific host-to-guest translation.
+  pub cache: Option<ExecutionCachePaths>,
+}
+
+/// Cache paths as observed by the runner inside the selected backend.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionCachePaths {
+  /// Writable local L1 directory.
+  pub local_directory: PathBuf,
+  /// Optional read-only bearer file.
+  pub token_file: Option<PathBuf>,
+  /// Optional read-only private CA certificate.
+  pub ca_certificate_file: Option<PathBuf>,
 }
 
 /// Monotonic resource-accounting snapshot for a running job.
@@ -420,6 +570,7 @@ mod tests {
       workspace: temporary.path().canonicalize().unwrap(),
       data_dir: temporary.path().canonicalize().unwrap().join("data"),
       workload_identity: None,
+      cache: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -454,6 +605,7 @@ mod tests {
       workspace: temporary.path().canonicalize().unwrap(),
       data_dir: data_dir.canonicalize().unwrap(),
       workload_identity: None,
+      cache: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -501,6 +653,7 @@ mod tests {
       workspace,
       data_dir,
       workload_identity: Some(identity.clone()),
+      cache: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -535,6 +688,86 @@ mod tests {
     assert!(request.validate().is_err());
   }
 
+  #[test]
+  fn validates_cache_capacity_and_uses_one_guest_projection() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let cache_root = root.join("cache");
+    let scope = cache_root.join("scope");
+    std::fs::create_dir(&cache_root).unwrap();
+    std::fs::create_dir(&scope).unwrap();
+    let mounts = ExecutionCacheMounts {
+      capacity_root: cache_root,
+      local_directory: scope,
+      local_capacity: LocalCacheCapacity::new(1024, 900, 800).unwrap(),
+      aggregate_max_bytes: 2048,
+      token_file: None,
+      ca_certificate_file: None,
+    };
+    assert_eq!(
+      mounts.projected_paths(),
+      ExecutionCachePaths {
+        local_directory: PathBuf::from(CACHE_DIRECTORY_PATH),
+        token_file: None,
+        ca_certificate_file: None,
+      }
+    );
+
+    let work_root = root.join("work");
+    let workspace = work_root.join("workspace");
+    let data_dir = workspace.join("data");
+    std::fs::create_dir(&work_root).unwrap();
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(&data_dir).unwrap();
+    let request = StartExecution {
+      execution_id: "job-1-attempt-1".to_owned(),
+      workspace_root: work_root.canonicalize().unwrap(),
+      workspace: workspace.canonicalize().unwrap(),
+      data_dir: data_dir.canonicalize().unwrap(),
+      workload_identity: None,
+      cache: Some(mounts.clone()),
+      cpu_millis: 1000,
+      memory_bytes: 1024,
+      writable_disk_bytes: 1024,
+      max_duration: Duration::from_secs(1),
+      root: ExecutionTarget::Native {
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
+      },
+      network: NetworkAccess::Disabled,
+    };
+    assert!(request.validate().is_ok());
+
+    let mut invalid = request;
+    invalid.cache.as_mut().unwrap().aggregate_max_bytes = 512;
+    assert!(invalid.validate().is_err());
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn process_cache_requires_a_dedicated_bounded_filesystem() {
+    let temporary = tempfile::tempdir().unwrap();
+    let capacity_root = temporary.path().join("cache");
+    let local_directory = capacity_root.join("scope");
+    std::fs::create_dir(&capacity_root).unwrap();
+    std::fs::create_dir(&local_directory).unwrap();
+    let cache = ExecutionCacheMounts {
+      capacity_root,
+      local_directory,
+      local_capacity: LocalCacheCapacity::new(1024, 900, 800).unwrap(),
+      aggregate_max_bytes: 2048,
+      token_file: None,
+      ca_certificate_file: None,
+    };
+
+    assert!(matches!(
+      validate_process_cache_filesystem(&cache),
+      Err(ExecutionError::Unavailable(message)) if message.contains("dedicated filesystem")
+    ));
+  }
+
   #[cfg(unix)]
   #[test]
   fn rejects_identity_paths_through_an_intermediate_symlink() {
@@ -557,6 +790,7 @@ mod tests {
       workspace,
       data_dir,
       workload_identity: Some(alias.join("job.identity")),
+      cache: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,

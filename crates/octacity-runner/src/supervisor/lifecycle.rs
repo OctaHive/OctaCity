@@ -30,7 +30,7 @@ pub(super) async fn drive(
 ) -> Result<RunnerCompletion, RunnerSupervisionError> {
   let (mut stdin, stdout) = protocol_io;
   let deadline = operation_deadline;
-  let run = build_run_request(&job.spec, execution.paths());
+  let run = build_run_request(&job.spec, job.cache.as_ref(), execution.paths())?;
   let mut stdout = BufReader::new(stdout);
   let hello_deadline = operation_deadline.min(Instant::now() + policy.hello_timeout);
   let hello = tokio::select! {

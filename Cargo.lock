@@ -3966,6 +3966,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
+ "octacity-cache-session",
  "octacity-config",
  "octacity-coordinator",
  "octacity-execution",
@@ -4004,12 +4005,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-cache-session"
+version = "0.1.0"
+dependencies = [
+ "octa-cache-protocol",
+ "octacity-execution",
+ "octacity-private-fs",
+ "octacity-protocol",
+ "octacity-runner",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "octacity-config"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
  "http 1.5.0",
+ "octa-cache-protocol",
  "octacity-private-fs",
  "octacity-protocol",
  "serde",
@@ -4044,6 +4064,8 @@ name = "octacity-execution"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "libc",
+ "octa-cache-protocol",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -4129,6 +4151,8 @@ dependencies = [
 name = "octacity-inventory"
 version = "0.1.0"
 dependencies = [
+ "octa-cache-protocol",
+ "octa-runner-protocol",
  "octacity-protocol",
  "octacity-runner",
  "octacity-source",
@@ -4142,6 +4166,7 @@ name = "octacity-job"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "octacity-cache-session",
  "octacity-execution",
  "octacity-execution-containerd",
  "octacity-execution-microsandbox",
@@ -4168,6 +4193,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "ed25519-dalek",
+ "octacity-cache-session",
  "octacity-coordinator",
  "octacity-execution",
  "octacity-identity",
@@ -4252,9 +4278,11 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "octa-cache-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
@@ -4264,6 +4292,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "memchr",
+ "octa-cache-protocol",
  "octa-plugin-lock",
  "octa-runner-protocol",
  "octacity-execution",

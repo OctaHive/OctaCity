@@ -139,6 +139,15 @@ pub(super) fn canonical_upload_origin(value: &str) -> Result<String, ConfigError
   })
 }
 
+/// Accepts and canonicalizes one HTTPS origin used by remote result caching.
+pub(super) fn canonical_cache_origin(value: &str) -> Result<String, ConfigError> {
+  let origin = canonical_upload_origin(value)?;
+  if !origin.starts_with("https://") {
+    return invalid(format!("cache origin '{value}' must use https"));
+  }
+  Ok(origin)
+}
+
 fn parse_absolute_url(name: &str, value: &str) -> Result<Uri, ConfigError> {
   let uri: Uri = value
     .parse()

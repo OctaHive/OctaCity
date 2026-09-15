@@ -9,8 +9,9 @@ semantics independently of a particular implementation language.
 | --- | --- | --- | --- |
 | Signed JobSpec v1 | Implemented | [signed-job-spec-v1.md](signed-job-spec-v1.md) | `octacity-protocol` |
 | Source-plugin v1 | Implemented | [source-plugin README](../../crates/octacity-source-plugin/README.md) | `octacity-source-plugin`, `octacity-source`, `octacity-source-git` |
-| Octa runner v1 | Implemented in Octa | Published by the `octa-runner-protocol` crate | `octa-runner-protocol`, `octacity-agent` |
-| Server-agent transport v1 | Phase 5 implemented | [server-agent-v1.md](server-agent-v1.md) | `octacity-protocol`, `octacity-coordinator`, `octacity-lifecycle` |
+| Octa runner v3 | Implemented in Octa | Published by the `octa-runner-protocol` crate | `octa-runner-protocol`, `octacity-runner` |
+| Server-agent transport v1 | Phases 5–7 implemented | [server-agent-v1.md](server-agent-v1.md) | `octacity-protocol`, `octacity-coordinator`, `octacity-lifecycle` |
+| Cache session v1 | Implemented | [cache-session-v1.md](cache-session-v1.md) | `octacity-cache-session`, `octacity-runner` |
 
 “Implemented” means the wire types and validation exist. The OctaCity server
 is not available yet; the agent daemon implements the operations listed in the

@@ -10,9 +10,10 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{
-  AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, BeginOutputUploadRequest,
-  BeginOutputUploadResponse, CompleteLeaseRequest, CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity,
-  HostSnapshot, JobSpecError, LeaseAssignment,
+  AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest,
+  BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse, CompleteLeaseRequest,
+  CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecError, LeaseAssignment,
+  RevokeCacheSessionRequest,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -260,6 +261,28 @@ pub trait OutputUploadCoordinator: Send + Sync {
     registration: &Registration,
     lease: &LeaseAssignment,
     request: &CompleteOutputUploadRequest,
+    cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError>;
+}
+
+/// Narrow coordinator boundary for short-lived runner cache authority.
+#[async_trait]
+pub trait CacheSessionCoordinator: Send + Sync {
+  /// Returns a fenced physical scope and optional remote L2 credential.
+  async fn begin_cache_session(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &BeginCacheSessionRequest,
+    cancellation: CancellationToken,
+  ) -> Result<BeginCacheSessionResponse, CoordinatorError>;
+
+  /// Revokes server-side authority after the runner can no longer read it.
+  async fn revoke_cache_session(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &RevokeCacheSessionRequest,
     cancellation: CancellationToken,
   ) -> Result<(), CoordinatorError>;
 }

@@ -71,6 +71,7 @@ fn inventory() -> AgentInventory {
       platforms: vec!["linux-x86_64".to_owned()],
       sha256: "3".repeat(64),
     }],
+    cache: None,
   }
 }
 
@@ -101,6 +102,23 @@ fn validates_complete_registration_inventory() {
   let mut invalid = request;
   invalid.inventory.runtimes[0].isolation = None;
   assert!(invalid.validate().unwrap_err().to_string().contains("isolation"));
+}
+
+#[test]
+fn cache_inventory_requires_the_exact_supported_action_key_format() {
+  let mut inventory = inventory();
+  let runner_protocol = 3;
+  inventory.octa.runner_protocols = vec![runner_protocol];
+  inventory.octa.features = vec![CACHE_FEATURE_V1.to_owned(), CACHE_HTTP_FEATURE_V1.to_owned()];
+  inventory.cache = Some(CacheCapability {
+    runner_protocol,
+    action_key_format: octa_cache_protocol::ACTION_KEY_FORMAT_V1,
+    remote_http: true,
+  });
+  inventory.validate().unwrap();
+
+  inventory.cache.as_mut().unwrap().action_key_format += 1;
+  assert!(inventory.validate().is_err());
 }
 
 #[test]
@@ -305,6 +323,34 @@ fn golden_coordinator_documents_match_the_wire_types() {
   .unwrap();
   upload_complete_response
     .validate("upload-complete-20260911-1", "upload-42-artifact-1")
+    .unwrap();
+
+  let cache: BeginCacheSessionRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/cache-begin-request-v1.json"
+  ))
+  .unwrap();
+  cache.validate().unwrap();
+
+  let cache_response: BeginCacheSessionResponse = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/cache-begin-response-v1.json"
+  ))
+  .unwrap();
+  cache_response
+    .validate("cache-begin-20260911-1", 1_789_056_100)
+    .unwrap();
+
+  let cache_revoke: RevokeCacheSessionRequest = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/cache-revoke-request-v1.json"
+  ))
+  .unwrap();
+  cache_revoke.validate().unwrap();
+
+  let cache_revoke_response: RevokeCacheSessionResponse = serde_json::from_str(include_str!(
+    "../../../../protocol/coordinator/cache-revoke-response-v1.json"
+  ))
+  .unwrap();
+  cache_revoke_response
+    .validate("cache-revoke-20260911-1", "cache-session-42-1")
     .unwrap();
 
   let completion: CompleteLeaseRequest = serde_json::from_str(include_str!(
@@ -692,4 +738,61 @@ fn upload_response_debug_redacts_the_presigned_capability() {
   assert!(!rendered.contains("url-secret"));
   assert!(!rendered.contains("header-secret"));
   assert!(rendered.contains("x-private"));
+}
+
+#[test]
+fn cache_session_values_validate_fencing_expiry_and_secret_redaction() {
+  let fence = LeaseFence {
+    lease_id: "lease-1".to_owned(),
+    job_id: "job-1".to_owned(),
+    attempt: 1,
+    fencing_token: "fence-1".to_owned(),
+  };
+  let request = BeginCacheSessionRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "cache-begin-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease: fence.clone(),
+    cache: CachePolicy {
+      namespace: "project/main".to_owned(),
+      read: true,
+      write: false,
+    },
+  };
+  request.validate().unwrap();
+
+  let response = BeginCacheSessionResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: request.request_id.clone(),
+    session_id: "cache-session-1".to_owned(),
+    scope_id: "project-trust-domain-1".to_owned(),
+    remote: Some(RemoteCacheGrant {
+      endpoint: "https://cache.example/v1".to_owned(),
+      bearer_token: "cache-secret".to_owned(),
+      expires_at: 200,
+    }),
+  };
+  response.validate(&request.request_id, 100).unwrap();
+  let debug = format!("{response:?}");
+  assert!(!debug.contains("cache-secret"));
+
+  let mut expired = response;
+  expired.remote.as_mut().unwrap().expires_at = 100;
+  assert!(expired.validate(&request.request_id, 100).is_err());
+
+  let revoke = RevokeCacheSessionRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "cache-revoke-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease: fence,
+    session_id: "cache-session-1".to_owned(),
+  };
+  revoke.validate().unwrap();
+  RevokeCacheSessionResponse {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: revoke.request_id.clone(),
+    session_id: revoke.session_id.clone(),
+  }
+  .validate(&revoke.request_id, &revoke.session_id)
+  .unwrap();
 }

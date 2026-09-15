@@ -54,6 +54,7 @@ fn spec() -> JobSpecV1 {
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
+    cache: None,
     outputs: OutputLimits {
       artifact_count: 10,
       artifact_bytes: 1024,
@@ -305,4 +306,49 @@ fn rejects_oversized_base64_before_decoding() {
     verify_job_spec(&envelope, &keys, binding(&specification)),
     Err(JobSpecError::SignatureLength)
   ));
+}
+
+#[test]
+fn cache_policy_preserves_independent_permissions_and_portable_namespaces() {
+  use octa_cache_protocol::CacheMode;
+
+  for (read, write, mode) in [
+    (true, false, CacheMode::ReadOnly),
+    (false, true, CacheMode::WriteOnly),
+    (true, true, CacheMode::ReadWrite),
+  ] {
+    let policy = CachePolicy {
+      namespace: "project/main".to_owned(),
+      read,
+      write,
+    };
+    assert_eq!(policy.mode().unwrap(), mode);
+  }
+
+  for namespace in ["", "project\nmain"] {
+    let policy = CachePolicy {
+      namespace: namespace.to_owned(),
+      read: true,
+      write: true,
+    };
+    assert!(policy.validate().is_err(), "accepted namespace {namespace:?}");
+  }
+  assert!(
+    CachePolicy {
+      namespace: "project/main".to_owned(),
+      read: false,
+      write: false,
+    }
+    .validate()
+    .is_err()
+  );
+  assert!(
+    CachePolicy {
+      namespace: "project/main".to_owned(),
+      read: false,
+      write: false,
+    }
+    .mode()
+    .is_err()
+  );
 }

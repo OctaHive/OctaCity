@@ -16,14 +16,15 @@ use std::{
   time::Duration,
 };
 
+use octacity_cache_session::{CacheSessionError, CacheSessionLifetime, CacheSessionManager, PreparedCacheSession};
 use octacity_execution::{
   ExecutionArchitecture, ExecutionBackend, ExecutionError, ExecutionOs, ExecutionPlatform, ExecutionTarget,
   NetworkAccess, OciIsolation as ExecutionOciIsolation, StartExecution,
 };
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
-  JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OutputLimits, PlatformArchitecture, PlatformOs,
-  RuntimeMode, RuntimeTarget,
+  BeginCacheSessionResponse, JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OutputLimits,
+  PlatformArchitecture, PlatformOs, RuntimeMode, RuntimeTarget,
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
@@ -43,6 +44,8 @@ pub struct ExecuteJobRequest {
   pub spec: JobSpecV1,
   /// Agent-resolved credential files keyed by source-plugin handle.
   pub source_credentials: BTreeMap<String, PathBuf>,
+  /// Fenced cache authority obtained out of band from the signed JobSpec.
+  pub cache_grant: Option<BeginCacheSessionResponse>,
 }
 
 /// Successful terminal data from source acquisition and `octa-runner`.
@@ -203,6 +206,17 @@ pub enum JobError {
   #[error("workload identity failed: {0}")]
   /// Local workload identity selection, provisioning, or revocation failed.
   WorkloadIdentity(#[source] Box<WorkloadIdentityError>),
+  /// Cache grant validation, private bearer provisioning, or revocation failed.
+  #[error("cache session failed: {0}")]
+  CacheSession(#[source] Box<CacheSessionError>),
+  /// Execution and cache credential revocation both failed.
+  #[error("job failed ({operation}) and cache session revocation also failed: {revocation}")]
+  OperationAndCacheRevocation {
+    /// Original job lifecycle failure.
+    operation: Box<JobError>,
+    /// Additional private cache cleanup failure.
+    revocation: Box<CacheSessionError>,
+  },
   #[error("job failed ({operation}) and workload identity revocation also failed: {revocation}")]
   /// Both execution and mandatory identity revocation failed.
   OperationAndIdentityRevocation {
@@ -260,6 +274,7 @@ pub struct JobExecutor {
   runner: RunnerInstallation,
   source: Arc<dyn SourceMaterializer>,
   identity: Arc<dyn WorkloadIdentityProvider>,
+  cache: Option<Arc<CacheSessionManager>>,
   backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
   work_root: PathBuf,
   max_workspace_bytes: u64,
@@ -320,6 +335,7 @@ impl JobExecutor {
       runner,
       source,
       identity,
+      cache: None,
       backends,
       work_root,
       max_workspace_bytes: config.max_workspace_bytes,
@@ -331,6 +347,12 @@ impl JobExecutor {
     })
   }
 
+  /// Enables job-scoped cache grants for an installation that advertises them.
+  pub fn with_cache(mut self, cache: Arc<CacheSessionManager>) -> Self {
+    self.cache = Some(cache);
+    self
+  }
+
   /// Runs one verified job and retains its workspace for output processing.
   /// The caller must finish by invoking [`JobCompletion::cleanup`].
   pub async fn execute(
@@ -340,6 +362,11 @@ impl JobExecutor {
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
     let spec = request.spec;
+    if spec.cache.is_some() != request.cache_grant.is_some() {
+      return Err(
+        JobError::Invalid("signed cache policy and fenced cache grant must be present together".to_owned()).into(),
+      );
+    }
 
     // Verify every immutable dependency before creating a workspace or
     // starting a source plugin.
@@ -417,6 +444,41 @@ impl JobExecutor {
         ),
         None => None,
       };
+      let cache = match (&spec.cache, request.cache_grant) {
+        (Some(policy), Some(grant)) => {
+          let preparation = self
+            .cache
+            .as_ref()
+            .ok_or_else(|| JobError::Invalid("cache support is not configured".to_owned()))?
+            .prepare(
+              policy,
+              grant,
+              &spec.runtime.target,
+              &spec.runtime.network,
+              &job_root,
+              CacheSessionLifetime {
+                now: unix_now()?,
+                remaining_job: remaining(deadline)?,
+              },
+            )
+            .await
+            .map_err(|error| JobError::CacheSession(Box::new(error)));
+          match preparation {
+            Ok(cache) => Some(cache),
+            Err(error) => return finish_identity(Err(error), identity).await,
+          }
+        }
+        (None, None) => None,
+        _ => {
+          return finish_identity(
+            Err(JobError::Invalid(
+              "signed cache policy and fenced cache grant must be present together".to_owned(),
+            )),
+            identity,
+          )
+          .await;
+        }
+      };
       let root = execution_target(&spec);
       let operation = async {
         supervise(
@@ -431,6 +493,7 @@ impl JobExecutor {
               workspace: workspace.clone(),
               data_dir,
               workload_identity: identity.as_ref().map(|lease| lease.path().to_owned()),
+              cache: cache.as_ref().map(|session| session.execution().clone()),
               cpu_millis: spec.runtime.cpu_millis,
               memory_bytes: spec.runtime.memory_bytes,
               writable_disk_bytes: spec.runtime.writable_disk_bytes,
@@ -439,7 +502,13 @@ impl JobExecutor {
               network,
             },
             spec: spec.execution.clone(),
-            redactions: RunnerRedactions::new(identity.iter().map(|lease| lease.sensitive_value())),
+            cache: cache.as_ref().map(|session| session.runner().clone()),
+            redactions: RunnerRedactions::new(
+              identity
+                .iter()
+                .map(|lease| lease.sensitive_value())
+                .chain(cache.iter().filter_map(|session| session.sensitive_value())),
+            ),
             cancellation_grace: self.cancellation_grace,
           },
           cancellation,
@@ -450,7 +519,8 @@ impl JobExecutor {
         .map_err(map_runner_error)
       }
       .await;
-      let runner = finish_identity(operation, identity).await?;
+      let operation = finish_identity(operation, identity).await;
+      let runner = finish_cache_session(operation, cache).await?;
 
       info!(job_id = %spec.job_id, attempt = spec.attempt, status = ?runner.status, "finished job");
       Ok((source, runner, workspace))
@@ -530,6 +600,33 @@ impl JobExecutor {
       }
     }
   }
+}
+
+/// Makes cache-token removal authoritative without hiding execution failure.
+async fn finish_cache_session<T>(
+  operation: Result<T, JobError>,
+  cache: Option<PreparedCacheSession>,
+) -> Result<T, JobError> {
+  let revocation = match cache {
+    Some(cache) => cache.revoke().await,
+    None => Ok(()),
+  };
+  match (operation, revocation) {
+    (Ok(value), Ok(())) => Ok(value),
+    (Err(operation), Ok(())) => Err(operation),
+    (Ok(_), Err(revocation)) => Err(JobError::CacheSession(Box::new(revocation))),
+    (Err(operation), Err(revocation)) => Err(JobError::OperationAndCacheRevocation {
+      operation: Box::new(operation),
+      revocation: Box::new(revocation),
+    }),
+  }
+}
+
+fn unix_now() -> Result<u64, JobError> {
+  std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|duration| duration.as_secs())
+    .map_err(|_| JobError::Invalid("system clock is before the Unix epoch".to_owned()))
 }
 
 /// Makes identity revocation authoritative without hiding an execution error.

@@ -275,6 +275,7 @@ async fn run_contract(
       ExecuteJobRequest {
         spec,
         source_credentials: BTreeMap::new(),
+        cache_grant: None,
       },
       CancellationToken::new(),
       &sender,
@@ -330,6 +331,7 @@ async fn run_cancellation_contract(
     ExecuteJobRequest {
       spec,
       source_credentials: BTreeMap::new(),
+      cache_grant: None,
     },
     cancellation.clone(),
     &sender,
@@ -424,6 +426,7 @@ fn specification(target: RuntimeTarget, workspace_bytes: u64, now: u64, runner: 
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
+    cache: None,
     outputs: OutputLimits {
       artifact_count: 0,
       artifact_bytes: 0,

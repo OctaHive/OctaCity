@@ -79,6 +79,7 @@ impl ExecutionBackend for FakeBackend {
         data_dir: request.data_dir,
         plugins_dir: runner.plugins_dir.clone(),
         plugin_lock: runner.plugin_lock.clone(),
+        cache: None,
       },
       destroyed: self.destroyed.clone(),
       killed: self.killed.clone(),
@@ -249,6 +250,7 @@ fn job(workspace: &std::path::Path) -> RunnerJobRequest {
       workspace: workspace.to_owned(),
       data_dir: workspace.join("data"),
       workload_identity: None,
+      cache: None,
       cpu_millis: 1000,
       memory_bytes: 1024,
       writable_disk_bytes: 1024,
@@ -271,6 +273,7 @@ fn job(workspace: &std::path::Path) -> RunnerJobRequest {
       parallel: false,
       failfast: true,
     },
+    cache: None,
     redactions: RunnerRedactions::default(),
     cancellation_grace: Duration::from_secs(1),
   }

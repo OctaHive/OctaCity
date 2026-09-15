@@ -45,6 +45,21 @@ impl Fixture {
       octa_release_root: directory("octa"),
       source_plugins_dir: directory("sources"),
       workload_identity_profiles: BTreeMap::new(),
+      cache: CacheConfig {
+        root: directory("cache"),
+        capacity: octa_cache_protocol::LocalCacheCapacity::new(1024 * 1024, 900 * 1024, 800 * 1024).unwrap(),
+        max_scopes: 16,
+        allow_read: true,
+        allow_write: true,
+        allowed_remote_origins: vec!["https://cache.example".to_owned()],
+        ca_certificate_file: None,
+        native_environment_identities: BTreeMap::from([(
+          "linux-amd64".to_owned(),
+          "rust-1.98-toolchain-v1".to_owned(),
+        )]),
+        request_timeout_seconds: 30,
+        max_parallel_transfers: 4,
+      },
       enabled_runtime_modes: vec![RuntimeMode::Native],
       allow_native_execution: true,
       native_linux_cgroup_root: Some(directory("cgroup")),
@@ -595,6 +610,105 @@ fn rejects_invalid_identity_and_server_material() {
       .to_string()
       .contains("only scheme")
   );
+}
+
+#[test]
+fn validates_cache_capacity_origins_and_native_runtime_identity() {
+  let mut fixture = Fixture::new();
+  fixture.config.cache.capacity.low_watermark_bytes = fixture.config.cache.capacity.high_watermark_bytes + 1;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("cache capacity")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.cache.max_scopes = 0;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("max_scopes")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.cache.allowed_remote_origins = vec!["https://cache.example/path".to_owned()];
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("only scheme")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.cache.allowed_remote_origins = vec!["http://localhost".to_owned()];
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("must use https")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture
+    .config
+    .cache
+    .native_environment_identities
+    .insert("linux-amd64".to_owned(), String::new());
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("must contain")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.cache.root = fixture.config.state_root.clone();
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("must not overlap")
+  );
+}
+
+#[test]
+fn protects_the_remote_cache_ca_as_trust_material() {
+  let mut fixture = Fixture::new();
+  let certificate = fixture.config.state_root.join("cache-ca.pem");
+  File::create(&certificate).unwrap().write_all(b"public-ca").unwrap();
+  fixture.config.cache.ca_certificate_file = Some(certificate.clone());
+
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&certificate, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+      fixture
+        .config
+        .clone()
+        .validate()
+        .unwrap_err()
+        .to_string()
+        .contains("cache.ca_certificate_file")
+    );
+    fs::set_permissions(&certificate, fs::Permissions::from_mode(0o600)).unwrap();
+  }
+
+  assert!(fixture.config.validate().is_ok());
 }
 
 #[test]

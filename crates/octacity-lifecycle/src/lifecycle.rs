@@ -10,15 +10,16 @@
 use std::{collections::BTreeMap, fs, future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use octacity_coordinator::{
-  CoordinatorClient, CoordinatorError, LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, Registration,
-  VerifiedLease,
+  CacheSessionCoordinator, CoordinatorClient, CoordinatorError, LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy,
+  Registration, VerifiedLease,
 };
 use octacity_execution::ResourceUsage;
 use octacity_job::{ExecuteJobRequest, JobError, JobExecutor};
 use octacity_output::{FreezeOutputs, OutputError, OutputPublisher, PublishOutputs};
 use octacity_protocol::{
-  ActiveJob, AgentLifecycleEvent, AttemptEventKind, CompleteLeaseRequest, HostCapacity, HostSnapshot,
-  JobCompletionStatus, JobLifecycleState, LeaseFence, ResourceUsageSnapshot, RunnerEventPayload,
+  ActiveJob, AgentLifecycleEvent, AttemptEventKind, BeginCacheSessionRequest, COORDINATOR_PROTOCOL_VERSION,
+  CompleteLeaseRequest, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState, LeaseFence,
+  ResourceUsageSnapshot, RevokeCacheSessionRequest, RunnerEventPayload,
 };
 use octacity_runner::{RunStatus, RunnerStreamItem};
 use sha2::{Digest as _, Sha256};
@@ -131,6 +132,7 @@ pub enum JobLifecycleError {
 /// Dependencies that run one verified lease without exposing transport to the executor.
 pub struct JobLifecycle {
   coordinator: Arc<dyn CoordinatorClient>,
+  cache_coordinator: Arc<dyn CacheSessionCoordinator>,
   registration: Registration,
   executor: Arc<JobExecutor>,
   outputs: Arc<dyn OutputPublisher>,
@@ -142,6 +144,7 @@ impl JobLifecycle {
   /// Constructs a lifecycle owner from already validated concrete components.
   pub fn new(
     coordinator: Arc<dyn CoordinatorClient>,
+    cache_coordinator: Arc<dyn CacheSessionCoordinator>,
     registration: Registration,
     executor: Arc<JobExecutor>,
     outputs: Arc<dyn OutputPublisher>,
@@ -153,6 +156,7 @@ impl JobLifecycle {
     config.validate()?;
     Ok(Self {
       coordinator,
+      cache_coordinator,
       registration,
       executor,
       outputs,
@@ -194,6 +198,38 @@ impl JobLifecycle {
     let cancellation = monitor.job_cancellation();
     let draining = monitor.draining();
     let mut monitor_task = tokio::spawn(monitor.wait());
+    let cache_grant = match &verified.spec.cache {
+      Some(cache) => {
+        let result = self
+          .cache_coordinator
+          .begin_cache_session(
+            &self.registration,
+            &lease,
+            &BeginCacheSessionRequest {
+              protocol_version: COORDINATOR_PROTOCOL_VERSION,
+              request_id: cache_operation_id(&fence, "begin"),
+              registration_id: self.registration.registration_id.clone(),
+              lease: fence.clone(),
+              cache: cache.clone(),
+            },
+            cancellation.clone(),
+          )
+          .await;
+        match result {
+          Ok(grant) => Some(grant),
+          Err(error) => {
+            cancellation.cancel();
+            monitor_task.abort();
+            if let Err(cleanup) = remove_unstarted_attempt(&attempt_root) {
+              warn!(%error, %cleanup, path = %attempt_root.display(), "cache grant failed and unstarted attempt cleanup also failed");
+            }
+            return Err(error.into());
+          }
+        }
+      }
+      None => None,
+    };
+    let cache_session_id = cache_grant.as_ref().map(|grant| grant.session_id.clone());
     let delivery = DeliveryTask {
       coordinator: self.coordinator.clone(),
       registration: self.registration.clone(),
@@ -218,6 +254,7 @@ impl JobLifecycle {
           ExecuteJobRequest {
             spec,
             source_credentials: BTreeMap::new(),
+            cache_grant,
           },
           job_cancellation,
           &event_sender,
@@ -263,6 +300,36 @@ impl JobLifecycle {
       delivery_finished = true;
       let error = delivery_failure((&mut delivery).await);
       lifecycle_error.get_or_insert(error);
+    }
+    // A panicked job task cannot revoke its private bearer. Stop backend
+    // resources and delete the owned workspace before revoking server access.
+    // Recording Cleaning first preserves the recovery contract even on this
+    // exceptional path.
+    let panic_cleanup = if job_result.is_none() {
+      let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+      if cleaning_recorded {
+        self.executor.cleanup_orphans().await.map_err(|error| error.to_string())
+      } else {
+        Ok(())
+      }
+    } else {
+      Ok(())
+    };
+    if let Some(session_id) = cache_session_id {
+      let revocation = RevokeCacheSessionRequest {
+        protocol_version: COORDINATOR_PROTOCOL_VERSION,
+        request_id: cache_operation_id(&fence, "revoke"),
+        registration_id: self.registration.registration_id.clone(),
+        lease: fence.clone(),
+        session_id,
+      };
+      if let Err(error) = self
+        .cache_coordinator
+        .revoke_cache_session(&self.registration, &lease, &revocation, CancellationToken::new())
+        .await
+      {
+        lifecycle_error.get_or_insert(JobLifecycleError::Coordinator(error));
+      }
     }
     while lifecycle_error.is_none()
       && let Ok(item) = events.try_recv()
@@ -363,15 +430,12 @@ impl JobLifecycle {
         };
         (status, None, Vec::new(), cleanup)
       }
-      None => {
-        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
-        let cleanup = if cleaning_recorded {
-          self.executor.cleanup_orphans().await.map_err(|error| error.to_string())
-        } else {
-          Ok(())
-        };
-        (JobCompletionStatus::InfrastructureFailed, None, Vec::new(), cleanup)
-      }
+      None => (
+        JobCompletionStatus::InfrastructureFailed,
+        None,
+        Vec::new(),
+        panic_cleanup,
+      ),
     };
     if let Err(error) = cleanup {
       lifecycle_error = Some(JobLifecycleError::Cleanup(error));
@@ -595,6 +659,15 @@ fn create_attempt_root(state_root: &std::path::Path, fence: &LeaseFence) -> Resu
   Ok(root)
 }
 
+/// Removes an attempt that never reached runner or delivery ownership.
+fn remove_unstarted_attempt(path: &std::path::Path) -> Result<(), JobLifecycleError> {
+  match fs::remove_dir_all(path) {
+    Ok(()) => Ok(()),
+    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+    Err(error) => Err(JobLifecycleError::StateIo(error)),
+  }
+}
+
 fn create_private_directory(path: &std::path::Path, exclusive: bool) -> Result<(), JobLifecycleError> {
   if !exclusive && path.is_dir() {
     return octacity_private_fs::validate_private_access(path).map_err(JobLifecycleError::StateIo);
@@ -608,6 +681,18 @@ fn attempt_directory(fence: &LeaseFence) -> String {
   digest.update([0]);
   digest.update(fence.fencing_token.as_bytes());
   format!("attempt-{:x}", digest.finalize())
+}
+
+fn cache_operation_id(fence: &LeaseFence, operation: &str) -> String {
+  let mut digest = Sha256::new();
+  digest.update(b"octacity-cache-session-v1");
+  digest.update([0]);
+  digest.update(fence.lease_id.as_bytes());
+  digest.update([0]);
+  digest.update(fence.fencing_token.as_bytes());
+  digest.update([0]);
+  digest.update(operation.as_bytes());
+  format!("cache-{operation}-{:x}", digest.finalize())
 }
 
 fn is_attempt_directory(name: &str) -> bool {

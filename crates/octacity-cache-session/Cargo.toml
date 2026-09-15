@@ -1,24 +1,24 @@
 [package]
-name = "octacity-config"
+name = "octacity-cache-session"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Parsing and intrinsic validation of OctaCity agent configuration"
+description = "Private per-job Octa cache session preparation for OctaCity"
 
 [dependencies]
-base64.workspace = true
-ed25519-dalek.workspace = true
-http.workspace = true
 octa-cache-protocol.workspace = true
+octacity-execution = { path = "../octacity-execution" }
 octacity-protocol = { path = "../octacity-protocol" }
+octacity-runner = { path = "../octacity-runner" }
 octacity-private-fs = { path = "../octacity-private-fs" }
-serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
-toml.workspace = true
-tracing.workspace = true
+tokio.workspace = true
+url.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-uuid.workspace = true

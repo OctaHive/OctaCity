@@ -11,17 +11,19 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use octacity_coordinator::{
-  CoordinatorClient, CoordinatorError, HttpCoordinatorClient, HttpCoordinatorConfig, LeaseMonitor, LeaseMonitorOutcome,
-  LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, OutputUploadCoordinator, Registration, RetryPolicy,
+  CacheSessionCoordinator, CoordinatorClient, CoordinatorError, HttpCoordinatorClient, HttpCoordinatorConfig,
+  LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, OutputUploadCoordinator,
+  Registration, RetryPolicy,
 };
 use octacity_protocol::{
   AcquireLeaseResponse, ActiveJob, AgentInventory, AgentLifecycleEvent, AppendEventsResponse, AttemptEventEnvelope,
-  AttemptEventKind, BackendHealth, BackendHealthStatus, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
-  CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse,
-  ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState, JobSpecV1,
-  LeaseAssignment, NetworkPolicy, OciIsolation, OctaInventory, OctaSpec, OutputKind, OutputLimits,
-  OutputUploadMetadata, PlatformArchitecture, PlatformOs, PlatformSpec, RegisterAgentResponse, RuntimeCapability,
-  RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM, SignedEnvelope, SourceSpec,
+  AttemptEventKind, BackendHealth, BackendHealthStatus, BeginCacheSessionRequest, BeginCacheSessionResponse,
+  COORDINATOR_PROTOCOL_VERSION, CachePolicy, CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest,
+  CompleteOutputUploadResponse, CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity,
+  HostSnapshot, JobCompletionStatus, JobLifecycleState, JobSpecV1, LeaseAssignment, NetworkPolicy, OciIsolation,
+  OctaInventory, OctaSpec, OutputKind, OutputLimits, OutputUploadMetadata, PlatformArchitecture, PlatformOs,
+  PlatformSpec, RegisterAgentResponse, RemoteCacheGrant, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
+  RuntimeCapability, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM, SignedEnvelope, SourceSpec,
 };
 use serde_json::json;
 use tokio::{
@@ -45,6 +47,8 @@ enum Action {
   AppendEvents(u64),
   BeginOutput,
   CompleteOutput,
+  BeginCache,
+  RevokeCache,
   Complete,
   Oversized(usize),
 }
@@ -238,6 +242,32 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
         write_response(stream, 200, &body).await;
         return;
       }
+      Action::BeginCache => {
+        let body = serde_json::to_vec(&BeginCacheSessionResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          session_id: "cache-session-1".to_owned(),
+          scope_id: "project-trust-domain-1".to_owned(),
+          remote: Some(RemoteCacheGrant {
+            endpoint: "https://cache.example/v1".to_owned(),
+            bearer_token: "cache-secret".to_owned(),
+            expires_at: unix_now() + 60,
+          }),
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
+      Action::RevokeCache => {
+        let body = serde_json::to_vec(&RevokeCacheSessionResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          session_id: request.body["session_id"].as_str().unwrap().to_owned(),
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
       Action::Complete => {
         let body = serde_json::to_vec(&CompleteLeaseResponse {
           protocol_version: COORDINATOR_PROTOCOL_VERSION,
@@ -292,6 +322,7 @@ fn inventory() -> AgentInventory {
       plugins: Vec::new(),
     },
     source_plugins: Vec::new(),
+    cache: None,
   }
 }
 
@@ -648,6 +679,54 @@ async fn authorizes_and_completes_outputs_on_exact_fenced_endpoints() {
   assert_eq!(records[1].body["upload_id"], "upload-1");
 }
 
+#[tokio::test]
+async fn begins_and_revokes_cache_authority_on_exact_fenced_endpoints() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let lease = signed_lease(&signing_key, unix_now());
+  let server = MockServer::start(vec![Action::BeginCache, Action::RevokeCache]).await;
+  let client = client(&server, 1, Duration::from_secs(1), 16 * 1024);
+  let registration = registration();
+  let begin = BeginCacheSessionRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "begin-cache-1".to_owned(),
+    registration_id: registration.registration_id.clone(),
+    lease: (&lease).into(),
+    cache: CachePolicy {
+      namespace: "project/main".to_owned(),
+      read: true,
+      write: true,
+    },
+  };
+  let grant = client
+    .begin_cache_session(&registration, &lease, &begin, CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!(grant.session_id, "cache-session-1");
+  assert!(!format!("{grant:?}").contains("cache-secret"));
+  let revoke = RevokeCacheSessionRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "revoke-cache-1".to_owned(),
+    registration_id: registration.registration_id.clone(),
+    lease: (&lease).into(),
+    session_id: grant.session_id,
+  };
+  client
+    .revoke_cache_session(&registration, &lease, &revoke, CancellationToken::new())
+    .await
+    .unwrap();
+
+  let records = server.records.lock().unwrap();
+  assert_eq!(records[0].path, "/api/v1/leases/lease-1/cache:begin");
+  assert_eq!(records[0].body["cache"]["namespace"], "project/main");
+  assert_eq!(records[1].path, "/api/v1/leases/lease-1/cache:revoke");
+  assert_eq!(records[1].body["session_id"], "cache-session-1");
+  assert!(
+    records
+      .iter()
+      .all(|record| !record.authorization.contains("cache-secret"))
+  );
+}
+
 struct ScriptedClient {
   leases: Mutex<VecDeque<Result<AcquireLeaseResponse, CoordinatorError>>>,
   heartbeats: Mutex<VecDeque<Result<HeartbeatDirective, CoordinatorError>>>,
@@ -760,6 +839,7 @@ fn signed_lease(signing_key: &SigningKey, now: u64) -> LeaseAssignment {
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
+    cache: None,
     outputs: OutputLimits {
       artifact_count: 1,
       artifact_bytes: 1024,

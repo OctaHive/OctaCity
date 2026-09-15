@@ -226,6 +226,9 @@ impl OciEngine for ContainerdEngine {
     }
     runner.validate()?;
     request.validate()?;
+    if let Some(cache) = &request.cache {
+      octacity_execution::validate_process_cache_filesystem(cache)?;
+    }
     validate_request(&self.config, self.capability, &request)?;
 
     // One absolute deadline covers connection, image resolution, snapshot

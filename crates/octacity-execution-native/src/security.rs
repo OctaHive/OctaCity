@@ -1,7 +1,7 @@
 //! Builds the Bubblewrap filesystem and seccomp security profile.
 
 use super::*;
-use octacity_execution::WORKLOAD_IDENTITY_PATH;
+use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, WORKLOAD_IDENTITY_PATH};
 
 /// Converts the signed network policy into Bubblewrap namespace arguments.
 pub(super) fn network_arguments(network: &NetworkAccess) -> &'static [&'static str] {
@@ -99,9 +99,29 @@ pub(super) fn add_native_filesystem(
   // quota accounting can still inspect `workspace_root` from the host.
   command.arg("--dir").arg(&request.workspace);
   bind(command, &request.workspace, &request.workspace);
-  if let Some(identity) = &request.workload_identity {
+  if request.workload_identity.is_some()
+    || request
+      .cache
+      .as_ref()
+      .is_some_and(|cache| cache.token_file.is_some() || cache.ca_certificate_file.is_some())
+  {
     command.arg("--dir").arg("/run");
+  }
+  if let Some(identity) = &request.workload_identity {
     ro_bind(command, identity, Path::new(WORKLOAD_IDENTITY_PATH));
+  }
+  if let Some(cache) = &request.cache {
+    command.arg("--dir").arg("/var").arg("--dir").arg("/var/cache");
+    bind(command, &cache.local_directory, Path::new(CACHE_DIRECTORY_PATH));
+    if cache.token_file.is_some() || cache.ca_certificate_file.is_some() {
+      command.arg("--dir").arg("/run/octa-cache");
+    }
+    if let Some(token) = &cache.token_file {
+      ro_bind(command, token, Path::new(CACHE_TOKEN_PATH));
+    }
+    if let Some(certificate) = &cache.ca_certificate_file {
+      ro_bind(command, certificate, Path::new(CACHE_CA_CERTIFICATE_PATH));
+    }
   }
   bind(command, temporary_directory, Path::new("/tmp"));
   bind(command, home_directory, Path::new("/home/octacity"));

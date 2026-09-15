@@ -7,8 +7,9 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use octacity_protocol::{
-  ActiveJob, AgentInventory, BackendHealth, COORDINATOR_PROTOCOL_VERSION, HostCapacity, HostSnapshot, OctaInventory,
-  PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeCapability, SourcePluginInventory, TaskPluginInventory,
+  ActiveJob, AgentInventory, BackendHealth, CACHE_FEATURE_V1, CACHE_HTTP_FEATURE_V1, COORDINATOR_PROTOCOL_VERSION,
+  CacheCapability, HostCapacity, HostSnapshot, OctaInventory, PlatformArchitecture, PlatformOs, PlatformSpec,
+  RuntimeCapability, SourcePluginInventory, TaskPluginInventory,
 };
 use octacity_runner::RunnerInstallation;
 use octacity_source::SourcePluginRegistry;
@@ -48,6 +49,19 @@ pub struct HostMonitor {
   system: System,
   disks: Disks,
   capacity: HostCapacity,
+}
+
+/// Operator and release values that identify one registration inventory.
+#[derive(Clone, Debug)]
+pub struct AgentInventoryConfig {
+  /// Stable operator-assigned agent identity.
+  pub agent_id: String,
+  /// Running OctaCity agent release.
+  pub agent_version: String,
+  /// Scheduler-visible operator labels.
+  pub labels: BTreeMap<String, String>,
+  /// Whether local policy permits advertising Octa's HTTP L2 transport.
+  pub remote_cache_configured: bool,
 }
 
 impl HostMonitor {
@@ -110,9 +124,7 @@ impl HostMonitor {
 
 /// Builds the immutable registration inventory from verified components.
 pub fn build_inventory(
-  agent_id: String,
-  agent_version: String,
-  labels: BTreeMap<String, String>,
+  config: AgentInventoryConfig,
   runtimes: Vec<RuntimeCapability>,
   runner: &RunnerInstallation,
   sources: &SourcePluginRegistry,
@@ -141,11 +153,33 @@ pub fn build_inventory(
       sha256: plugin.manifest.sha256.clone(),
     })
     .collect();
+  let cache = runner
+    .capabilities
+    .runner_protocols
+    .contains(&octa_runner_protocol::RUNNER_PROTOCOL_VERSION)
+    .then(|| {
+      runner
+        .capabilities
+        .features
+        .iter()
+        .any(|feature| feature == CACHE_FEATURE_V1)
+    })
+    .filter(|supported| *supported)
+    .map(|_| CacheCapability {
+      runner_protocol: octa_runner_protocol::RUNNER_PROTOCOL_VERSION,
+      action_key_format: octa_cache_protocol::ACTION_KEY_FORMAT_V1,
+      remote_http: config.remote_cache_configured
+        && runner
+          .capabilities
+          .features
+          .iter()
+          .any(|feature| feature == CACHE_HTTP_FEATURE_V1),
+    });
   let inventory = AgentInventory {
-    agent_id,
-    agent_version,
+    agent_id: config.agent_id,
+    agent_version: config.agent_version,
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],
-    labels,
+    labels: config.labels,
     host_platform: host_platform()?,
     host_capacity: capacity,
     runtimes,
@@ -161,6 +195,7 @@ pub fn build_inventory(
       plugins,
     },
     source_plugins,
+    cache,
   };
   inventory.validate()?;
   Ok(inventory)

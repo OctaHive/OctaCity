@@ -8,6 +8,20 @@ source_plugins_dir = "/opt/octacity/source-plugins"
 # Logical names are selected by signed jobs; values are operator-owned files
 # refreshed by an OIDC, SPIFFE, or platform identity service.
 workload_identity_profiles = { ci = "/run/octacity-identities/ci.jwt" }
+# Native and containerd require this root to be a dedicated filesystem whose
+# capacity is at most max_bytes * max_scopes. Microsandbox enforces a volume
+# quota instead.
+cache.root = "/var/lib/octacity/cache"
+cache.capacity.max_bytes = 2147483648
+cache.capacity.high_watermark_bytes = 1932735283
+cache.capacity.low_watermark_bytes = 1717986918
+cache.max_scopes = 5
+cache.allow_read = true
+cache.allow_write = true
+cache.allowed_remote_origins = ["https://cache.example.com"]
+cache.native_environment_identities."linux-amd64" = "rust-1.98-toolchain-v1"
+cache.request_timeout_seconds = 30
+cache.max_parallel_transfers = 8
 enabled_runtime_modes = ["native"]
 allow_native_execution = true
 native_linux_cgroup_root = "/sys/fs/cgroup/octacity"

@@ -2,7 +2,8 @@
 
 Status: implemented by `octacity-protocol`, `octacity-coordinator`, and
 `octacity-lifecycle` for registration, lease acquisition, heartbeat, durable
-events, artifact/report upload authorization, and terminal completion.
+events, cache-session authority, artifact/report upload authorization, and
+terminal completion.
 
 ## Boundary
 
@@ -30,6 +31,7 @@ The v1 client retries only idempotent operations:
 - lease acquisition;
 - fenced lease heartbeat;
 - fenced event append;
+- fenced cache-session begin and revocation;
 - fenced artifact/report upload begin and completion;
 - fenced terminal completion.
 
@@ -158,6 +160,20 @@ The operation starts only after every event is acknowledged and local cleanup
 has succeeded. On restart the agent does not resume execution: it first asks
 all configured backends to destroy orphans, then removes only state directories
 whose valid journal proves agent ownership. Unknown files are left untouched.
+
+## Cache-session authority
+
+```text
+POST /api/v1/leases/{lease_id}/cache:begin
+POST /api/v1/leases/{lease_id}/cache:revoke
+```
+
+Both requests carry the current registration epoch and complete lease fence.
+The begin operation exchanges the signed logical cache policy for an opaque
+scope and optional short-lived HTTP L2 credential; revocation invalidates that
+session after the runner stops. The credential is never included in durable
+agent state. Detailed narrowing, path mapping, and failure semantics are in
+the [cache-session v1 specification](cache-session-v1.md).
 
 ## Artifact and report uploads
 

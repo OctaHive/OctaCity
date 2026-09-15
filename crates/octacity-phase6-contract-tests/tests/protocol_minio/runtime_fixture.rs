@@ -155,6 +155,7 @@ impl ExecutionBackend for HostRunnerBackend {
         data_dir: request.data_dir,
         plugins_dir: runner.plugins_dir.clone(),
         plugin_lock: runner.plugin_lock.clone(),
+        cache: None,
       },
       reaped: false,
     }))
@@ -290,6 +291,29 @@ impl CoordinatorClient for Phase6Coordinator {
   ) -> Result<(), CoordinatorError> {
     self.completions.lock().unwrap().push(completion.clone());
     Ok(())
+  }
+}
+
+#[async_trait]
+impl octacity_coordinator::CacheSessionCoordinator for Phase6Coordinator {
+  async fn begin_cache_session(
+    &self,
+    _registration: &Registration,
+    _lease: &LeaseAssignment,
+    _request: &octacity_protocol::BeginCacheSessionRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<octacity_protocol::BeginCacheSessionResponse, CoordinatorError> {
+    unreachable!("phase-six fixture does not enable caching")
+  }
+
+  async fn revoke_cache_session(
+    &self,
+    _registration: &Registration,
+    _lease: &LeaseAssignment,
+    _request: &octacity_protocol::RevokeCacheSessionRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    unreachable!("phase-six fixture does not enable caching")
   }
 }
 
@@ -519,6 +543,7 @@ pub(super) fn phase6_spec(installation: &RunnerInstallation, vault_host: &str) -
       },
       workload_identity_profile: Some("ci".to_owned()),
     },
+    cache: None,
     outputs: OutputLimits {
       artifact_count: 1,
       artifact_bytes: 1024,

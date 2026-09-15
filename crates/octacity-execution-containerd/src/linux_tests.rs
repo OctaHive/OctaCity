@@ -3,7 +3,10 @@
 use std::os::{fd::FromRawFd as _, unix::net::UnixListener};
 
 use super::*;
-use octacity_execution::WORKLOAD_IDENTITY_PATH;
+use octacity_execution::{
+  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionCacheMounts, LocalCacheCapacity,
+  WORKLOAD_IDENTITY_PATH,
+};
 
 fn platform() -> ExecutionPlatform {
   ExecutionPlatform {
@@ -59,6 +62,7 @@ impl Fixture {
       workspace: self.workspace.canonicalize().unwrap(),
       data_dir: self.workspace.join("data").canonicalize().unwrap(),
       workload_identity: None,
+      cache: None,
       cpu_millis: 1000,
       memory_bytes: 64 * 1024 * 1024,
       writable_disk_bytes: u64::MAX,
@@ -184,12 +188,26 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   };
   let identity = temporary.path().join("identity-token");
   fs::write(&identity, "signed-jwt").unwrap();
+  let cache = temporary.path().join("cache");
+  let cache_token = temporary.path().join("cache-token");
+  let cache_ca = temporary.path().join("cache-ca.pem");
+  fs::create_dir(&cache).unwrap();
+  fs::write(&cache_token, "cache-secret").unwrap();
+  fs::write(&cache_ca, "fixture-ca").unwrap();
   let request = StartExecution {
     execution_id: "job-1".to_owned(),
     workspace_root: workspace.clone(),
     workspace: workspace.clone(),
     data_dir: workspace.join("data"),
     workload_identity: Some(identity.clone()),
+    cache: Some(ExecutionCacheMounts {
+      capacity_root: cache.clone(),
+      local_directory: cache.clone(),
+      local_capacity: LocalCacheCapacity::new(2 * 1024 * 1024, 1_900_000, 1_800_000).unwrap(),
+      aggregate_max_bytes: 4 * 1024 * 1024,
+      token_file: Some(cache_token.clone()),
+      ca_certificate_file: Some(cache_ca.clone()),
+    }),
     cpu_millis: 2000,
     memory_bytes: 1024,
     writable_disk_bytes: 2048,
@@ -205,6 +223,10 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   let environment = process_environment(vec!["PATH=/tools/bin".to_owned(), "HOME=/workspace".to_owned()]).unwrap();
   let spec = oci_spec(&fixture.config, &runner, &request, &paths, &environment, "octacity-job").unwrap();
   assert_eq!(paths.data_dir, Path::new("/workspace/data"));
+  assert_eq!(
+    paths.cache.as_ref().unwrap().local_directory,
+    Path::new(CACHE_DIRECTORY_PATH)
+  );
   assert_eq!(spec["root"]["readonly"], true);
   assert_eq!(spec["linux"]["resources"]["cpu"]["quota"], 200_000);
   assert_eq!(spec["linux"]["resources"]["memory"]["limit"], 1024);
@@ -233,6 +255,23 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
       .iter()
       .any(|value| value == "ro")
   );
+  for (destination, source, readonly) in [
+    (CACHE_DIRECTORY_PATH, cache, false),
+    (CACHE_TOKEN_PATH, cache_token, true),
+    (CACHE_CA_CERTIFICATE_PATH, cache_ca, true),
+  ] {
+    let mount = spec["mounts"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|mount| mount["destination"] == destination)
+      .unwrap();
+    assert_eq!(mount["source"], source.to_string_lossy().as_ref());
+    assert_eq!(
+      mount["options"].as_array().unwrap().iter().any(|value| value == "ro"),
+      readonly
+    );
+  }
 }
 
 #[test]

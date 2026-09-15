@@ -9,7 +9,8 @@ use octacity_execution::{
 };
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, ExecutionSpec, NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpec, SourceSpec,
+  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, ExecutionSpec, NetworkPolicy, OctaSpec, OutputLimits,
+  RuntimeSpec, SourceSpec,
 };
 use octacity_runner::{RunStatus, RunnerCapabilities};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -105,6 +106,7 @@ impl ExecutionBackend for FakeBackend {
         data_dir: request.data_dir,
         plugins_dir: runner.plugins_dir.clone(),
         plugin_lock: runner.plugin_lock.clone(),
+        cache: None,
       },
       destroyed: self.destroyed.clone(),
     }))
@@ -256,6 +258,7 @@ fn specification(mode: RuntimeMode) -> JobSpecV1 {
       },
       workload_identity_profile: None,
     },
+    cache: None,
     outputs: OutputLimits {
       artifact_count: 0,
       artifact_bytes: 0,
@@ -365,6 +368,7 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
       ExecuteJobRequest {
         spec: spec.clone(),
         source_credentials: BTreeMap::new(),
+        cache_grant: None,
       },
       CancellationToken::new(),
       &events,
@@ -406,6 +410,7 @@ async fn rejects_unknown_workload_identity_before_source_activity() {
       ExecuteJobRequest {
         spec,
         source_credentials: BTreeMap::new(),
+        cache_grant: None,
       },
       CancellationToken::new(),
       &events,
@@ -451,6 +456,7 @@ async fn provisions_identity_for_execution_and_revokes_it_before_completion() {
       ExecuteJobRequest {
         spec,
         source_credentials: BTreeMap::new(),
+        cache_grant: None,
       },
       CancellationToken::new(),
       &events,
@@ -487,6 +493,7 @@ async fn rejects_an_unavailable_backend_without_materializing_source() {
       ExecuteJobRequest {
         spec,
         source_credentials: BTreeMap::new(),
+        cache_grant: None,
       },
       CancellationToken::new(),
       &events,
@@ -522,6 +529,7 @@ async fn retains_a_failed_workspace_for_ordered_caller_cleanup() {
       ExecuteJobRequest {
         spec,
         source_credentials: BTreeMap::new(),
+        cache_grant: None,
       },
       CancellationToken::new(),
       &events,
@@ -658,6 +666,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
         ExecuteJobRequest {
           spec: oversized,
           source_credentials: BTreeMap::new(),
+          cache_grant: None,
         },
         CancellationToken::new(),
         &events,
@@ -674,6 +683,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
         ExecuteJobRequest {
           spec: specification(RuntimeMode::Native),
           source_credentials: BTreeMap::new(),
+          cache_grant: None,
         },
         cancelled,
         &events,
@@ -711,6 +721,7 @@ async fn rejects_network_and_output_policy_before_source_activity() {
         ExecuteJobRequest {
           spec: network,
           source_credentials: BTreeMap::new(),
+          cache_grant: None,
         },
         CancellationToken::new(),
         &events,
@@ -733,6 +744,7 @@ async fn rejects_network_and_output_policy_before_source_activity() {
         ExecuteJobRequest {
           spec: outputs,
           source_credentials: BTreeMap::new(),
+          cache_grant: None,
         },
         CancellationToken::new(),
         &events,
@@ -741,6 +753,50 @@ async fn rejects_network_and_output_policy_before_source_activity() {
     Err(error) if matches!(error.error(), JobError::OutputLimit)
   ));
   assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rejects_cache_authority_without_local_support_and_cleans_the_job() {
+  let work_root = tempfile::tempdir().unwrap();
+  let executor = executor(
+    work_root.path(),
+    Arc::new(FakeSource {
+      calls: Arc::new(AtomicUsize::new(0)),
+      fail: false,
+    }),
+    Some(Arc::new(FakeBackend {
+      starts: Arc::new(AtomicUsize::new(0)),
+      destroyed: Arc::new(AtomicBool::new(false)),
+    })),
+  );
+  let (events, _receiver) = mpsc::channel(8);
+  let mut spec = specification(RuntimeMode::Native);
+  spec.cache = Some(CachePolicy {
+    namespace: "project/main".to_owned(),
+    read: true,
+    write: true,
+  });
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        spec,
+        source_credentials: BTreeMap::new(),
+        cache_grant: Some(BeginCacheSessionResponse {
+          protocol_version: 1,
+          request_id: "cache-begin".to_owned(),
+          session_id: "cache-session".to_owned(),
+          scope_id: "scope".to_owned(),
+          remote: None,
+        }),
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(matches!(failure.error(), JobError::Invalid(message) if message.contains("not configured")));
+  failure.cleanup().await.unwrap();
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
 #[test]

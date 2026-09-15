@@ -6,7 +6,8 @@
 
 use std::time::Duration;
 
-use octa_runner_protocol::RunStatus;
+use octa_cache_protocol::{LocalCacheCapacity, RuntimeIdentity};
+use octa_runner_protocol::{CacheMode, RunStatus};
 use octacity_execution::{ExecutionBackend, ExecutionError, ResourceUsage, StartExecution};
 use octacity_protocol::{ExecutionSpec, OctaSpec};
 use thiserror::Error;
@@ -84,6 +85,8 @@ pub struct RunnerJobRequest {
   pub execution: StartExecution,
   /// Runner tasks, environment, and output configuration.
   pub spec: ExecutionSpec,
+  /// Optional semantic cache policy combined with backend-projected paths.
+  pub cache: Option<RunnerCacheSession>,
   /// Sensitive byte strings removed from untrusted runner messages.
   ///
   /// This is agent-local policy and is deliberately absent from the runner
@@ -91,6 +94,25 @@ pub struct RunnerJobRequest {
   pub redactions: RunnerRedactions,
   /// Time allowed for graceful runner cancellation before a forced kill.
   pub cancellation_grace: Duration,
+}
+
+/// Backend-independent values used to build Octa's cache session request.
+#[derive(Clone, Debug)]
+pub struct RunnerCacheSession {
+  /// Independently authorized cache access mode.
+  pub mode: CacheMode,
+  /// Server-authorized semantic namespace.
+  pub namespace: String,
+  /// Operator-selected capacity and watermarks for the local scope.
+  pub local_capacity: LocalCacheCapacity,
+  /// Immutable execution environment identity.
+  pub runtime: RuntimeIdentity,
+  /// Optional agent-approved HTTP L2 endpoint.
+  pub remote_endpoint: Option<String>,
+  /// Whole-operation remote request deadline.
+  pub request_timeout_seconds: u64,
+  /// Per-job remote blob transfer limit.
+  pub max_parallel_transfers: std::num::NonZeroUsize,
 }
 
 impl RunnerJobRequest {

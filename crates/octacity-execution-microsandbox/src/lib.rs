@@ -19,9 +19,10 @@ use std::{
 use async_trait::async_trait;
 use microsandbox::{Backend, ExecControl, ExecEvent, LocalBackend, NetworkPolicy, Sandbox, with_backend};
 use octacity_execution::{
-  ExecutionArchitecture, ExecutionError, ExecutionExit, ExecutionIo, ExecutionOs, ExecutionPaths, ExecutionPlatform,
-  ExecutionReader, ExecutionTarget, ExecutionWriter, NetworkAccess, OciIsolation, ResourceUsage, RunnerProgram,
-  RunningExecution, StartExecution, WORKLOAD_IDENTITY_PATH,
+  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionArchitecture, ExecutionCacheMounts,
+  ExecutionError, ExecutionExit, ExecutionIo, ExecutionOs, ExecutionPaths, ExecutionPlatform, ExecutionReader,
+  ExecutionTarget, ExecutionWriter, NetworkAccess, OciIsolation, ResourceUsage, RunnerProgram, RunningExecution,
+  StartExecution, WORKLOAD_IDENTITY_PATH,
 };
 use octacity_execution_oci::{OciCapability, OciEngine};
 use sha2::{Digest as _, Sha256};
@@ -241,6 +242,23 @@ impl OciEngine for MicrosandboxEngine {
             mount.bind(identity).readonly().nosuid().nodev()
           });
         }
+        if let Some(cache) = &plan.cache {
+          builder = builder.volume(CACHE_DIRECTORY_PATH, |mount| {
+            mount
+              .bind(&cache.mounts.local_directory)
+              .quota(cache.quota_mib)
+              .nosuid()
+              .nodev()
+          });
+          if let Some(token) = &cache.mounts.token_file {
+            builder = builder.volume(CACHE_TOKEN_PATH, |mount| mount.bind(token).readonly().nosuid().nodev());
+          }
+          if let Some(certificate) = &cache.mounts.ca_certificate_file {
+            builder = builder.volume(CACHE_CA_CERTIFICATE_PATH, |mount| {
+              mount.bind(certificate).readonly().nosuid().nodev()
+            });
+          }
+        }
         builder = match network {
           Some(policy) => builder.network(|configuration| configuration.policy(policy)),
           None => builder.disable_network(),
@@ -308,6 +326,7 @@ impl OciEngine for MicrosandboxEngine {
         data_dir: plan.guest_data_dir,
         plugins_dir: plan.guest_plugins_dir,
         plugin_lock: plan.guest_plugin_lock,
+        cache: plan.cache.as_ref().map(|cache| cache.mounts.projected_paths()),
       },
       exit_receiver: Some(exit_receiver),
       exit_code: None,

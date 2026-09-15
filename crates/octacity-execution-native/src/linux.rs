@@ -155,6 +155,9 @@ impl ExecutionBackend for NativeBackend {
     }
     runner.validate()?;
     request.validate()?;
+    if let Some(cache) = &request.cache {
+      octacity_execution::validate_process_cache_filesystem(cache)?;
+    }
     let host_platform = host_execution_platform()?;
     if request.root
       != (ExecutionTarget::Native {
@@ -280,6 +283,10 @@ impl ExecutionBackend for NativeBackend {
         data_dir: request.data_dir,
         plugins_dir: runner.plugins_dir.clone(),
         plugin_lock: runner.plugin_lock.clone(),
+        cache: request
+          .cache
+          .as_ref()
+          .map(octacity_execution::ExecutionCacheMounts::projected_paths),
       },
       cgroup,
       filesystem_root: request.workspace_root,

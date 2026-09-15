@@ -77,6 +77,7 @@ async fn run_loaded(
   )?;
   let lifecycle = JobLifecycle::new(
     coordinator,
+    components.cache_coordinator.clone(),
     registration,
     components.executor.clone(),
     components.outputs.clone(),
@@ -343,6 +344,18 @@ mod tests {
       octa_release_root: state.path().join("octa"),
       source_plugins_dir: state.path().join("sources"),
       workload_identity_profiles: Default::default(),
+      cache: octacity_config::CacheConfig {
+        root: state.path().join("cache"),
+        capacity: octacity_config::LocalCacheCapacity::new(100, 90, 80).unwrap(),
+        max_scopes: 2,
+        allow_read: true,
+        allow_write: true,
+        allowed_remote_origins: Vec::new(),
+        ca_certificate_file: None,
+        native_environment_identities: Default::default(),
+        request_timeout_seconds: 1,
+        max_parallel_transfers: 1,
+      },
       enabled_runtime_modes: Vec::new(),
       allow_native_execution: false,
       native_linux_cgroup_root: None,

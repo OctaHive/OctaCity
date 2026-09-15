@@ -454,14 +454,17 @@ state_root
 octa_release_root
 source_plugins_dir
 workload_identity_profiles
-cache_root
-cache_max_bytes
-cache_high_watermark_bytes
-cache_low_watermark_bytes
-allowed_cache_origins
-native_cache_environment_identities
-cache_request_timeout_seconds
-cache_max_parallel_transfers
+cache.root
+cache.capacity.max_bytes
+cache.capacity.high_watermark_bytes
+cache.capacity.low_watermark_bytes
+cache.max_scopes
+cache.allow_read
+cache.allow_write
+cache.allowed_remote_origins
+cache.native_environment_identities
+cache.request_timeout_seconds
+cache.max_parallel_transfers
 enabled_runtime_modes
 allow_native_execution
 native_environment
@@ -1289,8 +1292,9 @@ considered real; the S3 adapter remains unchanged behind `ArtifactStore`.
   only namespace and independent read/write permission; cache endpoints and
   bearer credentials are not repository-controlled inputs.
 - Add agent configuration for the persistent cache root, local capacity,
-  allowed remote origins, Native environment identities, request deadlines,
-  and transfer limits. Signed jobs may narrow but never enlarge these values.
+  retained trust-scope count, allowed remote origins, Native environment
+  identity strings, request deadlines, and transfer limits. Signed jobs may
+  narrow but never enlarge these values.
 - Add a fenced coordinator operation that returns a short-lived cache session
   credential. Store it in a private per-job file and revoke/remove it after
   runner shutdown without placing its value in serialized state.
@@ -1315,6 +1319,25 @@ Completion gate: agent A publishes one cacheable build through Octa; agent B,
 with an empty L1 but the same authorized namespace and runtime identity,
 restores it from the remote L2 without executing the task. Both agents retain
 verified local L1 copies, and neither observes the cache bearer value.
+
+Implementation status: component-complete; the release-level completion gate
+remains part of Phase 9. The signed job carries only namespace and
+read/write authority, while fenced begin/revoke operations supply a bounded,
+short-lived remote grant. `octacity-cache-session` narrows that grant through
+operator origin, network, runtime-identity, capacity, deadline, and transfer
+policy. Octa applies per-scope GC limits; Microsandbox hard-limits each scope,
+while process backends require an aggregate-bounded dedicated filesystem. It
+provisions a persistent trust-scoped L1 plus a private per-job
+bearer file and removes the bearer after runner shutdown. Native, containerd,
+and Microsandbox project the same fixed guest paths, and runner protocol v3
+carries explicit L1 watermarks without an agent-side cache implementation.
+Inventory advertises only the exact installed Octa cache capabilities.
+Lifecycle tests cover fenced ordering, failures, and cleanup, while Octa's published
+two-process HTTPS contract proves remote publication, restore into an empty
+second L1 without task execution, local retention, corruption repair, and
+credential non-disclosure. This proves the data plane and agent composition
+boundaries, but does not claim that two released agent processes and the
+durable server vertical slice already exist. Phase 9 closes that final gate.
 
 ### Phase 8: hardening and packaging
 

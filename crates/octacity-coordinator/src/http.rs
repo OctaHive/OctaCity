@@ -5,10 +5,11 @@ use std::{fs, io::Read as _, path::PathBuf, time::Duration};
 use async_trait::async_trait;
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentInventory, AppendEventsRequest, AppendEventsResponse,
-  AttemptEventEnvelope, BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION,
-  CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse,
-  CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot,
-  LeaseAssignment, RegisterAgentRequest, RegisterAgentResponse,
+  AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse, BeginOutputUploadRequest,
+  BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse,
+  CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse, HeartbeatDirective,
+  HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, LeaseAssignment, RegisterAgentRequest,
+  RegisterAgentResponse, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
 };
 use reqwest::{StatusCode, Url, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -18,7 +19,8 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::{
-  CoordinatorClient, CoordinatorError, OutputUploadCoordinator, Registration, RetryPolicy, invalid, unix_now,
+  CacheSessionCoordinator, CoordinatorClient, CoordinatorError, OutputUploadCoordinator, Registration, RetryPolicy,
+  invalid, unix_now,
 };
 
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
@@ -484,6 +486,67 @@ impl OutputUploadCoordinator for HttpCoordinatorClient {
       )
       .await?;
     response.validate(&request.request_id, &request.upload_id)?;
+    Ok(())
+  }
+}
+
+#[async_trait]
+impl CacheSessionCoordinator for HttpCoordinatorClient {
+  async fn begin_cache_session(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &BeginCacheSessionRequest,
+    cancellation: CancellationToken,
+  ) -> Result<BeginCacheSessionResponse, CoordinatorError> {
+    registration.validate()?;
+    request.validate()?;
+    if request.registration_id != registration.registration_id || request.lease != lease.into() {
+      return Err(invalid("cache session does not match its registration and lease"));
+    }
+    let response: BeginCacheSessionResponse = self
+      .post(
+        PostCall {
+          operation: "begin cache session",
+          path: &["api", "v1", "leases", &lease.lease_id, "cache:begin"],
+          request_id: &request.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        request,
+      )
+      .await?;
+    response.validate(&request.request_id, unix_now()?)?;
+    Ok(response)
+  }
+
+  async fn revoke_cache_session(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &RevokeCacheSessionRequest,
+    cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    registration.validate()?;
+    request.validate()?;
+    if request.registration_id != registration.registration_id || request.lease != lease.into() {
+      return Err(invalid("cache revocation does not match its registration and lease"));
+    }
+    let response: RevokeCacheSessionResponse = self
+      .post(
+        PostCall {
+          operation: "revoke cache session",
+          path: &["api", "v1", "leases", &lease.lease_id, "cache:revoke"],
+          request_id: &request.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        request,
+      )
+      .await?;
+    response.validate(&request.request_id, &request.session_id)?;
     Ok(())
   }
 }

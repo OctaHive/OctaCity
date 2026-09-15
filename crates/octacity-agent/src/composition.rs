@@ -9,9 +9,11 @@
 
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
+use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
 use octacity_config::{AgentConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
 use octacity_coordinator::{
-  CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, OutputUploadCoordinator, RetryPolicy,
+  CacheSessionCoordinator, CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, OutputUploadCoordinator,
+  RetryPolicy,
 };
 use octacity_execution::{ExecutionArchitecture, ExecutionBackend, ExecutionOs, ExecutionPlatform, OciIsolation};
 use octacity_execution_containerd::{CONTAINERD_ENGINE_NAME, ContainerdEngine, ContainerdEngineConfig};
@@ -19,7 +21,7 @@ use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngi
 use octacity_execution_native::{LinuxNativeConfig, NATIVE_BACKEND_NAME, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciCapability, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
-use octacity_inventory::{HostMonitor, build_inventory, host_platform};
+use octacity_inventory::{AgentInventoryConfig, HostMonitor, build_inventory, host_platform};
 use octacity_job::{JobExecutor, JobExecutorConfig};
 use octacity_output::{OutputPublisher, PresignedOutputPublisher, PresignedOutputPublisherConfig};
 use octacity_protocol::{
@@ -33,6 +35,7 @@ pub(crate) struct Components {
   pub(crate) runner: RunnerInstallation,
   pub(crate) executor: Arc<JobExecutor>,
   pub(crate) coordinator: Arc<dyn CoordinatorClient>,
+  pub(crate) cache_coordinator: Arc<dyn CacheSessionCoordinator>,
   pub(crate) outputs: Arc<dyn OutputPublisher>,
   pub(crate) inventory: AgentInventory,
   pub(crate) host: HostMonitor,
@@ -57,9 +60,12 @@ impl Components {
       virtualization_available,
     )?;
     let inventory = build_inventory(
-      validated.config.agent_id.clone(),
-      env!("CARGO_PKG_VERSION").to_owned(),
-      validated.config.labels.clone(),
+      AgentInventoryConfig {
+        agent_id: validated.config.agent_id.clone(),
+        agent_version: env!("CARGO_PKG_VERSION").to_owned(),
+        labels: validated.config.labels.clone(),
+        remote_cache_configured: !validated.config.cache.allowed_remote_origins.is_empty(),
+      },
       runtimes,
       &runner,
       &source_plugins,
@@ -78,6 +84,7 @@ impl Components {
       retry: retry.clone(),
     })?);
     let coordinator: Arc<dyn CoordinatorClient> = http_coordinator.clone();
+    let cache_coordinator: Arc<dyn CacheSessionCoordinator> = http_coordinator.clone();
     let output_coordinator: Arc<dyn OutputUploadCoordinator> = http_coordinator;
     let outputs: Arc<dyn OutputPublisher> = Arc::new(PresignedOutputPublisher::new(
       output_coordinator,
@@ -93,6 +100,7 @@ impl Components {
       runner,
       executor: Arc::new(executor),
       coordinator,
+      cache_coordinator,
       outputs,
       inventory,
       host,
@@ -107,6 +115,22 @@ async fn build_executor(
   runner: RunnerInstallation,
   source_plugins: Arc<SourcePluginRegistry>,
 ) -> Result<(JobExecutor, Vec<RuntimeCapability>, Vec<BackendHealth>), Box<dyn std::error::Error>> {
+  #[cfg(unix)]
+  if validated.runtimes.iter().any(|runtime| match runtime {
+    ValidatedRuntimeConfig::Native { .. } => true,
+    ValidatedRuntimeConfig::Oci { engines } => engines
+      .iter()
+      .any(|engine| matches!(engine, OciEngineConfig::Containerd { .. })),
+  }) {
+    let aggregate_max_bytes = validated
+      .config
+      .cache
+      .capacity
+      .max_bytes
+      .checked_mul(u64::try_from(validated.config.cache.max_scopes)?)
+      .ok_or("validated aggregate cache capacity overflowed")?;
+    octacity_execution::validate_process_cache_capacity_root(&validated.config.cache.root, aggregate_max_bytes)?;
+  }
   let mut backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>> = BTreeMap::new();
   let mut runtime_capabilities = Vec::new();
   let mut backend_health = Vec::new();
@@ -224,7 +248,19 @@ async fn build_executor(
         max_accounting_failures: validated.config.max_accounting_failures,
       },
     },
-  )?;
+  )?
+  .with_cache(Arc::new(CacheSessionManager::new(CacheSessionManagerConfig {
+    root: validated.config.cache.root.clone(),
+    capacity: validated.config.cache.capacity,
+    max_scopes: validated.config.cache.max_scopes,
+    allow_read: validated.config.cache.allow_read,
+    allow_write: validated.config.cache.allow_write,
+    allowed_origins: validated.config.cache.allowed_remote_origins.clone(),
+    ca_certificate_file: validated.config.cache.ca_certificate_file.clone(),
+    native_identities: validated.config.cache.native_environment_identities.clone(),
+    request_timeout_seconds: validated.config.cache.request_timeout_seconds,
+    max_parallel_transfers: validated.config.cache.max_parallel_transfers,
+  })?));
   Ok((executor, runtime_capabilities, backend_health))
 }
 
@@ -300,6 +336,9 @@ pub(crate) mod tests {
     let state_root = directory("state");
     let release_root = directory("octa");
     let source_plugins = directory("sources");
+    let cache_root = temporary.path().join("cache");
+    fs::create_dir(&cache_root).unwrap();
+    fs::set_permissions(&cache_root, fs::Permissions::from_mode(0o700)).unwrap();
     fs::create_dir(release_root.join("plugins")).unwrap();
     fs::write(release_root.join("Octa.lock"), "version: 1\nplugins: {}\n").unwrap();
 
@@ -314,7 +353,9 @@ pub(crate) mod tests {
     fs::write(
       release_root.join("octa-runner-capabilities.json"),
       format!(
-        "{{\"type\":\"capabilities\",\"octa_version\":\"0.3.0\",\"runner_protocols\":[1],\"event_schemas\":[3],\"plugin_protocols\":[1],\"octafile_versions\":[1],\"platform\":\"{runner_platform}\",\"features\":[]}}"
+        "{{\"type\":\"capabilities\",\"octa_version\":\"0.3.0\",\"runner_protocols\":[3],\"event_schemas\":[4],\"plugin_protocols\":[2],\"octafile_versions\":[1],\"platform\":\"{runner_platform}\",\"features\":[\"{cache_feature}\",\"{cache_http_feature}\"]}}",
+        cache_feature = octacity_protocol::CACHE_FEATURE_V1,
+        cache_http_feature = octacity_protocol::CACHE_HTTP_FEATURE_V1,
       ),
     )
     .unwrap();
@@ -340,6 +381,7 @@ state_root = "{}"
 octa_release_root = "{}"
 source_plugins_dir = "{}"
 workload_identity_profiles = {{}}
+cache = {{ root = "{}", capacity = {{ max_bytes = 1048576, high_watermark_bytes = 943718, low_watermark_bytes = 838860 }}, max_scopes = 4, allow_read = true, allow_write = true, allowed_remote_origins = ["https://cache.example"], native_environment_identities = {{}}, request_timeout_seconds = 10, max_parallel_transfers = 2 }}
 enabled_runtime_modes = ["oci"]
 allow_native_execution = false
 native_linux_pids_limit = 0
@@ -384,6 +426,7 @@ metrics_sample_interval_seconds = 1
         state_root.display(),
         release_root.display(),
         source_plugins.display(),
+        cache_root.display(),
         executable.display(),
         libkrunfw.display(),
       ),

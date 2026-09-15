@@ -8,6 +8,8 @@ repository.workspace = true
 description = "Agent inventory and advisory host metrics for OctaCity"
 
 [dependencies]
+octa-cache-protocol.workspace = true
+octa-runner-protocol.workspace = true
 octacity-protocol = { path = "../octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }

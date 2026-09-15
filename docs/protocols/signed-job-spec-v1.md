@@ -1,6 +1,6 @@
 # Signed JobSpec protocol v1
 
-Status: implemented wire contract; server-agent transport not yet implemented.
+Status: implemented wire contract.
 
 This document specifies the signed execution intent represented by the
 `octacity-protocol` crate. A server creates a `JobSpecV1`, signs its exact JSON
@@ -125,7 +125,7 @@ an actual job must use values resolved from installed artifacts and source.
   "octa": {
     "version": "0.3.0",
     "runner_sha256": "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0",
-    "runner_protocol": 1,
+    "runner_protocol": 3,
     "event_schema": 3,
     "plugin_protocol": 1,
     "plugin_digests": {
@@ -164,6 +164,11 @@ an actual job must use values resolved from installed artifacts and source.
       }
     }
   },
+  "cache": {
+    "namespace": "project/main",
+    "read": true,
+    "write": true
+  },
   "outputs": {
     "artifact_count": 100,
     "artifact_bytes": 1073741824,
@@ -196,6 +201,20 @@ jobs or attempts.
 JobSpec crate. The future coordinator transport must validate them on
 heartbeat, event, artifact, and completion operations. JobSpec verification
 does not replace continuous lease ownership or cancellation after lease loss.
+
+## Cache authority
+
+The optional `cache` object signs only semantic authority: a portable
+namespace and independent read/write permissions. At least one permission must
+be true. The namespace follows Octa cache-protocol length and character
+validation. It is an opaque semantic identifier, never a filesystem path.
+
+Endpoints, credentials, local paths, capacity, runtime identities, timeouts,
+and transfer limits are intentionally absent. The agent obtains a fenced,
+short-lived transport grant from the coordinator, narrows it through local
+configuration and the signed network policy, then passes the resulting session
+to Octa runner protocol v3. Omitting `cache` disables result caching for the
+job.
 
 ## Source requirement
 

@@ -9,6 +9,8 @@ description = "Backend-neutral execution ports for OctaCity"
 
 [dependencies]
 async-trait.workspace = true
+libc.workspace = true
+octa-cache-protocol.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

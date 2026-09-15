@@ -8,8 +8,13 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zeroize::Zeroize as _;
 
-use crate::{OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope};
+pub use octa_cache_protocol::{
+  TASK_RESULT_CACHE_FEATURE_V1 as CACHE_FEATURE_V1, TASK_RESULT_CACHE_HTTP_FEATURE_V1 as CACHE_HTTP_FEATURE_V1,
+};
+
+use crate::{CachePolicy, OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope};
 
 mod validation;
 
@@ -36,7 +41,8 @@ pub const MAX_PRESIGNED_UPLOAD_URL_BYTES: usize = 8192;
 pub const MAX_UPLOAD_HEADER_NAME_BYTES: usize = 256;
 /// Maximum UTF-8 bytes in one server-required upload header value.
 pub const MAX_UPLOAD_HEADER_VALUE_BYTES: usize = 4096;
-
+/// Maximum bytes accepted for one short-lived cache bearer credential.
+pub const MAX_CACHE_CREDENTIAL_BYTES: usize = 16 * 1024;
 /// Complete scheduler-visible inventory sent during registration.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -59,6 +65,21 @@ pub struct AgentInventory {
   pub octa: OctaInventory,
   /// Verified operator-installed source plugins.
   pub source_plugins: Vec<SourcePluginInventory>,
+  /// Verified Octa task-result cache capability, when installed.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache: Option<CacheCapability>,
+}
+
+/// Scheduler-visible cache support derived from the installed Octa runner.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheCapability {
+  /// Runner wire version carrying explicit L1 capacity.
+  pub runner_protocol: u16,
+  /// Canonical action-key format understood by the installed cache engine.
+  pub action_key_format: u16,
+  /// Whether the agent can negotiate Octa's HTTP L2 transport.
+  pub remote_http: bool,
 }
 
 /// Static host resources used only as advisory scheduling input.
@@ -613,6 +634,96 @@ pub struct CompleteOutputUploadResponse {
   pub request_id: String,
   /// Echo of the completed upload identity.
   pub upload_id: String,
+}
+
+/// Fenced request for server authorization of one runner cache session.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginCacheSessionRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Lease fence authorizing the operation.
+  pub lease: LeaseFence,
+  /// Signed namespace and independently narrowed access permissions.
+  pub cache: CachePolicy,
+}
+
+/// Optional remote L2 authority returned for an active fenced cache session.
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteCacheGrant {
+  /// HTTPS base URL implementing Octa's cache HTTP protocol.
+  pub endpoint: String,
+  /// Short-lived bearer value written only to a private per-job file.
+  pub bearer_token: String,
+  /// First Unix second at which the bearer is no longer usable.
+  pub expires_at: u64,
+}
+
+impl std::fmt::Debug for RemoteCacheGrant {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("RemoteCacheGrant")
+      .field("endpoint", &self.endpoint)
+      .field("bearer_token", &"<redacted>")
+      .field("expires_at", &self.expires_at)
+      .finish()
+  }
+}
+
+impl Drop for RemoteCacheGrant {
+  fn drop(&mut self) {
+    self.bearer_token.zeroize();
+  }
+}
+
+/// Server-authorized cache scope and optional remote transport authority.
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeginCacheSessionResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Opaque revocable cache-session identity.
+  pub session_id: String,
+  /// Opaque trust-domain scope used to isolate persistent L1 state.
+  pub scope_id: String,
+  /// Optional remote L2 authority; absence requests an L1-only session.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub remote: Option<RemoteCacheGrant>,
+}
+
+/// Idempotent fenced revocation of a cache session after runner shutdown.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeCacheSessionRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch.
+  pub registration_id: String,
+  /// Lease fence authorizing the operation.
+  pub lease: LeaseFence,
+  /// Opaque session returned by the corresponding begin operation.
+  pub session_id: String,
+}
+
+/// Acknowledgement that remote cache authority has been revoked.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeCacheSessionResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Echo of the revoked session identity.
+  pub session_id: String,
 }
 
 /// Advisory state of one concrete execution implementation.

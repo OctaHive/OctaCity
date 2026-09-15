@@ -7,7 +7,7 @@
 use octa_runner_protocol::{MAX_RUNNER_INPUT_FRAME_BYTES, RunnerCommand};
 #[cfg(test)]
 use octa_runner_protocol::{
-  RUNNER_EVENT_SCHEMA_VERSION, RUNNER_INPUT_SCHEMA_V2, RUNNER_OUTPUT_SCHEMA_V2, RUNNER_PROTOCOL_VERSION,
+  RUNNER_EVENT_SCHEMA_VERSION, RUNNER_INPUT_SCHEMA_V3, RUNNER_OUTPUT_SCHEMA_V3, RUNNER_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -99,8 +99,8 @@ mod tests {
 
   #[test]
   fn shared_schemas_match_the_supported_protocol_versions() {
-    let input: serde_json::Value = serde_json::from_str(RUNNER_INPUT_SCHEMA_V2).unwrap();
-    let output: serde_json::Value = serde_json::from_str(RUNNER_OUTPUT_SCHEMA_V2).unwrap();
+    let input: serde_json::Value = serde_json::from_str(RUNNER_INPUT_SCHEMA_V3).unwrap();
+    let output: serde_json::Value = serde_json::from_str(RUNNER_OUTPUT_SCHEMA_V3).unwrap();
 
     assert_eq!(
       input["$defs"]["start"]["properties"]["protocol_version"]["const"],

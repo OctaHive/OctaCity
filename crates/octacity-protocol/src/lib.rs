@@ -66,8 +66,52 @@ pub struct JobSpecV1 {
   pub execution: ExecutionSpec,
   /// Platform, isolation, resources, and network policy.
   pub runtime: RuntimeSpec,
+  /// Optional logical cache authority; transport credentials remain out of band.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache: Option<CachePolicy>,
   /// Upper bounds for outputs accepted from the job.
   pub outputs: OutputLimits,
+}
+
+/// Repository-controlled cache permissions covered by the JobSpec signature.
+///
+/// The server supplies storage location and credentials separately under the
+/// active lease fence. A repository can therefore opt out or narrow access,
+/// but it cannot select an endpoint or enlarge operator policy.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CachePolicy {
+  /// Server-authorized logical action namespace.
+  pub namespace: String,
+  /// Permit action and blob lookup.
+  pub read: bool,
+  /// Permit publication of successful action results.
+  pub write: bool,
+}
+
+impl CachePolicy {
+  /// Validates the semantic scope and requires at least one useful permission.
+  pub fn validate(&self) -> Result<(), String> {
+    octa_cache_protocol::validate_namespace(&self.namespace).map_err(|error| error.to_string())?;
+    if !self.read && !self.write {
+      return Err("cache policy must allow reading, writing, or both".to_owned());
+    }
+    Ok(())
+  }
+
+  /// Converts independent permissions to Octa's cache access mode.
+  ///
+  /// This method remains fallible because wire DTOs can be constructed by
+  /// callers without first invoking [`Self::validate`].
+  pub fn mode(&self) -> Result<octa_cache_protocol::CacheMode, String> {
+    self.validate()?;
+    Ok(match (self.read, self.write) {
+      (true, true) => octa_cache_protocol::CacheMode::ReadWrite,
+      (true, false) => octa_cache_protocol::CacheMode::ReadOnly,
+      (false, true) => octa_cache_protocol::CacheMode::WriteOnly,
+      (false, false) => return Err("cache policy must allow reading, writing, or both".to_owned()),
+    })
+  }
 }
 
 /// Exact source-plugin and revision requirement for a job.
@@ -370,6 +414,9 @@ impl JobSpecV1 {
     self.octa.validate()?;
     self.execution.validate()?;
     self.runtime.validate()?;
+    if let Some(cache) = &self.cache {
+      cache.validate()?;
+    }
     self.outputs.validate()
   }
 }

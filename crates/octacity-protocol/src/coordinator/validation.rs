@@ -31,6 +31,9 @@ impl AgentInventory {
       }
     }
     self.octa.validate()?;
+    if let Some(cache) = &self.cache {
+      cache.validate(&self.octa)?;
+    }
     bounded_len("source plugins", self.source_plugins.len())?;
     let mut source_names = BTreeSet::new();
     for plugin in &self.source_plugins {
@@ -38,6 +41,20 @@ impl AgentInventory {
       if !source_names.insert(&plugin.name) {
         return invalid("source plugin names must not contain duplicates");
       }
+    }
+    Ok(())
+  }
+}
+
+impl CacheCapability {
+  fn validate(&self, octa: &OctaInventory) -> Result<(), CoordinatorProtocolError> {
+    if self.runner_protocol == 0
+      || self.action_key_format != octa_cache_protocol::ACTION_KEY_FORMAT_V1
+      || !octa.runner_protocols.contains(&self.runner_protocol)
+      || !octa.features.iter().any(|feature| feature == CACHE_FEATURE_V1)
+      || (self.remote_http && !octa.features.iter().any(|feature| feature == CACHE_HTTP_FEATURE_V1))
+    {
+      return invalid("cache capability is not supported by the advertised Octa runner");
     }
     Ok(())
   }
@@ -469,6 +486,72 @@ impl CompleteOutputUploadResponse {
     identifier("upload_id", &self.upload_id)?;
     if self.upload_id != expected_upload_id {
       return invalid("output completion response does not match upload_id");
+    }
+    Ok(())
+  }
+}
+
+impl BeginCacheSessionRequest {
+  /// Validates fencing and the signed semantic cache authority.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    self.cache.validate().map_err(CoordinatorProtocolError::new)
+  }
+}
+
+impl BeginCacheSessionResponse {
+  /// Correlates and bounds an authorization before the agent creates files.
+  pub fn validate(&self, expected_request_id: &str, now: u64) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    identifier("cache session_id", &self.session_id)?;
+    identifier("cache scope_id", &self.scope_id)?;
+    if let Some(remote) = &self.remote {
+      remote.validate(now)?;
+    }
+    Ok(())
+  }
+}
+
+impl RemoteCacheGrant {
+  fn validate(&self, now: u64) -> Result<(), CoordinatorProtocolError> {
+    if self.endpoint.is_empty()
+      || self.endpoint.len() > octa_cache_protocol::MAX_CACHE_STRING_BYTES
+      || self.endpoint.chars().any(char::is_control)
+    {
+      return invalid("remote cache endpoint is empty, contains controls, or is oversized");
+    }
+    if self.bearer_token.is_empty()
+      || self.bearer_token.len() > MAX_CACHE_CREDENTIAL_BYTES
+      || self.bearer_token.chars().any(char::is_control)
+    {
+      return invalid("remote cache bearer is empty, contains controls, or is oversized");
+    }
+    if self.expires_at <= now {
+      return invalid("remote cache credential is expired");
+    }
+    Ok(())
+  }
+}
+
+impl RevokeCacheSessionRequest {
+  /// Validates the fenced idempotent revocation identity.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    identifier("cache session_id", &self.session_id)
+  }
+}
+
+impl RevokeCacheSessionResponse {
+  /// Correlates a revocation acknowledgement to the active session.
+  pub fn validate(&self, expected_request_id: &str, expected_session_id: &str) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    identifier("cache session_id", &self.session_id)?;
+    if self.session_id != expected_session_id {
+      return invalid("cache revocation response does not match session_id");
     }
     Ok(())
   }

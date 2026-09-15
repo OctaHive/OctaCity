@@ -1,7 +1,7 @@
 //! Builds the fixed OCI runtime specification and guest path mapping.
 
 use super::*;
-use octacity_execution::WORKLOAD_IDENTITY_PATH;
+use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, WORKLOAD_IDENTITY_PATH};
 
 /// Maps verified host paths into fixed paths inside the OCI root filesystem.
 pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> Result<ExecutionPaths, ExecutionError> {
@@ -10,6 +10,10 @@ pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> R
     data_dir: map_path(&request.workspace, &request.data_dir, Path::new(GUEST_WORKSPACE))?,
     plugins_dir: map_path(&runner.release_root, &runner.plugins_dir, Path::new(GUEST_RELEASE))?,
     plugin_lock: map_path(&runner.release_root, &runner.plugin_lock, Path::new(GUEST_RELEASE))?,
+    cache: request
+      .cache
+      .as_ref()
+      .map(octacity_execution::ExecutionCacheMounts::projected_paths),
   })
 }
 
@@ -105,5 +109,25 @@ pub(super) fn oci_spec(
         "options": ["bind", "ro", "nosuid", "nodev", "noexec"]
       }));
   }
+  if let Some(cache) = &request.cache {
+    push_bind_mount(&mut spec, CACHE_DIRECTORY_PATH, &cache.local_directory, false);
+    if let Some(token) = &cache.token_file {
+      push_bind_mount(&mut spec, CACHE_TOKEN_PATH, token, true);
+    }
+    if let Some(certificate) = &cache.ca_certificate_file {
+      push_bind_mount(&mut spec, CACHE_CA_CERTIFICATE_PATH, certificate, true);
+    }
+  }
   Ok(spec)
+}
+
+fn push_bind_mount(spec: &mut serde_json::Value, destination: &str, source: &Path, readonly: bool) {
+  let mut options = vec!["bind", "rw", "nosuid", "nodev", "noexec"];
+  if readonly {
+    options[1] = "ro";
+  }
+  spec["mounts"]
+    .as_array_mut()
+    .expect("the static OCI specification always contains a mounts array")
+    .push(serde_json::json!({ "destination": destination, "type": "bind", "source": source, "options": options }));
 }

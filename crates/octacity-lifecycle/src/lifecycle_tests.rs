@@ -6,17 +6,19 @@ use std::sync::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signer as _, SigningKey};
+use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
 use octacity_execution::{
-  ExecutionBackend, ExecutionError, ExecutionExit, ExecutionIo, ExecutionPaths, ExecutionReader, ExecutionWriter,
-  ResourceUsage, RunnerProgram, RunningExecution, StartExecution,
+  ExecutionBackend, ExecutionCacheMounts, ExecutionError, ExecutionExit, ExecutionIo, ExecutionPaths, ExecutionReader,
+  ExecutionWriter, LocalCacheCapacity, ResourceUsage, RunnerProgram, RunningExecution, StartExecution,
 };
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_job::JobExecutorConfig;
 use octacity_output::{FreezeOutputs, FrozenOutputs, OutputError, OutputPublisher, PublishOutputs};
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, AcquireLeaseResponse, AgentInventory, AppendEventsResponse, COORDINATOR_PROTOCOL_VERSION,
-  ExecutionSpec, HeartbeatDirective, JobSpecV1, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture,
-  PlatformOs, PlatformSpec, RunnerEventPayload, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM,
+  AGENT_PROTOCOL_VERSION, AcquireLeaseResponse, AgentInventory, AppendEventsResponse, BeginCacheSessionRequest,
+  BeginCacheSessionResponse, CACHE_FEATURE_V1, CACHE_HTTP_FEATURE_V1, COORDINATOR_PROTOCOL_VERSION, ExecutionSpec,
+  HeartbeatDirective, JobSpecV1, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec,
+  RevokeCacheSessionRequest, RunnerEventPayload, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM,
   SignedEnvelope, SourceSpec,
 };
 use octacity_runner::{RunnerCapabilities, RunnerInstallation, RunnerSupervisionPolicy};
@@ -185,9 +187,15 @@ struct LifecycleCoordinator {
   fence_on_heartbeat: bool,
   fence_after_output_starts: Option<Arc<AtomicBool>>,
   cancel_on_heartbeat: bool,
+  cache_begin_failure: bool,
+  cache_revoke_failure: bool,
+  panic_backend: Arc<AtomicBool>,
+  orphan_cleanup_observed: Arc<AtomicBool>,
   events: StdMutex<Vec<octacity_protocol::AttemptEventEnvelope>>,
   completions: StdMutex<Vec<CompleteLeaseRequest>>,
   heartbeat_snapshots: StdMutex<Vec<HostSnapshot>>,
+  cache_begins: StdMutex<Vec<BeginCacheSessionRequest>>,
+  cache_revocations: StdMutex<Vec<RevokeCacheSessionRequest>>,
   usage_observed: Arc<Notify>,
 }
 
@@ -197,9 +205,15 @@ impl Default for LifecycleCoordinator {
       fence_on_heartbeat: false,
       fence_after_output_starts: None,
       cancel_on_heartbeat: false,
+      cache_begin_failure: false,
+      cache_revoke_failure: false,
+      panic_backend: Arc::new(AtomicBool::new(false)),
+      orphan_cleanup_observed: Arc::new(AtomicBool::new(false)),
       events: StdMutex::new(Vec::new()),
       completions: StdMutex::new(Vec::new()),
       heartbeat_snapshots: StdMutex::new(Vec::new()),
+      cache_begins: StdMutex::new(Vec::new()),
+      cache_revocations: StdMutex::new(Vec::new()),
       usage_observed: Arc::new(Notify::new()),
     }
   }
@@ -297,6 +311,45 @@ impl CoordinatorClient for LifecycleCoordinator {
   }
 }
 
+#[async_trait]
+impl CacheSessionCoordinator for LifecycleCoordinator {
+  async fn begin_cache_session(
+    &self,
+    _registration: &Registration,
+    _lease: &octacity_protocol::LeaseAssignment,
+    request: &BeginCacheSessionRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<BeginCacheSessionResponse, CoordinatorError> {
+    request.validate()?;
+    self.cache_begins.lock().unwrap().push(request.clone());
+    if self.cache_begin_failure {
+      return Err(CoordinatorError::Invalid("fixture cache begin failure".to_owned()));
+    }
+    Ok(BeginCacheSessionResponse {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: request.request_id.clone(),
+      session_id: "cache-session-1".to_owned(),
+      scope_id: "project-trust-domain-1".to_owned(),
+      remote: None,
+    })
+  }
+
+  async fn revoke_cache_session(
+    &self,
+    _registration: &Registration,
+    _lease: &octacity_protocol::LeaseAssignment,
+    request: &RevokeCacheSessionRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<(), CoordinatorError> {
+    request.validate()?;
+    self.cache_revocations.lock().unwrap().push(request.clone());
+    if self.cache_revoke_failure {
+      return Err(CoordinatorError::Invalid("fixture cache revoke failure".to_owned()));
+    }
+    Ok(())
+  }
+}
+
 struct LifecycleSource;
 
 #[async_trait]
@@ -322,6 +375,8 @@ impl SourceMaterializer for LifecycleSource {
 struct LifecycleBackend {
   wait_for_cancel: bool,
   usage_observed: Arc<Notify>,
+  panic_on_start: Arc<AtomicBool>,
+  orphan_cleanup_observed: Arc<AtomicBool>,
 }
 
 struct LifecycleExecution {
@@ -338,6 +393,7 @@ impl ExecutionBackend for LifecycleBackend {
     request: StartExecution,
     _cancellation: CancellationToken,
   ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    assert!(!self.panic_on_start.load(Ordering::SeqCst), "fixture backend panic");
     let request_id = request.execution_id;
     let (agent_stdin, runner_input) = tokio::io::duplex(4096);
     let (runner_output, agent_stdout) = tokio::io::duplex(4096);
@@ -361,12 +417,14 @@ impl ExecutionBackend for LifecycleBackend {
         data_dir: request.data_dir,
         plugins_dir: runner.plugins_dir.clone(),
         plugin_lock: runner.plugin_lock.clone(),
+        cache: request.cache.as_ref().map(ExecutionCacheMounts::projected_paths),
       },
       exit_code: if self.wait_for_cancel { 130 } else { 0 },
     }))
   }
 
   async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
+    self.orphan_cleanup_observed.store(true, Ordering::SeqCst);
     Ok(())
   }
 }
@@ -409,7 +467,7 @@ async fn lifecycle_runner(
 ) {
   output
     .write_all(
-      b"{\"type\":\"hello\",\"protocol_version\":1,\"octa_version\":\"0.3.0\",\"event_schema_version\":3,\"plugin_protocol_version\":1}\n",
+      b"{\"type\":\"hello\",\"protocol_version\":3,\"octa_version\":\"0.3.0\",\"event_schema_version\":3,\"plugin_protocol_version\":1}\n",
     )
     .await
     .unwrap();
@@ -480,7 +538,7 @@ fn lifecycle_spec(now: u64) -> JobSpecV1 {
     octa: OctaSpec {
       version: "0.3.0".to_owned(),
       runner_sha256: digest.to_owned(),
-      runner_protocol: 1,
+      runner_protocol: 3,
       event_schema: 3,
       plugin_protocol: 1,
       plugin_digests: BTreeMap::new(),
@@ -509,6 +567,7 @@ fn lifecycle_spec(now: u64) -> JobSpecV1 {
       network: NetworkPolicy::Unrestricted,
       workload_identity_profile: None,
     },
+    cache: None,
     outputs: OutputLimits {
       artifact_count: 0,
       artifact_bytes: 0,
@@ -540,12 +599,12 @@ fn lifecycle_runner_installation() -> RunnerInstallation {
     sha256: digest.to_owned(),
     capabilities: RunnerCapabilities {
       octa_version: "0.3.0".to_owned(),
-      runner_protocols: vec![1],
+      runner_protocols: vec![3],
       event_schemas: vec![3],
       plugin_protocols: vec![1],
       octafile_versions: vec![1],
       platform: "any".to_owned(),
-      features: Vec::new(),
+      features: vec![CACHE_FEATURE_V1.to_owned(), CACHE_HTTP_FEATURE_V1.to_owned()],
       build_commit: None,
     },
     plugins: BTreeMap::new(),
@@ -573,6 +632,8 @@ fn lifecycle_fixture(
     expires_at: now + 60,
     signed_job_spec: signed_spec(&spec),
   };
+  let cache_root = state_root.join("cache");
+  octacity_private_fs::create_private_directory(&cache_root).unwrap();
   let executor = Arc::new(
     JobExecutor::new(
       lifecycle_runner_installation(),
@@ -583,6 +644,8 @@ fn lifecycle_fixture(
         Arc::new(LifecycleBackend {
           wait_for_cancel,
           usage_observed: coordinator.usage_observed.clone(),
+          panic_on_start: coordinator.panic_backend.clone(),
+          orphan_cleanup_observed: coordinator.orphan_cleanup_observed.clone(),
         }) as Arc<dyn ExecutionBackend>,
       )]),
       JobExecutorConfig {
@@ -598,7 +661,22 @@ fn lifecycle_fixture(
         },
       },
     )
-    .unwrap(),
+    .unwrap()
+    .with_cache(Arc::new(
+      CacheSessionManager::new(CacheSessionManagerConfig {
+        root: cache_root,
+        capacity: LocalCacheCapacity::new(1024 * 1024, 900 * 1024, 800 * 1024).unwrap(),
+        max_scopes: 2,
+        allow_read: true,
+        allow_write: true,
+        allowed_origins: Vec::new(),
+        ca_certificate_file: None,
+        native_identities: BTreeMap::from([("linux-amd64".to_owned(), "rust-1.98-toolchain-v1".to_owned())]),
+        request_timeout_seconds: 10,
+        max_parallel_transfers: 2,
+      })
+      .unwrap(),
+    )),
   );
   let capacity = HostCapacity {
     logical_cpu_count: 2,
@@ -616,6 +694,7 @@ fn lifecycle_fixture(
     backends: Vec::new(),
   };
   let lifecycle = JobLifecycle::new(
+    coordinator.clone(),
     coordinator,
     Registration {
       agent_id: "agent-1".to_owned(),
@@ -705,6 +784,130 @@ async fn completes_a_verified_job_after_durable_ordered_delivery_and_cleanup() {
       .as_ref()
       .is_some_and(|job| job.resource_usage.is_some())
   }));
+}
+
+#[tokio::test]
+async fn brackets_a_cache_enabled_execution_with_fenced_session_operations() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator::default());
+  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(NoopOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+    namespace: "project/main".to_owned(),
+    read: true,
+    write: true,
+  });
+
+  let outcome = lifecycle.run(lease, snapshot, CancellationToken::new()).await.unwrap();
+  assert_eq!(outcome.status, JobCompletionStatus::Succeeded);
+  let begins = coordinator.cache_begins.lock().unwrap();
+  let revocations = coordinator.cache_revocations.lock().unwrap();
+  assert_eq!(begins.len(), 1);
+  assert_eq!(revocations.len(), 1);
+  assert_eq!(begins[0].lease, revocations[0].lease);
+  assert_eq!(revocations[0].session_id, "cache-session-1");
+  assert_ne!(begins[0].request_id, revocations[0].request_id);
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+  assert!(state_root.path().join("cache/v1").is_dir());
+}
+
+#[tokio::test]
+async fn cache_begin_failure_stops_before_execution_and_removes_attempt_state() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator {
+    cache_begin_failure: true,
+    ..LifecycleCoordinator::default()
+  });
+  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(NoopOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+    namespace: "project/main".to_owned(),
+    read: true,
+    write: true,
+  });
+
+  assert!(matches!(
+    lifecycle.run(lease, snapshot, CancellationToken::new()).await,
+    Err(JobLifecycleError::Coordinator(CoordinatorError::Invalid(message)))
+      if message.contains("cache begin")
+  ));
+  assert_eq!(coordinator.cache_begins.lock().unwrap().len(), 1);
+  assert!(coordinator.cache_revocations.lock().unwrap().is_empty());
+  assert!(coordinator.completions.lock().unwrap().is_empty());
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+  assert!(!state_root.path().join("jobs").read_dir().unwrap().any(|_| true));
+}
+
+#[tokio::test]
+async fn cache_revoke_failure_cleans_the_job_but_refuses_terminal_completion() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator {
+    cache_revoke_failure: true,
+    ..LifecycleCoordinator::default()
+  });
+  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(NoopOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+    namespace: "project/main".to_owned(),
+    read: true,
+    write: true,
+  });
+
+  assert!(matches!(
+    lifecycle.run(lease, snapshot, CancellationToken::new()).await,
+    Err(JobLifecycleError::Coordinator(CoordinatorError::Invalid(message)))
+      if message.contains("cache revoke")
+  ));
+  assert_eq!(coordinator.cache_revocations.lock().unwrap().len(), 1);
+  assert!(coordinator.completions.lock().unwrap().is_empty());
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn panicked_cache_job_cleans_orphans_then_revokes_the_server_session() {
+  let state_root = tempfile::tempdir().unwrap();
+  let work_root = tempfile::tempdir().unwrap();
+  let coordinator = Arc::new(LifecycleCoordinator::default());
+  coordinator.panic_backend.store(true, Ordering::SeqCst);
+  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+    coordinator.clone(),
+    Arc::new(NoopOutputPublisher),
+    state_root.path(),
+    work_root.path(),
+    false,
+  );
+  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+    namespace: "project/main".to_owned(),
+    read: true,
+    write: true,
+  });
+
+  assert!(matches!(
+    lifecycle.run(lease, snapshot, CancellationToken::new()).await,
+    Err(JobLifecycleError::Join(_))
+  ));
+  assert!(coordinator.orphan_cleanup_observed.load(Ordering::SeqCst));
+  assert_eq!(coordinator.cache_revocations.lock().unwrap().len(), 1);
+  assert!(coordinator.completions.lock().unwrap().is_empty());
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
 #[tokio::test]
