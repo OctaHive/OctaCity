@@ -12,7 +12,7 @@ use std::{
 };
 
 use ed25519_dalek::VerifyingKey;
-use octacity_protocol::{OutputLimits, RuntimeMode};
+use octacity_protocol::{OutputLimits, PlatformSpec, RuntimeMode};
 use serde::Deserialize;
 
 pub use octa_cache_protocol::LocalCacheCapacity;
@@ -53,7 +53,9 @@ pub struct AgentConfig {
   pub workload_identity_profiles: BTreeMap<String, PathBuf>,
   /// Persistent local cache and optional remote-cache transport policy.
   pub cache: CacheConfig,
-  /// Runtime modes this agent may advertise.
+  /// Idle admission and cache-reclamation policy for disk pressure.
+  pub maintenance: MaintenanceConfig,
+  /// Runtime modes this agent may advertise; empty makes it unschedulable.
   pub enabled_runtime_modes: Vec<RuntimeMode>,
   /// Explicit opt-in for host-native execution.
   #[serde(default)]
@@ -159,6 +161,34 @@ pub struct CacheConfig {
   pub request_timeout_seconds: u64,
   /// Maximum simultaneous cache blob transfers within one job.
   pub max_parallel_transfers: usize,
+}
+
+/// Operator reserves that must remain available before acquiring another job.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MaintenanceConfig {
+  /// Free bytes retained after reserving the largest allowed workspace.
+  pub work_reserve_bytes: u64,
+  /// Free bytes retained after reserving the complete event spool.
+  pub state_reserve_bytes: u64,
+  /// Free bytes requested from the cache filesystem by LRU scope reclamation.
+  pub cache_reserve_bytes: u64,
+  /// Minimum delay between disk checks while job admission is paused.
+  pub disk_check_interval_seconds: u64,
+}
+
+/// Complete peak allocation reserved on each configured storage root.
+///
+/// Keeping this calculation beside configuration validation ensures admission
+/// and overflow checks cannot drift into different policies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DiskReservations {
+  /// Maximum workspace growth plus the operator's retained free-space margin.
+  pub work_bytes: u64,
+  /// Event spool and output staging plus the retained state margin.
+  pub state_bytes: u64,
+  /// One cache scope at its configured maximum plus the cache margin.
+  pub cache_bytes: u64,
 }
 
 /// One explicitly configured OCI lifecycle implementation.
@@ -315,26 +345,43 @@ impl CacheConfig {
       validate_trusted_directory_chain("cache.ca_certificate_file parent", parent)?;
     }
     for (platform, identity) in &self.native_environment_identities {
-      if !matches!(
-        platform.as_str(),
-        "linux-amd64" | "linux-arm64" | "windows-amd64" | "windows-arm64" | "macos-amd64" | "macos-arm64"
-      ) {
-        return invalid(format!("unsupported Native cache platform identity '{platform}'"));
-      }
-      // The string validation is platform-independent. The runtime module
-      // supplies the selected platform to the same shared constructor.
-      octa_cache_protocol::RuntimeIdentity::native(
-        octa_cache_protocol::PlatformOs::Linux,
-        octa_cache_protocol::PlatformArchitecture::Amd64,
-        identity,
-      )
-      .map_err(|error| ConfigError::Invalid(format!("Native cache environment identity '{platform}': {error}")))?;
+      let parsed = platform
+        .parse::<PlatformSpec>()
+        .map_err(|error| ConfigError::Invalid(format!("Native cache environment identity '{platform}': {error}")))?;
+      octa_cache_protocol::RuntimeIdentity::native(parsed.os.into(), parsed.architecture.into(), identity)
+        .map_err(|error| ConfigError::Invalid(format!("Native cache environment identity '{platform}': {error}")))?;
     }
     Ok(())
   }
 }
 
 impl AgentConfig {
+  /// Calculates the peak disk reservations used by startup validation and
+  /// idle admission. Overflow is rejected rather than silently saturated.
+  pub fn disk_reservations(&self) -> Result<DiskReservations, ConfigError> {
+    let work_bytes = self
+      .max_workspace_bytes
+      .checked_add(self.maintenance.work_reserve_bytes)
+      .ok_or_else(|| ConfigError::Invalid("workspace limit plus work reserve overflows bytes".to_owned()))?;
+    let state_bytes = self
+      .max_spool_bytes
+      .checked_add(self.maintenance.state_reserve_bytes)
+      .and_then(|bytes| bytes.checked_add(self.max_output_limits.artifact_bytes))
+      .and_then(|bytes| bytes.checked_add(self.max_output_limits.report_bytes))
+      .ok_or_else(|| ConfigError::Invalid("spool and output limits plus state reserve overflow bytes".to_owned()))?;
+    let cache_bytes = self
+      .cache
+      .capacity
+      .max_bytes
+      .checked_add(self.maintenance.cache_reserve_bytes)
+      .ok_or_else(|| ConfigError::Invalid("cache scope limit plus cache reserve overflows bytes".to_owned()))?;
+    Ok(DiskReservations {
+      work_bytes,
+      state_bytes,
+      cache_bytes,
+    })
+  }
+
   /// Reads a size-bounded TOML file without applying environmental defaults.
   pub fn load(path: &Path) -> Result<Self, ConfigError> {
     debug!(config = %path.display(), "loading agent configuration");
@@ -408,6 +455,10 @@ impl AgentConfig {
     validate_private_directory_permissions("cache.root", &self.cache.root)?;
     validate_trusted_directory_chain("cache.root", &self.cache.root)?;
     self.cache.validate()?;
+    if self.maintenance.disk_check_interval_seconds == 0 {
+      return invalid("maintenance.disk_check_interval_seconds must be greater than zero");
+    }
+    self.disk_reservations()?;
 
     for (profile, source) in &mut self.workload_identity_profiles {
       non_empty("workload identity profile", profile)?;
@@ -431,9 +482,6 @@ impl AgentConfig {
     for (name, value) in &self.labels {
       non_empty("label name", name)?;
       non_empty("label value", value)?;
-    }
-    if self.enabled_runtime_modes.is_empty() {
-      return invalid("enabled_runtime_modes must contain at least one mode");
     }
     let modes: BTreeSet<_> = self.enabled_runtime_modes.iter().copied().collect();
     if modes.len() != self.enabled_runtime_modes.len() {

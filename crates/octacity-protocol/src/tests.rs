@@ -352,3 +352,72 @@ fn cache_policy_preserves_independent_permissions_and_portable_namespaces() {
     .is_err()
   );
 }
+
+#[test]
+fn platform_keys_round_trip_and_map_to_octa_cache_dimensions() {
+  use octa_cache_protocol::{PlatformArchitecture as CacheArchitecture, PlatformOs as CacheOs};
+
+  for (key, platform, cache_os, cache_architecture) in [
+    (
+      "linux-amd64",
+      PlatformSpec {
+        os: PlatformOs::Linux,
+        architecture: PlatformArchitecture::Amd64,
+      },
+      CacheOs::Linux,
+      CacheArchitecture::Amd64,
+    ),
+    (
+      "linux-arm64",
+      PlatformSpec {
+        os: PlatformOs::Linux,
+        architecture: PlatformArchitecture::Arm64,
+      },
+      CacheOs::Linux,
+      CacheArchitecture::Arm64,
+    ),
+    (
+      "windows-amd64",
+      PlatformSpec {
+        os: PlatformOs::Windows,
+        architecture: PlatformArchitecture::Amd64,
+      },
+      CacheOs::Windows,
+      CacheArchitecture::Amd64,
+    ),
+    (
+      "windows-arm64",
+      PlatformSpec {
+        os: PlatformOs::Windows,
+        architecture: PlatformArchitecture::Arm64,
+      },
+      CacheOs::Windows,
+      CacheArchitecture::Arm64,
+    ),
+    (
+      "macos-amd64",
+      PlatformSpec {
+        os: PlatformOs::Macos,
+        architecture: PlatformArchitecture::Amd64,
+      },
+      CacheOs::Macos,
+      CacheArchitecture::Amd64,
+    ),
+    (
+      "macos-arm64",
+      PlatformSpec {
+        os: PlatformOs::Macos,
+        architecture: PlatformArchitecture::Arm64,
+      },
+      CacheOs::Macos,
+      CacheArchitecture::Arm64,
+    ),
+  ] {
+    let parsed: PlatformSpec = key.parse().unwrap();
+    assert_eq!(parsed, platform);
+    assert_eq!(parsed.to_string(), key);
+    assert_eq!(CacheOs::from(parsed.os), cache_os);
+    assert_eq!(CacheArchitecture::from(parsed.architecture), cache_architecture);
+  }
+  assert!("linux-x86_64".parse::<PlatformSpec>().is_err());
+}

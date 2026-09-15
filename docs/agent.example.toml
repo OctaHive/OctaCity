@@ -1,10 +1,10 @@
 agent_id = "linux-builder-01"
 server_url = "https://octacity.example.com"
-credential_file = "/etc/octacity/agent.token"
+credential_file = "/etc/octacity/enrollment-token"
 work_root = "/var/lib/octacity/work"
 state_root = "/var/lib/octacity/state"
 octa_release_root = "/opt/octacity/octa"
-source_plugins_dir = "/opt/octacity/source-plugins"
+source_plugins_dir = "/opt/octacity/current/source-plugins"
 # Logical names are selected by signed jobs; values are operator-owned files
 # refreshed by an OIDC, SPIFFE, or platform identity service.
 workload_identity_profiles = { ci = "/run/octacity-identities/ci.jwt" }
@@ -22,9 +22,22 @@ cache.allowed_remote_origins = ["https://cache.example.com"]
 cache.native_environment_identities."linux-amd64" = "rust-1.98-toolchain-v1"
 cache.request_timeout_seconds = 30
 cache.max_parallel_transfers = 8
+# Before polling for another lease the agent reserves room for the largest
+# allowed workspace and event spool, and reclaims inactive L1 scopes until the
+# cache filesystem reaches its reserve. Lease polling pauses while work or
+# state capacity remains below these explicit thresholds. Requirements are
+# added when multiple roots share one mounted filesystem.
+maintenance.work_reserve_bytes = 1073741824
+maintenance.state_reserve_bytes = 536870912
+maintenance.cache_reserve_bytes = 536870912
+maintenance.disk_check_interval_seconds = 30
+# A host with no implemented isolation backend may use an empty list. It will
+# register for inventory and lifecycle management but cannot receive jobs.
 enabled_runtime_modes = ["native"]
 allow_native_execution = true
-native_linux_cgroup_root = "/sys/fs/cgroup/octacity"
+# The packaged systemd Native drop-in delegates this service cgroup. A custom
+# unit or slice must change this path and its ReadWritePaths together.
+native_linux_cgroup_root = "/sys/fs/cgroup/system.slice/octacity-agent.service"
 native_linux_bubblewrap_executable = "/usr/bin/bwrap"
 # Toolchains outside /usr must be exposed explicitly and referenced by PATH.
 native_linux_readonly_paths = []

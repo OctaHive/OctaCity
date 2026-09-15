@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Private per-job Octa cache session preparation for OctaCity"
 
 [dependencies]
+fs4.workspace = true
 octa-cache-protocol.workspace = true
 octacity-execution = { path = "../octacity-execution" }
 octacity-protocol = { path = "../octacity-protocol" }
@@ -17,6 +18,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 url.workspace = true
 zeroize.workspace = true
 

@@ -24,6 +24,24 @@ fn samples_capacity_and_bounded_availability() {
   assert!(monitor.capacity().logical_cpu_count > 0);
   assert!(snapshot.available_memory_bytes <= monitor.capacity().total_memory_bytes);
   assert!(snapshot.work_disk_free_bytes <= monitor.capacity().work_disk_total_bytes);
+  let child = canonical_child(temporary.path());
+  let samples = monitor
+    .sample_filesystems(StorageRoots {
+      work: temporary.path(),
+      state: &child,
+      cache: temporary.path(),
+    })
+    .unwrap();
+  assert_eq!(samples.work.identity, samples.state.identity);
+  assert_eq!(samples.work.mount_point, samples.state.mount_point);
+  assert_eq!(samples.work.available_bytes, samples.state.available_bytes);
+  assert_eq!(samples.work, samples.cache);
+}
+
+fn canonical_child(root: &std::path::Path) -> std::path::PathBuf {
+  let child = root.join("child");
+  std::fs::create_dir(&child).unwrap();
+  child.canonicalize().unwrap()
 }
 
 #[test]
@@ -117,6 +135,21 @@ fn builds_registration_data_from_verified_component_inventories() {
   assert_eq!(inventory.octa.plugins[0].name, "shell");
   assert!(inventory.source_plugins.is_empty());
   assert!(inventory.cache.is_none());
+
+  let inventory_only = build_inventory(
+    AgentInventoryConfig {
+      agent_id: "agent-1".to_owned(),
+      agent_version: "agent-release".to_owned(),
+      labels: BTreeMap::new(),
+      remote_cache_configured: false,
+    },
+    Vec::new(),
+    &runner,
+    &sources,
+    monitor.capacity().clone(),
+  )
+  .unwrap();
+  assert!(inventory_only.runtimes.is_empty());
 
   runner.capabilities.runner_protocols = vec![octa_runner_protocol::RUNNER_PROTOCOL_VERSION];
   runner.capabilities.features = vec![CACHE_FEATURE_V1.to_owned(), CACHE_HTTP_FEATURE_V1.to_owned()];

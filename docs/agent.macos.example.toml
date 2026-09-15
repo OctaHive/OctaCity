@@ -1,0 +1,64 @@
+# macOS service-lifecycle example. It is intentionally unschedulable until an
+# OCI hypervisor backend is configured and enabled by the operator.
+agent_id = "macos-builder-01"
+server_url = "https://octacity.example.com"
+credential_file = "/etc/octacity/enrollment-token"
+work_root = "/var/lib/octacity/work"
+state_root = "/var/lib/octacity/state"
+octa_release_root = "/opt/octacity/octa"
+source_plugins_dir = "/opt/octacity/current/source-plugins"
+workload_identity_profiles = {}
+cache.root = "/var/lib/octacity/cache"
+cache.capacity.max_bytes = 2147483648
+cache.capacity.high_watermark_bytes = 1932735283
+cache.capacity.low_watermark_bytes = 1717986918
+cache.max_scopes = 5
+cache.allow_read = true
+cache.allow_write = true
+cache.allowed_remote_origins = ["https://cache.example.com"]
+cache.native_environment_identities = {}
+cache.request_timeout_seconds = 30
+cache.max_parallel_transfers = 8
+maintenance.work_reserve_bytes = 1073741824
+maintenance.state_reserve_bytes = 536870912
+maintenance.cache_reserve_bytes = 536870912
+maintenance.disk_check_interval_seconds = 30
+enabled_runtime_modes = []
+allow_native_execution = false
+native_linux_pids_limit = 0
+native_environment = {}
+allow_unrestricted_network = false
+allowed_network_hosts = ["vault.example.com", "identity.example.com"]
+allowed_upload_origins = ["https://artifacts.example.com"]
+max_archive_entries = 100000
+upload_timeout_seconds = 300
+max_output_limits = { artifact_count = 100, artifact_bytes = 5368709120, report_count = 100, report_bytes = 1073741824, single_output_bytes = 1073741824 }
+max_workspace_bytes = 10737418240
+max_spool_bytes = 1073741824
+max_spool_records = 100000
+event_batch_max_bytes = 1048576
+event_batch_max_records = 256
+event_channel_capacity = 128
+poll_timeout_seconds = 30
+coordinator_request_timeout_seconds = 10
+coordinator_max_body_bytes = 4194304
+retry_initial_delay_milliseconds = 100
+retry_max_delay_seconds = 10
+retry_max_attempts = 4
+heartbeat_interval_seconds = 5
+lease_safety_margin_seconds = 15
+graceful_cancel_timeout_seconds = 10
+cleanup_timeout_seconds = 30
+runner_hello_timeout_seconds = 5
+resource_sample_interval_seconds = 5
+resource_sample_timeout_seconds = 1
+max_accounting_failures = 3
+oci_engines = []
+
+[server_signing_keys]
+primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
+
+[labels]
+os = "macos"
+arch = "aarch64"
+trust = "internal"

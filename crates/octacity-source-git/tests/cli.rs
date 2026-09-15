@@ -26,6 +26,27 @@ fn reports_protocol_capabilities() {
 }
 
 #[test]
+fn reports_release_metadata_from_the_binary_contract() {
+  let output = Command::new(env!("CARGO_BIN_EXE_octacity-source-git"))
+    .arg("package-metadata")
+    .output()
+    .unwrap();
+
+  assert!(output.status.success());
+  let metadata = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+  assert_eq!(metadata["manifest_version"], 1);
+  assert_eq!(metadata["name"], "git");
+  assert_eq!(metadata["version"], env!("CARGO_PKG_VERSION"));
+  assert_eq!(metadata["protocol_min"], 1);
+  assert_eq!(metadata["protocol_max"], 1);
+  assert_eq!(
+    metadata["platform"],
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+  );
+  assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn rejects_an_unknown_command() {
   let output = Command::new(env!("CARGO_BIN_EXE_octacity-source-git"))
     .arg("clone")

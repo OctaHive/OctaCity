@@ -1,0 +1,42 @@
+[package]
+name = "octacity-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek = "2.2"
+libfuzzer-sys = "0.4.13"
+octa-runner-protocol = { path = "../../octa/crates/octa-runner-protocol" }
+octacity-protocol = { path = "../crates/octacity-protocol" }
+octacity-runner = { path = "../crates/octacity-runner", features = ["fuzzing"] }
+octacity-source-plugin = { path = "../crates/octacity-source-plugin" }
+serde_json = "1"
+
+[[bin]]
+name = "server-agent-json"
+path = "fuzz_targets/server_agent_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "runner-json"
+path = "fuzz_targets/runner_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "source-plugin"
+path = "fuzz_targets/source_plugin.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

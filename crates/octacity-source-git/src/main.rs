@@ -11,9 +11,10 @@ use std::{
 
 use octacity_source_git::{GitSourceError, MaterializedGitSource, materialize};
 use octacity_source_plugin::{
-  MAX_SOURCE_FRAME_BYTES, MaterializeRequest, SOURCE_PLUGIN_PROTOCOL_VERSION, SourceCommand, SourceMessage,
-  validate_request_id,
+  MAX_SOURCE_FRAME_BYTES, MaterializeRequest, SOURCE_PLUGIN_MANIFEST_VERSION, SOURCE_PLUGIN_PROTOCOL_VERSION,
+  SourceCommand, SourceMessage, decode_frame, validate_request_id,
 };
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -35,9 +36,37 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
   let _program = args.next();
   match (args.next().as_deref(), args.next()) {
     (Some("capabilities"), None) => write_hello().map_err(Into::into),
+    (Some("package-metadata"), None) => write_package_metadata().map_err(Into::into),
     (None, None) => serve().await,
-    _ => Err("usage: octacity-source-git [capabilities]".into()),
+    _ => Err("usage: octacity-source-git [capabilities|package-metadata]".into()),
   }
+}
+
+#[derive(Serialize)]
+struct PackageMetadata<'a> {
+  manifest_version: u16,
+  name: &'a str,
+  version: &'a str,
+  protocol_min: u16,
+  protocol_max: u16,
+  platform: String,
+}
+
+/// Emits build metadata from the same Rust constants used by the process
+/// handshake. Release packaging can execute the host-native binary without
+/// copying protocol or package versions into another build tool.
+fn write_package_metadata() -> std::io::Result<()> {
+  let metadata = PackageMetadata {
+    manifest_version: SOURCE_PLUGIN_MANIFEST_VERSION,
+    name: "git",
+    version: env!("CARGO_PKG_VERSION"),
+    protocol_min: SOURCE_PLUGIN_PROTOCOL_VERSION,
+    protocol_max: SOURCE_PLUGIN_PROTOCOL_VERSION,
+    platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+  };
+  let mut output = std::io::stdout().lock();
+  serde_json::to_writer(&mut output, &metadata).map_err(std::io::Error::other)?;
+  output.write_all(b"\n")
 }
 
 async fn serve() -> Result<(), Box<dyn std::error::Error>> {
@@ -142,13 +171,7 @@ fn read_commands(input: &mut dyn std::io::BufRead, sender: &tokio::sync::mpsc::S
       let _ = sender.blocking_send(Err("source-plugin input closed".to_owned()));
       return;
     }
-    if frame.len() > MAX_SOURCE_FRAME_BYTES || !frame.ends_with(b"\n") {
-      let _ = sender.blocking_send(Err(format!(
-        "source-plugin command exceeds the {MAX_SOURCE_FRAME_BYTES}-byte frame limit"
-      )));
-      return;
-    }
-    match serde_json::from_slice(&frame) {
+    match decode_frame(&frame) {
       Ok(command) => {
         if sender.blocking_send(Ok(command)).is_err() {
           return;

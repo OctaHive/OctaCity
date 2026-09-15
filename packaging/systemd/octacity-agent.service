@@ -1,0 +1,39 @@
+[Unit]
+Description=OctaCity build agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=octacity
+Group=octacity
+UMask=0077
+StateDirectory=octacity
+StateDirectoryMode=0700
+RuntimeDirectory=octacity-identities
+RuntimeDirectoryMode=0700
+ExecStartPre=/opt/octacity/current/bin/octacity-agent --log-format json validate /etc/octacity/agent.toml
+ExecStart=/opt/octacity/current/bin/octacity-agent --log-format json run /etc/octacity/agent.toml
+Restart=on-failure
+RestartSec=5s
+# Job cancellation and cleanup are bounded by the validated agent policy. Do
+# not add a second, unrelated service-manager deadline that can kill fenced
+# completion halfway through durable delivery.
+TimeoutStopSec=infinity
+KillMode=mixed
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadOnlyPaths=/etc/octacity /opt/octacity
+ReadWritePaths=/var/lib/octacity /run/octacity-identities
+PrivateDevices=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -99,6 +99,10 @@ fn validates_complete_registration_inventory() {
   let decoded: RegisterAgentRequest = serde_json::from_str(&json).unwrap();
   assert_eq!(decoded, request);
 
+  let mut inventory_only = request.clone();
+  inventory_only.inventory.runtimes.clear();
+  inventory_only.validate().unwrap();
+
   let mut invalid = request;
   invalid.inventory.runtimes[0].isolation = None;
   assert!(invalid.validate().unwrap_err().to_string().contains("isolation"));
@@ -192,6 +196,7 @@ fn rejects_unknown_transport_fields() {
     "request_id":"request-1",
     "registration_id":"registration-1",
     "wait_seconds":30,
+    "accept_jobs":true,
     "unexpected":true
   }"#;
   assert!(serde_json::from_str::<AcquireLeaseRequest>(json).is_err());
@@ -465,9 +470,6 @@ fn rejects_invalid_inventory_and_registration_boundaries() {
   invalid.host_capacity.logical_cpu_count = 0;
   assert!(invalid.validate().unwrap_err().to_string().contains("capacity"));
   invalid = valid.clone();
-  invalid.runtimes.clear();
-  assert!(invalid.validate().unwrap_err().to_string().contains("runtime"));
-  invalid = valid.clone();
   invalid.runtimes.push(invalid.runtimes[0].clone());
   assert!(invalid.validate().unwrap_err().to_string().contains("duplicates"));
   invalid = valid.clone();
@@ -542,6 +544,7 @@ fn rejects_invalid_inventory_and_registration_boundaries() {
     request_id: "request-1".to_owned(),
     registration_id: "registration-1".to_owned(),
     wait_seconds: 0,
+    accept_jobs: true,
   };
   assert!(acquire.validate().unwrap_err().to_string().contains("wait_seconds"));
   acquire.wait_seconds = 1;

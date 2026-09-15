@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, io, path::Path};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
@@ -192,6 +193,9 @@ pub enum ReadFrameError {
   /// A non-empty final frame was not newline terminated.
   #[error("source-plugin frame is not terminated by a newline")]
   Unterminated,
+  /// A complete bounded frame did not contain the requested wire type.
+  #[error("source-plugin frame is not valid protocol JSON: {0}")]
+  Json(#[source] Box<serde_json::Error>),
 }
 
 /// Reads one newline-delimited source-protocol frame without unbounded allocation.
@@ -209,6 +213,20 @@ pub async fn read_frame<R: AsyncRead + Unpin>(
     return Err(ReadFrameError::Unterminated);
   }
   Ok(read)
+}
+
+/// Validates and decodes one complete source-plugin JSONL frame.
+///
+/// Both the async host and the plugin's blocking stdin adapter use this same
+/// parser, making framing behavior identical in both protocol directions.
+pub fn decode_frame<T: DeserializeOwned>(frame: &[u8]) -> Result<T, ReadFrameError> {
+  if frame.len() > MAX_SOURCE_FRAME_BYTES {
+    return Err(ReadFrameError::TooLarge);
+  }
+  if !frame.ends_with(b"\n") {
+    return Err(ReadFrameError::Unterminated);
+  }
+  serde_json::from_slice(frame).map_err(|error| ReadFrameError::Json(Box::new(error)))
 }
 
 #[cfg(test)]
@@ -285,5 +303,17 @@ unknown = true
     assert!(validate_request_id("").is_err());
     assert!(validate_request_id("job\n1").is_err());
     assert!(validate_request_id(&"x".repeat(MAX_SOURCE_REQUEST_ID_BYTES + 1)).is_err());
+  }
+
+  #[test]
+  fn shared_decoder_enforces_framing_and_wire_shape() {
+    assert!(matches!(
+      decode_frame::<SourceCommand>(br#"{"type":"cancel","request_id":"request"}"#),
+      Err(ReadFrameError::Unterminated)
+    ));
+    assert!(matches!(
+      decode_frame::<SourceCommand>(b"not-json\n"),
+      Err(ReadFrameError::Json(_))
+    ));
   }
 }

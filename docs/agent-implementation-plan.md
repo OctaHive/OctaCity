@@ -273,6 +273,8 @@ host for that protocol; provider executables depend only on
   command-line arguments.
 - JSON request and response bodies with explicit `protocol_version`.
 - Request IDs on every call.
+- Explicit lease-admission state on every long poll, so disk pressure pauses
+  assignments without disconnecting the agent from drain control.
 - Timeouts and response-size limits on every endpoint.
 - Retry only operations defined as idempotent.
 - Exponential backoff with jitter and a server-provided upper bound.
@@ -1187,7 +1189,8 @@ on dedicated workers before being advertised.
 - Implement the HTTPS `CoordinatorClient` without exposing HTTP types to the
   job state machine.
 - Register the agent and inventory.
-- Acquire a lease through cancellable long polling.
+- Acquire a lease through cancellable long polling, resampling local disk
+  admission between polls and advertising it as `accept_jobs`.
 - Verify signed JobSpec and fencing data.
 - Run independent heartbeat and drain handling.
 - Implement bounded retries and idempotency keys.
@@ -1351,8 +1354,45 @@ durable server vertical slice already exist. Phase 9 closes that final gate.
 - Document installation, enrollment, rotation, upgrades, draining, and
   recovery.
 
-Completion gate: a clean machine can install, validate, run, restart, drain,
-upgrade, and remove the agent using documented commands.
+Completion gate: every supported target produces a deterministic,
+self-verifying archive whose configuration and service assets pass portable
+validation. Exercising those assets against a clean machine and a real server
+vertical slice belongs to the Phase 9 release matrix; Phase 8 does not simulate
+that operational boundary with mocks.
+
+Implementation status: component-complete. The Octa source pin targets
+the published `v0.4.0` release containing the required machine-readable release
+contract and matching `0.4.0` protocol crates. Deterministic
+archives contain the agent, the host-native Git source plugin and its
+digest-bound manifest, service
+assets, an internal checksum inventory, and operator documentation for Linux
+amd64/arm64, Windows amd64, and Apple Silicon macOS. Release workflows publish
+separate SHA-256 files and Sigstore-backed GitHub build-provenance
+attestations. The prepared Octa release workflow includes its generated runner
+capability manifest and uses the same checksum and attestation boundary;
+`.github/octa-source-revision` identifies that release commit, and the release
+workflow validates its contract before packaging OctaCity.
+
+The packaged service runs under a dedicated non-root identity. Linux runtime
+privileges are opt-in drop-ins: Native receives only an operator-delegated
+cgroup subtree, Microsandbox receives KVM access, and containerd socket access
+is explicitly identified as root-equivalent host authority without exposing
+the socket to repository code. The Windows package uses a real SCM dispatcher
+and control handler, mapping service stop into the worker's cancellation token.
+Startup destroys backend-owned orphans before
+recovering journal-proven attempts. Idle admission reserves the complete
+workspace, spool, output-staging, and next-scope cache growth allowance;
+reclaims only inactive recognized cache scopes by host-only LRU metadata;
+groups bind mounts by device or volume identity; exclusively owns its cache
+root; fails closed on corrupt state; and observes shutdown between traversed
+cache entries. Disk pressure is advertised on every long poll so assignments pause without
+hiding drain, and Windows service tracing is routed to its registered
+Application Event Log source rather than an unattached stderr stream.
+Portable CI validates service assets and deterministic packages;
+scheduled security jobs audit both lockfiles and fuzz all JSON/TOML protocol
+decoders, shared JSONL frame decoders, and signed JobSpec verification. The
+remaining released-machine end-to-end matrix is Phase 9 rather
+than being simulated here.
 
 ### Phase 9: Agent Ready test matrix
 
@@ -1382,7 +1422,11 @@ server persistence is not an agent-phase task:
 - duplicate resource samples after reconnect and final peak/cumulative totals;
 - local cache hit and remote cache hit across separate agents;
 - remote-cache outage, corrupt content, expired credential, namespace
-  isolation, and read-only/write-only cache grants.
+  isolation, and read-only/write-only cache grants;
+- installation on a clean machine followed by validation, service start,
+  restart, an atomic version upgrade, drain through the server control plane,
+  and complete service removal using the packaged assets and documented
+  commands.
 
 The initial end-to-end matrix covers Linux Native, Linux OCI process isolation,
 and Linux OCI hypervisor guests on supported Linux and Apple Silicon macOS
@@ -1390,6 +1434,10 @@ agents. Future Windows and host-native macOS combinations enter the matrix only
 after their implementations pass the same suite on dedicated workers. A
 platform/isolation pair is not advertised merely because its code
 cross-compiles.
+
+Completion gate: the released-machine matrix completes the documented install,
+validate, run, restart, upgrade, drain, and removal lifecycle without relying
+on repository build-tree paths or administrator-owned job state.
 
 ## Server roadmap handoff
 

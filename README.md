@@ -49,6 +49,7 @@ supported runner OS.
 
 ```shell
 cargo fmt --all -- --check
+python3 -m unittest discover -s tools/tests -v
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo llvm-cov --workspace --all-features --summary-only \
@@ -97,6 +98,13 @@ proves its protocol versions with `Hello` after the selected backend starts it.
 
 The implementation sequence and security boundaries are documented in
 [`docs/agent-implementation-plan.md`](docs/agent-implementation-plan.md).
+Release archives, provenance verification, enrollment, service installation,
+runtime-specific privileges, rotation, drain, upgrade, recovery, and removal
+are documented in [`docs/operations.md`](docs/operations.md). Packaged services
+run as dedicated non-root identities; Native cgroup access, containerd control,
+and Microsandbox virtualization access are separate explicit operator choices.
+Dependency auditing and protocol-fuzzing ownership are documented in
+[`docs/security-testing.md`](docs/security-testing.md).
 Language-neutral wire specifications are indexed in
 [`docs/protocols/README.md`](docs/protocols/README.md).
 The implemented coordinator transport is specified in

@@ -9,7 +9,7 @@
 use std::{
   path::{Path, PathBuf},
   sync::Arc,
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 use octacity_config::AgentConfig;
@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::composition::Components;
+use crate::maintenance::disk_capacity_available;
 
 pub(crate) async fn validate(config: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
   info!(config = %config.display(), "validating agent configuration");
@@ -57,7 +58,7 @@ pub(crate) async fn run(config: PathBuf) -> Result<(), Box<dyn std::error::Error
 /// Runs the worker from an already constructed component graph. Keeping signal
 /// installation outside makes the daemon policy independently testable while
 /// concrete adapter selection remains confined to the composition root.
-async fn run_loaded(
+pub(crate) async fn run_loaded(
   components: &mut Components,
   shutdown: CancellationToken,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -86,11 +87,34 @@ async fn run_loaded(
   )?;
 
   loop {
-    let lease = match poller.next(shutdown.clone()).await {
+    let admission_started = Instant::now();
+    let accept_jobs = disk_capacity_available(
+      &components.validated.config,
+      &mut components.host,
+      components.cache.as_ref(),
+      shutdown.clone(),
+    )
+    .await?;
+    if shutdown.is_cancelled() {
+      return Ok(());
+    }
+    let lease = match poller.next(accept_jobs, shutdown.clone()).await {
       Ok(LeasePollOutcome::Lease(lease)) => *lease,
       Ok(LeasePollOutcome::Drain) => {
         info!("coordinator drained idle agent");
         return Ok(());
+      }
+      Ok(LeasePollOutcome::NoWork { retry_after }) => {
+        let delay = repoll_delay(
+          accept_jobs,
+          retry_after,
+          Duration::from_secs(components.validated.config.maintenance.disk_check_interval_seconds),
+          admission_started.elapsed(),
+        );
+        tokio::select! {
+          () = shutdown.cancelled() => return Ok(()),
+          () = tokio::time::sleep(delay) => continue,
+        }
       }
       Err(octacity_coordinator::CoordinatorError::Cancelled) if shutdown.is_cancelled() => return Ok(()),
       Err(error) => return Err(error.into()),
@@ -103,6 +127,21 @@ async fn run_loaded(
       WorkerDirective::Continue => {}
       WorkerDirective::Stop => return Ok(()),
     }
+  }
+}
+
+/// Honors the coordinator's retry floor without adding a full disk-check
+/// interval after time already spent in the long poll.
+fn repoll_delay(
+  accept_jobs: bool,
+  coordinator_retry: Duration,
+  disk_check_interval: Duration,
+  admission_elapsed: Duration,
+) -> Duration {
+  if accept_jobs {
+    coordinator_retry
+  } else {
+    coordinator_retry.max(disk_check_interval.saturating_sub(admission_elapsed))
   }
 }
 
@@ -207,8 +246,12 @@ mod tests {
       AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, CompleteLeaseRequest,
       HeartbeatDirective, HostCapacity, HostSnapshot, LeaseAssignment,
     };
+    use std::sync::Mutex;
 
-    pub(super) struct DrainCoordinator;
+    #[derive(Default)]
+    pub(super) struct DrainCoordinator {
+      pub(super) admission: Mutex<Vec<bool>>,
+    }
 
     #[async_trait]
     impl CoordinatorClient for DrainCoordinator {
@@ -229,8 +272,10 @@ mod tests {
         _registration: &Registration,
         _wait: Duration,
         _lease_safety_margin: Duration,
+        accept_jobs: bool,
         _cancellation: CancellationToken,
       ) -> Result<AcquireLeaseResponse, CoordinatorError> {
+        self.admission.lock().unwrap().push(accept_jobs);
         Ok(AcquireLeaseResponse::Drain {
           protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
           request_id: "request-coverage".to_owned(),
@@ -356,6 +401,12 @@ mod tests {
         request_timeout_seconds: 1,
         max_parallel_transfers: 1,
       },
+      maintenance: octacity_config::MaintenanceConfig {
+        work_reserve_bytes: 1,
+        state_reserve_bytes: 1,
+        cache_reserve_bytes: 1,
+        disk_check_interval_seconds: 1,
+      },
       enabled_runtime_modes: Vec::new(),
       allow_native_execution: false,
       native_linux_cgroup_root: None,
@@ -420,12 +471,39 @@ mod tests {
     }]);
   }
 
+  #[test]
+  fn disk_repoll_delay_accounts_for_time_spent_in_the_long_poll() {
+    assert_eq!(
+      repoll_delay(
+        false,
+        Duration::from_secs(1),
+        Duration::from_secs(30),
+        Duration::from_secs(20),
+      ),
+      Duration::from_secs(10)
+    );
+    assert_eq!(
+      repoll_delay(
+        false,
+        Duration::from_secs(4),
+        Duration::from_secs(30),
+        Duration::from_secs(40),
+      ),
+      Duration::from_secs(4)
+    );
+    assert_eq!(
+      repoll_delay(true, Duration::from_secs(2), Duration::from_secs(30), Duration::ZERO,),
+      Duration::from_secs(2)
+    );
+  }
+
   #[cfg(any(
     all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
     all(target_os = "macos", target_arch = "aarch64")
   ))]
   #[tokio::test]
   async fn validates_a_complete_installed_agent() {
+    let _guard = crate::composition::tests::component_graph_guard().await;
     let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
     validate(fixture.config).await.unwrap();
   }
@@ -435,12 +513,24 @@ mod tests {
     all(target_os = "macos", target_arch = "aarch64")
   ))]
   #[tokio::test]
-  async fn cleans_registers_and_honors_an_idle_drain() {
+  async fn cleanup_and_idle_drain_remain_live_under_disk_pressure() {
+    let _guard = crate::composition::tests::component_graph_guard().await;
     let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
     let mut components = Components::load(&fixture.config).await.unwrap();
-    components.coordinator = Arc::new(installed_agent::DrainCoordinator);
+    components.validated.config.maintenance.work_reserve_bytes = u64::MAX
+      .checked_sub(components.validated.config.max_workspace_bytes)
+      .unwrap();
+    let coordinator = Arc::new(installed_agent::DrainCoordinator::default());
+    components.coordinator = coordinator.clone();
 
-    run_loaded(&mut components, CancellationToken::new()).await.unwrap();
+    tokio::time::timeout(
+      Duration::from_secs(5),
+      run_loaded(&mut components, CancellationToken::new()),
+    )
+    .await
+    .expect("disk pressure must not hide the coordinator drain")
+    .unwrap();
     assert!(!components.validated.config.state_root.join("jobs").exists());
+    assert_eq!(*coordinator.admission.lock().unwrap(), vec![false]);
   }
 }

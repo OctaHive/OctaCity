@@ -68,15 +68,20 @@ pub async fn read_message<R: AsyncRead + Unpin>(
   if read == 0 {
     return Ok(None);
   }
-  if read > MAX_RUNNER_OUTPUT_FRAME_BYTES {
+  decode_message_frame(&frame).map(Some)
+}
+
+/// Decodes one complete runner JSONL frame through the same bounded parser
+/// used by the process supervisor. This pure entry point is also the fuzzing
+/// seam for framing and JSON shape together.
+pub fn decode_message_frame(frame: &[u8]) -> Result<RunnerMessage, RunnerProtocolError> {
+  if frame.len() > MAX_RUNNER_OUTPUT_FRAME_BYTES {
     return Err(RunnerProtocolError::FrameTooLarge);
   }
   if !frame.ends_with(b"\n") {
     return Err(RunnerProtocolError::UnterminatedFrame);
   }
-  serde_json::from_slice(&frame)
-    .map(Some)
-    .map_err(|error| RunnerProtocolError::Json(Box::new(error)))
+  serde_json::from_slice(frame).map_err(|error| RunnerProtocolError::Json(Box::new(error)))
 }
 
 /// Serializes and flushes one bounded command to the runner.
@@ -150,6 +155,18 @@ mod tests {
     assert!(matches!(
       read_message(&mut oversized).await,
       Err(RunnerProtocolError::FrameTooLarge)
+    ));
+  }
+
+  #[test]
+  fn pure_decoder_enforces_framing_before_json() {
+    assert!(matches!(
+      decode_message_frame(br#"{"type":"hello"}"#),
+      Err(RunnerProtocolError::UnterminatedFrame)
+    ));
+    assert!(matches!(
+      decode_message_frame(b"not-json\n"),
+      Err(RunnerProtocolError::Json(_))
     ));
   }
 }

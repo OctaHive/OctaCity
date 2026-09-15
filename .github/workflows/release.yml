@@ -1,0 +1,124 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux-amd64
+            target: x86_64-unknown-linux-gnu
+            extension: ""
+            archive: tar.gz
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            extension: ""
+            archive: tar.gz
+          - runner: windows-2025
+            platform: windows-amd64
+            target: x86_64-pc-windows-msvc
+            extension: .exe
+            archive: zip
+          - runner: macos-14
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            extension: ""
+            archive: tar.gz
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - name: Validate pinned Octa release contract
+        shell: bash
+        run: python3 octacity/tools/validate_octa_release_contract.py octa/.github/release-contract.json
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+          targets: ${{ matrix.target }}
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Build agent and source plugin
+        working-directory: octacity
+        env:
+          OCTACITY_BUILD_COMMIT: ${{ github.sha }}
+        run: >-
+          cargo build --locked --release --target ${{ matrix.target }}
+          -p octacity-agent -p octacity-source-git
+      - name: Package deterministic release
+        shell: bash
+        working-directory: octacity
+        env:
+          OCTA_SOURCE_REVISION: ${{ steps.octa-source.outputs.revision }}
+        run: |
+          mkdir -p dist
+          SOURCE_METADATA=source-plugin-package.json
+          "target/${{ matrix.target }}/release/octacity-source-git${{ matrix.extension }}" package-metadata > "$SOURCE_METADATA"
+          VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$SOURCE_METADATA")
+          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" != "v${VERSION}" ]]; then
+            echo "release tag '${{ github.ref_name }}' does not match binary version '${VERSION}'" >&2
+            exit 1
+          fi
+          test "$("target/${{ matrix.target }}/release/octacity-agent${{ matrix.extension }}" --version)" = "octacity-agent ${VERSION}"
+          python3 tools/package_release.py \
+            --platform "${{ matrix.platform }}" \
+            --version "$VERSION" \
+            --agent "target/${{ matrix.target }}/release/octacity-agent${{ matrix.extension }}" \
+            --source-git "target/${{ matrix.target }}/release/octacity-source-git${{ matrix.extension }}" \
+            --source-metadata "$SOURCE_METADATA" \
+            --octacity-revision "${{ github.sha }}" \
+            --octa-revision "$OCTA_SOURCE_REVISION" \
+            --output "dist/octacity-agent-${{ matrix.platform }}.${{ matrix.archive }}"
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: octacity-agent-${{ matrix.platform }}
+          path: octacity/dist/*
+          if-no-files-found: error
+
+  attest-and-publish:
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download platform archives
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: octacity-agent-*
+          path: dist
+          merge-multiple: true
+      - name: Attest archives and checksums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: dist/*
+      - name: Publish GitHub release assets
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

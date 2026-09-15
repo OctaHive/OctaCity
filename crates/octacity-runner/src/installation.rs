@@ -102,7 +102,7 @@ pub enum RunnerInstallationError {
   Json(#[source] Box<serde_json::Error>),
   #[error("failed to parse the installed Octa.lock: {0}")]
   /// The default plugin lock is not valid YAML.
-  PluginLock(#[source] Box<serde_yml::Error>),
+  PluginLock(#[source] Box<serde_yaml_ng::Error>),
   #[error("Octa runner capabilities manifest is invalid: {0}")]
   /// The decoded capabilities violate a release invariant.
   Capabilities(String),
@@ -225,7 +225,7 @@ fn load_plugins(
   }
   let contents = fs::read_to_string(lock_path).map_err(|error| invalid(format!("Octa.lock: {error}")))?;
   let lock: PluginLock =
-    serde_yml::from_str(&contents).map_err(|error| RunnerInstallationError::PluginLock(Box::new(error)))?;
+    serde_yaml_ng::from_str(&contents).map_err(|error| RunnerInstallationError::PluginLock(Box::new(error)))?;
   if lock.version != PLUGIN_LOCK_VERSION {
     return Err(invalid(format!("unsupported Octa.lock version {}", lock.version)));
   }

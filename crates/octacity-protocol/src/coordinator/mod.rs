@@ -59,7 +59,8 @@ pub struct AgentInventory {
   pub host_platform: PlatformSpec,
   /// Static host capacity measured at registration.
   pub host_capacity: HostCapacity,
-  /// Exact execution capabilities validated at startup.
+  /// Exact execution capabilities validated at startup; an empty list keeps
+  /// an inventory-only agent visible but unschedulable.
   pub runtimes: Vec<RuntimeCapability>,
   /// Verified Octa runner and task-plugin release.
   pub octa: OctaInventory,
@@ -210,6 +211,11 @@ pub struct AcquireLeaseRequest {
   pub registration_id: String,
   /// Maximum server wait before returning no work.
   pub wait_seconds: u64,
+  /// Whether the agent currently has enough local capacity to accept a job.
+  ///
+  /// A false value keeps the registration and drain channel live without
+  /// allowing the coordinator to assign work that cannot be materialized.
+  pub accept_jobs: bool,
 }
 
 /// Result of one lease long poll.

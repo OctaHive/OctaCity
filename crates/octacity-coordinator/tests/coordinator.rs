@@ -510,6 +510,7 @@ async fn shutdown_cancels_a_blocked_long_poll_and_requests_time_out() {
           &registration(),
           Duration::from_secs(1),
           Duration::from_secs(1),
+          true,
           shutdown,
         )
         .await
@@ -555,6 +556,7 @@ async fn sends_fenced_lease_and_heartbeat_documents_to_exact_endpoints() {
       &registration,
       Duration::from_secs(1),
       Duration::from_secs(10),
+      true,
       CancellationToken::new(),
     )
     .await
@@ -579,6 +581,7 @@ async fn sends_fenced_lease_and_heartbeat_documents_to_exact_endpoints() {
   let records = server.records.lock().unwrap();
   assert_eq!(records[0].path, "/api/v1/agents/agent-1/leases:acquire");
   assert_eq!(records[0].body["registration_id"], "registration-1");
+  assert_eq!(records[0].body["accept_jobs"], true);
   assert_eq!(records[1].path, "/api/v1/leases/lease-1/heartbeat");
   assert_eq!(records[1].body["registration_id"], "registration-1");
   assert_eq!(records[1].body["lease"]["fencing_token"], "fence-1");
@@ -747,6 +750,7 @@ impl CoordinatorClient for ScriptedClient {
     _registration: &Registration,
     _wait: Duration,
     _lease_safety_margin: Duration,
+    _accept_jobs: bool,
     cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     if let Some(result) = self.leases.lock().unwrap().pop_front() {
@@ -873,7 +877,7 @@ fn unix_now() -> u64 {
 }
 
 #[tokio::test]
-async fn poller_waits_through_no_work_and_exposes_only_a_verified_lease() {
+async fn poller_exposes_no_work_then_a_verified_lease() {
   let signing_key = SigningKey::from_bytes(&[7; 32]);
   let lease = signed_lease(&signing_key, unix_now());
   let client = Arc::new(ScriptedClient {
@@ -901,7 +905,11 @@ async fn poller_waits_through_no_work_and_exposes_only_a_verified_lease() {
   )
   .unwrap();
 
-  let LeasePollOutcome::Lease(lease) = poller.next(CancellationToken::new()).await.unwrap() else {
+  assert!(matches!(
+    poller.next(true, CancellationToken::new()).await.unwrap(),
+    LeasePollOutcome::NoWork { retry_after } if retry_after == Duration::from_millis(1)
+  ));
+  let LeasePollOutcome::Lease(lease) = poller.next(true, CancellationToken::new()).await.unwrap() else {
     panic!("expected a lease");
   };
   assert_eq!(lease.spec.job_id, "job-1");
@@ -931,8 +939,36 @@ async fn poller_rejects_a_job_signature_that_does_not_match_the_lease() {
   )
   .unwrap();
   assert!(matches!(
-    poller.next(CancellationToken::new()).await,
+    poller.next(true, CancellationToken::new()).await,
     Err(CoordinatorError::JobSpec(_))
+  ));
+}
+
+#[tokio::test]
+async fn poller_rejects_a_lease_while_local_admission_is_paused() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let lease = signed_lease(&signing_key, unix_now());
+  let client = Arc::new(ScriptedClient {
+    leases: Mutex::new(VecDeque::from([Ok(AcquireLeaseResponse::Lease {
+      protocol_version: 1,
+      request_id: "poll-1".to_owned(),
+      lease,
+    })])),
+    heartbeats: Mutex::new(VecDeque::new()),
+  });
+  let keys = BTreeMap::from([("primary".to_owned(), signing_key.verifying_key())]);
+  let poller = LeasePoller::new(
+    client,
+    registration(),
+    Arc::new(keys),
+    Duration::from_secs(1),
+    Duration::from_secs(10),
+  )
+  .unwrap();
+
+  assert!(matches!(
+    poller.next(false, CancellationToken::new()).await,
+    Err(CoordinatorError::Invalid(message)) if message.contains("not accepting jobs")
   ));
 }
 

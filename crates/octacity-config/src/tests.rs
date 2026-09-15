@@ -60,6 +60,12 @@ impl Fixture {
         request_timeout_seconds: 30,
         max_parallel_transfers: 4,
       },
+      maintenance: MaintenanceConfig {
+        work_reserve_bytes: 1024,
+        state_reserve_bytes: 1024,
+        cache_reserve_bytes: 1024,
+        disk_check_interval_seconds: 1,
+      },
       enabled_runtime_modes: vec![RuntimeMode::Native],
       allow_native_execution: true,
       native_linux_cgroup_root: Some(directory("cgroup")),
@@ -166,6 +172,79 @@ fn validates_a_provisioned_agent() {
   let fixture = Fixture::new();
   let validated = fixture.config.validate().unwrap();
   assert_eq!(validated.signing_keys.len(), 1);
+}
+
+#[test]
+fn permits_an_inventory_only_agent_without_execution_backends() {
+  let mut fixture = Fixture::new();
+  fixture.config.enabled_runtime_modes.clear();
+  fixture.config.allow_native_execution = false;
+  fixture.config.native_linux_cgroup_root = None;
+  fixture.config.native_linux_bubblewrap_executable = None;
+  fixture.config.native_linux_readonly_paths.clear();
+  fixture.config.native_linux_pids_limit = 0;
+  fixture.config.native_environment.clear();
+
+  let validated = fixture.config.validate().unwrap();
+  assert!(validated.runtimes.is_empty());
+}
+
+#[test]
+fn validates_disk_pressure_reserves_without_overflow() {
+  let mut fixture = Fixture::new();
+  fixture.config.maintenance.disk_check_interval_seconds = 0;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("disk_check_interval")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.maintenance.work_reserve_bytes = u64::MAX;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("work reserve")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.maintenance.state_reserve_bytes = u64::MAX;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("state reserve")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.max_output_limits.artifact_bytes = u64::MAX;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("output limits")
+  );
+
+  let mut fixture = Fixture::new();
+  fixture.config.maintenance.cache_reserve_bytes = u64::MAX;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("cache reserve")
+  );
 }
 
 #[test]
@@ -718,7 +797,21 @@ fn rejects_unknown_configuration_fields() {
 
 #[test]
 fn example_configuration_stays_parseable() {
-  let config: AgentConfig = toml::from_str(include_str!("../../../docs/agent.example.toml")).unwrap();
-  assert_eq!(config.agent_id, "linux-builder-01");
-  assert!(decode_signing_key("primary", &config.server_signing_keys["primary"]).is_ok());
+  let examples = [
+    include_str!("../../../docs/agent.example.toml"),
+    include_str!("../../../docs/agent.linux-arm64.example.toml"),
+    include_str!("../../../docs/agent.macos.example.toml"),
+    include_str!("../../../docs/agent.windows.example.toml"),
+  ];
+  let configs = examples
+    .into_iter()
+    .map(|example| toml::from_str::<AgentConfig>(example).unwrap())
+    .collect::<Vec<_>>();
+  assert_eq!(configs[0].agent_id, "linux-builder-01");
+  assert_eq!(configs[1].agent_id, "linux-arm64-builder-01");
+  assert_eq!(configs[2].agent_id, "macos-builder-01");
+  assert_eq!(configs[3].agent_id, "windows-builder-01");
+  for config in configs {
+    assert!(decode_signing_key("primary", &config.server_signing_keys["primary"]).is_ok());
+  }
 }

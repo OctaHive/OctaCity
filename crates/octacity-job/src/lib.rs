@@ -16,7 +16,7 @@ use std::{
   time::Duration,
 };
 
-use octacity_cache_session::{CacheSessionError, CacheSessionLifetime, CacheSessionManager, PreparedCacheSession};
+use octacity_cache_session::{CacheSessionContext, CacheSessionError, CacheSessionManager, PreparedCacheSession};
 use octacity_execution::{
   ExecutionArchitecture, ExecutionBackend, ExecutionError, ExecutionOs, ExecutionPlatform, ExecutionTarget,
   NetworkAccess, OciIsolation as ExecutionOciIsolation, StartExecution,
@@ -287,6 +287,8 @@ pub struct JobExecutor {
 
 impl JobExecutor {
   /// Validates immutable agent dependencies and constructs a job orchestrator.
+  /// An empty backend map is valid for an inventory-only agent; every job is
+  /// then rejected as unavailable before source materialization.
   pub fn new(
     runner: RunnerInstallation,
     source: Arc<dyn SourceMaterializer>,
@@ -294,11 +296,6 @@ impl JobExecutor {
     backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
     config: JobExecutorConfig,
   ) -> Result<Self, JobError> {
-    if backends.is_empty() {
-      return Err(JobError::Invalid(
-        "at least one execution backend is required".to_owned(),
-      ));
-    }
     if config.max_workspace_bytes == 0 || config.cancellation_grace.is_zero() {
       return Err(JobError::Invalid(
         "workspace limit and cancellation grace must be greater than zero".to_owned(),
@@ -456,9 +453,10 @@ impl JobExecutor {
               &spec.runtime.target,
               &spec.runtime.network,
               &job_root,
-              CacheSessionLifetime {
+              CacheSessionContext {
                 now: unix_now()?,
                 remaining_job: remaining(deadline)?,
+                cancellation: cancellation.clone(),
               },
             )
             .await

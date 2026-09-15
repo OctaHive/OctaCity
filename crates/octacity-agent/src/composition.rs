@@ -36,6 +36,7 @@ pub(crate) struct Components {
   pub(crate) executor: Arc<JobExecutor>,
   pub(crate) coordinator: Arc<dyn CoordinatorClient>,
   pub(crate) cache_coordinator: Arc<dyn CacheSessionCoordinator>,
+  pub(crate) cache: Arc<CacheSessionManager>,
   pub(crate) outputs: Arc<dyn OutputPublisher>,
   pub(crate) inventory: AgentInventory,
   pub(crate) host: HostMonitor,
@@ -49,7 +50,7 @@ impl Components {
     let runner = RunnerInstallation::load(&validated.config.octa_release_root)?;
     let source_plugins = Arc::new(SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?);
     let source_plugin_count = source_plugins.len();
-    let (executor, runtimes, backend_health) =
+    let (executor, runtimes, backend_health, cache) =
       build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
     let virtualization_available = runtimes
       .iter()
@@ -101,6 +102,7 @@ impl Components {
       executor: Arc::new(executor),
       coordinator,
       cache_coordinator,
+      cache,
       outputs,
       inventory,
       host,
@@ -114,7 +116,15 @@ async fn build_executor(
   validated: &ValidatedConfig,
   runner: RunnerInstallation,
   source_plugins: Arc<SourcePluginRegistry>,
-) -> Result<(JobExecutor, Vec<RuntimeCapability>, Vec<BackendHealth>), Box<dyn std::error::Error>> {
+) -> Result<
+  (
+    JobExecutor,
+    Vec<RuntimeCapability>,
+    Vec<BackendHealth>,
+    Arc<CacheSessionManager>,
+  ),
+  Box<dyn std::error::Error>,
+> {
   #[cfg(unix)]
   if validated.runtimes.iter().any(|runtime| match runtime {
     ValidatedRuntimeConfig::Native { .. } => true,
@@ -229,6 +239,18 @@ async fn build_executor(
   let identity = Arc::new(FileWorkloadIdentityProvider::new(
     validated.config.workload_identity_profiles.clone(),
   ));
+  let cache = Arc::new(CacheSessionManager::new(CacheSessionManagerConfig {
+    root: validated.config.cache.root.clone(),
+    capacity: validated.config.cache.capacity,
+    max_scopes: validated.config.cache.max_scopes,
+    allow_read: validated.config.cache.allow_read,
+    allow_write: validated.config.cache.allow_write,
+    allowed_origins: validated.config.cache.allowed_remote_origins.clone(),
+    ca_certificate_file: validated.config.cache.ca_certificate_file.clone(),
+    native_identities: validated.config.cache.native_environment_identities.clone(),
+    request_timeout_seconds: validated.config.cache.request_timeout_seconds,
+    max_parallel_transfers: validated.config.cache.max_parallel_transfers,
+  })?);
   let executor = JobExecutor::new(
     runner,
     source,
@@ -249,19 +271,8 @@ async fn build_executor(
       },
     },
   )?
-  .with_cache(Arc::new(CacheSessionManager::new(CacheSessionManagerConfig {
-    root: validated.config.cache.root.clone(),
-    capacity: validated.config.cache.capacity,
-    max_scopes: validated.config.cache.max_scopes,
-    allow_read: validated.config.cache.allow_read,
-    allow_write: validated.config.cache.allow_write,
-    allowed_origins: validated.config.cache.allowed_remote_origins.clone(),
-    ca_certificate_file: validated.config.cache.ca_certificate_file.clone(),
-    native_identities: validated.config.cache.native_environment_identities.clone(),
-    request_timeout_seconds: validated.config.cache.request_timeout_seconds,
-    max_parallel_transfers: validated.config.cache.max_parallel_transfers,
-  })?));
-  Ok((executor, runtime_capabilities, backend_health))
+  .with_cache(cache.clone());
+  Ok((executor, runtime_capabilities, backend_health, cache))
 }
 
 fn advertised_oci_capability(backend: &str, capability: OciCapability) -> RuntimeCapability {
@@ -382,6 +393,7 @@ octa_release_root = "{}"
 source_plugins_dir = "{}"
 workload_identity_profiles = {{}}
 cache = {{ root = "{}", capacity = {{ max_bytes = 1048576, high_watermark_bytes = 943718, low_watermark_bytes = 838860 }}, max_scopes = 4, allow_read = true, allow_write = true, allowed_remote_origins = ["https://cache.example"], native_environment_identities = {{}}, request_timeout_seconds = 10, max_parallel_transfers = 2 }}
+maintenance = {{ work_reserve_bytes = 1, state_reserve_bytes = 1, cache_reserve_bytes = 1, disk_check_interval_seconds = 1 }}
 enabled_runtime_modes = ["oci"]
 allow_native_execution = false
 native_linux_pids_limit = 0
@@ -438,6 +450,17 @@ metrics_sample_interval_seconds = 1
     }
   }
 
+  /// Serializes tests that construct Microsandbox because its library keeps
+  /// one process-global path configuration until the owning graph is dropped.
+  pub(crate) async fn component_graph_guard() -> tokio::sync::OwnedMutexGuard<()> {
+    static GUARD: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> = std::sync::OnceLock::new();
+    GUARD
+      .get_or_init(|| Arc::new(tokio::sync::Mutex::new(())))
+      .clone()
+      .lock_owned()
+      .await
+  }
+
   #[test]
   fn translates_execution_capabilities_without_changing_isolation() {
     let process = advertised_oci_capability(
@@ -488,6 +511,7 @@ metrics_sample_interval_seconds = 1
   ))]
   #[tokio::test]
   async fn loads_a_complete_microsandbox_component_graph() {
+    let _guard = component_graph_guard().await;
     let fixture = installed_agent_fixture("https://coordinator.example");
     let components = Components::load(&fixture.config).await.unwrap();
 

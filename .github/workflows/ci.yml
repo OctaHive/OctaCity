@@ -12,21 +12,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
+        os: [ubuntu-24.04, macos-14, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: octacity
-      - uses: actions/checkout@v4
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          repository: OctaHive/octa
-          path: octa
-      - uses: dtolnay/rust-toolchain@stable
-        with:
+          toolchain: 1.98.1
           components: rustfmt, clippy
       - name: Install protobuf compiler
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: protoc
           fallback: none
@@ -37,6 +37,33 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
         working-directory: octacity
+      - name: Test release packager
+        run: python3 -m unittest discover -s tools/tests -v
+        working-directory: octacity
+      - name: Validate systemd service definition
+        if: runner.os == 'Linux'
+        run: systemd-analyze verify packaging/systemd/octacity-agent.service
+        working-directory: octacity
+      - name: Validate launchd service definition
+        if: runner.os == 'macOS'
+        run: plutil -lint packaging/launchd/com.octahive.octacity-agent.plist
+        working-directory: octacity
+      - name: Validate Windows service scripts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: octacity
+        run: |
+          $failed = $false
+          foreach ($path in @("packaging/windows/install-service.ps1", "packaging/windows/uninstall-service.ps1")) {
+            $tokens = $null
+            $errors = $null
+            [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -ne 0) {
+              $errors | Write-Error
+              $failed = $true
+            }
+          }
+          if ($failed) { throw "invalid Windows service script" }
       - name: Check warnings
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
         working-directory: octacity
@@ -50,20 +77,20 @@ jobs:
         working-directory: octacity
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: octacity
-      - uses: actions/checkout@v4
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          repository: OctaHive/octa
-          path: octa
-      - uses: dtolnay/rust-toolchain@stable
-        with:
+          toolchain: 1.98.1
           components: llvm-tools-preview
       - name: Install coverage and protobuf tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: cargo-llvm-cov@0.9.1,protoc
           fallback: none
@@ -78,7 +105,7 @@ jobs:
             -p 127.0.0.1:19000:9000 \
             -e MINIO_ROOT_USER=octacity \
             -e MINIO_ROOT_PASSWORD=octacity-secret \
-            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null; then
               exit 0
@@ -103,7 +130,7 @@ jobs:
       - name: Generate LCOV report
         run: cargo llvm-cov report --lcov --output-path lcov.info
         working-directory: octacity
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: lcov

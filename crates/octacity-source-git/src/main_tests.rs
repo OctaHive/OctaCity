@@ -56,7 +56,7 @@ fn rejects_malformed_and_oversized_input_frames() {
   let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
   let oversized = vec![b'a'; MAX_SOURCE_FRAME_BYTES + 1];
   read_commands(&mut oversized.as_slice(), &sender);
-  assert!(receiver.blocking_recv().unwrap().unwrap_err().contains("frame limit"));
+  assert!(receiver.blocking_recv().unwrap().unwrap_err().contains("byte limit"));
 }
 
 #[test]

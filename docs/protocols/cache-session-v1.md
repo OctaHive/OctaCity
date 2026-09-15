@@ -51,9 +51,11 @@ a hard quota on the persistent cache volume. Native and containerd require the
 configured cache root to be a dedicated filesystem no larger than
 `max_bytes × max_scopes`, which keeps arbitrary cache-mount writes away from
 the agent state disk and gives process isolation a physical aggregate bound.
-Reaching the scope-count limit fails
-closed until an operator or the Phase 8 disk-pressure policy removes an old
-scope; the agent never silently deletes a possibly active cache directory.
+One agent process exclusively locks the configured cache root; simultaneously
+running agents must use distinct roots. On reaching `max_scopes`, the agent
+removes the least-recently-used inactive scope before creating a new one.
+Active and already-reclaiming scopes are never eligible. If every retained
+scope is active, admission fails closed rather than deleting live cache state.
 
 ## Credential handling
 

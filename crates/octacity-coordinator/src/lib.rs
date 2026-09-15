@@ -204,6 +204,7 @@ pub trait CoordinatorClient: Send + Sync {
     registration: &Registration,
     wait: Duration,
     lease_safety_margin: Duration,
+    accept_jobs: bool,
     cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError>;
 

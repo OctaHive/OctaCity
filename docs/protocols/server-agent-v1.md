@@ -66,8 +66,12 @@ the agent still enforces every signed job requirement locally.
 POST /api/v1/agents/{agent_id}/leases:acquire
 ```
 
-The request contains the current `registration_id` and the maximum whole-second
-long-poll wait. A successful response has exactly one outcome:
+The request contains the current `registration_id`, the maximum whole-second
+long-poll wait, and `accept_jobs`. The agent sets `accept_jobs` to false while
+local disk admission is paused. The coordinator must then return only
+`no_work` or `drain`; this keeps registration liveness and operator drain
+available without assigning a job the agent cannot materialize. A successful
+response has exactly one outcome:
 
 - `lease`: a fenced assignment and signed JobSpec;
 - `no_work`: no match before the poll ended, plus a bounded repoll delay;

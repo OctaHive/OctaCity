@@ -1,0 +1,71 @@
+name: security
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * 1"
+  push:
+    paths:
+      - "**/Cargo.toml"
+      - "Cargo.lock"
+      - "fuzz/**"
+      - ".github/octa-source-revision"
+      - ".github/actions/checkout-octa/action.yml"
+      - ".github/workflows/security.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Install pinned cargo-audit
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
+      - name: Audit locked dependencies
+        run: |
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 >/dev/null
+          cargo audit
+          cargo audit --file fuzz/Cargo.lock
+        working-directory: octacity
+
+  fuzz-protocols:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable action, pinned nightly
+        with:
+          toolchain: nightly-2026-09-01
+      - name: Install build and fuzz tools
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc,cargo-fuzz@0.13.2
+          fallback: none
+      - name: Install Linux system dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Fuzz bounded protocol decoders
+        working-directory: octacity
+        run: |
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 >/dev/null
+          cargo fuzz run server-agent-json -- -max_total_time=30
+          cargo fuzz run runner-json -- -max_total_time=30
+          cargo fuzz run source-plugin -- -max_total_time=30

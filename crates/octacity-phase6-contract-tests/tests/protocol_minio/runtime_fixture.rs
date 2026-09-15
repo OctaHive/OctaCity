@@ -248,6 +248,7 @@ impl CoordinatorClient for Phase6Coordinator {
     _registration: &Registration,
     _wait: Duration,
     _lease_safety_margin: Duration,
+    _accept_jobs: bool,
     _cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     unreachable!()

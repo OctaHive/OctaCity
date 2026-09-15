@@ -53,13 +53,13 @@ docker run --detach --rm --name octacity-phase6-vault --cap-add=IPC_LOCK \
   -p 127.0.0.1:18200:8200 \
   -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
   -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
-  hashicorp/vault:1.20.4
+  hashicorp/vault:1.20.4@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
 
 docker run --detach --rm --name octacity-phase6-minio \
   -p 127.0.0.1:19000:9000 \
   -e MINIO_ROOT_USER=octacity \
   -e MINIO_ROOT_PASSWORD=octacity-secret \
-  quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+  quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
 
 OCTACITY_MINIO_ENDPOINT=http://127.0.0.1:19000 \
 OCTACITY_MINIO_ACCESS_KEY=octacity \

@@ -12,24 +12,32 @@ use std::{
   collections::{BTreeMap, BTreeSet},
   num::NonZeroUsize,
   path::{Path, PathBuf},
-  sync::Mutex,
+  sync::Arc,
   time::Duration,
 };
 
-use octa_cache_protocol::{
-  CacheMode, Digest, DigestAlgorithm, LocalCacheCapacity, PlatformArchitecture, PlatformOs, RuntimeIdentity,
-};
+use octa_cache_protocol::{CacheMode, Digest, DigestAlgorithm, LocalCacheCapacity, RuntimeIdentity};
 use octacity_execution::ExecutionCacheMounts;
 use octacity_protocol::{BeginCacheSessionResponse, CachePolicy, NetworkPolicy, PlatformSpec, RuntimeTarget};
 use octacity_runner::RunnerCacheSession;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use tokio::{fs, io::AsyncWriteExt as _};
+use tokio_util::sync::CancellationToken;
 use url::Url;
 use zeroize::Zeroizing;
 
 const SESSION_DIRECTORY: &str = "cache-session";
 const TOKEN_FILE: &str = "token";
+
+mod scope;
+#[cfg(test)]
+use scope::ACCESS_LAYOUT_DIRECTORY;
+#[cfg(test)]
+use scope::RECLAIM_LAYOUT_DIRECTORY;
+#[cfg(test)]
+use scope::SCOPE_DIRECTORY_HEX_LENGTH;
+use scope::{SCOPE_LAYOUT_DIRECTORY, ScopeLease, ScopeStore};
 
 /// Operator policy consumed by the cache-session module.
 ///
@@ -60,13 +68,15 @@ pub struct CacheSessionManagerConfig {
   pub max_parallel_transfers: usize,
 }
 
-/// Time boundary used to prove that a remote bearer outlives its job.
-#[derive(Clone, Copy, Debug)]
-pub struct CacheSessionLifetime {
+/// Per-job time and cancellation boundary for session preparation.
+#[derive(Clone, Debug)]
+pub struct CacheSessionContext {
   /// Current Unix timestamp supplied by the lifecycle composition root.
   pub now: u64,
   /// Time remaining on the single job execution deadline.
   pub remaining_job: Duration,
+  /// Job cancellation observed during potentially expensive scope admission.
+  pub cancellation: CancellationToken,
 }
 
 /// Validated operator policy used to narrow every cache grant.
@@ -75,14 +85,24 @@ pub struct CacheSessionManager {
   root: PathBuf,
   capacity: LocalCacheCapacity,
   aggregate_max_bytes: u64,
-  max_scopes: usize,
   allowed_mode: CacheMode,
   allowed_origins: BTreeSet<String>,
   ca_certificate_file: Option<PathBuf>,
   native_identities: BTreeMap<String, String>,
   request_timeout_seconds: u64,
   max_parallel_transfers: NonZeroUsize,
-  scope_creation: Mutex<()>,
+  scopes: Arc<ScopeStore>,
+}
+
+/// Result of one inactive-cache reclamation pass.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CacheReclaimReport {
+  /// Free bytes on the cache filesystem before reclamation.
+  pub initial_free_bytes: u64,
+  /// Free bytes observed after the final removal.
+  pub final_free_bytes: u64,
+  /// Number of complete inactive trust scopes removed.
+  pub removed_scopes: usize,
 }
 
 /// A prepared cache session whose bearer remains live until explicit revoke.
@@ -91,6 +111,7 @@ pub struct PreparedCacheSession {
   runner: RunnerCacheSession,
   sensitive_value: Option<Zeroizing<Vec<u8>>>,
   private_directory: Option<PathBuf>,
+  scope: Option<ScopeLease>,
 }
 
 impl std::fmt::Debug for PreparedCacheSession {
@@ -106,6 +127,9 @@ impl std::fmt::Debug for PreparedCacheSession {
 /// Invalid grants, unsupported runtime identity, or private filesystem failure.
 #[derive(Debug, Error)]
 pub enum CacheSessionError {
+  /// Host shutdown interrupted local cache reclamation.
+  #[error("cache session operation was cancelled")]
+  Cancelled,
   /// Operator or server values violate the cache-session contract.
   #[error("invalid cache session: {0}")]
   Invalid(String),
@@ -185,22 +209,22 @@ impl CacheSessionManager {
     }
     let ca_certificate_file = config.ca_certificate_file.map(validate_ca_certificate).transpose()?;
     for (platform, identity) in &config.native_identities {
-      validate_platform_key(platform)?;
-      RuntimeIdentity::native(PlatformOs::Linux, PlatformArchitecture::Amd64, identity)
+      let parsed = platform.parse::<PlatformSpec>().map_err(CacheSessionError::Invalid)?;
+      RuntimeIdentity::native(parsed.os.into(), parsed.architecture.into(), identity)
         .map_err(|error| CacheSessionError::Invalid(format!("Native identity '{platform}': {error}")))?;
     }
+    let scopes = ScopeStore::new(root.clone(), config.max_scopes)?;
     Ok(Self {
       root,
       capacity: config.capacity,
       aggregate_max_bytes,
-      max_scopes: config.max_scopes,
       allowed_mode,
       allowed_origins,
       ca_certificate_file,
       native_identities: config.native_identities,
       request_timeout_seconds: config.request_timeout_seconds,
       max_parallel_transfers,
-      scope_creation: Mutex::new(()),
+      scopes,
     })
   }
 
@@ -212,8 +236,11 @@ impl CacheSessionManager {
     runtime: &RuntimeTarget,
     network: &NetworkPolicy,
     job_root: &Path,
-    lifetime: CacheSessionLifetime,
+    context: CacheSessionContext,
   ) -> Result<PreparedCacheSession, CacheSessionError> {
+    if context.cancellation.is_cancelled() {
+      return Err(CacheSessionError::Cancelled);
+    }
     let mode = policy.mode().map_err(CacheSessionError::Invalid)?;
     if (mode.can_read() && !self.allowed_mode.can_read()) || (mode.can_write() && !self.allowed_mode.can_write()) {
       return Err(CacheSessionError::Invalid(
@@ -239,12 +266,12 @@ impl CacheSessionManager {
             "remote cache bearer credential is empty, oversized, or contains control characters".to_owned(),
           ));
         }
-        let remaining_seconds = lifetime
+        let remaining_seconds = context
           .remaining_job
           .as_secs()
-          .checked_add(u64::from(lifetime.remaining_job.subsec_nanos() != 0))
+          .checked_add(u64::from(context.remaining_job.subsec_nanos() != 0))
           .ok_or_else(|| CacheSessionError::Invalid("remaining cache lifetime overflows seconds".to_owned()))?;
-        let required_until = lifetime
+        let required_until = context
           .now
           .checked_add(remaining_seconds)
           .and_then(|deadline| deadline.checked_add(self.request_timeout_seconds))
@@ -258,7 +285,13 @@ impl CacheSessionManager {
         Some((remote.endpoint.clone(), bearer))
       }
     };
-    let local_directory = self.prepare_local_directory(&grant.scope_id, &runtime)?;
+    let scope = self
+      .prepare_local_directory(&grant.scope_id, &runtime, context.cancellation.clone())
+      .await?;
+    if context.cancellation.is_cancelled() {
+      return Err(CacheSessionError::Cancelled);
+    }
+    let local_directory = scope.directory.clone();
     let (remote_endpoint, token_file, private_directory, sensitive_value) = match remote {
       Some((endpoint, secret)) => {
         let directory = job_root.join(SESSION_DIRECTORY);
@@ -290,7 +323,22 @@ impl CacheSessionManager {
       },
       sensitive_value,
       private_directory,
+      scope: Some(scope),
     })
+  }
+
+  /// Removes at most one inactive LRU scope when the cache filesystem is below
+  /// the configured free-space reserve.
+  ///
+  /// A scope is eligible only when its directory name has the exact internal
+  /// digest shape, its path is a private regular directory, and no prepared
+  /// session holds an in-memory lease. Foreign entries are never deleted.
+  pub async fn reclaim_inactive(
+    &self,
+    minimum_free_bytes: u64,
+    cancellation: CancellationToken,
+  ) -> Result<CacheReclaimReport, CacheSessionError> {
+    self.scopes.reclaim_one(minimum_free_bytes, cancellation).await
   }
 
   fn local_directory(&self, scope: &str, runtime: &RuntimeIdentity) -> Result<PathBuf, CacheSessionError> {
@@ -311,57 +359,24 @@ impl CacheSessionManager {
     digest.update(scope.as_bytes());
     digest.update([0]);
     digest.update(encoded);
-    Ok(self.root.join("v1").join(format!("{:x}", digest.finalize())))
+    Ok(
+      self
+        .root
+        .join(SCOPE_LAYOUT_DIRECTORY)
+        .join(format!("{:x}", digest.finalize())),
+    )
   }
 
-  /// Creates at most the operator-authorized number of persistent trust
-  /// scopes. The agent currently owns one job at a time, while the mutex keeps
-  /// this invariant safe for concurrent callers and future scheduling changes.
-  fn prepare_local_directory(&self, scope: &str, runtime: &RuntimeIdentity) -> Result<PathBuf, CacheSessionError> {
+  /// Acquires one persistent trust scope through the store that owns process
+  /// exclusion, the scope limit, and inactive LRU reclamation.
+  async fn prepare_local_directory(
+    &self,
+    scope: &str,
+    runtime: &RuntimeIdentity,
+    cancellation: CancellationToken,
+  ) -> Result<ScopeLease, CacheSessionError> {
     let directory = self.local_directory(scope, runtime)?;
-    let layout = self.root.join("v1");
-    let _creation = self
-      .scope_creation
-      .lock()
-      .map_err(|_| CacheSessionError::Invalid("cache scope creation lock is poisoned".to_owned()))?;
-    create_private_path(&layout, false)?;
-    match std::fs::symlink_metadata(&directory) {
-      Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
-        create_private_path(&directory, false)?;
-        return Ok(directory);
-      }
-      Ok(_) => {
-        return Err(CacheSessionError::Invalid(format!(
-          "cache scope path '{}' is not a regular directory",
-          directory.display()
-        )));
-      }
-      Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-      Err(source) => return Err(io("inspect cache scope", &directory, source)),
-    }
-
-    let mut count = 0_usize;
-    for entry in std::fs::read_dir(&layout).map_err(|source| io("read cache scopes", &layout, source))? {
-      let entry = entry.map_err(|source| io("read cache scope entry", &layout, source))?;
-      let file_type = entry
-        .file_type()
-        .map_err(|source| io("inspect cache scope entry", &entry.path(), source))?;
-      if !file_type.is_dir() || file_type.is_symlink() {
-        return Err(CacheSessionError::Invalid(format!(
-          "cache scope root contains an unexpected entry '{}'",
-          entry.path().display()
-        )));
-      }
-      count = count.saturating_add(1);
-      if count >= self.max_scopes {
-        return Err(CacheSessionError::Invalid(format!(
-          "cache retains the configured maximum of {} trust scopes",
-          self.max_scopes
-        )));
-      }
-    }
-    create_private_path(&directory, false)?;
-    Ok(directory)
+    self.scopes.acquire(directory, cancellation).await
   }
 }
 
@@ -391,6 +406,7 @@ impl PreparedCacheSession {
       }
     }
     self.sensitive_value.take();
+    self.scope.take();
     Ok(())
   }
 }
@@ -401,58 +417,24 @@ fn runtime_identity(
 ) -> Result<RuntimeIdentity, CacheSessionError> {
   match runtime {
     RuntimeTarget::Native { platform } => {
-      let key = platform_key(*platform);
+      let key = platform.to_string();
       let identity = native.get(&key).ok_or_else(|| {
         CacheSessionError::Invalid(format!("Native cache environment identity '{key}' is not configured"))
       })?;
-      RuntimeIdentity::native(
-        cache_os(platform.os),
-        cache_architecture(platform.architecture),
-        identity,
-      )
-      .map_err(|error| CacheSessionError::Invalid(error.to_string()))
+      RuntimeIdentity::native(platform.os.into(), platform.architecture.into(), identity)
+        .map_err(|error| CacheSessionError::Invalid(error.to_string()))
     }
     RuntimeTarget::Oci { platform, image, .. } => {
       let (_, digest) = image
         .rsplit_once("@sha256:")
         .ok_or_else(|| CacheSessionError::Invalid("OCI cache runtime requires an immutable image".to_owned()))?;
       Ok(RuntimeIdentity::Oci {
-        os: cache_os(platform.os),
-        architecture: cache_architecture(platform.architecture),
+        os: platform.os.into(),
+        architecture: platform.architecture.into(),
         image: Digest::from_hex(DigestAlgorithm::Sha256, digest, 0)
           .map_err(|error| CacheSessionError::Invalid(error.to_string()))?,
       })
     }
-  }
-}
-
-fn platform_key(platform: PlatformSpec) -> String {
-  format!(
-    "{}-{}",
-    match platform.os {
-      octacity_protocol::PlatformOs::Linux => "linux",
-      octacity_protocol::PlatformOs::Windows => "windows",
-      octacity_protocol::PlatformOs::Macos => "macos",
-    },
-    match platform.architecture {
-      octacity_protocol::PlatformArchitecture::Amd64 => "amd64",
-      octacity_protocol::PlatformArchitecture::Arm64 => "arm64",
-    }
-  )
-}
-
-fn cache_os(os: octacity_protocol::PlatformOs) -> PlatformOs {
-  match os {
-    octacity_protocol::PlatformOs::Linux => PlatformOs::Linux,
-    octacity_protocol::PlatformOs::Windows => PlatformOs::Windows,
-    octacity_protocol::PlatformOs::Macos => PlatformOs::Macos,
-  }
-}
-
-fn cache_architecture(architecture: octacity_protocol::PlatformArchitecture) -> PlatformArchitecture {
-  match architecture {
-    octacity_protocol::PlatformArchitecture::Amd64 => PlatformArchitecture::Amd64,
-    octacity_protocol::PlatformArchitecture::Arm64 => PlatformArchitecture::Arm64,
   }
 }
 
@@ -522,19 +504,6 @@ fn validate_ca_certificate(path: PathBuf) -> Result<PathBuf, CacheSessionError> 
   Ok(canonical)
 }
 
-fn validate_platform_key(platform: &str) -> Result<(), CacheSessionError> {
-  if matches!(
-    platform,
-    "linux-amd64" | "linux-arm64" | "windows-amd64" | "windows-arm64" | "macos-amd64" | "macos-arm64"
-  ) {
-    Ok(())
-  } else {
-    Err(CacheSessionError::Invalid(format!(
-      "unsupported Native cache platform identity '{platform}'"
-    )))
-  }
-}
-
 fn authorize_remote_network(network: &NetworkPolicy, endpoint: &Url) -> Result<(), CacheSessionError> {
   match network {
     NetworkPolicy::Unrestricted => Ok(()),
@@ -557,18 +526,55 @@ fn authorize_remote_network(network: &NetworkPolicy, endpoint: &Url) -> Result<(
 }
 
 fn create_private_path(path: &Path, exclusive: bool) -> Result<(), CacheSessionError> {
-  if !exclusive && path.is_dir() {
-    return octacity_private_fs::validate_private_access(path)
-      .map_err(|source| io("validate private directory", path, source));
+  if !exclusive {
+    match std::fs::symlink_metadata(path) {
+      Ok(metadata) => return validate_existing_private_directory(path, &metadata),
+      Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+      Err(source) => return Err(io("inspect private directory", path, source)),
+    }
   }
   match octacity_private_fs::create_private_directory(path) {
     Ok(()) => Ok(()),
     Err(source) if !exclusive && source.kind() == std::io::ErrorKind::AlreadyExists => {
-      octacity_private_fs::validate_private_access(path)
-        .map_err(|source| io("validate private directory", path, source))
+      let metadata = std::fs::symlink_metadata(path)
+        .map_err(|source| io("inspect concurrently created private directory", path, source))?;
+      validate_existing_private_directory(path, &metadata)
     }
     Err(source) => Err(io("create private directory", path, source)),
   }
+}
+
+pub(crate) fn validate_existing_private_directory(
+  path: &Path,
+  metadata: &std::fs::Metadata,
+) -> Result<(), CacheSessionError> {
+  validate_directory_entry(path, metadata)?;
+  octacity_private_fs::validate_private_access(path).map_err(|source| io("validate private directory", path, source))
+}
+
+/// Rejects every directory entry capable of redirecting a later traversal.
+/// Windows junctions are reparse points but are not consistently exposed as
+/// Rust symbolic links, so the platform-specific check is mandatory there.
+fn validate_directory_entry(path: &Path, metadata: &std::fs::Metadata) -> Result<(), CacheSessionError> {
+  let redirects = metadata.file_type().is_symlink() || platform_redirects(path)?;
+  if !metadata.is_dir() || redirects {
+    return Err(CacheSessionError::Invalid(format!(
+      "cache path '{}' is not a regular non-redirecting directory",
+      path.display()
+    )));
+  }
+  Ok(())
+}
+
+#[cfg(windows)]
+fn platform_redirects(path: &Path) -> Result<bool, CacheSessionError> {
+  octacity_private_fs::is_reparse_point(path)
+    .map_err(|source| io("inspect private directory reparse state", path, source))
+}
+
+#[cfg(not(windows))]
+fn platform_redirects(_path: &Path) -> Result<bool, CacheSessionError> {
+  Ok(false)
 }
 
 async fn write_private_file(path: &Path, value: &[u8]) -> Result<(), CacheSessionError> {

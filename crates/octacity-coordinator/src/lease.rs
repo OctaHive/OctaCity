@@ -28,6 +28,9 @@ pub enum LeasePollOutcome {
   Lease(Box<VerifiedLease>),
   /// The coordinator requested an idle agent to drain.
   Drain,
+  /// No job was assigned; the caller should resample local admission state
+  /// after waiting no longer than this server-provided delay.
+  NoWork { retry_after: Duration },
 }
 
 /// Stateful long-poll loop that never exposes an unverified JobSpec.
@@ -61,36 +64,44 @@ impl LeasePoller {
     })
   }
 
-  /// Polls until a signed lease is available, drain is requested, or shutdown wins.
-  pub async fn next(&self, cancellation: CancellationToken) -> Result<LeasePollOutcome, CoordinatorError> {
-    loop {
-      let response = self
-        .client
-        .acquire_lease(
-          &self.registration,
-          self.poll_timeout,
-          self.lease_safety_margin,
-          cancellation.clone(),
-        )
-        .await?;
-      match response {
-        AcquireLeaseResponse::Lease { lease, .. } => {
-          let lease = verify_assignment(lease, &self.signing_keys, unix_now()?, self.lease_safety_margin)?;
-          info!(job_id = %lease.lease.job_id, attempt = lease.lease.attempt, lease_id = %lease.lease.lease_id, "acquired verified lease");
-          return Ok(LeasePollOutcome::Lease(Box::new(lease)));
+  /// Performs one poll while declaring whether the agent can accept work.
+  ///
+  /// Returning no-work to the daemon is intentional: local disk admission is
+  /// resampled between polls instead of becoming stale during an idle period.
+  pub async fn next(
+    &self,
+    accept_jobs: bool,
+    cancellation: CancellationToken,
+  ) -> Result<LeasePollOutcome, CoordinatorError> {
+    let response = self
+      .client
+      .acquire_lease(
+        &self.registration,
+        self.poll_timeout,
+        self.lease_safety_margin,
+        accept_jobs,
+        cancellation,
+      )
+      .await?;
+    match response {
+      AcquireLeaseResponse::Lease { lease, .. } => {
+        if !accept_jobs {
+          return Err(invalid(
+            "coordinator assigned a lease while the agent was not accepting jobs",
+          ));
         }
-        AcquireLeaseResponse::Drain { .. } => return Ok(LeasePollOutcome::Drain),
-        AcquireLeaseResponse::NoWork { retry_after_ms, .. } => {
-          if retry_after_ms == 0 {
-            return Err(invalid("coordinator returned a zero no-work retry delay"));
-          }
-          let delay = Duration::from_millis(retry_after_ms).min(self.registration.max_retry_delay);
-          debug!(?delay, "coordinator long poll returned no work");
-          tokio::select! {
-            () = cancellation.cancelled() => return Err(CoordinatorError::Cancelled),
-            () = tokio::time::sleep(delay) => {}
-          }
+        let lease = verify_assignment(lease, &self.signing_keys, unix_now()?, self.lease_safety_margin)?;
+        info!(job_id = %lease.lease.job_id, attempt = lease.lease.attempt, lease_id = %lease.lease.lease_id, "acquired verified lease");
+        Ok(LeasePollOutcome::Lease(Box::new(lease)))
+      }
+      AcquireLeaseResponse::Drain { .. } => Ok(LeasePollOutcome::Drain),
+      AcquireLeaseResponse::NoWork { retry_after_ms, .. } => {
+        if retry_after_ms == 0 {
+          return Err(invalid("coordinator returned a zero no-work retry delay"));
         }
+        let retry_after = Duration::from_millis(retry_after_ms).min(self.registration.max_retry_delay);
+        debug!(?retry_after, accept_jobs, "coordinator long poll returned no work");
+        Ok(LeasePollOutcome::NoWork { retry_after })
       }
     }
   }

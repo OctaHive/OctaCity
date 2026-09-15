@@ -1,0 +1,30 @@
+name: Checkout pinned Octa
+description: Validate the repository-owned Octa revision and check out that exact commit
+
+inputs:
+  path:
+    description: Workspace-relative checkout destination
+    required: false
+    default: octa
+
+outputs:
+  revision:
+    description: Validated 40-character Octa Git revision
+    value: ${{ steps.source.outputs.revision }}
+
+runs:
+  using: composite
+  steps:
+    - name: Read pinned Octa revision
+      id: source
+      shell: bash
+      run: |
+        revision=$(tr -d '\r\n' < "$GITHUB_ACTION_PATH/../../octa-source-revision")
+        [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid pinned Octa revision" >&2; exit 1; }
+        echo "revision=$revision" >> "$GITHUB_OUTPUT"
+    - name: Checkout pinned Octa revision
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        repository: OctaHive/octa
+        ref: ${{ steps.source.outputs.revision }}
+        path: ${{ inputs.path }}

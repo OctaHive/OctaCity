@@ -4,7 +4,11 @@
 //! runner and source-plugin inventories. The coordinator transport receives
 //! versioned DTOs and never reaches into component-specific types.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+  collections::BTreeMap,
+  fs,
+  path::{Path, PathBuf},
+};
 
 use octacity_protocol::{
   ActiveJob, AgentInventory, BackendHealth, CACHE_FEATURE_V1, CACHE_HTTP_FEATURE_V1, COORDINATOR_PROTOCOL_VERSION,
@@ -36,6 +40,14 @@ pub enum InventoryError {
   /// No mounted filesystem contains one of the configured roots.
   #[error("no mounted filesystem contains '{0}'")]
   Filesystem(PathBuf),
+  /// Filesystem identity could not be inspected for a configured root.
+  #[error("failed to inspect filesystem identity for '{path}': {source}")]
+  FilesystemIdentity {
+    /// Configured path whose filesystem was inspected.
+    path: PathBuf,
+    /// Underlying platform error.
+    source: std::io::Error,
+  },
   /// Generated inventory or snapshot violates the shared protocol contract.
   #[error(transparent)]
   Protocol(#[from] octacity_protocol::CoordinatorProtocolError),
@@ -49,6 +61,58 @@ pub struct HostMonitor {
   system: System,
   disks: Disks,
   capacity: HostCapacity,
+}
+
+/// Host-local identity of one mounted filesystem.
+///
+/// Unlike a mount path, this value remains equal for multiple bind mounts of
+/// the same filesystem. It is meaningful only within the current host; the
+/// variant records which kernel identity was observed so callers cannot mix
+/// unrelated raw integer namespaces accidentally.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum FilesystemIdentity {
+  /// Unix device number returned by `stat(2)`.
+  #[cfg(unix)]
+  UnixDevice(u64),
+  /// Windows volume serial number returned for an open directory handle.
+  #[cfg(windows)]
+  WindowsVolume(u32),
+}
+
+/// One refreshed filesystem observation used by local admission policy.
+///
+/// The kernel identity, rather than the diagnostic mount path, lets the agent
+/// combine reservations when configured roots share one filesystem.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FilesystemSample {
+  /// Kernel or volume identity used to combine reservations across bind mounts.
+  pub identity: FilesystemIdentity,
+  /// Mount containing the inspected configured root, retained for diagnostics.
+  pub mount_point: PathBuf,
+  /// Bytes currently available to the service account on that mount.
+  pub available_bytes: u64,
+}
+
+/// Named configured roots sampled together for disk admission.
+#[derive(Clone, Copy, Debug)]
+pub struct StorageRoots<'a> {
+  /// Root that receives per-job workspaces.
+  pub work: &'a Path,
+  /// Root that holds durable lifecycle and output state.
+  pub state: &'a Path,
+  /// Root that holds persistent Octa cache scopes.
+  pub cache: &'a Path,
+}
+
+/// One coherent disk observation for all agent storage roles.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageFilesystems {
+  /// Filesystem containing the workspace root.
+  pub work: FilesystemSample,
+  /// Filesystem containing the durable state root.
+  pub state: FilesystemSample,
+  /// Filesystem containing the cache root.
+  pub cache: FilesystemSample,
 }
 
 /// Operator and release values that identify one registration inventory.
@@ -120,6 +184,72 @@ impl HostMonitor {
     snapshot.validate(&self.capacity)?;
     Ok(snapshot)
   }
+
+  /// Refreshes disks once and samples every storage role from that coherent
+  /// observation. Naming the roles prevents positional path/result coupling.
+  pub fn sample_filesystems(&mut self, roots: StorageRoots<'_>) -> Result<StorageFilesystems, InventoryError> {
+    self.disks.refresh(true);
+    Ok(StorageFilesystems {
+      work: sample_filesystem(&self.disks, roots.work)?,
+      state: sample_filesystem(&self.disks, roots.state)?,
+      cache: sample_filesystem(&self.disks, roots.cache)?,
+    })
+  }
+}
+
+fn sample_filesystem(disks: &Disks, path: &Path) -> Result<FilesystemSample, InventoryError> {
+  let disk = filesystem_disk(disks, path)?;
+  Ok(FilesystemSample {
+    identity: filesystem_identity(path)?,
+    mount_point: disk.mount_point().to_owned(),
+    available_bytes: disk.available_space(),
+  })
+}
+
+#[cfg(unix)]
+fn filesystem_identity(path: &Path) -> Result<FilesystemIdentity, InventoryError> {
+  use std::os::unix::fs::MetadataExt as _;
+
+  fs::metadata(path)
+    .map(|metadata| FilesystemIdentity::UnixDevice(metadata.dev()))
+    .map_err(|source| InventoryError::FilesystemIdentity {
+      path: path.to_owned(),
+      source,
+    })
+}
+
+#[cfg(windows)]
+fn filesystem_identity(path: &Path) -> Result<FilesystemIdentity, InventoryError> {
+  use std::{
+    mem::MaybeUninit,
+    os::windows::{fs::OpenOptionsExt as _, io::AsRawHandle as _},
+  };
+  use windows_sys::Win32::{
+    Foundation::HANDLE,
+    Storage::FileSystem::{BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, GetFileInformationByHandle},
+  };
+
+  let file = fs::OpenOptions::new()
+    .read(true)
+    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+    .open(path)
+    .map_err(|source| InventoryError::FilesystemIdentity {
+      path: path.to_owned(),
+      source,
+    })?;
+  let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::zeroed();
+  // SAFETY: `information` points to writable storage of the required type and
+  // `file` keeps the directory handle alive for the complete synchronous call.
+  let succeeded = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, information.as_mut_ptr()) };
+  if succeeded == 0 {
+    return Err(InventoryError::FilesystemIdentity {
+      path: path.to_owned(),
+      source: std::io::Error::last_os_error(),
+    });
+  }
+  // SAFETY: a successful call initialized every field in the structure.
+  let information = unsafe { information.assume_init() };
+  Ok(FilesystemIdentity::WindowsVolume(information.dwVolumeSerialNumber))
 }
 
 /// Builds the immutable registration inventory from verified components.
@@ -227,17 +357,22 @@ pub fn host_platform() -> Result<PlatformSpec, InventoryError> {
   Ok(PlatformSpec { os, architecture })
 }
 
-fn filesystem_values(disks: &Disks, path: &std::path::Path) -> Result<(u64, u64), InventoryError> {
+fn filesystem_values(disks: &Disks, path: &Path) -> Result<(u64, u64), InventoryError> {
+  let disk = filesystem_disk(disks, path)?;
+  Ok((disk.total_space(), disk.available_space()))
+}
+
+fn filesystem_disk<'a>(disks: &'a Disks, path: &Path) -> Result<&'a sysinfo::Disk, InventoryError> {
   disks
     .list()
     .iter()
     .filter_map(|disk| mount_depth(path, disk.mount_point()).map(|depth| (depth, disk)))
     .max_by_key(|(depth, _)| *depth)
-    .map(|(_, disk)| (disk.total_space(), disk.available_space()))
+    .map(|(_, disk)| disk)
     .ok_or_else(|| InventoryError::Filesystem(path.to_owned()))
 }
 
-fn mount_depth(path: &std::path::Path, mount: &std::path::Path) -> Option<usize> {
+fn mount_depth(path: &Path, mount: &Path) -> Option<usize> {
   if path.starts_with(mount) {
     return Some(mount.components().count());
   }

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.octahive.octacity-agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/octacity/current/bin/octacity-agent</string>
+    <string>--log-format</string>
+    <string>json</string>
+    <string>run</string>
+    <string>/etc/octacity/agent.toml</string>
+  </array>
+  <key>UserName</key>
+  <string>octacity</string>
+  <key>GroupName</key>
+  <string>octacity</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/octacity-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/octacity-agent.log</string>
+</dict>
+</plist>

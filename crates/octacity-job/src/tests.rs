@@ -592,7 +592,7 @@ fn preserves_backend_cancellation_and_timeout_as_job_outcomes() {
 }
 
 #[test]
-fn rejects_invalid_executor_policies() {
+fn permits_an_unschedulable_executor_but_rejects_invalid_policies() {
   let work_root = tempfile::tempdir().unwrap();
   let source = Arc::new(FakeSource {
     calls: Arc::new(AtomicUsize::new(0)),
@@ -621,7 +621,7 @@ fn rejects_invalid_executor_policies() {
       BTreeMap::new(),
       config.clone()
     )
-    .is_err()
+    .is_ok()
   );
 
   let backend = Arc::new(FakeBackend {

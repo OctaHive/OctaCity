@@ -19,9 +19,6 @@ impl AgentInventory {
       identifier("label value", value)?;
     }
     self.host_capacity.validate()?;
-    if self.runtimes.is_empty() {
-      return invalid("at least one runtime capability is required");
-    }
     bounded_len("runtime capabilities", self.runtimes.len())?;
     let mut capabilities = BTreeSet::new();
     for capability in &self.runtimes {

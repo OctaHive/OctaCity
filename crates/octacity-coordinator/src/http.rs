@@ -284,6 +284,7 @@ impl CoordinatorClient for HttpCoordinatorClient {
     registration: &Registration,
     wait: Duration,
     lease_safety_margin: Duration,
+    accept_jobs: bool,
     cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     registration.validate()?;
@@ -296,6 +297,7 @@ impl CoordinatorClient for HttpCoordinatorClient {
       request_id: request_id.clone(),
       registration_id: registration.registration_id.clone(),
       wait_seconds: wait.as_secs(),
+      accept_jobs,
     };
     request.validate()?;
     let operation_timeout = wait

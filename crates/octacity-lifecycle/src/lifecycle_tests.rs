@@ -246,6 +246,7 @@ impl CoordinatorClient for LifecycleCoordinator {
     _registration: &Registration,
     _wait: Duration,
     _lease_safety_margin: Duration,
+    _accept_jobs: bool,
     _cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     unreachable!()
@@ -1122,6 +1123,7 @@ impl CoordinatorClient for ReplayCoordinator {
     _registration: &Registration,
     _wait: Duration,
     _lease_safety_margin: Duration,
+    _accept_jobs: bool,
     _cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     unreachable!()

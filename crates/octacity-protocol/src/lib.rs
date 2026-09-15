@@ -224,6 +224,77 @@ pub struct PlatformSpec {
   pub architecture: PlatformArchitecture,
 }
 
+// Configuration, inventory, and cache-session composition all use this one
+// spelling. Keeping it on the wire-owned type prevents platform switches from
+// drifting across crates when another supported pair is introduced.
+impl std::fmt::Display for PlatformSpec {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let os = match self.os {
+      PlatformOs::Linux => "linux",
+      PlatformOs::Windows => "windows",
+      PlatformOs::Macos => "macos",
+    };
+    let architecture = match self.architecture {
+      PlatformArchitecture::Amd64 => "amd64",
+      PlatformArchitecture::Arm64 => "arm64",
+    };
+    write!(formatter, "{os}-{architecture}")
+  }
+}
+
+impl std::str::FromStr for PlatformSpec {
+  type Err = String;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match value {
+      "linux-amd64" => Ok(Self {
+        os: PlatformOs::Linux,
+        architecture: PlatformArchitecture::Amd64,
+      }),
+      "linux-arm64" => Ok(Self {
+        os: PlatformOs::Linux,
+        architecture: PlatformArchitecture::Arm64,
+      }),
+      "windows-amd64" => Ok(Self {
+        os: PlatformOs::Windows,
+        architecture: PlatformArchitecture::Amd64,
+      }),
+      "windows-arm64" => Ok(Self {
+        os: PlatformOs::Windows,
+        architecture: PlatformArchitecture::Arm64,
+      }),
+      "macos-amd64" => Ok(Self {
+        os: PlatformOs::Macos,
+        architecture: PlatformArchitecture::Amd64,
+      }),
+      "macos-arm64" => Ok(Self {
+        os: PlatformOs::Macos,
+        architecture: PlatformArchitecture::Arm64,
+      }),
+      _ => Err(format!("unsupported platform '{value}'")),
+    }
+  }
+}
+
+impl From<PlatformOs> for octa_cache_protocol::PlatformOs {
+  fn from(value: PlatformOs) -> Self {
+    match value {
+      PlatformOs::Linux => Self::Linux,
+      PlatformOs::Windows => Self::Windows,
+      PlatformOs::Macos => Self::Macos,
+    }
+  }
+}
+
+impl From<PlatformArchitecture> for octa_cache_protocol::PlatformArchitecture {
+  fn from(value: PlatformArchitecture) -> Self {
+    match value {
+      PlatformArchitecture::Amd64 => Self::Amd64,
+      PlatformArchitecture::Arm64 => Self::Arm64,
+    }
+  }
+}
+
 /// Isolation boundary required around an OCI image.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]

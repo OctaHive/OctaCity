@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 description = "Octa runner inventory, protocol client, and supervisor for OctaCity"
 
+[features]
+# Exposes only bounded pure decoders to the out-of-workspace cargo-fuzz crate.
+# Normal agent builds have no additional public protocol surface.
+fuzzing = []
+
 [dependencies]
 base64.workspace = true
 memchr.workspace = true
@@ -17,7 +22,7 @@ octacity-execution = { path = "../octacity-execution" }
 octacity-protocol = { path = "../octacity-protocol" }
 serde.workspace = true
 serde_json.workspace = true
-serde_yml.workspace = true
+serde_yaml_ng.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

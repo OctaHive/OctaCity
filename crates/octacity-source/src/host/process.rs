@@ -2,7 +2,9 @@
 
 use std::{future::pending, time::Duration};
 
-use octacity_source_plugin::{MAX_SOURCE_FRAME_BYTES, SourceCommand, SourceMessage, read_frame};
+use octacity_source_plugin::{
+  MAX_SOURCE_FRAME_BYTES, ReadFrameError, SourceCommand, SourceMessage, decode_frame, read_frame,
+};
 use processkit::ProcessGroup;
 use tokio::{
   io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _, BufReader},
@@ -90,9 +92,15 @@ pub(super) async fn read_message<R: AsyncRead + Unpin>(
   if read == 0 {
     return Ok(None);
   }
-  let message = serde_json::from_str(&frame).map_err(|source| SourceHostError::Json {
-    plugin: plugin.to_owned(),
-    source: Box::new(source),
+  let message = decode_frame(frame.as_bytes()).map_err(|error| match error {
+    ReadFrameError::Json(source) => SourceHostError::Json {
+      plugin: plugin.to_owned(),
+      source,
+    },
+    error => SourceHostError::Protocol {
+      plugin: plugin.to_owned(),
+      message: error.to_string(),
+    },
   })?;
   Ok(Some(message))
 }

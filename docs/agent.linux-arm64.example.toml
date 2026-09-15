@@ -1,0 +1,102 @@
+agent_id = "linux-arm64-builder-01"
+server_url = "https://octacity.example.com"
+credential_file = "/etc/octacity/enrollment-token"
+work_root = "/var/lib/octacity/work"
+state_root = "/var/lib/octacity/state"
+octa_release_root = "/opt/octacity/octa"
+source_plugins_dir = "/opt/octacity/current/source-plugins"
+# Logical names are selected by signed jobs; values are operator-owned files
+# refreshed by an OIDC, SPIFFE, or platform identity service.
+workload_identity_profiles = { ci = "/run/octacity-identities/ci.jwt" }
+# Native and containerd require this root to be a dedicated filesystem whose
+# capacity is at most max_bytes * max_scopes. Microsandbox enforces a volume
+# quota instead.
+cache.root = "/var/lib/octacity/cache"
+cache.capacity.max_bytes = 2147483648
+cache.capacity.high_watermark_bytes = 1932735283
+cache.capacity.low_watermark_bytes = 1717986918
+cache.max_scopes = 5
+cache.allow_read = true
+cache.allow_write = true
+cache.allowed_remote_origins = ["https://cache.example.com"]
+cache.native_environment_identities."linux-arm64" = "rust-1.98-toolchain-v1"
+cache.request_timeout_seconds = 30
+cache.max_parallel_transfers = 8
+# Before polling for another lease the agent reserves room for the largest
+# allowed workspace and event spool, and reclaims inactive L1 scopes until the
+# cache filesystem reaches its reserve. Lease polling pauses while work or
+# state capacity remains below these explicit thresholds. Requirements are
+# added when multiple roots share one mounted filesystem.
+maintenance.work_reserve_bytes = 1073741824
+maintenance.state_reserve_bytes = 536870912
+maintenance.cache_reserve_bytes = 536870912
+maintenance.disk_check_interval_seconds = 30
+# A host with no implemented isolation backend may use an empty list. It will
+# register for inventory and lifecycle management but cannot receive jobs.
+enabled_runtime_modes = ["native"]
+allow_native_execution = true
+# The packaged systemd Native drop-in delegates this service cgroup. A custom
+# unit or slice must change this path and its ReadWritePaths together.
+native_linux_cgroup_root = "/sys/fs/cgroup/system.slice/octacity-agent.service"
+native_linux_bubblewrap_executable = "/usr/bin/bwrap"
+# Toolchains outside /usr must be exposed explicitly and referenced by PATH.
+native_linux_readonly_paths = []
+native_linux_pids_limit = 4096
+native_environment = { PATH = "/usr/local/bin:/usr/bin:/bin" }
+allow_unrestricted_network = false
+allowed_network_hosts = ["vault.example.com", "identity.example.com"]
+allowed_upload_origins = ["https://artifacts.example.com"]
+max_archive_entries = 100000
+upload_timeout_seconds = 300
+max_output_limits = { artifact_count = 100, artifact_bytes = 5368709120, report_count = 100, report_bytes = 1073741824, single_output_bytes = 1073741824 }
+max_workspace_bytes = 10737418240
+max_spool_bytes = 1073741824
+max_spool_records = 100000
+event_batch_max_bytes = 1048576
+event_batch_max_records = 256
+event_channel_capacity = 128
+poll_timeout_seconds = 30
+coordinator_request_timeout_seconds = 10
+coordinator_max_body_bytes = 4194304
+retry_initial_delay_milliseconds = 100
+retry_max_delay_seconds = 10
+retry_max_attempts = 4
+heartbeat_interval_seconds = 5
+lease_safety_margin_seconds = 15
+graceful_cancel_timeout_seconds = 10
+cleanup_timeout_seconds = 30
+runner_hello_timeout_seconds = 5
+resource_sample_interval_seconds = 5
+resource_sample_timeout_seconds = 1
+max_accounting_failures = 3
+
+# OCI engines are enabled explicitly. To use them, include "oci" in
+# enabled_runtime_modes and add one or both engine tables below. Containerd
+# currently provides Linux process isolation with networking disabled;
+# Microsandbox provides Linux hypervisor isolation on supported hosts.
+#
+# [[oci_engines]]
+# engine = "containerd"
+# endpoint = "/run/containerd/containerd.sock"
+# namespace = "octacity"
+# snapshotter = "overlayfs"
+# runtime = "io.containerd.runc.v2"
+# registry_config_dir = "/etc/containerd/certs.d"
+# pids_limit = 4096
+# open_files_limit = 65536
+#
+# [[oci_engines]]
+# engine = "microsandbox"
+# executable = "/opt/microsandbox/bin/msb"
+# libkrunfw = "/opt/microsandbox/lib/libkrunfw.so"
+# metrics_sample_interval_seconds = 1
+
+# Replace this public key during agent enrollment. Multiple named keys permit
+# an explicit overlap while rotating the server signing key.
+[server_signing_keys]
+primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
+
+[labels]
+os = "linux"
+arch = "aarch64"
+trust = "internal"
