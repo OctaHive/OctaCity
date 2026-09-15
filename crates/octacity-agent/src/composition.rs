@@ -452,6 +452,10 @@ metrics_sample_interval_seconds = 1
 
   /// Serializes tests that construct Microsandbox because its library keeps
   /// one process-global path configuration until the owning graph is dropped.
+  #[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(target_os = "macos", target_arch = "aarch64")
+  ))]
   pub(crate) async fn component_graph_guard() -> tokio::sync::OwnedMutexGuard<()> {
     static GUARD: std::sync::OnceLock<Arc<tokio::sync::Mutex<()>>> = std::sync::OnceLock::new();
     GUARD

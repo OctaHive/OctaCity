@@ -181,7 +181,8 @@ mod tests {
     assert!(matches!(
       cli.command,
       Command::Service { service_name, config }
-        if service_name == "OctaCityAgent" && config == PathBuf::from(r"C:\ProgramData\OctaCity\agent.toml")
+        if service_name == "OctaCityAgent"
+          && config == std::path::Path::new(r"C:\ProgramData\OctaCity\agent.toml")
     ));
   }
 }
