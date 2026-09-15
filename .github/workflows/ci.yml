@@ -42,7 +42,14 @@ jobs:
         working-directory: octacity
       - name: Validate systemd service definition
         if: runner.os == 'Linux'
-        run: systemd-analyze verify packaging/systemd/octacity-agent.service
+        run: |
+          # systemd verifies that absolute ExecStart paths exist. The release is
+          # not installed on the CI host, so provide an executable only for the
+          # duration of this pre-install syntax and sandbox validation.
+          test ! -e /opt/octacity/current/bin/octacity-agent
+          sudo install -D -m 0755 /bin/true /opt/octacity/current/bin/octacity-agent
+          trap 'sudo rm -f /opt/octacity/current/bin/octacity-agent' EXIT
+          systemd-analyze verify packaging/systemd/octacity-agent.service
         working-directory: octacity
       - name: Validate launchd service definition
         if: runner.os == 'macOS'

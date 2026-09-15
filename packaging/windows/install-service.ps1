@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 function Invoke-ServiceControl([string[]]$Arguments) {
   & sc.exe @Arguments | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    throw "sc.exe failed with exit code $LASTEXITCODE: $($Arguments -join ' ')"
+    throw "sc.exe failed with exit code ${LASTEXITCODE}: $($Arguments -join ' ')"
   }
 }
 

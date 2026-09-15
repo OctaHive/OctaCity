@@ -6,7 +6,8 @@ use super::{
   security::denied_syscalls,
 };
 use octacity_execution::{
-  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionCacheMounts, WORKLOAD_IDENTITY_PATH,
+  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionCacheMounts, LocalCacheCapacity,
+  WORKLOAD_IDENTITY_PATH,
 };
 
 fn execution_request(root: &Path) -> StartExecution {
@@ -302,7 +303,7 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
   request.cache = Some(ExecutionCacheMounts {
     capacity_root: cache.clone(),
     local_directory: cache,
-    local_capacity: octa_cache_protocol::LocalCacheCapacity::new(2 * 1024 * 1024, 1_900_000, 1_800_000).unwrap(),
+    local_capacity: LocalCacheCapacity::new(2 * 1024 * 1024, 1_900_000, 1_800_000).unwrap(),
     aggregate_max_bytes: 4 * 1024 * 1024,
     token_file: Some(cache_token),
     ca_certificate_file: Some(cache_ca),

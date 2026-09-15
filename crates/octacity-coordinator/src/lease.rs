@@ -30,7 +30,10 @@ pub enum LeasePollOutcome {
   Drain,
   /// No job was assigned; the caller should resample local admission state
   /// after waiting no longer than this server-provided delay.
-  NoWork { retry_after: Duration },
+  NoWork {
+    /// Maximum delay before the agent asks the coordinator for work again.
+    retry_after: Duration,
+  },
 }
 
 /// Stateful long-poll loop that never exposes an unverified JobSpec.
