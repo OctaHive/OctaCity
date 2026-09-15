@@ -612,13 +612,67 @@ fn lifecycle_runner_installation() -> RunnerInstallation {
   }
 }
 
+/// Owns the private cache root used by the real cache-session adapter.
+///
+/// Windows temporary directories inherit an ACL that deliberately fails the
+/// production ancestry check. Creating the fixture directly below the volume
+/// root gives it an atomic private DACL while retaining trusted ancestors.
+struct CacheFixtureRoot {
+  path: std::path::PathBuf,
+}
+
+impl CacheFixtureRoot {
+  fn path(&self) -> &std::path::Path {
+    &self.path
+  }
+}
+
+fn cache_fixture_root(_state_root: &std::path::Path) -> CacheFixtureRoot {
+  #[cfg(windows)]
+  {
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
+    let profile = std::fs::canonicalize(profile).expect("Windows tests require a canonical USERPROFILE");
+    let volume_root = profile
+      .ancestors()
+      .last()
+      .expect("Windows profile must have a volume root");
+    for _ in 0..16 {
+      let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
+      let path = volume_root.join(format!(
+        ".octacity-lifecycle-cache-test-{}-{sequence}",
+        std::process::id()
+      ));
+      match octacity_private_fs::create_private_directory(&path) {
+        Ok(()) => return CacheFixtureRoot { path },
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => panic!("failed to create protected Windows cache fixture: {error}"),
+      }
+    }
+    panic!("failed to allocate a protected Windows cache fixture")
+  }
+  #[cfg(not(windows))]
+  {
+    let path = _state_root.join("cache");
+    octacity_private_fs::create_private_directory(&path).unwrap();
+    CacheFixtureRoot { path }
+  }
+}
+
+#[cfg(windows)]
+impl Drop for CacheFixtureRoot {
+  fn drop(&mut self) {
+    let _ = std::fs::remove_dir_all(&self.path);
+  }
+}
+
 fn lifecycle_fixture(
   coordinator: Arc<LifecycleCoordinator>,
   outputs: Arc<dyn OutputPublisher>,
   state_root: &std::path::Path,
   work_root: &std::path::Path,
   wait_for_cancel: bool,
-) -> (JobLifecycle, VerifiedLease, HostSnapshot) {
+) -> (CacheFixtureRoot, JobLifecycle, VerifiedLease, HostSnapshot) {
   let now = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .unwrap()
@@ -633,8 +687,7 @@ fn lifecycle_fixture(
     expires_at: now + 60,
     signed_job_spec: signed_spec(&spec),
   };
-  let cache_root = state_root.join("cache");
-  octacity_private_fs::create_private_directory(&cache_root).unwrap();
+  let cache_root = cache_fixture_root(state_root);
   let executor = Arc::new(
     JobExecutor::new(
       lifecycle_runner_installation(),
@@ -665,7 +718,7 @@ fn lifecycle_fixture(
     .unwrap()
     .with_cache(Arc::new(
       CacheSessionManager::new(CacheSessionManagerConfig {
-        root: cache_root,
+        root: cache_root.path().to_owned(),
         capacity: LocalCacheCapacity::new(1024 * 1024, 900 * 1024, 800 * 1024).unwrap(),
         max_scopes: 2,
         allow_read: true,
@@ -722,7 +775,7 @@ fn lifecycle_fixture(
     },
   )
   .unwrap();
-  (lifecycle, VerifiedLease { lease, spec }, snapshot)
+  (cache_root, lifecycle, VerifiedLease { lease, spec }, snapshot)
 }
 
 #[tokio::test]
@@ -733,7 +786,7 @@ async fn completes_a_verified_job_after_durable_ordered_delivery_and_cleanup() {
   let outputs = Arc::new(RecordingOutputPublisher {
     called: AtomicBool::new(false),
   });
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     outputs.clone(),
     state_root.path(),
@@ -792,7 +845,7 @@ async fn brackets_a_cache_enabled_execution_with_fenced_session_operations() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
-  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+  let (cache_root, lifecycle, mut lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(NoopOutputPublisher),
     state_root.path(),
@@ -815,7 +868,7 @@ async fn brackets_a_cache_enabled_execution_with_fenced_session_operations() {
   assert_eq!(revocations[0].session_id, "cache-session-1");
   assert_ne!(begins[0].request_id, revocations[0].request_id);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
-  assert!(state_root.path().join("cache/v1").is_dir());
+  assert!(cache_root.path().join("v1").is_dir());
 }
 
 #[tokio::test]
@@ -826,7 +879,7 @@ async fn cache_begin_failure_stops_before_execution_and_removes_attempt_state() 
     cache_begin_failure: true,
     ..LifecycleCoordinator::default()
   });
-  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, mut lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(NoopOutputPublisher),
     state_root.path(),
@@ -859,7 +912,7 @@ async fn cache_revoke_failure_cleans_the_job_but_refuses_terminal_completion() {
     cache_revoke_failure: true,
     ..LifecycleCoordinator::default()
   });
-  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, mut lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(NoopOutputPublisher),
     state_root.path(),
@@ -888,7 +941,7 @@ async fn panicked_cache_job_cleans_orphans_then_revokes_the_server_session() {
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
   coordinator.panic_backend.store(true, Ordering::SeqCst);
-  let (lifecycle, mut lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, mut lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(NoopOutputPublisher),
     state_root.path(),
@@ -916,7 +969,7 @@ async fn invalid_output_completes_as_infrastructure_failure_without_entering_upl
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(FailingOutputPublisher),
     state_root.path(),
@@ -951,7 +1004,7 @@ async fn upload_failure_completes_as_infrastructure_failure_after_uploading() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(FailingUploadPublisher),
     state_root.path(),
@@ -982,7 +1035,7 @@ async fn fenced_output_endpoint_preserves_the_lease_loss_reason() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(FencedOutputPublisher),
     state_root.path(),
@@ -1011,7 +1064,7 @@ async fn fencing_cancels_execution_and_retains_recoverable_attempt_state() {
     fence_on_heartbeat: true,
     ..LifecycleCoordinator::default()
   });
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(NoopOutputPublisher),
     state_root.path(),
@@ -1051,7 +1104,7 @@ async fn cancellation_does_not_discard_outputs_produced_before_runner_exit() {
   let outputs = Arc::new(CancellationAwareOutputPublisher {
     called: AtomicBool::new(false),
   });
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     outputs.clone(),
     state_root.path(),
@@ -1081,7 +1134,7 @@ async fn fencing_during_output_publication_keeps_the_lease_loss_reason() {
     fence_after_output_starts: Some(started.clone()),
     ..LifecycleCoordinator::default()
   });
-  let (lifecycle, lease, snapshot) = lifecycle_fixture(
+  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
     Arc::new(BlockingOutputPublisher { started }),
     state_root.path(),
