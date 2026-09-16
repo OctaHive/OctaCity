@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use octacity_server::{ServerConfig, ServerRuntime};
 use reqwest::StatusCode;
 
@@ -80,15 +78,17 @@ async fn shutdown_cancels_the_listener_and_waits_for_its_task() {
   let runtime = ServerRuntime::start(test_config()).await.unwrap();
   let addr = runtime.management_addr();
 
+  assert!(
+    tokio::net::TcpListener::bind(addr).await.is_err(),
+    "the running management listener must own its address exclusively"
+  );
+
   runtime.shutdown().await.unwrap();
 
-  let connection = tokio::time::timeout(Duration::from_secs(1), tokio::net::TcpStream::connect(addr))
+  let replacement = tokio::net::TcpListener::bind(addr)
     .await
-    .expect("connection attempt must remain bounded");
-  assert!(
-    connection.is_err(),
-    "listener still accepted connections after shutdown"
-  );
+    .expect("shutdown must release the management listener");
+  assert_eq!(replacement.local_addr().unwrap(), addr);
 }
 
 fn test_config() -> ServerConfig {
