@@ -182,6 +182,17 @@ fn materialization_request(destination: PathBuf) -> SourceMaterializationRequest
 }
 
 #[cfg(unix)]
+async fn wait_for_plugin_marker(marker: &std::path::Path) {
+  tokio::time::timeout(LIFECYCLE_TEST_TIMEOUT, async {
+    while !marker.exists() {
+      tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+  })
+  .await
+  .expect("source plugin did not reach the synchronization point");
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn supervises_a_complete_source_plugin_lifecycle() {
   let (directory, plugin) = scripted_plugin(&[
@@ -253,25 +264,26 @@ async fn rejects_invalid_terminal_source_plugin_lifecycles() {
 #[tokio::test]
 async fn cooperatively_cancels_a_running_source_plugin() {
   let (directory, plugin) = source_plugin_with_body(
-    "printf '%s\\n' '{\"type\":\"accepted\",\"request_id\":\"request-1\"}'\nIFS= read -r cancel\nprintf '%s\\n' '{\"type\":\"cancelled\",\"request_id\":\"request-1\"}'\n",
+    "printf '%s\\n' '{\"type\":\"accepted\",\"request_id\":\"request-1\"}'\n: > cancellation-ready\nIFS= read -r cancel\nprintf '%s\\n' '{\"type\":\"cancelled\",\"request_id\":\"request-1\"}'\n",
   );
+  let marker = directory.path().join("cancellation-ready");
   let cancellation = CancellationToken::new();
   let trigger = cancellation.clone();
-  tokio::spawn(async move {
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    trigger.cancel();
+  let request = materialization_request(directory.path().to_owned());
+  let operation = tokio::spawn(async move {
+    plugin
+      .materialize(request, LIFECYCLE_TEST_TIMEOUT, LIFECYCLE_TEST_GRACE, cancellation)
+      .await
   });
 
-  let error = plugin
-    .materialize(
-      materialization_request(directory.path().to_owned()),
-      LIFECYCLE_TEST_TIMEOUT,
-      LIFECYCLE_TEST_GRACE,
-      cancellation,
-    )
-    .await
-    .unwrap_err();
-  assert!(matches!(error, SourceHostError::Cancelled { .. }));
+  wait_for_plugin_marker(&marker).await;
+  trigger.cancel();
+
+  let error = operation.await.unwrap().unwrap_err();
+  assert!(
+    matches!(error, SourceHostError::Cancelled { .. }),
+    "unexpected error: {error}"
+  );
 }
 
 #[cfg(unix)]
@@ -317,13 +329,7 @@ async fn preserves_cancellation_across_late_terminal_plugin_messages() {
 
     // Synchronize on the plugin reaching its post-Accepted read. A fixed sleep
     // makes this lifecycle assertion depend on CI scheduling speed.
-    tokio::time::timeout(LIFECYCLE_TEST_TIMEOUT, async {
-      while !marker.exists() {
-        tokio::time::sleep(Duration::from_millis(1)).await;
-      }
-    })
-    .await
-    .expect("source plugin did not accept the request");
+    wait_for_plugin_marker(&marker).await;
     trigger.cancel();
 
     let error = operation.await.unwrap().unwrap_err();
