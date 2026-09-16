@@ -1,0 +1,19 @@
+[package]
+name = "octacity-server-api-rest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Management REST API adapter for the OctaCity server"
+
+[dependencies]
+axum.workspace = true
+serde.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tower = { workspace = true, features = ["util"] }

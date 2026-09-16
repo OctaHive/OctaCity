@@ -1,0 +1,18 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": ["ARCH002_INVALID_DIRECTION"],
+  "packages": [
+    {
+      "name": "fixture-core",
+      "manifest_path": "/workspace/server/core/fixture-core/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-application", "kind": null, "path": "/workspace/server/application/fixture-application"}
+      ]
+    },
+    {
+      "name": "fixture-application",
+      "manifest_path": "/workspace/server/application/fixture-application/Cargo.toml",
+      "dependencies": []
+    }
+  ]
+}

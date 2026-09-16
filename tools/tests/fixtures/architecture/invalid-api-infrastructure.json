@@ -1,0 +1,18 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": ["ARCH003_ADAPTER_SELECTION"],
+  "packages": [
+    {
+      "name": "fixture-api",
+      "manifest_path": "/workspace/server/api/fixture-api/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-postgres", "kind": null, "path": "/workspace/server/infrastructure/fixture-postgres"}
+      ]
+    },
+    {
+      "name": "fixture-postgres",
+      "manifest_path": "/workspace/server/infrastructure/fixture-postgres/Cargo.toml",
+      "dependencies": []
+    }
+  ]
+}

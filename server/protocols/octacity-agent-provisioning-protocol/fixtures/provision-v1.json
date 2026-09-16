@@ -1,0 +1,25 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-01",
+  "command": {
+    "operation": "provision",
+    "payload": {
+      "operation_id": "operation-01",
+      "idempotency_key": "pool-01-capacity-0042",
+      "pool": {
+        "pool_id": "pool-01",
+        "expected_platform": {
+          "os": "linux",
+          "architecture": "x86_64"
+        },
+        "logical_cpu_count": 4,
+        "memory_bytes": 8589934592,
+        "work_disk_bytes": 107374182400
+      },
+      "bootstrap": {
+        "enrollment_credential_handle": "bootstrap-handle-01",
+        "expires_at_unix_ms": 1735689600000
+      }
+    }
+  }
+}

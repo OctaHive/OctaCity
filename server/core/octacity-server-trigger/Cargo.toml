@@ -1,0 +1,12 @@
+[package]
+name = "octacity-server-trigger"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Normalized Trigger domain for OctaCity"
+
+[dependencies]
+octacity-server-domain = { path = "../octacity-server-domain" }

@@ -1,0 +1,35 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": ["ARCH007_SHARED_IMPLEMENTATION_DEPENDENCY"],
+  "packages": [
+    {
+      "name": "fixture-shared",
+      "manifest_path": "/workspace/shared/fixture-shared/Cargo.toml",
+      "metadata": {
+        "octacity": {
+          "shared": {
+            "contract": "leaky-cross-product-contract",
+            "consumers": ["agent", "server"]
+          }
+        }
+      },
+      "dependencies": [
+        {"name": "sqlx", "kind": null, "path": null}
+      ]
+    },
+    {
+      "name": "fixture-agent",
+      "manifest_path": "/workspace/agent/fixture-agent/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "octacity-server",
+      "manifest_path": "/workspace/server/app/octacity-server/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    }
+  ]
+}

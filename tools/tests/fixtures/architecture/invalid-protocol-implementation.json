@@ -1,0 +1,13 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": ["ARCH009_PROTOCOL_IMPLEMENTATION_DEPENDENCY"],
+  "packages": [
+    {
+      "name": "fixture-provider-protocol",
+      "manifest_path": "/workspace/server/protocols/fixture-provider-protocol/Cargo.toml",
+      "dependencies": [
+        {"name": "reqwest", "kind": null, "path": null}
+      ]
+    }
+  ]
+}

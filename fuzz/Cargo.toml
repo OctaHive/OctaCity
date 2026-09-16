@@ -12,9 +12,9 @@ base64 = "0.22"
 ed25519-dalek = "2.2"
 libfuzzer-sys = "0.4.13"
 octa-runner-protocol = { path = "../../octa/crates/octa-runner-protocol" }
-octacity-protocol = { path = "../crates/octacity-protocol" }
-octacity-runner = { path = "../crates/octacity-runner", features = ["fuzzing"] }
-octacity-source-plugin = { path = "../crates/octacity-source-plugin" }
+octacity-protocol = { path = "../shared/octacity-protocol" }
+octacity-runner = { path = "../agent/octacity-runner", features = ["fuzzing"] }
+octacity-source-plugin = { path = "../agent/octacity-source-plugin" }
 serde_json = "1"
 
 [[bin]]

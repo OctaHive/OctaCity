@@ -1,0 +1,17 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-01",
+  "command": {
+    "operation": "verify_delivery",
+    "payload": {
+      "operation_id": "operation-01",
+      "integration_id": "integration-01",
+      "verification_material_handle": "secret-handle-01",
+      "headers": {
+        "content-type": "application/json",
+        "x-delivery-id": "delivery-01"
+      },
+      "body_base64": "eyJyZWYiOiJyZWZzL2hlYWRzL21haW4ifQ=="
+    }
+  }
+}

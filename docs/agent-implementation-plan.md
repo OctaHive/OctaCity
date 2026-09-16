@@ -195,9 +195,8 @@ ports:
 ```text
 octacity/
 |- Cargo.toml
-|- crates/
+|- agent/
 |  |- octacity-agent/       # agent CLI and composition root
-|  |- octacity-artifact-store/ # server storage port and S3-compatible adapter
 |  |- octacity-config/      # configuration parsing and intrinsic validation
 |  |- octacity-coordinator/ # bounded coordinator transport and lease client
 |  |- octacity-execution/   # backend-neutral execution ports and DTOs
@@ -210,15 +209,23 @@ octacity/
 |  |- octacity-job/         # source, identity, runtime, and cleanup ownership
 |  |- octacity-lifecycle/   # durable fenced attempt lifecycle and event spool
 |  |- octacity-output/      # immutable output validation and upload pipeline
-|  |- octacity-phase6-contract-tests/ # Vault/runner/MinIO integration contract
 |  |- octacity-private-fs/  # private cross-platform filesystem primitives
-|  |- octacity-protocol/    # versioned server-agent DTOs and signatures
 |  |- octacity-runner/      # Octa inventory, protocol client, and supervisor
 |  |- octacity-source/      # trusted source registry and process host
 |  |- octacity-source-plugin/ # source-plugin protocol and plugin SDK
 |  `- octacity-source-git/  # first trusted source plugin
-|- protocol/
-|  `- coordinator/          # server-agent golden JSON documents
+|- server/
+|  |- core/
+|  |  `- octacity-artifact-store/ # backend-neutral server storage port
+|  |- infrastructure/
+|  |  `- octacity-artifact-s3/ # S3-compatible storage adapter
+|  `- tests/
+|     `- octacity-phase6-contract-tests/ # cross-product integration contract
+|- shared/
+|  |- octacity-protocol/    # versioned server-agent DTOs and signatures
+|  `- protocol-fixtures/
+|     `- coordinator/       # server-agent golden JSON documents
+|- cli/                     # reserved for public command-line clients
 |- tests/
 |  `- fixtures/             # fake runner and Git repositories for tests
 `- docs/
@@ -582,7 +589,7 @@ There is no duplicate execution recovery path in v1.
 
 The canonical source-plugin v1 process specification, message examples, and
 implementation checklist live in
-[`crates/octacity-source-plugin/README.md`](../crates/octacity-source-plugin/README.md).
+[`agent/octacity-source-plugin/README.md`](../agent/octacity-source-plugin/README.md).
 
 Primary workspace acquisition happens before an Octafile can be loaded, so it
 uses an OctaCity source-plugin protocol rather than the Octa task-plugin

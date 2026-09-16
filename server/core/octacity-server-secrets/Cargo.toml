@@ -1,0 +1,9 @@
+[package]
+name = "octacity-server-secrets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Secret-reference and delegated-grant domain for OctaCity"

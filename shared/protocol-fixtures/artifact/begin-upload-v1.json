@@ -1,0 +1,23 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-01",
+  "command": {
+    "operation": "begin_upload",
+    "payload": {
+      "operation_id": "operation-01",
+      "idempotency_key": "job-7-output-2",
+      "artifact_id": "artifact-01",
+      "name": "test-report.xml",
+      "kind": "report",
+      "media_type": "application/xml",
+      "report_format": "junit-v3",
+      "content": {
+        "size_bytes": 128,
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "metadata": {
+        "suite": "unit"
+      }
+    }
+  }
+}

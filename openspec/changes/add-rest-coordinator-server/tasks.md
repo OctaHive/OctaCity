@@ -1,0 +1,117 @@
+## 1. Workspace, Layers, and Contracts
+
+- [x] 1.1 Reorganize workspace members under `cli`, `server`, `agent`, and `shared` while preserving existing Cargo package names and released agent behavior; verify workspace build, tests, packaging paths, and `cargo metadata` before and after the move.
+- [x] 1.2 Add the server composition, REST API, agent API, webhook API, application, trigger, pipeline, Job, orchestrator, placement scheduler, secrets, cache, artifacts, audit, store, PostgreSQL adapter, webhook host, VCS, and observability crates defined in `design.md`; verify every crate builds without starting a listener or external process.
+- [x] 1.3 Add architecture checks that enforce API -> application -> core/shared and infrastructure -> core-port dependency directions, composition-root-only adapter selection, and no server dependency from agent crates; verify intentionally invalid fixture graphs are rejected.
+- [x] 1.4 Audit `shared` ownership and keep only contracts used across product areas there; verify REST DTOs, SQL rows, provider payloads, and server domain entities are absent from shared crates.
+- [x] 1.5 Define bounded versioned webhook-provider, VCS, backend-neutral artifact, and agent-provisioning protocols with strict decoding, cancellation, classified failures, limits, and golden fixtures; verify incompatible versions and unknown fields are rejected.
+- [x] 1.6 Add the server-only `octacity-server-domain` core crate and define opaque identifiers, versions, bounded names, timestamps, trigger identities, Pipeline node identities, and typed domain errors for projects, configurations, pipelines, builds, attempts, jobs, pools, agents, leases, artifacts, and integrations; verify boundary and serialization tests.
+- [x] 1.7 Implement pure state machines for build, attempt, DAG job, lease, pool drain, artifact, cache session, trigger occurrence, and orchestration transitions; verify every allowed transition and representative forbidden transition with table-driven tests.
+- [x] 1.8 Document the canonical Trigger, Trigger Engine, Orchestrator, Placement Scheduler, Executor, Pipeline, Attempt, and Job vocabulary plus crate ownership and public protocol seams; verify rustdoc with `-D missing-docs` and documentation links.
+- [x] 1.9 Add a minimal `octacity-server` composition binary with validated configuration, structured tracing, request IDs, cancellation-tree ownership, liveness, readiness, and graceful shutdown but no domain mutation routes; verify startup and shutdown integration tests without external side effects.
+
+## 2. Authoritative Store and Durable Operations
+
+- [ ] 2.1 Define deep `octacity-server-store` interfaces around complete atomic use cases instead of table CRUD and provide reusable adapter contract tests plus a deterministic in-memory test implementation; verify application tests run without SQLx or network services.
+- [ ] 2.2 Create forward PostgreSQL migrations for projects, policy versions, repositories, pipelines and versions, build configurations, triggers and schedules, builds, attempts, jobs and dependency edges, ready queue, pools, agents, registrations, leases, events, log-chunk manifests, log-search documents and indexing work, artifacts, cache sessions, idempotency, audit, outbox, retries, retention, and worker claims; verify migration from an empty database.
+- [ ] 2.3 Add indexed database constraints for project acyclicity support, immutable pipeline snapshots, monotonically numbered attempts, dependency uniqueness, one current queue claim or lease per job, one registration epoch per agent, contiguous event uniqueness, and immutable published artifact identity; verify every constraint with PostgreSQL integration tests.
+- [ ] 2.4 Implement `octacity-server-store-postgres` using short transactions, bounded claims, and typed conflict, fenced, expired, duplicate, and not-found outcomes; verify the adapter-neutral contract suite against PostgreSQL.
+- [ ] 2.5 Implement concurrent claim and mutation tests with multiple PostgreSQL connections and server identities; verify no duplicate trigger occurrence, schedule fire, DAG transition, queue lease, attempt number, event, completion, audit fact, or idempotent mutation is observable.
+- [ ] 2.6 Persist idempotency outcomes, immutable audit facts, and required outbox records in the same transaction as each accepted mutation; verify commit, rollback, replay, mismatched-key reuse, and crash recovery.
+- [ ] 2.7 Implement single-use agent enrollment credentials and registration credentials with expiry, pool binding, expected-platform policy, epochs, revocation, and redacted formatting; verify replay and superseded-registration tests.
+- [ ] 2.8 Make readiness depend on migrations, PostgreSQL, mandatory object storage, signing material, configured secret providers, and supervised worker health while liveness remains process-local; verify dependency loss and recovery behavior.
+- [ ] 2.9 Define the backend-neutral `LogSearchIndex` query, indexing, freshness, deletion, and rebuild ports plus durable indexing-work identities and adapter-neutral contract tests; verify application and contract tests contain no PostgreSQL full-text, trigram, S3, or external-search types.
+
+## 3. Projects, Pipelines, Jobs, and Orchestration
+
+- [ ] 3.1 Implement transactional create, rename, move, read, list, and guarded delete operations for hierarchical projects using stable IDs and cycle prevention; verify deep-tree, concurrent-move, sibling-name, and active-reference cases.
+- [ ] 3.2 Implement root-to-leaf policy resolution with explicit inherit, replace, and narrow semantics for pools, repositories, secret and identity profiles, runtime, cache, artifacts, concurrency, and retention; verify descendants cannot broaden protected parent grants.
+- [ ] 3.3 Implement immutable versioned Pipeline DAGs with node and edge validation, deterministic ordering, fan-in/fan-out policy, and failure propagation; verify cycles, missing dependencies, duplicate nodes, invalid capabilities, and stable serialization.
+- [ ] 3.4 Implement versioned repositories and build configurations referencing immutable Pipeline versions, parameter schemas, trigger policy, agent requirements, allowed pools, runtime, cache, artifact, and retry policy; verify existing Builds retain old configuration and Pipeline snapshots.
+- [ ] 3.5 Implement the normalized Trigger model for manual, scheduled, external, and internal causes with stable deduplication and causal identities; verify duplicate occurrences create at most one Build.
+- [ ] 3.6 Atomically accept a manual Trigger, resolve an immutable revision, create a Build and Attempt, materialize all Jobs and dependency edges, and enqueue only root Jobs; verify injected failure leaves no partial graph or queue entry.
+- [ ] 3.7 Derive and sign each ready Job's canonical `JobSpecV1` from immutable Build, Pipeline node, and policy snapshots; verify callers cannot inject secrets, host paths, fences, transfer targets, or pre-signed JobSpecs.
+- [ ] 3.8 Implement the server Orchestrator that consumes persisted Job outcomes, makes newly unblocked Jobs ready, applies failure/skip policy, and derives Attempt and Build state; verify restart and duplicate-outcome processing produce the same graph state.
+- [ ] 3.9 Implement durable idempotent cancellation across blocked, ready, leased, and terminal Jobs and retry as a new Attempt over the original immutable snapshots; verify prior events and artifacts remain unchanged and queryable.
+- [ ] 3.10 Implement application projections for project, Pipeline, configuration, Build, Attempt, Job, DAG causality, and trigger history; verify projections expose no credential, raw secret, provider configuration, or private transfer URL.
+
+## 4. CQRS Application and Management REST
+
+- [ ] 4.1 Define typed application commands, queries, handlers, and outcomes independently of HTTP and database rows; verify handlers run against in-memory ports and do not depend on Axum, SQLx, S3, Git, or provider SDKs.
+- [ ] 4.2 Implement command transaction coordination so domain state, idempotency, audit, and outbox changes commit before success; verify every injected failure rolls back the complete command.
+- [ ] 4.3 Define versioned management REST DTOs, stable error codes, cursor envelopes, idempotency headers, and optimistic-concurrency preconditions separately from application projections; verify JSON golden fixtures and unknown-field rejection.
+- [ ] 4.4 Implement REST adapters for project trees, Pipelines, configurations, triggers, Builds, Attempts, Jobs, pools, agents, integrations, artifacts, cache, audit, and operations using only application commands and queries; verify handler tests cannot access infrastructure adapters directly.
+- [ ] 4.5 Publish `/api/v1/openapi.json` from the registered REST contract and add a drift test for routes, DTOs, error responses, and trusted-network security metadata; verify the document parses and contains every initial management operation.
+- [ ] 4.6 Require explicit trusted-network acknowledgement when unauthenticated management listens beyond loopback and keep management, agent, and webhook ingress independently configurable; verify unsafe startup fails before binding sockets.
+- [ ] 4.7 Add bounded long-poll Job-event reads that release database connections while waiting and re-query durable state after wake or timeout; verify ordered replay, empty timeout, notification loss, and restart.
+- [ ] 4.8 Add REST examples for complete headless setup and operation and verify every documented request against the running contract test server.
+
+## 5. Agent Pools and Ready-Job Placement
+
+- [ ] 5.1 Implement versioned static Agent Pools with admission policy, enabled/drain state, concurrency, and guarded deletion; verify references from configurations, agents, leases, and ready Jobs prevent unsafe deletion.
+- [ ] 5.2 Bind every enrolled Agent to exactly one Pool and expose normalized inventory, status, capacity, and last-seen projections; verify reassignment is rejected during an active lease.
+- [ ] 5.3 Implement agent registration through shared `octacity-protocol` DTOs and issue a fresh registration epoch; verify stale epochs cannot poll, heartbeat, append events, upload, use cache, or complete.
+- [ ] 5.4 Implement transactional long-poll placement from the global ready queue using Pool membership, accepting state, exact capabilities, resource availability, concurrency limits, and skip-locked selection; verify dependency-blocked Jobs are invisible and concurrent compatible Agents lease a ready Job once.
+- [ ] 5.5 Persist the selected Pool, registration epoch, lease expiry, and opaque fence atomically with placement; verify no response can expose an assignment that did not commit.
+- [ ] 5.6 Implement heartbeat renewal and independent continue, cancel, fenced, or drain directives; verify telemetry or event-ingestion backpressure does not prevent an otherwise valid renewal.
+- [ ] 5.7 Implement contiguous idempotent Job-event append and terminal completion only after the declared final cursor is durable; verify replay, gaps, conflicting duplicates, lost acknowledgements, and completion races.
+- [ ] 5.8 Implement Agent and Pool drain plus lease expiry, fencing, bounded infrastructure retry, and requeue through durable workers; verify multiple server replicas never create concurrent owners.
+- [ ] 5.9 Pass a released Native-agent vertical slice that executes a multi-node Pipeline sequentially, unblocks dependencies through the Orchestrator, and completes through the real REST server and PostgreSQL; retain events and protocol transcripts.
+
+## 6. Scheduled, Internal, and External Triggers
+
+- [ ] 6.1 Implement durable schedules with timezone, next occurrence, missed-run policy, bounded catch-up, claim ownership, and stable occurrence identity; verify clock boundaries, restart, concurrent replicas, and duplicate claims create at most one Build.
+- [ ] 6.2 Implement internal domain-event triggers through transactional outbox delivery with documented cycle/depth protection; verify retries and causal loops cannot create duplicate or unbounded Builds.
+- [ ] 6.3 Implement the webhook-provider protocol and bounded process host for verification, normalization, optional managed registration, cancellation, classified errors, digest pinning, and credential isolation; verify malformed, spoofed, oversized, crashed, hanging, and replaced adapter cases.
+- [ ] 6.4 Implement unmanaged webhook configuration that returns callback and verification requirements without provider administration credentials; verify a manually configured authenticated delivery reaches the Trigger Engine exactly once.
+- [ ] 6.5 Implement managed webhook registration interfaces and conformance fixtures without requiring a production GitHub or Gerrit adapter in the first release; verify create, observe, rotate, delete, lost response, and unsupported-operation semantics.
+- [ ] 6.6 Implement the VCS protocol, verified registry, and bounded process host for refs, commits, trees, file content, immutable revision resolution, cancellation, and credentials; verify protocol limits and adapter failure classification.
+- [ ] 6.7 Implement `octacity-vcs-git` without executing repository content or materializing a build workspace; verify bounded branch/tag listing, commit selection, tree/content browsing, and immutable resolution.
+- [ ] 6.8 Persist webhook delivery identities, normalized events, transient adapter retries, and dead-letter diagnostics; verify restart and repeated failure preserve causality without duplicate Trigger occurrences or Builds.
+
+## 7. Artifacts, Cache, and Secrets
+
+- [x] 7.1 Split the existing artifact interface from its S3-compatible implementation into backend-neutral and concrete adapter crates without changing the agent wire contract; verify both crates have the dependency direction defined in `design.md`.
+- [ ] 7.2 Implement pending, verifying, published, expired, and deleted artifact records tied to Job, current fence, logical name, digest, size, type, and retention policy; verify state transitions and uniqueness constraints.
+- [ ] 7.3 Implement idempotent begin/complete and short-lived download capabilities using the backend-neutral artifact interface; verify size and SHA-256 independently, never treat ETag as content identity, and expose no bucket, key, credential, or persistent URL.
+- [ ] 7.4 Run the object-store contract against MinIO for upload, verification, download, expiration, outage, and recovery; verify authoritative metadata and object bytes never produce a false published result.
+- [ ] 7.5 Implement cache namespace policy and fenced short-lived sessions bound to project, Build, Agent registration, current lease, permissions, expiry, quota, and retention; verify namespace isolation and revoked-session authorization.
+- [ ] 7.6 Implement Octa's published HTTP L2 cache protocol without recalculating action keys or interpreting plugin contracts; verify conformance fixtures, digest integrity, atomic publication, quota, retention, and cross-namespace non-disclosure.
+- [ ] 7.7 Implement logical secret references, provider configuration validation, policy resolution, and short-lived grant interfaces while preferring delegated Octa access over server-read secret values; verify secrets and provider credentials cannot enter Build, JobSpec, REST, audit, logs, or metrics.
+- [ ] 7.8 Implement bounded immutable stdout and stderr chunks with pre-persistence redaction, idempotent object identity, digest verification, contiguous sequence manifests, and atomic cursor plus indexing-outbox commit before acknowledgement; verify replay, lost acknowledgement, database rollback, object-store outage, and orphan cleanup.
+- [ ] 7.9 Implement the PostgreSQL `LogSearchIndex` adapter with `to_tsvector('simple', ...)`, GIN-backed full-text search, `pg_trgm` literal-fragment search, deterministic cursor ordering, bounded snippets, freshness positions, durable retry, and idempotent rebuild; verify index loss, lag, duplicate delivery, mixed-language logs, paths, hashes, error codes, and secret redaction.
+- [ ] 7.10 Add backend-neutral REST build-log search scoped by project, Build, Attempt, Job, stream, and time, with explicit full-text and literal modes, bounded queries and snippets, deterministic cursor pages, logical chunk and sequence references, and index freshness; verify unsupported modes, oversized input, pagination stability, lag reporting, and absence of storage or database details.
+- [ ] 7.11 Coordinate Build Result retention across logical visibility, PostgreSQL search documents, chunk manifests, and object bytes; verify interrupted deletion, repeated cleanup, retained-build references, orphan chunks, and rebuild cannot resurrect deleted logs.
+
+## 8. Audit and Observability
+
+- [ ] 8.1 Implement immutable structured audit facts for management, agent, Trigger, Orchestrator, adapter, and worker mutations; verify unauthenticated management actors are represented honestly and sensitive request bodies are never stored.
+- [ ] 8.2 Define stable server and Agent metric names, units, labels, trace fields, redaction rules, and cardinality budgets in the shared observability crate; verify high-cardinality identifiers and secret wrappers cannot become metric labels.
+- [ ] 8.3 Implement bounded agent telemetry ingestion independently of heartbeat and ordered build-event acceptance; verify exporter outage cannot fail coordination or grow memory without bound.
+- [ ] 8.4 Instrument REST, webhooks, VCS, triggers, orchestration, placement, leases, store operations, cache, artifacts, outbox, and workers; verify representative success, retry, rejection, and failure paths emit correlated safe telemetry.
+
+## 9. Agent Ready Release Matrix
+
+- [ ] 9.1 Build an isolated harness that installs released server, Agent, Octa, runner, and plugin bundles rather than workspace binaries; verify bundle manifests, protocol ranges, executable digests, and release contracts before each scenario.
+- [ ] 9.2 Exercise Linux Native execution from manual and scheduled Pipeline triggers through DAG completion, Build Result retrieval, full-text and literal log search, artifact download, and remote-cache reuse; verify cleanup, metrics, event order, cancellation, and resource enforcement.
+- [ ] 9.3 Exercise Linux OCI process execution through containerd and OCI hypervisor execution through Microsandbox using supported immutable images; verify network, filesystem, resource, cancellation, and cleanup contracts.
+- [ ] 9.4 Exercise supported Apple Silicon macOS Native and Microsandbox paths with released bundles; verify platform identity, lifecycle, cache identity, and artifact integrity.
+- [ ] 9.5 Inject Agent, server, PostgreSQL, S3, build-log indexer, VCS, webhook, secret-provider, telemetry-exporter, and network failures at each lifecycle phase; verify fencing, replay, search-index rebuild, outbox recovery, bounded retry, and no false success.
+- [ ] 9.6 Verify security boundaries for Agent enrollment, Pool admission, project policy, signed JobSpec, webhook authentication, secret references, malicious repositories, plugin digests, artifact paths, build-log archive and search redaction, presigned URL redaction, and cache namespaces.
+- [ ] 9.7 Verify install, reboot, graceful drain, forced drain, upgrade, rollback window, and uninstall behavior for supported service managers while Pipelines are absent and active.
+- [ ] 9.8 Measure Trigger latency, DAG transition latency, queue acquisition, REST latency, event throughput, build-log indexing lag and query latency, artifact throughput, cache restore, database contention, and 100-Agent soak behavior against explicit budgets.
+
+## 10. Production Hardening and Operations
+
+- [ ] 10.1 Add bounded per-client, per-Agent, webhook, and expensive-endpoint rate limits that do not become correctness state; verify overload returns stable retry guidance without starving heartbeats.
+- [ ] 10.2 Run multi-replica contention and rolling-restart tests for every schedule, Trigger, Orchestrator, outbox, queue, lease, retry, and retention claim; verify correctness does not depend on process-local locks, timers, or notifications.
+- [ ] 10.3 Define and test schema compatibility, forward migration rehearsal, failed migration behavior, and previous-binary rollback using database snapshots.
+- [ ] 10.4 Implement and rehearse coordinated PostgreSQL and object-store backup/restore with integrity reconciliation plus log-search projection restore or rebuild; verify a restored system never publishes metadata for missing or unverified objects and reports honest search freshness until catch-up.
+- [ ] 10.5 Document direct TLS versus trusted reverse proxy, trusted-network management isolation, listener separation, public URL validation, forwarded-header trust, signing and Agent credential rotation, retention, capacity, alerting, and incident recovery; verify example configurations in CI.
+- [ ] 10.6 Complete threat modeling, dependency/license review, protocol fuzzing, secret-scanning assertions, rustdoc, coverage, and architecture checks; verify all release gates pass without suppressing warnings.
+
+## 11. Deferred Extension Contracts
+
+- [ ] 11.1 Implement the versioned agent-provisioning protocol types and deterministic conformance fixture for provision, observe, terminate, cancellation, idempotency, bootstrap, and classified failures; verify no virtualization-provider-specific type reaches JobSpec, Agent, Pool, Orchestrator, or Placement Scheduler interfaces.
+- [ ] 11.2 Keep dynamic agent provisioning disabled when no production adapter is installed and exclude vSphere, Proxmox, and provisioning reconciliation from the first release; verify readiness and static placement are unaffected and management reports the capability unavailable.
+- [ ] 11.3 Document later adapter seams for operator authentication, LDAP/TOTP, GraphQL, Kafka/NATS, managed GitHub/Gerrit integrations, secret stores, and virtualization without creating empty production crates; verify the v1 dependency graph contains none of their SDKs.

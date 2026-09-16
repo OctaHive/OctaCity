@@ -1,0 +1,26 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": ["ARCH006_SHARED_OWNERSHIP"],
+  "packages": [
+    {
+      "name": "fixture-shared",
+      "manifest_path": "/workspace/shared/fixture-shared/Cargo.toml",
+      "metadata": {
+        "octacity": {
+          "shared": {
+            "contract": "claimed-cross-product-contract",
+            "consumers": ["agent", "server"]
+          }
+        }
+      },
+      "dependencies": []
+    },
+    {
+      "name": "fixture-agent",
+      "manifest_path": "/workspace/agent/fixture-agent/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    }
+  ]
+}

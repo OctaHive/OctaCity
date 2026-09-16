@@ -1,0 +1,38 @@
+[package]
+name = "octacity-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+octacity-cache-session = { path = "../octacity-cache-session" }
+clap.workspace = true
+octacity-config = { path = "../octacity-config" }
+octacity-coordinator = { path = "../octacity-coordinator" }
+octacity-execution = { path = "../octacity-execution" }
+octacity-execution-containerd = { path = "../octacity-execution-containerd" }
+octacity-execution-microsandbox = { path = "../octacity-execution-microsandbox" }
+octacity-execution-native = { path = "../octacity-execution-native" }
+octacity-execution-oci = { path = "../octacity-execution-oci" }
+octacity-inventory = { path = "../octacity-inventory" }
+octacity-identity = { path = "../octacity-identity" }
+octacity-job = { path = "../octacity-job" }
+octacity-lifecycle = { path = "../octacity-lifecycle" }
+octacity-output = { path = "../octacity-output" }
+octacity-protocol = { path = "../../shared/octacity-protocol" }
+octacity-runner = { path = "../octacity-runner" }
+octacity-source = { path = "../octacity-source" }
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+tracing-layer-win-eventlog.workspace = true
+windows-service.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true

@@ -1,0 +1,23 @@
+[package]
+name = "octacity-inventory"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agent inventory and advisory host metrics for OctaCity"
+
+[dependencies]
+octa-cache-protocol.workspace = true
+octa-runner-protocol.workspace = true
+octacity-protocol = { path = "../../shared/octacity-protocol" }
+octacity-runner = { path = "../octacity-runner" }
+octacity-source = { path = "../octacity-source" }
+sysinfo.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

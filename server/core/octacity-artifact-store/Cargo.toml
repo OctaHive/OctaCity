@@ -1,0 +1,13 @@
+[package]
+name = "octacity-artifact-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Backend-neutral server-side artifact storage boundary for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+octacity-server-domain = { path = "../octacity-server-domain" }
+thiserror.workspace = true

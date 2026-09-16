@@ -3,12 +3,16 @@
 OctaCity is the control plane and self-hosted agent for running
 [Octa](https://github.com/OctaHive/octa) jobs. The repository now includes the
 local-execution, coordinator-transport, and durable job-lifecycle milestones.
-No server is available yet.
+The modular server crates and contracts are being built. A runnable
+health-only server composition shell is available; management mutations and
+the durable control-plane vertical slices are not implemented yet.
 
 The current workspace contains:
 
-- `octacity-artifact-store`: server-side artifact persistence port and the
-  S3-compatible adapter used by the Phase 6 contract server;
+- `octacity-artifact-store`: backend-neutral server-side artifact persistence
+  port;
+- `octacity-artifact-s3`: S3-compatible adapter used by the Phase 6 contract
+  server;
 - `octacity-cache-session`: agent-owned L1 placement and short-lived remote
   cache authority preparation without implementing cache semantics;
 - `octacity-protocol`: strict, signed server-agent job types;
@@ -49,9 +53,11 @@ supported runner OS.
 
 ```shell
 cargo fmt --all -- --check
+python3 tools/check_architecture.py
 python3 -m unittest discover -s tools/tests -v
 cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D missing-docs" cargo doc --workspace --all-features --no-deps
 cargo llvm-cov --workspace --all-features --summary-only \
   --fail-under-lines 80
 ```
@@ -73,6 +79,24 @@ octacity-agent --log-filter octacity_agent=debug --log-format json \
 octacity-agent --log-filter octacity_agent=info --log-format json \
   run /etc/octacity/agent.toml
 ```
+
+The current server is a health-only composition shell. A minimal
+`server.toml` is:
+
+```toml
+management_bind = "127.0.0.1:8080"
+shutdown_grace_milliseconds = 10000
+```
+
+Validate it without opening a listener, then run it with:
+
+```shell
+cargo run -p octacity-server -- validate server.toml
+cargo run -p octacity-server -- run server.toml
+```
+
+It exposes only `/health/live` and `/health/ready`; management mutations and
+server-Agent coordination routes are intentionally absent at this phase.
 
 Native execution is deliberately Linux-only. It requires a delegated cgroup
 v2 root and a dedicated, quota-sized filesystem mounted at `work_root`. Version
@@ -107,11 +131,15 @@ Dependency auditing and protocol-fuzzing ownership are documented in
 [`docs/security-testing.md`](docs/security-testing.md).
 Language-neutral wire specifications are indexed in
 [`docs/protocols/README.md`](docs/protocols/README.md).
+Canonical coordination terminology is defined in
+[`CONTEXT.md`](CONTEXT.md), while server crate ownership, dependency direction,
+and public seams are mapped in
+[`docs/server-architecture.md`](docs/server-architecture.md).
 The implemented coordinator transport is specified in
 [`docs/protocols/server-agent-v1.md`](docs/protocols/server-agent-v1.md).
 The source-plugin process model and complete protocol v1 lifecycle are
 documented in
-[`crates/octacity-source-plugin/README.md`](crates/octacity-source-plugin/README.md).
+[`agent/octacity-source-plugin/README.md`](agent/octacity-source-plugin/README.md).
 An operator-facing configuration shape is available in
 [`docs/agent.example.toml`](docs/agent.example.toml).
 Provisioning and exact commands for the non-emulated execution contract suite

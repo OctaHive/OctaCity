@@ -8,11 +8,17 @@ semantics independently of a particular implementation language.
 | Protocol | Status | Specification | Implementation |
 | --- | --- | --- | --- |
 | Signed JobSpec v1 | Implemented | [signed-job-spec-v1.md](signed-job-spec-v1.md) | `octacity-protocol` |
-| Source-plugin v1 | Implemented | [source-plugin README](../../crates/octacity-source-plugin/README.md) | `octacity-source-plugin`, `octacity-source`, `octacity-source-git` |
+| Source-plugin v1 | Implemented | [source-plugin README](../../agent/octacity-source-plugin/README.md) | `octacity-source-plugin`, `octacity-source`, `octacity-source-git` |
 | Octa runner v3 | Implemented in Octa | Published by the `octa-runner-protocol` crate | `octa-runner-protocol`, `octacity-runner` |
 | Server-agent transport v1 | Phases 5–7 implemented | [server-agent-v1.md](server-agent-v1.md) | `octacity-protocol`, `octacity-coordinator`, `octacity-lifecycle` |
 | Cache session v1 | Implemented | [cache-session-v1.md](cache-session-v1.md) | `octacity-cache-session`, `octacity-runner` |
+| Webhook provider v1 | Wire contract implemented; host pending | [webhook-provider-v1.md](webhook-provider-v1.md) | `octacity-webhook-provider-protocol` |
+| VCS provider v1 | Wire contract implemented; host and Git adapter pending | [vcs-provider-v1.md](vcs-provider-v1.md) | `octacity-vcs-protocol` |
+| Artifact transfer v1 | Wire contract implemented | [artifact-transfer-v1.md](artifact-transfer-v1.md) | `octacity-protocol` |
+| Agent provisioning v1 | Conformance contract only; no production adapter | [agent-provisioning-v1.md](agent-provisioning-v1.md) | `octacity-agent-provisioning-protocol` |
 
-“Implemented” means the wire types and validation exist. The OctaCity server
-is not available yet; the agent daemon implements the operations listed in the
-server-agent specification.
+“Implemented” means the wire types and validation exist. A health-only
+`octacity-server` composition shell is available, but it intentionally exposes
+no management mutations or server-Agent coordination routes yet. The agent
+daemon implements the client-side operations listed in the server-Agent
+specification.

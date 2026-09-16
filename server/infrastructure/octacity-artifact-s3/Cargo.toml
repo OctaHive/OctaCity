@@ -1,0 +1,22 @@
+[package]
+name = "octacity-artifact-s3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "S3-compatible artifact storage adapter for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+aws-sdk-s3.workspace = true
+base64.workspace = true
+http.workspace = true
+octacity-artifact-store = { path = "../../core/octacity-artifact-store" }
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+reqwest.workspace = true
+uuid.workspace = true

@@ -10,7 +10,9 @@ backend.
 
 The document does not define lease acquisition, heartbeat, event upload,
 artifact upload, or completion endpoints. Those operations belong to the
-planned server-agent transport. The current crate contains only Signed JobSpec
+separate [server-Agent transport](server-agent-v1.md). The shared protocol and
+agent-side client are implemented; the health-only server composition shell
+does not expose those routes yet. This document covers only Signed JobSpec
 types, signature verification, lease-attempt binding, and semantic validation.
 
 ## Purpose and trust boundary
@@ -237,7 +239,7 @@ the selected plugin authoritatively validates `revision`, `reference`, and
 
 Source materialization must return the exact requested `revision`. A branch or
 tag in `reference` can narrow the fetch but cannot replace this equality check.
-See the [source-plugin v1 specification](../../crates/octacity-source-plugin/README.md)
+See the [source-plugin v1 specification](../../agent/octacity-source-plugin/README.md)
 for the process lifecycle.
 
 ## Octa release requirement
@@ -411,9 +413,9 @@ authenticated; there is no preferred canonical serializer in v1.
 
 ## Implementation locations
 
-- Wire types and verification: `crates/octacity-protocol/src/lib.rs`
-- Agent configuration and verification keys: `crates/octacity-config/src/lib.rs`
-- Source-plugin inventory and host: `crates/octacity-source/src/`
-- Octa release inventory and supervision: `crates/octacity-runner/src/`
-- Backend-neutral execution contract: `crates/octacity-execution/src/lib.rs`
-- Native execution adapter: `crates/octacity-execution-native/src/lib.rs`
+- Wire types and verification: `shared/octacity-protocol/src/lib.rs`
+- Agent configuration and verification keys: `agent/octacity-config/src/lib.rs`
+- Source-plugin inventory and host: `agent/octacity-source/src/`
+- Octa release inventory and supervision: `agent/octacity-runner/src/`
+- Backend-neutral execution contract: `agent/octacity-execution/src/lib.rs`
+- Native execution adapter: `agent/octacity-execution-native/src/lib.rs`

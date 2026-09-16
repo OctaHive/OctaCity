@@ -1,0 +1,12 @@
+[package]
+name = "octacity-server-scheduler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Ready-Job placement scheduler domain for OctaCity"
+
+[dependencies]
+octacity-server-domain = { path = "../octacity-server-domain" }

@@ -1,0 +1,9 @@
+[package]
+name = "octacity-server-webhook"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Verified webhook-provider host for the OctaCity server"

@@ -1,0 +1,14 @@
+[package]
+name = "octacity-observability"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Shared observability vocabulary for OctaCity server and agents"
+
+[package.metadata.octacity.shared]
+contract = "agent-server-observability-vocabulary"
+consumers = ["agent", "server"]
+scaffold = true

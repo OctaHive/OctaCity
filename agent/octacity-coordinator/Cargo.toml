@@ -1,0 +1,26 @@
+[package]
+name = "octacity-coordinator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded HTTPS coordinator client and lease supervision for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+ed25519-dalek.workspace = true
+octacity-protocol = { path = "../../shared/octacity-protocol" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+tempfile.workspace = true

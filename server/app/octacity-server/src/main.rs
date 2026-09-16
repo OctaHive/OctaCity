@@ -1,0 +1,149 @@
+use std::{path::PathBuf, process::ExitCode};
+
+use clap::{Parser, Subcommand, ValueEnum};
+use octacity_server::{ServerConfig, ServerRuntime};
+use tracing::{error, info};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
+
+#[derive(Debug, Parser)]
+#[command(version, about = "OctaCity build coordination server")]
+struct Cli {
+  /// Tracing filter using the same syntax as RUST_LOG.
+  #[arg(long, global = true, value_name = "DIRECTIVES")]
+  log_filter: Option<String>,
+  /// Structured log representation written to stderr.
+  #[arg(long, global = true, value_enum, default_value_t = LogFormat::Json)]
+  log_format: LogFormat,
+  #[command(subcommand)]
+  command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+  /// Validate configuration without binding a socket.
+  Validate {
+    /// Path to the server TOML configuration.
+    config: PathBuf,
+  },
+  /// Run the server until SIGINT or SIGTERM.
+  Run {
+    /// Path to the server TOML configuration.
+    config: PathBuf,
+  },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum LogFormat {
+  Compact,
+  Json,
+}
+
+fn main() -> ExitCode {
+  let cli = Cli::parse();
+  if let Err(error) = init_tracing(cli.log_filter.as_deref(), cli.log_format) {
+    eprintln!("octacity-server: failed to initialize tracing: {error}");
+    return ExitCode::FAILURE;
+  }
+  let result = match cli.command {
+    Command::Validate { config } => validate(config),
+    Command::Run { config } => run_async(run(config)),
+  };
+  match result {
+    Ok(()) => ExitCode::SUCCESS,
+    Err(error) => {
+      error!(%error, "server command failed");
+      ExitCode::FAILURE
+    }
+  }
+}
+
+fn validate(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+  let config = ServerConfig::load(&path)?;
+  println!(
+    "server configuration is valid (management listener {})",
+    config.management_bind()
+  );
+  Ok(())
+}
+
+async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+  let config = ServerConfig::load(&path)?;
+  let mut runtime = ServerRuntime::start(config).await?;
+  info!(management_addr = %runtime.management_addr(), "server started");
+  tokio::select! {
+    signal = shutdown_signal() => {
+      signal?;
+      info!("shutdown signal received");
+      runtime.shutdown().await?;
+    }
+    listener = runtime.wait() => listener?,
+  }
+  Ok(())
+}
+
+fn run_async<F>(future: F) -> Result<(), Box<dyn std::error::Error>>
+where
+  F: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+  tokio::runtime::Builder::new_multi_thread()
+    .enable_all()
+    .build()?
+    .block_on(future)
+}
+
+fn init_tracing(filter: Option<&str>, format: LogFormat) -> Result<(), Box<dyn std::error::Error>> {
+  let filter = match filter {
+    Some(filter) => EnvFilter::try_new(filter)?,
+    None => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+  };
+  let registry = tracing_subscriber::registry().with(filter);
+  match format {
+    LogFormat::Compact => registry.with(tracing_subscriber::fmt::layer().compact()).try_init()?,
+    LogFormat::Json => registry.with(tracing_subscriber::fmt::layer().json()).try_init()?,
+  }
+  Ok(())
+}
+
+async fn shutdown_signal() -> std::io::Result<()> {
+  #[cfg(unix)]
+  {
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    tokio::select! {
+      result = tokio::signal::ctrl_c() => result,
+      signal = terminate.recv() => signal.map(|_| ()).ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::BrokenPipe, "SIGTERM stream closed")
+      }),
+    }
+  }
+  #[cfg(not(unix))]
+  {
+    tokio::signal::ctrl_c().await
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn parses_run_with_structured_logging_options() {
+    let cli = Cli::try_parse_from([
+      "octacity-server",
+      "--log-filter",
+      "octacity_server=debug",
+      "--log-format",
+      "json",
+      "run",
+      "server.toml",
+    ])
+    .unwrap();
+    assert_eq!(cli.log_filter.as_deref(), Some("octacity_server=debug"));
+    assert_eq!(cli.log_format, LogFormat::Json);
+    assert!(matches!(cli.command, Command::Run { .. }));
+  }
+
+  #[test]
+  fn rejects_an_invalid_tracing_filter() {
+    assert!(init_tracing(Some("[invalid"), LogFormat::Json).is_err());
+  }
+}

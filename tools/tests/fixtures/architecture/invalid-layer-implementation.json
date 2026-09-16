@@ -1,0 +1,31 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": [
+    "ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY",
+    "ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY",
+    "ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"
+  ],
+  "packages": [
+    {
+      "name": "fixture-api",
+      "manifest_path": "/workspace/server/api/fixture-api/Cargo.toml",
+      "dependencies": [
+        {"name": "aws-sdk-s3", "kind": null, "path": null}
+      ]
+    },
+    {
+      "name": "fixture-application",
+      "manifest_path": "/workspace/server/application/fixture-application/Cargo.toml",
+      "dependencies": [
+        {"name": "sqlx", "kind": null, "path": null}
+      ]
+    },
+    {
+      "name": "fixture-core",
+      "manifest_path": "/workspace/server/core/fixture-core/Cargo.toml",
+      "dependencies": [
+        {"name": "axum", "kind": "dev", "path": null}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "workspace_root": "/workspace",
+  "expected_codes": [],
+  "packages": [
+    {
+      "name": "octacity-server",
+      "manifest_path": "/workspace/server/app/octacity-server/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-api", "kind": null, "path": "/workspace/server/api/fixture-api"},
+        {"name": "fixture-postgres", "kind": null, "path": "/workspace/server/infrastructure/fixture-postgres"},
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-api",
+      "manifest_path": "/workspace/server/api/fixture-api/Cargo.toml",
+      "dependencies": [
+        {"name": "axum", "kind": null, "path": null},
+        {"name": "tower", "kind": "dev", "path": null},
+        {"name": "fixture-application", "kind": null, "path": "/workspace/server/application/fixture-application"},
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-application",
+      "manifest_path": "/workspace/server/application/fixture-application/Cargo.toml",
+      "dependencies": [
+        {"name": "async-trait", "kind": null, "path": null},
+        {"name": "fixture-core", "kind": null, "path": "/workspace/server/core/fixture-core"},
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-core",
+      "manifest_path": "/workspace/server/core/fixture-core/Cargo.toml",
+      "dependencies": [
+        {"name": "serde", "kind": null, "path": null},
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-provider-protocol",
+      "manifest_path": "/workspace/server/protocols/fixture-provider-protocol/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-postgres",
+      "manifest_path": "/workspace/server/infrastructure/fixture-postgres/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-core", "kind": null, "path": "/workspace/server/core/fixture-core"},
+        {"name": "fixture-provider-protocol", "kind": null, "path": "/workspace/server/protocols/fixture-provider-protocol"},
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-agent-core",
+      "manifest_path": "/workspace/agent/fixture-agent-core/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-agent",
+      "manifest_path": "/workspace/agent/fixture-agent/Cargo.toml",
+      "dependencies": [
+        {"name": "fixture-agent-core", "kind": null, "path": "/workspace/agent/fixture-agent-core"},
+        {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
+      ]
+    },
+    {
+      "name": "fixture-shared",
+      "manifest_path": "/workspace/shared/fixture-shared/Cargo.toml",
+      "metadata": {
+        "octacity": {
+          "shared": {
+            "contract": "fixture-cross-product-contract",
+            "consumers": ["agent", "server"]
+          }
+        }
+      },
+      "dependencies": []
+    }
+  ]
+}

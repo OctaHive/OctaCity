@@ -1,0 +1,15 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-01",
+  "command": {
+    "operation": "resolve_revision",
+    "payload": {
+      "repository": {
+        "operation_id": "operation-01",
+        "repository_id": "repository-01",
+        "credential_handle": "credential-handle-01"
+      },
+      "reference": "refs/heads/main"
+    }
+  }
+}

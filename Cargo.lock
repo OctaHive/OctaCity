@@ -3935,18 +3935,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "octacity-artifact-store"
+name = "octacity-agent-provisioning-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "octacity-artifact-s3"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "aws-sdk-s3",
  "base64 0.22.1",
  "http 1.5.0",
+ "octacity-artifact-store",
  "reqwest",
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "octacity-artifact-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "octacity-server-domain",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4163,6 +4182,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-observability"
+version = "0.1.0"
+
+[[package]]
 name = "octacity-output"
 version = "0.1.0"
 dependencies = [
@@ -4191,6 +4214,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "ed25519-dalek",
+ "octacity-artifact-s3",
  "octacity-artifact-store",
  "octacity-coordinator",
  "octacity-execution",
@@ -4258,6 +4282,129 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "clap",
+ "octacity-server-api-rest",
+ "reqwest",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "octacity-server-api-agent"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-api-rest"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "octacity-server-api-webhook"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-application"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-artifacts"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+]
+
+[[package]]
+name = "octacity-server-audit"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-cache"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+]
+
+[[package]]
+name = "octacity-server-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "octacity-server-job"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+]
+
+[[package]]
+name = "octacity-server-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+]
+
+[[package]]
+name = "octacity-server-pipeline"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-scheduler"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+]
+
+[[package]]
+name = "octacity-server-secrets"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-store"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-store-postgres"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-trigger"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+]
+
+[[package]]
+name = "octacity-server-vcs"
+version = "0.1.0"
+
+[[package]]
+name = "octacity-server-webhook"
+version = "0.1.0"
+
+[[package]]
 name = "octacity-source"
 version = "0.1.0"
 dependencies = [
@@ -4300,6 +4447,26 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "octacity-vcs-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "octacity-webhook-provider-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
