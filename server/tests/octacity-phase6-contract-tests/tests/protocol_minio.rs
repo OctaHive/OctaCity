@@ -92,10 +92,11 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
       region,
       bucket: bucket.clone(),
       prefix: "phase6-protocol".to_owned(),
-      access_key,
-      secret_key,
+      access_key: access_key.into(),
+      secret_key: secret_key.into(),
       force_path_style: true,
       operation_timeout: Duration::from_secs(30),
+      capability_recheck_interval: Duration::from_secs(300),
     })
     .unwrap(),
   );

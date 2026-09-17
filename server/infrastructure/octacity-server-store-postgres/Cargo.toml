@@ -7,3 +7,19 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "PostgreSQL adapter for OctaCity server persistence ports"
+
+[dependencies]
+async-trait.workspace = true
+octacity-server-domain = { path = "../../core/octacity-server-domain" }
+octacity-server-orchestrator = { path = "../../core/octacity-server-orchestrator" }
+octacity-server-pipeline = { path = "../../core/octacity-server-pipeline" }
+octacity-server-store = { path = "../../core/octacity-server-store" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+octacity-server-store = { path = "../../core/octacity-server-store", features = ["test-support"] }
+tokio.workspace = true

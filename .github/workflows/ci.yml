@@ -124,6 +124,22 @@ jobs:
           done
           docker logs octacity-coverage-minio
           exit 1
+      - name: Start pinned PostgreSQL service
+        run: |
+          docker run --detach --rm --name octacity-coverage-postgres \
+            -p 127.0.0.1:15432:5432 \
+            -e POSTGRES_USER=octacity \
+            -e POSTGRES_PASSWORD=octacity-secret \
+            -e POSTGRES_DB=postgres \
+            postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+          for attempt in {1..30}; do
+            if docker exec octacity-coverage-postgres pg_isready -U octacity -d postgres >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs octacity-coverage-postgres
+          exit 1
       - name: Cover the S3-compatible storage adapter
         env:
           OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
@@ -134,9 +150,43 @@ jobs:
           -p octacity-artifact-s3 --test minio --
           s3_store_satisfies_the_minio_contract --ignored --exact
         working-directory: octacity
-      - name: Stop coverage service
+      - name: Cover PostgreSQL migrations from an empty database
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test migrations --
+          migrates_an_empty_database_and_is_reentrant --ignored --exact
+        working-directory: octacity
+      - name: Cover authoritative PostgreSQL constraints and allocators
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test constraints --
+          --ignored
+        working-directory: octacity
+      - name: Cover the authoritative PostgreSQL store contract
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test store_contract --
+          --ignored
+        working-directory: octacity
+      - name: Cover PostgreSQL contention contracts
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test concurrency --
+          --ignored
+        working-directory: octacity
+      - name: Stop coverage services
         if: always()
-        run: docker rm --force octacity-coverage-minio || true
+        run: |
+          docker rm --force octacity-coverage-minio || true
+          docker rm --force octacity-coverage-postgres || true
       - name: Generate LCOV report
         run: cargo llvm-cov report --lcov --output-path lcov.info
         working-directory: octacity

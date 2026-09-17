@@ -3,23 +3,24 @@ use std::{fs::File, io::Read as _, net::SocketAddr, path::Path, path::PathBuf, t
 use serde::Deserialize;
 use thiserror::Error;
 
+mod dependencies;
+
+pub(crate) use dependencies::{ObjectStorageConfig, PostgresConfig, SigningConfig};
+
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_SHUTDOWN_GRACE_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_READINESS_CHECK_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 /// Validated operator configuration for the server process.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerConfig {
   management_bind: SocketAddr,
   shutdown_grace_milliseconds: u64,
-}
-
-impl Default for ServerConfig {
-  fn default() -> Self {
-    Self {
-      management_bind: SocketAddr::from(([127, 0, 0, 1], 8080)),
-      shutdown_grace_milliseconds: 10_000,
-    }
-  }
+  readiness_check_interval_milliseconds: u64,
+  readiness_check_timeout_milliseconds: u64,
+  postgres: PostgresConfig,
+  object_storage: ObjectStorageConfig,
+  signing: SigningConfig,
 }
 
 impl ServerConfig {
@@ -39,6 +40,11 @@ impl ServerConfig {
     let config = Self {
       management_bind: config.management_bind,
       shutdown_grace_milliseconds: config.shutdown_grace_milliseconds,
+      readiness_check_interval_milliseconds: config.readiness_check_interval_milliseconds,
+      readiness_check_timeout_milliseconds: config.readiness_check_timeout_milliseconds,
+      postgres: config.postgres,
+      object_storage: config.object_storage,
+      signing: config.signing,
     };
     config.validate()?;
     Ok(config)
@@ -76,31 +82,85 @@ impl ServerConfig {
     Duration::from_millis(self.shutdown_grace_milliseconds)
   }
 
+  /// Interval between refreshes of the dependency readiness snapshot.
+  pub const fn readiness_check_interval(&self) -> Duration {
+    Duration::from_millis(self.readiness_check_interval_milliseconds)
+  }
+
+  /// Aggregate deadline for one refresh of every readiness dependency.
+  pub const fn readiness_check_timeout(&self) -> Duration {
+    Duration::from_millis(self.readiness_check_timeout_milliseconds)
+  }
+
+  pub(crate) const fn postgres(&self) -> &PostgresConfig {
+    &self.postgres
+  }
+
+  pub(crate) const fn object_storage(&self) -> &ObjectStorageConfig {
+    &self.object_storage
+  }
+
+  pub(crate) const fn signing(&self) -> &SigningConfig {
+    &self.signing
+  }
+
   fn validate(&self) -> Result<(), ServerConfigError> {
     if self.shutdown_grace_milliseconds == 0 || self.shutdown_grace_milliseconds > MAX_SHUTDOWN_GRACE_MILLISECONDS {
       return Err(ServerConfigError::Invalid(format!(
         "shutdown_grace_milliseconds must be between 1 and {MAX_SHUTDOWN_GRACE_MILLISECONDS}"
       )));
     }
+    if self.readiness_check_interval_milliseconds == 0
+      || self.readiness_check_interval_milliseconds > MAX_READINESS_CHECK_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "readiness_check_interval_milliseconds must be between 1 and {MAX_READINESS_CHECK_MILLISECONDS}"
+      )));
+    }
+    if self.readiness_check_timeout_milliseconds == 0
+      || self.readiness_check_timeout_milliseconds > MAX_READINESS_CHECK_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "readiness_check_timeout_milliseconds must be between 1 and {MAX_READINESS_CHECK_MILLISECONDS}"
+      )));
+    }
+    self.postgres.validate().map_err(ServerConfigError::Invalid)?;
+    self.object_storage.validate().map_err(ServerConfigError::Invalid)?;
+    self.signing.validate().map_err(ServerConfigError::Invalid)?;
     Ok(())
   }
 }
 
 #[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct UnvalidatedServerConfig {
+  #[serde(default = "default_management_bind")]
   management_bind: SocketAddr,
+  #[serde(default = "default_shutdown_grace_milliseconds")]
   shutdown_grace_milliseconds: u64,
+  #[serde(default = "default_readiness_check_interval_milliseconds")]
+  readiness_check_interval_milliseconds: u64,
+  #[serde(default = "default_readiness_check_timeout_milliseconds")]
+  readiness_check_timeout_milliseconds: u64,
+  postgres: PostgresConfig,
+  object_storage: ObjectStorageConfig,
+  signing: SigningConfig,
 }
 
-impl Default for UnvalidatedServerConfig {
-  fn default() -> Self {
-    let config = ServerConfig::default();
-    Self {
-      management_bind: config.management_bind,
-      shutdown_grace_milliseconds: config.shutdown_grace_milliseconds,
-    }
-  }
+fn default_management_bind() -> SocketAddr {
+  SocketAddr::from(([127, 0, 0, 1], 8080))
+}
+
+const fn default_shutdown_grace_milliseconds() -> u64 {
+  10_000
+}
+
+const fn default_readiness_check_interval_milliseconds() -> u64 {
+  5_000
+}
+
+const fn default_readiness_check_timeout_milliseconds() -> u64 {
+  2_000
 }
 
 /// Failure to read, decode, or validate server configuration.

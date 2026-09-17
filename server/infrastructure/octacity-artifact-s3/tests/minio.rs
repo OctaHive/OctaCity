@@ -34,12 +34,15 @@ async fn s3_store_satisfies_the_minio_contract() {
     region,
     bucket: bucket.clone(),
     prefix: "phase6".to_owned(),
-    access_key,
-    secret_key,
+    access_key: zeroize::Zeroizing::new(access_key),
+    secret_key: zeroize::Zeroizing::new(secret_key),
     force_path_style: true,
     operation_timeout: Duration::from_secs(30),
+    capability_recheck_interval: Duration::from_secs(300),
   })
   .unwrap();
+  store.health_check().await.unwrap();
+  store.health_check().await.unwrap();
   let bytes = b"verified-minio-artifact";
   let stored = object(bytes);
   upload(&store, &stored, bytes).await;
@@ -85,7 +88,21 @@ async fn s3_store_satisfies_the_minio_contract() {
       .await
       .is_err()
   );
+  delete_test_objects(&client, &bucket).await;
   client.delete_bucket().bucket(bucket).send().await.unwrap();
+}
+
+async fn delete_test_objects(client: &Client, bucket: &str) {
+  let listed = client.list_objects_v2().bucket(bucket).send().await.unwrap();
+  for object in listed.contents() {
+    client
+      .delete_object()
+      .bucket(bucket)
+      .key(object.key().unwrap())
+      .send()
+      .await
+      .unwrap();
+  }
 }
 
 async fn upload(store: &S3ArtifactStore, object: &ArtifactObject, bytes: &[u8]) {

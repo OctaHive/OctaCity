@@ -7,7 +7,8 @@ use octacity_server_domain::{
   JobName, JobVersion, LeaseId, LeaseVersion, MAX_ARTIFACT_NAME_BYTES, MAX_PIPELINE_NODE_ID_BYTES,
   MAX_RESOURCE_NAME_BYTES, MAX_TIMESTAMP_MILLIS, MAX_TRIGGER_IDENTITY_BYTES, MIN_TIMESTAMP_MILLIS, PipelineId,
   PipelineName, PipelineNodeId, PipelineVersion, PoolId, PoolName, PoolVersion, ProjectId, ProjectName, ProjectVersion,
-  TextErrorKind, Timestamp, TransitionError, TriggerId, TriggerIdentity, TriggerOccurrenceId, VersionErrorKind,
+  RepositoryId, RepositoryVersion, TextErrorKind, Timestamp, TransitionError, TriggerId, TriggerIdentity,
+  TriggerOccurrenceId, TriggerVersion, VersionErrorKind,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
@@ -30,6 +31,7 @@ fn every_opaque_identifier_has_one_canonical_serialization() {
   assert_id_round_trip::<ProjectId>();
   assert_id_round_trip::<BuildConfigurationId>();
   assert_id_round_trip::<PipelineId>();
+  assert_id_round_trip::<RepositoryId>();
   assert_id_round_trip::<BuildId>();
   assert_id_round_trip::<AttemptId>();
   assert_id_round_trip::<JobId>();
@@ -174,6 +176,7 @@ fn entity_versions_are_positive_bounded_and_typed() {
   assert_version!(ProjectVersion);
   assert_version!(BuildConfigurationVersion);
   assert_version!(PipelineVersion);
+  assert_version!(RepositoryVersion);
   assert_version!(BuildVersion);
   assert_version!(AttemptVersion);
   assert_version!(JobVersion);
@@ -182,6 +185,7 @@ fn entity_versions_are_positive_bounded_and_typed() {
   assert_version!(LeaseVersion);
   assert_version!(ArtifactVersion);
   assert_version!(IntegrationVersion);
+  assert_version!(TriggerVersion);
 }
 
 #[test]

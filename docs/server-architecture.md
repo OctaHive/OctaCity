@@ -82,6 +82,28 @@ The Artifact Store port lives in the core layer. Its S3-compatible adapter is
 an infrastructure crate selected only by a composition root; neither the core
 nor the server-Agent wire contract depends on the AWS SDK.
 
+Process readiness is composed only in `octacity-server`. The REST adapter sees
+a constant-time boolean callback and therefore has no dependency on SQLx, S3,
+signing keys, secret providers, or worker implementations. A supervised
+monitor refreshes that snapshot under an aggregate deadline. Migrations,
+PostgreSQL, object storage, and signing capability are unconditional checks;
+future configured mandatory secret providers and workers must be added by the
+composition root through the additional-required-check seam when their
+implementations arrive. The first successful object-storage check verifies the
+actual bounded PUT, GET, COPY, and DELETE capability set with process-unique
+probe objects. Healthy recurring checks use `HeadObject` on the process-owned
+marker, so readiness adds no bucket-list permission. The configured capability
+recheck interval periodically re-arms the full probe; an availability failure
+or failed artifact operation does so immediately. Qualification and
+invalidation are serialized so a concurrent older successful probe cannot hide
+an object-operation failure. Versioned buckets require lifecycle cleanup for
+noncurrent probe versions and delete markers below the health prefix. Recurring
+migration readiness performs a read-only compatibility check
+and takes the migration lock only while the schema is behind. The monitor logs
+only initial state and transitions, with a stable non-secret dependency name
+and unavailable/timeout reason. Liveness remains process-local and independent
+of this snapshot.
+
 Several entries above currently contain only ownership documentation because
 task 1.2 established the dependency boundaries before their implementation
 tasks begin. These phase scaffolds are not evidence that a separate crate has
@@ -108,7 +130,8 @@ wire compatibility promise.
 | Webhook provider process | `octacity-webhook-provider-protocol` | `octacity-server-webhook` | Exact raw delivery is authenticated before a normalized event reaches the Trigger Engine |
 | VCS provider process | `octacity-vcs-protocol` | `octacity-server-vcs` | Mutable refs resolve once to immutable revisions; repository content is bounded data only |
 | Agent provisioning process | `octacity-agent-provisioning-protocol` | Future infrastructure host | No production adapter or dynamic-provisioning readiness dependency exists in v1 |
-| Authoritative store port | `octacity-server-store` | PostgreSQL adapter; deterministic test adapter later | Complete atomic use cases cross the port; SQL types never do |
+| Authoritative store ports | `octacity-server-store` | PostgreSQL adapter; deterministic in-memory test adapter | Initial ports expose implemented atomic coordination, credential, and log-index watermark use cases and grow with feature implementations; SQL types never cross an interface |
+| Build-log search ports | `octacity-server-store::{LogIndexWorkStore, LogSearchIndex}` | Authoritative store plus PostgreSQL projection; deterministic in-memory test adapters | The application reads the committed watermark from the authoritative port and combines it with contiguous projection progress; PostgreSQL query syntax and physical log locations do not cross either interface |
 | Immutable byte-store port | `octacity-artifact-store` | `octacity-artifact-s3` | Physical bucket, key, credential, and ETag remain adapter-private |
 | Secret-provider port | `octacity-server-secrets` | Future configured provider adapters | Logical references and scoped grants cross the port; raw values do not enter durable domain state |
 | Octa remote-cache data plane | Published Octa HTTP cache protocol | Cache HTTP adapter and Octa | Server authorizes namespaces and sessions but does not reinterpret Octa cache keys |
@@ -117,6 +140,50 @@ Language-neutral wire documents and golden fixtures are indexed in
 [the protocol catalogue](protocols/README.md). The server-side adapter protocol
 crates are additionally mapped in
 [the server protocol README](../server/protocols/README.md).
+
+## Agent credential lifecycle
+
+`AgentCredentialStore` is a core interface rather than a wire protocol. The
+application layer supplies independently generated 256-bit secrets; adapters
+persist only domain-separated SHA-256 verifiers. Secret and verifier formatting
+is always redacted, and audit and outbox payloads contain only logical
+identities, Pool binding, epoch, and expiry metadata.
+
+An enrollment credential is bound to an exact Agent Pool version, an optional
+exact platform policy, and an exclusive expiry. Its first successful
+registration consumes it atomically. A process restart proves possession of
+the current registration credential and creates the next positive epoch in the
+same transaction that revokes the old registration. Exact retries are keyed by
+the newly proposed registration identity and recover the original outcome;
+using the consumed enrollment credential or a superseded registration under a
+new identity is rejected. HTTP authentication and mapping to the shared Agent
+DTOs are added at the Agent API seam in task 5.3.
+
+## Store transaction and projection invariants
+
+Atomic store requests are bounded before an adapter opens a transaction. The
+core interface publishes limits for encoded documents, Trigger materialization,
+dependency edges, Pool allowlists, Agent inventory, and event batches. Concrete
+adapters revalidate those limits and use bounded bulk statements for collection
+writes. A durable Job event computes its own canonical digest from event kind,
+source time, and payload; callers cannot supply payload and digest separately.
+
+Pipeline dependency policy is a typed immutable Pipeline value. PostgreSQL
+serializes terminal mutations for one Attempt and loads persisted fan-in
+outcomes; the Orchestrator makes the readiness decision, after which the
+adapter updates Jobs and queue entries in bounded bulk statements. This keeps
+policy out of infrastructure while preventing concurrent predecessor
+completion from leaving a satisfied child blocked. The in-memory adapter runs
+the same decision and behavioral contract, including registration and
+Lease-expiry checks.
+
+`LogIndexWorkStore` reads the committed project-local watermark from the
+authoritative store. The application, rather than an external query DTO,
+combines it with the greatest contiguous position reported by
+`LogSearchIndex`. Applying a later position therefore cannot conceal an earlier
+gap. Build deletion records a durable tombstone; delayed indexing and rebuild
+work has a projection-specific `Superseded` outcome and cannot restore
+searchable documents.
 
 ## State-machine interfaces
 

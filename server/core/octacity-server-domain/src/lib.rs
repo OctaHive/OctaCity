@@ -18,8 +18,9 @@ pub use error::{
   DomainError, DomainValueError, EntityKind, IdentifierErrorKind, TextErrorKind, TimestampErrorKind, VersionErrorKind,
 };
 pub use id::{
-  AgentId, ArtifactId, ArtifactUploadId, AttemptId, BuildConfigurationId, BuildId, IntegrationId, JobId, LeaseId,
-  PipelineId, PoolId, ProjectId, TriggerId, TriggerOccurrenceId,
+  AgentId, ArtifactId, ArtifactUploadId, AttemptId, BuildConfigurationId, BuildId, EnrollmentCredentialId,
+  IntegrationId, JobId, LeaseId, LogChunkId, LogIndexingWorkId, PipelineId, PoolId, ProjectId,
+  RegistrationCredentialId, RepositoryId, TriggerId, TriggerOccurrenceId,
 };
 pub use identity::{MAX_PIPELINE_NODE_ID_BYTES, MAX_TRIGGER_IDENTITY_BYTES, PipelineNodeId, TriggerIdentity};
 pub use name::{
@@ -30,5 +31,6 @@ pub use time::{MAX_TIMESTAMP_MILLIS, MIN_TIMESTAMP_MILLIS, Timestamp};
 pub use transition::TransitionError;
 pub use version::{
   AgentVersion, ArtifactVersion, AttemptNumber, AttemptVersion, BuildConfigurationVersion, BuildVersion,
-  IntegrationVersion, JobVersion, LeaseVersion, PipelineVersion, PoolVersion, ProjectVersion,
+  IntegrationVersion, JobVersion, LeaseVersion, PipelineVersion, PoolVersion, ProjectVersion, RepositoryVersion,
+  TriggerVersion,
 };

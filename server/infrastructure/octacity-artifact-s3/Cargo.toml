@@ -16,7 +16,8 @@ octacity-artifact-store = { path = "../../core/octacity-artifact-store" }
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
-uuid.workspace = true

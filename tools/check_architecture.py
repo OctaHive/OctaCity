@@ -61,9 +61,11 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
         "async-trait",
         "serde",
         "serde_json",
+        "sha2",
         "thiserror",
         "tracing",
         "uuid",
+        "zeroize",
     }),
     # Cross-product and process-boundary contracts stay dependency-light. Any
     # new library requires an explicit policy decision instead of evading a
@@ -111,7 +113,6 @@ SHARED_FORBIDDEN_SOURCE_DIRECTORIES = frozenset({
     "rest",
     "sql",
 })
-
 
 class MetadataError(ValueError):
     """Raised when Cargo metadata cannot be interpreted safely."""

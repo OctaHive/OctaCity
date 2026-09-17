@@ -7,16 +7,30 @@ Defines observable, auditable, secret-safe, and recoverable operation of the hea
 ### Requirement: Validated startup and migrations
 The server SHALL reject unknown or unsafe configuration, verify required credential files and dependencies, and apply or explicitly validate ordered PostgreSQL migrations before becoming ready.
 
+Credential paths SHALL resolve directly to bounded regular files, SHALL NOT be symbolic links, and SHALL be restricted to the server owner where the platform exposes Unix permission bits. Recurring readiness SHALL validate an up-to-date migration history without repeatedly acquiring the migration lock; it MAY re-enter the migration path when the schema is absent or behind.
+
 #### Scenario: Database schema is incompatible
 - **WHEN** the database schema is newer than the server or a required migration cannot complete
 - **THEN** readiness remains false and no agent lease or mutating management request is accepted
 
+#### Scenario: Schema remains current
+- **WHEN** periodic readiness checks observe the already-current migration history
+- **THEN** they use a read-only compatibility query and do not rerun the migration executor
+
 ### Requirement: Distinct liveness and readiness
-The server SHALL expose unauthenticated bounded liveness and readiness probes. Liveness SHALL describe process responsiveness; readiness SHALL require the database, signing capability, mandatory storage dependencies, configured mandatory secret providers, and supervised workers needed for safe mutations.
+The server SHALL expose unauthenticated bounded liveness and readiness probes. Liveness SHALL describe process responsiveness; readiness SHALL require the database, signing capability, mandatory storage dependencies, configured mandatory secret providers, and supervised workers needed for safe mutations. Object-storage readiness SHALL periodically prove the complete required object lifecycle, SHALL requalify after a failed artifact operation, and SHALL use a process-owned object for cheaper checks so readiness does not require bucket-list permission solely for health observation.
 
 #### Scenario: Object storage is unavailable
 - **WHEN** object storage is configured as mandatory and its health check fails
 - **THEN** liveness can remain successful while readiness reports unavailable
+
+#### Scenario: Object permissions change while the service remains reachable
+- **WHEN** the configured capability-recheck interval expires or an artifact operation fails
+- **THEN** readiness repeats the complete PUT, GET, COPY, GET, and DELETE qualification before reporting recovery
+
+#### Scenario: Object storage identity has least privilege
+- **WHEN** recurring readiness checks a still-qualified object store
+- **THEN** it reads the process-owned marker without requiring bucket-list permission
 
 ### Requirement: Trusted-network management mode
 The first release SHALL expose management operations without operator authentication or role evaluation and SHALL require explicit configuration acknowledging trusted-network deployment. This mode SHALL NOT disable agent credentials, webhook verification, JobSpec signing, or secret-provider authentication.
@@ -61,7 +75,7 @@ After restart, the server SHALL reconstruct schedules, trigger work, pipeline st
 - **THEN** the server resumes heartbeat, event, and completion handling without duplicating the job or attempt
 
 ### Requirement: Rebuildable log-search projection
-Build-log search SHALL be a derived projection behind a backend-neutral `LogSearchIndex` port. The initial PostgreSQL adapter SHALL provide full-text search using the `simple` text-search configuration and GIN indexing plus bounded literal-fragment search suitable for error codes, paths, and hashes. Indexing SHALL consume durable outbox work, expose lag, retry idempotently, and rebuild from committed redacted chunks without blocking coordination when the projection is unavailable.
+Build-log search SHALL be a derived projection behind a backend-neutral `LogSearchIndex` port. The initial PostgreSQL adapter SHALL provide full-text search using the `simple` text-search configuration and GIN indexing plus bounded literal-fragment search suitable for error codes, paths, and hashes. Indexing SHALL consume durable project-local contiguous work positions, expose both indexed and committed watermarks, retry idempotently, preserve deletion tombstones, and rebuild from committed visible redacted chunks without blocking coordination when the projection is unavailable. The application SHALL obtain the committed watermark from the authoritative `LogIndexWorkStore`; external search DTOs SHALL NOT supply or override it.
 
 #### Scenario: Search projection is lost
 - **WHEN** an operator starts a rebuild from retained committed log chunks
@@ -70,6 +84,10 @@ Build-log search SHALL be a derived projection behind a backend-neutral `LogSear
 #### Scenario: Index worker repeatedly fails
 - **WHEN** the PostgreSQL search projection cannot accept updates
 - **THEN** event ingestion, heartbeat and valid completion continue, indexing work remains durable, and in-memory retry state remains bounded
+
+#### Scenario: Index work arrives out of order
+- **WHEN** the projection applies a later project position while an earlier position is missing
+- **THEN** freshness remains at the greatest contiguous applied position and reports lag against the committed watermark
 
 ### Requirement: Signing and agent credential lifecycle
 The server SHALL support overlap-based rotation of JobSpec signing keys and independent expiry and revocation of agent enrollment and registration credentials.

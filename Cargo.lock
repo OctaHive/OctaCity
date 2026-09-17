@@ -3957,6 +3957,7 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4285,11 +4286,18 @@ dependencies = [
 name = "octacity-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
+ "base64 0.22.1",
  "clap",
+ "ed25519-dalek",
+ "octacity-artifact-s3",
  "octacity-server-api-rest",
+ "octacity-server-store-postgres",
  "reqwest",
+ "rustix",
  "serde",
+ "sqlx",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
@@ -4298,6 +4306,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4323,6 +4332,12 @@ version = "0.1.0"
 [[package]]
 name = "octacity-server-application"
 version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+ "octacity-server-store",
+ "thiserror 2.0.20",
+ "uuid",
+]
 
 [[package]]
 name = "octacity-server-artifacts"
@@ -4364,11 +4379,16 @@ name = "octacity-server-orchestrator"
 version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
+ "octacity-server-pipeline",
+ "uuid",
 ]
 
 [[package]]
 name = "octacity-server-pipeline"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "octacity-server-scheduler"
@@ -4384,10 +4404,34 @@ version = "0.1.0"
 [[package]]
 name = "octacity-server-store"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "octacity-server-domain",
+ "octacity-server-orchestrator",
+ "octacity-server-pipeline",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "zeroize",
+]
 
 [[package]]
 name = "octacity-server-store-postgres"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "octacity-server-domain",
+ "octacity-server-orchestrator",
+ "octacity-server-pipeline",
+ "octacity-server-store",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "octacity-server-trigger"
@@ -5912,6 +5956,7 @@ dependencies = [
  "sqlx-postgres",
  "sqlx-sqlite",
  "syn 2.0.119",
+ "thiserror 2.0.20",
  "tokio",
  "url",
 ]

@@ -5,21 +5,36 @@ use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use crate::ServerConfig;
+use crate::{
+  ServerConfig,
+  readiness::{ReadinessChecks, ReadinessMonitor, ReadinessState},
+};
 
 /// Running server process and ownership handle for its cancellation tree.
 #[must_use = "dropping the runtime aborts the listener; call shutdown for graceful drain"]
 pub struct ServerRuntime {
   management_addr: SocketAddr,
   shutdown_grace: std::time::Duration,
-  health: Arc<HealthState>,
+  readiness: Arc<ReadinessState>,
   cancellation: CancellationToken,
   listener_task: Option<JoinHandle<Result<(), std::io::Error>>>,
+  readiness_task: Option<JoinHandle<()>>,
 }
 
 impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
+    let checks = ReadinessChecks::from_config(&config)
+      .await
+      .map_err(ServerRuntimeError::ReadinessSetup)?;
+    Self::start_with_readiness(config, checks).await
+  }
+
+  /// Starts the process with concrete dependency and worker health checks.
+  pub(crate) async fn start_with_readiness(
+    config: ServerConfig,
+    checks: ReadinessChecks,
+  ) -> Result<Self, ServerRuntimeError> {
     let listener = TcpListener::bind(config.management_bind())
       .await
       .map_err(|source| ServerRuntimeError::Bind {
@@ -27,27 +42,35 @@ impl ServerRuntime {
         source,
       })?;
     let management_addr = listener.local_addr().map_err(ServerRuntimeError::InspectListener)?;
-    let health = Arc::new(HealthState::default());
     let cancellation = CancellationToken::new();
+    let monitor = ReadinessMonitor::start(
+      checks,
+      config.readiness_check_interval(),
+      config.readiness_check_timeout(),
+      cancellation.child_token(),
+    )
+    .await;
+    let readiness = monitor.state();
+    let readiness_task = monitor.into_task();
     let listener_cancellation = cancellation.child_token();
-    let router_health = health.clone();
-    let router = octacity_server_api_rest::management_router(move || router_health.is_ready());
-    let listener_health = health.clone();
+    let router_readiness = readiness.clone();
+    let router = octacity_server_api_rest::management_router(move || router_readiness.is_ready());
+    let listener_readiness = readiness.clone();
     let listener_task = tokio::spawn(async move {
       let result = axum::serve(listener, router)
         .with_graceful_shutdown(listener_cancellation.cancelled_owned())
         .await;
-      listener_health.ready.store(false, std::sync::atomic::Ordering::Release);
+      listener_readiness.set(false);
       result
     });
-    health.ready.store(true, std::sync::atomic::Ordering::Release);
     info!(%management_addr, "server management listener ready");
     Ok(Self {
       management_addr,
       shutdown_grace: config.shutdown_grace(),
-      health,
+      readiness,
       cancellation,
       listener_task: Some(listener_task),
+      readiness_task: Some(readiness_task),
     })
   }
 
@@ -66,6 +89,13 @@ impl ServerRuntime {
     };
     let result = listener_task.await;
     self.listener_task = None;
+    self.readiness.set(false);
+    self.cancellation.cancel();
+    if let Some(readiness_task) = self.readiness_task.take()
+      && let Err(source) = readiness_task.await
+    {
+      return Err(ServerRuntimeError::ReadinessTask(source));
+    }
     match result {
       Ok(Ok(())) => Err(ServerRuntimeError::UnexpectedExit),
       Ok(Err(source)) => Err(ServerRuntimeError::Serve(source)),
@@ -75,21 +105,31 @@ impl ServerRuntime {
 
   /// Stops admission, cancels the process tree, and waits for bounded drain.
   pub async fn shutdown(mut self) -> Result<(), ServerRuntimeError> {
-    self.health.ready.store(false, std::sync::atomic::Ordering::Release);
+    self.readiness.set(false);
     self.cancellation.cancel();
     let Some(mut listener_task) = self.listener_task.take() else {
       return Err(ServerRuntimeError::UnexpectedExit);
     };
-    match tokio::time::timeout(self.shutdown_grace, &mut listener_task).await {
-      Ok(Ok(Ok(()))) => {
+    let Some(mut readiness_task) = self.readiness_task.take() else {
+      return Err(ServerRuntimeError::UnexpectedExit);
+    };
+    match tokio::time::timeout(self.shutdown_grace, async {
+      tokio::join!(&mut listener_task, &mut readiness_task)
+    })
+    .await
+    {
+      Ok((Ok(Ok(())), Ok(()))) => {
         info!(%self.management_addr, "server shutdown complete");
         Ok(())
       }
-      Ok(Ok(Err(source))) => Err(ServerRuntimeError::Serve(source)),
-      Ok(Err(source)) => Err(ServerRuntimeError::ListenerTask(source)),
+      Ok((Ok(Err(source)), _)) => Err(ServerRuntimeError::Serve(source)),
+      Ok((Err(source), _)) => Err(ServerRuntimeError::ListenerTask(source)),
+      Ok((_, Err(source))) => Err(ServerRuntimeError::ReadinessTask(source)),
       Err(_) => {
         listener_task.abort();
+        readiness_task.abort();
         let _ = listener_task.await;
+        let _ = readiness_task.await;
         Err(ServerRuntimeError::ShutdownTimeout(self.shutdown_grace))
       }
     }
@@ -98,28 +138,23 @@ impl ServerRuntime {
 
 impl Drop for ServerRuntime {
   fn drop(&mut self) {
-    self.health.ready.store(false, std::sync::atomic::Ordering::Release);
+    self.readiness.set(false);
     self.cancellation.cancel();
     if let Some(listener_task) = self.listener_task.take() {
       listener_task.abort();
     }
-  }
-}
-
-#[derive(Default)]
-struct HealthState {
-  ready: std::sync::atomic::AtomicBool,
-}
-
-impl HealthState {
-  fn is_ready(&self) -> bool {
-    self.ready.load(std::sync::atomic::Ordering::Acquire)
+    if let Some(readiness_task) = self.readiness_task.take() {
+      readiness_task.abort();
+    }
   }
 }
 
 /// Failure to start, serve, or gracefully stop the server process.
 #[derive(Debug, Error)]
 pub enum ServerRuntimeError {
+  /// Static dependency material could not be loaded safely.
+  #[error("failed to configure readiness dependencies: {0}")]
+  ReadinessSetup(crate::ReadinessSetupError),
   /// The management listener could not bind its configured address.
   #[error("failed to bind management listener at {address}: {source}")]
   Bind {
@@ -137,6 +172,9 @@ pub enum ServerRuntimeError {
   /// The supervised listener task panicked or was cancelled unexpectedly.
   #[error("management listener task failed: {0}")]
   ListenerTask(tokio::task::JoinError),
+  /// The supervised readiness monitor panicked or was cancelled unexpectedly.
+  #[error("readiness monitor task failed: {0}")]
+  ReadinessTask(tokio::task::JoinError),
   /// The listener stopped without a requested shutdown.
   #[error("management listener exited unexpectedly")]
   UnexpectedExit,
@@ -147,16 +185,105 @@ pub enum ServerRuntimeError {
 
 #[cfg(test)]
 mod tests {
+  use async_trait::async_trait;
+  use reqwest::StatusCode;
+
   use super::*;
+  use crate::readiness::ReadinessCheck;
+
+  struct HealthyCheck;
+
+  #[async_trait]
+  impl ReadinessCheck for HealthyCheck {
+    fn name(&self) -> &'static str {
+      "test-dependency"
+    }
+
+    async fn check(&self) -> bool {
+      true
+    }
+  }
+
+  fn healthy_checks() -> ReadinessChecks {
+    let check = || Arc::new(HealthyCheck) as Arc<dyn ReadinessCheck>;
+    ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
+  }
+
+  fn test_config() -> ServerConfig {
+    ServerConfig::parse_toml(
+      r#"
+management_bind = "127.0.0.1:0"
+shutdown_grace_milliseconds = 1000
+readiness_check_interval_milliseconds = 10
+readiness_check_timeout_milliseconds = 100
+
+[postgres]
+url_file = "postgres-url"
+
+[object_storage]
+endpoint = "http://127.0.0.1:9000"
+region = "us-east-1"
+bucket = "octacity-artifacts"
+access_key_file = "object-access-key"
+secret_key_file = "object-secret-key"
+
+[signing]
+key_file = "signing-key"
+"#,
+    )
+    .unwrap()
+  }
+
+  #[tokio::test]
+  async fn startup_exposes_only_bounded_health_routes_with_request_ids() {
+    let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
+      .await
+      .unwrap();
+    let client = reqwest::Client::new();
+    let origin = format!("http://{}", runtime.management_addr());
+
+    for (path, expected_body) in [
+      ("/health/live", r#"{"status":"live"}"#),
+      ("/health/ready", r#"{"status":"ready"}"#),
+    ] {
+      let response = client.get(format!("{origin}{path}")).send().await.unwrap();
+      assert_eq!(response.status(), StatusCode::OK);
+      assert!(response.headers().contains_key("x-request-id"));
+      assert_eq!(response.text().await.unwrap(), expected_body);
+    }
+
+    runtime.shutdown().await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn shutdown_cancels_the_listener_and_waits_for_its_task() {
+    let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
+      .await
+      .unwrap();
+    let address = runtime.management_addr();
+    assert!(tokio::net::TcpListener::bind(address).await.is_err());
+
+    runtime.shutdown().await.unwrap();
+
+    let replacement = tokio::net::TcpListener::bind(address)
+      .await
+      .expect("shutdown must release the management listener");
+    assert_eq!(replacement.local_addr().unwrap(), address);
+  }
 
   #[tokio::test]
   async fn wait_reports_a_listener_that_stops_without_shutdown() {
+    let cancellation = CancellationToken::new();
+    let readiness_cancellation = cancellation.child_token();
     let mut runtime = ServerRuntime {
       management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
       shutdown_grace: std::time::Duration::from_secs(1),
-      health: Arc::new(HealthState::default()),
-      cancellation: CancellationToken::new(),
+      readiness: Arc::new(ReadinessState::default()),
+      cancellation,
       listener_task: Some(tokio::spawn(async { Ok(()) })),
+      readiness_task: Some(tokio::spawn(async move {
+        readiness_cancellation.cancelled().await;
+      })),
     };
 
     assert!(matches!(runtime.wait().await, Err(ServerRuntimeError::UnexpectedExit)));
@@ -185,9 +312,10 @@ mod tests {
     let runtime = ServerRuntime {
       management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
       shutdown_grace: std::time::Duration::from_secs(1),
-      health: Arc::new(HealthState::default()),
+      readiness: Arc::new(ReadinessState::default()),
       cancellation: CancellationToken::new(),
       listener_task: Some(listener_task),
+      readiness_task: Some(tokio::spawn(std::future::pending())),
     };
 
     started_receiver.await.unwrap();

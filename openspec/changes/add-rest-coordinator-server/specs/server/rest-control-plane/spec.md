@@ -53,7 +53,7 @@ The REST API SHALL provide backend-neutral search over redacted committed build 
 
 #### Scenario: Search projection is behind durable logs
 - **WHEN** committed log chunks have not yet been indexed
-- **THEN** the response exposes the indexed-through freshness position so an empty result cannot be mistaken for a fully caught-up search
+- **THEN** the response exposes contiguous indexed-through and authoritative committed-through positions so an empty result cannot be mistaken for a fully caught-up search
 
 ### Requirement: REST-only initial product surface
 Every operation required to manage project hierarchies, pipelines, build configurations, triggers, builds, attempts, jobs, agent pools, agents, outputs, repository integrations, follow and search build logs, diagnose execution, drain capacity, and maintain the initial server SHALL be available through REST; no workflow SHALL require a Web UI.

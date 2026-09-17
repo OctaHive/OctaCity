@@ -74,6 +74,11 @@ positive_version!(
   EntityKind::Pipeline,
   "Immutable version number of a Pipeline DAG."
 );
+positive_version!(
+  RepositoryVersion,
+  EntityKind::Repository,
+  "Immutable version number of a source Repository definition."
+);
 positive_version!(BuildVersion, EntityKind::Build, "Optimistic state version of a Build.");
 positive_version!(
   AttemptVersion,
@@ -97,6 +102,11 @@ positive_version!(
   IntegrationVersion,
   EntityKind::Integration,
   "Optimistic version of an external-system Integration."
+);
+positive_version!(
+  TriggerVersion,
+  EntityKind::Trigger,
+  "Immutable version number of a Trigger definition."
 );
 
 /// Positive monotonically increasing attempt number within one Build.

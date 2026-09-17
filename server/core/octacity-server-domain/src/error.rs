@@ -11,6 +11,8 @@ pub enum EntityKind {
   Configuration,
   /// Immutable Pipeline resource.
   Pipeline,
+  /// Versioned source repository definition.
+  Repository,
   /// Immutable build input and its derived state.
   Build,
   /// One execution attempt of a build.
@@ -21,6 +23,10 @@ pub enum EntityKind {
   Pool,
   /// Enrolled Agent.
   Agent,
+  /// Single-use credential authorizing initial Agent enrollment.
+  AgentEnrollmentCredential,
+  /// One credential-bearing Agent process registration.
+  AgentRegistration,
   /// Fenced Job lease.
   Lease,
   /// Logical build output.
@@ -37,6 +43,10 @@ pub enum EntityKind {
   CacheSession,
   /// Durable Orchestrator reconciliation cycle.
   Orchestration,
+  /// Immutable archived chunk of Build log events.
+  LogChunk,
+  /// Durable request to update the derived Build-log search projection.
+  LogIndexingWork,
 }
 
 impl std::fmt::Display for EntityKind {
@@ -45,11 +55,14 @@ impl std::fmt::Display for EntityKind {
       Self::Project => "project",
       Self::Configuration => "configuration",
       Self::Pipeline => "pipeline",
+      Self::Repository => "repository",
       Self::Build => "build",
       Self::Attempt => "attempt",
       Self::Job => "job",
       Self::Pool => "pool",
       Self::Agent => "agent",
+      Self::AgentEnrollmentCredential => "agent_enrollment_credential",
+      Self::AgentRegistration => "agent_registration",
       Self::Lease => "lease",
       Self::Artifact => "artifact",
       Self::ArtifactUpload => "artifact_upload",
@@ -58,6 +71,8 @@ impl std::fmt::Display for EntityKind {
       Self::PipelineNode => "pipeline_node",
       Self::CacheSession => "cache_session",
       Self::Orchestration => "orchestration",
+      Self::LogChunk => "log_chunk",
+      Self::LogIndexingWork => "log_indexing_work",
     })
   }
 }

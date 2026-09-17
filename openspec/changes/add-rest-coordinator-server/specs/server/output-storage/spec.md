@@ -63,3 +63,7 @@ Retention SHALL remove logical visibility before deleting search documents or by
 #### Scenario: Server stops during deletion
 - **WHEN** retention is interrupted after hiding metadata but before object deletion completes
 - **THEN** a later pass resumes search-document and object deletion without making the Build Result visible again
+
+#### Scenario: Stale indexing follows deletion
+- **WHEN** delayed indexing or rebuild work arrives after a Build Result has a durable deletion tombstone
+- **THEN** the projection acknowledges the obsolete work without restoring any searchable document

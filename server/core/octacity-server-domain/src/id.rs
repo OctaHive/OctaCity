@@ -93,11 +93,26 @@ opaque_id!(
   "Opaque identity of a Build Configuration."
 );
 opaque_id!(PipelineId, EntityKind::Pipeline, "Opaque identity of a Pipeline.");
+opaque_id!(
+  RepositoryId,
+  EntityKind::Repository,
+  "Opaque identity of a source Repository."
+);
 opaque_id!(BuildId, EntityKind::Build, "Opaque identity of a Build.");
 opaque_id!(AttemptId, EntityKind::Attempt, "Opaque identity of a Build Attempt.");
 opaque_id!(JobId, EntityKind::Job, "Opaque identity of a materialized Job.");
 opaque_id!(PoolId, EntityKind::Pool, "Opaque identity of an Agent Pool.");
 opaque_id!(AgentId, EntityKind::Agent, "Opaque identity of an enrolled Agent.");
+opaque_id!(
+  EnrollmentCredentialId,
+  EntityKind::AgentEnrollmentCredential,
+  "Opaque identity of a single-use Agent enrollment credential."
+);
+opaque_id!(
+  RegistrationCredentialId,
+  EntityKind::AgentRegistration,
+  "Opaque identity of one Agent process registration credential."
+);
 opaque_id!(LeaseId, EntityKind::Lease, "Opaque identity of a fenced Job lease.");
 opaque_id!(
   ArtifactId,
@@ -123,4 +138,14 @@ opaque_id!(
   TriggerOccurrenceId,
   EntityKind::Trigger,
   "Opaque identity of one normalized Trigger occurrence."
+);
+opaque_id!(
+  LogChunkId,
+  EntityKind::LogChunk,
+  "Opaque identity of one immutable archived Build-log chunk."
+);
+opaque_id!(
+  LogIndexingWorkId,
+  EntityKind::LogIndexingWork,
+  "Opaque identity of one durable Build-log indexing operation."
 );

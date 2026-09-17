@@ -101,7 +101,7 @@ Protocols and infrastructure:
 - `octacity-webhook-provider-protocol`: versioned webhook verification, normalization, and managed-registration process contract;
 - `octacity-vcs-protocol`: versioned ref, commit, tree, content, and revision-resolution process contract;
 - `octacity-agent-provisioning-protocol`: future provision/observe/terminate contract, without a production adapter in v1;
-- `octacity-server-store`: atomic persistence interfaces, the backend-neutral `LogSearchIndex` port, and adapter-neutral contract tests;
+- `octacity-server-store`: atomic persistence interfaces, the authoritative `LogIndexWorkStore` watermark source, the backend-neutral `LogSearchIndex` projection port, and adapter-neutral contract tests;
 - `octacity-server-store-postgres`: migrations, SQLx rows, transactions, locks, PostgreSQL full-text and literal log-search projection, and persistence implementation;
 - `octacity-server-webhook`: verified webhook-provider registry and bounded process host;
 - `octacity-server-vcs`: verified adapter registry and bounded process host;
@@ -144,7 +144,7 @@ The existing `octacity-job` crate is agent-side execution orchestration and move
 
 ### 6. Deep store operations and an honest PostgreSQL adapter
 
-`octacity-server-store` is not a generic CRUD repository. It defines complete atomic operations required by application handlers, including:
+`octacity-server-store` is not a generic CRUD repository. Its interface grows only when an implementing feature adds a complete application use case, an adapter operation, and a reusable contract test. Stage 2 establishes Trigger acceptance, ready-Job claim, event append, completion, Agent credential lifecycle, authoritative log-index watermark, and derived log-search operations. Later feature tasks add the following complete operations when they are implemented, rather than reserving speculative CRUD methods:
 
 - mutate a project hierarchy with acyclicity and optimistic version checks;
 - publish a pipeline/configuration version;
@@ -162,6 +162,10 @@ The existing `octacity-job` crate is agent-side execution orchestration and move
 
 The PostgreSQL adapter owns SQL schema knowledge, transactions, locking, and row conversion. Application tests use a deterministic in-memory adapter where useful; the same behavioral contract suite runs against PostgreSQL, with additional concurrency tests for database-specific semantics.
 
+Atomic store inputs have documented item and encoded-byte limits. Trigger acceptance, DAG materialization, event append, Agent inventory, and other collection-bearing operations reject oversized work before opening a transaction. PostgreSQL adapters use bounded bulk statements rather than one round trip per Job, dependency edge, queue entry, or event.
+
+Idempotency fingerprints describe stable caller intent and MUST NOT include a newly observed server processing timestamp. The first accepted transaction persists its authoritative acceptance or completion time, while a later replay with the same lease, sequence range, payload, and terminal intent returns the original outcome even when it is observed at a later time.
+
 Naming the concrete crate `octacity-server-store-postgres` localizes rather than hides the technology dependency. Replacing it requires a new adapter to pass the atomic store contract, not changing core types.
 
 ### 7. PostgreSQL is the first authoritative control-plane store
@@ -176,6 +180,8 @@ PostgreSQL stores every correctness-relevant state transition. Initial tables ar
 
 Queue acquisition and DAG transitions use short transactions and proven locking such as `FOR UPDATE SKIP LOCKED`. Correctness never depends on an in-memory mutex, notification, or timer.
 
+Pipeline dependency policy is an explicit typed immutable value rather than adapter-owned JSON. A terminal Job mutation serializes the affected Attempt, the PostgreSQL adapter loads persisted predecessor outcomes, and the Orchestrator derives the readiness decision through the Pipeline policy before the adapter applies it in bulk. Concurrent fan-in completions therefore cannot leave a satisfied child blocked without moving domain policy into infrastructure.
+
 Kafka and NATS are future `EventBus` adapters for wakeups, fan-out, and integration delivery. The transactional outbox preserves causality between authoritative state and publication. Making a broker the authoritative Job queue is a separate architecture change because it introduces cross-system transaction and recovery semantics.
 
 ### 8. Management REST is a replaceable trusted-network adapter
@@ -183,6 +189,8 @@ Kafka and NATS are future `EventBus` adapters for wakeups, fan-out, and integrat
 `octacity-server-api-rest` exposes `/api/v1/...` management resources. The first release performs no operator authentication or RBAC. Startup requires an explicit acknowledgement when the management listener is reachable beyond loopback, and documentation requires network-level isolation.
 
 Agent routes remain independently authenticated with enrollment and registration credentials. Webhook routes authenticate provider deliveries. Liveness and readiness remain bounded and unauthenticated.
+
+The composition root evaluates readiness under one aggregate deadline and records a stable non-secret dependency name plus an unavailable-or-timeout reason only on initial state and transitions. Object-storage readiness performs a complete process-unique PUT/GET/COPY/GET/DELETE qualification, uses `HeadObject` on its own retained marker for cheap checks without requiring bucket-list permission, and repeats complete qualification after a configured interval or immediately after availability loss or a failed artifact operation. Qualification and invalidation are serialized so an older successful probe cannot hide a concurrent operation failure. Operators of versioned buckets MUST expire noncurrent versions and delete markers under the health-probe prefix.
 
 The dependency graph reserves a later `octacity-server-auth` core module with local, LDAP, TOTP, and other adapters. None of those crates or provider SDKs is created in v1; the future module will decorate application commands and queries with verified actor context without moving authorization decisions into REST or GraphQL adapters.
 
@@ -235,7 +243,7 @@ Before a log payload becomes durable, required agent and server redaction remove
 
 The first `LogSearchIndex` implementation is a rebuildable PostgreSQL projection. It indexes normalized redacted text with `to_tsvector('simple', ...)` and a GIN index for full-text terms, plus `pg_trgm` for bounded literal fragments such as error codes, paths, and hashes. Search text may duplicate archived chunk bytes, but the projection is not correctness state and can be recreated from committed chunks and manifests. A later OpenSearch or equivalent adapter can implement the same port without changing REST or application contracts.
 
-Indexing consumes durable outbox work and is eventually consistent. Index unavailability or lag never rejects event ingestion, prevents a valid heartbeat, or changes Job completion. Search responses expose freshness so callers can distinguish no match from an index that has not caught up. Rebuild, retry, and retention are idempotent; removing a Build Result first removes logical visibility, then its search documents, and finally its object bytes.
+Indexing consumes durable outbox work and is eventually consistent. Every Project has contiguous positive indexing positions persisted with its work items. PostgreSQL serializes a per-Project counter in the same transaction as each work insert, rejects explicit gaps, and derives the committed watermark from that counter rather than `MAX(position)`. Search responses expose both the greatest contiguous indexed position and the latest committed authoritative position so callers can distinguish no match from an index that has not caught up; observing a later position never hides a gap. Index unavailability or lag never rejects event ingestion, prevents a valid heartbeat, or changes Job completion. Rebuild, retry, and retention are idempotent. Removing a Build Result first removes logical visibility, then records a durable search tombstone and removes its documents, and finally removes its object bytes; stale indexing or rebuild work cannot resurrect a tombstoned Build.
 
 ### 12. Cache authority reuses Octa semantics
 
@@ -266,7 +274,7 @@ Process-local tasks are wake and execution mechanisms, never the only record tha
 Implementation proceeds through executable vertical slices:
 
 1. **Workspace and contracts**: establish `cli/server/agent/shared`, crate ownership, dependency checks, protocol crates, domain vocabulary, configuration, and a minimal composition root.
-2. **Store foundation**: store and `LogSearchIndex` contracts, PostgreSQL adapter, migrations, agent credentials, idempotency, audit, outbox, readiness, and restart tests.
+2. **Store foundation**: atomic store, authoritative log-index watermark, and `LogSearchIndex` contracts; PostgreSQL adapter, migrations, agent credentials, idempotency, audit, outbox, readiness, and restart tests.
 3. **Projects, pipelines, and manual builds**: hierarchy, policy, repositories, pipeline DAGs, build configurations, manual triggers, Attempt materialization, JobSpec signing, and queries.
 4. **Static-agent vertical slice**: pools, placement scheduler, leases, heartbeat, events, completion, orchestrator transitions, drain, expiry, and a released Native agent running a multi-node pipeline sequentially.
 5. **REST completion**: all initial management commands and queries, OpenAPI, CLI examples, long-poll event reads, bounded build-log search, and trusted-network deployment guardrails.

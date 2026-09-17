@@ -7,3 +7,20 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Backend-neutral atomic persistence ports for OctaCity"
+
+[features]
+test-support = ["dep:octacity-server-orchestrator"]
+
+[dependencies]
+async-trait.workspace = true
+octacity-server-domain = { path = "../octacity-server-domain" }
+octacity-server-orchestrator = { path = "../octacity-server-orchestrator", optional = true }
+octacity-server-pipeline = { path = "../octacity-server-pipeline" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+octacity-server-orchestrator = { path = "../octacity-server-orchestrator" }

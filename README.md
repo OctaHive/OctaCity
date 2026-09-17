@@ -80,13 +80,51 @@ octacity-agent --log-filter octacity_agent=info --log-format json \
   run /etc/octacity/agent.toml
 ```
 
-The current server is a health-only composition shell. A minimal
-`server.toml` is:
+The current server is a health-only composition shell. It becomes ready only
+after its PostgreSQL migrations, database, mandatory S3-compatible bucket, and
+JobSpec signing material are usable. A minimal `server.toml` is:
 
 ```toml
 management_bind = "127.0.0.1:8080"
 shutdown_grace_milliseconds = 10000
+readiness_check_interval_milliseconds = 5000
+readiness_check_timeout_milliseconds = 2000
+
+[postgres]
+url_file = "/run/secrets/octacity-postgres-url"
+max_connections = 10
+
+[object_storage]
+endpoint = "https://objects.example"
+region = "us-east-1"
+bucket = "octacity-artifacts"
+prefix = "octacity/v1"
+access_key_file = "/run/secrets/octacity-s3-access-key"
+secret_key_file = "/run/secrets/octacity-s3-secret-key"
+force_path_style = false
+operation_timeout_milliseconds = 5000
+capability_recheck_interval_milliseconds = 300000
+
+[signing]
+key_file = "/run/secrets/octacity-jobspec-ed25519-key"
 ```
+
+Credential files contain one value with an optional trailing newline. The
+PostgreSQL file contains a connection URL, the object-store files contain the
+two S3 credentials, and the signing file contains the standard-base64 encoding
+of exactly 32 Ed25519 private-key bytes. Their contents are bounded, never
+included in diagnostics, and loaded before the management listener binds.
+Each path must name a regular file directly (symbolic links are rejected); on
+Unix, set owner-only permissions such as `0400` or `0600`.
+The file owner must also match the server process's effective user. The first
+successful object-store readiness check performs a bounded zero-byte
+PUT/GET/COPY/GET/DELETE probe below the configured prefix, so its identity
+needs those object capabilities. Healthy recurring checks use `HeadObject` on
+the process-owned marker and therefore do not require `s3:ListBucket` solely
+for readiness. The full probe repeats after the configured capability recheck
+interval and after any availability failure or failed artifact operation. For
+a versioned bucket, lifecycle policy must expire noncurrent versions and delete
+markers below `<prefix>/health/` as well as normal retained artifact objects.
 
 Validate it without opening a listener, then run it with:
 
@@ -97,6 +135,11 @@ cargo run -p octacity-server -- run server.toml
 
 It exposes only `/health/live` and `/health/ready`; management mutations and
 server-Agent coordination routes are intentionally absent at this phase.
+Liveness is process-local. Readiness is a periodically refreshed, bounded
+snapshot and can recover after PostgreSQL or object storage becomes available
+again without restarting the process. Safe structured logs identify the failed
+readiness dependency and whether it was unavailable or timed out, and emit only
+initial state and transitions rather than one message per polling interval.
 
 Native execution is deliberately Linux-only. It requires a delegated cgroup
 v2 root and a dedicated, quota-sized filesystem mounted at `work_root`. Version

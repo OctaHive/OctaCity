@@ -24,7 +24,10 @@ SPEC.loader.exec_module(ARCHITECTURE)
 class ArchitecturePolicyTests(unittest.TestCase):
     def test_current_workspace_satisfies_the_policy(self):
         graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
-        self.assertEqual(ARCHITECTURE.check(graph) + ARCHITECTURE.check_shared_sources(graph), [])
+        self.assertEqual(
+            ARCHITECTURE.check(graph) + ARCHITECTURE.check_shared_sources(graph),
+            [],
+        )
 
     def test_fixture_graphs_have_the_expected_violations(self):
         for path in sorted(FIXTURES.glob("*.json")):
@@ -85,7 +88,6 @@ class ArchitecturePolicyTests(unittest.TestCase):
                     [violation.code for violation in ARCHITECTURE.check_shared_sources(graph)],
                     ["ARCH008_SHARED_REPRESENTATION"],
                 )
-
 
 if __name__ == "__main__":
     unittest.main()

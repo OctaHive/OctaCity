@@ -17,7 +17,9 @@
 mod attempt;
 mod build;
 mod cycle;
+mod dag;
 
 pub use attempt::{AttemptEvent, AttemptState};
 pub use build::{BuildEvent, BuildState};
 pub use cycle::{OrchestrationEvent, OrchestrationState};
+pub use dag::{DagDecisionError, DependencyObservation, newly_ready_jobs};

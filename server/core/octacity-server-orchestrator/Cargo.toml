@@ -10,3 +10,7 @@ description = "Build, attempt, and DAG orchestration domain for OctaCity"
 
 [dependencies]
 octacity-server-domain = { path = "../octacity-server-domain" }
+octacity-server-pipeline = { path = "../octacity-server-pipeline" }
+
+[dev-dependencies]
+uuid.workspace = true

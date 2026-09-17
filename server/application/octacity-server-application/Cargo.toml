@@ -7,3 +7,12 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Transport-independent CQRS application layer for OctaCity"
+
+[dependencies]
+octacity-server-domain = { path = "../../core/octacity-server-domain" }
+octacity-server-store = { path = "../../core/octacity-server-store" }
+thiserror.workspace = true
+
+[dev-dependencies]
+octacity-server-store = { path = "../../core/octacity-server-store", features = ["test-support"] }
+uuid.workspace = true

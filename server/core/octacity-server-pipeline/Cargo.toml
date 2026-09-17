@@ -7,3 +7,6 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Immutable Pipeline DAG domain for OctaCity"
+
+[dependencies]
+serde.workspace = true
