@@ -1,20 +1,32 @@
 use async_trait::async_trait;
 
 use crate::{
-  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, JobClaim,
-  JobClaimOutcome, JobCompletion, StoreError,
+  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, CancelBuild, CancellationDisposition,
+  CompletionDisposition, JobClaim, JobClaimOutcome, JobCompletion, RetryBuild, RetryDisposition, StoreError,
+  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
 };
 
-/// Backend-neutral authoritative store shaped around complete atomic use cases.
-///
-/// Every method is one transaction boundary. Callers never coordinate table
-/// repositories, database transactions, queue rows, or lease rows themselves.
+/// Atomic persistence used by Trigger acceptance.
 #[async_trait]
-pub trait AuthoritativeStore: Send + Sync {
+pub trait TriggerAcceptanceStore: Send + Sync {
+  /// Returns an identical accepted outcome before mutable external resolution,
+  /// or reports a conflict when the same identity carries different intent.
+  async fn replay_trigger_acceptance(
+    &self,
+    request: TriggerAcceptanceProbe,
+  ) -> Result<Option<TriggerEvaluationOutcome>, StoreError>;
+
   /// Deduplicates a Trigger occurrence and commits its Build, first Attempt,
   /// complete materialized DAG, and root ready-queue entries together.
   async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError>;
 
+  /// Commits one terminal suppressed occurrence without Build or queue state.
+  async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError>;
+}
+
+/// Atomic persistence used by Job placement and execution.
+#[async_trait]
+pub trait JobExecutionStore: Send + Sync {
   /// Selects one compatible root Job from the global ready queue and commits
   /// its exclusive current Lease in the same operation.
   async fn claim_ready_job(&self, request: JobClaim) -> Result<JobClaimOutcome, StoreError>;
@@ -26,4 +38,28 @@ pub trait AuthoritativeStore: Send + Sync {
   /// Commits an idempotent terminal outcome only when the declared final event
   /// cursor is already durable for the current Lease.
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError>;
+}
+
+/// Atomic persistence used by Build cancellation and retry.
+#[async_trait]
+pub trait BuildRunControlStore: Send + Sync {
+  /// Persists one idempotent Build cancellation intent and atomically removes
+  /// queued work or requests cancellation from current Lease owners.
+  async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError>;
+
+  /// Locks one failed Build, allocates exactly its next Attempt number, verifies
+  /// the candidate DAG against immutable prior snapshots, and enqueues roots.
+  async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError>;
+}
+
+/// Complete backend-neutral authoritative-store contract.
+///
+/// Every method inherited from the operation-specific ports is one transaction
+/// boundary. Applications SHOULD depend on the narrowest port that serves
+/// their use case; adapter contract suites use this composite interface.
+pub trait AuthoritativeStore: TriggerAcceptanceStore + JobExecutionStore + BuildRunControlStore + Send + Sync {}
+
+impl<T> AuthoritativeStore for T where
+  T: TriggerAcceptanceStore + JobExecutionStore + BuildRunControlStore + Send + Sync + ?Sized
+{
 }

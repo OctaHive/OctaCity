@@ -1,7 +1,8 @@
 //! Wire-shape, signature, and signed-boundary validation tests.
 
 use super::*;
-use ed25519_dalek::{Signer as _, SigningKey};
+use ed25519_dalek::Signer as _;
+use ed25519_dalek::SigningKey;
 
 const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 

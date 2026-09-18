@@ -14,10 +14,24 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use octacity_server_domain::{EntityKind, TransitionError};
+use std::collections::{BTreeMap, BTreeSet};
+
+use octacity_protocol::{PlatformArchitecture, PlatformOs};
+use octacity_server_domain::{EntityKind, RuntimeClass, TransitionError};
+use octacity_server_pipeline::ExecutionCapability;
+use serde::{Deserialize, Serialize};
+
+mod spec;
+
+pub use spec::{
+  DerivedJobSpec, JobExecutionTemplate, JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot,
+  JobSpecSigner, JobSpecSigningError, JobSpecTemplate, JobSpecValidity, MAX_JOB_SPEC_VALIDITY_SECONDS,
+  SourcePluginPolicy, derive_job_spec_template, sign_ready_job_spec,
+};
 
 /// Durable scheduling and execution state of one materialized DAG Job.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum JobState {
   /// One or more required predecessor Jobs are incomplete.
   Blocked,
@@ -37,6 +51,41 @@ pub enum JobState {
   Cancelled,
   /// Pipeline dependency policy made execution unnecessary or forbidden.
   Skipped,
+}
+
+/// Authoritative class of an unsuccessful executed Job.
+///
+/// Cancellation and dependency-policy skips are represented by their terminal
+/// [`JobState`] and are not execution failure classes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JobFailureClass {
+  /// Repository-controlled commands, tests, or build logic failed.
+  Execution,
+  /// Agent, runtime, transport, or storage infrastructure failed.
+  Infrastructure,
+}
+
+/// Immutable placement requirements captured for one materialized Job.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobRequirements {
+  /// Required execution capabilities.
+  pub capabilities: BTreeSet<ExecutionCapability>,
+  /// Exact normalized Agent inventory labels.
+  pub labels: BTreeMap<String, String>,
+  /// Minimum CPU capacity in thousandths of one logical CPU.
+  pub minimum_cpu_millis: u32,
+  /// Minimum available memory in bytes.
+  pub minimum_memory_bytes: u64,
+  /// Minimum available workspace bytes.
+  pub minimum_disk_bytes: u64,
+  /// Required runtime and isolation class.
+  pub runtime_class: RuntimeClass,
+  /// Required operating system.
+  pub operating_system: PlatformOs,
+  /// Required CPU architecture.
+  pub architecture: PlatformArchitecture,
 }
 
 /// Fact applied to a [`JobState`].

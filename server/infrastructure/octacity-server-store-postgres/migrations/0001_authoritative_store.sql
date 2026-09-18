@@ -183,7 +183,6 @@ CREATE TABLE jobs (
   attempt_id UUID NOT NULL REFERENCES attempts(id),
   pipeline_node_id TEXT NOT NULL,
   state TEXT NOT NULL,
-  job_snapshot JSONB NOT NULL,
   allowed_pool_ids UUID[] NOT NULL,
   requirements JSONB NOT NULL,
   version BIGINT NOT NULL,

@@ -1,7 +1,9 @@
 use octacity_server_domain::{EntityKind, TransitionError};
+use serde::{Deserialize, Serialize};
 
 /// Durable evaluation state of one deduplicated Trigger occurrence.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TriggerOccurrenceState {
   /// The normalized occurrence is durable and awaits evaluation.
   Pending,

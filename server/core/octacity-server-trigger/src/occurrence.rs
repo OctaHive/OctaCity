@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, fmt};
 
-use octacity_server_domain::SourceReference;
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, BuildId, IntegrationId, RepositoryId, Timestamp, TriggerId,
   TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
+use octacity_server_domain::{ImmutableRevision, SourceReference};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::Value;
 use thiserror::Error;
@@ -18,7 +18,7 @@ pub const MAX_TRIGGER_METADATA_KEY_BYTES: usize = 128;
 /// Maximum UTF-8 bytes in one normalized event classification.
 pub const MAX_TRIGGER_EVENT_KIND_BYTES: usize = 128;
 /// Maximum UTF-8 bytes in one normalized immutable revision.
-pub const MAX_TRIGGER_REVISION_BYTES: usize = 512;
+pub const MAX_TRIGGER_REVISION_BYTES: usize = octacity_server_domain::MAX_IMMUTABLE_REVISION_BYTES;
 
 /// Invalid normalized Trigger input rejected before persistence or evaluation.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
@@ -201,7 +201,7 @@ pub enum TriggerCause {
     /// Optional mutable reference reported by the provider.
     reference: Option<SourceReference>,
     /// Optional immutable revision reported by the provider.
-    revision: Option<String>,
+    revision: Option<ImmutableRevision>,
   },
   /// A server-owned domain event derived from an earlier Build.
   Internal {
@@ -225,13 +225,6 @@ impl TriggerCause {
   }
 
   fn validate(&self) -> Result<(), TriggerInputError> {
-    if let Self::External { revision, .. } = self
-      && revision
-        .as_ref()
-        .is_some_and(|value| !valid_text(value, MAX_TRIGGER_REVISION_BYTES))
-    {
-      return Err(TriggerInputError::InvalidRevision);
-    }
     Ok(())
   }
 }
@@ -323,6 +316,24 @@ pub struct NormalizedTriggerOccurrence {
   pub source_time: Timestamp,
 }
 
+/// Stable caller intent used to compare deduplicated Trigger occurrences.
+///
+/// A manual occurrence excludes its server-observed arrival time because a
+/// retry after a lost response observes a new time but retains the same
+/// source-scoped identity. Provider and schedule timestamps remain part of
+/// their immutable source facts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TriggerOccurrenceIntent {
+  id: TriggerOccurrenceId,
+  trigger: TriggerDefinitionRef,
+  target: TriggerTarget,
+  deduplication_identity: TriggerIdentity,
+  cause: TriggerCause,
+  causality: TriggerCausality,
+  provider_metadata: TriggerMetadata,
+  source_time: Option<Timestamp>,
+}
+
 impl NormalizedTriggerOccurrence {
   /// Normalizes a manual, scheduled, or external root occurrence.
   pub fn root(
@@ -386,6 +397,21 @@ impl NormalizedTriggerOccurrence {
     TriggerDeduplicationKey {
       trigger: self.trigger,
       identity: self.deduplication_identity.clone(),
+    }
+  }
+
+  /// Returns the stable intent compared for exact idempotent replay.
+  #[must_use]
+  pub fn intent(&self) -> TriggerOccurrenceIntent {
+    TriggerOccurrenceIntent {
+      id: self.id,
+      trigger: self.trigger,
+      target: self.target,
+      deduplication_identity: self.deduplication_identity.clone(),
+      cause: self.cause.clone(),
+      causality: self.causality,
+      provider_metadata: self.provider_metadata.clone(),
+      source_time: (self.cause.kind() != TriggerKind::Manual).then_some(self.source_time),
     }
   }
 

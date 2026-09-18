@@ -37,6 +37,22 @@ impl MutationIdentity {
       conflict_entity,
     })
   }
+
+  pub(crate) const fn with_digest(
+    kind: MutationKind,
+    key: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request_digest: [u8; 32],
+  ) -> Self {
+    Self {
+      kind,
+      key,
+      request_digest,
+      occurred_at,
+      conflict_entity,
+    }
+  }
 }
 
 pub(crate) struct MutationFacts {
@@ -60,9 +76,12 @@ pub(crate) enum MutationKind {
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
   AcceptTrigger,
+  SuppressTrigger,
   ClaimReadyJob,
   AppendJobEvents,
   CompleteJob,
+  CancelBuild,
+  RetryBuild,
   IssueAgentEnrollment,
   RegisterAgent,
   RevokeAgentEnrollment,
@@ -148,6 +167,12 @@ impl MutationKind {
         "build",
         "build.accepted"
       ),
+      Self::SuppressTrigger => metadata!(
+        b"octacity.suppress-trigger.v1\0",
+        "suppress-trigger",
+        "trigger",
+        "trigger.suppressed"
+      ),
       Self::ClaimReadyJob => metadata!(
         b"octacity.claim-ready-job.v2\0",
         "claim-ready-job",
@@ -161,6 +186,13 @@ impl MutationKind {
         "job.events-appended"
       ),
       Self::CompleteJob => metadata!(b"octacity.complete-job.v1\0", "complete-job", "job", "job.completed"),
+      Self::CancelBuild => metadata!(
+        b"octacity.cancel-build.v1\0",
+        "cancel-build",
+        "build",
+        "build.cancellation-requested"
+      ),
+      Self::RetryBuild => metadata!(b"octacity.retry-build.v1\0", "retry-build", "build", "build.retried"),
       Self::IssueAgentEnrollment => metadata!(
         b"octacity.issue-agent-enrollment.v2\0",
         "issue-agent-enrollment",
@@ -192,7 +224,7 @@ impl MutationKind {
     self.metadata().digest_version
   }
 
-  const fn scope(self) -> &'static str {
+  pub(crate) const fn scope(self) -> &'static str {
     self.metadata().scope
   }
 

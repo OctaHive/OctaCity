@@ -25,6 +25,7 @@ access_key_file = "object-access-key"
 secret_key_file = "object-secret-key"
 
 [signing]
+key_id = "test-key"
 key_file = "signing-key"
 "#;
   assert!(ServerConfig::parse_toml(unknown).is_err());
@@ -44,6 +45,7 @@ access_key_file = "object-access-key"
 secret_key_file = "object-secret-key"
 
 [signing]
+key_id = "test-key"
 key_file = "signing-key"
 "#;
   assert!(ServerConfig::parse_toml(zero_grace).is_err());
@@ -53,6 +55,9 @@ key_file = "signing-key"
 
   let unsafe_bucket = valid_configuration().replace("octacity-artifacts", "INVALID_BUCKET");
   assert!(ServerConfig::parse_toml(&unsafe_bucket).is_err());
+
+  let invalid_signing_key_id = valid_configuration().replace("key_id = \"test-key\"", "key_id = \"\"");
+  assert!(ServerConfig::parse_toml(&invalid_signing_key_id).is_err());
 
   let disabled_capability_recheck = valid_configuration().replace(
     "secret_key_file = \"object-secret-key\"",
@@ -83,6 +88,7 @@ access_key_file = "object-access-key"
 secret_key_file = "object-secret-key"
 
 [signing]
+key_id = "test-key"
 key_file = "signing-key"
 "#
 }
@@ -168,6 +174,7 @@ access_key_file = "{}"
 secret_key_file = "{}"
 
 [signing]
+key_id = "test-key"
 key_file = "{}"
 "#,
     path(&postgres_url),

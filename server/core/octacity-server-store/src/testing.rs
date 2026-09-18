@@ -5,27 +5,48 @@
 
 use std::{
   collections::{BTreeMap, BTreeSet},
-  sync::{Mutex, MutexGuard},
+  sync::{Arc, Mutex, MutexGuard},
 };
 
 use async_trait::async_trait;
+use octacity_protocol::{NetworkPolicy, OctaSpec, OutputLimits, PlatformSpec, RuntimeSpec, RuntimeTarget};
 use octacity_server_domain::{
-  AgentId, AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind, JobId,
-  LeaseId, PipelineId, PipelineNodeId, PipelineVersion, PoolId, PoolVersion, ProjectId, RepositoryId,
-  RepositoryVersion, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  AgentId, AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind,
+  ImmutableRevision, JobId, LeaseId, PipelineId, PipelineNodeId, PipelineVersion, PoolId, PoolVersion, ProjectId,
+  RepositoryId, RepositoryVersion, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
-use octacity_server_orchestrator::{DependencyObservation, newly_ready_jobs};
-use octacity_server_pipeline::{DependencyOutcome, DependencyPolicy};
+use octacity_server_job::{
+  DerivedJobSpec, JobSpecBuildSnapshot, JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate, JobState,
+  SourcePluginPolicy, derive_job_spec_template, sign_ready_job_spec,
+};
+use octacity_server_orchestrator::{
+  AttemptState, BuildState, JobGraphNode, cancel_job_states, decide_retry, reconcile_cancelled_job_graph,
+  reconcile_job_graph,
+};
+use octacity_server_pipeline::DependencyPolicy;
 use serde_json::json;
 
 use crate::test_support::{id, time};
 use crate::{
-  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, AuthoritativeStore,
-  CompletionDisposition, EventDigest, EventSequence, ImmutableBuildInput, JobClaim, JobClaimOutcome, JobCompletion,
-  JobCompletionKind, LeaseAccess, LeaseGrant, LogIndexPosition, LogIndexWorkStore, MaterializedJob,
-  MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, StoreError, StoreOperation, TriggerCause,
-  TriggerDeduplicationKey, TriggerDefinitionRef, TriggerKind, TriggerMetadata, TriggerTarget,
+  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, BuildRunControlStore, CancelBuild,
+  CancellationDisposition, CompletionDisposition, EventDigest, EventSequence, IdempotencyKey, ImmutableBuildInput,
+  JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore, LeaseAccess, LeaseGrant, LogIndexPosition,
+  LogIndexWorkStore, MaterializedJob, MaterializedJobPayload, MutationDisposition, NormalizedTriggerOccurrence,
+  RegistrationEpoch, RetryBuild, RetryDisposition, StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome,
+  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
+  TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget, complete_job_state,
+  retry_graph_is_equivalent, start_job_execution,
 };
+
+mod fixtures;
+mod lease_events;
+mod run_control;
+mod state;
+mod trigger;
+
+pub(crate) use fixtures::trigger_request;
+pub use fixtures::{job_spec_template, retry_request};
+pub(crate) use state::*;
 
 pub use crate::authoritative_contract_testing::{verify_authoritative_store_contract, verify_in_memory_store_contract};
 pub use crate::configuration_contract_testing::{
@@ -70,9 +91,17 @@ pub trait MutationEvidenceProbe: Send + Sync {
 /// One mutex represents one serializable authoritative transaction boundary;
 /// no timing, random identity, external process, filesystem, or network state
 /// participates in its behavior.
-#[derive(Default)]
 pub struct InMemoryStore {
   state: Mutex<MemoryState>,
+  job_spec_signer: Arc<JobSpecSigner>,
+}
+
+impl Default for InMemoryStore {
+  fn default() -> Self {
+    Self::with_signer(Arc::new(
+      JobSpecSigner::new("contract-key", [7; 32]).expect("fixed contract signing key is valid"),
+    ))
+  }
 }
 
 impl InMemoryStore {
@@ -80,6 +109,15 @@ impl InMemoryStore {
   #[must_use]
   pub fn new() -> Self {
     Self::default()
+  }
+
+  /// Creates an empty store with the explicit signer used at Ready boundaries.
+  #[must_use]
+  pub fn with_signer(job_spec_signer: Arc<JobSpecSigner>) -> Self {
+    Self {
+      state: Mutex::new(MemoryState::default()),
+      job_spec_signer,
+    }
   }
 
   /// Seeds only the Pool and registration prerequisites used by the shared contract.
@@ -156,122 +194,6 @@ impl MutationEvidenceProbe for InMemoryStore {
   }
 }
 
-#[derive(Default)]
-pub(crate) struct MemoryState {
-  pub(crate) credentials: crate::credential_testing::CredentialMemoryState,
-  trigger_prerequisites: BTreeSet<TriggerPrerequisites>,
-  accepted: BTreeMap<TriggerOccurrenceId, AcceptedRecord>,
-  accepted_by_deduplication: BTreeMap<TriggerDeduplicationKey, TriggerOccurrenceId>,
-  builds: BTreeSet<BuildId>,
-  attempts: BTreeSet<AttemptId>,
-  jobs: BTreeMap<JobId, MaterializedJob>,
-  ready_queue: BTreeSet<ReadyEntry>,
-  ready_jobs: BTreeSet<JobId>,
-  next_enqueue_order: u64,
-  leases: BTreeMap<LeaseId, LeaseGrant>,
-  pub(crate) pools: BTreeMap<(PoolId, PoolVersion), PoolEligibility>,
-  pub(crate) registrations: BTreeMap<(AgentId, RegistrationEpoch), RegistrationEligibility>,
-  claims: BTreeMap<LeaseId, ClaimRecord>,
-  current_lease_by_job: BTreeMap<JobId, LeaseId>,
-  events: BTreeMap<JobId, BTreeMap<EventSequence, EventDigest>>,
-  event_appends: BTreeMap<(LeaseId, EventSequence, EventSequence), EventAppendRecord>,
-  completions: BTreeMap<JobId, CompletionRecord>,
-  idempotency_outcomes: BTreeSet<String>,
-  audit_facts: BTreeSet<String>,
-  outbox_entries: BTreeSet<String>,
-  committed_log_index_positions: BTreeMap<ProjectId, LogIndexPosition>,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct PoolEligibility {
-  enabled: bool,
-  accepting: bool,
-}
-
-impl PoolEligibility {
-  pub(crate) const ACCEPTING: Self = Self {
-    enabled: true,
-    accepting: true,
-  };
-  const DISABLED: Self = Self {
-    enabled: false,
-    accepting: true,
-  };
-  const DRAINING: Self = Self {
-    enabled: true,
-    accepting: false,
-  };
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct RegistrationEligibility {
-  pub(crate) pool_id: PoolId,
-  pub(crate) pool_version: PoolVersion,
-  pub(crate) expires_at: Timestamp,
-  pub(crate) revoked: bool,
-}
-
-#[derive(Clone)]
-struct AcceptedRecord {
-  request: AcceptTrigger,
-  outcome: AcceptTriggerOutcome,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct ReadyEntry {
-  enqueue_order: u64,
-  job_id: JobId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct CompletionRecord {
-  request: JobCompletion,
-  outcome: CompletionDisposition,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct ClaimRecord {
-  request: JobClaim,
-  outcome: JobClaimOutcome,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct EventAppendRecord {
-  request: AppendJobEvents,
-  outcome: AppendJobEventsOutcome,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct TriggerPrerequisites {
-  trigger_id: TriggerId,
-  trigger_version: TriggerVersion,
-  trigger_kind: TriggerKind,
-  project_id: ProjectId,
-  configuration_id: BuildConfigurationId,
-  configuration_version: BuildConfigurationVersion,
-  pipeline_id: PipelineId,
-  pipeline_version: PipelineVersion,
-  repository_id: RepositoryId,
-  repository_version: RepositoryVersion,
-}
-
-impl TriggerPrerequisites {
-  fn from_request(request: &AcceptTrigger) -> Self {
-    Self {
-      trigger_id: request.trigger.trigger.id,
-      trigger_version: request.trigger.trigger.version,
-      trigger_kind: request.trigger.cause.kind(),
-      project_id: request.build.project_id,
-      configuration_id: request.build.configuration_id,
-      configuration_version: request.build.configuration_version,
-      pipeline_id: request.build.pipeline_id,
-      pipeline_version: request.build.pipeline_version,
-      repository_id: request.build.repository_id,
-      repository_version: request.build.repository_version,
-    }
-  }
-}
-
 /// Deterministic prerequisite identities used by the reusable adapter contract.
 #[derive(Clone)]
 pub struct StoreContractFixture {
@@ -329,349 +251,53 @@ pub fn authoritative_store_contract_fixture() -> StoreContractFixture {
 }
 
 #[async_trait]
-impl AuthoritativeStore for InMemoryStore {
-  async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
-    request.validate()?;
-    let mut state = self.lock()?;
-    if !state
-      .trigger_prerequisites
-      .contains(&TriggerPrerequisites::from_request(&request))
-    {
-      return Err(StoreError::NotFound {
-        entity: EntityKind::Trigger,
-      });
-    }
-    if request
-      .jobs
-      .iter()
-      .flat_map(|job| &job.allowed_pools)
-      .any(|pool| !state.pools.keys().any(|(pool_id, _)| pool_id == pool))
-    {
-      return Err(StoreError::NotFound {
-        entity: EntityKind::Pool,
-      });
-    }
-    let deduplication_key = request.trigger.deduplication_key();
-    let existing_occurrence = state
-      .accepted
-      .contains_key(&request.trigger.id)
-      .then_some(request.trigger.id)
-      .or_else(|| state.accepted_by_deduplication.get(&deduplication_key).copied());
-    if let Some(existing_occurrence) = existing_occurrence {
-      let existing = state
-        .accepted
-        .get(&existing_occurrence)
-        .ok_or(StoreError::Unavailable)?;
-      if same_trigger_acceptance(&existing.request, &request) {
-        let mut outcome = existing.outcome.clone();
-        outcome.disposition = MutationDisposition::Replayed;
-        return Ok(outcome);
-      }
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Trigger,
-      });
-    }
-
-    if state.builds.contains(&request.build.id) {
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Build,
-      });
-    }
-    if state.attempts.contains(&request.attempt_id) {
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Attempt,
-      });
-    }
-    if request.jobs.iter().any(|job| state.jobs.contains_key(&job.id)) {
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Job,
-      });
-    }
-
-    let ready_jobs: Vec<_> = request
-      .jobs
-      .iter()
-      .filter(|job| job.dependencies.is_empty())
-      .map(|job| job.id)
-      .collect();
-    let outcome = AcceptTriggerOutcome {
-      disposition: MutationDisposition::Applied,
-      build_id: request.build.id,
-      attempt_id: request.attempt_id,
-      ready_jobs: ready_jobs.clone(),
-    };
-    let evidence_identity = format!("accept-trigger:{}", request.trigger.id);
-    ensure_evidence_available(&state, &evidence_identity)?;
-    ensure_enqueue_capacity(&state, ready_jobs.iter().copied())?;
-
-    state.builds.insert(request.build.id);
-    state.attempts.insert(request.attempt_id);
-    for job in &request.jobs {
-      state.jobs.insert(job.id, job.clone());
-    }
-    for job_id in ready_jobs {
-      enqueue(&mut state, job_id);
-    }
-    let occurrence_id = request.trigger.id;
-    state.accepted.insert(
-      occurrence_id,
-      AcceptedRecord {
-        request,
-        outcome: outcome.clone(),
-      },
-    );
-    state.accepted_by_deduplication.insert(deduplication_key, occurrence_id);
-    record_evidence(&mut state, evidence_identity);
-    Ok(outcome)
+impl TriggerAcceptanceStore for InMemoryStore {
+  async fn replay_trigger_acceptance(
+    &self,
+    request: TriggerAcceptanceProbe,
+  ) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
+    trigger::replay(self, request).await
   }
 
+  async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
+    trigger::accept(self, request).await
+  }
+
+  async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
+    trigger::suppress(self, request).await
+  }
+}
+
+#[async_trait]
+impl JobExecutionStore for InMemoryStore {
   async fn claim_ready_job(&self, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
-    request.validate()?;
-    let mut state = self.lock()?;
-    if let Some(existing) = state.claims.get(&request.lease_id) {
-      if same_job_claim(existing.request, request) {
-        return Ok(existing.outcome);
-      }
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Lease,
-      });
-    }
-    let Some(registration) = state.registrations.get(&(request.agent_id, request.registration_epoch)) else {
-      return Ok(JobClaimOutcome::Empty);
-    };
-    let pool = state.pools.get(&(request.pool_id, registration.pool_version));
-    if registration.pool_id != request.pool_id
-      || registration.revoked
-      || registration.expires_at <= request.claimed_at
-      || !pool.is_some_and(|pool| pool.enabled && pool.accepting)
-    {
-      return Ok(JobClaimOutcome::Empty);
-    }
-    let selected = state.ready_queue.iter().copied().find(|entry| {
-      state
-        .jobs
-        .get(&entry.job_id)
-        .is_some_and(|job| job.allowed_pools.binary_search(&request.pool_id).is_ok())
-    });
-    let Some(selected) = selected else {
-      return Ok(JobClaimOutcome::Empty);
-    };
-    let grant = LeaseGrant {
-      lease_id: request.lease_id,
-      fence: request.fence,
-      job_id: selected.job_id,
-      agent_id: request.agent_id,
-      registration_epoch: request.registration_epoch,
-      pool_id: request.pool_id,
-      expires_at: request.expires_at,
-    };
-    let evidence_identity = format!("claim-ready-job:{}", request.lease_id);
-    ensure_evidence_available(&state, &evidence_identity)?;
-    state.ready_queue.remove(&selected);
-    state.ready_jobs.remove(&selected.job_id);
-    state.current_lease_by_job.insert(selected.job_id, request.lease_id);
-    state.leases.insert(request.lease_id, grant);
-    state.claims.insert(
-      request.lease_id,
-      ClaimRecord {
-        request,
-        outcome: JobClaimOutcome::Claimed(grant),
-      },
-    );
-    record_evidence(&mut state, evidence_identity);
-    Ok(JobClaimOutcome::Claimed(grant))
+    lease_events::claim(self, request).await
   }
 
   async fn append_job_events(&self, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError> {
-    request.validate()?;
-    let mut state = self.lock()?;
-    let first = request.events[0].sequence();
-    let last = request.events[request.events.len() - 1].sequence();
-    let append_key = (request.lease.lease_id, first, last);
-    if let Some(existing) = state.event_appends.get(&append_key) {
-      if same_event_append(&existing.request, &request) {
-        return Ok(existing.outcome);
-      }
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Job,
-      });
-    }
-    let grant = current_grant(&state, request.lease, request.accepted_at)?;
-    let events = state.events.get(&grant.job_id);
-    let durable_through = events
-      .and_then(|events| events.last_key_value().map(|(sequence, _)| sequence.get()))
-      .unwrap_or(0);
-    let mut expected = durable_through.saturating_add(1);
-    let mut new_events = Vec::new();
-
-    for event in &request.events {
-      let sequence = event.sequence().get();
-      if sequence <= durable_through {
-        if events.and_then(|events| events.get(&event.sequence())) != Some(&event.digest()) {
-          return Err(StoreError::Conflict {
-            entity: EntityKind::Job,
-          });
-        }
-      } else if sequence != expected {
-        return Err(StoreError::EventGap {
-          job: grant.job_id,
-          expected,
-          actual: sequence,
-        });
-      } else {
-        new_events.push(event.clone());
-        expected = expected.checked_add(1).ok_or(StoreError::Unavailable)?;
-      }
-    }
-
-    let acknowledged = durable_through
-      .checked_add(u64::try_from(new_events.len()).map_err(|_| StoreError::Unavailable)?)
-      .ok_or(StoreError::Unavailable)?;
-    let acknowledged_through = EventSequence::new(acknowledged).map_err(|source| StoreError::InvalidInput {
-      operation: StoreOperation::AppendJobEvents,
-      source,
-    })?;
-    let outcome = AppendJobEventsOutcome {
-      acknowledged_through,
-      inserted: new_events.len(),
-    };
-    let evidence_identity = format!(
-      "append-job-events:{}:{}-{}",
-      append_key.0,
-      append_key.1.get(),
-      append_key.2.get()
-    );
-    ensure_evidence_available(&state, &evidence_identity)?;
-    let events = state.events.entry(grant.job_id).or_default();
-    for event in &new_events {
-      events.insert(event.sequence(), event.digest());
-    }
-    state
-      .event_appends
-      .insert(append_key, EventAppendRecord { request, outcome });
-    record_evidence(&mut state, evidence_identity);
-    Ok(outcome)
+    lease_events::append_events(self, request).await
   }
 
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
-    let mut state = self.lock()?;
-    let grant = lease_grant(&state, request.lease)?;
-    if let Some(existing) = state.completions.get(&grant.job_id) {
-      if same_completion(existing.request, request) {
-        let mut outcome = existing.outcome.clone();
-        outcome.disposition = MutationDisposition::Replayed;
-        return Ok(outcome);
-      }
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Job,
-      });
-    }
-    current_grant(&state, request.lease, request.completed_at)?;
-
-    let durable_through = state
-      .events
-      .get(&grant.job_id)
-      .and_then(|events| events.last_key_value().map(|(sequence, _)| sequence.get()))
-      .unwrap_or(0);
-    let required = request.final_sequence.map_or(0, EventSequence::get);
-    if required > durable_through {
-      return Err(StoreError::EventsMissing {
-        job: grant.job_id,
-        durable_through,
-        required,
-      });
-    }
-    if required < durable_through {
-      return Err(StoreError::Conflict {
-        entity: EntityKind::Job,
-      });
-    }
-
-    let mut observations = Vec::new();
-    for job in state.jobs.values().filter(|job| {
-      !job.dependencies.is_empty()
-        && !state.ready_jobs.contains(&job.id)
-        && !state.current_lease_by_job.contains_key(&job.id)
-        && !state.completions.contains_key(&job.id)
-    }) {
-      observations.extend(job.dependencies.iter().map(|dependency| DependencyObservation {
-        job_id: job.id,
-        policy: job.dependency_policy,
-        outcome: if *dependency == grant.job_id {
-          dependency_outcome(request.kind)
-        } else {
-          state
-            .completions
-            .get(dependency)
-            .map_or(DependencyOutcome::Pending, |completion| {
-              dependency_outcome(completion.request.kind)
-            })
-        },
-      }));
-    }
-    let candidates = newly_ready_jobs(observations).map_err(|_| StoreError::Unavailable)?;
-    let ready_jobs = candidates;
-    let outcome = CompletionDisposition {
-      disposition: MutationDisposition::Applied,
-      job_id: grant.job_id,
-      ready_jobs: ready_jobs.clone(),
-    };
-    let evidence_identity = format!("complete-job:{}", request.lease.lease_id);
-    ensure_evidence_available(&state, &evidence_identity)?;
-    ensure_enqueue_capacity(&state, ready_jobs.iter().copied())?;
-    state.current_lease_by_job.remove(&grant.job_id);
-    for job_id in &ready_jobs {
-      enqueue(&mut state, *job_id);
-    }
-    state.completions.insert(
-      grant.job_id,
-      CompletionRecord {
-        request,
-        outcome: outcome.clone(),
-      },
-    );
-    record_evidence(&mut state, evidence_identity);
-    Ok(outcome)
+    lease_events::complete(self, request).await
   }
 }
 
-fn same_trigger_acceptance(left: &AcceptTrigger, right: &AcceptTrigger) -> bool {
-  left.trigger == right.trigger
-    && left.build == right.build
-    && left.attempt_id == right.attempt_id
-    && left.attempt_number == right.attempt_number
-    && left.jobs == right.jobs
-}
+#[async_trait]
+impl BuildRunControlStore for InMemoryStore {
+  async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
+    run_control::cancel(self, request).await
+  }
 
-fn same_job_claim(left: JobClaim, right: JobClaim) -> bool {
-  left.lease_id == right.lease_id
-    && left.fence == right.fence
-    && left.agent_id == right.agent_id
-    && left.registration_epoch == right.registration_epoch
-    && left.pool_id == right.pool_id
-    && left.expires_at == right.expires_at
-}
-
-fn same_event_append(left: &AppendJobEvents, right: &AppendJobEvents) -> bool {
-  left.lease == right.lease && left.events == right.events
-}
-
-fn same_completion(left: JobCompletion, right: JobCompletion) -> bool {
-  left.lease == right.lease && left.final_sequence == right.final_sequence && left.kind == right.kind
+  async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
+    run_control::retry(self, request).await
+  }
 }
 
 #[async_trait]
 impl LogIndexWorkStore for InMemoryStore {
   async fn committed_log_index_position(&self, project_id: ProjectId) -> Result<Option<LogIndexPosition>, StoreError> {
     Ok(self.lock()?.committed_log_index_positions.get(&project_id).copied())
-  }
-}
-
-const fn dependency_outcome(kind: JobCompletionKind) -> DependencyOutcome {
-  match kind {
-    JobCompletionKind::Succeeded => DependencyOutcome::Succeeded,
-    JobCompletionKind::Failed => DependencyOutcome::Failed,
-    JobCompletionKind::Cancelled => DependencyOutcome::Cancelled,
   }
 }
 
@@ -696,6 +322,26 @@ fn enqueue(state: &mut MemoryState, job_id: JobId) {
   }
 }
 
+fn sign_ready_job(
+  state: &mut MemoryState,
+  signer: &JobSpecSigner,
+  job_id: JobId,
+  issued_at: Timestamp,
+) -> Result<(), StoreError> {
+  let job = state.jobs.get(&job_id).ok_or(StoreError::Unavailable)?;
+  let attempt = state.attempts.get(&job.attempt_id).ok_or(StoreError::Unavailable)?;
+  let signed = sign_ready_job_spec(
+    &job.materialized.job_spec_template,
+    attempt.number,
+    job_id,
+    issued_at,
+    signer,
+  )
+  .map_err(|_| StoreError::Unavailable)?;
+  state.signed_job_specs.insert(job_id, signed);
+  Ok(())
+}
+
 pub(crate) fn ensure_evidence_available(state: &MemoryState, identity: &str) -> Result<(), StoreError> {
   if state.idempotency_outcomes.contains(identity)
     || state.audit_facts.contains(identity)
@@ -711,92 +357,4 @@ pub(crate) fn record_evidence(state: &mut MemoryState, identity: String) {
   let audit_inserted = state.audit_facts.insert(identity.clone());
   let outbox_inserted = state.outbox_entries.insert(identity);
   debug_assert!(idempotency_inserted && audit_inserted && outbox_inserted);
-}
-
-fn lease_grant(state: &MemoryState, access: LeaseAccess) -> Result<LeaseGrant, StoreError> {
-  let grant = state
-    .leases
-    .get(&access.lease_id)
-    .copied()
-    .ok_or(StoreError::Fenced { lease: access.lease_id })?;
-  if grant.fence != access.fence
-    || grant.agent_id != access.agent_id
-    || grant.registration_epoch != access.registration_epoch
-  {
-    return Err(StoreError::Fenced { lease: access.lease_id });
-  }
-  Ok(grant)
-}
-
-fn current_grant(state: &MemoryState, access: LeaseAccess, observed_at: Timestamp) -> Result<LeaseGrant, StoreError> {
-  let grant = lease_grant(state, access)?;
-  if observed_at >= grant.expires_at {
-    return Err(StoreError::Expired { lease: access.lease_id });
-  }
-  if state.current_lease_by_job.get(&grant.job_id) != Some(&grant.lease_id) {
-    return Err(StoreError::Fenced { lease: access.lease_id });
-  }
-  Ok(grant)
-}
-
-pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> AcceptTrigger {
-  let root = MaterializedJob::new(
-    id(base + 3),
-    PipelineNodeId::new("root").unwrap(),
-    Vec::new(),
-    DependencyPolicy::AllSucceeded,
-    vec![pool],
-    json!({"command": "root"}),
-    json!({"platform": "linux"}),
-  )
-  .unwrap();
-  let child = MaterializedJob::new(
-    id(base + 4),
-    PipelineNodeId::new("child").unwrap(),
-    vec![root.id],
-    DependencyPolicy::AllSucceeded,
-    vec![pool],
-    json!({"command": "child"}),
-    json!({"platform": "linux"}),
-  )
-  .unwrap();
-  let build = ImmutableBuildInput {
-    id: id(base + 1),
-    project_id: id::<ProjectId>(31),
-    configuration_id: id::<BuildConfigurationId>(32),
-    configuration_version: BuildConfigurationVersion::INITIAL,
-    pipeline_id: id::<PipelineId>(33),
-    pipeline_version: PipelineVersion::INITIAL,
-    repository_id: id::<RepositoryId>(34),
-    repository_version: RepositoryVersion::INITIAL,
-    immutable_revision: "0123456789abcdef".to_owned(),
-    input_snapshot: json!({"parameter": "value"}),
-    effective_policy_snapshot: json!({"allowed_pool": pool.to_string()}),
-    priority: 10,
-  };
-  let trigger = NormalizedTriggerOccurrence::root(
-    id(occurrence),
-    TriggerDefinitionRef {
-      id: id::<TriggerId>(30),
-      version: TriggerVersion::INITIAL,
-    },
-    TriggerTarget {
-      configuration_id: build.configuration_id,
-      configuration_version: build.configuration_version,
-    },
-    TriggerIdentity::new(format!("manual:{occurrence}")).unwrap(),
-    TriggerCause::Manual {},
-    TriggerMetadata::default(),
-    time(400),
-  )
-  .unwrap();
-  AcceptTrigger::new(
-    trigger,
-    build,
-    id(base + 2),
-    AttemptNumber::FIRST,
-    vec![root, child],
-    time(500),
-  )
-  .unwrap()
 }

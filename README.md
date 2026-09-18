@@ -106,6 +106,7 @@ operation_timeout_milliseconds = 5000
 capability_recheck_interval_milliseconds = 300000
 
 [signing]
+key_id = "server-key-2026-09"
 key_file = "/run/secrets/octacity-jobspec-ed25519-key"
 ```
 
@@ -114,6 +115,9 @@ PostgreSQL file contains a connection URL, the object-store files contain the
 two S3 credentials, and the signing file contains the standard-base64 encoding
 of exactly 32 Ed25519 private-key bytes. Their contents are bounded, never
 included in diagnostics, and loaded before the management listener binds.
+`signing.key_id` is the non-secret identifier agents use to select the matching
+verification key; rotate it together with the private key while retaining the
+previous public key for the configured overlap window.
 Each path must name a regular file directly (symbolic links are rejected); on
 Unix, set owner-only permissions such as `0400` or `0600`.
 The file owner must also match the server process's effective user. The first

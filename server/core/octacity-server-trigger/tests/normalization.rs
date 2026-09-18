@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, fmt::Debug, str::FromStr};
 
 use octacity_server_domain::{
-  BuildConfigurationId, BuildConfigurationVersion, BuildId, SourceReference, Timestamp, TriggerId, TriggerIdentity,
-  TriggerOccurrenceId, TriggerVersion,
+  BuildConfigurationId, BuildConfigurationVersion, BuildId, ImmutableRevision, SourceReference, Timestamp, TriggerId,
+  TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_trigger::{
   MAX_TRIGGER_METADATA_BYTES, MAX_TRIGGER_METADATA_ENTRIES, NormalizedTriggerOccurrence, TriggerCausality,
@@ -32,7 +32,7 @@ fn every_origin_normalizes_to_one_strict_provider_neutral_shape() {
       repository_id: id(21),
       event_kind: TriggerEventKind::new("repository.push").unwrap(),
       reference: Some(SourceReference::new("refs/heads/main").unwrap()),
-      revision: Some("0123456789abcdef".to_owned()),
+      revision: Some(ImmutableRevision::new("0123456789abcdef").unwrap()),
     },
     TriggerMetadata::new(BTreeMap::from([("actor_display".to_owned(), json!("builder"))])).unwrap(),
   );

@@ -1,26 +1,34 @@
-use octacity_server_domain::{EntityKind, JobId, Timestamp};
-use octacity_server_orchestrator::{DependencyObservation, newly_ready_jobs};
-use octacity_server_pipeline::{DependencyOutcome, DependencyPolicy};
+use octacity_server_domain::{EntityKind, JobId};
+use octacity_server_job::{JobFailureClass, JobSpecSigner};
+use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
   CompletionDisposition, EventSequence, JobCompletion, JobCompletionKind, MutationDisposition, StoreError,
-  StoreOperation,
+  StoreOperation, complete_job_state,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
+use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
-  database::{classify, number, unavailable},
+  database::{classify, job_ids, number, unavailable},
   lease,
   mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  state::{attempt_state, build_state, job_state, parse_attempt_state, parse_build_state, parse_job_state},
 };
 
-pub(crate) async fn execute(pool: &PgPool, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
+mod orchestration;
+
+pub(crate) async fn execute(
+  pool: &PgPool,
+  signer: &JobSpecSigner,
+  request: JobCompletion,
+) -> Result<CompletionDisposition, StoreError> {
   let digest_input = json!({
     "agent_id": request.lease.agent_id,
     "final_sequence": request.final_sequence.map(EventSequence::get),
     "fence": request.lease.fence.expose(),
+    "failure_class": failure_class(request.kind),
     "kind": completion_kind(request.kind),
     "lease_id": request.lease.lease_id,
     "registration_epoch": request.lease.registration_epoch.get(),
@@ -36,13 +44,22 @@ pub(crate) async fn execute(pool: &PgPool, request: JobCompletion) -> Result<Com
     MutationStart::Fresh(transaction) => transaction,
     MutationStart::Replay(outcome) => return replay(outcome),
   };
+  let (attempt_id, build_id) = locate_graph(&mut transaction, request.lease.lease_id.as_uuid())
+    .await?
+    .ok_or(StoreError::Fenced {
+      lease: request.lease.lease_id,
+    })?;
+  lock_build_and_attempt(&mut transaction, build_id, attempt_id).await?;
   let lease = lease::load(&mut transaction, request.lease, StoreOperation::CompleteJob).await?;
+  if lease.attempt_id != attempt_id {
+    return Err(StoreError::Unavailable);
+  }
   let required = request.final_sequence.map_or(0, EventSequence::get);
   let required_db = number(required, StoreOperation::CompleteJob)?;
   let kind = completion_kind(request.kind);
 
   let existing: Option<CompletionRow> = sqlx::query_as(
-    "SELECT lease_id, final_sequence, kind, ready_job_ids \
+    "SELECT lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, build_state \
      FROM job_completions WHERE job_id = $1 FOR UPDATE",
   )
   .bind(lease.job_id)
@@ -51,15 +68,15 @@ pub(crate) async fn execute(pool: &PgPool, request: JobCompletion) -> Result<Com
   .map_err(unavailable)?;
   if let Some(existing) = existing {
     if existing.matches(request, required_db, kind) {
-      let ready_jobs = existing
-        .ready_job_ids
-        .into_iter()
-        .map(|id| JobId::from_uuid(id).map_err(|_| StoreError::Unavailable))
-        .collect::<Result<_, _>>()?;
+      let ready_jobs = job_ids(existing.ready_job_ids)?;
       let outcome = CompletionDisposition {
         disposition: MutationDisposition::Replayed,
         job_id: JobId::from_uuid(lease.job_id).map_err(|_| StoreError::Unavailable)?,
+        failure_class: parse_failure_class(existing.failure_class.as_deref())?,
         ready_jobs,
+        skipped_jobs: job_ids(existing.skipped_job_ids)?,
+        attempt_state: parse_attempt_state(&existing.attempt_state)?,
+        build_state: parse_build_state(&existing.build_state)?,
       };
       crate::mutation::commit(
         transaction,
@@ -77,23 +94,38 @@ pub(crate) async fn execute(pool: &PgPool, request: JobCompletion) -> Result<Com
 
   lease::require_current(&lease, request.lease, request.completed_at)?;
   require_durable_cursor(&mut transaction, lease.job_id, required).await?;
-  lock_attempt(&mut transaction, lease.attempt_id).await?;
-  persist_completion(&mut transaction, &request, lease.job_id, required_db, kind).await?;
-  let ready = ready_dependents(&mut transaction, lease.attempt_id, request.completed_at).await?;
-  sqlx::query("UPDATE job_completions SET ready_job_ids = $1 WHERE job_id = $2")
-    .bind(&ready)
-    .bind(lease.job_id)
-    .execute(&mut *transaction)
-    .await
-    .map_err(|error| classify(error, EntityKind::Job))?;
+  persist_terminal_state(&mut transaction, &request, lease.job_id, kind).await?;
+  let applied = orchestration::reconcile_and_apply(
+    &mut transaction,
+    signer,
+    lease.attempt_id,
+    build_id,
+    request.completed_at,
+  )
+  .await?;
+  persist_completion(
+    &mut transaction,
+    CompletionWrite {
+      request: &request,
+      job_id: lease.job_id,
+      final_sequence: required_db,
+      kind,
+      ready: &applied.ready_jobs,
+      skipped: &applied.skipped_jobs,
+      attempt_state: applied.attempt_state,
+      build_state: applied.build_state,
+    },
+  )
+  .await?;
 
   let outcome = CompletionDisposition {
     disposition: MutationDisposition::Applied,
     job_id: JobId::from_uuid(lease.job_id).map_err(|_| StoreError::Unavailable)?,
-    ready_jobs: ready
-      .into_iter()
-      .map(|id| JobId::from_uuid(id).map_err(|_| StoreError::Unavailable))
-      .collect::<Result<_, _>>()?,
+    failure_class: request.kind.failure_class(),
+    ready_jobs: job_ids(applied.ready_jobs)?,
+    skipped_jobs: job_ids(applied.skipped_jobs)?,
+    attempt_state: applied.attempt_state,
+    build_state: applied.build_state,
   };
   crate::mutation::commit(
     transaction,
@@ -131,25 +163,21 @@ async fn require_durable_cursor(
   Ok(())
 }
 
-async fn persist_completion(
+async fn persist_terminal_state(
   transaction: &mut Transaction<'_, Postgres>,
   request: &JobCompletion,
   job_id: Uuid,
-  required: i64,
   kind: &str,
 ) -> Result<(), StoreError> {
-  sqlx::query(
-    "INSERT INTO job_completions (job_id, lease_id, final_sequence, kind, ready_job_ids, completed_at) \
-     VALUES ($1, $2, $3, $4, '{}', to_timestamp($5::double precision / 1000.0))",
-  )
-  .bind(job_id)
-  .bind(request.lease.lease_id.as_uuid())
-  .bind(required)
-  .bind(kind)
-  .bind(request.completed_at.unix_millis())
-  .execute(&mut **transaction)
-  .await
-  .map_err(|error| classify(error, EntityKind::Job))?;
+  let current: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = $1 FOR UPDATE")
+    .bind(job_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  let terminal = complete_job_state(parse_job_state(&current)?, request.kind)?;
+  if job_state(terminal) != kind {
+    return Err(StoreError::Unavailable);
+  }
   sqlx::query(
     "UPDATE leases SET state = 'completed', version = version + 1, \
        completed_at = to_timestamp($1::double precision / 1000.0) WHERE id = $2",
@@ -163,7 +191,7 @@ async fn persist_completion(
     "UPDATE jobs SET state = $1, version = version + 1, \
        updated_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
   )
-  .bind(kind)
+  .bind(job_state(terminal))
   .bind(request.completed_at.unix_millis())
   .bind(job_id)
   .execute(&mut **transaction)
@@ -172,103 +200,78 @@ async fn persist_completion(
   Ok(())
 }
 
-async fn lock_attempt(transaction: &mut Transaction<'_, Postgres>, attempt_id: Uuid) -> Result<(), StoreError> {
-  sqlx::query("SELECT id FROM attempts WHERE id = $1 FOR UPDATE")
+async fn locate_graph(
+  transaction: &mut Transaction<'_, Postgres>,
+  lease_id: Uuid,
+) -> Result<Option<(Uuid, Uuid)>, StoreError> {
+  sqlx::query_as(
+    "SELECT job.attempt_id, attempt.build_id FROM leases AS lease \
+     JOIN jobs AS job ON job.id = lease.job_id \
+     JOIN attempts AS attempt ON attempt.id = job.attempt_id \
+     WHERE lease.id = $1",
+  )
+  .bind(lease_id)
+  .fetch_optional(&mut **transaction)
+  .await
+  .map_err(unavailable)
+}
+
+async fn lock_build_and_attempt(
+  transaction: &mut Transaction<'_, Postgres>,
+  build_id: Uuid,
+  attempt_id: Uuid,
+) -> Result<(), StoreError> {
+  sqlx::query_scalar::<_, Uuid>("SELECT id FROM builds WHERE id = $1 FOR UPDATE")
+    .bind(build_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  let locked_build: Uuid = sqlx::query_scalar("SELECT build_id FROM attempts WHERE id = $1 FOR UPDATE")
     .bind(attempt_id)
     .fetch_one(&mut **transaction)
     .await
     .map_err(unavailable)?;
+  if locked_build != build_id {
+    return Err(StoreError::Unavailable);
+  }
   Ok(())
 }
 
-async fn ready_dependents(
-  transaction: &mut Transaction<'_, Postgres>,
-  attempt_id: Uuid,
-  ready_at: Timestamp,
-) -> Result<Vec<Uuid>, StoreError> {
-  let rows: Vec<DependencyRow> = sqlx::query_as(
-    "SELECT job.id AS job_id, dependency.dependency_policy, completion.kind AS completion_kind \
-     FROM jobs AS job \
-     JOIN job_dependencies AS dependency ON dependency.job_id = job.id \
-     LEFT JOIN job_completions AS completion ON completion.job_id = dependency.dependency_job_id \
-     WHERE job.attempt_id = $1 AND job.state = 'blocked' \
-     ORDER BY job.id, dependency.dependency_job_id \
-     FOR UPDATE OF job",
-  )
-  .bind(attempt_id)
-  .fetch_all(&mut **transaction)
-  .await
-  .map_err(unavailable)?;
-
-  let observations = rows
-    .into_iter()
-    .map(|row| {
-      Ok(DependencyObservation {
-        job_id: JobId::from_uuid(row.job_id).map_err(|_| StoreError::Unavailable)?,
-        policy: row.dependency_policy.0,
-        outcome: dependency_outcome(row.completion_kind.as_deref())?,
-      })
-    })
-    .collect::<Result<Vec<_>, StoreError>>()?;
-  let candidates: Vec<Uuid> = newly_ready_jobs(observations)
-    .map_err(|_| StoreError::Unavailable)?
-    .into_iter()
-    .map(JobId::as_uuid)
-    .collect();
-
-  if !candidates.is_empty() {
-    let updated = sqlx::query(
-      "UPDATE jobs SET state = 'ready', version = version + 1, \
-       updated_at = to_timestamp($1::double precision / 1000.0) WHERE id = ANY($2::uuid[])",
-    )
-    .bind(ready_at.unix_millis())
-    .bind(&candidates)
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| classify(error, EntityKind::Job))?;
-    if updated.rows_affected() != candidates.len() as u64 {
-      return Err(StoreError::Unavailable);
-    }
-
-    let enqueued = sqlx::query(
-      "INSERT INTO ready_queue_entries \
-         (job_id, priority, enqueued_at, project_id, build_configuration_id, build_configuration_version, \
-          allowed_pool_ids, requirements) \
-       SELECT job.id, build.priority, to_timestamp($1::double precision / 1000.0), build.project_id, \
-              build.build_configuration_id, build.build_configuration_version, job.allowed_pool_ids, job.requirements \
-       FROM jobs AS job \
-       JOIN attempts AS attempt ON attempt.id = job.attempt_id \
-       JOIN builds AS build ON build.id = attempt.build_id \
-       WHERE job.id = ANY($2::uuid[]) \
-       ORDER BY job.id",
-    )
-    .bind(ready_at.unix_millis())
-    .bind(&candidates)
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| classify(error, EntityKind::Job))?;
-    if enqueued.rows_affected() != candidates.len() as u64 {
-      return Err(StoreError::Unavailable);
-    }
-  }
-  Ok(candidates)
-}
-
-#[derive(FromRow)]
-struct DependencyRow {
+struct CompletionWrite<'a> {
+  request: &'a JobCompletion,
   job_id: Uuid,
-  dependency_policy: Json<DependencyPolicy>,
-  completion_kind: Option<String>,
+  final_sequence: i64,
+  kind: &'a str,
+  ready: &'a [Uuid],
+  skipped: &'a [Uuid],
+  attempt_state: AttemptState,
+  build_state: BuildState,
 }
 
-fn dependency_outcome(kind: Option<&str>) -> Result<DependencyOutcome, StoreError> {
-  match kind {
-    None => Ok(DependencyOutcome::Pending),
-    Some("succeeded") => Ok(DependencyOutcome::Succeeded),
-    Some("failed") => Ok(DependencyOutcome::Failed),
-    Some("cancelled") => Ok(DependencyOutcome::Cancelled),
-    Some(_) => Err(StoreError::Unavailable),
-  }
+async fn persist_completion(
+  transaction: &mut Transaction<'_, Postgres>,
+  write: CompletionWrite<'_>,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO job_completions \
+       (job_id, lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, \
+        build_state, completed_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10::double precision / 1000.0))",
+  )
+  .bind(write.job_id)
+  .bind(write.request.lease.lease_id.as_uuid())
+  .bind(write.final_sequence)
+  .bind(write.kind)
+  .bind(failure_class(write.request.kind))
+  .bind(write.ready)
+  .bind(write.skipped)
+  .bind(attempt_state(write.attempt_state))
+  .bind(build_state(write.build_state))
+  .bind(write.request.completed_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(|error| classify(error, EntityKind::Job))?;
+  Ok(())
 }
 
 #[derive(FromRow)]
@@ -276,26 +279,41 @@ struct CompletionRow {
   lease_id: Uuid,
   final_sequence: i64,
   kind: String,
+  failure_class: Option<String>,
   ready_job_ids: Vec<Uuid>,
+  skipped_job_ids: Vec<Uuid>,
+  attempt_state: String,
+  build_state: String,
 }
 
 impl CompletionRow {
   fn matches(&self, request: JobCompletion, final_sequence: i64, kind: &str) -> bool {
-    self.lease_id == request.lease.lease_id.as_uuid() && self.final_sequence == final_sequence && self.kind == kind
+    self.lease_id == request.lease.lease_id.as_uuid()
+      && self.final_sequence == final_sequence
+      && self.kind == kind
+      && self.failure_class.as_deref() == failure_class(request.kind)
   }
 }
 
 #[derive(Deserialize, Serialize)]
 struct StoredOutcome {
   job_id: JobId,
+  failure_class: Option<JobFailureClass>,
   ready_jobs: Vec<JobId>,
+  skipped_jobs: Vec<JobId>,
+  attempt_state: AttemptState,
+  build_state: BuildState,
 }
 
 impl From<&CompletionDisposition> for StoredOutcome {
   fn from(outcome: &CompletionDisposition) -> Self {
     Self {
       job_id: outcome.job_id,
+      failure_class: outcome.failure_class,
       ready_jobs: outcome.ready_jobs.clone(),
+      skipped_jobs: outcome.skipped_jobs.clone(),
+      attempt_state: outcome.attempt_state,
+      build_state: outcome.build_state,
     }
   }
 }
@@ -305,7 +323,11 @@ fn replay(value: Value) -> Result<CompletionDisposition, StoreError> {
   Ok(CompletionDisposition {
     disposition: MutationDisposition::Replayed,
     job_id: stored.job_id,
+    failure_class: stored.failure_class,
     ready_jobs: stored.ready_jobs,
+    skipped_jobs: stored.skipped_jobs,
+    attempt_state: stored.attempt_state,
+    build_state: stored.build_state,
   })
 }
 
@@ -317,14 +339,22 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
     safe_metadata: json!({
       "final_sequence": request.final_sequence.map(EventSequence::get),
       "kind": completion_kind(request.kind),
+      "failure_class": failure_class(request.kind),
       "lease_id": request.lease.lease_id,
       "ready_job_count": outcome.ready_jobs.len(),
+      "skipped_job_count": outcome.skipped_jobs.len(),
+      "attempt_state": attempt_state(outcome.attempt_state),
+      "build_state": build_state(outcome.build_state),
     }),
     outbox_payload: json!({
       "job_id": outcome.job_id,
       "kind": completion_kind(request.kind),
+      "failure_class": failure_class(request.kind),
       "ready_jobs": outcome.ready_jobs,
-      "schema_version": 1,
+      "skipped_jobs": outcome.skipped_jobs,
+      "attempt_state": attempt_state(outcome.attempt_state),
+      "build_state": build_state(outcome.build_state),
+      "schema_version": 2,
     }),
   }
 }
@@ -332,7 +362,24 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
 const fn completion_kind(kind: JobCompletionKind) -> &'static str {
   match kind {
     JobCompletionKind::Succeeded => "succeeded",
-    JobCompletionKind::Failed => "failed",
+    JobCompletionKind::Failed(_) => "failed",
     JobCompletionKind::Cancelled => "cancelled",
+  }
+}
+
+const fn failure_class(kind: JobCompletionKind) -> Option<&'static str> {
+  match kind {
+    JobCompletionKind::Failed(JobFailureClass::Execution) => Some("execution"),
+    JobCompletionKind::Failed(JobFailureClass::Infrastructure) => Some("infrastructure"),
+    JobCompletionKind::Succeeded | JobCompletionKind::Cancelled => None,
+  }
+}
+
+fn parse_failure_class(value: Option<&str>) -> Result<Option<JobFailureClass>, StoreError> {
+  match value {
+    None => Ok(None),
+    Some("execution") => Ok(Some(JobFailureClass::Execution)),
+    Some("infrastructure") => Ok(Some(JobFailureClass::Infrastructure)),
+    Some(_) => Err(StoreError::Unavailable),
   }
 }

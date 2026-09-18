@@ -22,6 +22,6 @@ pub use occurrence::{
   MAX_TRIGGER_EVENT_KIND_BYTES, MAX_TRIGGER_METADATA_BYTES, MAX_TRIGGER_METADATA_ENTRIES,
   MAX_TRIGGER_METADATA_KEY_BYTES, MAX_TRIGGER_REVISION_BYTES, NormalizedTriggerOccurrence, TriggerCausality,
   TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEventKind, TriggerInputError, TriggerKind,
-  TriggerMetadata, TriggerTarget,
+  TriggerMetadata, TriggerOccurrenceIntent, TriggerTarget,
 };
 pub use state::{TriggerOccurrenceEvent, TriggerOccurrenceState};

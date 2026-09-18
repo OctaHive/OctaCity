@@ -70,11 +70,15 @@ impl ObjectStorageConfig {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SigningConfig {
+  pub(crate) key_id: String,
   pub(crate) key_file: PathBuf,
 }
 
 impl SigningConfig {
   pub(crate) fn validate(&self) -> Result<(), String> {
+    if !octacity_protocol::valid_signing_key_id(&self.key_id) {
+      return Err("signing.key_id is invalid".to_owned());
+    }
     validate_path("signing.key_file", &self.key_file)
   }
 }

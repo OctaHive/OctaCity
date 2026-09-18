@@ -1,51 +1,112 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, PipelineId, PipelineVersion, ProjectId, RepositoryId,
   RepositoryVersion,
 };
+use octacity_server_job::JobSpecSigner;
 use octacity_server_store::{
   AcceptTrigger, AcceptTriggerOutcome, AgentCredentialStore, AgentRegistrationOutcome, AppendJobEvents,
-  AppendJobEventsOutcome, AuthenticateAgentRegistration, AuthenticatedAgentRegistration, AuthoritativeStore,
-  BuildConfigurationMutationOutcome, CompletionDisposition, ConfigurationStore, CreateBuildConfiguration,
-  CreateProject, CreateRepository, DeleteProject, DeleteProjectOutcome, IssueAgentEnrollment,
-  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, ListProjects, LogIndexPosition,
-  LogIndexWorkStore, MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore, ProjectDetails,
-  ProjectMutationOutcome, ProjectPage, ProjectStore, PublishBuildConfigurationVersion, PublishPipelineVersion,
-  PublishRepositoryVersion, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, RegisterAgent,
-  RenameProject, RepositoryMutationOutcome, RevokeAgentCredential, StoreError,
+  AppendJobEventsOutcome, AuthenticateAgentRegistration, AuthenticatedAgentRegistration,
+  BuildConfigurationMutationOutcome, BuildRunControlStore, CancelBuild, CancellationDisposition, CompletionDisposition,
+  ConfigurationStore, CreateBuildConfiguration, CreateProject, CreateRepository, DeleteProject, DeleteProjectOutcome,
+  IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore,
+  ListProjects, LogIndexPosition, LogIndexWorkStore, MoveProject, MutationDisposition, PipelineMutationOutcome,
+  PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectStore, PublishBuildConfigurationVersion,
+  PublishPipelineVersion, PublishRepositoryVersion, PublishedBuildConfiguration, PublishedPipeline,
+  PublishedRepository, RegisterAgent, RenameProject, RepositoryMutationOutcome, RetryBuild, RetryDisposition,
+  RevokeAgentCredential, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
+  TriggerAcceptanceStore, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationOutcome, TriggerKind,
+  TriggerTarget,
 };
 use sqlx::PgPool;
 
-/// PostgreSQL adapter for the backend-neutral authoritative store interface.
+/// PostgreSQL adapter for ports that do not cross a JobSpec signing boundary.
 #[derive(Clone)]
 pub struct PostgresStore {
   pool: PgPool,
 }
 
 impl PostgresStore {
-  /// Creates an adapter backed by a migrated PostgreSQL pool.
+  /// Creates infrastructure ports backed by a migrated PostgreSQL pool.
   #[must_use]
-  pub fn new(pool: PgPool) -> Self {
+  pub const fn new(pool: PgPool) -> Self {
     Self { pool }
   }
 }
 
+/// PostgreSQL adapter for mutations that cross a signed JobSpec boundary.
+#[derive(Clone)]
+pub struct PostgresAuthoritativeStore {
+  store: PostgresStore,
+  job_spec_signer: Arc<JobSpecSigner>,
+}
+
+impl PostgresAuthoritativeStore {
+  /// Creates an authoritative adapter with an explicit active signing key.
+  #[must_use]
+  pub fn new(pool: PgPool, job_spec_signer: Arc<JobSpecSigner>) -> Self {
+    Self {
+      store: PostgresStore::new(pool),
+      job_spec_signer,
+    }
+  }
+}
+
 #[async_trait]
-impl AuthoritativeStore for PostgresStore {
-  async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
-    crate::accept_trigger::execute(&self.pool, request).await
+impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
+  async fn replay_trigger_acceptance(
+    &self,
+    request: TriggerAcceptanceProbe,
+  ) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
+    crate::accept_trigger::replay_evaluation(&self.store.pool, request).await
   }
 
+  async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
+    crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request).await
+  }
+
+  async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
+    crate::accept_trigger::suppress(&self.store.pool, request).await
+  }
+}
+
+#[async_trait]
+impl JobExecutionStore for PostgresAuthoritativeStore {
   async fn claim_ready_job(&self, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
-    crate::job_claim::execute(&self.pool, request).await
+    crate::job_claim::execute(&self.store.pool, request).await
   }
 
   async fn append_job_events(&self, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError> {
-    crate::job_events::execute(&self.pool, request).await
+    crate::job_events::execute(&self.store.pool, request).await
   }
 
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
-    crate::job_completion::execute(&self.pool, request).await
+    crate::job_completion::execute(&self.store.pool, &self.job_spec_signer, request).await
+  }
+}
+
+#[async_trait]
+impl BuildRunControlStore for PostgresAuthoritativeStore {
+  async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
+    crate::cancel_build::execute(&self.store.pool, request).await
+  }
+
+  async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
+    crate::retry_build::execute(&self.store.pool, &self.job_spec_signer, request).await
+  }
+}
+
+#[async_trait]
+impl TriggerDefinitionStore for PostgresStore {
+  async fn require_enabled_trigger(
+    &self,
+    trigger: TriggerDefinitionRef,
+    kind: TriggerKind,
+    target: TriggerTarget,
+  ) -> Result<(), StoreError> {
+    crate::trigger_query::require_enabled(&self.pool, trigger, kind, target).await
   }
 }
 

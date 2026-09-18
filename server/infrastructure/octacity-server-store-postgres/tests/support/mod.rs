@@ -1,8 +1,15 @@
-use std::{env, str::FromStr as _};
+use std::{env, str::FromStr as _, sync::Arc};
+
+use octacity_server_job::JobSpecSigner;
 
 use sqlx::{Connection as _, PgConnection, PgPool, postgres::PgConnectOptions};
 
 const DATABASE_URL_ENV: &str = "OCTACITY_POSTGRES_URL";
+
+#[allow(dead_code)]
+pub fn test_signer() -> Arc<JobSpecSigner> {
+  Arc::new(JobSpecSigner::new("postgres-contract-key", [7; 32]).expect("static signing fixture is valid"))
+}
 
 pub struct TestDatabase {
   pub pool: PgPool,

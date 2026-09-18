@@ -215,7 +215,7 @@ async fn insert_version(
   .bind(repository_id.as_uuid())
   .bind(version)
   .bind(definition.vcs_integration_id.as_uuid())
-  .bind(&definition.repository_locator)
+  .bind(definition.repository_locator.as_str())
   .bind(Json(selection))
   .bind(published_at_millis)
   .execute(&mut **transaction)

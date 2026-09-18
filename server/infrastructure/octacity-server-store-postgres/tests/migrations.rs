@@ -37,6 +37,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "artifacts",
     "attempts",
     "audit_facts",
+    "build_cancellations",
     "build_configurations",
     "build_configuration_versions",
     "builds",

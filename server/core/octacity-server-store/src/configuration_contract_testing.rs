@@ -3,6 +3,7 @@ use std::{
   sync::Arc,
 };
 
+use octacity_protocol::{PlatformArchitecture, PlatformOs};
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, EntityKind, IntegrationId, PipelineId,
   PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion,
@@ -20,6 +21,8 @@ use crate::{
   RepositoryDefinition, RepositorySelectionPolicy, RetryClass, RuntimeClass, SourceReference, StoreError,
   StoreInputError, StoreOperation, TriggerKind,
 };
+
+const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 /// Runs the reusable immutable Repository and Build Configuration contract.
 pub async fn verify_configuration_store_contract<S, P>(
@@ -172,6 +175,17 @@ pub async fn verify_configuration_store_contract<S, P>(
     project_id,
     "invalid-runtime",
     invalid_runtime,
+  )
+  .await;
+  let mut credential_bearing_image = configuration_v1.clone();
+  credential_bearing_image.runtime.class = RuntimeClass::OciProcess;
+  credential_bearing_image.runtime.immutable_image = Some(format!("user@registry.test/image@sha256:{DIGEST}"));
+  assert_invalid_configuration(
+    Arc::clone(&store),
+    id(220),
+    project_id,
+    "credential-bearing-image",
+    credential_bearing_image,
   )
   .await;
   let mut invalid_cache = configuration_v1.clone();
@@ -426,7 +440,7 @@ pub fn verify_in_memory_configuration_store_contract() {
 fn repository_definition(locator: &str) -> RepositoryDefinition {
   RepositoryDefinition {
     vcs_integration_id: id::<IntegrationId>(500),
-    repository_locator: locator.to_owned(),
+    repository_locator: octacity_server_domain::RepositoryLocator::new(locator).unwrap(),
     selection: RepositorySelectionPolicy {
       allowed_references: BTreeSet::from([SourceReference::new("main").unwrap()]),
       default_reference: Some(SourceReference::new("main").unwrap()),
@@ -473,8 +487,8 @@ fn build_configuration(
     allowed_pools: BTreeSet::from([pool_id]),
     runtime: ConfigurationRuntimePolicy {
       class: RuntimeClass::Native,
-      operating_system: "linux".to_owned(),
-      architecture: "amd64".to_owned(),
+      operating_system: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
       immutable_image: None,
       cpu_millis: 1_000,
       memory_bytes: 1024 * 1024,

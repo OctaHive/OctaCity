@@ -42,6 +42,10 @@ pub enum StoreOperation {
   AppendJobEvents,
   /// Commit one terminal Job outcome after its event history is durable.
   CompleteJob,
+  /// Apply durable cancellation intent to one Build and its current Attempt.
+  CancelBuild,
+  /// Materialize the next Attempt from one failed Build's immutable snapshots.
+  RetryBuild,
   /// Issue one short-lived, single-use Agent enrollment credential.
   IssueAgentEnrollment,
   /// Consume valid Agent authority and create a fresh registration epoch.
@@ -76,6 +80,9 @@ pub enum StoreInputError {
   /// The normalized occurrence and materialized Build target different configuration versions.
   #[error("a normalized trigger target does not match the build configuration")]
   TriggerTargetMismatch,
+  /// Stable execution intent was not derived for its surrounding Build and Pipeline node.
+  #[error("a JobSpec template does not match its materialized job graph")]
+  JobSpecTemplateBindingMismatch,
   /// An accepted Build must materialize at least one Job.
   #[error("a materialized attempt must contain at least one job")]
   EmptyJobGraph,
@@ -112,9 +119,6 @@ pub enum StoreInputError {
   /// A persisted structured document exceeds the process-safe nesting bound.
   #[error("a structured store document exceeds its nesting bound")]
   JsonDocumentTooDeep,
-  /// An immutable source revision is empty, malformed, or too long.
-  #[error("an immutable source revision is invalid")]
-  InvalidImmutableRevision,
   /// A Job-event classification is empty, malformed, or too long.
   #[error("a job event classification is invalid")]
   InvalidEventKind,
@@ -160,6 +164,9 @@ pub enum StoreInputError {
   /// Event sequences inside one request must be contiguous and increasing.
   #[error("an event batch must contain contiguous increasing sequences")]
   NonContiguousEventBatch,
+  /// A retry must name an Attempt number after the initial Attempt.
+  #[error("a retry attempt number must be greater than one")]
+  InvalidRetryAttempt,
 }
 
 /// Backend-neutral failure from an authoritative atomic operation.

@@ -7,17 +7,20 @@ use std::{fmt::Debug, str::FromStr, sync::Arc};
 use async_trait::async_trait;
 use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_server_domain::{EntityKind, PipelineId, PoolId, ProjectId, Timestamp, TriggerId};
+use octacity_server_job::JobFailureClass;
 use octacity_server_store::{
-  AgentCredentialStore as _, AgentRegistrationProof, AppendJobEvents, AuthoritativeStore as _, CredentialSecret,
+  AgentCredentialStore as _, AgentRegistrationProof, AppendJobEvents, BuildRunControlStore as _, CredentialSecret,
   DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind,
-  LeaseAccess, LeaseFence, MutationDisposition, RegisterAgent, StoreError,
+  JobExecutionStore as _, LeaseAccess, LeaseFence, MutationDisposition, RegisterAgent, StoreError,
+  TriggerAcceptanceStore as _,
   testing::{
     MutationEvidenceCounts, MutationEvidenceProbe, agent_credential_store_contract_fixture,
-    authoritative_store_contract_fixture, verify_agent_credential_store_contract, verify_authoritative_store_contract,
-    verify_configuration_store_contract, verify_pipeline_store_contract, verify_project_store_contract,
+    authoritative_store_contract_fixture, retry_request, verify_agent_credential_store_contract,
+    verify_authoritative_store_contract, verify_configuration_store_contract, verify_pipeline_store_contract,
+    verify_project_store_contract,
   },
 };
-use octacity_server_store_postgres::PostgresStore;
+use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
 use serde_json::json;
 use sqlx::PgPool;
 use support::TestDatabase;
@@ -51,12 +54,140 @@ async fn postgres_satisfies_the_authoritative_store_contract() {
   seed_authoritative_prerequisites(&database.pool, &fixture)
     .await
     .unwrap();
-  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let store = Arc::new(PostgresAuthoritativeStore::new(
+    database.pool.clone(),
+    support::test_signer(),
+  ));
 
   let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
   let result = tokio::spawn(verify_authoritative_store_contract(store, evidence)).await;
+  let terminal_graph_counts: (i64, i64, i64) = sqlx::query_as(
+    "SELECT \
+       (SELECT COUNT(*) FROM builds WHERE state = 'failed'), \
+       (SELECT COUNT(*) FROM attempts WHERE state = 'failed'), \
+       (SELECT COUNT(*) FROM jobs WHERE state = 'skipped')",
+  )
+  .fetch_one(&database.pool)
+  .await
+  .unwrap();
   database.cleanup().await;
   result.expect("PostgreSQL authoritative-store contract failed");
+  assert_eq!(
+    terminal_graph_counts,
+    (0, 1, 1),
+    "retry reactivates the Build while preserving the failed Attempt and skipped Job"
+  );
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let request = fixture.request.clone();
+  let store = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  store.accept_trigger(request.clone()).await.unwrap();
+  let claim = JobClaim::new(
+    id(900),
+    LeaseFence::from_bytes([9; 32]),
+    fixture.agent_id,
+    fixture.registration_epoch,
+    fixture.allowed_pool,
+    time(1_000),
+    time(253_402_300_799_000),
+  )
+  .unwrap();
+  let grant = match store.claim_ready_job(claim).await.unwrap() {
+    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Empty => panic!("root Job must be claimable"),
+  };
+  let access = LeaseAccess {
+    lease_id: grant.lease_id,
+    fence: grant.fence,
+    agent_id: grant.agent_id,
+    registration_epoch: grant.registration_epoch,
+  };
+  store.append_job_events(one_event(access)).await.unwrap();
+  sqlx::query(
+    "INSERT INTO artifacts \
+       (id, build_id, attempt_id, job_id, logical_name, media_type, report_format, byte_length, sha256, \
+        object_identity, object_generation, state, retention_until, published_at) \
+     VALUES ($1, $2, $3, $4, 'result.txt', 'text/plain', NULL, 3, $5, \
+             'object/history', 'generation-1', 'published', NULL, now())",
+  )
+  .bind(id::<octacity_server_domain::ArtifactId>(901).as_uuid())
+  .bind(request.build.id.as_uuid())
+  .bind(request.attempt_id.as_uuid())
+  .bind(grant.job_id.as_uuid())
+  .bind(vec![0x41_u8; 32])
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  store
+    .complete_job(JobCompletion {
+      lease: access,
+      final_sequence: Some(EventSequence::new(1).unwrap()),
+      kind: JobCompletionKind::Failed(JobFailureClass::Execution),
+      completed_at: time(2_000),
+    })
+    .await
+    .unwrap();
+  let event_before: (serde_json::Value, Vec<u8>) =
+    sqlx::query_as("SELECT payload, event_digest FROM job_events WHERE job_id = $1 AND sequence = 1")
+      .bind(grant.job_id.as_uuid())
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+  let artifact_before: (uuid::Uuid, String, Vec<u8>, String) =
+    sqlx::query_as("SELECT attempt_id, logical_name, sha256, state FROM artifacts WHERE job_id = $1")
+      .bind(grant.job_id.as_uuid())
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+
+  let left = retry_request(&request, 910, "concurrent-retry-left", time(2_100));
+  let right = retry_request(&request, 920, "concurrent-retry-right", time(2_100));
+  let (left_result, right_result) = tokio::join!(store.retry_build(left), store.retry_build(right));
+  let outcomes = [left_result, right_result];
+  assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+  assert_eq!(
+    outcomes
+      .iter()
+      .filter(|outcome| matches!(
+        outcome,
+        Err(StoreError::Conflict {
+          entity: EntityKind::Build
+        })
+      ))
+      .count(),
+    1
+  );
+  let attempts: Vec<(i64, Option<uuid::Uuid>)> = sqlx::query_as(
+    "SELECT attempt_number, retry_of_attempt_id FROM attempts WHERE build_id = $1 ORDER BY attempt_number",
+  )
+  .bind(request.build.id.as_uuid())
+  .fetch_all(&database.pool)
+  .await
+  .unwrap();
+  assert_eq!(attempts, [(1, None), (2, Some(request.attempt_id.as_uuid()))]);
+  let event_after: (serde_json::Value, Vec<u8>) =
+    sqlx::query_as("SELECT payload, event_digest FROM job_events WHERE job_id = $1 AND sequence = 1")
+      .bind(grant.job_id.as_uuid())
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+  let artifact_after: (uuid::Uuid, String, Vec<u8>, String) =
+    sqlx::query_as("SELECT attempt_id, logical_name, sha256, state FROM artifacts WHERE job_id = $1")
+      .bind(grant.job_id.as_uuid())
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+  database.cleanup().await;
+  assert_eq!(event_after, event_before);
+  assert_eq!(artifact_after, artifact_before);
 }
 
 #[tokio::test]
@@ -317,7 +448,7 @@ async fn auxiliary_record_failure_rolls_back_the_domain_mutation() {
 async fn verify_classified_outcomes(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
   let fixture = authoritative_store_contract_fixture();
   seed_authoritative_prerequisites(pool, &fixture).await?;
-  let store = PostgresStore::new(pool.clone());
+  let store = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
 
   let mut missing = fixture.request.clone();
   missing.trigger.trigger.id = id::<TriggerId>(999);
@@ -367,8 +498,14 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   let fixture = authoritative_store_contract_fixture();
   seed_authoritative_prerequisites(pool, &fixture).await?;
   let request = fixture.request.clone();
-  let store = PostgresStore::new(pool.clone());
+  let store = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
   let accepted = store.accept_trigger(request.clone()).await?;
+  let persisted_job_specs: Vec<Option<serde_json::Value>> =
+    sqlx::query_scalar("SELECT signed_job_spec FROM jobs ORDER BY id")
+      .fetch_all(pool)
+      .await?;
+  assert_eq!(persisted_job_specs.iter().filter(|spec| spec.is_some()).count(), 1);
+  assert_eq!(persisted_job_specs.iter().filter(|spec| spec.is_none()).count(), 1);
   let claim = JobClaim::new(
     id(800),
     LeaseFence::from_bytes([8; 32]),
@@ -397,6 +534,15 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     completed_at: time(2_000),
   };
   let completed = store.complete_job(completion).await?;
+  let signed_after_unblock: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE signed_job_spec IS NOT NULL")
+    .fetch_one(pool)
+    .await?;
+  assert_eq!(
+    signed_after_unblock, 2,
+    "the child is signed in the transaction that makes it ready"
+  );
+  let graph_before_restart =
+    persisted_graph_state(pool, request.build.id.as_uuid(), request.attempt_id.as_uuid()).await?;
 
   assert_eq!(mutation_record_count(pool, "idempotency_records").await?, 4);
   assert_eq!(mutation_record_count(pool, "audit_facts").await?, 4);
@@ -410,16 +556,20 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   );
 
   drop(store);
-  let recovered = PostgresStore::new(pool.clone());
+  let recovered = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
   assert_eq!(
-    recovered.accept_trigger(request).await?.disposition,
+    recovered.accept_trigger(request.clone()).await?.disposition,
     MutationDisposition::Replayed
   );
   assert_eq!(recovered.claim_ready_job(claim).await?, JobClaimOutcome::Claimed(grant));
   assert_eq!(recovered.append_job_events(event).await?, appended);
+  let mut expected_replay = completed.clone();
+  expected_replay.disposition = MutationDisposition::Replayed;
+  assert_eq!(recovered.complete_job(completion).await?, expected_replay);
   assert_eq!(
-    recovered.complete_job(completion).await?.disposition,
-    MutationDisposition::Replayed
+    persisted_graph_state(pool, request.build.id.as_uuid(), request.attempt_id.as_uuid(),).await?,
+    graph_before_restart,
+    "adapter restart and duplicate completion must not change graph state"
   );
   assert_eq!(completed.job_id, grant.job_id);
   assert_eq!(accepted.ready_jobs, [grant.job_id]);
@@ -441,6 +591,43 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   Ok(())
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct PersistedGraphState {
+  jobs: Vec<(uuid::Uuid, String, i64)>,
+  ready_jobs: Vec<uuid::Uuid>,
+  attempt: (String, i64),
+  build: (String, i64),
+}
+
+async fn persisted_graph_state(
+  pool: &PgPool,
+  build_id: uuid::Uuid,
+  attempt_id: uuid::Uuid,
+) -> Result<PersistedGraphState, sqlx::Error> {
+  Ok(PersistedGraphState {
+    jobs: sqlx::query_as("SELECT id, state, version FROM jobs WHERE attempt_id = $1 ORDER BY id")
+      .bind(attempt_id)
+      .fetch_all(pool)
+      .await?,
+    ready_jobs: sqlx::query_scalar(
+      "SELECT queue.job_id FROM ready_queue_entries AS queue \
+       JOIN jobs AS job ON job.id = queue.job_id \
+       WHERE job.attempt_id = $1 ORDER BY queue.job_id",
+    )
+    .bind(attempt_id)
+    .fetch_all(pool)
+    .await?,
+    attempt: sqlx::query_as("SELECT state, version FROM attempts WHERE id = $1")
+      .bind(attempt_id)
+      .fetch_one(pool)
+      .await?,
+    build: sqlx::query_as("SELECT state, version FROM builds WHERE id = $1")
+      .bind(build_id)
+      .fetch_one(pool)
+      .await?,
+  })
+}
+
 async fn verify_auxiliary_failure_rollback(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
   let fixture = authoritative_store_contract_fixture();
   seed_authoritative_prerequisites(pool, &fixture).await?;
@@ -451,7 +638,7 @@ async fn verify_auxiliary_failure_rollback(pool: &PgPool) -> Result<(), Box<dyn 
   .execute(pool)
   .await?;
 
-  let store = PostgresStore::new(pool.clone());
+  let store = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
   assert_eq!(
     store.accept_trigger(fixture.request.clone()).await.unwrap_err(),
     StoreError::Unavailable

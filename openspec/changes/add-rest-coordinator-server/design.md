@@ -143,6 +143,8 @@ Root Jobs become ready immediately. Other Jobs remain blocked until the orchestr
 
 The existing `octacity-job` crate is agent-side execution orchestration and moves under the `agent` product area; it is not reused as the server Job domain model. Shared `JobSpecV1` remains the signed wire intent crossing from server to agent.
 
+The server Job core derives and persists a stable `JobSpecTemplate` from the immutable Build, Pipeline node, and effective policy. The template excludes Job identity, Attempt number, issue and expiry times, and signature. The authoritative store signs it with the server-owned active key in the same transaction that changes a Job to `Ready` and inserts its queue entry. This keeps lost-response fingerprints stable, prevents blocked Jobs from retaining expired envelopes, and applies key rotation at the readiness boundary. Retry graph equivalence is one core decision shared by all store adapters and includes root dependency policy and the complete template. Execution and infrastructure failure classes are typed completion facts persisted with terminal state and projected from storage.
+
 ### 6. Deep store operations and an honest PostgreSQL adapter
 
 `octacity-server-store` is not a generic CRUD repository. Its interface grows only when an implementing feature adds a complete application use case, an adapter operation, and a reusable contract test. Stage 2 establishes Trigger acceptance, ready-Job claim, event append, completion, Agent credential lifecycle, authoritative log-index watermark, and derived log-search operations. Later feature tasks add the following complete operations when they are implemented, rather than reserving speculative CRUD methods:
@@ -165,7 +167,7 @@ The PostgreSQL adapter owns SQL schema knowledge, transactions, locking, and row
 
 Atomic store inputs have documented item and encoded-byte limits. Trigger acceptance, DAG materialization, event append, Agent inventory, and other collection-bearing operations reject oversized work before opening a transaction. PostgreSQL adapters use bounded bulk statements rather than one round trip per Job, dependency edge, queue entry, or event.
 
-Idempotency fingerprints describe stable caller intent and MUST NOT include a newly observed server processing timestamp. The first accepted transaction persists its authoritative acceptance or completion time, while a later replay with the same lease, sequence range, payload, and terminal intent returns the original outcome even when it is observed at a later time.
+Idempotency fingerprints describe stable caller intent and MUST NOT include a newly observed server processing timestamp. Manual-trigger replay is checked before mutable VCS resolution, so a moved branch or temporarily unavailable provider cannot invalidate a lost-response retry. The first accepted transaction persists its authoritative acceptance or completion time, while a later replay with the same lease, sequence range, payload, and terminal intent returns the original outcome even when it is observed at a later time.
 
 Naming the concrete crate `octacity-server-store-postgres` localizes rather than hides the technology dependency. Replacing it requires a new adapter to pass the atomic store contract, not changing core types.
 

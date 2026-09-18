@@ -5,6 +5,7 @@ use std::{
   sync::Arc,
 };
 
+use octacity_protocol::{PlatformArchitecture, PlatformOs};
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, BuildId, IntegrationId, JobName, PipelineId,
   PipelineName, PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion,
@@ -257,7 +258,7 @@ async fn seed_build(
 fn repository_definition() -> RepositoryDefinition {
   RepositoryDefinition {
     vcs_integration_id: id::<IntegrationId>(9),
-    repository_locator: "octahive/octacity".to_owned(),
+    repository_locator: octacity_server_domain::RepositoryLocator::new("octahive/octacity").unwrap(),
     selection: RepositorySelectionPolicy {
       allowed_references: BTreeSet::from([SourceReference::new("main").unwrap()]),
       default_reference: Some(SourceReference::new("main").unwrap()),
@@ -303,8 +304,8 @@ fn configuration(
     allowed_pools: BTreeSet::from([pool_id]),
     runtime: ConfigurationRuntimePolicy {
       class: RuntimeClass::Native,
-      operating_system: "linux".to_owned(),
-      architecture: "amd64".to_owned(),
+      operating_system: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
       immutable_image: None,
       cpu_millis: 1_000,
       memory_bytes: 1,

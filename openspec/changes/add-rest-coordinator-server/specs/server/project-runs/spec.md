@@ -82,11 +82,19 @@ Every build SHALL have monotonically numbered attempts. Each attempt SHALL mater
 - **THEN** the orchestrator applies the recorded pipeline failure policy to dependent jobs without mutating the pipeline snapshot
 
 ### Requirement: Server-signed JobSpec
-The server SHALL derive each ready job's JobSpec from validated server policy, immutable build input, and its pipeline job template, sign the exact canonical payload with an active signing key, and never allow a repository or management caller to supply secrets, host paths, fencing values, or upload credentials inside the JobSpec.
+The server SHALL persist stable server-derived JobSpec intent from validated server policy, immutable build input, and the pipeline job template. It SHALL add the concrete Job identity, Attempt number, validity window, and active-key signature atomically whenever that Job transitions to ready, before queue visibility. Blocked Jobs SHALL NOT retain a prematurely issued envelope. A repository or management caller SHALL never supply a signed envelope, secrets, host paths, fencing values, upload credentials, local repository paths, traversal locators, or credential-bearing repository locators inside this intent.
 
 #### Scenario: Job becomes ready
 - **WHEN** the orchestrator determines that a job's dependencies are satisfied
 - **THEN** the resulting signed JobSpec is bound to that build, attempt and job and passes the shared protocol validator before queue visibility
+
+#### Scenario: Blocked job waits longer than one signing window
+- **WHEN** a dependent job remains blocked beyond the validity window used by an earlier ready job
+- **THEN** the dependent job has no stale envelope and receives a new envelope using the current signing key and readiness time in the transaction that unblocks it
+
+#### Scenario: Lost manual-trigger response is retried
+- **WHEN** a client repeats the same manual trigger identity with a later transport or observation timestamp after losing the first response
+- **THEN** the server replays the existing Build before resolving mutable VCS state because stable intent and the idempotency fingerprint exclude processing timestamps, resolved revisions, and short-lived signatures
 
 ### Requirement: Durable pipeline orchestration
 The server SHALL advance build, attempt, and job state through explicit state machines driven by persisted commands and events. The server SHALL orchestrate dependencies but SHALL NOT execute repository-controlled build steps.
@@ -96,7 +104,7 @@ The server SHALL advance build, attempt, and job state through explicit state ma
 - **THEN** the orchestrator durably marks newly unblocked jobs ready and derives the attempt state from the complete DAG
 
 ### Requirement: Explicit cancellation and retry
-Cancellation SHALL be a durable idempotent build intent propagated to every non-terminal job. Retry SHALL create a new positive attempt number from the same immutable build and pipeline snapshots while preserving prior attempt and output history.
+Cancellation SHALL be a durable idempotent build intent propagated to every non-terminal job. Retry SHALL create a new positive attempt number from the same immutable build, pipeline, placement, dependency-policy, and stable JobSpec-intent snapshots while preserving prior attempt and output history. One shared core decision SHALL define retry graph equivalence for every store adapter.
 
 #### Scenario: Running pipeline is cancelled
 - **WHEN** a client cancels a build with queued, blocked, and running jobs
@@ -106,8 +114,12 @@ Cancellation SHALL be a durable idempotent build intent propagated to every non-
 - **WHEN** a client retries a terminal failed build
 - **THEN** the server materializes a new attempt from the recorded snapshots without mutating the completed attempt
 
+#### Scenario: Retry changes root policy or execution intent
+- **WHEN** a retry candidate changes a root Job dependency policy, source locator, runtime policy, or any other stable JobSpec input
+- **THEN** every store adapter rejects the retry as a conflict before inserting the new Attempt
+
 ### Requirement: Queryable state and causality
-Build, attempt and job reads SHALL expose current state, pipeline dependency state, timestamps, initiating cause, trigger identity, configuration and effective-policy versions, queue position inputs, selected pool, assigned agent when present, terminal outcome, event cursor, output references, and failure classification without exposing credentials or private signed URLs.
+Build, attempt and job reads SHALL expose current state, pipeline dependency state, timestamps, initiating cause, trigger identity, configuration and effective-policy versions, queue position inputs, selected pool, assigned agent when present, terminal outcome, event cursor, output references, and failure classification without exposing credentials or private signed URLs. Execution and infrastructure failure classes SHALL be typed completion input, persisted with the terminal completion, and projected from that authoritative fact rather than accepted from a read DTO.
 
 #### Scenario: Client diagnoses a failed build
 - **WHEN** a client reads a failed attempt

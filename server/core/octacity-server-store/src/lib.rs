@@ -21,6 +21,8 @@ mod pipeline_port;
 mod port;
 mod project_model;
 mod project_port;
+mod run_control;
+mod trigger_port;
 
 #[cfg(any(test, feature = "test-support"))]
 mod log_search_testing;
@@ -66,9 +68,10 @@ pub use configuration_model::{
   ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
   ConfigurationTriggerPolicy, CreateBuildConfiguration, CreateRepository, MAX_AGENT_REQUIREMENT_LABELS,
   MAX_BUILD_CONFIGURATION_BYTES, MAX_CONFIGURATION_LABEL_BYTES, MAX_CONFIGURATION_PARAMETERS, MAX_CONFIGURATION_POOLS,
-  MAX_REPOSITORY_DEFINITION_BYTES, MAX_REPOSITORY_REFERENCES, MAX_RETRY_ATTEMPTS, ParameterDefinition, ParameterSchema,
-  ParameterType, PublishBuildConfigurationVersion, PublishRepositoryVersion, PublishedBuildConfiguration,
-  PublishedRepository, RepositoryDefinition, RepositoryMutationOutcome, RepositorySelectionPolicy, RetryClass,
+  MAX_REPOSITORY_DEFINITION_BYTES, MAX_REPOSITORY_REFERENCES, MAX_RETRY_ATTEMPTS, ParameterDefinition,
+  ParameterResolutionError, ParameterSchema, ParameterType, PublishBuildConfigurationVersion, PublishRepositoryVersion,
+  PublishedBuildConfiguration, PublishedRepository, RepositoryDefinition, RepositoryMutationOutcome,
+  RepositorySelectionPolicy, RetryClass,
 };
 pub use configuration_port::ConfigurationStore;
 pub use credential_port::AgentCredentialStore;
@@ -82,7 +85,7 @@ pub use error::{StoreError, StoreInputError, StoreOperation};
 pub use idempotency::{IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES};
 pub use job_model::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, LeaseAccess, LeaseGrant,
+  JobCompletion, JobCompletionKind, LeaseAccess, LeaseGrant, complete_job_state, start_job_execution,
 };
 pub use log_search::{
   BuildLogStream, DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCursor, LogSearchDocument,
@@ -93,44 +96,87 @@ pub use log_search::{
 pub use log_search_port::{LogIndexWorkStore, LogSearchIndex};
 pub use model::{
   AcceptTrigger, AcceptTriggerOutcome, EventDigest, EventSequence, ImmutableBuildInput, JobEventKind, LeaseFence,
-  MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_IMMUTABLE_REVISION_BYTES, MAX_JOB_DEPENDENCIES,
-  MAX_JOB_EVENT_BATCH_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES,
-  MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS, MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob,
-  MutationDisposition, RegistrationEpoch,
+  MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES, MAX_JOB_EVENT_BATCH_BYTES,
+  MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_MATERIALIZED_DEPENDENCY_EDGES,
+  MAX_MATERIALIZED_JOBS, MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob, MaterializedJobPayload, MutationDisposition,
+  RegistrationEpoch, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
+  TriggerIntentDigest, TriggerIntentDigestError,
 };
-pub use octacity_server_domain::{ArtifactPolicy, NetworkHost, RuntimeClass, SourceReference};
+pub use octacity_server_domain::{ArtifactPolicy, ImmutableRevision, NetworkHost, RuntimeClass, SourceReference};
 pub use octacity_server_domain::{EnrollmentCredentialId, LogChunkId, LogIndexingWorkId, RegistrationCredentialId};
 pub use octacity_server_trigger::{
   NormalizedTriggerOccurrence, TriggerCausality, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
-  TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerTarget,
+  TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent, TriggerTarget,
 };
 pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
 pub use pipeline_port::PipelineStore;
-pub use port::AuthoritativeStore;
+pub use port::{AuthoritativeStore, BuildRunControlStore, JobExecutionStore, TriggerAcceptanceStore};
 pub use project_model::{
   CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MAX_PROJECT_PAGE_SIZE, MoveProject, Project,
   ProjectDetails, ProjectHierarchyError, ProjectMutationOutcome, ProjectPage, RenameProject, validate_project_ancestry,
 };
 pub use project_port::ProjectStore;
+pub use run_control::{
+  CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
+};
+pub use trigger_port::TriggerDefinitionStore;
 
 #[cfg(test)]
 mod tests {
-  use octacity_server_domain::Timestamp;
+  use octacity_server_domain::{BuildId, Timestamp};
   use serde_json::json;
 
   use super::testing::{
-    verify_in_memory_agent_credential_contract, verify_in_memory_log_search_index_contract,
-    verify_in_memory_store_contract,
+    InMemoryStore, authoritative_store_contract_fixture, verify_in_memory_agent_credential_contract,
+    verify_in_memory_log_search_index_contract, verify_in_memory_store_contract,
   };
   use super::{
     AppendJobEvents, DurableJobEvent, EventSequence, IdempotencyKey, JobEventKind, LeaseAccess, LeaseFence,
     ListProjects, MAX_IDEMPOTENCY_KEY_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_PAYLOAD_BYTES,
-    MAX_PROJECT_PAGE_SIZE, RegistrationEpoch, StoreError, StoreInputError, StoreOperation,
+    MAX_MATERIALIZED_JOBS, MAX_PROJECT_PAGE_SIZE, MutationDisposition, RegistrationEpoch, StoreError, StoreInputError,
+    StoreOperation, TriggerAcceptanceStore,
   };
 
   #[test]
   fn in_memory_adapter_satisfies_the_authoritative_store_contract() {
     verify_in_memory_store_contract();
+  }
+
+  #[test]
+  fn materialized_job_count_is_bounded_before_template_validation() {
+    let fixture = authoritative_store_contract_fixture();
+    let jobs = vec![fixture.request.jobs[0].clone(); MAX_MATERIALIZED_JOBS + 1];
+    let unrelated_build = super::test_support::id::<BuildId>(999);
+
+    assert_eq!(
+      super::model::validate_materialized_jobs(StoreOperation::AcceptTrigger, unrelated_build, &jobs),
+      Err(StoreError::invalid(
+        StoreOperation::AcceptTrigger,
+        StoreInputError::TooManyJobs,
+      )),
+    );
+  }
+
+  #[test]
+  fn failed_ready_signing_rolls_back_the_complete_in_memory_acceptance() {
+    let fixture = authoritative_store_contract_fixture();
+    let store = InMemoryStore::new();
+    store.seed_authoritative_contract_prerequisites(&fixture).unwrap();
+    let mut invalid = fixture.request.clone();
+    invalid.accepted_at = Timestamp::from_unix_millis(-1).unwrap();
+    super::test_support::run_ready(
+      async {
+        assert_eq!(
+          store.accept_trigger(invalid).await.unwrap_err(),
+          StoreError::Unavailable
+        );
+        assert_eq!(
+          store.accept_trigger(fixture.request).await.unwrap().disposition,
+          MutationDisposition::Applied
+        );
+      },
+      "the in-memory transaction unexpectedly yielded",
+    );
   }
 
   #[test]

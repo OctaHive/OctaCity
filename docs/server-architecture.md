@@ -82,6 +82,23 @@ The Artifact Store port lives in the core layer. Its S3-compatible adapter is
 an infrastructure crate selected only by a composition root; neither the core
 nor the server-Agent wire contract depends on the AWS SDK.
 
+`octacity-server-job` owns JobSpec derivation and the private-key signer. It
+accepts only immutable Build facts, a strict Pipeline execution template, and
+validated server policy; it never accepts a caller-created `JobSpecV1` or
+signed envelope. Materialization persists a stable `JobSpecTemplate` without
+Job identity, Attempt number, issue time, or signature. The authoritative store
+adds those volatile facts and persists `jobs.signed_job_spec` in the same
+transaction that changes a root or dependent Job to `Ready`, before inserting
+its queue entry. Blocked Jobs therefore cannot retain an expired envelope, and
+key rotation applies naturally when they become ready. Lease fences, transfer
+capabilities, and secret grants are created later and remain outside the signed
+execution intent.
+
+The architecture guard grants only `octacity-server-job` access to the pure
+`ed25519-dalek` and `base64` libraries. This package-specific capability keeps
+private-key handling out of shared wire contracts and prevents unrelated core
+crates from acquiring crypto implementation dependencies implicitly.
+
 Process readiness is composed only in `octacity-server`. The REST adapter sees
 a constant-time boolean callback and therefore has no dependency on SQLx, S3,
 signing keys, secret providers, or worker implementations. A supervised
@@ -168,6 +185,22 @@ adapters revalidate those limits and use bounded bulk statements for collection
 writes. A durable Job event computes its own canonical digest from event kind,
 source time, and payload; callers cannot supply payload and digest separately.
 
+Application use cases depend on operation-shaped ports rather than the complete
+adapter surface: Trigger acceptance, Job execution, and Build run control have
+separate interfaces. `AuthoritativeStore` is only their composite adapter
+contract. Manual Trigger context loading also uses a dedicated Trigger-definition
+query and verifies the exact enabled manual Trigger version and target before
+any mutable VCS reference is resolved.
+
+The PostgreSQL package exposes a plain `PostgresStore` for configuration,
+Project, Pipeline, credential, and indexing ports. Only
+`PostgresAuthoritativeStore` accepts the active JobSpec signer and implements
+coordination mutations that can move Jobs through a signed `Ready` boundary.
+This keeps unrelated persistence capabilities usable without signing material.
+Platform requirements use the shared closed OS and architecture types at the
+configuration boundary, so an unsupported spelling cannot be published and
+fail later during JobSpec derivation.
+
 PostgreSQL describes storage shape with keys, foreign keys, unique indexes,
 nullability, and row-local checks. It does not own lifecycle transitions,
 hierarchy validity, sequence allocation, or append-only policy through stored
@@ -177,14 +210,78 @@ transaction-scoped advisory lock. This keeps the same core behavior available
 to another store adapter while PostgreSQL remains responsible for durable
 atomicity and structural integrity.
 
-Pipeline dependency policy is a typed immutable Pipeline value. PostgreSQL
-serializes terminal mutations for one Attempt and loads persisted fan-in
-outcomes; the Orchestrator makes the readiness decision, after which the
-adapter updates Jobs and queue entries in bounded bulk statements. This keeps
-policy out of infrastructure while preventing concurrent predecessor
-completion from leaving a satisfied child blocked. The in-memory adapter runs
-the same decision and behavioral contract, including registration and
-Lease-expiry checks.
+Pipeline dependency policy is a typed immutable Pipeline value. A terminal
+Job mutation locks its Build and Attempt and loads the complete persisted Job
+graph. The Orchestrator validates that snapshot and computes a deterministic
+fixed point:
+newly satisfied Jobs become `Ready`, dependency failures cascade `Skipped`
+through descendants, and the post-transition graph derives the Attempt and
+Build state. PostgreSQL then updates Jobs, the global ready queue, Attempt,
+Build, completion replay data, audit, and outbox in the same transaction.
+Job read projections call this durable Pool/Agent pair an assignment rather
+than current ownership and retain it for executed terminal Jobs. Current Lease
+ownership and its secret fence remain coordination-only data; queued or skipped
+Jobs cannot claim an assignment, while cancellation may be terminal with or
+without one depending on whether placement occurred.
+The first newly persisted Agent event advances a leased Job through the core
+`ExecutionStarted` transition to `Running`; terminal completion uses the same
+state machine and may infer that transition only for a zero-event Job.
+
+The decision is pure and stably ordered by Job identity. Re-evaluating the
+same graph produces no transitions, while an exact completion replay returns
+the originally committed transition set and aggregate states. A process crash
+can therefore expose either the graph before the transaction or the complete
+post-orchestration graph, never a persisted outcome with partially advanced
+dependencies. The in-memory and PostgreSQL adapters run the same decision and
+behavioral contract. This keeps failure policy out of infrastructure while
+preventing concurrent predecessor completion from leaving a satisfied child
+blocked.
+
+Build cancellation and retry use separate complete store operations. A
+cancellation locks the Build and its current Attempt, records one durable
+Build-level intent, and asks the Orchestrator to transition the complete Job
+set. Blocked and ready Jobs become terminal `Cancelled`, their queue entries
+are removed, leased or running Jobs become `Cancelling`, and current Leases
+become `cancellation_requested`; terminal Jobs never change. The Attempt and
+Build remain running only while an Agent must acknowledge cancellation, then
+normal fenced completion derives their terminal `Cancelled` state. Exact
+replay returns the original transition set.
+
+A retry is allowed only for the latest failed Attempt. The PostgreSQL adapter
+locks the Build, calculates its next positive Attempt number in Rust, and
+rejects a stale proposed number, so concurrent requests cannot create sibling
+retries. Candidate Jobs carry fresh identities, while one backend-neutral core
+decision compares every Pipeline node, dependency, root and non-root policy,
+placement requirement, Job snapshot, and stable JobSpec template with the
+preceding immutable Attempt. Root JobSpecs are signed only after that check.
+The new Attempt records `retry_of_attempt_id`; the prior Attempt, events,
+logs, and artifacts remain append-only and addressable. Attempt creation, DAG
+materialization, root queue insertion, Build reactivation, idempotency, audit,
+and outbox commit atomically.
+
+### Application projection boundary
+
+`octacity-server-application` owns transport-independent projections for
+Projects, immutable Pipeline and Build Configuration versions, Builds,
+Attempts, Jobs, diagnostic DAG causality, and Trigger history. They are not
+REST DTOs or database rows: later query handlers return these models, while a
+REST or future GraphQL adapter maps them into its own versioned contract.
+
+Projection construction is deliberately lossy at security boundaries. A
+Pipeline node is decoded through the strict repository-controlled
+`JobExecutionTemplate`; a Build projection decodes the server-owned input and
+effective-policy snapshots but omits its JobSpec toolchain policy; a Job
+projection omits the signed JobSpec, Lease fence, and internal node snapshot;
+and Trigger history omits opaque provider metadata. Configuration policy
+exposes only validated logical cache and workload-identity references. Output
+references contain logical Artifact identity, name, content digest, size, and
+publication time, never a bucket, object key, credential, or transfer URL.
+
+The diagnostic DAG projection validates that every dependency stays within
+one Attempt and that the resulting graph is acyclic. It exposes stable Job and
+Pipeline-node identities, current states, dependency policy, and safe failure
+classification so skipped and failed causal paths remain explainable without
+returning execution credentials or provider configuration.
 
 ### Immutable Pipeline publication
 
@@ -221,7 +318,11 @@ next version wins and every earlier snapshot remains unchanged.
 A Repository has a stable Project-owned identity and sibling-unique name, but
 its provider-neutral VCS integration, locator, and revision-selection policy
 live in append-only Repository versions. A Build Configuration follows the
-same identity/version split. Each version captures its enabled state, an exact
+same identity/version split. The same `RepositoryLocator` value crosses
+configuration and JobSpec derivation:
+it accepts provider-owned opaque remote identifiers as well as URLs while
+rejecting local paths, traversal, embedded credentials, and query fragments.
+Each Build Configuration version captures its enabled state, an exact
 Repository version, an exact immutable Pipeline version owned by the same
 Project, parameter schema and defaults, accepted Trigger kinds, Agent
 requirements, allowed Pools, runtime and network policy, cache authority,
@@ -277,8 +378,23 @@ lineage, origin kind, and bounded provider metadata as data, applies only
 structural checks and foreign keys, and keeps the unique source-scoped
 deduplication key. The existing atomic Trigger-acceptance operation and its
 in-memory/PostgreSQL contract verify that duplicate occurrences expose at most
-one Build. Resolving source input and materializing a manual request end to end
-remain the separate 3.6 operation.
+one Build.
+
+`ManualTriggerService` completes the manual path without exposing persistence
+or VCS protocol details to a transport. It loads the exact immutable Build
+Configuration, Repository, Pipeline, and effective Project policy through
+application ports; rejects invalid parameters, source selection, and policy
+before external work; then resolves or verifies the selected source through a
+provider-neutral `RevisionResolver`. Occurrence, Build, first Attempt, and Job
+identities are derived deterministically from the Trigger version and
+deduplication identity, so a lost-response replay cannot create a second graph.
+The service materializes every Pipeline node and dependency, intersects the
+configuration and Project Pool allowlists, and submits one `AcceptTrigger`
+operation. That transaction persists the occurrence, immutable Build snapshot,
+Attempt, Jobs, dependency edges, audit, outbox, and only root ready-queue
+entries together. The first manual observation time is retained, but a replay
+with the same source identity is not rejected merely because the retry arrived
+later.
 
 `LogIndexWorkStore` reads the committed project-local watermark from the
 authoritative store. The application, rather than an external query DTO,

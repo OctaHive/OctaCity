@@ -28,6 +28,8 @@ pub const AGENT_PROTOCOL_VERSION: u16 = 1;
 pub const SIGNATURE_ALGORITHM: &str = "ed25519";
 /// Maximum decoded size of an authenticated JobSpec JSON payload.
 pub const MAX_SIGNED_JOB_SPEC_BYTES: usize = 1024 * 1024;
+/// Maximum UTF-8 bytes in one server signing-key identifier.
+pub const MAX_SIGNING_KEY_ID_BYTES: usize = 128;
 const MAX_ENCODED_JOB_SPEC_BYTES: usize = MAX_SIGNED_JOB_SPEC_BYTES.div_ceil(3) * 4;
 const ED25519_SIGNATURE_BYTES: usize = 64;
 const MAX_ENCODED_SIGNATURE_BYTES: usize = ED25519_SIGNATURE_BYTES.div_ceil(3) * 4;
@@ -44,6 +46,15 @@ pub struct SignedEnvelope {
   pub payload: String,
   /// Standard-base64 encoding of the Ed25519 signature over `payload` bytes.
   pub signature: String,
+}
+
+/// Reports whether a public signing-key identifier is safe for configuration and wire use.
+#[must_use]
+pub fn valid_signing_key_id(key_id: &str) -> bool {
+  !key_id.is_empty()
+    && key_id.len() <= MAX_SIGNING_KEY_ID_BYTES
+    && key_id.trim() == key_id
+    && !key_id.chars().any(char::is_control)
 }
 
 /// Immutable job description covered by the server signature.

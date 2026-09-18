@@ -163,48 +163,36 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
   expect_constraint(insert_attempt(pool, 163, 2).await, "attempts_build_number_key")?;
 
   insert_job(pool, 179, 162, "retry").await?;
-  sqlx::query(
-    "INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id, dependency_policy) \
-     VALUES ($1, $2, $3, to_jsonb('all_succeeded'::text))",
-  )
-  .bind(id(161))
-  .bind(id(178))
-  .bind(id(177))
-  .execute(pool)
-  .await?;
-  expect_constraint(
-    sqlx::query(
-      "INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id, dependency_policy) \
-       VALUES ($1, $2, $3, to_jsonb('all_succeeded'::text))",
-    )
+  sqlx::query("INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id) VALUES ($1, $2, $3)")
     .bind(id(161))
     .bind(id(178))
     .bind(id(177))
     .execute(pool)
-    .await,
+    .await?;
+  expect_constraint(
+    sqlx::query("INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id) VALUES ($1, $2, $3)")
+      .bind(id(161))
+      .bind(id(178))
+      .bind(id(177))
+      .execute(pool)
+      .await,
     "job_dependencies_pkey",
   )?;
   expect_constraint(
-    sqlx::query(
-      "INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id, dependency_policy) \
-       VALUES ($1, $2, $2, to_jsonb('all_succeeded'::text))",
-    )
-    .bind(id(161))
-    .bind(id(177))
-    .execute(pool)
-    .await,
+    sqlx::query("INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id) VALUES ($1, $2, $2)")
+      .bind(id(161))
+      .bind(id(177))
+      .execute(pool)
+      .await,
     "job_dependencies_not_self",
   )?;
   expect_constraint(
-    sqlx::query(
-      "INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id, dependency_policy) \
-       VALUES ($1, $2, $3, to_jsonb('all_succeeded'::text))",
-    )
-    .bind(id(161))
-    .bind(id(178))
-    .bind(id(179))
-    .execute(pool)
-    .await,
+    sqlx::query("INSERT INTO job_dependencies (attempt_id, job_id, dependency_job_id) VALUES ($1, $2, $3)")
+      .bind(id(161))
+      .bind(id(178))
+      .bind(id(179))
+      .execute(pool)
+      .await,
     "job_dependencies_dependency_attempt_fk",
   )?;
 
@@ -423,8 +411,9 @@ async fn insert_attempt(pool: &PgPool, raw_id: u128, number: i64) -> Result<PgQu
 async fn insert_job(pool: &PgPool, raw_id: u128, attempt: u128, node: &str) -> Result<PgQueryResult, Error> {
   sqlx::query(
     "INSERT INTO jobs \
-       (id, attempt_id, pipeline_node_id, state, job_snapshot, allowed_pool_ids, requirements, version, created_at, updated_at) \
-     VALUES ($1, $2, $3, 'ready', '{}', ARRAY[$4]::uuid[], '{}', 1, now(), now())",
+       (id, attempt_id, pipeline_node_id, state, allowed_pool_ids, requirements, job_spec_template, \
+        dependency_policy, signed_job_spec, version, created_at, updated_at) \
+     VALUES ($1, $2, $3, 'ready', ARRAY[$4]::uuid[], '{}', '{}', '\"all_succeeded\"', '{}', 1, now(), now())",
   )
   .bind(id(raw_id))
   .bind(id(attempt))

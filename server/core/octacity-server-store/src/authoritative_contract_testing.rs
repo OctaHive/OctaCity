@@ -3,16 +3,20 @@
 use std::sync::Arc;
 
 use octacity_server_domain::{AgentId, EntityKind, PoolId, TriggerIdentity};
+use octacity_server_job::JobFailureClass;
+use octacity_server_orchestrator::{AttemptState, BuildState};
 use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
 use crate::testing::{
-  InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe, authoritative_store_contract_fixture, trigger_request,
+  InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe, authoritative_store_contract_fixture, retry_request,
+  trigger_request,
 };
 use crate::{
-  AcceptTrigger, AppendJobEvents, AuthoritativeStore, DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence, MutationDisposition, RegistrationEpoch,
-  StoreError, StoreInputError, StoreOperation, TriggerCausality, TriggerCause,
+  AcceptTrigger, AppendJobEvents, AuthoritativeStore, CancelBuild, DurableJobEvent, EventSequence, IdempotencyKey,
+  JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence,
+  MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation, SuppressTrigger,
+  TriggerAcceptanceProbe, TriggerCausality, TriggerCause, TriggerEvaluationOutcome, TriggerIntentDigest,
 };
 
 const CONTRACT_LEASE_EXPIRY_MILLIS: i64 = 253_402_300_799_000;
@@ -71,15 +75,101 @@ where
     },
     "an adapter must reject a materialized Job that references an unknown Pool"
   );
+  let mut mismatched_job_spec = request.clone();
+  mismatched_job_spec.jobs[0].job_spec_template = request.jobs[1].job_spec_template.clone();
+  assert_eq!(
+    store.accept_trigger(mismatched_job_spec).await.unwrap_err(),
+    StoreError::InvalidInput {
+      operation: StoreOperation::AcceptTrigger,
+      source: StoreInputError::JobSpecTemplateBindingMismatch,
+    },
+    "materialization must require execution intent derived for the exact Pipeline node"
+  );
 
   let accepted = store.accept_trigger(request.clone()).await.unwrap();
   assert_eq!(accepted.disposition, MutationDisposition::Applied);
   assert_eq!(accepted.ready_jobs, [root_job]);
   let mut trigger_replay = request.clone();
   trigger_replay.accepted_at = time(501);
+  trigger_replay.trigger.source_time = time(502);
   let replayed = store.accept_trigger(trigger_replay).await.unwrap();
   assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+  assert_eq!(replayed.trigger_occurrence_id, request.trigger.id);
   assert_eq!(replayed.build_id, accepted.build_id);
+
+  let mut equivalent_occurrence = request.trigger.clone();
+  equivalent_occurrence.id = id(10_001);
+  equivalent_occurrence.causality = TriggerCausality::root(equivalent_occurrence.id);
+  equivalent_occurrence.source_time = time(503);
+  let replayed = store
+    .replay_trigger_acceptance(TriggerAcceptanceProbe {
+      trigger: equivalent_occurrence.clone(),
+      intent_digest: request.intent_digest,
+    })
+    .await
+    .unwrap()
+    .expect("the stable Trigger deduplication key must find the accepted Build");
+  let TriggerEvaluationOutcome::Accepted(replayed) = replayed else {
+    panic!("an accepted Trigger must replay its Build outcome");
+  };
+  assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+  assert_eq!(replayed.trigger_occurrence_id, request.trigger.id);
+  assert_eq!(replayed.build_id, accepted.build_id);
+  assert_eq!(replayed.attempt_id, accepted.attempt_id);
+
+  let mut suppressed_occurrence = request.trigger.clone();
+  suppressed_occurrence.id = id(10_002);
+  suppressed_occurrence.causality = TriggerCausality::root(suppressed_occurrence.id);
+  suppressed_occurrence.deduplication_identity = TriggerIdentity::new("manual:suppressed").unwrap();
+  let suppressed_intent = TriggerIntentDigest::from_bytes([42; 32]);
+  let suppressed = store
+    .suppress_trigger(SuppressTrigger::new(suppressed_occurrence.clone(), suppressed_intent, time(504)).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(suppressed.disposition, MutationDisposition::Applied);
+  let original_suppressed_occurrence = suppressed.trigger_occurrence_id;
+  suppressed_occurrence.id = id(10_003);
+  suppressed_occurrence.causality = TriggerCausality::root(suppressed_occurrence.id);
+  let replayed = store
+    .replay_trigger_acceptance(TriggerAcceptanceProbe {
+      trigger: suppressed_occurrence,
+      intent_digest: suppressed_intent,
+    })
+    .await
+    .unwrap()
+    .expect("suppressed Trigger must be replayable before external resolution");
+  let TriggerEvaluationOutcome::Suppressed(replayed) = replayed else {
+    panic!("suppressed Trigger must replay a suppressed outcome");
+  };
+  assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+  assert_eq!(replayed.trigger_occurrence_id, original_suppressed_occurrence);
+
+  let mut duplicate_acceptance = trigger_request(10_001, 20_000, allowed_pool);
+  duplicate_acceptance.trigger.deduplication_identity = request.trigger.deduplication_identity.clone();
+  duplicate_acceptance.intent_digest = request.intent_digest;
+  let duplicate_candidate_build = duplicate_acceptance.build.id;
+  let replayed = store.accept_trigger(duplicate_acceptance.clone()).await.unwrap();
+  assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+  assert_eq!(replayed.trigger_occurrence_id, request.trigger.id);
+  assert_eq!(replayed.build_id, accepted.build_id);
+  assert_ne!(replayed.build_id, duplicate_candidate_build);
+  assert_eq!(replayed.attempt_id, accepted.attempt_id);
+  let replayed_again = store.accept_trigger(duplicate_acceptance).await.unwrap();
+  assert_eq!(replayed_again.trigger_occurrence_id, request.trigger.id);
+
+  assert_eq!(
+    store
+      .replay_trigger_acceptance(TriggerAcceptanceProbe {
+        trigger: equivalent_occurrence,
+        intent_digest: TriggerIntentDigest::from_bytes([99; 32]),
+      })
+      .await
+      .unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Trigger
+    },
+    "deduplication-key reuse with different stable intent must conflict before external resolution"
+  );
 
   assert_eq!(
     store
@@ -271,14 +361,16 @@ where
   let completed = store.complete_job(completion).await.unwrap();
   assert_eq!(completed.disposition, MutationDisposition::Applied);
   assert_eq!(completed.ready_jobs, [child_job]);
+  assert!(completed.skipped_jobs.is_empty());
+  assert_eq!(completed.attempt_state, AttemptState::Running);
+  assert_eq!(completed.build_state, BuildState::Running);
   let replayed_completion = JobCompletion {
     completed_at: time(3_001),
     ..completion
   };
-  assert_eq!(
-    store.complete_job(replayed_completion).await.unwrap().disposition,
-    MutationDisposition::Replayed
-  );
+  let mut expected_replay = completed.clone();
+  expected_replay.disposition = MutationDisposition::Replayed;
+  assert_eq!(store.complete_job(replayed_completion).await.unwrap(), expected_replay);
 
   let child_grant = match store
     .claim_ready_job(claim(
@@ -314,7 +406,47 @@ where
     "an expired Lease cannot append events"
   );
 
-  let conflicting = trigger_request(10, 300, allowed_pool);
+  let cancellation = CancelBuild {
+    build_id: request.build.id,
+    idempotency_key: IdempotencyKey::new("cancel-main-build").unwrap(),
+    requested_at: time(3_500),
+  };
+  let cancelled = store.cancel_build(cancellation.clone()).await.unwrap();
+  assert!(cancelled.cancelled_jobs.is_empty());
+  assert_eq!(cancelled.cancelling_jobs, [child_job]);
+  assert_eq!(cancelled.attempt_state, AttemptState::Running);
+  assert_eq!(cancelled.build_state, BuildState::Running);
+  let replayed_cancellation = store
+    .cancel_build(CancelBuild {
+      requested_at: time(3_501),
+      ..cancellation
+    })
+    .await
+    .unwrap();
+  let mut expected_cancellation_replay = cancelled;
+  expected_cancellation_replay.disposition = MutationDisposition::Replayed;
+  assert_eq!(replayed_cancellation, expected_cancellation_replay);
+
+  let child_access = LeaseAccess {
+    lease_id: child_grant.lease_id,
+    fence: child_grant.fence,
+    agent_id: child_grant.agent_id,
+    registration_epoch: child_grant.registration_epoch,
+  };
+  let cancelled_completion = store
+    .complete_job(JobCompletion {
+      lease: child_access,
+      final_sequence: None,
+      kind: JobCompletionKind::Failed(JobFailureClass::Execution),
+      completed_at: time(3_600),
+    })
+    .await
+    .unwrap();
+  assert_eq!(cancelled_completion.attempt_state, AttemptState::Cancelled);
+  assert_eq!(cancelled_completion.build_state, BuildState::Cancelled);
+
+  let mut conflicting = trigger_request(10, 300, allowed_pool);
+  conflicting.intent_digest = TriggerIntentDigest::from_bytes([99; 32]);
   assert_eq!(
     store.accept_trigger(conflicting.clone()).await.unwrap_err(),
     StoreError::Conflict {
@@ -330,6 +462,7 @@ where
     duplicate_graph.attempt_id,
     duplicate_graph.attempt_number,
     duplicate_graph.jobs,
+    duplicate_graph.intent_digest,
     duplicate_graph.accepted_at,
   )
   .unwrap();
@@ -350,20 +483,149 @@ where
     conflicting.attempt_id,
     conflicting.attempt_number,
     conflicting.jobs,
+    conflicting.intent_digest,
     conflicting.accepted_at,
   )
   .unwrap();
+  let independent_root = independent.jobs[0].id;
+  let independent_child = independent.jobs[1].id;
   assert_eq!(
-    store.accept_trigger(independent).await.unwrap().disposition,
+    store.accept_trigger(independent.clone()).await.unwrap().disposition,
     MutationDisposition::Applied,
     "a rejected conflicting transaction must leave no partial Build graph"
   );
+  let failed_grant = match store
+    .claim_ready_job(claim(
+      208,
+      fixture.agent_id,
+      fixture.registration_epoch,
+      allowed_pool,
+      4_000,
+      CONTRACT_LEASE_EXPIRY_MILLIS,
+    ))
+    .await
+    .unwrap()
+  {
+    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Empty => panic!("the independent root must be claimable"),
+  };
+  assert_eq!(failed_grant.job_id, independent_root);
+  let failed_access = LeaseAccess {
+    lease_id: failed_grant.lease_id,
+    fence: failed_grant.fence,
+    agent_id: failed_grant.agent_id,
+    registration_epoch: failed_grant.registration_epoch,
+  };
+  let failure = JobCompletion {
+    lease: failed_access,
+    final_sequence: None,
+    kind: JobCompletionKind::Failed(JobFailureClass::Infrastructure),
+    completed_at: time(4_100),
+  };
+  let failed = store.complete_job(failure).await.unwrap();
+  assert!(failed.ready_jobs.is_empty());
+  assert_eq!(failed.skipped_jobs, [independent_child]);
+  assert_eq!(failed.failure_class, Some(JobFailureClass::Infrastructure));
+  assert_eq!(failed.attempt_state, AttemptState::Failed);
+  assert_eq!(failed.build_state, BuildState::Failed);
+  let replayed_failure = store
+    .complete_job(JobCompletion {
+      completed_at: time(4_101),
+      ..failure
+    })
+    .await
+    .unwrap();
+  let mut expected_failure_replay = failed;
+  expected_failure_replay.disposition = MutationDisposition::Replayed;
+  assert_eq!(replayed_failure, expected_failure_replay);
+
+  let retry = retry_request(&independent, 600, "retry-independent-build", time(4_200));
+  let retry_root = retry.jobs[0].id;
+  let mut immutable_mismatch = retry.clone();
+  immutable_mismatch.idempotency_key = IdempotencyKey::new("retry-with-mutated-requirements").unwrap();
+  immutable_mismatch.jobs[0].requirements.minimum_cpu_millis += 1;
+  assert_eq!(
+    store.retry_build(immutable_mismatch).await.unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Attempt
+    },
+    "retry must compare candidate Jobs with the authoritative immutable graph"
+  );
+  let mut policy_mismatch = retry.clone();
+  policy_mismatch.idempotency_key = IdempotencyKey::new("retry-with-mutated-root-policy").unwrap();
+  policy_mismatch.jobs[0].dependency_policy = octacity_server_pipeline::DependencyPolicy::AnySucceeded;
+  assert_eq!(
+    store.retry_build(policy_mismatch).await.unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Attempt
+    },
+    "retry must preserve dependency policy even for a root Job"
+  );
+  let mut intent_mismatch = retry.clone();
+  intent_mismatch.idempotency_key = IdempotencyKey::new("retry-with-mutated-job-intent").unwrap();
+  let mut intent = serde_json::to_value(&intent_mismatch.jobs[0].job_spec_template).unwrap();
+  intent["repository_locator"] = json!("https://example.test/other-repository.git");
+  intent_mismatch.jobs[0].job_spec_template = serde_json::from_value(intent).unwrap();
+  assert_eq!(
+    store.retry_build(intent_mismatch).await.unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Attempt
+    },
+    "retry must preserve the complete server-derived execution intent"
+  );
+  let retried = store.retry_build(retry.clone()).await.unwrap();
+  assert_eq!(retried.disposition, MutationDisposition::Applied);
+  assert_eq!(retried.source_attempt_id, independent.attempt_id);
+  assert_eq!(retried.attempt_number.get(), 2);
+  assert_eq!(retried.ready_jobs, [retry_root]);
+  let mut retry_replay = retry.clone();
+  retry_replay.requested_at = time(4_201);
+  let mut expected_retry_replay = retried.clone();
+  expected_retry_replay.disposition = MutationDisposition::Replayed;
+  assert_eq!(store.retry_build(retry_replay).await.unwrap(), expected_retry_replay);
+
+  let mut changed_retry = retry;
+  changed_retry.jobs[0].requirements.minimum_cpu_millis += 1;
+  assert_eq!(
+    store.retry_build(changed_retry).await.unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Build
+    },
+    "one retry idempotency key cannot describe another graph"
+  );
+  assert_eq!(
+    store
+      .complete_job(JobCompletion {
+        completed_at: time(4_202),
+        ..failure
+      })
+      .await
+      .unwrap(),
+    expected_failure_replay,
+    "retry must preserve the prior Attempt's terminal history"
+  );
+
+  let cancellable = trigger_request(13, 500, allowed_pool);
+  let cancellable_jobs: Vec<_> = cancellable.jobs.iter().map(|job| job.id).collect();
+  store.accept_trigger(cancellable.clone()).await.unwrap();
+  let cancelled_without_owner = store
+    .cancel_build(CancelBuild {
+      build_id: cancellable.build.id,
+      idempotency_key: IdempotencyKey::new("cancel-unowned-build").unwrap(),
+      requested_at: time(4_300),
+    })
+    .await
+    .unwrap();
+  assert_eq!(cancelled_without_owner.cancelled_jobs, cancellable_jobs);
+  assert!(cancelled_without_owner.cancelling_jobs.is_empty());
+  assert_eq!(cancelled_without_owner.attempt_state, AttemptState::Cancelled);
+  assert_eq!(cancelled_without_owner.build_state, BuildState::Cancelled);
   assert_eq!(
     evidence.mutation_evidence_counts().await,
     MutationEvidenceCounts {
-      idempotency: 8,
-      audit: 8,
-      outbox: 8,
+      idempotency: 17,
+      audit: 17,
+      outbox: 17,
     },
     "every accepted mutation must atomically persist one idempotency outcome, audit fact, and outbox entry"
   );

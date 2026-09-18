@@ -1,20 +1,22 @@
 use std::{collections::BTreeSet, fmt, num::NonZeroU64};
 
 use octacity_server_domain::{
-  AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, JobId, PipelineId,
-  PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryVersion, Timestamp,
+  AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, ImmutableRevision, JobId,
+  PipelineId, PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryVersion, Timestamp,
 };
+use octacity_server_job::{JobRequirements, JobSpecTemplate, JobState};
+use octacity_server_orchestrator::{JobGraphNode, validate_job_graph};
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_trigger::NormalizedTriggerOccurrence;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
+use thiserror::Error;
 
 use crate::{StoreError, StoreInputError, StoreOperation};
 
 /// Maximum UTF-8 bytes in one persisted Job-event classification.
 pub const MAX_JOB_EVENT_KIND_BYTES: usize = 64;
-/// Maximum UTF-8 bytes in one resolved immutable source revision.
-pub const MAX_IMMUTABLE_REVISION_BYTES: usize = 512;
 /// Maximum encoded bytes in one structured JSON document stored atomically.
 pub const MAX_STRUCTURED_DOCUMENT_BYTES: usize = 256 * 1_024;
 /// Maximum encoded bytes accepted by one Trigger transaction.
@@ -90,6 +92,85 @@ impl EventDigest {
   }
 }
 
+/// Stable digest of caller intent used to recognize a Trigger replay before
+/// consulting mutable external source state.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]
+pub struct TriggerIntentDigest([u8; 32]);
+
+impl TriggerIntentDigest {
+  /// Constructs a digest from a canonical SHA-256 result.
+  #[must_use]
+  pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+    Self(bytes)
+  }
+
+  /// Returns the digest bytes for a persistence adapter.
+  #[must_use]
+  pub const fn as_bytes(self) -> [u8; 32] {
+    self.0
+  }
+
+  /// Hashes one canonical serializable intent with a versioned domain prefix.
+  pub fn derive<T: Serialize + ?Sized>(intent: &T) -> Result<Self, TriggerIntentDigestError> {
+    let encoded = serde_json::to_vec(intent).map_err(|_| TriggerIntentDigestError)?;
+    let mut digest = Sha256::new();
+    digest.update(b"octacity.trigger-intent.v1\0");
+    digest.update(encoded);
+    Ok(Self(digest.finalize().into()))
+  }
+}
+
+/// Stable Trigger intent could not be encoded for digest derivation.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[error("trigger intent could not be encoded")]
+pub struct TriggerIntentDigestError;
+
+/// Identity required to look up a terminal Trigger evaluation without
+/// resolving mutable VCS selection again.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TriggerAcceptanceProbe {
+  /// Normalized occurrence whose identity and deduplication key are queried.
+  pub trigger: NormalizedTriggerOccurrence,
+  /// Digest of the transport-independent caller intent.
+  pub intent_digest: TriggerIntentDigest,
+}
+
+/// Complete atomic input for recording policy-suppressed Trigger evaluation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SuppressTrigger {
+  /// Normalized occurrence and exact deduplication identity.
+  pub trigger: NormalizedTriggerOccurrence,
+  /// Digest of stable caller intent shared with an accepted evaluation.
+  pub intent_digest: TriggerIntentDigest,
+  /// Authoritative time at which policy selected suppression.
+  pub suppressed_at: Timestamp,
+}
+
+impl SuppressTrigger {
+  /// Creates and validates one durable suppression request.
+  pub fn new(
+    trigger: NormalizedTriggerOccurrence,
+    intent_digest: TriggerIntentDigest,
+    suppressed_at: Timestamp,
+  ) -> Result<Self, StoreError> {
+    let request = Self {
+      trigger,
+      intent_digest,
+      suppressed_at,
+    };
+    request.validate()?;
+    Ok(request)
+  }
+
+  /// Revalidates the normalized occurrence at an adapter seam.
+  pub fn validate(&self) -> Result<(), StoreError> {
+    self
+      .trigger
+      .validate()
+      .map_err(|_| StoreError::invalid(StoreOperation::AcceptTrigger, StoreInputError::InvalidNormalizedTrigger))
+  }
+}
+
 /// Secret opaque token proving current ownership of one Lease.
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct LeaseFence([u8; 32]);
@@ -159,7 +240,7 @@ pub struct ImmutableBuildInput {
   /// Immutable Repository version.
   pub repository_version: RepositoryVersion,
   /// Exact immutable revision selected before acceptance.
-  pub immutable_revision: String,
+  pub immutable_revision: ImmutableRevision,
   /// Validated parameters and initiating input.
   pub input_snapshot: Value,
   /// Effective inherited policy frozen for this Build.
@@ -171,13 +252,6 @@ pub struct ImmutableBuildInput {
 impl ImmutableBuildInput {
   /// Validates immutable source and JSON snapshot shape.
   pub fn validate(&self) -> Result<(), StoreInputError> {
-    if self.immutable_revision.is_empty()
-      || self.immutable_revision.len() > MAX_IMMUTABLE_REVISION_BYTES
-      || self.immutable_revision.trim() != self.immutable_revision
-      || self.immutable_revision.chars().any(char::is_control)
-    {
-      return Err(StoreInputError::InvalidImmutableRevision);
-    }
     require_bounded_json_object(&self.input_snapshot)?;
     require_bounded_json_object(&self.effective_policy_snapshot)
   }
@@ -196,10 +270,27 @@ pub struct MaterializedJob {
   pub dependency_policy: DependencyPolicy,
   /// Effective Pool allowlist captured with the immutable Build input.
   pub allowed_pools: Vec<PoolId>,
-  /// Immutable validated Job template and execution inputs.
-  pub snapshot: Value,
   /// Backend-neutral placement requirements.
-  pub requirements: Value,
+  pub requirements: JobRequirements,
+  /// Stable server-derived intent signed only when this Job becomes ready.
+  pub job_spec_template: JobSpecTemplate,
+}
+
+/// Validated snapshots and stable execution intent stored with one Job.
+pub struct MaterializedJobPayload {
+  requirements: JobRequirements,
+  job_spec_template: JobSpecTemplate,
+}
+
+impl MaterializedJobPayload {
+  /// Groups the immutable node, placement, and execution-intent documents.
+  pub fn new(requirements: JobRequirements, job_spec_template: JobSpecTemplate) -> Result<Self, StoreInputError> {
+    require_bounded_serializable_object(&requirements)?;
+    Ok(Self {
+      requirements,
+      job_spec_template,
+    })
+  }
 }
 
 impl MaterializedJob {
@@ -210,8 +301,7 @@ impl MaterializedJob {
     mut dependencies: Vec<JobId>,
     dependency_policy: DependencyPolicy,
     mut allowed_pools: Vec<PoolId>,
-    snapshot: Value,
-    requirements: Value,
+    payload: MaterializedJobPayload,
   ) -> Result<Self, StoreInputError> {
     if dependencies.len() > MAX_JOB_DEPENDENCIES {
       return Err(StoreInputError::TooManyDependencies);
@@ -233,16 +323,18 @@ impl MaterializedJob {
     if allowed_pools.windows(2).any(|pair| pair[0] == pair[1]) {
       return Err(StoreInputError::DuplicateAllowedPool);
     }
-    require_bounded_json_object(&snapshot)?;
-    require_bounded_json_object(&requirements)?;
+    let MaterializedJobPayload {
+      requirements,
+      job_spec_template,
+    } = payload;
     Ok(Self {
       id,
       pipeline_node_id,
       dependencies,
       dependency_policy,
       allowed_pools,
-      snapshot,
       requirements,
+      job_spec_template,
     })
   }
 
@@ -265,8 +357,7 @@ impl MaterializedJob {
     if self.allowed_pools.windows(2).any(|pair| pair[0] >= pair[1]) {
       return Err(StoreInputError::DuplicateAllowedPool);
     }
-    require_bounded_json_object(&self.snapshot)?;
-    require_bounded_json_object(&self.requirements)
+    require_bounded_serializable_object(&self.requirements)
   }
 }
 
@@ -283,6 +374,8 @@ pub struct AcceptTrigger {
   pub attempt_number: AttemptNumber,
   /// Validated and canonical materialized Job graph.
   pub jobs: Vec<MaterializedJob>,
+  /// Digest of stable caller intent, independent of resolved VCS state.
+  pub intent_digest: TriggerIntentDigest,
   /// Authoritative acceptance time supplied by the application clock.
   pub accepted_at: Timestamp,
 }
@@ -295,6 +388,7 @@ impl AcceptTrigger {
     attempt_id: AttemptId,
     attempt_number: AttemptNumber,
     mut jobs: Vec<MaterializedJob>,
+    intent_digest: TriggerIntentDigest,
     accepted_at: Timestamp,
   ) -> Result<Self, StoreError> {
     jobs.sort_unstable_by_key(|job| job.id);
@@ -304,6 +398,7 @@ impl AcceptTrigger {
       attempt_id,
       attempt_number,
       jobs,
+      intent_digest,
       accepted_at,
     };
     request.validate()?;
@@ -326,29 +421,7 @@ impl AcceptTrigger {
         StoreInputError::TriggerTargetMismatch,
       ));
     }
-    if self.jobs.is_empty() {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::EmptyJobGraph,
-      ));
-    }
-    if self.jobs.len() > MAX_MATERIALIZED_JOBS {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::TooManyJobs,
-      ));
-    }
-    if self
-      .jobs
-      .iter()
-      .try_fold(0_usize, |total, job| total.checked_add(job.dependencies.len()))
-      .is_none_or(|total| total > MAX_MATERIALIZED_DEPENDENCY_EDGES)
-    {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::TooManyDependencyEdges,
-      ));
-    }
+    validate_materialized_jobs(StoreOperation::AcceptTrigger, self.build.id, &self.jobs)?;
     let encoded_bytes = serde_json::to_vec(&self.trigger)
       .ok()
       .zip(serde_json::to_vec(&self.build).ok())
@@ -369,59 +442,84 @@ impl AcceptTrigger {
         StoreInputError::RequestTooLarge,
       ));
     }
-    for job in &self.jobs {
-      job
-        .validate()
-        .map_err(|source| StoreError::invalid(StoreOperation::AcceptTrigger, source))?;
-    }
-    if self.jobs.windows(2).any(|pair| pair[0].id >= pair[1].id) {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::DuplicateJob,
-      ));
-    }
-    let node_ids: BTreeSet<_> = self.jobs.iter().map(|job| &job.pipeline_node_id).collect();
-    if node_ids.len() != self.jobs.len() {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::DuplicatePipelineNode,
-      ));
-    }
-    let identities: BTreeSet<_> = self.jobs.iter().map(|job| job.id).collect();
-    if self
-      .jobs
-      .iter()
-      .flat_map(|job| job.dependencies.iter())
-      .any(|dependency| !identities.contains(dependency))
-    {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::UnknownDependency,
-      ));
-    }
-    validate_acyclic(&self.jobs)
+    Ok(())
   }
 }
 
-fn validate_acyclic(jobs: &[MaterializedJob]) -> Result<(), StoreError> {
-  let mut completed = BTreeSet::new();
-  loop {
-    let before = completed.len();
-    for job in jobs {
-      if !completed.contains(&job.id) && job.dependencies.iter().all(|dependency| completed.contains(dependency)) {
-        completed.insert(job.id);
-      }
-    }
-    if completed.len() == jobs.len() {
-      return Ok(());
-    }
-    if completed.len() == before {
-      return Err(StoreError::invalid(
-        StoreOperation::AcceptTrigger,
-        StoreInputError::CyclicJobGraph,
-      ));
-    }
+pub(crate) fn validate_materialized_jobs(
+  operation: StoreOperation,
+  build_id: BuildId,
+  jobs: &[MaterializedJob],
+) -> Result<(), StoreError> {
+  if jobs.is_empty() {
+    return Err(StoreError::invalid(operation, StoreInputError::EmptyJobGraph));
   }
+  if jobs.len() > MAX_MATERIALIZED_JOBS {
+    return Err(StoreError::invalid(operation, StoreInputError::TooManyJobs));
+  }
+  if jobs
+    .iter()
+    .try_fold(0_usize, |total, job| total.checked_add(job.dependencies.len()))
+    .is_none_or(|total| total > MAX_MATERIALIZED_DEPENDENCY_EDGES)
+  {
+    return Err(StoreError::invalid(operation, StoreInputError::TooManyDependencyEdges));
+  }
+  if jobs.iter().any(|job| {
+    job.job_spec_template.build_id() != build_id
+      || job.job_spec_template.pipeline_node_id() != &job.pipeline_node_id
+      || job.job_spec_template.validate().is_err()
+  }) {
+    return Err(StoreError::invalid(
+      operation,
+      StoreInputError::JobSpecTemplateBindingMismatch,
+    ));
+  }
+  for job in jobs {
+    job
+      .validate()
+      .map_err(|source| StoreError::invalid(operation, source))?;
+  }
+  if jobs.windows(2).any(|pair| pair[0].id >= pair[1].id) {
+    return Err(StoreError::invalid(operation, StoreInputError::DuplicateJob));
+  }
+  let node_ids: BTreeSet<_> = jobs.iter().map(|job| &job.pipeline_node_id).collect();
+  if node_ids.len() != jobs.len() {
+    return Err(StoreError::invalid(operation, StoreInputError::DuplicatePipelineNode));
+  }
+  let graph = jobs
+    .iter()
+    .map(|job| {
+      JobGraphNode::new(
+        job.id,
+        if job.dependencies.is_empty() {
+          JobState::Ready
+        } else {
+          JobState::Blocked
+        },
+        job.dependencies.clone(),
+        job.dependency_policy,
+      )
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|error| graph_error(operation, error))?;
+  validate_job_graph(graph).map_err(|error| graph_error(operation, error))
+}
+
+fn graph_error(operation: StoreOperation, error: octacity_server_orchestrator::OrchestrationError) -> StoreError {
+  use octacity_server_orchestrator::OrchestrationError;
+
+  let source = match error {
+    OrchestrationError::DuplicateJob { .. } => StoreInputError::DuplicateJob,
+    OrchestrationError::SelfDependency { .. } => StoreInputError::SelfDependency,
+    OrchestrationError::DuplicateDependency { .. } => StoreInputError::DuplicateDependency,
+    OrchestrationError::UnknownDependency { .. } => StoreInputError::UnknownDependency,
+    OrchestrationError::CyclicGraph => StoreInputError::CyclicJobGraph,
+    OrchestrationError::EmptyGraph => StoreInputError::EmptyJobGraph,
+    OrchestrationError::BlockedRoot { .. }
+    | OrchestrationError::InvalidJobTransition { .. }
+    | OrchestrationError::CancellationNotPropagated { .. } => StoreInputError::CyclicJobGraph,
+  };
+  StoreError::invalid(operation, source)
 }
 
 /// Whether an idempotent mutation was newly applied or exactly replayed.
@@ -439,12 +537,43 @@ pub enum MutationDisposition {
 pub struct AcceptTriggerOutcome {
   /// Idempotency disposition.
   pub disposition: MutationDisposition,
+  /// Original occurrence durably associated with the Build.
+  pub trigger_occurrence_id: octacity_server_domain::TriggerOccurrenceId,
   /// Build durably associated with the occurrence.
   pub build_id: BuildId,
   /// Attempt durably associated with the occurrence.
   pub attempt_id: AttemptId,
   /// Root Jobs inserted into the global ready queue.
   pub ready_jobs: Vec<JobId>,
+}
+
+/// Result of durably suppressing a Trigger without creating queued work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SuppressTriggerOutcome {
+  /// Idempotency disposition.
+  pub disposition: MutationDisposition,
+  /// Original occurrence that received the terminal suppressed outcome.
+  pub trigger_occurrence_id: octacity_server_domain::TriggerOccurrenceId,
+}
+
+/// Durable terminal result returned by Trigger evaluation and replay.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TriggerEvaluationOutcome {
+  /// Evaluation created and materialized one Build.
+  Accepted(AcceptTriggerOutcome),
+  /// Policy intentionally created no Build or queued work.
+  Suppressed(SuppressTriggerOutcome),
+}
+
+impl TriggerEvaluationOutcome {
+  /// Returns whether this call applied new state or replayed prior state.
+  #[must_use]
+  pub const fn disposition(&self) -> MutationDisposition {
+    match self {
+      Self::Accepted(outcome) => outcome.disposition,
+      Self::Suppressed(outcome) => outcome.disposition,
+    }
+  }
 }
 
 pub(crate) fn require_bounded_json_object(value: &Value) -> Result<(), StoreInputError> {
@@ -456,6 +585,11 @@ pub(crate) fn require_bounded_json_object(value: &Value) -> Result<(), StoreInpu
     MAX_STRUCTURED_DOCUMENT_BYTES,
     StoreInputError::JsonDocumentTooLarge,
   )
+}
+
+fn require_bounded_serializable_object(value: &impl Serialize) -> Result<(), StoreInputError> {
+  let value = serde_json::to_value(value).map_err(|_| StoreInputError::JsonDocumentTooLarge)?;
+  require_bounded_json_object(&value)
 }
 
 pub(crate) fn require_bounded_json(

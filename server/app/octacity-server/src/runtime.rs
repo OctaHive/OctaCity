@@ -228,6 +228,7 @@ access_key_file = "object-access-key"
 secret_key_file = "object-secret-key"
 
 [signing]
+key_id = "test-key"
 key_file = "signing-key"
 "#,
     )

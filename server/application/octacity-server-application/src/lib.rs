@@ -6,7 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+mod manual_trigger;
 mod project_policy;
+mod projections;
+mod snapshots;
 
 use std::sync::Arc;
 
@@ -16,10 +19,24 @@ use octacity_server_store::{
 };
 use thiserror::Error;
 
+pub use manual_trigger::{
+  EffectiveProjectPolicySource, EffectiveProjectPolicySourceError, JobSpecToolchainPolicy, ManualSourceSelection,
+  ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider,
+  ManualTriggerError, ManualTriggerInputError, ManualTriggerService, RevisionResolutionError,
+  RevisionResolutionRequest, RevisionResolver, StoreBackedManualTriggerContext,
+};
 pub use project_policy::{
   ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
   MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource, ProjectPolicy,
   ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName, resolve_project_policy,
+};
+pub use projections::{
+  AttemptProjection, BuildConfigurationProjection, BuildProjection, ConfigurationCacheProjection,
+  ConfigurationRuntimeProjection, DagCausalityProjection, DagEdgeProjection, DagNodeProjection,
+  JobAssignmentProjection, JobFailureClassification, JobOutputKind, JobOutputReference, JobPlacementProjection,
+  JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, ParameterValueProjection,
+  PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection, ProjectProjection, ProjectSummaryProjection,
+  ProjectionError, Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection,
 };
 
 /// Application query service that combines authoritative indexing work with a

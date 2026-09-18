@@ -1,16 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use octacity_protocol::{PlatformArchitecture, PlatformOs};
 use octacity_server_domain::{
   ArtifactPolicy, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, IntegrationId, NetworkHost,
-  PipelineId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion, RuntimeClass,
-  SourceReference, Timestamp,
+  PipelineId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryLocator, RepositoryName, RepositoryVersion,
+  RuntimeClass, SourceReference, Timestamp,
 };
 use octacity_server_pipeline::ExecutionCapability;
 use octacity_server_trigger::TriggerKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{IdempotencyKey, MutationDisposition, StoreInputError};
+use crate::{IdempotencyKey, MAX_STRUCTURED_DOCUMENT_BYTES, MutationDisposition, StoreInputError};
 
 /// Maximum encoded bytes in one Repository definition.
 pub const MAX_REPOSITORY_DEFINITION_BYTES: usize = 256 * 1_024;
@@ -63,7 +64,7 @@ pub struct RepositoryDefinition {
   /// VCS integration selected through the provider-neutral VCS seam.
   pub vcs_integration_id: IntegrationId,
   /// Provider-owned bounded repository locator, treated only as data.
-  pub repository_locator: String,
+  pub repository_locator: RepositoryLocator,
   /// Rules for mutable-reference and exact-revision selection.
   pub selection: RepositorySelectionPolicy,
 }
@@ -71,9 +72,6 @@ pub struct RepositoryDefinition {
 impl RepositoryDefinition {
   /// Revalidates the complete immutable definition at an adapter seam.
   pub fn validate(&self) -> Result<(), StoreInputError> {
-    if !valid_text(&self.repository_locator, 2_048) {
-      return Err(StoreInputError::InvalidRepositoryDefinition);
-    }
     self.selection.validate()?;
     validate_encoded(
       self,
@@ -164,6 +162,26 @@ impl ParameterType {
   }
 }
 
+/// Failure while resolving one Trigger's parameter values against a schema.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ParameterResolutionError {
+  /// The supplied map exceeds the configured item or encoded-byte bound.
+  #[error("build parameters exceed their item or encoded-byte bound")]
+  TooLarge,
+  /// A parameter is absent from a closed schema.
+  #[error("unknown build parameter: {0}")]
+  Unknown(String),
+  /// A required parameter has neither a supplied value nor a default.
+  #[error("required build parameter is missing: {0}")]
+  Missing(String),
+  /// A declared parameter does not match its configured primitive type.
+  #[error("build parameter has the wrong type: {0}")]
+  InvalidType(String),
+  /// An open-schema parameter cannot be represented as an execution variable.
+  #[error("build parameter cannot be represented as an execution variable: {0}")]
+  UnsupportedValue(String),
+}
+
 /// Type, presence rule, and optional default for one Build parameter.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -201,6 +219,57 @@ impl ParameterSchema {
     }
     Ok(())
   }
+
+  /// Applies defaults and validates a bounded Trigger-supplied parameter map.
+  ///
+  /// Open schemas still accept only named primitive values because every
+  /// resolved parameter is projected into the signed execution environment.
+  pub fn resolve(
+    &self,
+    supplied: &BTreeMap<String, Value>,
+  ) -> Result<BTreeMap<String, Value>, ParameterResolutionError> {
+    if supplied.len() > MAX_CONFIGURATION_PARAMETERS
+      || !serde_json::to_vec(supplied).is_ok_and(|encoded| encoded.len() <= MAX_STRUCTURED_DOCUMENT_BYTES)
+    {
+      return Err(ParameterResolutionError::TooLarge);
+    }
+    if self.deny_unknown
+      && let Some(name) = supplied.keys().find(|name| !self.parameters.contains_key(*name))
+    {
+      return Err(ParameterResolutionError::Unknown(name.clone()));
+    }
+    if !self.deny_unknown
+      && let Some((name, _)) = supplied
+        .iter()
+        .find(|(name, value)| !valid_identifier(name) || !is_execution_variable(value))
+    {
+      return Err(ParameterResolutionError::UnsupportedValue(name.clone()));
+    }
+
+    let mut resolved = if self.deny_unknown {
+      BTreeMap::new()
+    } else {
+      supplied.clone()
+    };
+    for (name, definition) in &self.parameters {
+      let value = supplied.get(name).or(definition.default.as_ref());
+      let Some(value) = value else {
+        if definition.required {
+          return Err(ParameterResolutionError::Missing(name.clone()));
+        }
+        continue;
+      };
+      if !definition.value_type.accepts(value) {
+        return Err(ParameterResolutionError::InvalidType(name.clone()));
+      }
+      resolved.insert(name.clone(), value.clone());
+    }
+    Ok(resolved)
+  }
+}
+
+fn is_execution_variable(value: &Value) -> bool {
+  matches!(value, Value::String(_) | Value::Bool(_) | Value::Number(_))
 }
 
 /// Trigger admission policy captured by one configuration version.
@@ -267,6 +336,15 @@ pub enum ConfigurationNetworkPolicy {
 }
 
 impl ConfigurationNetworkPolicy {
+  /// Borrows the canonical host allowlist for restricted policy.
+  #[must_use]
+  pub const fn allowed_hosts(&self) -> Option<&BTreeSet<NetworkHost>> {
+    match self {
+      Self::Restricted { allowed_hosts } => Some(allowed_hosts),
+      Self::Disabled | Self::Unrestricted => None,
+    }
+  }
+
   fn validate(&self) -> Result<(), StoreInputError> {
     if let Self::Restricted { allowed_hosts } = self
       && (allowed_hosts.is_empty() || allowed_hosts.len() > MAX_AGENT_REQUIREMENT_LABELS)
@@ -283,10 +361,10 @@ impl ConfigurationNetworkPolicy {
 pub struct ConfigurationRuntimePolicy {
   /// Required runtime and isolation class.
   pub class: RuntimeClass,
-  /// Required operating-system label.
-  pub operating_system: String,
-  /// Required CPU-architecture label.
-  pub architecture: String,
+  /// Required operating system.
+  pub operating_system: PlatformOs,
+  /// Required CPU architecture.
+  pub architecture: PlatformArchitecture,
   /// Immutable OCI image required for OCI classes and forbidden for Native.
   pub immutable_image: Option<String>,
   /// CPU execution limit in thousandths of one logical CPU.
@@ -313,8 +391,6 @@ impl ConfigurationRuntimePolicy {
         .is_some_and(|image| valid_immutable_image(image)),
     };
     if !image_valid
-      || !valid_label(&self.operating_system)
-      || !valid_label(&self.architecture)
       || self.cpu_millis == 0
       || self.memory_bytes == 0
       || self.writable_disk_bytes == 0
@@ -514,18 +590,6 @@ fn valid_identifier(value: &str) -> bool {
     && characters.all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
 }
 
-fn valid_label(value: &str) -> bool {
-  let mut characters = value.chars();
-  !value.is_empty()
-    && value.len() <= MAX_CONFIGURATION_LABEL_BYTES
-    && characters
-      .next()
-      .is_some_and(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
-    && characters.all(|character| {
-      character.is_ascii_lowercase() || character.is_ascii_digit() || matches!(character, '.' | '_' | '-')
-    })
-}
-
 fn valid_text(value: &str, max_bytes: usize) -> bool {
   !value.is_empty() && value.len() <= max_bytes && value.trim() == value && !value.chars().any(char::is_control)
 }
@@ -535,6 +599,8 @@ fn valid_immutable_image(value: &str) -> bool {
     return false;
   };
   valid_text(name, 1_024)
+    && !name.contains(['@', '?', '#', '\\'])
+    && !name.contains("://")
     && digest.len() == 64
     && digest
       .bytes()

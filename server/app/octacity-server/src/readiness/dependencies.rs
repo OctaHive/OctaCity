@@ -2,12 +2,12 @@ use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ed25519_dalek::{Signer as _, SigningKey};
 use octacity_artifact_s3::{S3ArtifactStore, S3ArtifactStoreConfig};
+use octacity_server_job::JobSpecSigner;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use thiserror::Error;
 use tokio::io::AsyncReadExt as _;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
 
 use super::{ReadinessCheck, ReadinessChecks};
 use crate::ServerConfig;
@@ -45,7 +45,7 @@ impl ReadinessChecks {
     })
     .map_err(ReadinessSetupError::ObjectStorageConfig)?;
 
-    let signing_key = read_signing_key(&config.signing().key_file).await?;
+    let signing_key = read_signing_key(&config.signing().key_id, &config.signing().key_file).await?;
     Ok(Self::new(
       Arc::new(MigrationCheck { pool: pool.clone() }),
       Arc::new(PostgresCheck { pool }),
@@ -105,7 +105,7 @@ impl ReadinessCheck for ObjectStorageCheck {
   }
 }
 
-struct SigningMaterialCheck(SigningKey);
+struct SigningMaterialCheck(JobSpecSigner);
 
 #[async_trait]
 impl ReadinessCheck for SigningMaterialCheck {
@@ -114,16 +114,11 @@ impl ReadinessCheck for SigningMaterialCheck {
   }
 
   async fn check(&self) -> bool {
-    let challenge = b"octacity-readiness-v1";
-    self
-      .0
-      .verifying_key()
-      .verify_strict(challenge, &self.0.sign(challenge))
-      .is_ok()
+    self.0.is_usable()
   }
 }
 
-async fn read_signing_key(path: &Path) -> Result<SigningKey, ReadinessSetupError> {
+async fn read_signing_key(key_id: &str, path: &Path) -> Result<JobSpecSigner, ReadinessSetupError> {
   let encoded = read_credential("JobSpec signing key", path).await?;
   let decoded =
     Zeroizing::new(
@@ -133,14 +128,18 @@ async fn read_signing_key(path: &Path) -> Result<SigningKey, ReadinessSetupError
           purpose: "JobSpec signing key",
         })?,
     );
-  let bytes: [u8; SIGNING_KEY_BYTES] =
+  let mut bytes: [u8; SIGNING_KEY_BYTES] =
     decoded
       .as_slice()
       .try_into()
       .map_err(|_| ReadinessSetupError::InvalidCredential {
         purpose: "JobSpec signing key",
       })?;
-  Ok(SigningKey::from_bytes(&bytes))
+  let signer = JobSpecSigner::new(key_id, bytes);
+  bytes.zeroize();
+  signer.map_err(|_| ReadinessSetupError::InvalidCredential {
+    purpose: "JobSpec signing key",
+  })
 }
 
 async fn read_credential(purpose: &'static str, path: &Path) -> Result<Zeroizing<String>, ReadinessSetupError> {

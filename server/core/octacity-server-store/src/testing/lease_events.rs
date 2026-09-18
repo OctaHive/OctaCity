@@ -1,0 +1,302 @@
+use super::*;
+
+pub(super) async fn claim(store: &InMemoryStore, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
+  request.validate()?;
+  let mut state = MemoryTransaction::begin(store.lock()?);
+  if let Some(existing) = state.claims.get(&request.lease_id) {
+    if same_job_claim(existing.request, request) {
+      return Ok(existing.outcome);
+    }
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Lease,
+    });
+  }
+  let Some(registration) = state.registrations.get(&(request.agent_id, request.registration_epoch)) else {
+    return Ok(JobClaimOutcome::Empty);
+  };
+  let pool = state.pools.get(&(request.pool_id, registration.pool_version));
+  if registration.pool_id != request.pool_id
+    || registration.revoked
+    || registration.expires_at <= request.claimed_at
+    || !pool.is_some_and(|pool| pool.enabled && pool.accepting)
+  {
+    return Ok(JobClaimOutcome::Empty);
+  }
+  let selected = state.ready_queue.iter().copied().find(|entry| {
+    state
+      .jobs
+      .get(&entry.job_id)
+      .is_some_and(|job| job.materialized.allowed_pools.binary_search(&request.pool_id).is_ok())
+  });
+  let Some(selected) = selected else {
+    return Ok(JobClaimOutcome::Empty);
+  };
+  let grant = LeaseGrant {
+    lease_id: request.lease_id,
+    fence: request.fence,
+    job_id: selected.job_id,
+    agent_id: request.agent_id,
+    registration_epoch: request.registration_epoch,
+    pool_id: request.pool_id,
+    expires_at: request.expires_at,
+  };
+  let evidence_identity = format!("claim-ready-job:{}", request.lease_id);
+  ensure_evidence_available(&state, &evidence_identity)?;
+  state.ready_queue.remove(&selected);
+  state.ready_jobs.remove(&selected.job_id);
+  state
+    .jobs
+    .get_mut(&selected.job_id)
+    .ok_or(StoreError::Unavailable)?
+    .state = JobState::Leased;
+  state.current_lease_by_job.insert(selected.job_id, request.lease_id);
+  state.leases.insert(request.lease_id, grant);
+  state.claims.insert(
+    request.lease_id,
+    ClaimRecord {
+      request,
+      outcome: JobClaimOutcome::Claimed(grant),
+    },
+  );
+  record_evidence(&mut state, evidence_identity);
+  state.commit();
+  Ok(JobClaimOutcome::Claimed(grant))
+}
+
+pub(super) async fn append_events(
+  store: &InMemoryStore,
+  request: AppendJobEvents,
+) -> Result<AppendJobEventsOutcome, StoreError> {
+  request.validate()?;
+  let mut state = MemoryTransaction::begin(store.lock()?);
+  let first = request.events[0].sequence();
+  let last = request.events[request.events.len() - 1].sequence();
+  let append_key = (request.lease.lease_id, first, last);
+  if let Some(existing) = state.event_appends.get(&append_key) {
+    if same_event_append(&existing.request, &request) {
+      return Ok(existing.outcome);
+    }
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Job,
+    });
+  }
+  let grant = current_grant(&state, request.lease, request.accepted_at)?;
+  let events = state.events.get(&grant.job_id);
+  let durable_through = events
+    .and_then(|events| events.last_key_value().map(|(sequence, _)| sequence.get()))
+    .unwrap_or(0);
+  let mut expected = durable_through.saturating_add(1);
+  let mut new_events = Vec::new();
+
+  for event in &request.events {
+    let sequence = event.sequence().get();
+    if sequence <= durable_through {
+      if events.and_then(|events| events.get(&event.sequence())) != Some(&event.digest()) {
+        return Err(StoreError::Conflict {
+          entity: EntityKind::Job,
+        });
+      }
+    } else if sequence != expected {
+      return Err(StoreError::EventGap {
+        job: grant.job_id,
+        expected,
+        actual: sequence,
+      });
+    } else {
+      new_events.push(event.clone());
+      expected = expected.checked_add(1).ok_or(StoreError::Unavailable)?;
+    }
+  }
+
+  let acknowledged = durable_through
+    .checked_add(u64::try_from(new_events.len()).map_err(|_| StoreError::Unavailable)?)
+    .ok_or(StoreError::Unavailable)?;
+  let acknowledged_through = EventSequence::new(acknowledged).map_err(|source| StoreError::InvalidInput {
+    operation: StoreOperation::AppendJobEvents,
+    source,
+  })?;
+  let outcome = AppendJobEventsOutcome {
+    acknowledged_through,
+    inserted: new_events.len(),
+  };
+  let evidence_identity = format!(
+    "append-job-events:{}:{}-{}",
+    append_key.0,
+    append_key.1.get(),
+    append_key.2.get()
+  );
+  ensure_evidence_available(&state, &evidence_identity)?;
+  if !new_events.is_empty() {
+    let job = state.jobs.get_mut(&grant.job_id).ok_or(StoreError::Unavailable)?;
+    job.state = start_job_execution(job.state)?;
+  }
+  let events = state.events.entry(grant.job_id).or_default();
+  for event in &new_events {
+    events.insert(event.sequence(), event.digest());
+  }
+  state
+    .event_appends
+    .insert(append_key, EventAppendRecord { request, outcome });
+  record_evidence(&mut state, evidence_identity);
+  state.commit();
+  Ok(outcome)
+}
+
+pub(super) async fn complete(
+  store: &InMemoryStore,
+  request: JobCompletion,
+) -> Result<CompletionDisposition, StoreError> {
+  let mut state = MemoryTransaction::begin(store.lock()?);
+  let grant = lease_grant(&state, request.lease)?;
+  if let Some(existing) = state.completions.get(&grant.job_id) {
+    if same_completion(existing.request, request) {
+      let mut outcome = existing.outcome.clone();
+      outcome.disposition = MutationDisposition::Replayed;
+      return Ok(outcome);
+    }
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Job,
+    });
+  }
+  current_grant(&state, request.lease, request.completed_at)?;
+
+  let durable_through = state
+    .events
+    .get(&grant.job_id)
+    .and_then(|events| events.last_key_value().map(|(sequence, _)| sequence.get()))
+    .unwrap_or(0);
+  let required = request.final_sequence.map_or(0, EventSequence::get);
+  if required > durable_through {
+    return Err(StoreError::EventsMissing {
+      job: grant.job_id,
+      durable_through,
+      required,
+    });
+  }
+  if required < durable_through {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Job,
+    });
+  }
+
+  let completed_job = state.jobs.get(&grant.job_id).ok_or(StoreError::Unavailable)?;
+  let completed_state = complete_job_state(completed_job.state, request.kind)?;
+  let attempt_id = completed_job.attempt_id;
+  let graph = state
+    .jobs
+    .values()
+    .filter(|job| job.attempt_id == attempt_id)
+    .map(|job| {
+      JobGraphNode::new(
+        job.materialized.id,
+        if job.materialized.id == grant.job_id {
+          completed_state
+        } else {
+          job.state
+        },
+        job.materialized.dependencies.clone(),
+        job.materialized.dependency_policy,
+      )
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|_| StoreError::Unavailable)?;
+  let build_id = state.attempts.get(&attempt_id).ok_or(StoreError::Unavailable)?.build_id;
+  let decision = if state.cancellations.contains_key(&build_id) {
+    reconcile_cancelled_job_graph(graph)
+  } else {
+    reconcile_job_graph(graph)
+  }
+  .map_err(|_| StoreError::Unavailable)?;
+  let ready_jobs: Vec<_> = decision
+    .job_transitions()
+    .iter()
+    .filter_map(|transition| (transition.state() == JobState::Ready).then_some(transition.job_id()))
+    .collect();
+  let skipped_jobs: Vec<_> = decision
+    .job_transitions()
+    .iter()
+    .filter_map(|transition| (transition.state() == JobState::Skipped).then_some(transition.job_id()))
+    .collect();
+  let outcome = CompletionDisposition {
+    disposition: MutationDisposition::Applied,
+    job_id: grant.job_id,
+    failure_class: request.kind.failure_class(),
+    ready_jobs: ready_jobs.clone(),
+    skipped_jobs,
+    attempt_state: decision.attempt_state(),
+    build_state: decision.build_state(),
+  };
+  let evidence_identity = format!("complete-job:{}", request.lease.lease_id);
+  ensure_evidence_available(&state, &evidence_identity)?;
+  ensure_enqueue_capacity(&state, ready_jobs.iter().copied())?;
+  state.current_lease_by_job.remove(&grant.job_id);
+  state.jobs.get_mut(&grant.job_id).ok_or(StoreError::Unavailable)?.state = completed_state;
+  for transition in decision.job_transitions() {
+    state
+      .jobs
+      .get_mut(&transition.job_id())
+      .ok_or(StoreError::Unavailable)?
+      .state = transition.state();
+  }
+  let attempt = state.attempts.get_mut(&attempt_id).ok_or(StoreError::Unavailable)?;
+  attempt.state = decision.attempt_state();
+  let build_id = attempt.build_id;
+  *state.builds.get_mut(&build_id).ok_or(StoreError::Unavailable)? = decision.build_state();
+  for job_id in &ready_jobs {
+    sign_ready_job(&mut state, &store.job_spec_signer, *job_id, request.completed_at)?;
+    enqueue(&mut state, *job_id);
+  }
+  state.completions.insert(
+    grant.job_id,
+    CompletionRecord {
+      request,
+      outcome: outcome.clone(),
+    },
+  );
+  record_evidence(&mut state, evidence_identity);
+  state.commit();
+  Ok(outcome)
+}
+
+fn same_job_claim(left: JobClaim, right: JobClaim) -> bool {
+  left.lease_id == right.lease_id
+    && left.fence == right.fence
+    && left.agent_id == right.agent_id
+    && left.registration_epoch == right.registration_epoch
+    && left.pool_id == right.pool_id
+    && left.expires_at == right.expires_at
+}
+
+fn same_event_append(left: &AppendJobEvents, right: &AppendJobEvents) -> bool {
+  left.lease == right.lease && left.events == right.events
+}
+
+fn same_completion(left: JobCompletion, right: JobCompletion) -> bool {
+  left.lease == right.lease && left.final_sequence == right.final_sequence && left.kind == right.kind
+}
+
+fn lease_grant(state: &MemoryState, access: LeaseAccess) -> Result<LeaseGrant, StoreError> {
+  let grant = state
+    .leases
+    .get(&access.lease_id)
+    .copied()
+    .ok_or(StoreError::Fenced { lease: access.lease_id })?;
+  if grant.fence != access.fence
+    || grant.agent_id != access.agent_id
+    || grant.registration_epoch != access.registration_epoch
+  {
+    return Err(StoreError::Fenced { lease: access.lease_id });
+  }
+  Ok(grant)
+}
+
+fn current_grant(state: &MemoryState, access: LeaseAccess, observed_at: Timestamp) -> Result<LeaseGrant, StoreError> {
+  let grant = lease_grant(state, access)?;
+  if observed_at >= grant.expires_at {
+    return Err(StoreError::Expired { lease: access.lease_id });
+  }
+  if state.current_lease_by_job.get(&grant.job_id) != Some(&grant.lease_id) {
+    return Err(StoreError::Fenced { lease: access.lease_id });
+  }
+  Ok(grant)
+}

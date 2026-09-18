@@ -3,13 +3,14 @@ use std::{fmt::Debug, str::FromStr};
 use octacity_server_domain::{
   AgentId, AgentName, AgentVersion, ArtifactId, ArtifactName, ArtifactPolicy, ArtifactUploadId, ArtifactVersion,
   AttemptId, AttemptNumber, AttemptVersion, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion,
-  BuildId, BuildVersion, DomainError, DomainValueError, EntityKind, IntegrationId, IntegrationName, IntegrationVersion,
-  JobId, JobName, JobVersion, LeaseId, LeaseVersion, MAX_ARTIFACT_NAME_BYTES, MAX_CANONICAL_JSON_DEPTH,
-  MAX_PIPELINE_NODE_ID_BYTES, MAX_RESOURCE_NAME_BYTES, MAX_SOURCE_REFERENCE_BYTES, MAX_TIMESTAMP_MILLIS,
-  MAX_TRIGGER_IDENTITY_BYTES, MIN_TIMESTAMP_MILLIS, NetworkHost, PipelineId, PipelineName, PipelineNodeId,
-  PipelineVersion, PoolId, PoolName, PoolVersion, ProjectId, ProjectName, ProjectPolicyVersion, ProjectVersion,
-  RepositoryId, RepositoryVersion, SourceReference, TextErrorKind, Timestamp, TransitionError, TriggerId,
-  TriggerIdentity, TriggerOccurrenceId, TriggerVersion, VersionErrorKind, canonicalize_json,
+  BuildId, BuildVersion, DomainError, DomainValueError, EntityKind, ImmutableRevision, IntegrationId, IntegrationName,
+  IntegrationVersion, JobId, JobName, JobVersion, LeaseId, LeaseVersion, MAX_ARTIFACT_NAME_BYTES,
+  MAX_CANONICAL_JSON_DEPTH, MAX_IMMUTABLE_REVISION_BYTES, MAX_PIPELINE_NODE_ID_BYTES, MAX_RESOURCE_NAME_BYTES,
+  MAX_SOURCE_REFERENCE_BYTES, MAX_TIMESTAMP_MILLIS, MAX_TRIGGER_IDENTITY_BYTES, MIN_TIMESTAMP_MILLIS, NetworkHost,
+  PipelineId, PipelineName, PipelineNodeId, PipelineVersion, PoolId, PoolName, PoolVersion, ProjectId, ProjectName,
+  ProjectPolicyVersion, ProjectVersion, RepositoryId, RepositoryLocator, RepositoryVersion, SourceReference,
+  TextErrorKind, Timestamp, TransitionError, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  VersionErrorKind, canonicalize_json,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
@@ -141,6 +142,38 @@ fn source_references_share_one_bounded_value_type() {
   assert!(SourceReference::new("x".repeat(MAX_SOURCE_REFERENCE_BYTES)).is_ok());
   assert!(SourceReference::new("x".repeat(MAX_SOURCE_REFERENCE_BYTES + 1)).is_err());
   assert!(serde_json::from_str::<SourceReference>(r#"" leading""#).is_err());
+}
+
+#[test]
+fn immutable_revisions_share_one_bounded_value_type() {
+  let revision = ImmutableRevision::new("0123456789abcdef").unwrap();
+  assert_eq!(revision.as_str(), "0123456789abcdef");
+  assert!(ImmutableRevision::new("x".repeat(MAX_IMMUTABLE_REVISION_BYTES)).is_ok());
+  assert!(ImmutableRevision::new("x".repeat(MAX_IMMUTABLE_REVISION_BYTES + 1)).is_err());
+  assert!(serde_json::from_str::<ImmutableRevision>(r#"" leading""#).is_err());
+}
+
+#[test]
+fn repository_locators_are_provider_neutral_but_never_local_or_credential_bearing() {
+  for value in ["octahive/octacity", "https://example.test/team/repository.git"] {
+    assert_eq!(RepositoryLocator::new(value).unwrap().as_str(), value);
+  }
+  for value in [
+    "/srv/repository",
+    "~/repository",
+    r"C:\repository",
+    "C:repository",
+    "../repository",
+    "team/../repository",
+    "https://user@example.test/repository.git",
+    "file:///srv/repository",
+    "https://example.test/%2e%2e/repository",
+  ] {
+    assert!(
+      RepositoryLocator::new(value).is_err(),
+      "accepted unsafe locator {value}"
+    );
+  }
 }
 
 #[test]

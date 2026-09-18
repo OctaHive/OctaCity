@@ -2,17 +2,22 @@
 mod authoritative_fixture;
 mod support;
 
-use std::sync::Arc;
+use std::{
+  collections::{BTreeMap, BTreeSet},
+  sync::Arc,
+};
 
 use authoritative_fixture::seed_authoritative_prerequisites;
-use octacity_server_domain::{AgentId, EntityKind, JobId, LeaseId, PipelineNodeId, Timestamp};
+use octacity_protocol::{PlatformArchitecture, PlatformOs};
+use octacity_server_domain::{AgentId, EntityKind, JobId, LeaseId, PipelineNodeId, RuntimeClass, Timestamp};
+use octacity_server_job::JobRequirements;
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
-  AppendJobEvents, AppendJobEventsOutcome, AuthoritativeStore as _, CompletionDisposition, DurableJobEvent,
-  EventSequence, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence,
-  MaterializedJob, MutationDisposition, testing::authoritative_store_contract_fixture,
+  AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, EventSequence, JobClaim,
+  JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence,
+  MaterializedJob, MutationDisposition, TriggerAcceptanceStore as _, testing::authoritative_store_contract_fixture,
 };
-use octacity_server_store_postgres::PostgresStore;
+use octacity_server_store_postgres::PostgresAuthoritativeStore;
 use serde_json::json;
 use support::TestDatabase;
 use tokio::sync::Barrier;
@@ -31,8 +36,8 @@ async fn concurrent_servers_accept_one_trigger_occurrence_once() {
   seed_authoritative_prerequisites(&database.pool, &fixture)
     .await
     .unwrap();
-  let left = PostgresStore::new(independent_pool(&database.pool).await);
-  let right = PostgresStore::new(independent_pool(&database.pool).await);
+  let left = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
+  let right = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
   let request = fixture.request;
   let occurrence_id = request.trigger.id;
   let target = request.trigger.target;
@@ -115,8 +120,8 @@ async fn concurrent_agents_lease_one_ready_job_once() {
     .unwrap();
   let second_agent = AgentId::from_uuid(uuid::Uuid::from_u128(700)).unwrap();
   seed_matching_agent(&database.pool, second_agent, fixture.allowed_pool).await;
-  let left = PostgresStore::new(independent_pool(&database.pool).await);
-  let right = PostgresStore::new(independent_pool(&database.pool).await);
+  let left = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
+  let right = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
   left.accept_trigger(fixture.request).await.unwrap();
   let left_claim = claim(
     701,
@@ -168,8 +173,8 @@ async fn concurrent_event_and_completion_replays_have_one_dag_transition() {
   seed_authoritative_prerequisites(&database.pool, &fixture)
     .await
     .unwrap();
-  let left = PostgresStore::new(independent_pool(&database.pool).await);
-  let right = PostgresStore::new(independent_pool(&database.pool).await);
+  let left = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
+  let right = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
   left.accept_trigger(fixture.request).await.unwrap();
   let grant = match left
     .claim_ready_job(claim(
@@ -262,9 +267,25 @@ async fn concurrent_fan_in_completions_cannot_leave_a_satisfied_child_blocked() 
   let database = TestDatabase::migrated().await;
   let mut fixture = authoritative_store_contract_fixture();
   let second_agent = AgentId::from_uuid(uuid::Uuid::from_u128(730)).unwrap();
-  let first_root = materialized_job(731, "first-root", Vec::new(), fixture.allowed_pool);
-  let second_root = materialized_job(732, "second-root", Vec::new(), fixture.allowed_pool);
+  let first_root = materialized_job(
+    fixture.request.build.id,
+    fixture.request.attempt_id,
+    731,
+    "first-root",
+    Vec::new(),
+    fixture.allowed_pool,
+  );
+  let second_root = materialized_job(
+    fixture.request.build.id,
+    fixture.request.attempt_id,
+    732,
+    "second-root",
+    Vec::new(),
+    fixture.allowed_pool,
+  );
   let child = materialized_job(
+    fixture.request.build.id,
+    fixture.request.attempt_id,
     733,
     "fan-in-child",
     vec![first_root.id, second_root.id],
@@ -276,8 +297,8 @@ async fn concurrent_fan_in_completions_cannot_leave_a_satisfied_child_blocked() 
     .await
     .unwrap();
   seed_matching_agent(&database.pool, second_agent, fixture.allowed_pool).await;
-  let left = PostgresStore::new(independent_pool(&database.pool).await);
-  let right = PostgresStore::new(independent_pool(&database.pool).await);
+  let left = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
+  let right = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
   left.accept_trigger(fixture.request).await.unwrap();
 
   let first_grant = claimed(
@@ -347,7 +368,7 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
   seed_authoritative_prerequisites(&database.pool, &fixture)
     .await
     .unwrap();
-  PostgresStore::new(database.pool.clone())
+  PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer())
     .accept_trigger(fixture.request)
     .await
     .unwrap();
@@ -473,7 +494,7 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
 }
 
 async fn accept_after_barrier(
-  store: PostgresStore,
+  store: PostgresAuthoritativeStore,
   request: octacity_server_store::AcceptTrigger,
   barrier: Arc<Barrier>,
 ) -> Result<octacity_server_store::AcceptTriggerOutcome, octacity_server_store::StoreError> {
@@ -482,7 +503,7 @@ async fn accept_after_barrier(
 }
 
 async fn claim_after_barrier(
-  store: PostgresStore,
+  store: PostgresAuthoritativeStore,
   claim: JobClaim,
   barrier: Arc<Barrier>,
 ) -> Result<JobClaimOutcome, octacity_server_store::StoreError> {
@@ -491,7 +512,7 @@ async fn claim_after_barrier(
 }
 
 async fn append_after_barrier(
-  store: PostgresStore,
+  store: PostgresAuthoritativeStore,
   request: AppendJobEvents,
   barrier: Arc<Barrier>,
 ) -> Result<AppendJobEventsOutcome, octacity_server_store::StoreError> {
@@ -500,7 +521,7 @@ async fn append_after_barrier(
 }
 
 async fn complete_after_barrier(
-  store: PostgresStore,
+  store: PostgresAuthoritativeStore,
   request: JobCompletion,
   barrier: Arc<Barrier>,
 ) -> Result<CompletionDisposition, octacity_server_store::StoreError> {
@@ -705,19 +726,34 @@ fn event(lease: LeaseAccess, sequence: u64, digest_marker: u8) -> AppendJobEvent
 }
 
 fn materialized_job(
+  build_id: octacity_server_domain::BuildId,
+  _attempt_id: octacity_server_domain::AttemptId,
   id: u128,
   node: &str,
   dependencies: Vec<JobId>,
   pool_id: octacity_server_domain::PoolId,
 ) -> MaterializedJob {
+  let job_id = JobId::from_uuid(uuid::Uuid::from_u128(id)).unwrap();
   MaterializedJob::new(
-    JobId::from_uuid(uuid::Uuid::from_u128(id)).unwrap(),
+    job_id,
     PipelineNodeId::new(node).unwrap(),
     dependencies,
     DependencyPolicy::AllSucceeded,
     vec![pool_id],
-    json!({"command": node}),
-    json!({"platform": "linux"}),
+    octacity_server_store::MaterializedJobPayload::new(
+      JobRequirements {
+        capabilities: BTreeSet::new(),
+        labels: BTreeMap::new(),
+        minimum_cpu_millis: 0,
+        minimum_memory_bytes: 0,
+        minimum_disk_bytes: 0,
+        runtime_class: RuntimeClass::Native,
+        operating_system: PlatformOs::Linux,
+        architecture: PlatformArchitecture::Amd64,
+      },
+      octacity_server_store::testing::job_spec_template(build_id, node),
+    )
+    .unwrap(),
   )
   .unwrap()
 }

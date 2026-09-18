@@ -16,10 +16,17 @@
 
 mod attempt;
 mod build;
+mod cancellation;
 mod cycle;
-mod dag;
+mod reconcile;
+mod retry;
 
 pub use attempt::{AttemptEvent, AttemptState};
 pub use build::{BuildEvent, BuildState};
+pub use cancellation::{CancellationDecision, CancellationError, CancellationTransition, cancel_job_states};
 pub use cycle::{OrchestrationEvent, OrchestrationState};
-pub use dag::{DagDecisionError, DependencyObservation, JobDependencyDecision, dependency_decisions, newly_ready_jobs};
+pub use reconcile::{
+  JobGraphNode, JobGraphTransition, OrchestrationDecision, OrchestrationError, reconcile_cancelled_job_graph,
+  reconcile_job_graph, validate_job_graph,
+};
+pub use retry::{RetryDecision, RetryDecisionError, decide_retry};

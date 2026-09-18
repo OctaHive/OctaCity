@@ -1,6 +1,6 @@
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, IntegrationId, PipelineId, PipelineVersion,
-  ProjectId, RepositoryId, RepositoryName, RepositoryVersion, Timestamp,
+  ProjectId, RepositoryId, RepositoryLocator, RepositoryName, RepositoryVersion, Timestamp,
 };
 use octacity_server_store::{
   BuildConfigurationDefinition, PublishedBuildConfiguration, PublishedRepository, RepositoryDefinition,
@@ -28,7 +28,7 @@ impl TryFrom<RepositoryRow> for PublishedRepository {
   fn try_from(row: RepositoryRow) -> Result<Self, Self::Error> {
     let definition = RepositoryDefinition {
       vcs_integration_id: IntegrationId::from_uuid(row.vcs_integration_id).map_err(|_| StoreError::Unavailable)?,
-      repository_locator: row.repository_locator,
+      repository_locator: RepositoryLocator::new(row.repository_locator).map_err(|_| StoreError::Unavailable)?,
       selection: serde_json::from_value::<RepositorySelectionPolicy>(row.selection_policy.0)
         .map_err(|_| StoreError::Unavailable)?,
     };

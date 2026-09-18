@@ -87,6 +87,33 @@ order, and escaping are significant because they change `payload_bytes`.
 Consumers must verify the decoded bytes from the envelope and must not parse and
 re-serialize the payload before verification.
 
+The official server producer uses one deterministic representation: protocol
+struct fields remain in declaration order and every map is a lexically ordered
+map. `JobSpecSigner::sign` validates the complete value, serializes that exact
+representation once, and signs the same bytes placed in the envelope. Equal
+immutable inputs therefore produce equal payload bytes and signatures without
+making canonical JSON a requirement for independent protocol producers.
+
+### Server derivation boundary
+
+The server does not accept a `JobSpecV1` or `SignedEnvelope` from a management
+command or repository. `octacity-server-job` derives the value from the
+immutable Build source and parameters, the strict Pipeline execution template,
+and the effective runtime, cache, output, source-plugin, and Octa policy
+snapshots. The Pipeline template can select only workspace-relative Octafile,
+task names, task arguments, concurrency, parallel, and fail-fast behavior.
+Unknown fields are rejected, so it cannot supply a secret profile, host path,
+lease fence, transfer target, upload credential, or pre-signed payload.
+
+The server first persists a stable `JobSpecTemplate` bound to the immutable
+Build and Pipeline node. The template excludes Job identity, Attempt number,
+issue time, expiry, and signature. When a root or dependent Job transitions to
+`Ready`, the authoritative transaction adds its concrete Job identity, Attempt
+number, and current validity window, signs the payload with the active key, and
+persists the envelope before inserting the ready-queue entry. Lease fences,
+cache grants, artifact upload capabilities, and secret-provider grants remain
+short-lived out-of-band values authorized after placement.
+
 ### Verification order
 
 `verify_job_spec` performs these steps in order:
@@ -414,6 +441,7 @@ authenticated; there is no preferred canonical serializer in v1.
 ## Implementation locations
 
 - Wire types and verification: `shared/octacity-protocol/src/lib.rs`
+- Server template derivation and canonical signing helper: `server/core/octacity-server-job/src/spec/`
 - Agent configuration and verification keys: `agent/octacity-config/src/lib.rs`
 - Source-plugin inventory and host: `agent/octacity-source/src/`
 - Octa release inventory and supervision: `agent/octacity-runner/src/`

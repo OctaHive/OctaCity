@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use octacity_server_domain::{EntityKind, JobId};
-use octacity_server_store::{AppendJobEvents, AppendJobEventsOutcome, EventSequence, StoreError, StoreOperation};
+use octacity_server_store::{
+  AppendJobEvents, AppendJobEventsOutcome, EventSequence, StoreError, StoreOperation, start_job_execution,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, types::Json};
@@ -10,6 +12,7 @@ use crate::{
   database::{classify, number, unavailable},
   lease,
   mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  state::{job_state, parse_job_state},
 };
 
 pub(crate) async fn execute(pool: &PgPool, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError> {
@@ -111,6 +114,7 @@ pub(crate) async fn execute(pool: &PgPool, request: AppendJobEvents) -> Result<A
   }
 
   if !new_events.is_empty() {
+    persist_execution_started(&mut transaction, lease.job_id, request.accepted_at).await?;
     let lease_id = request.lease.lease_id.as_uuid();
     let mut query = QueryBuilder::<Postgres>::new(
       "INSERT INTO job_events \
@@ -157,6 +161,37 @@ pub(crate) async fn execute(pool: &PgPool, request: AppendJobEvents) -> Result<A
   )
   .await?;
   Ok(outcome)
+}
+
+async fn persist_execution_started(
+  transaction: &mut sqlx::Transaction<'_, Postgres>,
+  job_id: uuid::Uuid,
+  started_at: octacity_server_domain::Timestamp,
+) -> Result<(), StoreError> {
+  let current: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = $1 FOR UPDATE")
+    .bind(job_id)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  let current_state = parse_job_state(&current)?;
+  let next = start_job_execution(current_state)?;
+  if next != current_state {
+    let updated = sqlx::query(
+      "UPDATE jobs SET state = $1, version = version + 1, \
+       updated_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3 AND state = $4",
+    )
+    .bind(job_state(next))
+    .bind(started_at.unix_millis())
+    .bind(job_id)
+    .bind(current)
+    .execute(&mut **transaction)
+    .await
+    .map_err(|error| classify(error, EntityKind::Job))?;
+    if updated.rows_affected() != 1 {
+      return Err(StoreError::Unavailable);
+    }
+  }
+  Ok(())
 }
 
 #[derive(FromRow)]

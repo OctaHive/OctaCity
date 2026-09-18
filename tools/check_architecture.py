@@ -56,7 +56,7 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # Application and core crates are intentionally limited to foundational
     # libraries. Provider, persistence, transport, and configuration SDKs are
     # rejected without relying on a finite denylist of known implementations.
-    "application": frozenset({"async-trait", "serde", "thiserror", "tracing", "uuid"}),
+    "application": frozenset({"async-trait", "serde", "serde_json", "thiserror", "tracing", "uuid"}),
     "core": frozenset({
         "async-trait",
         "serde",
@@ -80,6 +80,14 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
         "zeroize",
     }),
     "protocol": frozenset({"base64", "serde", "serde_json", "thiserror"}),
+}
+
+# Narrow package capabilities that are part of a core security boundary rather
+# than transport, persistence, or provider integration. Keep these exceptions
+# package-specific so another core crate cannot acquire private-key handling by
+# depending on the same libraries.
+PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
+    "octacity-server-job": frozenset({"base64", "ed25519-dalek"}),
 }
 
 SHARED_SOURCE_RULES = (
@@ -369,8 +377,9 @@ def check(graph: Graph) -> list[Violation]:
                     )
                 )
         allowed_for_role = ROLE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.role)
+        allowed_for_package = PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.name, frozenset())
         unapproved_dependencies = (
-            sorted(set(package.external_dependencies) - allowed_for_role)
+            sorted(set(package.external_dependencies) - allowed_for_role - allowed_for_package)
             if allowed_for_role is not None
             else []
         )

@@ -33,8 +33,9 @@ pub use name::{
   MAX_RESOURCE_NAME_BYTES, PipelineName, PoolName, ProjectName, RepositoryName,
 };
 pub use source::{
-  MAX_NETWORK_HOST_BYTES, MAX_SOURCE_REFERENCE_BYTES, NetworkHost, NetworkHostError, SourceReference,
-  SourceReferenceError,
+  ImmutableRevision, ImmutableRevisionError, MAX_IMMUTABLE_REVISION_BYTES, MAX_NETWORK_HOST_BYTES,
+  MAX_REPOSITORY_LOCATOR_BYTES, MAX_SOURCE_REFERENCE_BYTES, NetworkHost, NetworkHostError, RepositoryLocator,
+  RepositoryLocatorError, SourceReference, SourceReferenceError,
 };
 pub use time::{MAX_TIMESTAMP_MILLIS, MIN_TIMESTAMP_MILLIS, Timestamp};
 pub use transition::TransitionError;

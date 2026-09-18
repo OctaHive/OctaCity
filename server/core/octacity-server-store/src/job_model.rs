@@ -1,4 +1,6 @@
 use octacity_server_domain::{AgentId, JobId, LeaseId, PoolId, Timestamp, canonicalize_json};
+use octacity_server_job::{JobEvent, JobFailureClass, JobState};
+use octacity_server_orchestrator::{AttemptState, BuildState};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
@@ -262,9 +264,48 @@ pub enum JobCompletionKind {
   /// The Job completed successfully.
   Succeeded,
   /// The Job completed with a classified execution failure.
-  Failed,
+  Failed(JobFailureClass),
   /// The Job reached terminal cancellation.
   Cancelled,
+}
+
+impl JobCompletionKind {
+  /// Returns the durable failure class carried by an unsuccessful completion.
+  #[must_use]
+  pub const fn failure_class(self) -> Option<JobFailureClass> {
+    match self {
+      Self::Failed(class) => Some(class),
+      Self::Succeeded | Self::Cancelled => None,
+    }
+  }
+}
+
+/// Applies the explicit execution and terminal facts represented by an Agent
+/// completion to the durable Job state machine.
+pub fn complete_job_state(current: JobState, kind: JobCompletionKind) -> Result<JobState, StoreError> {
+  let running = start_job_execution(current)?;
+  let event = match kind {
+    JobCompletionKind::Succeeded => JobEvent::Succeed,
+    JobCompletionKind::Failed(_) => JobEvent::Fail,
+    JobCompletionKind::Cancelled => JobEvent::Cancel,
+  };
+  running.transition(event).map_err(|_| StoreError::Conflict {
+    entity: octacity_server_domain::EntityKind::Job,
+  })
+}
+
+/// Applies the persisted execution-start fact while allowing later Agent
+/// deliveries to observe an already running or cancelling Job idempotently.
+pub fn start_job_execution(current: JobState) -> Result<JobState, StoreError> {
+  match current {
+    JobState::Leased => current
+      .transition(JobEvent::ExecutionStarted)
+      .map_err(|_| StoreError::Unavailable),
+    JobState::Running | JobState::Cancelling => Ok(current),
+    _ => Err(StoreError::Conflict {
+      entity: octacity_server_domain::EntityKind::Job,
+    }),
+  }
 }
 
 /// Complete atomic input for terminal Job completion.
@@ -287,6 +328,14 @@ pub struct CompletionDisposition {
   pub disposition: MutationDisposition,
   /// Completed Job identity.
   pub job_id: JobId,
+  /// Authoritative failure class persisted for an unsuccessful execution.
+  pub failure_class: Option<JobFailureClass>,
   /// Dependency-unblocked Jobs inserted into the ready queue by this commit.
   pub ready_jobs: Vec<JobId>,
+  /// Jobs made terminal by dependency failure propagation in this commit.
+  pub skipped_jobs: Vec<JobId>,
+  /// Attempt state derived from the complete post-transition graph.
+  pub attempt_state: AttemptState,
+  /// Build state derived from the current Attempt state.
+  pub build_state: BuildState,
 }
