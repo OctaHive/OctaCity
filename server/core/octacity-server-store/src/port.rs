@@ -2,8 +2,9 @@ use async_trait::async_trait;
 
 use crate::{
   AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, CancelBuild, CancellationDisposition,
-  CompletionDisposition, JobClaim, JobClaimOutcome, JobCompletion, RetryBuild, RetryDisposition, StoreError,
-  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
+  CompletionDisposition, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, ReadJobEvents, RetryBuild,
+  RetryDisposition, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
+  TriggerEvaluationOutcome,
 };
 
 /// Atomic persistence used by Trigger acceptance.
@@ -38,6 +39,16 @@ pub trait JobExecutionStore: Send + Sync {
   /// Commits an idempotent terminal outcome only when the declared final event
   /// cursor is already durable for the current Lease.
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError>;
+}
+
+/// Read-only authoritative access to immutable Job-event streams.
+///
+/// Each invocation is a complete short store operation. Implementations must
+/// not retain a transaction or checked-out database connection after return.
+#[async_trait]
+pub trait JobEventReadStore: Send + Sync {
+  /// Reads one bounded ordered page after the caller's durable cursor.
+  async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError>;
 }
 
 /// Atomic persistence used by Build cancellation and retry.

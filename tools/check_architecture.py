@@ -43,6 +43,7 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # Transport adapters may use transport/runtime support, but every new
     # external dependency still requires an explicit architecture-policy edit.
     "api": frozenset({
+        "async-trait",
         "axum",
         "http",
         "serde",

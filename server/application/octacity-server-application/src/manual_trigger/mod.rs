@@ -8,9 +8,9 @@ mod preparation;
 mod service;
 
 pub use model::{
-  EffectiveProjectPolicySourceError, JobSpecToolchainPolicy, ManualSourceSelection, ManualTriggerCommand,
-  ManualTriggerContext, ManualTriggerContextError, ManualTriggerError, ManualTriggerInputError,
-  RevisionResolutionError, RevisionResolutionRequest,
+  AcceptManualTriggerCommand, EffectiveProjectPolicySourceError, JobSpecToolchainPolicy, ManualSourceSelection,
+  ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerError, ManualTriggerInputError,
+  ManualTriggerOutcome, RevisionResolutionError, RevisionResolutionRequest,
 };
 pub use ports::{
   EffectiveProjectPolicySource, ManualTriggerContextProvider, RevisionResolver, StoreBackedManualTriggerContext,

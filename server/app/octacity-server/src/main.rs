@@ -60,8 +60,15 @@ fn main() -> ExitCode {
 fn validate(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
   let config = ServerConfig::load(&path)?;
   println!(
-    "server configuration is valid (management listener {})",
-    config.management_bind()
+    "server configuration is valid (management listener {}, security trusted_network_unauthenticated, external acknowledgement {}, agent listener {}, webhook listener {})",
+    config.management_bind(),
+    config.unauthenticated_management_acknowledged(),
+    config
+      .agent_bind()
+      .map_or_else(|| "disabled".to_owned(), |address| address.to_string()),
+    config
+      .webhook_bind()
+      .map_or_else(|| "disabled".to_owned(), |address| address.to_string()),
   );
   Ok(())
 }
@@ -69,7 +76,13 @@ fn validate(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
 async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
   let config = ServerConfig::load(&path)?;
   let mut runtime = ServerRuntime::start(config).await?;
-  info!(management_addr = %runtime.management_addr(), "server started");
+  info!(
+    management_addr = %runtime.management_addr(),
+    agent_addr = ?runtime.agent_addr(),
+    webhook_addr = ?runtime.webhook_addr(),
+    management_security_mode = "trusted_network_unauthenticated",
+    "server started"
+  );
   tokio::select! {
     signal = shutdown_signal() => {
       signal?;

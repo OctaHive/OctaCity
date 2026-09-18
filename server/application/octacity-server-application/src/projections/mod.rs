@@ -9,13 +9,23 @@ mod trigger;
 use thiserror::Error;
 
 pub use build::{AttemptProjection, BuildProjection, ParameterValueProjection};
-pub use configuration::{BuildConfigurationProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection};
+pub(crate) use configuration::validate_configuration_projection;
+pub use configuration::{
+  AgentRequirementsProjection, ArtifactPolicyProjection, BuildConfigurationProjection, ConfigurationCacheProjection,
+  ConfigurationRuntimeProjection, NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection,
+  ParameterTypeProjection, PlatformArchitectureProjection, PlatformOsProjection, RepositoryProjection,
+  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
+  TriggerKindProjection,
+};
 pub use dag::{DagCausalityProjection, DagEdgeProjection, DagNodeProjection};
 pub use job::{
   JobAssignmentProjection, JobFailureClassification, JobOutputKind, JobOutputReference, JobPlacementProjection,
   JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, Sha256DigestProjection,
 };
-pub use pipeline::{PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection};
+pub use pipeline::{
+  DependencyPolicyProjection, JobExecutionProjection, PipelineEdgeProjection, PipelineNodeProjection,
+  PipelineProjection,
+};
 pub use project::{ProjectProjection, ProjectSummaryProjection};
 pub use trigger::{TriggerCauseProjection, TriggerHistoryProjection};
 

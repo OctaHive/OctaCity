@@ -7,7 +7,8 @@ use sha2::{Digest as _, Sha256};
 use crate::model::require_bounded_json;
 use crate::{
   EventDigest, EventSequence, JobEventKind, LeaseFence, MAX_JOB_EVENT_BATCH_BYTES, MAX_JOB_EVENT_BATCH_SIZE,
-  MAX_JOB_EVENT_PAYLOAD_BYTES, MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation,
+  MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_JOB_EVENT_READ_PAGE_SIZE, MutationDisposition, RegistrationEpoch, StoreError,
+  StoreInputError, StoreOperation,
 };
 
 /// Complete atomic input for compatible ready-Job selection and Lease creation.
@@ -256,6 +257,50 @@ pub struct AppendJobEventsOutcome {
   pub acknowledged_through: EventSequence,
   /// Number of newly inserted events; an exact replay inserts zero.
   pub inserted: usize,
+}
+
+/// Bounded durable read after one caller-observed Job-event sequence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReadJobEvents {
+  /// Job whose immutable event stream is requested.
+  pub job_id: JobId,
+  /// Greatest sequence already observed by the caller; zero starts the stream.
+  pub after_sequence: u64,
+  /// Maximum number of events returned by one store operation.
+  pub limit: u16,
+}
+
+impl ReadJobEvents {
+  /// Creates one validated bounded Job-event read.
+  pub fn new(job_id: JobId, after_sequence: u64, limit: u16) -> Result<Self, StoreError> {
+    let request = Self {
+      job_id,
+      after_sequence,
+      limit,
+    };
+    request.validate()?;
+    Ok(request)
+  }
+
+  /// Revalidates the page bound at an adapter seam.
+  pub fn validate(self) -> Result<(), StoreError> {
+    if self.limit == 0 || usize::from(self.limit) > MAX_JOB_EVENT_READ_PAGE_SIZE {
+      return Err(StoreError::invalid(
+        StoreOperation::ReadJobEvents,
+        StoreInputError::InvalidJobEventPageSize,
+      ));
+    }
+    Ok(())
+  }
+}
+
+/// One ordered durable Job-event page and its resumable sequence cursor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JobEventPage {
+  /// Contiguous events after the requested sequence, in ascending order.
+  pub events: Vec<DurableJobEvent>,
+  /// Last returned sequence, or the current durable stream cursor when empty.
+  pub cursor: u64,
 }
 
 /// Stable terminal classification stored for one completed Job.

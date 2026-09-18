@@ -40,6 +40,8 @@ pub enum StoreOperation {
   ClaimReadyJob,
   /// Append one contiguous idempotent batch of Job events.
   AppendJobEvents,
+  /// Read one bounded ordered page from a Job event stream.
+  ReadJobEvents,
   /// Commit one terminal Job outcome after its event history is durable.
   CompleteJob,
   /// Apply durable cancellation intent to one Build and its current Attempt.
@@ -140,6 +142,12 @@ pub enum StoreInputError {
   /// An append request contains more events than one transaction permits.
   #[error("an event batch exceeds its item bound")]
   EventBatchTooLarge,
+  /// A Job-event read page size is zero or exceeds its contract bound.
+  #[error("a job event page size is outside its allowed range")]
+  InvalidJobEventPageSize,
+  /// A Job-event long-poll wait exceeds the application contract bound.
+  #[error("a job event wait exceeds its allowed bound")]
+  InvalidJobEventWait,
   /// An atomic store request exceeds its total encoded-byte budget.
   #[error("an atomic store request exceeds its encoded-byte budget")]
   RequestTooLarge,

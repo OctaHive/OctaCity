@@ -137,8 +137,9 @@ cargo run -p octacity-server -- validate server.toml
 cargo run -p octacity-server -- run server.toml
 ```
 
-It exposes only `/health/live` and `/health/ready`; management mutations and
-server-Agent coordination routes are intentionally absent at this phase.
+It exposes `/health/live`, `/health/ready`, and
+`/api/v1/operations/metadata`; management mutations and server-Agent
+coordination routes are intentionally absent at this phase.
 Liveness is process-local. Readiness is a periodically refreshed, bounded
 snapshot and can recover after PostgreSQL or object storage becomes available
 again without restarting the process. Safe structured logs identify the failed

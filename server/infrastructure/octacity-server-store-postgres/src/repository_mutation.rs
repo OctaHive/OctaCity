@@ -14,7 +14,6 @@ use crate::{
 
 #[derive(Serialize)]
 struct CreateFingerprint<'a> {
-  id: RepositoryId,
   project_id: ProjectId,
   name: &'a RepositoryName,
   definition: &'a RepositoryDefinition,
@@ -38,7 +37,6 @@ pub(crate) async fn create(
     request.published_at,
     EntityKind::Repository,
     &CreateFingerprint {
-      id: request.id,
       project_id: request.project_id,
       name: &request.name,
       definition: &request.definition,

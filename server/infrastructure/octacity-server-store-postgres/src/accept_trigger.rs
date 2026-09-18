@@ -564,9 +564,10 @@ fn replay_suppressed(value: Value) -> Result<SuppressTriggerOutcome, StoreError>
 }
 
 fn accepted_facts(request: &AcceptTrigger, outcome: &AcceptTriggerOutcome) -> MutationFacts {
+  let (actor_kind, actor_identity) = trigger_actor(&request.trigger);
   MutationFacts {
-    actor_kind: "trigger",
-    actor_identity: Some(request.trigger.trigger.id.to_string()),
+    actor_kind,
+    actor_identity,
     target_identity: outcome.build_id.to_string(),
     safe_metadata: json!({
       "attempt_id": outcome.attempt_id,
@@ -583,9 +584,10 @@ fn accepted_facts(request: &AcceptTrigger, outcome: &AcceptTriggerOutcome) -> Mu
 }
 
 fn suppressed_facts(request: &SuppressTrigger, occurrence_id: TriggerOccurrenceId) -> MutationFacts {
+  let (actor_kind, actor_identity) = trigger_actor(&request.trigger);
   MutationFacts {
-    actor_kind: "trigger",
-    actor_identity: Some(request.trigger.trigger.id.to_string()),
+    actor_kind,
+    actor_identity,
     target_identity: occurrence_id.to_string(),
     safe_metadata: json!({
       "reason": "configuration_disabled",
@@ -596,5 +598,46 @@ fn suppressed_facts(request: &SuppressTrigger, occurrence_id: TriggerOccurrenceI
       "schema_version": 1,
       "trigger_occurrence_id": occurrence_id,
     }),
+  }
+}
+
+fn trigger_actor(trigger: &octacity_server_store::NormalizedTriggerOccurrence) -> (&'static str, Option<String>) {
+  match &trigger.cause {
+    octacity_server_store::TriggerCause::Manual {} => ("unauthenticated_management", None),
+    _ => ("trigger", Some(trigger.trigger.id.to_string())),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use octacity_server_domain::{
+    BuildConfigurationId, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  };
+  use octacity_server_store::{
+    NormalizedTriggerOccurrence, TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerTarget,
+  };
+
+  use super::trigger_actor;
+
+  #[test]
+  fn manual_trigger_is_audited_as_the_unauthenticated_management_actor() {
+    let trigger = NormalizedTriggerOccurrence::root(
+      TriggerOccurrenceId::from_uuid(uuid::Uuid::from_u128(1)).unwrap(),
+      TriggerDefinitionRef {
+        id: TriggerId::from_uuid(uuid::Uuid::from_u128(2)).unwrap(),
+        version: TriggerVersion::INITIAL,
+      },
+      TriggerTarget {
+        configuration_id: BuildConfigurationId::from_uuid(uuid::Uuid::from_u128(3)).unwrap(),
+        configuration_version: octacity_server_domain::BuildConfigurationVersion::INITIAL,
+      },
+      TriggerIdentity::new("manual:audit").unwrap(),
+      TriggerCause::Manual {},
+      TriggerMetadata::default(),
+      Timestamp::from_unix_millis(1).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(trigger_actor(&trigger), ("unauthenticated_management", None));
   }
 }

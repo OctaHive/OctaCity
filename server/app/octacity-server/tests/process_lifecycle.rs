@@ -72,6 +72,47 @@ key_file = "signing-key"
   ));
 }
 
+#[tokio::test]
+async fn external_unauthenticated_management_requires_acknowledgement_before_bind() {
+  let reservation = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let port = reservation.local_addr().unwrap().port();
+  drop(reservation);
+  let external = valid_configuration().replace("127.0.0.1:0", &format!("0.0.0.0:{port}"));
+
+  let error = ServerConfig::parse_toml(&external).unwrap_err();
+  assert!(error.to_string().contains("acknowledge_unauthenticated_management"));
+  let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port))
+    .await
+    .expect("configuration rejection must happen before any listener bind");
+  drop(listener);
+
+  let acknowledged = external.replace(
+    &format!("management_bind = \"0.0.0.0:{port}\""),
+    &format!("management_bind = \"0.0.0.0:{port}\"\nacknowledge_unauthenticated_management = true"),
+  );
+  let config = ServerConfig::parse_toml(&acknowledged).unwrap();
+  assert!(config.management_externally_reachable());
+  assert!(config.unauthenticated_management_acknowledged());
+}
+
+#[test]
+fn management_agent_and_webhook_ingress_are_independently_configured() {
+  let configured = valid_configuration().replace(
+    "management_bind = \"127.0.0.1:0\"",
+    "management_bind = \"127.0.0.1:0\"\nagent_bind = \"127.0.0.1:0\"\nwebhook_bind = \"[::1]:0\"",
+  );
+  let config = ServerConfig::parse_toml(&configured).unwrap();
+  assert_eq!(config.agent_bind().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
+  assert_eq!(config.webhook_bind().unwrap().ip(), std::net::Ipv6Addr::LOCALHOST);
+
+  let overlapping = valid_configuration().replace(
+    "management_bind = \"127.0.0.1:0\"",
+    "management_bind = \"127.0.0.1:8080\"\nagent_bind = \"0.0.0.0:8080\"\nacknowledge_unauthenticated_management = true",
+  );
+  let error = ServerConfig::parse_toml(&overlapping).unwrap_err();
+  assert!(error.to_string().contains("independently bindable"));
+}
+
 fn valid_configuration() -> &'static str {
   r#"
 management_bind = "127.0.0.1:0"

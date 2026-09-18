@@ -19,6 +19,7 @@ mod configuration_row;
 mod database;
 mod job_claim;
 mod job_completion;
+mod job_event_query;
 mod job_events;
 mod lease;
 mod mutation;

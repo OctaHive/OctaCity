@@ -15,7 +15,6 @@ use crate::{
 
 #[derive(Serialize)]
 struct CreateFingerprint<'a> {
-  id: ProjectId,
   parent_id: Option<ProjectId>,
   name: &'a octacity_server_domain::ProjectName,
 }
@@ -47,7 +46,6 @@ pub(crate) async fn create(pool: &sqlx::PgPool, request: CreateProject) -> Resul
     request.created_at,
     EntityKind::Project,
     &CreateFingerprint {
-      id: request.id,
       parent_id: request.parent_id,
       name: &request.name,
     },

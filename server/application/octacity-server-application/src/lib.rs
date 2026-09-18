@@ -6,10 +6,18 @@
 
 #![forbid(unsafe_code)]
 
+mod configuration_cqrs;
+mod cqrs;
+mod error;
+mod job_event_cqrs;
+mod management_input;
 mod manual_trigger;
+mod pipeline_cqrs;
+mod project_cqrs;
 mod project_policy;
 mod projections;
 mod snapshots;
+mod transaction;
 
 use std::sync::Arc;
 
@@ -19,11 +27,30 @@ use octacity_server_store::{
 };
 use thiserror::Error;
 
+pub use configuration_cqrs::{
+  BuildConfigurationCommandOutcome, BuildConfigurationHandlers, CreateBuildConfigurationCommand,
+  CreateRepositoryCommand, GetBuildConfigurationQuery, GetRepositoryQuery, PublishBuildConfigurationVersionCommand,
+  PublishRepositoryVersionCommand, RepositoryCommandOutcome,
+};
+pub use cqrs::{Command, CommandHandler, MutationDisposition, Query, QueryHandler};
+pub use error::{ApplicationError, ApplicationFailure};
+pub use job_event_cqrs::{
+  JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
+};
+pub use management_input::{ManagementInputError, ManagementInputFactory, ManualTriggerInput};
 pub use manual_trigger::{
-  EffectiveProjectPolicySource, EffectiveProjectPolicySourceError, JobSpecToolchainPolicy, ManualSourceSelection,
-  ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider,
-  ManualTriggerError, ManualTriggerInputError, ManualTriggerService, RevisionResolutionError,
-  RevisionResolutionRequest, RevisionResolver, StoreBackedManualTriggerContext,
+  AcceptManualTriggerCommand, EffectiveProjectPolicySource, EffectiveProjectPolicySourceError, JobSpecToolchainPolicy,
+  ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
+  ManualTriggerContextProvider, ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome,
+  ManualTriggerService, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
+  StoreBackedManualTriggerContext,
+};
+pub use pipeline_cqrs::{
+  CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
+};
+pub use project_cqrs::{
+  CreateProjectCommand, DeleteProjectCommand, DeleteProjectCommandOutcome, GetProjectQuery, ListProjectsQuery,
+  MoveProjectCommand, ProjectCommandOutcome, ProjectHandlers, ProjectPageProjection, RenameProjectCommand,
 };
 pub use project_policy::{
   ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
@@ -31,13 +58,45 @@ pub use project_policy::{
   ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName, resolve_project_policy,
 };
 pub use projections::{
-  AttemptProjection, BuildConfigurationProjection, BuildProjection, ConfigurationCacheProjection,
-  ConfigurationRuntimeProjection, DagCausalityProjection, DagEdgeProjection, DagNodeProjection,
-  JobAssignmentProjection, JobFailureClassification, JobOutputKind, JobOutputReference, JobPlacementProjection,
-  JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, ParameterValueProjection,
-  PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection, ProjectProjection, ProjectSummaryProjection,
-  ProjectionError, Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection,
+  AgentRequirementsProjection, ArtifactPolicyProjection, AttemptProjection, BuildConfigurationProjection,
+  BuildProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection, DagCausalityProjection,
+  DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection, JobAssignmentProjection, JobExecutionProjection,
+  JobFailureClassification, JobOutputKind, JobOutputReference, JobPlacementProjection, JobProjection,
+  JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, NetworkPolicyProjection,
+  ParameterDefinitionProjection, ParameterSchemaProjection, ParameterTypeProjection, ParameterValueProjection,
+  PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection, PlatformArchitectureProjection,
+  PlatformOsProjection, ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection,
+  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
+  Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
 };
+pub use transaction::CommandTransaction;
+
+/// Maximum number of Projects accepted by one management list query.
+pub const MAX_PROJECT_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_PROJECT_PAGE_SIZE;
+/// Maximum number of Job events accepted by one management read query.
+pub const MAX_JOB_EVENT_PAGE_SIZE: u16 = octacity_server_store::MAX_JOB_EVENT_READ_PAGE_SIZE as u16;
+
+/// Typed application query for bounded redacted Build-log search.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchBuildLogsQuery {
+  /// Backend-neutral validated search shape.
+  pub search: LogSearchQuery,
+}
+
+impl Query for SearchBuildLogsQuery {
+  type Outcome = LogSearchPage;
+}
+
+/// Typed application query for Build-log projection freshness.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GetBuildLogFreshnessQuery {
+  /// Project whose authoritative and indexed watermarks are requested.
+  pub project_id: ProjectId,
+}
+
+impl Query for GetBuildLogFreshnessQuery {
+  type Outcome = LogSearchFreshness;
+}
 
 /// Application query service that combines authoritative indexing work with a
 /// replaceable derived Build-log search projection.
@@ -100,6 +159,32 @@ where
       indexed_through,
       committed_through,
     })
+  }
+}
+
+#[async_trait::async_trait]
+impl<W, I> QueryHandler<SearchBuildLogsQuery> for BuildLogSearch<W, I>
+where
+  W: LogIndexWorkStore + 'static,
+  I: LogSearchIndex + 'static,
+{
+  type Error = BuildLogSearchError;
+
+  async fn handle_query(&self, query: SearchBuildLogsQuery) -> Result<LogSearchPage, Self::Error> {
+    self.search(query.search).await
+  }
+}
+
+#[async_trait::async_trait]
+impl<W, I> QueryHandler<GetBuildLogFreshnessQuery> for BuildLogSearch<W, I>
+where
+  W: LogIndexWorkStore + 'static,
+  I: LogSearchIndex + 'static,
+{
+  type Error = BuildLogSearchError;
+
+  async fn handle_query(&self, query: GetBuildLogFreshnessQuery) -> Result<LogSearchFreshness, Self::Error> {
+    self.freshness(query.project_id).await
   }
 }
 

@@ -11,14 +11,14 @@ use octacity_server_store::{
   AppendJobEventsOutcome, AuthenticateAgentRegistration, AuthenticatedAgentRegistration,
   BuildConfigurationMutationOutcome, BuildRunControlStore, CancelBuild, CancellationDisposition, CompletionDisposition,
   ConfigurationStore, CreateBuildConfiguration, CreateProject, CreateRepository, DeleteProject, DeleteProjectOutcome,
-  IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore,
-  ListProjects, LogIndexPosition, LogIndexWorkStore, MoveProject, MutationDisposition, PipelineMutationOutcome,
-  PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectStore, PublishBuildConfigurationVersion,
-  PublishPipelineVersion, PublishRepositoryVersion, PublishedBuildConfiguration, PublishedPipeline,
-  PublishedRepository, RegisterAgent, RenameProject, RepositoryMutationOutcome, RetryBuild, RetryDisposition,
-  RevokeAgentCredential, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
-  TriggerAcceptanceStore, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationOutcome, TriggerKind,
-  TriggerTarget,
+  IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage,
+  JobEventReadStore, JobExecutionStore, ListProjects, LogIndexPosition, LogIndexWorkStore, MoveProject,
+  MutationDisposition, PipelineMutationOutcome, PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage,
+  ProjectStore, PublishBuildConfigurationVersion, PublishPipelineVersion, PublishRepositoryVersion,
+  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents, RegisterAgent, RenameProject,
+  RepositoryMutationOutcome, RetryBuild, RetryDisposition, RevokeAgentCredential, StoreError, SuppressTrigger,
+  SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionRef, TriggerDefinitionStore,
+  TriggerEvaluationOutcome, TriggerKind, TriggerTarget,
 };
 use sqlx::PgPool;
 
@@ -84,6 +84,20 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
 
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     crate::job_completion::execute(&self.store.pool, &self.job_spec_signer, request).await
+  }
+}
+
+#[async_trait]
+impl JobEventReadStore for PostgresStore {
+  async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
+    crate::job_event_query::read(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl JobEventReadStore for PostgresAuthoritativeStore {
+  async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
+    crate::job_event_query::read(&self.store.pool, request).await
   }
 }
 

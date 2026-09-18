@@ -56,7 +56,6 @@ struct PipelineMetadata {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum MutationFingerprint {
   Create {
-    id: PipelineId,
     project_id: ProjectId,
     name: PipelineName,
     dag: octacity_server_pipeline::PublishablePipelineDag,
@@ -93,7 +92,6 @@ impl PipelineStore for InMemoryPipelineStore {
     validate_dag(&request.dag, StoreOperation::CreatePipeline)?;
     let scope = "create-pipeline";
     let fingerprint = MutationFingerprint::Create {
-      id: request.id,
       project_id: request.project_id,
       name: request.name.clone(),
       dag: request.dag.clone(),

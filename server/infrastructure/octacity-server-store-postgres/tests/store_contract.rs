@@ -11,8 +11,8 @@ use octacity_server_job::JobFailureClass;
 use octacity_server_store::{
   AgentCredentialStore as _, AgentRegistrationProof, AppendJobEvents, BuildRunControlStore as _, CredentialSecret,
   DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind,
-  JobExecutionStore as _, LeaseAccess, LeaseFence, MutationDisposition, RegisterAgent, StoreError,
-  TriggerAcceptanceStore as _,
+  JobEventReadStore as _, JobExecutionStore as _, LeaseAccess, LeaseFence, MutationDisposition, ReadJobEvents,
+  RegisterAgent, StoreError, TriggerAcceptanceStore as _,
   testing::{
     MutationEvidenceCounts, MutationEvidenceProbe, agent_credential_store_contract_fixture,
     authoritative_store_contract_fixture, retry_request, verify_agent_credential_store_contract,
@@ -527,6 +527,14 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   };
   let event = one_event(access);
   let appended = store.append_job_events(event.clone()).await?;
+  let event_page = store.read_job_events(ReadJobEvents::new(grant.job_id, 0, 10)?).await?;
+  assert_eq!(event_page.events.len(), 1);
+  assert_eq!(event_page.events[0].sequence().get(), 1);
+  assert_eq!(event_page.events[0].payload(), &json!({"state": "running"}));
+  assert_eq!(event_page.cursor, 1);
+  let empty_page = store.read_job_events(ReadJobEvents::new(grant.job_id, 1, 10)?).await?;
+  assert!(empty_page.events.is_empty());
+  assert_eq!(empty_page.cursor, 1);
   let completion = JobCompletion {
     lease: access,
     final_sequence: Some(EventSequence::new(1)?),
@@ -563,6 +571,13 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   );
   assert_eq!(recovered.claim_ready_job(claim).await?, JobClaimOutcome::Claimed(grant));
   assert_eq!(recovered.append_job_events(event).await?, appended);
+  assert_eq!(
+    recovered
+      .read_job_events(ReadJobEvents::new(grant.job_id, 0, 10)?)
+      .await?,
+    event_page,
+    "a fresh adapter must reconstruct the event page from durable state"
+  );
   let mut expected_replay = completed.clone();
   expected_replay.disposition = MutationDisposition::Replayed;
   assert_eq!(recovered.complete_job(completion).await?, expected_replay);

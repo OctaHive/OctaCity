@@ -77,6 +77,21 @@ pub struct MutationEvidenceCounts {
   pub outbox: usize,
 }
 
+/// Test-only failure stage for an accepted mutation transaction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MutationFailurePoint {
+  /// Fail after staging the domain-state change.
+  DomainState,
+  /// Fail after staging the durable idempotency outcome.
+  IdempotencyOutcome,
+  /// Fail after staging the immutable audit fact.
+  AuditFact,
+  /// Fail after staging the required outbox entry.
+  OutboxEntry,
+  /// Fail immediately before publishing the staged transaction.
+  Commit,
+}
+
 /// Test-only observation seam used by reusable adapter contracts.
 ///
 /// Production interfaces deliberately do not expose persistence internals.

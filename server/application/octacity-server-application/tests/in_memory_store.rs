@@ -4,7 +4,7 @@ use std::{
   task::{Context, Poll, Waker},
 };
 
-use octacity_server_application::BuildLogSearch;
+use octacity_server_application::{BuildLogSearch, QueryHandler, SearchBuildLogsQuery};
 use octacity_server_domain::{AttemptId, BuildId, JobId, LogChunkId, LogIndexingWorkId, ProjectId, Timestamp};
 use octacity_server_store::{
   BuildLogStream, LogIndexPosition, LogSearchDocument, LogSearchIndex as _, LogSearchMode, LogSearchQuery,
@@ -54,18 +54,20 @@ fn log_search_freshness_uses_the_authoritative_watermark() {
       .unwrap();
     let service = BuildLogSearch::new(work, index);
     let page = service
-      .search(LogSearchQuery {
-        project_id,
-        text: "later".to_owned(),
-        mode: LogSearchMode::Literal,
-        build_id: None,
-        attempt_id: None,
-        job_id: None,
-        stream: None,
-        occurred_from: None,
-        occurred_through: None,
-        after: None,
-        limit: 10,
+      .handle_query(SearchBuildLogsQuery {
+        search: LogSearchQuery {
+          project_id,
+          text: "later".to_owned(),
+          mode: LogSearchMode::Literal,
+          build_id: None,
+          attempt_id: None,
+          job_id: None,
+          stream: None,
+          occurred_from: None,
+          occurred_through: None,
+          after: None,
+          limit: 10,
+        },
       })
       .await
       .unwrap();

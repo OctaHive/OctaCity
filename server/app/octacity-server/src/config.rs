@@ -15,6 +15,9 @@ const MAX_READINESS_CHECK_MILLISECONDS: u64 = 5 * 60 * 1000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerConfig {
   management_bind: SocketAddr,
+  agent_bind: Option<SocketAddr>,
+  webhook_bind: Option<SocketAddr>,
+  acknowledge_unauthenticated_management: bool,
   shutdown_grace_milliseconds: u64,
   readiness_check_interval_milliseconds: u64,
   readiness_check_timeout_milliseconds: u64,
@@ -39,6 +42,9 @@ impl ServerConfig {
     })?;
     let config = Self {
       management_bind: config.management_bind,
+      agent_bind: config.agent_bind,
+      webhook_bind: config.webhook_bind,
+      acknowledge_unauthenticated_management: config.acknowledge_unauthenticated_management,
       shutdown_grace_milliseconds: config.shutdown_grace_milliseconds,
       readiness_check_interval_milliseconds: config.readiness_check_interval_milliseconds,
       readiness_check_timeout_milliseconds: config.readiness_check_timeout_milliseconds,
@@ -77,6 +83,26 @@ impl ServerConfig {
     self.management_bind
   }
 
+  /// Optional address for authenticated Agent protocol ingress.
+  pub const fn agent_bind(&self) -> Option<SocketAddr> {
+    self.agent_bind
+  }
+
+  /// Optional address for authenticated webhook delivery ingress.
+  pub const fn webhook_bind(&self) -> Option<SocketAddr> {
+    self.webhook_bind
+  }
+
+  /// Whether external unauthenticated management access was explicitly acknowledged.
+  pub const fn unauthenticated_management_acknowledged(&self) -> bool {
+    self.acknowledge_unauthenticated_management
+  }
+
+  /// Whether management is configured beyond an IP loopback interface.
+  pub const fn management_externally_reachable(&self) -> bool {
+    !self.management_bind.ip().is_loopback()
+  }
+
   /// Maximum time allowed for in-flight requests to finish during shutdown.
   pub const fn shutdown_grace(&self) -> Duration {
     Duration::from_millis(self.shutdown_grace_milliseconds)
@@ -105,6 +131,28 @@ impl ServerConfig {
   }
 
   fn validate(&self) -> Result<(), ServerConfigError> {
+    if self.management_externally_reachable() && !self.acknowledge_unauthenticated_management {
+      return Err(ServerConfigError::Invalid(
+        "acknowledge_unauthenticated_management must be true when management_bind is not loopback".to_owned(),
+      ));
+    }
+    let listeners = [
+      ("management_bind", Some(self.management_bind)),
+      ("agent_bind", self.agent_bind),
+      ("webhook_bind", self.webhook_bind),
+    ];
+    for (index, (left_name, left)) in listeners.iter().enumerate() {
+      for (right_name, right) in &listeners[index + 1..] {
+        if left
+          .zip(*right)
+          .is_some_and(|(left, right)| listener_addresses_overlap(left, right))
+        {
+          return Err(ServerConfigError::Invalid(format!(
+            "{left_name} and {right_name} must use independently bindable addresses"
+          )));
+        }
+      }
+    }
     if self.shutdown_grace_milliseconds == 0 || self.shutdown_grace_milliseconds > MAX_SHUTDOWN_GRACE_MILLISECONDS {
       return Err(ServerConfigError::Invalid(format!(
         "shutdown_grace_milliseconds must be between 1 and {MAX_SHUTDOWN_GRACE_MILLISECONDS}"
@@ -136,6 +184,12 @@ impl ServerConfig {
 struct UnvalidatedServerConfig {
   #[serde(default = "default_management_bind")]
   management_bind: SocketAddr,
+  #[serde(default)]
+  agent_bind: Option<SocketAddr>,
+  #[serde(default)]
+  webhook_bind: Option<SocketAddr>,
+  #[serde(default)]
+  acknowledge_unauthenticated_management: bool,
   #[serde(default = "default_shutdown_grace_milliseconds")]
   shutdown_grace_milliseconds: u64,
   #[serde(default = "default_readiness_check_interval_milliseconds")]
@@ -149,6 +203,14 @@ struct UnvalidatedServerConfig {
 
 fn default_management_bind() -> SocketAddr {
   SocketAddr::from(([127, 0, 0, 1], 8080))
+}
+
+fn listener_addresses_overlap(left: SocketAddr, right: SocketAddr) -> bool {
+  if left.port() == 0 || right.port() == 0 || left.port() != right.port() {
+    return false;
+  }
+  left.ip() == right.ip()
+    || (left.is_ipv4() == right.is_ipv4() && (left.ip().is_unspecified() || right.ip().is_unspecified()))
 }
 
 const fn default_shutdown_grace_milliseconds() -> u64 {

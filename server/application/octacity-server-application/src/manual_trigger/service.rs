@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use octacity_server_domain::{AttemptNumber, Timestamp};
 use octacity_server_store::{
   AcceptTrigger, ImmutableBuildInput, SuppressTrigger, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause,
@@ -11,10 +12,14 @@ use super::{
   materialization::{
     ManualBuildIdentities, classify_error, effective_policy_snapshot, input_snapshot, materialize_jobs,
   },
-  model::{ManualTriggerCommand, ManualTriggerError, RevisionResolutionRequest},
+  model::{
+    AcceptManualTriggerCommand, ManualTriggerCommand, ManualTriggerError, ManualTriggerOutcome,
+    RevisionResolutionRequest,
+  },
   ports::{ManualTriggerContextProvider, RevisionResolver},
   preparation::{prepare_validated, validate_context},
 };
+use crate::{CommandHandler, CommandTransaction};
 
 /// Application service that resolves source state and commits one complete initial Build graph.
 pub struct ManualTriggerService {
@@ -42,7 +47,7 @@ impl ManualTriggerService {
     &self,
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
-  ) -> Result<TriggerEvaluationOutcome, ManualTriggerError> {
+  ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     let occurrence_id = ManualBuildIdentities::occurrence_id(&command);
     let trigger = octacity_server_store::NormalizedTriggerOccurrence::root(
       occurrence_id,
@@ -64,7 +69,7 @@ impl ManualTriggerService {
       .await
       .map_err(ManualTriggerError::Store)?
     {
-      return Ok(outcome);
+      return Ok(outcome.into());
     }
     let context = self
       .context
@@ -78,6 +83,7 @@ impl ManualTriggerService {
         .suppress_trigger(SuppressTrigger::new(trigger, intent_digest, accepted_at).map_err(classify_error)?)
         .await
         .map(TriggerEvaluationOutcome::Suppressed)
+        .map(Into::into)
         .map_err(ManualTriggerError::Store);
     }
     let prepared = prepare_validated(&command, &context).map_err(ManualTriggerError::Invalid)?;
@@ -120,7 +126,26 @@ impl ManualTriggerService {
       .accept_trigger(request)
       .await
       .map(TriggerEvaluationOutcome::Accepted)
+      .map(Into::into)
       .map_err(ManualTriggerError::Store)
+  }
+}
+
+#[async_trait]
+impl CommandTransaction<AcceptManualTriggerCommand> for ManualTriggerService {
+  type Error = ManualTriggerError;
+
+  async fn commit_command(&self, command: AcceptManualTriggerCommand) -> Result<ManualTriggerOutcome, Self::Error> {
+    self.accept(command.trigger, command.accepted_at).await
+  }
+}
+
+#[async_trait]
+impl CommandHandler<AcceptManualTriggerCommand> for ManualTriggerService {
+  type Error = ManualTriggerError;
+
+  async fn handle_command(&self, command: AcceptManualTriggerCommand) -> Result<ManualTriggerOutcome, Self::Error> {
+    self.commit_command(command).await
   }
 }
 

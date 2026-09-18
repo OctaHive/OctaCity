@@ -9,11 +9,15 @@ publish = false
 description = "Management REST API adapter for the OctaCity server"
 
 [dependencies]
+async-trait.workspace = true
 axum.workspace = true
+octacity-server-application = { path = "../../application/octacity-server-application" }
 serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
+tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
 tower = { workspace = true, features = ["util"] }

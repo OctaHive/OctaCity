@@ -96,7 +96,6 @@ enum MutationFingerprint {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CreateRepositoryIntent {
-  id: RepositoryId,
   project_id: ProjectId,
   name: RepositoryName,
   definition: crate::RepositoryDefinition,
@@ -111,7 +110,6 @@ struct PublishRepositoryIntent {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CreateConfigurationIntent {
-  id: BuildConfigurationId,
   project_id: ProjectId,
   name: BuildConfigurationName,
   definition: crate::BuildConfigurationDefinition,
@@ -160,7 +158,6 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       .map_err(|source| StoreError::invalid(StoreOperation::CreateRepository, source))?;
     let scope = "create-repository";
     let fingerprint = MutationFingerprint::CreateRepository(CreateRepositoryIntent {
-      id: request.id,
       project_id: request.project_id,
       name: request.name.clone(),
       definition: request.definition.clone(),
@@ -303,7 +300,6 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       .map_err(|source| StoreError::invalid(StoreOperation::CreateBuildConfiguration, source))?;
     let scope = "create-build-configuration";
     let fingerprint = MutationFingerprint::CreateConfiguration(CreateConfigurationIntent {
-      id: request.id,
       project_id: request.project_id,
       name: request.name.clone(),
       definition: request.definition.clone(),

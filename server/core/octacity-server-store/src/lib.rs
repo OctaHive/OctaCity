@@ -85,7 +85,8 @@ pub use error::{StoreError, StoreInputError, StoreOperation};
 pub use idempotency::{IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES};
 pub use job_model::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, LeaseAccess, LeaseGrant, complete_job_state, start_job_execution,
+  JobCompletion, JobCompletionKind, JobEventPage, LeaseAccess, LeaseGrant, ReadJobEvents, complete_job_state,
+  start_job_execution,
 };
 pub use log_search::{
   BuildLogStream, DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCursor, LogSearchDocument,
@@ -97,10 +98,10 @@ pub use log_search_port::{LogIndexWorkStore, LogSearchIndex};
 pub use model::{
   AcceptTrigger, AcceptTriggerOutcome, EventDigest, EventSequence, ImmutableBuildInput, JobEventKind, LeaseFence,
   MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES, MAX_JOB_EVENT_BATCH_BYTES,
-  MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_MATERIALIZED_DEPENDENCY_EDGES,
-  MAX_MATERIALIZED_JOBS, MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob, MaterializedJobPayload, MutationDisposition,
-  RegistrationEpoch, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
-  TriggerIntentDigest, TriggerIntentDigestError,
+  MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_JOB_EVENT_READ_PAGE_SIZE,
+  MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS, MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob,
+  MaterializedJobPayload, MutationDisposition, RegistrationEpoch, SuppressTrigger, SuppressTriggerOutcome,
+  TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest, TriggerIntentDigestError,
 };
 pub use octacity_server_domain::{ArtifactPolicy, ImmutableRevision, NetworkHost, RuntimeClass, SourceReference};
 pub use octacity_server_domain::{EnrollmentCredentialId, LogChunkId, LogIndexingWorkId, RegistrationCredentialId};
@@ -110,7 +111,9 @@ pub use octacity_server_trigger::{
 };
 pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
 pub use pipeline_port::PipelineStore;
-pub use port::{AuthoritativeStore, BuildRunControlStore, JobExecutionStore, TriggerAcceptanceStore};
+pub use port::{
+  AuthoritativeStore, BuildRunControlStore, JobEventReadStore, JobExecutionStore, TriggerAcceptanceStore,
+};
 pub use project_model::{
   CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MAX_PROJECT_PAGE_SIZE, MoveProject, Project,
   ProjectDetails, ProjectHierarchyError, ProjectMutationOutcome, ProjectPage, RenameProject, validate_project_ancestry,

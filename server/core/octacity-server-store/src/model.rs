@@ -31,6 +31,8 @@ pub const MAX_MATERIALIZED_DEPENDENCY_EDGES: usize = 8_192;
 pub const MAX_ALLOWED_POOLS_PER_JOB: usize = 128;
 /// Maximum events accepted by one append transaction.
 pub const MAX_JOB_EVENT_BATCH_SIZE: usize = 256;
+/// Maximum events returned by one durable Job-event read.
+pub const MAX_JOB_EVENT_READ_PAGE_SIZE: usize = 256;
 /// Maximum encoded bytes in one persisted Job-event payload.
 pub const MAX_JOB_EVENT_PAYLOAD_BYTES: usize = 256 * 1_024;
 /// Maximum aggregate payload bytes accepted by one event transaction.

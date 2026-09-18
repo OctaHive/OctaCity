@@ -1,17 +1,20 @@
 use std::collections::BTreeMap;
 
 use octacity_protocol::OctaSpec;
-use octacity_server_domain::{ImmutableRevision, SourceReference, Timestamp};
+use octacity_server_domain::{
+  AttemptId, BuildId, ImmutableRevision, JobId, SourceReference, Timestamp, TriggerOccurrenceId,
+};
 use octacity_server_job::{JobSpecDerivationError, JobSpecValidity, SourcePluginPolicy};
 use octacity_server_store::{
   PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, StoreError, StoreInputError,
-  TriggerDefinitionRef, TriggerTarget,
+  TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerTarget,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::EffectiveProjectPolicy;
+use crate::{ApplicationFailure, Command, MutationDisposition};
 
 /// Source expression supplied by a trusted-network manual Build command.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -42,6 +45,63 @@ pub struct ManualTriggerCommand {
   pub priority: i64,
   /// Time at which the management command was observed.
   pub observed_at: Timestamp,
+}
+
+/// Complete application command for accepting one manual Trigger occurrence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AcceptManualTriggerCommand {
+  /// Stable caller intent and immutable Trigger target.
+  pub trigger: ManualTriggerCommand,
+  /// Authoritative time persisted for the accepted or suppressed occurrence.
+  pub accepted_at: Timestamp,
+}
+
+impl Command for AcceptManualTriggerCommand {
+  type Outcome = ManualTriggerOutcome;
+}
+
+/// Transport-independent result of evaluating one manual Trigger command.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum ManualTriggerOutcome {
+  /// Evaluation created one Build and its first Attempt.
+  Accepted {
+    /// Whether this evaluation was applied or replayed.
+    disposition: MutationDisposition,
+    /// Stable normalized occurrence identity.
+    trigger_occurrence_id: TriggerOccurrenceId,
+    /// Created Build identity.
+    build_id: BuildId,
+    /// First Attempt identity.
+    attempt_id: AttemptId,
+    /// Root Jobs inserted into the ready queue.
+    ready_job_ids: Vec<JobId>,
+  },
+  /// Policy intentionally created no Build.
+  Suppressed {
+    /// Whether this evaluation was applied or replayed.
+    disposition: MutationDisposition,
+    /// Stable normalized occurrence identity.
+    trigger_occurrence_id: TriggerOccurrenceId,
+  },
+}
+
+impl From<TriggerEvaluationOutcome> for ManualTriggerOutcome {
+  fn from(value: TriggerEvaluationOutcome) -> Self {
+    match value {
+      TriggerEvaluationOutcome::Accepted(outcome) => Self::Accepted {
+        disposition: outcome.disposition.into(),
+        trigger_occurrence_id: outcome.trigger_occurrence_id,
+        build_id: outcome.build_id,
+        attempt_id: outcome.attempt_id,
+        ready_job_ids: outcome.ready_jobs,
+      },
+      TriggerEvaluationOutcome::Suppressed(outcome) => Self::Suppressed {
+        disposition: outcome.disposition.into(),
+        trigger_occurrence_id: outcome.trigger_occurrence_id,
+      },
+    }
+  }
 }
 
 /// Immutable server-owned inputs needed to evaluate a manual Trigger.
@@ -202,4 +262,35 @@ pub enum ManualTriggerError {
   /// The validated Pipeline could not be materialized into a store request.
   #[error("manual trigger DAG materialization failed")]
   Materialization(#[source] StoreInputError),
+}
+
+impl ManualTriggerError {
+  /// Constructs an unavailable dependency failure for adapter-boundary tests.
+  #[must_use]
+  pub const fn unavailable() -> Self {
+    Self::Store(StoreError::Unavailable)
+  }
+
+  /// Returns a transport-neutral failure classification.
+  #[must_use]
+  pub const fn classification(&self) -> ApplicationFailure {
+    match self {
+      Self::Invalid(_) | Self::Materialization(_) => ApplicationFailure::Invalid,
+      Self::Context(ManualTriggerContextError::Policy(EffectiveProjectPolicySourceError::NotFound))
+      | Self::Revision(RevisionResolutionError::NotFound) => ApplicationFailure::NotFound,
+      Self::Context(ManualTriggerContextError::Store(StoreError::NotFound { .. })) => ApplicationFailure::NotFound,
+      Self::Context(ManualTriggerContextError::Store(StoreError::Unavailable))
+      | Self::Context(ManualTriggerContextError::Policy(EffectiveProjectPolicySourceError::Unavailable))
+      | Self::Revision(RevisionResolutionError::Transient | RevisionResolutionError::Unavailable)
+      | Self::Store(StoreError::Unavailable) => ApplicationFailure::Unavailable,
+      Self::Context(ManualTriggerContextError::Store(StoreError::Conflict { .. } | StoreError::Duplicate { .. }))
+      | Self::Store(StoreError::Conflict { .. } | StoreError::Duplicate { .. }) => ApplicationFailure::Conflict,
+      Self::Context(ManualTriggerContextError::Policy(EffectiveProjectPolicySourceError::Invalid))
+      | Self::Context(ManualTriggerContextError::Store(_))
+      | Self::Revision(RevisionResolutionError::Invalid | RevisionResolutionError::Cancelled)
+      | Self::Store(_)
+      | Self::SnapshotEncoding
+      | Self::JobSpec(_) => ApplicationFailure::Internal,
+    }
+  }
 }

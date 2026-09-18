@@ -1,9 +1,9 @@
 use octacity_server_domain::{ProjectId, ProjectName, ProjectVersion, Timestamp};
 use octacity_server_store::{Project, ProjectDetails};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Safe application summary of one Project resource.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProjectSummaryProjection {
   /// Stable Project identity.
   pub id: ProjectId,
@@ -33,7 +33,7 @@ impl From<Project> for ProjectSummaryProjection {
 }
 
 /// One Project together with its stable root-to-parent ancestry.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProjectProjection {
   /// Requested Project.
   pub project: ProjectSummaryProjection,

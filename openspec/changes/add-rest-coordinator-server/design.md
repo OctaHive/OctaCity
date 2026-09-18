@@ -201,6 +201,8 @@ The dependency graph reserves a later `octacity-server-auth` core module with lo
 
 REST DTOs never serialize domain entities or database rows directly. Requests use bounded decoding, stable error codes, request IDs, idempotency keys, and optimistic preconditions. OpenAPI is generated from or verified against the actual registered routes and DTOs.
 
+Management routes are delivered with the feature task that introduces each complete application use case. Section 4 registers the already implemented Project, Pipeline, Repository, Build Configuration, and manual-Trigger commands and queries. Later Pool, Agent, integration, Artifact, cache, audit, and execution-diagnostic tasks add their REST adapters and extend the same OpenAPI drift test when their application ports and invariants exist. The server does not publish placeholder CRUD routes or let REST reach through the application layer merely to reserve the eventual URL surface.
+
 Live CLI output uses bounded long polling of Job events without holding a transaction or checked-out database connection while waiting.
 
 Build-log search is a query interface distinct from live event following. It accepts a bounded query and explicit project, Build, Attempt, Job, stream, and time filters, and returns deterministic cursor pages with bounded snippets, sequence references, and index freshness. The first adapter supports full-text terms and literal fragments; unbounded regular-expression execution is not part of the initial contract.

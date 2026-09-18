@@ -8,11 +8,12 @@ use std::{
 use async_trait::async_trait;
 use octacity_protocol::{OctaSpec, PlatformArchitecture, PlatformOs};
 use octacity_server_application::{
-  ArtifactPolicy, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName, JobAssignmentProjection,
-  JobProjection, JobProjectionFacts, JobQueueProjection, JobSpecToolchainPolicy, JobTerminalOutcomeProjection,
-  ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
-  ManualTriggerContextProvider, ManualTriggerError, ManualTriggerInputError, ManualTriggerService, PolicySource,
-  RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, RuntimeClass,
+  AcceptManualTriggerCommand, ArtifactPolicy, CachePolicy, CommandHandler, ConcurrencyPolicy, EffectiveProjectPolicy,
+  IdentityProfileName, JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
+  JobSpecToolchainPolicy, JobTerminalOutcomeProjection, ManualSourceSelection, ManualTriggerCommand,
+  ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider, ManualTriggerError,
+  ManualTriggerInputError, ManualTriggerOutcome, ManualTriggerService, MutationDisposition as ApplicationDisposition,
+  PolicySource, RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, RuntimeClass,
   SecretProfileName,
 };
 use octacity_server_domain::{
@@ -28,10 +29,10 @@ use octacity_server_pipeline::{
 use octacity_server_store::{
   AcceptTrigger, AcceptTriggerOutcome, BuildConfigurationDefinition, ConfigurationAgentRequirements,
   ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
-  ConfigurationTriggerPolicy, MutationDisposition, ParameterDefinition, ParameterSchema, ParameterType,
-  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, RepositoryDefinition, RepositorySelectionPolicy,
-  RetryClass, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerDefinitionRef,
-  TriggerEvaluationOutcome, TriggerKind, TriggerTarget,
+  ConfigurationTriggerPolicy, MutationDisposition as StoreDisposition, ParameterDefinition, ParameterSchema,
+  ParameterType, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, RepositoryDefinition,
+  RepositorySelectionPolicy, RetryClass, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
+  TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerKind, TriggerTarget,
 };
 use serde_json::json;
 
@@ -47,16 +48,27 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
       resolver.clone(),
     );
 
-    let outcome = service.accept(fixture.command.clone(), time(200)).await.unwrap();
-    let TriggerEvaluationOutcome::Accepted(outcome) = outcome else {
+    let outcome = service
+      .handle_command(AcceptManualTriggerCommand {
+        trigger: fixture.command.clone(),
+        accepted_at: time(200),
+      })
+      .await
+      .unwrap();
+    let ManualTriggerOutcome::Accepted {
+      disposition,
+      ready_job_ids,
+      ..
+    } = outcome
+    else {
       panic!("enabled configuration must create a Build");
     };
     let request = store.one_request();
-    assert_eq!(outcome.disposition, MutationDisposition::Applied);
+    assert_eq!(disposition, ApplicationDisposition::Applied);
     assert_eq!(request.build.immutable_revision.as_str(), "0123456789abcdef");
     assert_eq!(request.attempt_number.get(), 1);
     assert_eq!(request.jobs.len(), 2);
-    assert_eq!(outcome.ready_jobs.len(), 1);
+    assert_eq!(ready_job_ids.len(), 1);
     let root = request.jobs.iter().find(|job| job.dependencies.is_empty()).unwrap();
     let child = request.jobs.iter().find(|job| !job.dependencies.is_empty()).unwrap();
     assert_eq!(child.dependencies, [root.id]);
@@ -143,15 +155,21 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
     replay.observed_at = time(999);
     let replay_service = ManualTriggerService::new(store.clone(), Arc::new(UnreachableContext), resolver.clone());
     let replayed = replay_service.accept(replay, time(300)).await.unwrap();
-    let TriggerEvaluationOutcome::Accepted(replayed) = replayed else {
+    let ManualTriggerOutcome::Accepted {
+      disposition,
+      build_id,
+      attempt_id,
+      ..
+    } = replayed
+    else {
       panic!("accepted evaluation must replay its Build");
     };
-    assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+    assert_eq!(disposition, ApplicationDisposition::Replayed);
     assert_eq!(resolver.requests.lock().unwrap().len(), 1);
     let requests = store.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
-    assert_eq!(replayed.build_id, requests[0].build.id);
-    assert_eq!(replayed.attempt_id, requests[0].attempt_id);
+    assert_eq!(build_id, requests[0].build.id);
+    assert_eq!(attempt_id, requests[0].attempt_id);
   });
 }
 
@@ -193,21 +211,29 @@ fn disabled_configuration_is_durably_suppressed_and_replayed_without_vcs() {
     );
 
     let outcome = service.accept(fixture.command.clone(), time(200)).await.unwrap();
-    let TriggerEvaluationOutcome::Suppressed(outcome) = outcome else {
+    let ManualTriggerOutcome::Suppressed {
+      disposition,
+      trigger_occurrence_id,
+    } = outcome
+    else {
       panic!("disabled configuration must suppress the Trigger");
     };
-    assert_eq!(outcome.disposition, MutationDisposition::Applied);
+    assert_eq!(disposition, ApplicationDisposition::Applied);
     assert!(store.requests.lock().unwrap().is_empty());
     assert_eq!(store.suppressions.lock().unwrap().len(), 1);
     assert!(resolver.requests.lock().unwrap().is_empty());
 
     let replay_service = ManualTriggerService::new(store.clone(), Arc::new(UnreachableContext), resolver.clone());
     let replayed = replay_service.accept(fixture.command, time(300)).await.unwrap();
-    let TriggerEvaluationOutcome::Suppressed(replayed) = replayed else {
+    let ManualTriggerOutcome::Suppressed {
+      disposition,
+      trigger_occurrence_id: replayed_occurrence_id,
+    } = replayed
+    else {
       panic!("suppressed evaluation must replay suppression");
     };
-    assert_eq!(replayed.disposition, MutationDisposition::Replayed);
-    assert_eq!(replayed.trigger_occurrence_id, outcome.trigger_occurrence_id);
+    assert_eq!(disposition, ApplicationDisposition::Replayed);
+    assert_eq!(replayed_occurrence_id, trigger_occurrence_id);
     assert_eq!(store.suppressions.lock().unwrap().len(), 1);
     assert!(resolver.requests.lock().unwrap().is_empty());
   });
@@ -597,7 +623,7 @@ impl octacity_server_store::TriggerAcceptanceStore for RecordingStore {
         });
       }
       return Ok(Some(TriggerEvaluationOutcome::Suppressed(SuppressTriggerOutcome {
-        disposition: MutationDisposition::Replayed,
+        disposition: StoreDisposition::Replayed,
         trigger_occurrence_id: existing.trigger.id,
       })));
     }
@@ -614,7 +640,7 @@ impl octacity_server_store::TriggerAcceptanceStore for RecordingStore {
       });
     }
     Ok(Some(TriggerEvaluationOutcome::Accepted(AcceptTriggerOutcome {
-      disposition: MutationDisposition::Replayed,
+      disposition: StoreDisposition::Replayed,
       trigger_occurrence_id: existing.trigger.id,
       build_id: existing.build.id,
       attempt_id: existing.attempt_id,
@@ -639,7 +665,7 @@ impl octacity_server_store::TriggerAcceptanceStore for RecordingStore {
       .map(|job| job.id)
       .collect();
     let outcome = AcceptTriggerOutcome {
-      disposition: MutationDisposition::Applied,
+      disposition: StoreDisposition::Applied,
       trigger_occurrence_id: request.trigger.id,
       build_id: request.build.id,
       attempt_id: request.attempt_id,
@@ -655,7 +681,7 @@ impl octacity_server_store::TriggerAcceptanceStore for RecordingStore {
       return Err(StoreError::Unavailable);
     }
     let outcome = SuppressTriggerOutcome {
-      disposition: MutationDisposition::Applied,
+      disposition: StoreDisposition::Applied,
       trigger_occurrence_id: request.trigger.id,
     };
     self.suppressions.lock().unwrap().push(request);
