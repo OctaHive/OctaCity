@@ -41,12 +41,24 @@ _Avoid_: Job, lease
 ## Triggering and coordination
 
 **Trigger**:
-A normalized cause that requests evaluation of a Build Configuration, regardless of whether the cause is manual, scheduled, external, or internal.
-_Avoid_: Scheduler, webhook
+A versioned rule that permits one normalized origin kind to target an exact Build Configuration version.
+_Avoid_: Trigger Occurrence, Scheduler, webhook
+
+**Trigger Cause**:
+Provider-neutral facts explaining why a Trigger Occurrence exists; its origin kind is manual, scheduled, external, or internal.
+_Avoid_: Provider payload, Trigger definition
 
 **Trigger Occurrence**:
-One durably deduplicated instance of a Trigger with a stable causal identity and target Build Configuration.
+One normalized instance of a Trigger with a source-scoped deduplication identity, exact target Build Configuration, source time, and stable causal lineage.
 _Avoid_: Delivery, Build
+
+**Deduplication Identity**:
+A stable identity assigned by one Trigger source and scoped to an exact Trigger version; retries retain it even when their occurrence IDs differ.
+_Avoid_: Occurrence ID, idempotency key
+
+**Causal Lineage**:
+The stable root occurrence, optional direct parent occurrence, and internal derivation depth carried by a Trigger Occurrence.
+_Avoid_: Deduplication identity, Build dependency
 
 **Trigger Engine**:
 The domain role that evaluates Trigger Occurrences and creates at most one Build for each accepted occurrence.

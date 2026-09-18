@@ -1,8 +1,8 @@
-use octacity_server_domain::{AgentId, JobId, LeaseId, PoolId, Timestamp};
+use octacity_server_domain::{AgentId, JobId, LeaseId, PoolId, Timestamp, canonicalize_json};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
-use crate::model::{canonical_json, require_bounded_json};
+use crate::model::require_bounded_json;
 use crate::{
   EventDigest, EventSequence, JobEventKind, LeaseFence, MAX_JOB_EVENT_BATCH_BYTES, MAX_JOB_EVENT_BATCH_SIZE,
   MAX_JOB_EVENT_PAYLOAD_BYTES, MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation,
@@ -133,7 +133,7 @@ impl DurableJobEvent {
       MAX_JOB_EVENT_PAYLOAD_BYTES,
       StoreInputError::EventPayloadTooLarge,
     )?;
-    let canonical_payload = canonical_json(payload);
+    let canonical_payload = canonicalize_json(payload).map_err(|_| StoreInputError::JsonDocumentTooDeep)?;
     let encoded = serde_json::to_vec(&(kind.as_str(), occurred_at.unix_millis(), &canonical_payload))
       .map_err(|_| StoreInputError::EventPayloadTooLarge)?;
     let digest = EventDigest::from_bytes(Sha256::digest(encoded).into());

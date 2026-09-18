@@ -55,7 +55,7 @@ provider crate name.
 | `octacity-server-api-rest` | Management REST DTOs, decoding, routing, OpenAPI, HTTP error mapping | Transactions, domain state, database rows |
 | `octacity-server-api-agent` | HTTP adaptation of the shared server-Agent protocol | Agent execution or placement decisions |
 | `octacity-server-api-webhook` | Bounded raw webhook HTTP ingress | Provider authentication, normalization, Trigger decisions |
-| `octacity-server-application` | Transport-independent commands, queries, handlers, projections, transaction coordination | HTTP DTOs and concrete infrastructure |
+| `octacity-server-application` | Transport-independent commands, queries, handlers, projections, transaction coordination, and cross-module Project-policy resolution | HTTP DTOs and concrete infrastructure |
 | `octacity-server-domain` | Server-only identities, versions, bounded values, timestamps, and typed errors | Aggregates, transport DTOs, persistence rows |
 | `octacity-server-trigger` | Trigger normalization, occurrence deduplication, and Trigger evaluation state | Ready-Job placement or provider payloads |
 | `octacity-server-pipeline` | Immutable Pipeline versions, DAG validation, dependency policy, Attempt materialization rules | Agent execution and queue leasing |
@@ -72,7 +72,7 @@ provider crate name.
 | `octacity-agent-provisioning-protocol` | Versioned future provision/observe/terminate contract | vSphere, Proxmox, or other production adapters |
 | `octacity-server-webhook` | Verified webhook-adapter registry and bounded process host | Provider-specific payload models |
 | `octacity-server-vcs` | Verified VCS-adapter registry and bounded process host | Repository code execution |
-| `octacity-server-store-postgres` | PostgreSQL schema, rows, locking, transactions, and store-port implementation | Application commands and domain policy |
+| `octacity-server-store-postgres` | PostgreSQL schema, declarative constraints, rows, locking, transactions, and store-port implementation | Application commands, stored business routines, and domain policy |
 | `octacity-artifact-store` | Backend-neutral immutable-byte interface | Logical Artifact lifecycle and storage-provider details |
 | `octacity-artifact-s3` | S3-compatible implementation of the Artifact Store port | Logical Artifact policy and public S3 details |
 | `octacity-protocol` | Shared signed JobSpec, server-Agent, and Artifact-transfer wire contracts | Server domain entities and HTTP routes |
@@ -168,6 +168,15 @@ adapters revalidate those limits and use bounded bulk statements for collection
 writes. A durable Job event computes its own canonical digest from event kind,
 source time, and payload; callers cannot supply payload and digest separately.
 
+PostgreSQL describes storage shape with keys, foreign keys, unique indexes,
+nullability, and row-local checks. It does not own lifecycle transitions,
+hierarchy validity, sequence allocation, or append-only policy through stored
+routines or triggers. Cross-row decisions stay in Rust store operations and
+are serialized with an explicit transaction isolation level, row lock, or
+transaction-scoped advisory lock. This keeps the same core behavior available
+to another store adapter while PostgreSQL remains responsible for durable
+atomicity and structural integrity.
+
 Pipeline dependency policy is a typed immutable Pipeline value. PostgreSQL
 serializes terminal mutations for one Attempt and loads persisted fan-in
 outcomes; the Orchestrator makes the readiness decision, after which the
@@ -176,6 +185,100 @@ policy out of infrastructure while preventing concurrent predecessor
 completion from leaving a satisfied child blocked. The in-memory adapter runs
 the same decision and behavioral contract, including registration and
 Lease-expiry checks.
+
+### Immutable Pipeline publication
+
+`octacity-server-pipeline` accepts a publication draft only through
+`PublishablePipelineDag::new`. The resulting proof type is serializable but
+not deserializable, so a restored historical `PipelineDag` must explicitly
+cross `for_publication` with the current capability catalog before a store
+create or publish operation can accept it. Construction validates node and
+edge identity, missing references, cycles, fan-in and fan-out bounds,
+process-safe JSON depth, per-node and aggregate encoded size, and requested
+execution capabilities. It then canonicalizes nodes, edges, capabilities, and
+nested JSON objects. Topological ordering uses node identity as the stable tie
+breaker, and the serialized snapshot carries an explicit schema version.
+
+Capabilities are checked against the publication-time `CapabilityCatalog`.
+Reading an existing snapshot validates its structure and schema but does not
+re-evaluate it against the current catalog: removing a capability from a later
+server release must not make historical Pipeline versions unreadable.
+Dependency policies return explicit `Blocked`, `Ready`, or `Skipped` decisions,
+so failure propagation is owned by Pipeline and Orchestrator code rather than
+being inferred by a storage adapter.
+
+`PipelineStore` exposes three use-case-shaped operations: create a Pipeline
+with version one, append exactly the next version under an optimistic version
+precondition, and read an exact version. It intentionally exposes no update or
+delete operation for a published snapshot. Each accepted mutation commits its
+idempotency result, audit fact, and outbox event in the same transaction.
+PostgreSQL locks the Pipeline identity to serialize competing publications;
+the reusable store contract and a PostgreSQL concurrency test verify that one
+next version wins and every earlier snapshot remains unchanged.
+
+### Immutable Repository and Build Configuration publication
+
+A Repository has a stable Project-owned identity and sibling-unique name, but
+its provider-neutral VCS integration, locator, and revision-selection policy
+live in append-only Repository versions. A Build Configuration follows the
+same identity/version split. Each version captures its enabled state, an exact
+Repository version, an exact immutable Pipeline version owned by the same
+Project, parameter schema and defaults, accepted Trigger kinds, Agent
+requirements, allowed Pools, runtime and network policy, cache authority,
+artifact and report ceilings, and retry policy.
+
+Mutable VCS references, exact network hosts, runtime classes, and artifact
+ceilings are server-domain value objects shared by Trigger, policy, and
+configuration modules. VCS references therefore have one byte bound, network
+allowlists cannot contain URLs, ports, or implicit wildcards, and artifact
+shape validation cannot drift between inherited policy and configuration.
+
+`ConfigurationStore` exposes only create, append-next-version, and exact-version
+read operations for these aggregates. The core types validate bounded typed
+snapshots at every adapter seam; PostgreSQL supplies keys, foreign keys, row
+locks, atomicity, and JSON persistence but does not decide configuration
+policy. Stable identities and version rows are separate tables, and published
+versions have no update or delete operation. Competing publications use the
+caller's expected-current-version precondition, while exact idempotent replays
+return the original outcome without adding audit or outbox facts.
+
+A Build records exact Build Configuration and Pipeline version references.
+Publishing later Repository, Pipeline, or Build Configuration versions can
+therefore affect only subsequent Builds. Existing Builds and retries continue
+to resolve the snapshots they originally captured. The reusable in-memory and
+PostgreSQL store contract verifies version immutability, reference validation,
+typed policy rejection, replay behavior, and atomic mutation evidence; a
+PostgreSQL concurrency test additionally verifies that only one competing next
+configuration version wins.
+
+### Normalized Trigger occurrences
+
+`octacity-server-trigger` owns the normalized occurrence interface. Manual
+commands, persisted schedule times, authenticated external repository events,
+and server-generated internal events become one strict
+`NormalizedTriggerOccurrence` before they reach authoritative persistence.
+Every occurrence names an exact Trigger definition and Build Configuration
+version, a source-observed time, a source-scoped deduplication identity, a
+typed provider-neutral cause, and causal lineage. Only authenticated external
+events may retain bounded opaque provider metadata.
+
+Deduplication and causality are deliberately separate. The deduplication key
+is the exact Trigger version plus the stable source identity and prevents
+retries with different occurrence IDs from creating another Build. Causal
+lineage records the root occurrence, optional direct parent, and derivation
+depth so later internal-trigger cycle policy can reason about ancestry without
+using a provider delivery identifier as a graph edge. Root manual, scheduled,
+and external occurrences point to themselves at depth zero; internal
+occurrences require distinct root and parent identities and a positive depth.
+
+The authoritative store revalidates this core model and the exact
+configuration target before mutation. PostgreSQL persists typed cause,
+lineage, origin kind, and bounded provider metadata as data, applies only
+structural checks and foreign keys, and keeps the unique source-scoped
+deduplication key. The existing atomic Trigger-acceptance operation and its
+in-memory/PostgreSQL contract verify that duplicate occurrences expose at most
+one Build. Resolving source input and materializing a manual request end to end
+remain the separate 3.6 operation.
 
 `LogIndexWorkStore` reads the committed project-local watermark from the
 authoritative store. The application, rather than an external query DTO,

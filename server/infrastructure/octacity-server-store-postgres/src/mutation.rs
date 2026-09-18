@@ -49,6 +49,16 @@ pub(crate) struct MutationFacts {
 
 #[derive(Clone, Copy)]
 pub(crate) enum MutationKind {
+  CreateProject,
+  RenameProject,
+  MoveProject,
+  DeleteProject,
+  CreatePipeline,
+  PublishPipelineVersion,
+  CreateRepository,
+  PublishRepositoryVersion,
+  CreateBuildConfiguration,
+  PublishBuildConfigurationVersion,
   AcceptTrigger,
   ClaimReadyJob,
   AppendJobEvents,
@@ -60,53 +70,146 @@ pub(crate) enum MutationKind {
 }
 
 impl MutationKind {
-  const fn digest_version(self) -> &'static [u8] {
-    match self {
-      Self::AcceptTrigger => b"octacity.accept-trigger.v2\0",
-      Self::ClaimReadyJob => b"octacity.claim-ready-job.v2\0",
-      Self::AppendJobEvents => b"octacity.append-job-events.v1\0",
-      Self::CompleteJob => b"octacity.complete-job.v1\0",
-      Self::IssueAgentEnrollment => b"octacity.issue-agent-enrollment.v2\0",
-      Self::RegisterAgent => b"octacity.register-agent.v2\0",
-      Self::RevokeAgentEnrollment => b"octacity.revoke-agent-enrollment.v1\0",
-      Self::RevokeAgentRegistration => b"octacity.revoke-agent-registration.v1\0",
+  const fn metadata(self) -> MutationMetadata {
+    macro_rules! metadata {
+      ($digest:literal, $scope:literal, $target:literal, $topic:literal) => {
+        MutationMetadata {
+          digest_version: $digest,
+          scope: $scope,
+          target_kind: $target,
+          outbox_topic: $topic,
+        }
+      };
     }
+    match self {
+      Self::CreateProject => metadata!(
+        b"octacity.create-project.v1\0",
+        "create-project",
+        "project",
+        "project.created"
+      ),
+      Self::RenameProject => metadata!(
+        b"octacity.rename-project.v1\0",
+        "rename-project",
+        "project",
+        "project.renamed"
+      ),
+      Self::MoveProject => metadata!(
+        b"octacity.move-project.v1\0",
+        "move-project",
+        "project",
+        "project.moved"
+      ),
+      Self::DeleteProject => metadata!(
+        b"octacity.delete-project.v1\0",
+        "delete-project",
+        "project",
+        "project.deleted"
+      ),
+      Self::CreatePipeline => metadata!(
+        b"octacity.create-pipeline.v1\0",
+        "create-pipeline",
+        "pipeline",
+        "pipeline.created"
+      ),
+      Self::PublishPipelineVersion => metadata!(
+        b"octacity.publish-pipeline-version.v1\0",
+        "publish-pipeline-version",
+        "pipeline",
+        "pipeline.version-published"
+      ),
+      Self::CreateRepository => metadata!(
+        b"octacity.create-repository.v1\0",
+        "create-repository",
+        "repository",
+        "repository.created"
+      ),
+      Self::PublishRepositoryVersion => metadata!(
+        b"octacity.publish-repository-version.v1\0",
+        "publish-repository-version",
+        "repository",
+        "repository.version-published"
+      ),
+      Self::CreateBuildConfiguration => metadata!(
+        b"octacity.create-build-configuration.v1\0",
+        "create-build-configuration",
+        "build_configuration",
+        "build-configuration.created"
+      ),
+      Self::PublishBuildConfigurationVersion => metadata!(
+        b"octacity.publish-build-configuration-version.v1\0",
+        "publish-build-configuration-version",
+        "build_configuration",
+        "build-configuration.version-published"
+      ),
+      Self::AcceptTrigger => metadata!(
+        b"octacity.accept-trigger.v2\0",
+        "accept-trigger",
+        "build",
+        "build.accepted"
+      ),
+      Self::ClaimReadyJob => metadata!(
+        b"octacity.claim-ready-job.v2\0",
+        "claim-ready-job",
+        "job",
+        "job.claimed"
+      ),
+      Self::AppendJobEvents => metadata!(
+        b"octacity.append-job-events.v1\0",
+        "append-job-events",
+        "job",
+        "job.events-appended"
+      ),
+      Self::CompleteJob => metadata!(b"octacity.complete-job.v1\0", "complete-job", "job", "job.completed"),
+      Self::IssueAgentEnrollment => metadata!(
+        b"octacity.issue-agent-enrollment.v2\0",
+        "issue-agent-enrollment",
+        "agent_enrollment_credential",
+        "agent.enrollment-issued"
+      ),
+      Self::RegisterAgent => metadata!(
+        b"octacity.register-agent.v2\0",
+        "register-agent",
+        "agent_registration",
+        "agent.registered"
+      ),
+      Self::RevokeAgentEnrollment => metadata!(
+        b"octacity.revoke-agent-enrollment.v1\0",
+        "revoke-agent-enrollment",
+        "agent_enrollment_credential",
+        "agent.enrollment-revoked"
+      ),
+      Self::RevokeAgentRegistration => metadata!(
+        b"octacity.revoke-agent-registration.v1\0",
+        "revoke-agent-registration",
+        "agent_registration",
+        "agent.registration-revoked"
+      ),
+    }
+  }
+
+  const fn digest_version(self) -> &'static [u8] {
+    self.metadata().digest_version
   }
 
   const fn scope(self) -> &'static str {
-    match self {
-      Self::AcceptTrigger => "accept-trigger",
-      Self::ClaimReadyJob => "claim-ready-job",
-      Self::AppendJobEvents => "append-job-events",
-      Self::CompleteJob => "complete-job",
-      Self::IssueAgentEnrollment => "issue-agent-enrollment",
-      Self::RegisterAgent => "register-agent",
-      Self::RevokeAgentEnrollment => "revoke-agent-enrollment",
-      Self::RevokeAgentRegistration => "revoke-agent-registration",
-    }
+    self.metadata().scope
   }
 
   const fn target_kind(self) -> &'static str {
-    match self {
-      Self::AcceptTrigger => "build",
-      Self::ClaimReadyJob | Self::AppendJobEvents | Self::CompleteJob => "job",
-      Self::IssueAgentEnrollment | Self::RevokeAgentEnrollment => "agent_enrollment_credential",
-      Self::RegisterAgent | Self::RevokeAgentRegistration => "agent_registration",
-    }
+    self.metadata().target_kind
   }
 
-  const fn outbox_topic(self) -> &'static str {
-    match self {
-      Self::AcceptTrigger => "build.accepted",
-      Self::ClaimReadyJob => "job.claimed",
-      Self::AppendJobEvents => "job.events-appended",
-      Self::CompleteJob => "job.completed",
-      Self::IssueAgentEnrollment => "agent.enrollment-issued",
-      Self::RegisterAgent => "agent.registered",
-      Self::RevokeAgentEnrollment => "agent.enrollment-revoked",
-      Self::RevokeAgentRegistration => "agent.registration-revoked",
-    }
+  pub(crate) const fn outbox_topic(self) -> &'static str {
+    self.metadata().outbox_topic
   }
+}
+
+struct MutationMetadata {
+  digest_version: &'static [u8],
+  scope: &'static str,
+  target_kind: &'static str,
+  outbox_topic: &'static str,
 }
 
 #[derive(Deserialize, Serialize)]

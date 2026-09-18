@@ -15,13 +15,19 @@ pub async fn seed_authoritative_prerequisites(
   .execute(pool)
   .await?;
   sqlx::query(
-    "INSERT INTO repositories \
-       (id, version, project_id, name, vcs_integration_id, repository_locator, selection_policy, created_at) \
-     VALUES ($1, $2, $3, 'contract-repository', $4, 'contract/repository', '{}', now())",
+    "INSERT INTO repositories (id, project_id, name, created_at) VALUES ($1, $2, 'contract-repository', now())",
+  )
+  .bind(build.repository_id.as_uuid())
+  .bind(build.project_id.as_uuid())
+  .execute(pool)
+  .await?;
+  sqlx::query(
+    "INSERT INTO repository_versions \
+       (repository_id, version, vcs_integration_id, repository_locator, selection_policy, published_at) \
+     VALUES ($1, $2, $3, 'contract/repository', '{}', now())",
   )
   .bind(build.repository_id.as_uuid())
   .bind(i64::try_from(build.repository_version.get()).unwrap())
-  .bind(build.project_id.as_uuid())
   .bind(uuid::Uuid::from_u128(600))
   .execute(pool)
   .await?;
@@ -38,14 +44,21 @@ pub async fn seed_authoritative_prerequisites(
   .execute(pool)
   .await?;
   sqlx::query(
-    "INSERT INTO build_configurations \
-       (id, version, project_id, name, enabled, repository_id, repository_version, pipeline_id, \
-        pipeline_version, configuration_snapshot, created_at) \
-     VALUES ($1, $2, $3, 'contract-configuration', true, $4, $5, $6, $7, '{}', now())",
+    "INSERT INTO build_configurations (id, project_id, name, created_at) \
+     VALUES ($1, $2, 'contract-configuration', now())",
+  )
+  .bind(build.configuration_id.as_uuid())
+  .bind(build.project_id.as_uuid())
+  .execute(pool)
+  .await?;
+  sqlx::query(
+    "INSERT INTO build_configuration_versions \
+       (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
+        pipeline_version, configuration_snapshot, published_at) \
+     VALUES ($1, $2, true, $3, $4, $5, $6, '{}', now())",
   )
   .bind(build.configuration_id.as_uuid())
   .bind(i64::try_from(build.configuration_version.get()).unwrap())
-  .bind(build.project_id.as_uuid())
   .bind(build.repository_id.as_uuid())
   .bind(i64::try_from(build.repository_version.get()).unwrap())
   .bind(build.pipeline_id.as_uuid())
@@ -57,8 +70,8 @@ pub async fn seed_authoritative_prerequisites(
        (id, version, build_configuration_id, build_configuration_version, kind, enabled, definition, created_at) \
      VALUES ($1, $2, $3, $4, 'manual', true, '{}', now())",
   )
-  .bind(trigger.trigger_id.as_uuid())
-  .bind(i64::try_from(trigger.trigger_version.get()).unwrap())
+  .bind(trigger.trigger.id.as_uuid())
+  .bind(i64::try_from(trigger.trigger.version.get()).unwrap())
   .bind(build.configuration_id.as_uuid())
   .bind(i64::try_from(build.configuration_version.get()).unwrap())
   .execute(pool)

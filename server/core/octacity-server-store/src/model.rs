@@ -2,12 +2,12 @@ use std::{collections::BTreeSet, fmt, num::NonZeroU64};
 
 use octacity_server_domain::{
   AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, JobId, PipelineId,
-  PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryVersion, Timestamp, TriggerId,
-  TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  PipelineNodeId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryVersion, Timestamp,
 };
 use octacity_server_pipeline::DependencyPolicy;
+use octacity_server_trigger::NormalizedTriggerOccurrence;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::{StoreError, StoreInputError, StoreOperation};
 
@@ -136,50 +136,6 @@ impl JobEventKind {
   #[must_use]
   pub fn as_str(&self) -> &str {
     &self.0
-  }
-}
-
-/// Normalized Trigger occurrence accepted by the Trigger Engine.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct NormalizedTrigger {
-  /// Durable occurrence identity used for exact replay detection.
-  pub id: TriggerOccurrenceId,
-  /// Trigger definition that accepted the occurrence.
-  pub trigger_id: TriggerId,
-  /// Immutable Trigger definition version.
-  pub trigger_version: TriggerVersion,
-  /// Stable causal identity supplied by Trigger normalization.
-  pub identity: TriggerIdentity,
-  /// Bounded provider-neutral cause and metadata.
-  pub cause: Value,
-  /// Source-observed time retained independently of acceptance time.
-  pub source_time: Timestamp,
-}
-
-impl NormalizedTrigger {
-  /// Validates one normalized occurrence.
-  pub fn new(
-    id: TriggerOccurrenceId,
-    trigger_id: TriggerId,
-    trigger_version: TriggerVersion,
-    identity: TriggerIdentity,
-    cause: Value,
-    source_time: Timestamp,
-  ) -> Result<Self, StoreInputError> {
-    require_bounded_json_object(&cause)?;
-    Ok(Self {
-      id,
-      trigger_id,
-      trigger_version,
-      identity,
-      cause,
-      source_time,
-    })
-  }
-
-  /// Revalidates the bounded provider-neutral cause at an adapter seam.
-  pub fn validate(&self) -> Result<(), StoreInputError> {
-    require_bounded_json_object(&self.cause)
   }
 }
 
@@ -318,7 +274,7 @@ impl MaterializedJob {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AcceptTrigger {
   /// Normalized occurrence and exact deduplication identity.
-  pub trigger: NormalizedTrigger,
+  pub trigger: NormalizedTriggerOccurrence,
   /// Immutable Build identity, references, and snapshots.
   pub build: ImmutableBuildInput,
   /// First materialized Attempt identity.
@@ -334,7 +290,7 @@ pub struct AcceptTrigger {
 impl AcceptTrigger {
   /// Validates cross-Job references and canonicalizes a materialized DAG.
   pub fn new(
-    trigger: NormalizedTrigger,
+    trigger: NormalizedTriggerOccurrence,
     build: ImmutableBuildInput,
     attempt_id: AttemptId,
     attempt_number: AttemptNumber,
@@ -359,8 +315,17 @@ impl AcceptTrigger {
     self
       .trigger
       .validate()
+      .map_err(|_| StoreInputError::InvalidNormalizedTrigger)
       .and_then(|()| self.build.validate())
       .map_err(|source| StoreError::invalid(StoreOperation::AcceptTrigger, source))?;
+    if self.trigger.target.configuration_id != self.build.configuration_id
+      || self.trigger.target.configuration_version != self.build.configuration_version
+    {
+      return Err(StoreError::invalid(
+        StoreOperation::AcceptTrigger,
+        StoreInputError::TriggerTargetMismatch,
+      ));
+    }
     if self.jobs.is_empty() {
       return Err(StoreError::invalid(
         StoreOperation::AcceptTrigger,
@@ -460,7 +425,8 @@ fn validate_acyclic(jobs: &[MaterializedJob]) -> Result<(), StoreError> {
 }
 
 /// Whether an idempotent mutation was newly applied or exactly replayed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MutationDisposition {
   /// The authoritative state changed during this call.
   Applied,
@@ -502,21 +468,4 @@ pub(crate) fn require_bounded_json(
     return Err(too_large);
   }
   Ok(())
-}
-
-pub(crate) fn canonical_json(value: Value) -> Value {
-  match value {
-    Value::Array(values) => Value::Array(values.into_iter().map(canonical_json).collect()),
-    Value::Object(values) => {
-      let mut entries: Vec<_> = values.into_iter().collect();
-      entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
-      Value::Object(
-        entries
-          .into_iter()
-          .map(|(key, value)| (key, canonical_json(value)))
-          .collect::<Map<_, _>>(),
-      )
-    }
-    scalar => scalar,
-  }
 }

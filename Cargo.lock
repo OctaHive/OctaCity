@@ -4335,6 +4335,7 @@ version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
  "octacity-server-store",
+ "serde",
  "thiserror 2.0.20",
  "uuid",
 ]
@@ -4387,7 +4388,10 @@ dependencies = [
 name = "octacity-server-pipeline"
 version = "0.1.0"
 dependencies = [
+ "octacity-server-domain",
  "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4409,6 +4413,7 @@ dependencies = [
  "octacity-server-domain",
  "octacity-server-orchestrator",
  "octacity-server-pipeline",
+ "octacity-server-trigger",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4438,6 +4443,9 @@ name = "octacity-server-trigger"
 version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -1,10 +1,18 @@
 use async_trait::async_trait;
-use octacity_server_domain::ProjectId;
+use octacity_server_domain::{
+  BuildConfigurationId, BuildConfigurationVersion, PipelineId, PipelineVersion, ProjectId, RepositoryId,
+  RepositoryVersion,
+};
 use octacity_server_store::{
   AcceptTrigger, AcceptTriggerOutcome, AgentCredentialStore, AgentRegistrationOutcome, AppendJobEvents,
   AppendJobEventsOutcome, AuthenticateAgentRegistration, AuthenticatedAgentRegistration, AuthoritativeStore,
-  CompletionDisposition, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion,
-  LogIndexPosition, LogIndexWorkStore, MutationDisposition, RegisterAgent, RevokeAgentCredential, StoreError,
+  BuildConfigurationMutationOutcome, CompletionDisposition, ConfigurationStore, CreateBuildConfiguration,
+  CreateProject, CreateRepository, DeleteProject, DeleteProjectOutcome, IssueAgentEnrollment,
+  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, ListProjects, LogIndexPosition,
+  LogIndexWorkStore, MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore, ProjectDetails,
+  ProjectMutationOutcome, ProjectPage, ProjectStore, PublishBuildConfigurationVersion, PublishPipelineVersion,
+  PublishRepositoryVersion, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, RegisterAgent,
+  RenameProject, RepositoryMutationOutcome, RevokeAgentCredential, StoreError,
 };
 use sqlx::PgPool;
 
@@ -38,6 +46,102 @@ impl AuthoritativeStore for PostgresStore {
 
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     crate::job_completion::execute(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl ProjectStore for PostgresStore {
+  async fn create_project(&self, request: CreateProject) -> Result<ProjectMutationOutcome, StoreError> {
+    crate::project_mutation::create(&self.pool, request).await
+  }
+
+  async fn rename_project(&self, request: RenameProject) -> Result<ProjectMutationOutcome, StoreError> {
+    crate::project_mutation::rename(&self.pool, request).await
+  }
+
+  async fn move_project(&self, request: MoveProject) -> Result<ProjectMutationOutcome, StoreError> {
+    crate::project_mutation::move_project(&self.pool, request).await
+  }
+
+  async fn project(&self, project_id: ProjectId) -> Result<ProjectDetails, StoreError> {
+    crate::project_query::read(&self.pool, project_id).await
+  }
+
+  async fn list_projects(&self, request: ListProjects) -> Result<ProjectPage, StoreError> {
+    crate::project_query::list(&self.pool, request).await
+  }
+
+  async fn delete_project(&self, request: DeleteProject) -> Result<DeleteProjectOutcome, StoreError> {
+    crate::project_mutation::delete(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl PipelineStore for PostgresStore {
+  async fn create_pipeline(
+    &self,
+    request: octacity_server_store::CreatePipeline,
+  ) -> Result<PipelineMutationOutcome, StoreError> {
+    crate::pipeline_mutation::create(&self.pool, request).await
+  }
+
+  async fn publish_pipeline_version(
+    &self,
+    request: PublishPipelineVersion,
+  ) -> Result<PipelineMutationOutcome, StoreError> {
+    crate::pipeline_mutation::publish(&self.pool, request).await
+  }
+
+  async fn pipeline_version(
+    &self,
+    pipeline_id: PipelineId,
+    version: PipelineVersion,
+  ) -> Result<PublishedPipeline, StoreError> {
+    crate::pipeline_query::read(&self.pool, pipeline_id, version).await
+  }
+}
+
+#[async_trait]
+impl ConfigurationStore for PostgresStore {
+  async fn create_repository(&self, request: CreateRepository) -> Result<RepositoryMutationOutcome, StoreError> {
+    crate::repository_mutation::create(&self.pool, request).await
+  }
+
+  async fn publish_repository_version(
+    &self,
+    request: PublishRepositoryVersion,
+  ) -> Result<RepositoryMutationOutcome, StoreError> {
+    crate::repository_mutation::publish(&self.pool, request).await
+  }
+
+  async fn repository_version(
+    &self,
+    repository_id: RepositoryId,
+    version: RepositoryVersion,
+  ) -> Result<PublishedRepository, StoreError> {
+    crate::configuration_query::repository(&self.pool, repository_id, version).await
+  }
+
+  async fn create_build_configuration(
+    &self,
+    request: CreateBuildConfiguration,
+  ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
+    crate::build_configuration_mutation::create(&self.pool, request).await
+  }
+
+  async fn publish_build_configuration_version(
+    &self,
+    request: PublishBuildConfigurationVersion,
+  ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
+    crate::build_configuration_mutation::publish(&self.pool, request).await
+  }
+
+  async fn build_configuration_version(
+    &self,
+    configuration_id: BuildConfigurationId,
+    version: BuildConfigurationVersion,
+  ) -> Result<PublishedBuildConfiguration, StoreError> {
+    crate::configuration_query::build_configuration(&self.pool, configuration_id, version).await
   }
 }
 

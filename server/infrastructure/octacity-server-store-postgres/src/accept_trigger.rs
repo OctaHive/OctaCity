@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId};
 use octacity_server_store::{
-  AcceptTrigger, AcceptTriggerOutcome, ImmutableBuildInput, MaterializedJob, MutationDisposition, NormalizedTrigger,
-  StoreError, StoreOperation,
+  AcceptTrigger, AcceptTriggerOutcome, ImmutableBuildInput, MaterializedJob, MutationDisposition,
+  NormalizedTriggerOccurrence, StoreError, StoreOperation,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,7 +24,7 @@ pub(crate) async fn execute(pool: &PgPool, request: AcceptTrigger) -> Result<Acc
     EntityKind::Trigger,
     &fingerprint,
   )?;
-  let trigger_version = number(request.trigger.trigger_version.get(), StoreOperation::AcceptTrigger)?;
+  let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
   let configuration_version = number(request.build.configuration_version.get(), StoreOperation::AcceptTrigger)?;
   let pipeline_version = number(request.build.pipeline_version.get(), StoreOperation::AcceptTrigger)?;
   let repository_version = number(request.build.repository_version.get(), StoreOperation::AcceptTrigger)?;
@@ -60,7 +60,14 @@ pub(crate) async fn execute(pool: &PgPool, request: AcceptTrigger) -> Result<Acc
     repository_version,
   )
   .await?;
-  insert_occurrence(&mut transaction, &request, trigger_version, &identity.request_digest).await?;
+  insert_occurrence(
+    &mut transaction,
+    &request,
+    trigger_version,
+    configuration_version,
+    &identity.request_digest,
+  )
+  .await?;
   insert_build(
     &mut transaction,
     &request,
@@ -87,7 +94,7 @@ pub(crate) async fn execute(pool: &PgPool, request: AcceptTrigger) -> Result<Acc
 
 #[derive(Serialize)]
 struct RequestFingerprint<'a> {
-  trigger: &'a NormalizedTrigger,
+  trigger: &'a NormalizedTriggerOccurrence,
   build: &'a ImmutableBuildInput,
   attempt_id: AttemptId,
   attempt_number: octacity_server_domain::AttemptNumber,
@@ -118,18 +125,19 @@ async fn require_references(
     "SELECT EXISTS (\
        SELECT 1 \
        FROM triggers AS trigger \
-       JOIN build_configurations AS configuration \
-         ON configuration.id = trigger.build_configuration_id \
-        AND configuration.version = trigger.build_configuration_version \
+       JOIN build_configuration_versions AS version \
+         ON version.build_configuration_id = trigger.build_configuration_id \
+        AND version.version = trigger.build_configuration_version \
+       JOIN build_configurations AS configuration ON configuration.id = version.build_configuration_id \
        WHERE trigger.id = $1 AND trigger.version = $2 \
-         AND configuration.id = $3 AND configuration.version = $4 \
+         AND configuration.id = $3 AND version.version = $4 \
          AND configuration.project_id = $5 \
-         AND configuration.pipeline_id = $6 AND configuration.pipeline_version = $7 \
-         AND configuration.repository_id = $8 AND configuration.repository_version = $9 \
-         AND trigger.enabled AND configuration.enabled\
+         AND version.pipeline_id = $6 AND version.pipeline_version = $7 \
+         AND version.repository_id = $8 AND version.repository_version = $9 \
+         AND trigger.kind = $10 AND trigger.enabled AND version.enabled\
      )",
   )
-  .bind(request.trigger.trigger_id.as_uuid())
+  .bind(request.trigger.trigger.id.as_uuid())
   .bind(trigger_version)
   .bind(request.build.configuration_id.as_uuid())
   .bind(configuration_version)
@@ -138,6 +146,7 @@ async fn require_references(
   .bind(pipeline_version)
   .bind(request.build.repository_id.as_uuid())
   .bind(repository_version)
+  .bind(request.trigger.cause.kind().as_str())
   .fetch_one(&mut **transaction)
   .await
   .map_err(unavailable)?;
@@ -170,21 +179,29 @@ async fn insert_occurrence(
   transaction: &mut Transaction<'_, Postgres>,
   request: &AcceptTrigger,
   trigger_version: i64,
+  configuration_version: i64,
   request_digest: &[u8; 32],
 ) -> Result<(), StoreError> {
   let inserted = sqlx::query(
     "INSERT INTO trigger_occurrences \
-       (id, trigger_id, trigger_version, deduplication_identity, cause, source_time, state, build_id, \
-        request_digest, created_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0), 'accepted', NULL, $7, \
-             to_timestamp($8::double precision / 1000.0), to_timestamp($8::double precision / 1000.0)) \
+       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
+        deduplication_identity, cause, causality, provider_metadata, source_time, state, build_id, request_digest, \
+        created_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision / 1000.0), \
+             'accepted', NULL, $12, to_timestamp($13::double precision / 1000.0), \
+             to_timestamp($13::double precision / 1000.0)) \
      ON CONFLICT DO NOTHING",
   )
   .bind(request.trigger.id.as_uuid())
-  .bind(request.trigger.trigger_id.as_uuid())
+  .bind(request.trigger.trigger.id.as_uuid())
   .bind(trigger_version)
-  .bind(request.trigger.identity.as_str())
+  .bind(request.trigger.target.configuration_id.as_uuid())
+  .bind(configuration_version)
+  .bind(request.trigger.cause.kind().as_str())
+  .bind(request.trigger.deduplication_identity.as_str())
   .bind(Json(request.trigger.cause.clone()))
+  .bind(Json(request.trigger.causality))
+  .bind(Json(request.trigger.provider_metadata.clone()))
   .bind(request.trigger.source_time.unix_millis())
   .bind(request_digest.as_slice())
   .bind(request.accepted_at.unix_millis())
@@ -383,9 +400,9 @@ async fn occurrence_digest(
      FOR UPDATE",
   )
   .bind(request.trigger.id.as_uuid())
-  .bind(request.trigger.trigger_id.as_uuid())
+  .bind(request.trigger.trigger.id.as_uuid())
   .bind(trigger_version)
-  .bind(request.trigger.identity.as_str())
+  .bind(request.trigger.deduplication_identity.as_str())
   .fetch_optional(&mut **transaction)
   .await
   .map_err(unavailable)
@@ -435,7 +452,7 @@ fn outcome(request: &AcceptTrigger, disposition: MutationDisposition) -> AcceptT
 fn facts(request: &AcceptTrigger, outcome: &AcceptTriggerOutcome) -> MutationFacts {
   MutationFacts {
     actor_kind: "trigger",
-    actor_identity: Some(request.trigger.trigger_id.to_string()),
+    actor_identity: Some(request.trigger.trigger.id.to_string()),
     target_identity: outcome.build_id.to_string(),
     safe_metadata: json!({
       "attempt_id": outcome.attempt_id,

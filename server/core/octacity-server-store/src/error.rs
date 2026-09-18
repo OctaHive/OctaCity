@@ -4,6 +4,36 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoreOperation {
+  /// Create one Project below an optional parent.
+  CreateProject,
+  /// Rename one Project using an optimistic version precondition.
+  RenameProject,
+  /// Move one Project using an optimistic version precondition.
+  MoveProject,
+  /// Delete one unreferenced Project using an optimistic version precondition.
+  DeleteProject,
+  /// Read one Project together with its ancestry.
+  ReadProject,
+  /// List one bounded page of direct child Projects.
+  ListProjects,
+  /// Create one Pipeline identity and immutable initial version.
+  CreatePipeline,
+  /// Append exactly the next immutable Pipeline version.
+  PublishPipelineVersion,
+  /// Read one exact immutable Pipeline version.
+  ReadPipelineVersion,
+  /// Create one Repository identity and immutable initial version.
+  CreateRepository,
+  /// Append exactly the next immutable Repository version.
+  PublishRepositoryVersion,
+  /// Read one exact immutable Repository version.
+  ReadRepositoryVersion,
+  /// Create one Build Configuration identity and immutable initial version.
+  CreateBuildConfiguration,
+  /// Append exactly the next immutable Build Configuration version.
+  PublishBuildConfigurationVersion,
+  /// Read one exact immutable Build Configuration version.
+  ReadBuildConfigurationVersion,
   /// Deduplicate a Trigger and persist its complete initial Build graph.
   AcceptTrigger,
   /// Select one compatible ready Job and create its current Lease.
@@ -25,6 +55,27 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// An idempotency key is empty, malformed, or exceeds its byte bound.
+  #[error("an idempotency key is invalid")]
+  InvalidIdempotencyKey,
+  /// A Project page size is zero or exceeds the store contract bound.
+  #[error("a project page size is outside its allowed range")]
+  InvalidProjectPageSize,
+  /// A Pipeline DAG failed structural revalidation at the adapter seam.
+  #[error("an immutable pipeline snapshot is invalid")]
+  InvalidPipelineSnapshot,
+  /// A Repository definition is malformed or exceeds its encoded bound.
+  #[error("an immutable repository definition is invalid")]
+  InvalidRepositoryDefinition,
+  /// A Build Configuration definition is malformed or exceeds its encoded bound.
+  #[error("an immutable build configuration is invalid")]
+  InvalidBuildConfiguration,
+  /// A Trigger occurrence is malformed or violates source-specific invariants.
+  #[error("a normalized trigger occurrence is invalid")]
+  InvalidNormalizedTrigger,
+  /// The normalized occurrence and materialized Build target different configuration versions.
+  #[error("a normalized trigger target does not match the build configuration")]
+  TriggerTargetMismatch,
   /// An accepted Build must materialize at least one Job.
   #[error("a materialized attempt must contain at least one job")]
   EmptyJobGraph,
@@ -58,6 +109,9 @@ pub enum StoreInputError {
   /// A persisted structured document exceeds the store contract byte bound.
   #[error("a structured store document exceeds its byte bound")]
   JsonDocumentTooLarge,
+  /// A persisted structured document exceeds the process-safe nesting bound.
+  #[error("a structured store document exceeds its nesting bound")]
+  JsonDocumentTooDeep,
   /// An immutable source revision is empty, malformed, or too long.
   #[error("an immutable source revision is invalid")]
   InvalidImmutableRevision,

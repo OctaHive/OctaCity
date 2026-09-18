@@ -11,6 +11,7 @@ description = "Transport-independent CQRS application layer for OctaCity"
 [dependencies]
 octacity-server-domain = { path = "../../core/octacity-server-domain" }
 octacity-server-store = { path = "../../core/octacity-server-store" }
+serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

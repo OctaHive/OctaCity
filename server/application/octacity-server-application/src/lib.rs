@@ -6,6 +6,8 @@
 
 #![forbid(unsafe_code)]
 
+mod project_policy;
+
 use std::sync::Arc;
 
 use octacity_server_domain::ProjectId;
@@ -13,6 +15,12 @@ use octacity_server_store::{
   LogIndexWorkStore, LogSearchError, LogSearchFreshness, LogSearchIndex, LogSearchPage, LogSearchQuery, StoreError,
 };
 use thiserror::Error;
+
+pub use project_policy::{
+  ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
+  MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource, ProjectPolicy,
+  ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName, resolve_project_policy,
+};
 
 /// Application query service that combines authoritative indexing work with a
 /// replaceable derived Build-log search projection.

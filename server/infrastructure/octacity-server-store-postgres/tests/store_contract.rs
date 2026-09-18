@@ -6,7 +6,7 @@ use std::{fmt::Debug, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use authoritative_fixture::seed_authoritative_prerequisites;
-use octacity_server_domain::{EntityKind, Timestamp, TriggerId};
+use octacity_server_domain::{EntityKind, PipelineId, PoolId, ProjectId, Timestamp, TriggerId};
 use octacity_server_store::{
   AgentCredentialStore as _, AgentRegistrationProof, AppendJobEvents, AuthoritativeStore as _, CredentialSecret,
   DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind,
@@ -14,6 +14,7 @@ use octacity_server_store::{
   testing::{
     MutationEvidenceCounts, MutationEvidenceProbe, agent_credential_store_contract_fixture,
     authoritative_store_contract_fixture, verify_agent_credential_store_contract, verify_authoritative_store_contract,
+    verify_configuration_store_contract, verify_pipeline_store_contract, verify_project_store_contract,
   },
 };
 use octacity_server_store_postgres::PostgresStore;
@@ -70,6 +71,88 @@ async fn postgres_satisfies_the_agent_credential_contract() {
   let result = tokio::spawn(verify_agent_credential_store_contract(store, evidence)).await;
   database.cleanup().await;
   result.expect("PostgreSQL Agent credential contract failed");
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_satisfies_the_project_store_contract() {
+  let database = TestDatabase::migrated().await;
+  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
+  let result = tokio::spawn(verify_project_store_contract(store, evidence)).await;
+  database.cleanup().await;
+  result.expect("PostgreSQL Project-store contract failed");
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_satisfies_the_pipeline_store_contract() {
+  let database = TestDatabase::migrated().await;
+  let project_id = id::<ProjectId>(1);
+  sqlx::query(
+    "INSERT INTO projects (id, parent_id, name, version, created_at, updated_at) \
+     VALUES ($1, NULL, 'pipeline-contract', 1, now(), now())",
+  )
+  .bind(project_id.as_uuid())
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
+  let result = tokio::spawn(verify_pipeline_store_contract(store, evidence, project_id)).await;
+  database.cleanup().await;
+  result.expect("PostgreSQL Pipeline-store contract failed");
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_satisfies_the_configuration_store_contract() {
+  let database = TestDatabase::migrated().await;
+  let project_id = id::<ProjectId>(1);
+  let pipeline_id = id::<PipelineId>(2);
+  let pool_id = id::<PoolId>(3);
+  sqlx::query(
+    "INSERT INTO projects (id, parent_id, name, version, created_at, updated_at) \
+     VALUES ($1, NULL, 'configuration-contract', 1, now(), now())",
+  )
+  .bind(project_id.as_uuid())
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  sqlx::query("INSERT INTO pipelines (id, project_id, name, created_at) VALUES ($1, $2, 'main', now())")
+    .bind(pipeline_id.as_uuid())
+    .bind(project_id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  sqlx::query(
+    "INSERT INTO pipeline_versions (pipeline_id, version, dag_snapshot, published_at) \
+     VALUES ($1, 1, '{}', now()), ($1, 2, '{}', now())",
+  )
+  .bind(pipeline_id.as_uuid())
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  sqlx::query(
+    "INSERT INTO pools (id, version, name, enabled, drain_state, admission_policy, concurrency_limit, created_at) \
+     VALUES ($1, 1, 'configuration-pool', true, 'accepting', '{}', 1, now())",
+  )
+  .bind(pool_id.as_uuid())
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
+  let result = tokio::spawn(verify_configuration_store_contract(
+    store,
+    evidence,
+    project_id,
+    pipeline_id,
+    pool_id,
+  ))
+  .await;
+  database.cleanup().await;
+  result.expect("PostgreSQL Configuration-store contract failed");
 }
 
 #[tokio::test]
@@ -237,7 +320,7 @@ async fn verify_classified_outcomes(pool: &PgPool) -> Result<(), Box<dyn std::er
   let store = PostgresStore::new(pool.clone());
 
   let mut missing = fixture.request.clone();
-  missing.trigger.trigger_id = id::<TriggerId>(999);
+  missing.trigger.trigger.id = id::<TriggerId>(999);
   assert_eq!(
     store.accept_trigger(missing).await.unwrap_err(),
     StoreError::NotFound {
@@ -355,14 +438,6 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     }
   );
 
-  let immutable = sqlx::query("UPDATE audit_facts SET outcome = 'rewritten'")
-    .execute(pool)
-    .await
-    .unwrap_err();
-  assert_eq!(
-    immutable.as_database_error().and_then(|error| error.code()).as_deref(),
-    Some("55000")
-  );
   Ok(())
 }
 

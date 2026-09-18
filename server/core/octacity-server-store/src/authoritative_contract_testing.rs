@@ -11,8 +11,8 @@ use crate::testing::{
 };
 use crate::{
   AcceptTrigger, AppendJobEvents, AuthoritativeStore, DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence, MutationDisposition, NormalizedTrigger,
-  RegistrationEpoch, StoreError,
+  JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence, MutationDisposition, RegistrationEpoch,
+  StoreError, StoreInputError, StoreOperation, TriggerCausality, TriggerCause,
 };
 
 const CONTRACT_LEASE_EXPIRY_MILLIS: i64 = 253_402_300_799_000;
@@ -28,6 +28,27 @@ where
   let request = fixture.request;
   let root_job = request.jobs[0].id;
   let child_job = request.jobs[1].id;
+
+  let mut mismatched_target = request.clone();
+  mismatched_target.trigger.target.configuration_id = id(997);
+  assert_eq!(
+    store.accept_trigger(mismatched_target).await.unwrap_err(),
+    StoreError::InvalidInput {
+      operation: StoreOperation::AcceptTrigger,
+      source: StoreInputError::TriggerTargetMismatch,
+    },
+    "the normalized occurrence must carry the exact Build Configuration target"
+  );
+  let mut wrong_kind = request.clone();
+  wrong_kind.trigger.cause = TriggerCause::Scheduled {};
+  wrong_kind.trigger.deduplication_identity = TriggerIdentity::new("schedule:wrong-kind").unwrap();
+  assert_eq!(
+    store.accept_trigger(wrong_kind).await.unwrap_err(),
+    StoreError::NotFound {
+      entity: EntityKind::Trigger
+    },
+    "the normalized origin must match the persisted Trigger definition"
+  );
 
   let mut missing_reference = request.clone();
   missing_reference.build.repository_version = missing_reference.build.repository_version.next().unwrap();
@@ -301,15 +322,8 @@ where
     }
   );
   let duplicate_graph = trigger_request(12, 400, allowed_pool);
-  let duplicate_identity_trigger = NormalizedTrigger::new(
-    duplicate_graph.trigger.id,
-    duplicate_graph.trigger.trigger_id,
-    duplicate_graph.trigger.trigger_version,
-    request.trigger.identity.clone(),
-    duplicate_graph.trigger.cause.clone(),
-    duplicate_graph.trigger.source_time,
-  )
-  .unwrap();
+  let mut duplicate_identity_trigger = duplicate_graph.trigger.clone();
+  duplicate_identity_trigger.deduplication_identity = request.trigger.deduplication_identity.clone();
   let duplicate_identity = AcceptTrigger::new(
     duplicate_identity_trigger,
     duplicate_graph.build,
@@ -326,15 +340,10 @@ where
     },
     "one stable Trigger deduplication identity cannot create a second Build"
   );
-  let independent_trigger = NormalizedTrigger::new(
-    id(11),
-    conflicting.trigger.trigger_id,
-    conflicting.trigger.trigger_version,
-    TriggerIdentity::new("manual:11").unwrap(),
-    conflicting.trigger.cause.clone(),
-    conflicting.trigger.source_time,
-  )
-  .unwrap();
+  let mut independent_trigger = conflicting.trigger.clone();
+  independent_trigger.id = id(11);
+  independent_trigger.deduplication_identity = TriggerIdentity::new("manual:11").unwrap();
+  independent_trigger.causality = TriggerCausality::root(independent_trigger.id);
   let independent = AcceptTrigger::new(
     independent_trigger,
     conflicting.build,

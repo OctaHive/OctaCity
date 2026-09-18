@@ -101,6 +101,12 @@ bounded_name!(
   "Bounded sibling name of a Build Configuration."
 );
 bounded_name!(
+  RepositoryName,
+  EntityKind::Repository,
+  MAX_RESOURCE_NAME_BYTES,
+  "Bounded sibling name of a source Repository."
+);
+bounded_name!(
   PipelineName,
   EntityKind::Pipeline,
   MAX_RESOURCE_NAME_BYTES,

@@ -17,6 +17,17 @@ Credential paths SHALL resolve directly to bounded regular files, SHALL NOT be s
 - **WHEN** periodic readiness checks observe the already-current migration history
 - **THEN** they use a read-only compatibility query and do not rerun the migration executor
 
+### Requirement: Application-owned business rules
+Domain and application code SHALL own hierarchy validation, policy resolution, state transitions, lifecycle immutability, and sequence decisions. PostgreSQL SHALL provide durable storage, declarative structural constraints, indexes, transaction isolation, and locking, and SHALL NOT use stored routines or triggers to implement domain behavior. A PostgreSQL adapter MAY use row locks, transaction-scoped advisory locks, and atomic statements to serialize a complete store operation before applying the Rust decision.
+
+#### Scenario: Concurrent mutations require a cross-row decision
+- **WHEN** multiple server replicas concurrently attempt mutations whose validity depends on several authoritative rows
+- **THEN** the PostgreSQL adapter serializes the complete operation, evaluates the shared Rust rule against locked state, and commits at most one valid result without invoking database-resident business logic
+
+#### Scenario: Another authoritative store is introduced
+- **WHEN** a new store adapter implements the same atomic port and behavioral contract
+- **THEN** it does not need to reproduce hidden PostgreSQL trigger or stored-routine behavior to preserve domain semantics
+
 ### Requirement: Distinct liveness and readiness
 The server SHALL expose unauthenticated bounded liveness and readiness probes. Liveness SHALL describe process responsiveness; readiness SHALL require the database, signing capability, mandatory storage dependencies, configured mandatory secret providers, and supervised workers needed for safe mutations. Object-storage readiness SHALL periodically prove the complete required object lifecycle, SHALL requalify after a failed artifact operation, and SHALL use a process-owned object for cheaper checks so readiness does not require bucket-list permission solely for health observation.
 

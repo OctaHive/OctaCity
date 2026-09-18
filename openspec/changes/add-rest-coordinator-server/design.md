@@ -85,7 +85,7 @@ API and application:
 
 Core:
 
-- `octacity-server-domain`: server-only ubiquitous value objects shared by core modules, including opaque identities, versions, bounded names, timestamps, trigger and Pipeline-node identities, and typed domain errors; it owns no aggregate behavior or infrastructure representation;
+- `octacity-server-domain`: server-only ubiquitous value objects shared by core modules, including opaque identities, versions, bounded names, timestamps, source references, network hosts, runtime classes, output ceilings, trigger and Pipeline-node identities, and typed domain errors; it owns no aggregate behavior or infrastructure representation;
 - `octacity-server-trigger`: manual, scheduled, external, and internal trigger normalization and deduplication rules;
 - `octacity-server-pipeline`: immutable pipeline versions, DAG validation, dependency policy, and attempt materialization;
 - `octacity-server-job`: server-side Job identity, state, requirements, and JobSpec construction inputs;
@@ -124,8 +124,9 @@ Command success is returned only after domain state, idempotency outcome, audit 
 
 These terms are canonical:
 
-- **Trigger**: a normalized occurrence that requests evaluation of a build configuration.
-- **Trigger engine**: accepts manual commands, persisted schedules, authenticated external events, and internal domain events and creates at most one Build per occurrence.
+- **Trigger**: a versioned rule that selects a Build Configuration and matches manual, scheduled, external, or internal input.
+- **Trigger occurrence**: one normalized, deduplicated instance that requests evaluation of a Build Configuration.
+- **Trigger engine**: accepts manual commands, persisted schedules, authenticated external events, and internal domain events and creates at most one Build per Trigger occurrence.
 - **Orchestrator**: advances Build, Attempt, and DAG state and makes dependency-blocked Jobs ready.
 - **Placement scheduler**: leases an already-ready Job to a compatible accepting Agent.
 - **Executor**: agent-side code that executes one signed JobSpec; the server has no executor for repository code.
@@ -160,7 +161,7 @@ The existing `octacity-job` crate is agent-side execution orchestration and move
 - begin and revoke a cache session;
 - claim due schedules, outbox entries, retention work, and adapter retries.
 
-The PostgreSQL adapter owns SQL schema knowledge, transactions, locking, and row conversion. Application tests use a deterministic in-memory adapter where useful; the same behavioral contract suite runs against PostgreSQL, with additional concurrency tests for database-specific semantics.
+The PostgreSQL adapter owns SQL schema knowledge, transactions, locking, and row conversion. Domain and application logic remains in Rust: migrations use declarative keys, foreign keys, uniqueness, nullability, checks, and indexes, but do not use stored routines or triggers to decide domain transitions, hierarchy validity, sequencing, policy, or lifecycle behavior. When a cross-row invariant cannot be expressed declaratively, the adapter serializes the complete store operation with transaction isolation, row locks, or a transaction-scoped advisory lock, loads the authoritative facts, invokes the same Rust decision used by the in-memory adapter, and commits the resulting writes atomically. Application tests use a deterministic in-memory adapter where useful; the same behavioral contract suite runs against PostgreSQL, with additional concurrency tests for database-specific transaction semantics.
 
 Atomic store inputs have documented item and encoded-byte limits. Trigger acceptance, DAG materialization, event append, Agent inventory, and other collection-bearing operations reject oversized work before opening a transaction. PostgreSQL adapters use bounded bulk statements rather than one round trip per Job, dependency edge, queue entry, or event.
 
@@ -179,6 +180,8 @@ PostgreSQL stores every correctness-relevant state transition. Initial tables ar
 - operations: worker claims, adapter retries, retention claims, and migration state.
 
 Queue acquisition and DAG transitions use short transactions and proven locking such as `FOR UPDATE SKIP LOCKED`. Correctness never depends on an in-memory mutex, notification, or timer.
+
+Authoritative storage does not imply database-owned business behavior. PostgreSQL persists the state selected by core and application code and provides declarative structural integrity, isolation, and locking. It does not implement state machines, hierarchy traversal decisions, contiguous sequence allocation, policy resolution, or immutable lifecycle rules in PL/pgSQL triggers or stored routines. The Rust adapter exposes only complete atomic operations, so an alternative store implements the same port and contract rather than reproducing hidden PostgreSQL behavior.
 
 Pipeline dependency policy is an explicit typed immutable value rather than adapter-owned JSON. A terminal Job mutation serializes the affected Attempt, the PostgreSQL adapter loads persisted predecessor outcomes, and the Orchestrator derives the readiness decision through the Pipeline policy before the adapter applies it in bulk. Concurrent fan-in completions therefore cannot leave a satisfied child blocked without moving domain policy into infrastructure.
 

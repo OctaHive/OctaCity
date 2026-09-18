@@ -34,6 +34,9 @@ async fn concurrent_servers_accept_one_trigger_occurrence_once() {
   let left = PostgresStore::new(independent_pool(&database.pool).await);
   let right = PostgresStore::new(independent_pool(&database.pool).await);
   let request = fixture.request;
+  let occurrence_id = request.trigger.id;
+  let target = request.trigger.target;
+  let verify_pool = database.pool.clone();
 
   let result = tokio::spawn(async move {
     let barrier = Arc::new(Barrier::new(2));
@@ -58,6 +61,43 @@ async fn concurrent_servers_accept_one_trigger_occurrence_once() {
     );
     assert_eq!(left_outcome.build_id, right_outcome.build_id);
     assert_eq!(left_outcome.attempt_id, right_outcome.attempt_id);
+    let build_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds WHERE trigger_occurrence_id = $1")
+      .bind(occurrence_id.as_uuid())
+      .fetch_one(&verify_pool)
+      .await
+      .unwrap();
+    assert_eq!(build_count, 1, "one deduplicated occurrence may create only one Build");
+    let (kind, configuration_id, configuration_version, cause, causality, metadata): (
+      String,
+      uuid::Uuid,
+      i64,
+      sqlx::types::Json<serde_json::Value>,
+      sqlx::types::Json<serde_json::Value>,
+      sqlx::types::Json<serde_json::Value>,
+    ) = sqlx::query_as(
+      "SELECT kind, build_configuration_id, build_configuration_version, cause, causality, provider_metadata \
+       FROM trigger_occurrences WHERE id = $1",
+    )
+    .bind(occurrence_id.as_uuid())
+    .fetch_one(&verify_pool)
+    .await
+    .unwrap();
+    assert_eq!(kind, "manual");
+    assert_eq!(configuration_id, target.configuration_id.as_uuid());
+    assert_eq!(
+      configuration_version,
+      i64::try_from(target.configuration_version.get()).unwrap()
+    );
+    assert_eq!(cause.0, json!({"kind": "manual"}));
+    assert_eq!(
+      causality.0,
+      json!({
+        "depth": 0,
+        "parent_occurrence_id": null,
+        "root_occurrence_id": occurrence_id,
+      })
+    );
+    assert_eq!(metadata.0, json!({}));
   })
   .await;
 
@@ -300,8 +340,10 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
   let database = TestDatabase::migrated().await;
   let fixture = authoritative_store_contract_fixture();
   let build_id = fixture.request.build.id;
-  let trigger_id = fixture.request.trigger.trigger_id;
-  let trigger_version = i64::try_from(fixture.request.trigger.trigger_version.get()).unwrap();
+  let configuration_id = fixture.request.build.configuration_id;
+  let configuration_version = i64::try_from(fixture.request.build.configuration_version.get()).unwrap();
+  let trigger_id = fixture.request.trigger.trigger.id;
+  let trigger_version = i64::try_from(fixture.request.trigger.trigger.version.get()).unwrap();
   seed_authoritative_prerequisites(&database.pool, &fixture)
     .await
     .unwrap();
@@ -326,8 +368,20 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
   let result = tokio::spawn(async move {
     let barrier = Arc::new(Barrier::new(2));
     let (left_claim, right_claim) = tokio::join!(
-      claim_schedule(&left_pool, "server-a", barrier.clone()),
-      claim_schedule(&right_pool, "server-b", barrier)
+      claim_schedule(
+        &left_pool,
+        "server-a",
+        configuration_id,
+        configuration_version,
+        barrier.clone()
+      ),
+      claim_schedule(
+        &right_pool,
+        "server-b",
+        configuration_id,
+        configuration_version,
+        barrier
+      )
     );
     assert_eq!(
       [left_claim.unwrap(), right_claim.unwrap()]
@@ -454,7 +508,13 @@ async fn complete_after_barrier(
   store.complete_job(request).await
 }
 
-async fn claim_schedule(pool: &sqlx::PgPool, owner: &str, barrier: Arc<Barrier>) -> Result<bool, sqlx::Error> {
+async fn claim_schedule(
+  pool: &sqlx::PgPool,
+  owner: &str,
+  configuration_id: octacity_server_domain::BuildConfigurationId,
+  configuration_version: i64,
+  barrier: Arc<Barrier>,
+) -> Result<bool, sqlx::Error> {
   barrier.wait().await;
   let mut transaction = pool.begin().await?;
   let claimed: Option<(uuid::Uuid, i64)> = sqlx::query_as(
@@ -479,14 +539,18 @@ async fn claim_schedule(pool: &sqlx::PgPool, owner: &str, barrier: Arc<Barrier>)
   if let Some((trigger_id, trigger_version)) = claimed {
     sqlx::query(
       "INSERT INTO trigger_occurrences \
-         (id, trigger_id, trigger_version, deduplication_identity, cause, source_time, state, request_digest, \
+         (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
+          deduplication_identity, cause, causality, provider_metadata, source_time, state, request_digest, \
           created_at, updated_at) \
-       VALUES ($1, $2, $3, 'schedule:epoch-0', '{\"kind\":\"schedule\"}', to_timestamp(0), 'accepted', \
-               decode(repeat('04', 32), 'hex'), now(), now())",
+       VALUES ($1, $2, $3, $4, $5, 'scheduled', 'schedule:epoch-0', '{\"kind\":\"scheduled\"}', \
+               jsonb_build_object('root_occurrence_id', $1, 'parent_occurrence_id', NULL, 'depth', 0), '{}', \
+               to_timestamp(0), 'accepted', decode(repeat('04', 32), 'hex'), now(), now())",
     )
     .bind(uuid::Uuid::from_u128(740))
     .bind(trigger_id)
     .bind(trigger_version)
+    .bind(configuration_id.as_uuid())
+    .bind(configuration_version)
     .execute(&mut *transaction)
     .await?;
     transaction.commit().await?;

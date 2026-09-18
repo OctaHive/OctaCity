@@ -9,4 +9,7 @@ publish = false
 description = "Immutable Pipeline DAG domain for OctaCity"
 
 [dependencies]
+octacity-server-domain = { path = "../octacity-server-domain" }
 serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

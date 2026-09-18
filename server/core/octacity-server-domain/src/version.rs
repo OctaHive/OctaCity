@@ -65,6 +65,11 @@ macro_rules! positive_version {
 
 positive_version!(ProjectVersion, EntityKind::Project, "Optimistic version of a Project.");
 positive_version!(
+  ProjectPolicyVersion,
+  EntityKind::Project,
+  "Immutable version number of a Project policy."
+);
+positive_version!(
   BuildConfigurationVersion,
   EntityKind::Configuration,
   "Immutable version number of a Build Configuration."

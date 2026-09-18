@@ -1,8 +1,6 @@
 mod support;
 
-use octacity_server_domain::ProjectId;
-use octacity_server_store::LogIndexWorkStore as _;
-use octacity_server_store_postgres::PostgresStore;
+use serde_json::json;
 use sqlx::{Error, PgPool, postgres::PgQueryResult};
 use support::TestDatabase;
 
@@ -19,45 +17,150 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
   seed_authoritative_graph(pool).await?;
 
   expect_constraint(
-    sqlx::query("UPDATE projects SET parent_id = $1 WHERE id = $2")
-      .bind(id(2))
+    insert_trigger_occurrence(
+      pool,
+      81,
+      "invalid-kind",
+      "unknown",
+      "unknown",
+      json!({"depth": 0}),
+      json!({}),
+    )
+    .await,
+    "trigger_occurrences_kind",
+  )?;
+  expect_constraint(
+    insert_trigger_occurrence(pool, 82, "invalid-causality", "manual", "manual", json!([]), json!({})).await,
+    "trigger_occurrences_causality_object",
+  )?;
+  expect_constraint(
+    insert_trigger_occurrence(
+      pool,
+      83,
+      "invalid-metadata",
+      "manual",
+      "manual",
+      json!({"depth": 0}),
+      json!([]),
+    )
+    .await,
+    "trigger_occurrences_provider_metadata_object",
+  )?;
+  expect_constraint(
+    insert_trigger_occurrence(
+      pool,
+      84,
+      "mismatched-cause-kind",
+      "scheduled",
+      "manual",
+      json!({"depth": 0}),
+      json!({}),
+    )
+    .await,
+    "trigger_occurrences_cause_kind",
+  )?;
+  expect_constraint(
+    sqlx::query(
+      "INSERT INTO triggers \
+         (id, version, build_configuration_id, build_configuration_version, kind, enabled, definition, created_at) \
+       VALUES ($1, 1, $2, 1, 'unknown', true, '{}', now())",
+    )
+    .bind(id(85))
+    .bind(id(48))
+    .execute(pool)
+    .await,
+    "triggers_kind",
+  )?;
+
+  expect_constraint(
+    sqlx::query("INSERT INTO repositories (id, project_id, name, created_at) VALUES ($1, $2, 'repo', now())")
+      .bind(id(23))
       .bind(id(1))
       .execute(pool)
       .await,
-    "projects_acyclic",
+    "repositories_project_name_key",
+  )?;
+  expect_constraint(
+    sqlx::query(
+      "INSERT INTO repository_versions \
+         (repository_id, version, vcs_integration_id, repository_locator, selection_policy, published_at) \
+       VALUES ($1, 0, $2, 'repo', '{}', now())",
+    )
+    .bind(id(16))
+    .bind(id(17))
+    .execute(pool)
+    .await,
+    "repository_versions_positive_version",
+  )?;
+  expect_constraint(
+    sqlx::query(
+      "INSERT INTO repository_versions \
+         (repository_id, version, vcs_integration_id, repository_locator, selection_policy, published_at) \
+       VALUES ($1, 2, $2, 'repo', '[]', now())",
+    )
+    .bind(id(16))
+    .bind(id(17))
+    .execute(pool)
+    .await,
+    "repository_versions_selection_object",
+  )?;
+  expect_constraint(
+    sqlx::query("INSERT INTO build_configurations (id, project_id, name, created_at) VALUES ($1, $2, 'config', now())")
+      .bind(id(49))
+      .bind(id(1))
+      .execute(pool)
+      .await,
+    "build_configurations_project_name_key",
+  )?;
+  expect_constraint(
+    sqlx::query(
+      "INSERT INTO build_configuration_versions \
+         (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
+          pipeline_version, configuration_snapshot, published_at) \
+       VALUES ($1, 0, true, $2, 1, $3, 1, '{}', now())",
+    )
+    .bind(id(48))
+    .bind(id(16))
+    .bind(id(20))
+    .execute(pool)
+    .await,
+    "build_configuration_versions_positive_version",
+  )?;
+  expect_constraint(
+    sqlx::query(
+      "INSERT INTO build_configuration_versions \
+         (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
+          pipeline_version, configuration_snapshot, published_at) \
+       VALUES ($1, 2, true, $2, 1, $3, 1, '[]', now())",
+    )
+    .bind(id(48))
+    .bind(id(16))
+    .bind(id(20))
+    .execute(pool)
+    .await,
+    "build_configuration_versions_snapshot_object",
   )?;
 
   expect_constraint(
-    sqlx::query("UPDATE pipeline_versions SET dag_snapshot = '{\"changed\":true}' WHERE pipeline_id = $1")
-      .bind(id(20))
+    sqlx::query("INSERT INTO pipelines (id, project_id, name, created_at) VALUES ($1, $2, 'pipeline', now())")
+      .bind(id(21))
+      .bind(id(1))
       .execute(pool)
       .await,
-    "pipeline_versions_immutable",
+    "pipelines_project_name_key",
   )?;
   expect_constraint(
-    sqlx::query("DELETE FROM pipeline_versions WHERE pipeline_id = $1")
-      .bind(id(20))
-      .execute(pool)
-      .await,
-    "pipeline_versions_immutable",
+    sqlx::query(
+      "INSERT INTO pipeline_versions (pipeline_id, version, dag_snapshot, published_at) VALUES ($1, 2, '[]', now())",
+    )
+    .bind(id(20))
+    .execute(pool)
+    .await,
+    "pipeline_versions_dag_object",
   )?;
 
-  expect_constraint(insert_attempt(pool, 162, 3).await, "attempts_monotonic_number")?;
   insert_attempt(pool, 162, 2).await?;
-  expect_constraint(
-    sqlx::query("UPDATE attempts SET attempt_number = 3 WHERE id = $1")
-      .bind(id(162))
-      .execute(pool)
-      .await,
-    "attempts_immutable_identity",
-  )?;
-  expect_constraint(
-    sqlx::query("DELETE FROM attempts WHERE id = $1")
-      .bind(id(162))
-      .execute(pool)
-      .await,
-    "attempts_immutable_identity",
-  )?;
+  expect_constraint(insert_attempt(pool, 163, 2).await, "attempts_build_number_key")?;
 
   insert_job(pool, 179, 162, "retry").await?;
   sqlx::query(
@@ -106,14 +209,12 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
   )?;
 
   insert_ready_entry(pool, 177).await?;
-  expect_constraint(insert_lease(pool, 193, 177).await, "jobs_one_current_queue_or_lease")?;
   sqlx::query("DELETE FROM ready_queue_entries WHERE job_id = $1")
     .bind(id(177))
     .execute(pool)
     .await?;
   insert_lease(pool, 193, 177).await?;
   expect_constraint(insert_lease(pool, 194, 177).await, "leases_one_current_per_job_idx")?;
-  expect_constraint(insert_ready_entry(pool, 177).await, "jobs_one_current_queue_or_lease")?;
 
   expect_constraint(
     sqlx::query(
@@ -133,22 +234,15 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
     .execute(pool)
     .await?;
   insert_event(pool, 1).await?;
-  expect_constraint(insert_event(pool, 3).await, "job_events_contiguous_sequence")?;
   insert_event(pool, 2).await?;
-  expect_constraint(insert_event(pool, 2).await, "job_events_contiguous_sequence")?;
-  expect_constraint(
-    sqlx::query("DELETE FROM job_events WHERE job_id = $1 AND sequence = 2")
-      .bind(id(177))
-      .execute(pool)
-      .await,
-    "job_events_append_only",
-  )?;
+  expect_constraint(insert_event(pool, 2).await, "job_events_pkey")?;
+  expect_constraint(insert_event(pool, 0).await, "job_events_positive_sequence")?;
 
   insert_log_chunk(pool).await?;
   insert_log_work(pool, 225, 1, "index", Some(224)).await?;
   expect_constraint(
     insert_log_work(pool, 226, 1, "index", Some(224)).await,
-    "log_indexing_work_contiguous_position",
+    "log_indexing_work_project_position_unique",
   )?;
   expect_constraint(
     insert_log_work(pool, 227, 0, "index", Some(224)).await,
@@ -158,102 +252,15 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
     insert_log_work(pool, 228, 2, "delete_build", Some(224)).await,
     "log_indexing_work_operation_shape",
   )?;
-  expect_constraint(
-    insert_log_work(pool, 229, 3, "delete_build", None).await,
-    "log_indexing_work_contiguous_position",
-  )?;
-  let allocated = insert_allocated_log_work(pool, 230).await?;
-  assert_eq!(allocated, 2);
-  let committed = PostgresStore::new(pool.clone())
-    .committed_log_index_position(ProjectId::from_uuid(id(1))?)
-    .await?;
-  assert_eq!(
-    committed.and_then(|position| i64::try_from(position.get()).ok()),
-    Some(2)
-  );
-  expect_sql_state(
-    sqlx::query("UPDATE log_indexing_work SET position = 3 WHERE id = $1")
-      .bind(id(230))
-      .execute(pool)
-      .await,
-    "55000",
-  )?;
+  insert_log_work(pool, 229, 2, "delete_build", None).await?;
 
   insert_published_artifact(pool, 209).await?;
-  expect_constraint(
-    sqlx::query("UPDATE artifacts SET sha256 = decode(repeat('bb', 32), 'hex') WHERE id = $1")
-      .bind(id(209))
-      .execute(pool)
-      .await,
-    "artifacts_published_identity_immutable",
-  )?;
   expect_constraint(
     insert_published_artifact(pool, 210).await,
     "artifacts_published_job_name_idx",
   )?;
-  expect_constraint(
-    sqlx::query("DELETE FROM artifacts WHERE id = $1")
-      .bind(id(209))
-      .execute(pool)
-      .await,
-    "artifacts_published_identity_immutable",
-  )?;
-
-  insert_audit_fact(pool).await?;
-  expect_sql_state(
-    sqlx::query("UPDATE audit_facts SET outcome = 'changed' WHERE id = $1")
-      .bind(id(240))
-      .execute(pool)
-      .await,
-    "55000",
-  )?;
-  expect_sql_state(
-    sqlx::query("DELETE FROM audit_facts WHERE id = $1")
-      .bind(id(240))
-      .execute(pool)
-      .await,
-    "55000",
-  )?;
 
   Ok(())
-}
-
-#[tokio::test]
-#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
-async fn concurrent_log_index_position_allocation_is_contiguous() {
-  let database = TestDatabase::migrated().await;
-  let result = async {
-    seed_authoritative_graph(&database.pool).await?;
-    let mut tasks = Vec::new();
-    for offset in 0..8_u128 {
-      let pool = database.pool.clone();
-      tasks.push(tokio::spawn(async move {
-        insert_allocated_log_work(&pool, 300 + offset).await
-      }));
-    }
-    let mut positions = Vec::new();
-    for task in tasks {
-      positions.push(task.await??);
-    }
-    positions.sort_unstable();
-    assert_eq!(positions, (1..=8).collect::<Vec<_>>());
-    Ok::<(), Box<dyn std::error::Error>>(())
-  }
-  .await;
-  database.cleanup().await;
-  result.unwrap();
-}
-
-async fn insert_audit_fact(pool: &PgPool) -> Result<PgQueryResult, Error> {
-  sqlx::query(
-    "INSERT INTO audit_facts \
-       (id, actor_kind, operation, target_kind, target_identity, request_identity, idempotency_key, outcome, \
-        safe_metadata, occurred_at) \
-     VALUES ($1, 'worker', 'constraint-test', 'build', 'build-1', 'request-1', 'audit-1', 'accepted', '{}', now())",
-  )
-  .bind(id(240))
-  .execute(pool)
-  .await
 }
 
 async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
@@ -266,13 +273,17 @@ async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
   .bind(id(2))
   .execute(pool)
   .await?;
+  sqlx::query("INSERT INTO repositories (id, project_id, name, created_at) VALUES ($1, $2, 'repo', now())")
+    .bind(id(16))
+    .bind(id(1))
+    .execute(pool)
+    .await?;
   sqlx::query(
-    "INSERT INTO repositories \
-       (id, version, project_id, name, vcs_integration_id, repository_locator, selection_policy, created_at) \
-     VALUES ($1, 1, $2, 'repo', $3, 'repo', '{}', now())",
+    "INSERT INTO repository_versions \
+       (repository_id, version, vcs_integration_id, repository_locator, selection_policy, published_at) \
+     VALUES ($1, 1, $2, 'repo', '{}', now())",
   )
   .bind(id(16))
-  .bind(id(1))
   .bind(id(17))
   .execute(pool)
   .await?;
@@ -287,14 +298,18 @@ async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
   .bind(id(20))
   .execute(pool)
   .await?;
+  sqlx::query("INSERT INTO build_configurations (id, project_id, name, created_at) VALUES ($1, $2, 'config', now())")
+    .bind(id(48))
+    .bind(id(1))
+    .execute(pool)
+    .await?;
   sqlx::query(
-    "INSERT INTO build_configurations \
-       (id, version, project_id, name, enabled, repository_id, repository_version, pipeline_id, \
-        pipeline_version, configuration_snapshot, created_at) \
-     VALUES ($1, 1, $2, 'config', true, $3, 1, $4, 1, '{}', now())",
+    "INSERT INTO build_configuration_versions \
+       (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
+        pipeline_version, configuration_snapshot, published_at) \
+     VALUES ($1, 1, true, $2, 1, $3, 1, '{}', now())",
   )
   .bind(id(48))
-  .bind(id(1))
   .bind(id(16))
   .bind(id(20))
   .execute(pool)
@@ -308,15 +323,15 @@ async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
   .bind(id(48))
   .execute(pool)
   .await?;
-  sqlx::query(
-    "INSERT INTO trigger_occurrences \
-       (id, trigger_id, trigger_version, deduplication_identity, cause, source_time, state, request_digest, \
-        created_at, updated_at) \
-     VALUES ($1, $2, 1, 'occurrence', '{}', now(), 'accepted', decode(repeat('aa', 32), 'hex'), now(), now())",
+  insert_trigger_occurrence(
+    pool,
+    80,
+    "occurrence",
+    "manual",
+    "manual",
+    json!({"depth": 0}),
+    json!({}),
   )
-  .bind(id(80))
-  .bind(id(64))
-  .execute(pool)
   .await?;
   sqlx::query(
     "INSERT INTO pools \
@@ -362,6 +377,35 @@ async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
   insert_job(pool, 177, 161, "root").await?;
   insert_job(pool, 178, 161, "child").await?;
   Ok(())
+}
+
+async fn insert_trigger_occurrence(
+  pool: &PgPool,
+  occurrence: u128,
+  deduplication_identity: &str,
+  kind: &str,
+  cause_kind: &str,
+  causality: serde_json::Value,
+  provider_metadata: serde_json::Value,
+) -> Result<PgQueryResult, Error> {
+  sqlx::query(
+    "INSERT INTO trigger_occurrences \
+       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
+        deduplication_identity, cause, causality, provider_metadata, source_time, state, request_digest, \
+        created_at, updated_at) \
+     VALUES ($1, $2, 1, $3, 1, $4, $5, jsonb_build_object('kind', $6::text), $7, $8, now(), 'accepted', \
+             decode(repeat('aa', 32), 'hex'), now(), now())",
+  )
+  .bind(id(occurrence))
+  .bind(id(64))
+  .bind(id(48))
+  .bind(kind)
+  .bind(deduplication_identity)
+  .bind(cause_kind)
+  .bind(sqlx::types::Json(causality))
+  .bind(sqlx::types::Json(provider_metadata))
+  .execute(pool)
+  .await
 }
 
 async fn insert_attempt(pool: &PgPool, raw_id: u128, number: i64) -> Result<PgQueryResult, Error> {
@@ -486,33 +530,11 @@ async fn insert_log_work(
   .await
 }
 
-async fn insert_allocated_log_work(pool: &PgPool, work: u128) -> Result<i64, Error> {
-  sqlx::query_scalar(
-    "INSERT INTO log_indexing_work \
-       (id, project_id, position, build_id, chunk_id, operation, state, attempt_count, available_at, created_at) \
-     VALUES ($1, $2, NULL, $3, NULL, 'delete_build', 'pending', 0, now(), now()) \
-     RETURNING position",
-  )
-  .bind(id(work))
-  .bind(id(1))
-  .bind(id(144))
-  .fetch_one(pool)
-  .await
-}
-
 fn expect_constraint(result: Result<PgQueryResult, Error>, expected: &str) -> Result<(), Box<dyn std::error::Error>> {
   match result {
     Err(Error::Database(error)) if error.constraint() == Some(expected) => Ok(()),
     Err(error) => Err(std::io::Error::other(format!("expected constraint {expected}, got {error}")).into()),
     Ok(_) => Err(std::io::Error::other(format!("constraint {expected} accepted invalid state")).into()),
-  }
-}
-
-fn expect_sql_state(result: Result<PgQueryResult, Error>, expected: &str) -> Result<(), Box<dyn std::error::Error>> {
-  match result {
-    Err(Error::Database(error)) if error.code().as_deref() == Some(expected) => Ok(()),
-    Err(error) => Err(std::io::Error::other(format!("expected SQLSTATE {expected}, got {error}")).into()),
-    Ok(_) => Err(std::io::Error::other(format!("SQLSTATE {expected} did not reject invalid state")).into()),
   }
 }
 

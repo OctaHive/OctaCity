@@ -1,14 +1,15 @@
 use std::{fmt::Debug, str::FromStr};
 
 use octacity_server_domain::{
-  AgentId, AgentName, AgentVersion, ArtifactId, ArtifactName, ArtifactUploadId, ArtifactVersion, AttemptId,
-  AttemptNumber, AttemptVersion, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, BuildId,
-  BuildVersion, DomainError, DomainValueError, EntityKind, IntegrationId, IntegrationName, IntegrationVersion, JobId,
-  JobName, JobVersion, LeaseId, LeaseVersion, MAX_ARTIFACT_NAME_BYTES, MAX_PIPELINE_NODE_ID_BYTES,
-  MAX_RESOURCE_NAME_BYTES, MAX_TIMESTAMP_MILLIS, MAX_TRIGGER_IDENTITY_BYTES, MIN_TIMESTAMP_MILLIS, PipelineId,
-  PipelineName, PipelineNodeId, PipelineVersion, PoolId, PoolName, PoolVersion, ProjectId, ProjectName, ProjectVersion,
-  RepositoryId, RepositoryVersion, TextErrorKind, Timestamp, TransitionError, TriggerId, TriggerIdentity,
-  TriggerOccurrenceId, TriggerVersion, VersionErrorKind,
+  AgentId, AgentName, AgentVersion, ArtifactId, ArtifactName, ArtifactPolicy, ArtifactUploadId, ArtifactVersion,
+  AttemptId, AttemptNumber, AttemptVersion, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion,
+  BuildId, BuildVersion, DomainError, DomainValueError, EntityKind, IntegrationId, IntegrationName, IntegrationVersion,
+  JobId, JobName, JobVersion, LeaseId, LeaseVersion, MAX_ARTIFACT_NAME_BYTES, MAX_CANONICAL_JSON_DEPTH,
+  MAX_PIPELINE_NODE_ID_BYTES, MAX_RESOURCE_NAME_BYTES, MAX_SOURCE_REFERENCE_BYTES, MAX_TIMESTAMP_MILLIS,
+  MAX_TRIGGER_IDENTITY_BYTES, MIN_TIMESTAMP_MILLIS, NetworkHost, PipelineId, PipelineName, PipelineNodeId,
+  PipelineVersion, PoolId, PoolName, PoolVersion, ProjectId, ProjectName, ProjectPolicyVersion, ProjectVersion,
+  RepositoryId, RepositoryVersion, SourceReference, TextErrorKind, Timestamp, TransitionError, TriggerId,
+  TriggerIdentity, TriggerOccurrenceId, TriggerVersion, VersionErrorKind, canonicalize_json,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::json;
@@ -134,6 +135,59 @@ fn trigger_identity_is_bounded_and_serializable() {
 }
 
 #[test]
+fn source_references_share_one_bounded_value_type() {
+  let reference = SourceReference::new("refs/heads/main").unwrap();
+  assert_eq!(reference.as_str(), "refs/heads/main");
+  assert!(SourceReference::new("x".repeat(MAX_SOURCE_REFERENCE_BYTES)).is_ok());
+  assert!(SourceReference::new("x".repeat(MAX_SOURCE_REFERENCE_BYTES + 1)).is_err());
+  assert!(serde_json::from_str::<SourceReference>(r#"" leading""#).is_err());
+}
+
+#[test]
+fn network_hosts_are_exact_and_canonical() {
+  assert_eq!(NetworkHost::new("EXAMPLE.COM").unwrap().as_str(), "example.com");
+  assert_eq!(NetworkHost::new("2001:db8::1").unwrap().as_str(), "2001:db8::1");
+  for invalid in [
+    "",
+    "not a host",
+    "https://example.com/path",
+    "*.example.com",
+    "example.com:443",
+  ] {
+    assert!(NetworkHost::new(invalid).is_err(), "accepted {invalid}");
+  }
+}
+
+#[test]
+fn artifact_policy_validates_its_shared_shape() {
+  let valid = ArtifactPolicy {
+    artifact_count: 1,
+    artifact_bytes: 1024,
+    report_count: 0,
+    report_bytes: 0,
+    single_output_bytes: 512,
+  };
+  assert!(valid.validate().is_ok());
+  assert!(
+    ArtifactPolicy {
+      artifact_bytes: 0,
+      ..valid
+    }
+    .validate()
+    .is_err()
+  );
+}
+
+#[test]
+fn canonical_json_rejects_excessive_nesting() {
+  let mut value = json!(null);
+  for _ in 0..=MAX_CANONICAL_JSON_DEPTH {
+    value = json!([value]);
+  }
+  assert!(canonicalize_json(value).is_err());
+}
+
+#[test]
 fn pipeline_node_identity_has_a_portable_alphabet() {
   let node = PipelineNodeId::new("linux.release_1-tests").expect("pipeline node identity");
   let encoded = serde_json::to_string(&node).expect("serialize pipeline node identity");
@@ -174,6 +228,7 @@ macro_rules! assert_version {
 #[test]
 fn entity_versions_are_positive_bounded_and_typed() {
   assert_version!(ProjectVersion);
+  assert_version!(ProjectPolicyVersion);
   assert_version!(BuildConfigurationVersion);
   assert_version!(PipelineVersion);
   assert_version!(RepositoryVersion);

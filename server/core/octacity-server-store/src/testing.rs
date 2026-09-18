@@ -23,10 +23,15 @@ use crate::{
   AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, AuthoritativeStore,
   CompletionDisposition, EventDigest, EventSequence, ImmutableBuildInput, JobClaim, JobClaimOutcome, JobCompletion,
   JobCompletionKind, LeaseAccess, LeaseGrant, LogIndexPosition, LogIndexWorkStore, MaterializedJob,
-  MutationDisposition, NormalizedTrigger, RegistrationEpoch, StoreError, StoreOperation,
+  MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, StoreError, StoreOperation, TriggerCause,
+  TriggerDeduplicationKey, TriggerDefinitionRef, TriggerKind, TriggerMetadata, TriggerTarget,
 };
 
 pub use crate::authoritative_contract_testing::{verify_authoritative_store_contract, verify_in_memory_store_contract};
+pub use crate::configuration_contract_testing::{
+  verify_configuration_store_contract, verify_in_memory_configuration_store_contract,
+};
+pub use crate::configuration_testing::InMemoryConfigurationStore;
 pub use crate::credential_contract_testing::{
   agent_credential_store_contract_fixture, verify_agent_credential_store_contract,
   verify_in_memory_agent_credential_contract,
@@ -35,6 +40,10 @@ pub use crate::log_search_contract_testing::{
   verify_in_memory_log_search_index_contract, verify_log_search_index_contract,
 };
 pub use crate::log_search_testing::InMemoryLogSearchIndex;
+pub use crate::pipeline_contract_testing::{verify_in_memory_pipeline_store_contract, verify_pipeline_store_contract};
+pub use crate::pipeline_testing::InMemoryPipelineStore;
+pub use crate::project_contract_testing::{verify_in_memory_project_store_contract, verify_project_store_contract};
+pub use crate::project_testing::InMemoryProjectStore;
 
 /// Counts of transactional evidence produced by accepted mutations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -208,23 +217,6 @@ struct AcceptedRecord {
   outcome: AcceptTriggerOutcome,
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct TriggerDeduplicationKey {
-  trigger_id: TriggerId,
-  trigger_version: TriggerVersion,
-  identity: TriggerIdentity,
-}
-
-impl TriggerDeduplicationKey {
-  fn from_request(request: &AcceptTrigger) -> Self {
-    Self {
-      trigger_id: request.trigger.trigger_id,
-      trigger_version: request.trigger.trigger_version,
-      identity: request.trigger.identity.clone(),
-    }
-  }
-}
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct ReadyEntry {
   enqueue_order: u64,
@@ -253,6 +245,7 @@ struct EventAppendRecord {
 struct TriggerPrerequisites {
   trigger_id: TriggerId,
   trigger_version: TriggerVersion,
+  trigger_kind: TriggerKind,
   project_id: ProjectId,
   configuration_id: BuildConfigurationId,
   configuration_version: BuildConfigurationVersion,
@@ -265,8 +258,9 @@ struct TriggerPrerequisites {
 impl TriggerPrerequisites {
   fn from_request(request: &AcceptTrigger) -> Self {
     Self {
-      trigger_id: request.trigger.trigger_id,
-      trigger_version: request.trigger.trigger_version,
+      trigger_id: request.trigger.trigger.id,
+      trigger_version: request.trigger.trigger.version,
+      trigger_kind: request.trigger.cause.kind(),
       project_id: request.build.project_id,
       configuration_id: request.build.configuration_id,
       configuration_version: request.build.configuration_version,
@@ -357,7 +351,7 @@ impl AuthoritativeStore for InMemoryStore {
         entity: EntityKind::Pool,
       });
     }
-    let deduplication_key = TriggerDeduplicationKey::from_request(&request);
+    let deduplication_key = request.trigger.deduplication_key();
     let existing_occurrence = state
       .accepted
       .contains_key(&request.trigger.id)
@@ -766,15 +760,6 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
     json!({"platform": "linux"}),
   )
   .unwrap();
-  let trigger = NormalizedTrigger::new(
-    id(occurrence),
-    id::<TriggerId>(30),
-    TriggerVersion::INITIAL,
-    TriggerIdentity::new(format!("manual:{occurrence}")).unwrap(),
-    json!({"kind": "manual"}),
-    time(400),
-  )
-  .unwrap();
   let build = ImmutableBuildInput {
     id: id(base + 1),
     project_id: id::<ProjectId>(31),
@@ -789,6 +774,22 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
     effective_policy_snapshot: json!({"allowed_pool": pool.to_string()}),
     priority: 10,
   };
+  let trigger = NormalizedTriggerOccurrence::root(
+    id(occurrence),
+    TriggerDefinitionRef {
+      id: id::<TriggerId>(30),
+      version: TriggerVersion::INITIAL,
+    },
+    TriggerTarget {
+      configuration_id: build.configuration_id,
+      configuration_version: build.configuration_version,
+    },
+    TriggerIdentity::new(format!("manual:{occurrence}")).unwrap(),
+    TriggerCause::Manual {},
+    TriggerMetadata::default(),
+    time(400),
+  )
+  .unwrap();
   AcceptTrigger::new(
     trigger,
     build,

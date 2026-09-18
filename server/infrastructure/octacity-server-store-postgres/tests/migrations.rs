@@ -38,6 +38,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "attempts",
     "audit_facts",
     "build_configurations",
+    "build_configuration_versions",
     "builds",
     "cache_sessions",
     "idempotency_records",
@@ -59,6 +60,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "projects",
     "ready_queue_entries",
     "repositories",
+    "repository_versions",
     "retention_work",
     "schedules",
     "trigger_occurrences",
@@ -76,5 +78,33 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
       .into(),
     );
   }
+
+  let application_triggers: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) \
+     FROM pg_trigger AS trigger \
+     JOIN pg_class AS relation ON relation.oid = trigger.tgrelid \
+     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+     WHERE namespace.nspname = 'public' AND NOT trigger.tgisinternal",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(
+    application_triggers, 0,
+    "business behavior must not be implemented by triggers"
+  );
+
+  let stored_business_routines: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) \
+     FROM pg_proc AS routine \
+     JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace \
+     JOIN pg_language AS language ON language.oid = routine.prolang \
+     WHERE namespace.nspname = 'public' AND language.lanname = 'plpgsql'",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(
+    stored_business_routines, 0,
+    "business behavior must not be implemented by stored PL/pgSQL routines"
+  );
   Ok(())
 }
