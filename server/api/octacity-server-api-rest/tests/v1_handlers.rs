@@ -800,6 +800,7 @@ struct DocumentedHttpRequest {
 }
 
 fn documented_http_requests(document: &str) -> Vec<DocumentedHttpRequest> {
+  let document = document.replace("\r\n", "\n");
   document
     .split("```http\n")
     .skip(1)
@@ -829,6 +830,13 @@ fn documented_http_requests(document: &str) -> Vec<DocumentedHttpRequest> {
       }
     })
     .collect()
+}
+
+#[test]
+fn documented_http_requests_support_windows_line_endings() {
+  let document = DOCUMENTED_SECTION_FOUR_WORKFLOW.replace('\n', "\r\n");
+
+  assert_eq!(documented_http_requests(&document).len(), 5);
 }
 
 async fn send_documented_request(address: std::net::SocketAddr, request: &DocumentedHttpRequest) -> u16 {
