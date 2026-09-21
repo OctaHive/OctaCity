@@ -1,0 +1,27 @@
+name: Set up Microsandbox agentd
+description: Download, verify, and expose the pinned guest agent used by Microsandbox builds
+
+outputs:
+  path:
+    description: Absolute path exported as MSB_AGENTD_PATH
+    value: ${{ steps.stage.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: stage
+      name: Stage verified guest agent
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${RUNNER_ARCH}" in
+          X64) architecture=x86_64 ;;
+          ARM64) architecture=aarch64 ;;
+          *) echo "unsupported GitHub runner architecture: ${RUNNER_ARCH}" >&2; exit 1 ;;
+        esac
+
+        path=$(python3 "${GITHUB_ACTION_PATH}/../../../tools/stage_microsandbox_agentd.py" \
+          --architecture "${architecture}" \
+          --output "${RUNNER_TEMP}/octacity-microsandbox/agentd-${architecture}")
+        printf 'MSB_AGENTD_PATH=%s\n' "${path}" >> "${GITHUB_ENV}"
+        printf 'path=%s\n' "${path}" >> "${GITHUB_OUTPUT}"
