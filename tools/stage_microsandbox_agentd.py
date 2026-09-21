@@ -9,7 +9,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -19,14 +19,27 @@ RELEASE_URL = (
     "https://github.com/superradcompany/microsandbox/releases/download/"
     f"v{VERSION}"
 )
+ASSET_API_URL = "https://api.github.com/repos/superradcompany/microsandbox/releases/assets"
+
+
+class Asset(NamedTuple):
+    """Immutable identity of one upstream release asset."""
+
+    name: str
+    sha256: str
+    api_id: int
+
+
 ASSETS = {
-    "aarch64": (
+    "aarch64": Asset(
         "agentd-aarch64",
         "446efc7c97fd4c17233c500f1162a19b546562222d8088889207f45091468f29",
+        553487982,
     ),
-    "x86_64": (
+    "x86_64": Asset(
         "agentd-x86_64",
         "ba7f7a719bacb4afdfa211b5e42da9f75cea2fcadc0b1a58a686cd5a727ecdf7",
+        553487978,
     ),
 }
 
@@ -58,18 +71,30 @@ def stage_agentd(
     if attempts < 1:
         raise ValueError("attempts must be positive")
 
-    asset, expected_digest = ASSETS[architecture]
+    asset = ASSETS[architecture]
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    if output.is_file() and file_sha256(output) == expected_digest:
+    if output.is_file() and file_sha256(output) == asset.sha256:
         return output
 
-    url = f"{RELEASE_URL}/{asset}"
     partial = output.with_name(f"{output.name}.part")
-    request = Request(url, headers={"User-Agent": "OctaCity-CI"})
+    requests = (
+        Request(
+            f"{ASSET_API_URL}/{asset.api_id}",
+            headers={
+                "Accept": "application/octet-stream",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "OctaCity-CI",
+            },
+        ),
+        Request(
+            f"{RELEASE_URL}/{asset.name}", headers={"User-Agent": "OctaCity-CI"}
+        ),
+    )
 
     for attempt in range(1, attempts + 1):
         partial.unlink(missing_ok=True)
+        request = requests[(attempt - 1) % len(requests)]
         try:
             digest = hashlib.sha256()
             with opener(request, timeout=60) as response, partial.open("wb") as target:
@@ -77,9 +102,9 @@ def stage_agentd(
                     target.write(chunk)
                     digest.update(chunk)
             actual_digest = digest.hexdigest()
-            if actual_digest != expected_digest:
+            if actual_digest != asset.sha256:
                 raise StageError(
-                    f"checksum mismatch for {asset}: expected {expected_digest}, "
+                    f"checksum mismatch for {asset.name}: expected {asset.sha256}, "
                     f"received {actual_digest}"
                 )
             os.replace(partial, output)
@@ -88,11 +113,12 @@ def stage_agentd(
             partial.unlink(missing_ok=True)
             if attempt == attempts:
                 raise StageError(
-                    f"failed to stage {asset} after {attempts} attempts: {error}"
+                    f"failed to stage {asset.name} after {attempts} attempts: {error}"
                 ) from error
             delay = min(2 ** (attempt - 1), 8)
             print(
-                f"agentd download attempt {attempt}/{attempts} failed: {error}; "
+                f"agentd download attempt {attempt}/{attempts} via "
+                f"{request.host} failed: {error}; "
                 f"retrying in {delay}s",
                 file=sys.stderr,
             )

@@ -27,11 +27,11 @@ class MicrosandboxAgentdStagingTests(unittest.TestCase):
     def setUp(self):
         self.architecture = "x86_64"
         self.payload = b"verified agentd fixture"
-        asset, _ = STAGER.ASSETS[self.architecture]
         self.original_asset = STAGER.ASSETS[self.architecture]
-        STAGER.ASSETS[self.architecture] = (
-            asset,
+        STAGER.ASSETS[self.architecture] = STAGER.Asset(
+            self.original_asset.name,
             hashlib.sha256(self.payload).hexdigest(),
+            self.original_asset.api_id,
         )
 
     def tearDown(self):
@@ -60,6 +60,30 @@ class MicrosandboxAgentdStagingTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), self.payload)
             self.assertEqual(calls, [60, 60])
             self.assertEqual(delays, [1])
+
+    def test_uses_the_asset_api_when_the_release_cdn_returns_only_504(self):
+        requested_urls = []
+
+        def open_fixture(request, *, timeout):
+            requested_urls.append(request.full_url)
+            if request.full_url.startswith(STAGER.RELEASE_URL):
+                raise URLError("HTTP Error 504: Gateway Timeout")
+            return io.BytesIO(self.payload)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "agentd"
+            staged = STAGER.stage_agentd(
+                self.architecture,
+                output,
+                opener=open_fixture,
+                sleeper=lambda _delay: None,
+            )
+
+            self.assertEqual(staged, output.resolve())
+            self.assertEqual(output.read_bytes(), self.payload)
+            self.assertTrue(
+                any(url.startswith(STAGER.ASSET_API_URL) for url in requested_urls)
+            )
 
     def test_rejects_an_invalid_download_without_replacing_the_cached_file(self):
         with tempfile.TemporaryDirectory() as temporary:
