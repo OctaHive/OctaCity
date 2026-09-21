@@ -46,6 +46,131 @@ fn project_resource(project: octacity_server_application::ProjectSummaryProjecti
   }
 }
 
+pub(super) fn agent_pool_mutation(outcome: AgentPoolCommandOutcome) -> MutationResponse<AgentPoolResource> {
+  MutationResponse {
+    disposition: mutation_disposition(outcome.disposition),
+    resource: agent_pool_resource(outcome.pool),
+  }
+}
+
+pub(super) fn delete_agent_pool_response(outcome: DeleteAgentPoolCommandOutcome) -> DeleteAgentPoolResponse {
+  DeleteAgentPoolResponse {
+    disposition: mutation_disposition(outcome.disposition),
+    pool_id: outcome.pool_id.to_string(),
+  }
+}
+
+pub(super) fn agent_pool_page(
+  page: AgentPoolPageProjection,
+  request_id: &RequestId,
+) -> Result<CursorPage<AgentPoolResource>, ApiError> {
+  Ok(CursorPage {
+    items: page.pools.into_iter().map(agent_pool_resource).collect(),
+    next_cursor: page
+      .next_cursor
+      .map(|cursor| Cursor::new(cursor.to_string()))
+      .transpose()
+      .map_err(|_| internal_conversion(request_id))?,
+  })
+}
+
+pub(super) fn agent_pool_resource(projection: AgentPoolProjection) -> AgentPoolResource {
+  let drain_state = match projection.drain_state {
+    octacity_server_application::AgentPoolDrainStateProjection::Accepting => AgentPoolDrainState::Accepting,
+    octacity_server_application::AgentPoolDrainStateProjection::GracefulDrain => AgentPoolDrainState::GracefulDrain,
+    octacity_server_application::AgentPoolDrainStateProjection::ForcedDrain => AgentPoolDrainState::ForcedDrain,
+    octacity_server_application::AgentPoolDrainStateProjection::Drained => AgentPoolDrainState::Drained,
+  };
+  let admission_policy = match projection.admission_policy {
+    octacity_server_application::AgentPoolAdmissionPolicyProjection::Any => AgentPoolAdmissionPolicy::Any,
+    octacity_server_application::AgentPoolAdmissionPolicyProjection::Allowlist { platforms } => {
+      AgentPoolAdmissionPolicy::Allowlist {
+        platforms: platforms
+          .into_iter()
+          .map(|platform| AgentPlatform {
+            operating_system: platform.operating_system,
+            architecture: platform.architecture,
+          })
+          .collect(),
+      }
+    }
+  };
+  AgentPoolResource {
+    id: projection.id.to_string(),
+    name: projection.name,
+    version: projection.version.get(),
+    definition: AgentPoolDefinition {
+      enabled: projection.enabled,
+      drain_state,
+      admission_policy,
+      concurrency_limit: projection.concurrency_limit,
+      fairness_policy: match projection.fairness_policy {
+        octacity_server_application::AgentPoolFairnessPolicyProjection::PriorityFifo => {
+          AgentPoolFairnessPolicy::PriorityFifo
+        }
+        octacity_server_application::AgentPoolFairnessPolicyProjection::ConfigurationFair => {
+          AgentPoolFairnessPolicy::ConfigurationFair
+        }
+      },
+      static_capacity_limit: projection.static_capacity_limit,
+    },
+    published_at_unix_ms: projection.published_at.unix_millis(),
+  }
+}
+
+pub(super) fn agent_mutation(
+  outcome: AgentCommandOutcome,
+  request_id: &RequestId,
+) -> Result<MutationResponse<AgentResource>, ApiError> {
+  Ok(MutationResponse {
+    disposition: mutation_disposition(outcome.disposition),
+    resource: agent_resource(outcome.agent, request_id)?,
+  })
+}
+
+pub(super) fn agent_page(
+  page: AgentPageProjection,
+  request_id: &RequestId,
+) -> Result<CursorPage<AgentResource>, ApiError> {
+  Ok(CursorPage {
+    items: page
+      .agents
+      .into_iter()
+      .map(|agent| agent_resource(agent, request_id))
+      .collect::<Result<_, _>>()?,
+    next_cursor: page
+      .next_cursor
+      .map(|cursor| Cursor::new(cursor.to_string()))
+      .transpose()
+      .map_err(|_| internal_conversion(request_id))?,
+  })
+}
+
+pub(super) fn agent_resource(projection: AgentProjection, request_id: &RequestId) -> Result<AgentResource, ApiError> {
+  let inventory = serde_json::to_value(projection.inventory).map_err(|_| internal_conversion(request_id))?;
+  Ok(AgentResource {
+    id: projection.id.to_string(),
+    name: projection.name,
+    version: projection.version.get(),
+    pool_id: projection.pool_id.to_string(),
+    pool_version: projection.pool_version.get(),
+    inventory,
+    capacity: AgentCapacity {
+      logical_cpu_count: projection.capacity.logical_cpu_count,
+      total_memory_bytes: projection.capacity.total_memory_bytes,
+      work_disk_total_bytes: projection.capacity.work_disk_total_bytes,
+      state_disk_total_bytes: projection.capacity.state_disk_total_bytes,
+      virtualization_available: projection.capacity.virtualization_available,
+    },
+    status: match projection.status {
+      octacity_server_application::AgentStatusProjection::Online => AgentStatus::Online,
+      octacity_server_application::AgentStatusProjection::Offline => AgentStatus::Offline,
+      octacity_server_application::AgentStatusProjection::Draining => AgentStatus::Draining,
+    },
+    last_seen_at_unix_ms: projection.last_seen_at.unix_millis(),
+  })
+}
+
 pub(super) fn pipeline_mutation(outcome: PipelineCommandOutcome) -> MutationResponse<PipelineResource> {
   MutationResponse {
     disposition: mutation_disposition(outcome.disposition),
@@ -230,6 +355,7 @@ pub(super) fn configuration_resource(projection: BuildConfigurationProjection) -
   };
   let definition = BuildConfigurationDefinition {
     enabled: projection.enabled,
+    job_concurrency_limit: projection.job_concurrency_limit,
     repository_id: projection.repository_id.to_string(),
     repository_version: projection.repository_version.get(),
     pipeline_id: projection.pipeline_id.to_string(),
@@ -334,18 +460,22 @@ pub(super) fn configuration_document(
   Ok(document)
 }
 
+pub(super) fn agent_pool_document(definition: AgentPoolDefinition, request_id: &RequestId) -> Result<Value, ApiError> {
+  serde_json::to_value(definition).map_err(|_| internal_conversion(request_id))
+}
+
 pub(super) fn encode<T: Serialize>(value: T, request_id: &RequestId) -> Result<Value, ApiError> {
   serde_json::to_value(value).map_err(|_| internal_conversion(request_id))
 }
 
-fn mutation_disposition(value: ApplicationMutationDisposition) -> MutationDisposition {
+pub(super) fn mutation_disposition(value: ApplicationMutationDisposition) -> MutationDisposition {
   match value {
     ApplicationMutationDisposition::Applied => MutationDisposition::Applied,
     ApplicationMutationDisposition::Replayed => MutationDisposition::Replayed,
   }
 }
 
-fn internal_conversion(request_id: &RequestId) -> ApiError {
+pub(super) fn internal_conversion(request_id: &RequestId) -> ApiError {
   ApiError::new(
     StatusCode::INTERNAL_SERVER_ERROR,
     ErrorCode::Internal,

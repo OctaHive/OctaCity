@@ -15,6 +15,7 @@
       "lease_id": "lease-42",
       "fencing_token": "fence-42-1",
       "stream_sequence": 1,
+      "occurred_at_unix_ms": 1789128000000,
       "kind": {
         "source": "agent",
         "event": {
@@ -29,6 +30,7 @@
       "lease_id": "lease-42",
       "fencing_token": "fence-42-1",
       "stream_sequence": 2,
+      "occurred_at_unix_ms": 1789128001000,
       "kind": {
         "source": "runner",
         "event": {

@@ -679,6 +679,12 @@ fn rejects_invalid_identity_and_server_material() {
       .contains("must use https")
   );
 
+  for server_url in ["http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"] {
+    let mut fixture = Fixture::new();
+    fixture.config.server_url = server_url.to_owned();
+    fixture.config.validate().unwrap();
+  }
+
   let mut fixture = Fixture::new();
   fixture.config.server_url = "https://octacity.example/api".to_owned();
   assert!(

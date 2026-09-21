@@ -459,6 +459,7 @@ fn build_configuration(
 ) -> BuildConfigurationDefinition {
   BuildConfigurationDefinition {
     enabled: true,
+    job_concurrency_limit: 2,
     repository_id,
     repository_version,
     pipeline_id,

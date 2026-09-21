@@ -8,9 +8,9 @@ terminal completion.
 ## Boundary
 
 The agent opens outbound HTTP connections only. Production endpoints require
-HTTPS with normal certificate validation. Loopback HTTP is accepted solely by
-the client constructor for local integration tests. Authentication uses a
-Bearer enrollment credential read from a permissions-restricted file; it is
+HTTPS with normal certificate validation. Agent configuration and the client
+constructor accept loopback HTTP solely for local integration tests.
+Authentication uses a Bearer enrollment credential read from a permissions-restricted file; it is
 never accepted as a command-line value or written to logs.
 
 All bodies are strict JSON objects. Unknown fields, unsupported
@@ -67,7 +67,7 @@ the agent still enforces every signed job requirement locally.
 POST /api/v1/agents/{agent_id}/leases:acquire
 ```
 
-The request contains the current `registration_id`, the maximum whole-second
+The request contains the current `registration_id`, a 1–60 second whole-second
 long-poll wait, and `accept_jobs`. The agent sets `accept_jobs` to false while
 local disk admission is paused. The coordinator must then return only
 `no_work` or `drain`; this keeps registration liveness and operator drain
@@ -77,6 +77,23 @@ response has exactly one outcome:
 - `lease`: a fenced assignment and signed JobSpec;
 - `no_work`: no match before the poll ended, plus a bounded repoll delay;
 - `drain`: stop acquiring work for this registration epoch.
+
+Placement reads one global durable queue in priority, enqueue-order, and stable
+Job-identity order. It verifies Pool membership and accepting state, Pool and
+single-Agent concurrency, exact labels, platform, runtime/isolation route,
+registered capacity, Octa protocols and digest, task/source plugin identities,
+and cache capability. Incompatible entries are skipped without changing their
+priority. The selected queue row is locked with `FOR UPDATE SKIP LOCKED`; the
+Lease commit wins before an assignment is returned. Waiting happens outside a
+transaction and is followed by fresh registration authorization and another
+authoritative claim, so notifications are only wake-up hints.
+
+That commit removes the queue entry, marks the Job leased, and records the
+selected Pool version, registration epoch, issue time, expiry, and a one-way
+SHA-256 verifier for the opaque fence in the same transaction as idempotency,
+audit, and outbox evidence. The raw fence is returned only in the committed
+assignment and is never written to audit or outbox payloads. A failed commit
+therefore leaves the Job ready and produces no assignment response.
 
 A lease contains `lease_id`, `job_id`, positive `attempt`, opaque
 `fencing_token`, `issued_at`, `expires_at`, and `signed_job_spec`. Before a
@@ -134,7 +151,8 @@ POST /api/v1/leases/{lease_id}/events:append
 ```
 
 Every envelope repeats `job_id`, `attempt`, `lease_id`, and `fencing_token`,
-then adds a positive `stream_sequence`. A batch is non-empty, bounded, and
+then adds a positive `stream_sequence` and an immutable
+`occurred_at_unix_ms`. A batch is non-empty, bounded, and
 strictly contiguous. Runner events retain their original event-schema version,
 timestamp, category, data, and runner sequence inside the envelope. Agent
 lifecycle and resource events use a separate tagged type and cannot be

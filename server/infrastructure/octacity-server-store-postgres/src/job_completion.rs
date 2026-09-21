@@ -1,4 +1,6 @@
-use octacity_server_domain::{EntityKind, JobId};
+use std::collections::BTreeSet;
+
+use octacity_server_domain::{EntityKind, JobId, PoolId};
 use octacity_server_job::{JobFailureClass, JobSpecSigner};
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
@@ -17,7 +19,7 @@ use crate::{
   state::{attempt_state, build_state, job_state, parse_attempt_state, parse_build_state, parse_job_state},
 };
 
-mod orchestration;
+pub(crate) mod orchestration;
 
 pub(crate) async fn execute(
   pool: &PgPool,
@@ -35,7 +37,7 @@ pub(crate) async fn execute(
   });
   let identity = MutationIdentity::new(
     MutationKind::CompleteJob,
-    request.lease.lease_id.to_string(),
+    request.completion_id.to_string(),
     request.completed_at,
     EntityKind::Job,
     &digest_input,
@@ -59,7 +61,7 @@ pub(crate) async fn execute(
   let kind = completion_kind(request.kind);
 
   let existing: Option<CompletionRow> = sqlx::query_as(
-    "SELECT lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, build_state \
+    "SELECT completion_id, lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, build_state \
      FROM job_completions WHERE job_id = $1 FOR UPDATE",
   )
   .bind(lease.job_id)
@@ -67,13 +69,15 @@ pub(crate) async fn execute(
   .await
   .map_err(unavailable)?;
   if let Some(existing) = existing {
-    if existing.matches(request, required_db, kind) {
+    if existing.matches(&request, required_db, kind) {
       let ready_jobs = job_ids(existing.ready_job_ids)?;
+      let ready_pools = ready_pools(&mut transaction, &ready_jobs).await?;
       let outcome = CompletionDisposition {
         disposition: MutationDisposition::Replayed,
         job_id: JobId::from_uuid(lease.job_id).map_err(|_| StoreError::Unavailable)?,
         failure_class: parse_failure_class(existing.failure_class.as_deref())?,
         ready_jobs,
+        ready_pools,
         skipped_jobs: job_ids(existing.skipped_job_ids)?,
         attempt_state: parse_attempt_state(&existing.attempt_state)?,
         build_state: parse_build_state(&existing.build_state)?,
@@ -118,11 +122,14 @@ pub(crate) async fn execute(
   )
   .await?;
 
+  let ready_jobs = job_ids(applied.ready_jobs)?;
+  let ready_pools = ready_pools(&mut transaction, &ready_jobs).await?;
   let outcome = CompletionDisposition {
     disposition: MutationDisposition::Applied,
     job_id: JobId::from_uuid(lease.job_id).map_err(|_| StoreError::Unavailable)?,
     failure_class: request.kind.failure_class(),
-    ready_jobs: job_ids(applied.ready_jobs)?,
+    ready_jobs,
+    ready_pools,
     skipped_jobs: job_ids(applied.skipped_jobs)?,
     attempt_state: applied.attempt_state,
     build_state: applied.build_state,
@@ -254,11 +261,12 @@ async fn persist_completion(
 ) -> Result<(), StoreError> {
   sqlx::query(
     "INSERT INTO job_completions \
-       (job_id, lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, \
+       (job_id, completion_id, lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, \
         build_state, completed_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10::double precision / 1000.0))",
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision / 1000.0))",
   )
   .bind(write.job_id)
+  .bind(write.request.completion_id.as_str())
   .bind(write.request.lease.lease_id.as_uuid())
   .bind(write.final_sequence)
   .bind(write.kind)
@@ -276,6 +284,7 @@ async fn persist_completion(
 
 #[derive(FromRow)]
 struct CompletionRow {
+  completion_id: String,
   lease_id: Uuid,
   final_sequence: i64,
   kind: String,
@@ -287,8 +296,9 @@ struct CompletionRow {
 }
 
 impl CompletionRow {
-  fn matches(&self, request: JobCompletion, final_sequence: i64, kind: &str) -> bool {
-    self.lease_id == request.lease.lease_id.as_uuid()
+  fn matches(&self, request: &JobCompletion, final_sequence: i64, kind: &str) -> bool {
+    self.completion_id == request.completion_id.as_str()
+      && self.lease_id == request.lease.lease_id.as_uuid()
       && self.final_sequence == final_sequence
       && self.kind == kind
       && self.failure_class.as_deref() == failure_class(request.kind)
@@ -300,6 +310,8 @@ struct StoredOutcome {
   job_id: JobId,
   failure_class: Option<JobFailureClass>,
   ready_jobs: Vec<JobId>,
+  #[serde(default)]
+  ready_pools: BTreeSet<PoolId>,
   skipped_jobs: Vec<JobId>,
   attempt_state: AttemptState,
   build_state: BuildState,
@@ -311,6 +323,7 @@ impl From<&CompletionDisposition> for StoredOutcome {
       job_id: outcome.job_id,
       failure_class: outcome.failure_class,
       ready_jobs: outcome.ready_jobs.clone(),
+      ready_pools: outcome.ready_pools.clone(),
       skipped_jobs: outcome.skipped_jobs.clone(),
       attempt_state: outcome.attempt_state,
       build_state: outcome.build_state,
@@ -325,10 +338,32 @@ fn replay(value: Value) -> Result<CompletionDisposition, StoreError> {
     job_id: stored.job_id,
     failure_class: stored.failure_class,
     ready_jobs: stored.ready_jobs,
+    ready_pools: stored.ready_pools,
     skipped_jobs: stored.skipped_jobs,
     attempt_state: stored.attempt_state,
     build_state: stored.build_state,
   })
+}
+
+async fn ready_pools(
+  transaction: &mut Transaction<'_, Postgres>,
+  ready_jobs: &[JobId],
+) -> Result<BTreeSet<PoolId>, StoreError> {
+  if ready_jobs.is_empty() {
+    return Ok(BTreeSet::new());
+  }
+  let job_ids: Vec<_> = ready_jobs.iter().map(|job_id| job_id.as_uuid()).collect();
+  let rows: Vec<Uuid> = sqlx::query_scalar(
+    "SELECT DISTINCT unnest(allowed_pool_ids) AS pool_id FROM jobs WHERE id = ANY($1::uuid[]) ORDER BY pool_id",
+  )
+  .bind(job_ids)
+  .fetch_all(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  rows
+    .into_iter()
+    .map(|pool_id| PoolId::from_uuid(pool_id).map_err(|_| StoreError::Unavailable))
+    .collect()
 }
 
 fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFacts {
@@ -341,6 +376,7 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
       "kind": completion_kind(request.kind),
       "failure_class": failure_class(request.kind),
       "lease_id": request.lease.lease_id,
+      "completion_id": request.completion_id,
       "ready_job_count": outcome.ready_jobs.len(),
       "skipped_job_count": outcome.skipped_jobs.len(),
       "attempt_state": attempt_state(outcome.attempt_state),

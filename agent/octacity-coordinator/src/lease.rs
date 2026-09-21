@@ -74,6 +74,7 @@ impl LeasePoller {
   pub async fn next(
     &self,
     accept_jobs: bool,
+    snapshot: &octacity_protocol::HostSnapshot,
     cancellation: CancellationToken,
   ) -> Result<LeasePollOutcome, CoordinatorError> {
     let response = self
@@ -83,6 +84,7 @@ impl LeasePoller {
         self.poll_timeout,
         self.lease_safety_margin,
         accept_jobs,
+        snapshot,
         cancellation,
       )
       .await?;

@@ -10,6 +10,7 @@ description = "Versioned provider-neutral webhook adapter protocol for OctaCity"
 
 [dependencies]
 base64.workspace = true
+octacity-adapter-protocol = { path = "../octacity-adapter-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

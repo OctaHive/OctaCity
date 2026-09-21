@@ -3,9 +3,10 @@
 OctaCity is the control plane and self-hosted agent for running
 [Octa](https://github.com/OctaHive/octa) jobs. The repository now includes the
 local-execution, coordinator-transport, and durable job-lifecycle milestones.
-The modular server crates and contracts are being built. A runnable
-health-only server composition shell is available; management mutations and
-the durable control-plane vertical slices are not implemented yet.
+The workspace includes a runnable PostgreSQL-backed coordinator server,
+versioned management REST API, authenticated Agent ingress, atomic placement,
+and durable Build/Attempt/Job lifecycle. Native, containerd, and Microsandbox
+execution backends are covered by platform-specific contract runners.
 
 The current workspace contains:
 
@@ -80,15 +81,27 @@ octacity-agent --log-filter octacity_agent=info --log-format json \
   run /etc/octacity/agent.toml
 ```
 
-The current server is a health-only composition shell. It becomes ready only
-after its PostgreSQL migrations, database, mandatory S3-compatible bucket, and
-JobSpec signing material are usable. A minimal `server.toml` is:
+The server becomes ready only after its PostgreSQL migrations, database,
+mandatory S3-compatible bucket, and JobSpec signing material are usable. When
+`agent_bind` is configured, the independently authenticated Agent listener
+serves registration at `/api/v1/agents/register` and lease long polling at
+`/api/v1/agents/{agent_id}/leases:acquire`. A minimal `server.toml` is:
 
 ```toml
 management_bind = "127.0.0.1:8080"
+agent_bind = "127.0.0.1:8081"
 shutdown_grace_milliseconds = 10000
 readiness_check_interval_milliseconds = 5000
 readiness_check_timeout_milliseconds = 2000
+agent_registration_lifetime_milliseconds = 86400000
+agent_enrollment_lifetime_milliseconds = 900000
+agent_max_retry_delay_milliseconds = 30000
+agent_lease_lifetime_milliseconds = 300000
+lease_expiry_poll_interval_milliseconds = 1000
+lease_expiry_claim_lifetime_milliseconds = 30000
+lease_expiry_batch_size = 32
+ready_job_listener_reconnect_milliseconds = 1000
+supported_pipeline_capabilities = ["native"]
 
 [postgres]
 url_file = "/run/secrets/octacity-postgres-url"
@@ -108,17 +121,30 @@ capability_recheck_interval_milliseconds = 300000
 [signing]
 key_id = "server-key-2026-09"
 key_file = "/run/secrets/octacity-jobspec-ed25519-key"
+
+[agent_credentials]
+enrollment_key_file = "/run/secrets/octacity-agent-enrollment-key"
+
+[job_spec]
+policy_file = "/etc/octacity/job-spec-policy.json"
 ```
 
 Credential files contain one value with an optional trailing newline. The
 PostgreSQL file contains a connection URL, the object-store files contain the
 two S3 credentials, and the signing file contains the standard-base64 encoding
-of exactly 32 Ed25519 private-key bytes. Their contents are bounded, never
+of exactly 32 Ed25519 private-key bytes. The Agent enrollment key file likewise
+contains standard-base64 encoding of an independently generated 32-byte key.
+Their contents are bounded, never
 included in diagnostics, and loaded before the management listener binds.
 `signing.key_id` is the non-secret identifier agents use to select the matching
 verification key; rotate it together with the private key while retaining the
 previous public key for the configured overlap window.
-Each path must name a regular file directly (symbolic links are rejected); on
+`job_spec.policy_file` is a strict bounded JSON document containing the
+immutable source-plugin identity, Octa release and plugin digests, protocol
+versions, and signed JobSpec validity for newly accepted Builds. See
+[`docs/job-spec-policy.example.json`](docs/job-spec-policy.example.json).
+Invalid policy stops startup before listeners bind.
+Each credential path must name a regular file directly (symbolic links are rejected); on
 Unix, set owner-only permissions such as `0400` or `0600`.
 The file owner must also match the server process's effective user. The first
 successful object-store readiness check performs a bounded zero-byte
@@ -137,9 +163,11 @@ cargo run -p octacity-server -- validate server.toml
 cargo run -p octacity-server -- run server.toml
 ```
 
-It exposes `/health/live`, `/health/ready`, and
-`/api/v1/operations/metadata`; management mutations and server-Agent
-coordination routes are intentionally absent at this phase.
+It exposes `/health/live`, `/health/ready`, `/api/v1/openapi.json`, the
+management API, and—when `agent_bind` is configured—the authenticated Agent
+registration, lease, heartbeat, event, and completion API. Management v1 is
+currently unauthenticated and belongs only on the configured trusted network;
+Agent routes always require enrollment or current-registration credentials.
 Liveness is process-local. Readiness is a periodically refreshed, bounded
 snapshot and can recover after PostgreSQL or object storage becomes available
 again without restarting the process. Safe structured logs identify the failed

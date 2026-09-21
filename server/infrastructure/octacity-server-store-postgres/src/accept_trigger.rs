@@ -278,6 +278,13 @@ async fn require_references(
     .flat_map(|job| job.allowed_pools.iter().map(|pool| pool.as_uuid()))
     .collect();
   let pool_ids: Vec<_> = allowed_pools.iter().copied().collect();
+  for pool_id in &allowed_pools {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+      .bind(format!("octacity.agent-pool.{pool_id}"))
+      .execute(&mut **transaction)
+      .await
+      .map_err(unavailable)?;
+  }
   let pool_count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id) FROM pools WHERE id = ANY($1)")
     .bind(&pool_ids)
     .fetch_one(&mut **transaction)
@@ -415,9 +422,9 @@ async fn insert_build(
     "INSERT INTO builds \
        (id, project_id, build_configuration_id, build_configuration_version, pipeline_id, pipeline_version, \
         repository_id, repository_version, trigger_occurrence_id, immutable_revision, input_snapshot, \
-        effective_policy_snapshot, priority, state, version, created_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'running', 1, \
-             to_timestamp($14::double precision / 1000.0), to_timestamp($14::double precision / 1000.0))",
+        effective_policy_snapshot, project_job_concurrency_limit, priority, state, version, created_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'running', 1, \
+             to_timestamp($15::double precision / 1000.0), to_timestamp($15::double precision / 1000.0))",
   )
   .bind(request.build.id.as_uuid())
   .bind(request.build.project_id.as_uuid())
@@ -431,6 +438,7 @@ async fn insert_build(
   .bind(request.build.immutable_revision.as_str())
   .bind(Json(request.build.input_snapshot.clone()))
   .bind(Json(request.build.effective_policy_snapshot.clone()))
+  .bind(i64::from(request.build.project_job_concurrency_limit))
   .bind(request.build.priority)
   .bind(request.accepted_at.unix_millis())
   .execute(&mut **transaction)

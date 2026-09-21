@@ -363,6 +363,7 @@ fn fixture() -> Fixture {
     version: BuildConfigurationVersion::INITIAL,
     definition: BuildConfigurationDefinition {
       enabled: true,
+      job_concurrency_limit: 2,
       repository_id,
       repository_version: RepositoryVersion::INITIAL,
       pipeline_id,

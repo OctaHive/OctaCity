@@ -1,6 +1,6 @@
 use std::{
   sync::Arc,
-  time::{SystemTime, UNIX_EPOCH},
+  time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -10,171 +10,136 @@ use axum::{
     rejection::{JsonRejection, QueryRejection},
   },
   http::{HeaderMap, StatusCode},
-  response::{IntoResponse, Response},
+  response::IntoResponse,
   routing::{get, post},
 };
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, ApplicationFailure, BuildConfigurationCommandOutcome,
-  BuildConfigurationProjection, CommandHandler, CreateBuildConfigurationCommand, CreatePipelineCommand,
-  CreateProjectCommand, CreateRepositoryCommand, DeleteProjectCommand, DeleteProjectCommandOutcome,
-  DependencyPolicyProjection as ApplicationDependencyPolicy, GetBuildConfigurationQuery, GetPipelineQuery,
-  GetProjectQuery, GetRepositoryQuery, JobEventPageProjection, ListProjectsQuery, ManagementInputError,
-  ManagementInputFactory, ManualTriggerError, ManualTriggerInput, ManualTriggerOutcome, MoveProjectCommand,
-  MutationDisposition as ApplicationMutationDisposition, NetworkPolicyProjection as ApplicationNetworkPolicy,
-  ParameterTypeProjection as ApplicationParameterType, PipelineCommandOutcome, PipelineProjection,
-  PlatformArchitectureProjection as ApplicationPlatformArchitecture, PlatformOsProjection as ApplicationPlatformOs,
-  ProjectCommandOutcome, ProjectPageProjection, ProjectProjection, PublishBuildConfigurationVersionCommand,
-  PublishPipelineVersionCommand, PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery,
-  RenameProjectCommand, RepositoryCommandOutcome, RepositoryProjection, RetryClassProjection as ApplicationRetryClass,
-  RuntimeClassProjection as ApplicationRuntimeClass, TriggerKindProjection as ApplicationTriggerKind,
+  AgentCommandOutcome, AgentEnrollmentSecretKey, AgentPageProjection, AgentPoolCommandOutcome, AgentPoolPageProjection,
+  AgentPoolProjection, AgentProjection, ApplicationFailure, AttemptDetailsProjection, BuildConfigurationCommandOutcome,
+  BuildConfigurationProjection, BuildDetailsProjection, CancelBuildCommandOutcome, DeleteAgentPoolCommandOutcome,
+  DeleteProjectCommandOutcome, DependencyPolicyProjection as ApplicationDependencyPolicy, JobEventPageProjection,
+  JobProjection, ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput,
+  ManualTriggerOutcome, MutationDisposition as ApplicationMutationDisposition,
+  NetworkPolicyProjection as ApplicationNetworkPolicy, ParameterTypeProjection as ApplicationParameterType,
+  PipelineCommandOutcome, PipelineProjection, PlatformArchitectureProjection as ApplicationPlatformArchitecture,
+  PlatformOsProjection as ApplicationPlatformOs, ProjectCommandOutcome, ProjectPageProjection, ProjectProjection,
+  RepositoryCommandOutcome, RepositoryProjection, RetryBuildCommandOutcome,
+  RetryClassProjection as ApplicationRetryClass, RuntimeClassProjection as ApplicationRuntimeClass,
+  TriggerKindProjection as ApplicationTriggerKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
-  API_PREFIX, AcceptManualTriggerRequest, AgentRequirements, ArtifactPolicy, BuildConfigurationDefinition,
-  BuildConfigurationResource, CachePolicy, CreateBuildConfigurationRequest, CreatePipelineRequest,
-  CreateProjectRequest, CreateRepositoryRequest, Cursor, CursorPage, DeleteProjectResponse, DependencyPolicy,
-  ErrorCode, ErrorResponse, IDEMPOTENCY_KEY_HEADER, IdempotencyKey, JobEventPage, JobEventResource, JobExecution,
-  MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy, OPTIMISTIC_PRECONDITION_HEADER,
-  ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge, PipelineNode, PipelineResource,
-  PlatformArchitecture, PlatformOs, ProjectDetails, ProjectResource, PublishBuildConfigurationVersionRequest,
-  PublishPipelineVersionRequest, PublishRepositoryVersionRequest, RenameProjectRequest, RepositoryDefinition,
-  RepositoryResource, RepositorySelectionPolicy, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy,
+  API_PREFIX, AcceptManualTriggerRequest, AgentCapacity, AgentDrainMode, AgentPlatform, AgentPoolAdmissionPolicy,
+  AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy, AgentPoolResource, AgentRequirements,
+  AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptSummaryResource, BuildConfigurationDefinition,
+  BuildConfigurationResource, BuildResource, CachePolicy, CancelBuildResponse, CreateAgentPoolRequest,
+  CreateBuildConfigurationRequest, CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest,
+  CreateRepositoryRequest, Cursor, CursorPage, DagEdgeResource, DeleteAgentPoolResponse, DeleteProjectResponse,
+  DependencyPolicy, DrainAgentRequest, ErrorCode, IDEMPOTENCY_KEY_HEADER, IdempotencyKey, IssueAgentEnrollmentRequest,
+  IssueAgentEnrollmentResponse, JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource,
+  JobResource, JobTerminalResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
+  OPTIMISTIC_PRECONDITION_HEADER, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
+  PipelineNode, PipelineResource, PlatformArchitecture, PlatformOs, ProjectDetails, ProjectPolicyResource,
+  ProjectResource, PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest,
+  PublishPipelineVersionRequest, PublishProjectPolicyRequest, PublishRepositoryVersionRequest,
+  ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy,
+  RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, TriggerDefinitionResource,
   TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
 };
 use crate::RequestId;
 
+mod agent;
+mod agent_pool;
+mod application;
+mod error;
+mod execution;
 mod representations;
 
+use agent::{drain_agent, get_agent, issue_agent_enrollment, list_agents, reassign_agent_pool};
+use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agent_pools, publish_agent_pool};
+use application::{AgentEndpoints, AgentPoolManagementApplication};
+pub use application::{
+  AgentManagementApplication, BuildManagementApplication, CatalogManagementApplication,
+  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
+  JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication,
+};
+use error::ApiError;
+use execution::{cancel_build, get_attempt, get_build, get_job, retry_build};
 use representations::*;
 
 const MAX_MANAGEMENT_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const DEFAULT_PAGE_LIMIT: u16 = 50;
 pub(super) const DEFAULT_JOB_EVENT_LIMIT: u16 = 100;
 
-type ProjectCreate = dyn CommandHandler<CreateProjectCommand, Error = ApplicationError>;
-type ProjectRename = dyn CommandHandler<RenameProjectCommand, Error = ApplicationError>;
-type ProjectMove = dyn CommandHandler<MoveProjectCommand, Error = ApplicationError>;
-type ProjectDelete = dyn CommandHandler<DeleteProjectCommand, Error = ApplicationError>;
-type ProjectGet = dyn QueryHandler<GetProjectQuery, Error = ApplicationError>;
-type ProjectList = dyn QueryHandler<ListProjectsQuery, Error = ApplicationError>;
-type PipelineCreate = dyn CommandHandler<CreatePipelineCommand, Error = ApplicationError>;
-type PipelinePublish = dyn CommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>;
-type PipelineGet = dyn QueryHandler<GetPipelineQuery, Error = ApplicationError>;
-type RepositoryCreate = dyn CommandHandler<CreateRepositoryCommand, Error = ApplicationError>;
-type RepositoryPublish = dyn CommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>;
-type RepositoryGet = dyn QueryHandler<GetRepositoryQuery, Error = ApplicationError>;
-type ConfigurationCreate = dyn CommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>;
-type ConfigurationPublish = dyn CommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>;
-type ConfigurationGet = dyn QueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>;
-type ManualTriggerAccept = dyn CommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError>;
-type JobEventsRead = dyn QueryHandler<ReadJobEventsQuery, Error = ApplicationError>;
-
-#[derive(Clone)]
-struct ProjectEndpoints {
-  create: Arc<ProjectCreate>,
-  rename: Arc<ProjectRename>,
-  move_project: Arc<ProjectMove>,
-  delete: Arc<ProjectDelete>,
-  get: Arc<ProjectGet>,
-  list: Arc<ProjectList>,
-}
-
-#[derive(Clone)]
-struct PipelineEndpoints {
-  create: Arc<PipelineCreate>,
-  publish: Arc<PipelinePublish>,
-  get: Arc<PipelineGet>,
-}
-
-#[derive(Clone)]
-struct ConfigurationEndpoints {
-  create_repository: Arc<RepositoryCreate>,
-  publish_repository: Arc<RepositoryPublish>,
-  get_repository: Arc<RepositoryGet>,
-  create_configuration: Arc<ConfigurationCreate>,
-  publish_configuration: Arc<ConfigurationPublish>,
-  get_configuration: Arc<ConfigurationGet>,
-}
-
 /// Typed application handlers used by the v1 management REST adapter.
 ///
 /// Construction accepts only application-layer command and query handlers. The
 /// REST crate has no dependency on an infrastructure adapter.
-#[derive(Clone)]
 pub struct ManagementApplication {
   inputs: ManagementInputFactory,
-  projects: ProjectEndpoints,
-  pipelines: PipelineEndpoints,
-  configurations: ConfigurationEndpoints,
-  manual_triggers: Arc<ManualTriggerAccept>,
-  job_events: Arc<JobEventsRead>,
+  projects: ProjectManagementApplication,
+  pipelines: PipelineManagementApplication,
+  configurations: ConfigurationManagementApplication,
+  agent_pools: AgentPoolManagementApplication,
+  agents: AgentEndpoints,
+  builds: BuildManagementApplication,
+  definitions: DefinitionManagementApplication,
+  manual_triggers: ManualTriggerManagementApplication,
+  job_events: JobEventManagementApplication,
 }
 
 impl ManagementApplication {
-  /// Creates the complete section-4 management adapter from application handlers.
-  pub fn new<P, L, C, T, E>(
+  /// Creates the management adapter registered through the static Agent Pool slice.
+  pub fn new(
     supported_pipeline_capabilities: impl IntoIterator<Item = String>,
-    projects: Arc<P>,
-    pipelines: Arc<L>,
-    configurations: Arc<C>,
-    manual_triggers: Arc<T>,
-    job_events: Arc<E>,
-  ) -> Result<Self, ManagementInputError>
-  where
-    P: CommandHandler<CreateProjectCommand, Error = ApplicationError>
-      + CommandHandler<RenameProjectCommand, Error = ApplicationError>
-      + CommandHandler<MoveProjectCommand, Error = ApplicationError>
-      + CommandHandler<DeleteProjectCommand, Error = ApplicationError>
-      + QueryHandler<GetProjectQuery, Error = ApplicationError>
-      + QueryHandler<ListProjectsQuery, Error = ApplicationError>
-      + 'static,
-    L: CommandHandler<CreatePipelineCommand, Error = ApplicationError>
-      + CommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetPipelineQuery, Error = ApplicationError>
-      + 'static,
-    C: CommandHandler<CreateRepositoryCommand, Error = ApplicationError>
-      + CommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetRepositoryQuery, Error = ApplicationError>
-      + CommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>
-      + CommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>
-      + 'static,
-    T: CommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError> + 'static,
-    E: QueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
-  {
+    agent_enrollment_lifetime: Duration,
+    agent_enrollment_secret_key: AgentEnrollmentSecretKey,
+    handlers: ManagementApplicationHandlers,
+  ) -> Result<Self, ManagementInputError> {
+    let ManagementApplicationHandlers {
+      catalog,
+      agents: agent_management,
+      execution,
+    } = handlers;
+    let CatalogManagementApplication {
+      projects,
+      pipelines,
+      configurations,
+      definitions,
+    } = catalog;
+    let ExecutionManagementApplication {
+      builds,
+      manual_triggers,
+      job_events,
+    } = execution;
+    let AgentManagementApplication {
+      pools: agent_pools,
+      agents,
+    } = agent_management;
     Ok(Self {
-      inputs: ManagementInputFactory::new(supported_pipeline_capabilities)?,
-      projects: ProjectEndpoints {
-        create: projects.clone(),
-        rename: projects.clone(),
-        move_project: projects.clone(),
-        delete: projects.clone(),
-        get: projects.clone(),
-        list: projects,
-      },
-      pipelines: PipelineEndpoints {
-        create: pipelines.clone(),
-        publish: pipelines.clone(),
-        get: pipelines,
-      },
-      configurations: ConfigurationEndpoints {
-        create_repository: configurations.clone(),
-        publish_repository: configurations.clone(),
-        get_repository: configurations.clone(),
-        create_configuration: configurations.clone(),
-        publish_configuration: configurations.clone(),
-        get_configuration: configurations,
-      },
+      inputs: ManagementInputFactory::new(
+        supported_pipeline_capabilities,
+        agent_enrollment_lifetime,
+        agent_enrollment_secret_key,
+      )?,
+      projects,
+      pipelines,
+      configurations,
+      agent_pools,
+      agents,
+      builds,
+      definitions,
       manual_triggers,
       job_events,
     })
   }
 }
 
-/// Builds the registered section-4 management routes below `/api/v1`.
+/// Builds the registered management routes below `/api/v1`.
 pub fn router(application: ManagementApplication) -> Router {
   Router::new()
     .route(&format!("{API_PREFIX}/openapi.json"), get(openapi))
@@ -193,6 +158,10 @@ pub fn router(application: ManagementApplication) -> Router {
     .route(
       &format!("{API_PREFIX}/projects/{{project_id}}/move"),
       post(move_project),
+    )
+    .route(
+      &format!("{API_PREFIX}/projects/{{project_id}}/policy-versions"),
+      post(publish_project_policy),
     )
     .route(&format!("{API_PREFIX}/pipelines"), post(create_pipeline))
     .route(
@@ -224,7 +193,40 @@ pub fn router(application: ManagementApplication) -> Router {
       &format!("{API_PREFIX}/build-configurations/{{configuration_id}}/versions/{{version}}"),
       get(get_build_configuration),
     )
+    .route(
+      &format!("{API_PREFIX}/trigger-definitions/manual"),
+      post(create_manual_trigger_definition),
+    )
     .route(&format!("{API_PREFIX}/triggers/manual"), post(accept_manual_trigger))
+    .route(&format!("{API_PREFIX}/builds/{{build_id}}"), get(get_build))
+    .route(&format!("{API_PREFIX}/builds/{{build_id}}/cancel"), post(cancel_build))
+    .route(&format!("{API_PREFIX}/builds/{{build_id}}/retry"), post(retry_build))
+    .route(&format!("{API_PREFIX}/attempts/{{attempt_id}}"), get(get_attempt))
+    .route(
+      &format!("{API_PREFIX}/agent-pools"),
+      post(create_agent_pool).get(list_agent_pools),
+    )
+    .route(
+      &format!("{API_PREFIX}/agent-pools/{{pool_id}}"),
+      axum::routing::delete(delete_agent_pool),
+    )
+    .route(
+      &format!("{API_PREFIX}/agent-pools/{{pool_id}}/versions"),
+      post(publish_agent_pool),
+    )
+    .route(
+      &format!("{API_PREFIX}/agent-pools/{{pool_id}}/versions/{{version}}"),
+      get(get_agent_pool),
+    )
+    .route(&format!("{API_PREFIX}/agents"), get(list_agents))
+    .route(&format!("{API_PREFIX}/agent-enrollments"), post(issue_agent_enrollment))
+    .route(&format!("{API_PREFIX}/agents/{{agent_id}}"), get(get_agent))
+    .route(
+      &format!("{API_PREFIX}/agents/{{agent_id}}/pool"),
+      post(reassign_agent_pool),
+    )
+    .route(&format!("{API_PREFIX}/agents/{{agent_id}}/drain"), post(drain_agent))
+    .route(&format!("{API_PREFIX}/jobs/{{job_id}}"), get(get_job))
     .route(&format!("{API_PREFIX}/jobs/{{job_id}}/events"), get(read_job_events))
     .fallback(api_not_found)
     .layer(DefaultBodyLimit::max(MAX_MANAGEMENT_BODY_BYTES))
@@ -270,7 +272,7 @@ async fn create_project(
       body.parent_id.as_deref(),
       body.name,
       idempotency_key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -294,7 +296,13 @@ async fn rename_project(
   let expected = precondition(&headers, &request_id)?;
   let command = application
     .inputs
-    .rename_project(&project_id, expected.version(), body.name, key.as_str(), now_unix_ms())
+    .rename_project(
+      &project_id,
+      expected.version(),
+      body.name,
+      key.as_str(),
+      now_unix_ms(&request_id)?,
+    )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
     .projects
@@ -322,7 +330,7 @@ async fn move_project(
       expected.version(),
       body.parent_id.as_deref(),
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -344,7 +352,7 @@ async fn delete_project(
   let expected = precondition(&headers, &request_id)?;
   let command = application
     .inputs
-    .delete_project(&project_id, expected.version(), key.as_str(), now_unix_ms())
+    .delete_project(&project_id, expected.version(), key.as_str(), now_unix_ms(&request_id)?)
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
     .projects
@@ -353,6 +361,44 @@ async fn delete_project(
     .await
     .map_err(|error| application_error(error.classification(), &request_id))?;
   Ok((StatusCode::OK, Json(delete_project_response(outcome))))
+}
+
+async fn publish_project_policy(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(request_id): Extension<RequestId>,
+  Path(project_id): Path<String>,
+  headers: HeaderMap,
+  payload: Result<Json<PublishProjectPolicyRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let expected = optional_precondition(&headers, &request_id)?.map(VersionPrecondition::version);
+  let command = application
+    .inputs
+    .publish_project_policy(
+      &project_id,
+      expected,
+      body.policy,
+      key.as_str(),
+      now_unix_ms(&request_id)?,
+    )
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .definitions
+    .publish_project_policy
+    .handle_command(command)
+    .await
+    .map_err(|error| application_error(error.classification(), &request_id))?;
+  Ok((
+    StatusCode::CREATED,
+    Json(MutationResponse {
+      disposition: mutation_disposition(outcome.disposition),
+      resource: ProjectPolicyResource {
+        project_id: outcome.project_id.to_string(),
+        version: outcome.version.get(),
+      },
+    }),
+  ))
 }
 
 async fn get_project(
@@ -412,7 +458,7 @@ async fn create_pipeline(
       body.name,
       pipeline_document(body.dag),
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -441,7 +487,7 @@ async fn publish_pipeline(
       expected.version(),
       pipeline_document(body.dag),
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -487,7 +533,7 @@ async fn create_repository(
       body.name,
       encode(body.definition, &request_id)?,
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -516,7 +562,7 @@ async fn publish_repository(
       expected.version(),
       encode(body.definition, &request_id)?,
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -562,7 +608,7 @@ async fn create_build_configuration(
       body.name,
       configuration_document(body.definition, &request_id)?,
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -591,7 +637,7 @@ async fn publish_build_configuration(
       expected.version(),
       configuration_document(body.definition, &request_id)?,
       key.as_str(),
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
@@ -650,15 +696,56 @@ async fn accept_manual_trigger(
         parameters: body.parameters,
         priority: body.priority,
       },
-      now_unix_ms(),
+      now_unix_ms(&request_id)?,
     )
     .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
     .manual_triggers
+    .0
     .handle_command(command)
     .await
     .map_err(|error| application_error(error.classification(), &request_id))?;
   Ok((StatusCode::OK, Json(trigger_response(outcome))))
+}
+
+async fn create_manual_trigger_definition(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(request_id): Extension<RequestId>,
+  headers: HeaderMap,
+  payload: Result<Json<CreateManualTriggerDefinitionRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let command = application
+    .inputs
+    .create_manual_trigger_definition(
+      ManualTriggerDefinitionInput {
+        id: Uuid::new_v4(),
+        configuration_id: body.configuration_id,
+        configuration_version: body.configuration_version,
+        enabled: body.enabled,
+        definition: body.definition,
+      },
+      key.as_str(),
+      now_unix_ms(&request_id)?,
+    )
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .definitions
+    .create_trigger
+    .handle_command(command)
+    .await
+    .map_err(|error| application_error(error.classification(), &request_id))?;
+  Ok((
+    StatusCode::CREATED,
+    Json(MutationResponse {
+      disposition: mutation_disposition(outcome.disposition),
+      resource: TriggerDefinitionResource {
+        id: outcome.trigger_id.to_string(),
+        version: outcome.version.get(),
+      },
+    }),
+  ))
 }
 
 async fn read_job_events(
@@ -679,6 +766,7 @@ async fn read_job_events(
     .map_err(|error| invalid_input(error, &request_id))?;
   let page = application
     .job_events
+    .0
     .handle_query(query)
     .await
     .map_err(|error| application_error(error.classification(), &request_id))?;
@@ -774,6 +862,22 @@ fn precondition(headers: &HeaderMap, request_id: &RequestId) -> Result<VersionPr
     })
 }
 
+fn optional_precondition(headers: &HeaderMap, request_id: &RequestId) -> Result<Option<VersionPrecondition>, ApiError> {
+  headers
+    .get(OPTIMISTIC_PRECONDITION_HEADER)
+    .map(|value| {
+      VersionPrecondition::from_header(value).map_err(|_| {
+        ApiError::new(
+          StatusCode::BAD_REQUEST,
+          ErrorCode::InvalidRequest,
+          "If-Match must contain one strong positive version",
+          request_id,
+        )
+      })
+    })
+    .transpose()
+}
+
 fn invalid_input(error: ManagementInputError, request_id: &RequestId) -> ApiError {
   ApiError::new(
     StatusCode::BAD_REQUEST,
@@ -826,35 +930,19 @@ fn default_job_event_limit() -> u16 {
   DEFAULT_JOB_EVENT_LIMIT
 }
 
-fn now_unix_ms() -> i64 {
+fn now_unix_ms(request_id: &RequestId) -> Result<i64, ApiError> {
   let milliseconds = SystemTime::now()
     .duration_since(UNIX_EPOCH)
-    .expect("system time must not precede the Unix epoch")
+    .map_err(|_| clock_error(request_id))?
     .as_millis();
-  i64::try_from(milliseconds).expect("current Unix time fits in i64 milliseconds")
+  i64::try_from(milliseconds).map_err(|_| clock_error(request_id))
 }
 
-#[derive(Debug)]
-struct ApiError {
-  status: StatusCode,
-  body: ErrorResponse,
-}
-
-impl ApiError {
-  fn new(status: StatusCode, code: ErrorCode, message: &str, request_id: &RequestId) -> Self {
-    Self {
-      status,
-      body: ErrorResponse {
-        code,
-        message: message.to_owned(),
-        request_id: request_id.0.clone(),
-      },
-    }
-  }
-}
-
-impl IntoResponse for ApiError {
-  fn into_response(self) -> Response {
-    (self.status, Json(self.body)).into_response()
-  }
+fn clock_error(request_id: &RequestId) -> ApiError {
+  ApiError::new(
+    StatusCode::INTERNAL_SERVER_ERROR,
+    ErrorCode::Internal,
+    "the server clock cannot represent the current time",
+    request_id,
+  )
 }

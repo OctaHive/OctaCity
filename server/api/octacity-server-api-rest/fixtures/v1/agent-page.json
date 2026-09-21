@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "id": "77777777-7777-4777-8777-777777777777",
+      "name": "linux-builder-1",
+      "version": 3,
+      "pool_id": "66666666-6666-4666-8666-666666666666",
+      "pool_version": 2,
+      "inventory": {
+        "agent_version": "0.1.0",
+        "coordinator_protocols": [1],
+        "labels": {"region": "local"},
+        "host_platform": {"os": "linux", "architecture": "amd64"},
+        "runtimes": [],
+        "octa": {
+          "version": "0.1.0",
+          "runner_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "build_commit": null,
+          "runner_protocols": [1],
+          "event_schemas": [1],
+          "plugin_protocols": [1],
+          "octafile_versions": [1],
+          "features": [],
+          "plugins": []
+        },
+        "source_plugins": [],
+        "cache": null
+      },
+      "capacity": {
+        "logical_cpu_count": 8,
+        "total_memory_bytes": 17179869184,
+        "work_disk_total_bytes": 107374182400,
+        "state_disk_total_bytes": 53687091200,
+        "virtualization_available": true
+      },
+      "status": "online",
+      "last_seen_at_unix_ms": 1789750800000
+    }
+  ],
+  "next_cursor": null
+}

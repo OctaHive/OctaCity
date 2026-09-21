@@ -1,0 +1,13 @@
+# Versioned, non-secret defaults shared by backend-runner preflight and CI.
+# Every value may be overridden in the runner service environment.
+: "${OCTACITY_RUNNER_WORKSPACE_BYTES:=1073741824}"
+: "${OCTACITY_RUNNER_OCTA_RELEASE_NAME:=octa-linux-arm64-v0.4.0}"
+: "${OCTACITY_RUNNER_MICROSANDBOX_VERSION:=0.6.18}"
+: "${OCTACITY_RUNNER_MICROSANDBOX_IMAGE:=quay.io/fedora/fedora@sha256:83205934094144b56f645f86c42b84f81083f423b0bea9cb233f91c21bab0919}"
+: "${OCTACITY_RUNNER_MICROSANDBOX_ALLOWED_HOST:=example.com}"
+: "${OCTACITY_RUNNER_MICROSANDBOX_DENIED_HOST:=www.cloudflare.com}"
+: "${OCTACITY_RUNNER_NATIVE_CGROUP_ROOT:=/sys/fs/cgroup/octacity/jobs}"
+: "${OCTACITY_RUNNER_NATIVE_WORK_ROOT:=/var/lib/octacity-contract/native}"
+: "${OCTACITY_RUNNER_NATIVE_CACHE_ROOT:=/var/lib/octacity-contract/native-cache}"
+: "${OCTACITY_RUNNER_NATIVE_BWRAP:=/usr/bin/bwrap}"
+: "${OCTACITY_RUNNER_NATIVE_PATH:=/usr/local/bin:/usr/bin:/bin}"

@@ -2,12 +2,26 @@ name: backend contracts
 
 on:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Real backend suite to execute
+        required: true
+        default: released-agent
+        type: choice
+        options:
+          - released-agent
+          - all
+          - phase6
+          - linux-native
+          - linux-containerd
+          - macos-microsandbox
 
 permissions:
   contents: read
 
 jobs:
   phase6-vault-minio:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'phase6' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -63,6 +77,7 @@ jobs:
         run: docker rm --force octacity-phase6-vault octacity-phase6-minio || true
 
   linux-native:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-native' }}
     runs-on: [self-hosted, linux, octacity-native]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -74,12 +89,35 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.1
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
       - run: >-
           cargo test -p octacity-job --test backend_contract
           native_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
+      - name: Package the Agent release candidate
+        id: agent-candidate
+        uses: ./octacity/.github/actions/package-agent-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+      - name: Run released Linux Native vertical slice
+        id: release-slice
+        uses: ./octacity/.github/actions/release-agent-vertical-slice
+        with:
+          agent-root: ${{ steps.agent-candidate.outputs.root }}
+          backend: native
+      - name: Retain Linux Native release evidence
+        if: always() && steps.release-slice.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-slice-linux-native
+          path: ${{ steps.release-slice.outputs.evidence }}
+          if-no-files-found: error
 
   linux-containerd:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'linux-containerd' }}
     runs-on: [self-hosted, linux, octacity-containerd]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -97,6 +135,7 @@ jobs:
         working-directory: octacity
 
   macos-microsandbox:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'macos-microsandbox' }}
     runs-on: [self-hosted, macOS, ARM64, octacity-microsandbox]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -108,7 +147,29 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.1
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
       - run: >-
           cargo test -p octacity-job --test backend_contract
           microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
+      - name: Package the Agent release candidate
+        id: agent-candidate
+        uses: ./octacity/.github/actions/package-agent-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+      - name: Run released macOS Microsandbox vertical slice
+        id: release-slice
+        uses: ./octacity/.github/actions/release-agent-vertical-slice
+        with:
+          agent-root: ${{ steps.agent-candidate.outputs.root }}
+          backend: microsandbox
+      - name: Retain macOS Microsandbox release evidence
+        if: always() && steps.release-slice.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-slice-macos-microsandbox
+          path: ${{ steps.release-slice.outputs.evidence }}
+          if-no-files-found: error

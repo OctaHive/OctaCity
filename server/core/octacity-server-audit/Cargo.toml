@@ -1,9 +1,0 @@
-[package]
-name = "octacity-server-audit"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
-publish = false
-description = "Immutable audit fact domain for the OctaCity server"

@@ -98,7 +98,8 @@ pub(crate) async fn run_loaded(
     if shutdown.is_cancelled() {
       return Ok(());
     }
-    let lease = match poller.next(accept_jobs, shutdown.clone()).await {
+    let poll_snapshot = components.host.snapshot(None, components.backend_health.clone())?;
+    let lease = match poller.next(accept_jobs, &poll_snapshot, shutdown.clone()).await {
       Ok(LeasePollOutcome::Lease(lease)) => *lease,
       Ok(LeasePollOutcome::Drain) => {
         info!("coordinator drained idle agent");
@@ -273,6 +274,7 @@ mod tests {
         _wait: Duration,
         _lease_safety_margin: Duration,
         accept_jobs: bool,
+        _snapshot: &octacity_protocol::HostSnapshot,
         _cancellation: CancellationToken,
       ) -> Result<AcquireLeaseResponse, CoordinatorError> {
         self.admission.lock().unwrap().push(accept_jobs);

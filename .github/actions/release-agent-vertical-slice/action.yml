@@ -1,0 +1,79 @@
+name: Run released Agent vertical slice
+description: Execute a packaged Agent against real REST, PostgreSQL, MinIO, and its provisioned backend
+
+inputs:
+  agent-root:
+    description: Extracted checksummed Agent release root
+    required: true
+  backend:
+    description: Provisioned execution backend (native or microsandbox)
+    required: true
+
+outputs:
+  evidence:
+    description: Directory containing release manifests, REST state, events, and Agent logs
+    value: ${{ steps.test.outputs.evidence }}
+
+runs:
+  using: composite
+  steps:
+    - name: Start disposable PostgreSQL and MinIO
+      shell: bash
+      run: |
+        set -euo pipefail
+        suffix=$(printf '%s-%s-%s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${GITHUB_JOB}" | tr -c 'A-Za-z0-9_.-' '-')
+        postgres_name="octacity-release-postgres-${suffix}"
+        minio_name="octacity-release-minio-${suffix}"
+        printf 'OCTACITY_RELEASE_POSTGRES_CONTAINER=%s\n' "${postgres_name}" >> "${GITHUB_ENV}"
+        printf 'OCTACITY_RELEASE_MINIO_CONTAINER=%s\n' "${minio_name}" >> "${GITHUB_ENV}"
+        docker run --detach --rm --name "${postgres_name}" \
+          -p 127.0.0.1::5432 \
+          -e POSTGRES_USER=octacity \
+          -e POSTGRES_PASSWORD=octacity-secret \
+          postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+        docker run --detach --rm --name "${minio_name}" \
+          -p 127.0.0.1::9000 \
+          -e MINIO_ROOT_USER=octacity \
+          -e MINIO_ROOT_PASSWORD=octacity-secret \
+          quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+
+        postgres_port=$(docker port "${postgres_name}" 5432/tcp | awk -F: 'NR == 1 {print $NF}')
+        minio_port=$(docker port "${minio_name}" 9000/tcp | awk -F: 'NR == 1 {print $NF}')
+        printf 'OCTACITY_POSTGRES_URL=postgres://octacity:octacity-secret@127.0.0.1:%s/postgres\n' "${postgres_port}" >> "${GITHUB_ENV}"
+        printf 'OCTACITY_MINIO_ENDPOINT=http://127.0.0.1:%s\n' "${minio_port}" >> "${GITHUB_ENV}"
+
+        for attempt in {1..60}; do
+          if docker exec "${postgres_name}" pg_isready -U octacity >/dev/null \
+            && curl --fail --silent "http://127.0.0.1:${minio_port}/minio/health/live" >/dev/null; then
+            exit 0
+          fi
+          sleep 1
+        done
+        docker logs "${postgres_name}"
+        docker logs "${minio_name}"
+        exit 1
+
+    - id: test
+      name: Run release vertical slice
+      shell: bash
+      working-directory: octacity
+      env:
+        OCTACITY_RELEASE_AGENT_ROOT: ${{ inputs.agent-root }}
+        OCTACITY_RELEASE_BACKEND: ${{ inputs.backend }}
+      run: |
+        set -euo pipefail
+        : "${OCTACITY_CONTRACT_OCTA_RELEASE_ROOT:?runner must configure a checksummed Octa release root}"
+        evidence=$(mktemp -d "${RUNNER_TEMP}/octacity-release-evidence.XXXXXX")
+        printf 'evidence=%s\n' "${evidence}" >> "${GITHUB_OUTPUT}"
+        export OCTACITY_RELEASE_EVIDENCE_DIR="${evidence}"
+        cargo test -p octacity-server --test release_vertical_slice \
+          released_agent_completes_a_sequential_pipeline_through_rest_and_postgres \
+          -- --ignored --exact --nocapture
+
+    - name: Stop disposable services
+      if: always()
+      shell: bash
+      run: |
+        docker rm --force \
+          "${OCTACITY_RELEASE_MINIO_CONTAINER:-octacity-release-minio-not-started}" \
+          "${OCTACITY_RELEASE_POSTGRES_CONTAINER:-octacity-release-postgres-not-started}" || true

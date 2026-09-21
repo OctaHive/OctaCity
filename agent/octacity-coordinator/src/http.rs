@@ -1,15 +1,15 @@
 //! Reqwest adapter for the versioned outbound coordinator protocol.
 
-use std::{fs, io::Read as _, path::PathBuf, time::Duration};
+use std::{fs, io::Read as _, path::PathBuf, sync::RwLock, time::Duration};
 
 use async_trait::async_trait;
 use octacity_protocol::{
-  AcquireLeaseRequest, AcquireLeaseResponse, AgentInventory, AppendEventsRequest, AppendEventsResponse,
-  AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse, BeginOutputUploadRequest,
-  BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse,
-  CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse, HeartbeatDirective,
-  HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, LeaseAssignment, RegisterAgentRequest,
-  RegisterAgentResponse, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
+  AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AppendEventsRequest,
+  AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse,
+  BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
+  CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse,
+  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, LeaseAssignment,
+  RegisterAgentRequest, RegisterAgentResponse, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
 };
 use reqwest::{StatusCode, Url, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -44,7 +44,7 @@ pub struct HttpCoordinatorConfig {
 /// Bounded HTTPS implementation of [`CoordinatorClient`].
 pub struct HttpCoordinatorClient {
   base_url: Url,
-  authorization: header::HeaderValue,
+  authorization: RwLock<header::HeaderValue>,
   client: reqwest::Client,
   request_timeout: Duration,
   max_body_bytes: usize,
@@ -100,7 +100,7 @@ impl HttpCoordinatorClient {
       })?;
     Ok(Self {
       base_url,
-      authorization,
+      authorization: RwLock::new(authorization),
       client,
       request_timeout: config.request_timeout,
       max_body_bytes: config.max_body_bytes,
@@ -144,7 +144,7 @@ impl HttpCoordinatorClient {
         () = cancellation.cancelled() => return Err(CoordinatorError::Cancelled),
         result = timeout_at(deadline, self.client
           .post(url.clone())
-          .header(header::AUTHORIZATION, self.authorization.clone())
+          .header(header::AUTHORIZATION, self.authorization()?)
           .header(header::CONTENT_TYPE, "application/json")
           .header(IDEMPOTENCY_KEY, idempotency.clone())
           .body(encoded.clone())
@@ -241,6 +241,39 @@ impl HttpCoordinatorClient {
     drop(segments);
     Ok(url)
   }
+
+  fn authorization(&self) -> Result<header::HeaderValue, CoordinatorError> {
+    self
+      .authorization
+      .read()
+      .map(|authorization| authorization.clone())
+      .map_err(|_| invalid("coordinator credential state is unavailable"))
+  }
+
+  fn promote_registration_credential(&self, registration_id: &str) -> Result<(), CoordinatorError> {
+    let current = self.authorization()?;
+    let token = current
+      .to_str()
+      .map_err(|_| invalid("coordinator credential state is invalid"))?
+      .strip_prefix("Bearer ")
+      .ok_or_else(|| invalid("coordinator credential state is invalid"))?;
+    let credential = match AgentCredentialToken::parse(token) {
+      Ok(credential) => credential,
+      Err(_) => return Ok(()),
+    };
+    let promoted = credential
+      .promote(registration_id)
+      .map_err(|_| invalid("registration credential identity is invalid"))?;
+    let encoded = promoted.encode();
+    let mut promoted = header::HeaderValue::from_str(&format!("Bearer {}", encoded.as_str()))
+      .map_err(|_| invalid("registration credential cannot be represented as an HTTP bearer token"))?;
+    promoted.set_sensitive(true);
+    *self
+      .authorization
+      .write()
+      .map_err(|_| invalid("coordinator credential state is unavailable"))? = promoted;
+    Ok(())
+  }
 }
 
 #[async_trait]
@@ -272,6 +305,7 @@ impl CoordinatorClient for HttpCoordinatorClient {
       )
       .await?;
     response.validate(&request_id)?;
+    self.promote_registration_credential(&response.registration_id)?;
     Ok(Registration {
       agent_id: inventory.agent_id.clone(),
       registration_id: response.registration_id,
@@ -285,6 +319,7 @@ impl CoordinatorClient for HttpCoordinatorClient {
     wait: Duration,
     lease_safety_margin: Duration,
     accept_jobs: bool,
+    snapshot: &octacity_protocol::HostSnapshot,
     cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     registration.validate()?;
@@ -298,6 +333,7 @@ impl CoordinatorClient for HttpCoordinatorClient {
       registration_id: registration.registration_id.clone(),
       wait_seconds: wait.as_secs(),
       accept_jobs,
+      snapshot: snapshot.clone(),
     };
     request.validate()?;
     let operation_timeout = wait

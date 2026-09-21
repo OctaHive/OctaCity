@@ -1,0 +1,8 @@
+{
+  "pool_id": "66666666-6666-4666-8666-666666666666",
+  "pool_version": 1,
+  "expected_platform": {
+    "operating_system": "linux",
+    "architecture": "amd64"
+  }
+}

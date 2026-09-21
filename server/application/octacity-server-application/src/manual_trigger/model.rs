@@ -120,7 +120,7 @@ pub struct ManualTriggerContext {
 }
 
 /// Immutable operator policy for executable identities signed into every Job.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct JobSpecToolchainPolicy {
   /// Exact source plugin and public Repository-locator parameter.
@@ -129,6 +129,14 @@ pub struct JobSpecToolchainPolicy {
   pub octa: OctaSpec,
   /// Number of seconds for which a derived JobSpec remains valid.
   pub validity: JobSpecValidity,
+}
+
+impl JobSpecToolchainPolicy {
+  /// Revalidates operator configuration after strict deserialization.
+  pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
+    self.source.validate()?;
+    self.octa.validate().map_err(|_| JobSpecDerivationError::InvalidPolicy)
+  }
 }
 
 /// Failure while loading immutable manual-Trigger context.

@@ -209,6 +209,7 @@ fn configuration(project_id: ProjectId) -> PublishedBuildConfiguration {
     version: BuildConfigurationVersion::INITIAL,
     definition: BuildConfigurationDefinition {
       enabled: true,
+      job_concurrency_limit: 2,
       repository_id: id(5),
       repository_version: RepositoryVersion::INITIAL,
       pipeline_id: id(3),
@@ -320,6 +321,7 @@ fn build_input(project_id: ProjectId) -> ImmutableBuildInput {
       "project": effective_policy(project_id),
       "job_spec_toolchain": toolchain(),
     }),
+    project_job_concurrency_limit: 4,
     priority: 10,
   }
 }

@@ -6,6 +6,32 @@ use crate::{PlatformArchitecture, PlatformOs};
 
 use super::*;
 
+#[test]
+fn agent_credentials_round_trip_without_exposing_the_secret() {
+  let token = AgentCredentialToken::parse(
+    "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+  )
+  .unwrap();
+  assert_eq!(token.kind(), AgentCredentialKind::Enrollment);
+  assert_eq!(token.secret(), &[7; AGENT_CREDENTIAL_SECRET_BYTES]);
+  assert!(!format!("{token:?}").contains("BwcH"));
+
+  let promoted = token.promote("registration-1").unwrap();
+  assert_eq!(promoted.kind(), AgentCredentialKind::Registration);
+  assert_eq!(
+    promoted.encode().as_str(),
+    "registration.registration-1.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+  );
+
+  let issued = AgentCredentialToken::enrollment_base64url(
+    "00000000-0000-0000-0000-000000000002",
+    "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc".to_owned(),
+  )
+  .unwrap();
+  assert_eq!(issued.secret(), &[7; AGENT_CREDENTIAL_SECRET_BYTES]);
+  assert!(AgentCredentialToken::enrollment_base64url("credential-2", "invalid".to_owned()).is_err());
+}
+
 fn envelope() -> SignedEnvelope {
   SignedEnvelope {
     key_id: "primary".to_owned(),
@@ -197,6 +223,7 @@ fn rejects_unknown_transport_fields() {
     "registration_id":"registration-1",
     "wait_seconds":30,
     "accept_jobs":true,
+    "snapshot":{"available_cpu_millis":4000,"available_memory_bytes":8192,"work_disk_free_bytes":16384,"state_disk_free_bytes":32768,"active_job":null,"backends":[]},
     "unexpected":true
   }"#;
   assert!(serde_json::from_str::<AcquireLeaseRequest>(json).is_err());
@@ -389,6 +416,7 @@ fn event_batches_are_fenced_contiguous_and_resource_samples_are_sane() {
       lease_id: lease.lease_id.clone(),
       fencing_token: lease.fencing_token.clone(),
       stream_sequence: 1,
+      occurred_at_unix_ms: 1,
       kind: AttemptEventKind::Agent {
         event: AgentLifecycleEvent::ResourceUsage {
           usage: ResourceUsageSnapshot {
@@ -437,6 +465,7 @@ fn append_metadata_reserve_covers_maximally_escaped_bounded_identifiers() {
       lease_id: fence.lease_id.clone(),
       fencing_token: fence.fencing_token.clone(),
       stream_sequence,
+      occurred_at_unix_ms: i64::try_from(stream_sequence).unwrap(),
       kind: AttemptEventKind::Agent {
         event: AgentLifecycleEvent::StateChanged {
           state: JobLifecycleState::Running,
@@ -547,10 +576,24 @@ fn rejects_invalid_inventory_and_registration_boundaries() {
     registration_id: "registration-1".to_owned(),
     wait_seconds: 0,
     accept_jobs: true,
+    snapshot: idle_snapshot(),
   };
+  assert!(acquire.validate().unwrap_err().to_string().contains("wait_seconds"));
+  acquire.wait_seconds = MAX_LEASE_WAIT_SECONDS + 1;
   assert!(acquire.validate().unwrap_err().to_string().contains("wait_seconds"));
   acquire.wait_seconds = 1;
   acquire.validate().unwrap();
+}
+
+fn idle_snapshot() -> HostSnapshot {
+  HostSnapshot {
+    available_cpu_millis: 4_000,
+    available_memory_bytes: 8 * 1024,
+    work_disk_free_bytes: 16 * 1024,
+    state_disk_free_bytes: 32 * 1024,
+    active_job: None,
+    backends: Vec::new(),
+  }
 }
 
 #[test]

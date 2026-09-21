@@ -92,6 +92,17 @@ impl SourcePluginPolicy {
     }
     Ok(value)
   }
+
+  /// Revalidates a policy restored from configuration or durable state.
+  pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
+    Self::new(
+      self.provider.clone(),
+      self.plugin_version.clone(),
+      self.plugin_sha256.clone(),
+      self.repository_parameter.clone(),
+    )
+    .map(|_| ())
+  }
 }
 
 /// Immutable server policy needed to construct an Agent execution intent.
@@ -182,6 +193,27 @@ pub struct JobSpecTemplate {
   policy: JobSpecPolicySnapshot,
 }
 
+/// Immutable toolchain and runtime facts used before a ready Job is leased.
+///
+/// The view deliberately omits repository parameters and other execution
+/// payload. Placement needs exact installed identities, while the signed
+/// [`octacity_protocol::JobSpecV1`] remains the execution authority.
+#[derive(Clone, Copy, Debug)]
+pub struct JobPlacementPolicy<'a> {
+  /// Logical source-plugin identity.
+  pub source_provider: &'a str,
+  /// Exact source-plugin package version.
+  pub source_plugin_version: &'a str,
+  /// Exact source-plugin executable digest.
+  pub source_plugin_sha256: &'a str,
+  /// Exact Octa and task-plugin requirements.
+  pub octa: &'a octacity_protocol::OctaSpec,
+  /// Exact runtime, isolation, platform, and resource policy.
+  pub runtime: &'a octacity_protocol::RuntimeSpec,
+  /// Whether this Job requires the registered Octa cache capability.
+  pub requires_cache: bool,
+}
+
 impl JobSpecTemplate {
   pub(super) fn new(
     build: &JobSpecBuildSnapshot,
@@ -217,13 +249,7 @@ impl JobSpecTemplate {
 
   /// Revalidates a template decoded at a persistence or API boundary.
   pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
-    if SourcePluginPolicy::new(
-      self.policy.source.provider.clone(),
-      self.policy.source.plugin_version.clone(),
-      self.policy.source.plugin_sha256.clone(),
-      self.policy.source.repository_parameter.clone(),
-    )
-    .is_err()
+    if self.policy.source.validate().is_err()
       || self.policy.outputs.validate().is_err()
       || self
         .policy
@@ -236,6 +262,19 @@ impl JobSpecTemplate {
     super::derive::validate_execution_template(&self.execution)?;
     super::derive::execution_variables(&self.parameters)?;
     super::derive::validate_protocol_template(self)
+  }
+
+  /// Borrows the exact facts required for scheduler compatibility checks.
+  #[must_use]
+  pub fn placement_policy(&self) -> JobPlacementPolicy<'_> {
+    JobPlacementPolicy {
+      source_provider: &self.policy.source.provider,
+      source_plugin_version: &self.policy.source.plugin_version,
+      source_plugin_sha256: &self.policy.source.plugin_sha256,
+      octa: &self.policy.octa,
+      runtime: &self.policy.runtime,
+      requires_cache: self.policy.cache.is_some(),
+    }
   }
 
   pub(super) const fn execution(&self) -> &JobExecutionTemplate {

@@ -519,7 +519,8 @@ impl SourceSpec {
 }
 
 impl OctaSpec {
-  fn validate(&self) -> Result<(), String> {
+  /// Validates release identities, digests, and positive protocol versions.
+  pub fn validate(&self) -> Result<(), String> {
     non_empty("octa.version", &self.version)?;
     sha256("octa.runner_sha256", &self.runner_sha256)?;
     if self.runner_protocol == 0 || self.event_schema == 0 || self.plugin_protocol == 0 {

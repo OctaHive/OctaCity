@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+use octacity_adapter_protocol::{self as adapter_core, ValidationFailure};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -32,14 +33,11 @@ pub struct ProtocolRange {
 impl ProtocolRange {
   /// Selects the newest mutually supported version.
   pub fn negotiate(self, other: Self) -> Result<u16, ProtocolError> {
-    if self.min == 0 || other.min == 0 || self.min > self.max || other.min > other.max {
-      return Err(ProtocolError::Invalid("invalid protocol range"));
-    }
-    let selected = self.max.min(other.max);
-    if selected < self.min.max(other.min) {
-      return Err(ProtocolError::IncompatibleVersion);
-    }
-    Ok(selected)
+    adapter_core::negotiate_version(self.min, self.max, other.min, other.max).map_err(|failure| match failure {
+      ValidationFailure::InvalidRange => ProtocolError::Invalid("invalid protocol range"),
+      ValidationFailure::IncompatibleVersion => ProtocolError::IncompatibleVersion,
+      _ => unreachable!("version negotiation returns only range failures"),
+    })
   }
 }
 
@@ -125,10 +123,13 @@ impl Response {
   pub fn validate_for(&self, request: &Request) -> Result<(), ProtocolError> {
     request.validate()?;
     self.validate()?;
-    if self.protocol_version != request.protocol_version || self.request_id != request.request_id {
-      return Err(ProtocolError::CorrelationMismatch);
-    }
-    Ok(())
+    adapter_core::require_correlation(
+      self.protocol_version,
+      &self.request_id,
+      request.protocol_version,
+      &request.request_id,
+    )
+    .map_err(|_| ProtocolError::CorrelationMismatch)
   }
 }
 
@@ -151,7 +152,7 @@ struct ResponseWire {
 /// Decodes and validates one size-bounded agent-provisioning request.
 pub fn decode_request(message: &[u8]) -> Result<Request, ProtocolError> {
   bounded_message(message)?;
-  let wire: RequestWire = serde_json::from_slice(message).map_err(|_| ProtocolError::MalformedMessage)?;
+  let wire: RequestWire = adapter_core::decode_json(message).map_err(|_| ProtocolError::MalformedMessage)?;
   let request = Request {
     protocol_version: wire.protocol_version,
     request_id: wire.request_id,
@@ -164,7 +165,7 @@ pub fn decode_request(message: &[u8]) -> Result<Request, ProtocolError> {
 /// Decodes a size-bounded response and verifies correlation to `request`.
 pub fn decode_response(message: &[u8], request: &Request) -> Result<Response, ProtocolError> {
   bounded_message(message)?;
-  let wire: ResponseWire = serde_json::from_slice(message).map_err(|_| ProtocolError::MalformedMessage)?;
+  let wire: ResponseWire = adapter_core::decode_json(message).map_err(|_| ProtocolError::MalformedMessage)?;
   let response = Response {
     protocol_version: wire.protocol_version,
     request_id: wire.request_id,
@@ -473,31 +474,19 @@ pub enum ProtocolError {
 }
 
 fn bounded_message(message: &[u8]) -> Result<(), ProtocolError> {
-  if message.len() > MAX_AGENT_PROVISIONING_MESSAGE_BYTES {
-    return Err(ProtocolError::LimitExceeded("encoded message"));
-  }
-  Ok(())
+  adapter_core::require_message_size(message, MAX_AGENT_PROVISIONING_MESSAGE_BYTES)
+    .map_err(|_| ProtocolError::LimitExceeded("encoded message"))
 }
 
 fn identifier(field: &'static str, value: &str) -> Result<(), ProtocolError> {
-  if value.is_empty() || value.chars().any(char::is_control) {
-    return Err(ProtocolError::Invalid(field));
-  }
-  if value.len() > MAX_IDENTIFIER_BYTES {
-    return Err(ProtocolError::LimitExceeded(field));
-  }
-  Ok(())
+  adapter_core::require_bounded_text(value, MAX_IDENTIFIER_BYTES).map_err(|failure| match failure {
+    ValidationFailure::LimitExceeded => ProtocolError::LimitExceeded(field),
+    _ => ProtocolError::Invalid(field),
+  })
 }
 
 fn sha256(value: &str) -> Result<(), ProtocolError> {
-  if value.len() != 64
-    || !value
-      .bytes()
-      .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-  {
-    return Err(ProtocolError::Invalid("executable digest must be lowercase SHA-256"));
-  }
-  Ok(())
+  adapter_core::require_sha256(value).map_err(|_| ProtocolError::Invalid("executable digest must be lowercase SHA-256"))
 }
 
 #[cfg(test)]

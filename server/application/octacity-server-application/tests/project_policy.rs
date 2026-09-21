@@ -2,7 +2,8 @@ use std::{collections::BTreeSet, str::FromStr};
 
 use octacity_server_application::{
   ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, IdentityProfileName, PolicyCategory, PolicyDirective,
-  PolicyResolutionError, ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName, resolve_project_policy,
+  PolicyResolutionError, ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName,
+  resolve_project_policy,
 };
 use octacity_server_domain::{PoolId, ProjectId, ProjectPolicyVersion, RepositoryId};
 
@@ -35,38 +36,40 @@ fn root_policy() -> ProjectPolicyLayer {
     project_id: project(1),
     parent_id: None,
     version: ProjectPolicyVersion::INITIAL,
-    pools: PolicyDirective::Replace(BTreeSet::from([pool(1), pool(2)])),
-    repositories: PolicyDirective::Replace(BTreeSet::from([repository(1), repository(2)])),
-    secret_profiles: PolicyDirective::Replace(BTreeSet::from([secret("ci"), secret("release")])),
-    identity_profiles: PolicyDirective::Replace(BTreeSet::from([identity("reader"), identity("publisher")])),
-    runtimes: PolicyDirective::Replace(BTreeSet::from([
-      RuntimeClass::Native,
-      RuntimeClass::OciProcess,
-      RuntimeClass::OciHypervisor,
-    ])),
-    cache: PolicyDirective::Replace(CachePolicy {
-      namespaces: BTreeSet::from([namespace("project/main"), namespace("project/release")]),
-      read: true,
-      write: true,
-      max_bytes: 1_000,
-    }),
-    artifacts: PolicyDirective::Replace(ArtifactPolicy {
-      artifact_count: 10,
-      artifact_bytes: 1_000,
-      report_count: 8,
-      report_bytes: 800,
-      single_output_bytes: 500,
-    }),
-    concurrency: PolicyDirective::Replace(ConcurrencyPolicy {
-      active_builds: 10,
-      active_jobs: 20,
-    }),
-    retention: PolicyDirective::Replace(RetentionPolicy {
-      build_seconds: 1_000,
-      log_seconds: 900,
-      artifact_seconds: 800,
-      cache_seconds: 700,
-    }),
+    definition: ProjectPolicyDefinition {
+      pools: PolicyDirective::Replace(BTreeSet::from([pool(1), pool(2)])),
+      repositories: PolicyDirective::Replace(BTreeSet::from([repository(1), repository(2)])),
+      secret_profiles: PolicyDirective::Replace(BTreeSet::from([secret("ci"), secret("release")])),
+      identity_profiles: PolicyDirective::Replace(BTreeSet::from([identity("reader"), identity("publisher")])),
+      runtimes: PolicyDirective::Replace(BTreeSet::from([
+        RuntimeClass::Native,
+        RuntimeClass::OciProcess,
+        RuntimeClass::OciHypervisor,
+      ])),
+      cache: PolicyDirective::Replace(CachePolicy {
+        namespaces: BTreeSet::from([namespace("project/main"), namespace("project/release")]),
+        read: true,
+        write: true,
+        max_bytes: 1_000,
+      }),
+      artifacts: PolicyDirective::Replace(ArtifactPolicy {
+        artifact_count: 10,
+        artifact_bytes: 1_000,
+        report_count: 8,
+        report_bytes: 800,
+        single_output_bytes: 500,
+      }),
+      concurrency: PolicyDirective::Replace(ConcurrencyPolicy {
+        active_builds: 10,
+        active_jobs: 20,
+      }),
+      retention: PolicyDirective::Replace(RetentionPolicy {
+        build_seconds: 1_000,
+        log_seconds: 900,
+        artifact_seconds: 800,
+        cache_seconds: 700,
+      }),
+    },
   }
 }
 
@@ -75,16 +78,33 @@ fn inheriting_child(id: ProjectId, parent_id: ProjectId) -> ProjectPolicyLayer {
     project_id: id,
     parent_id: Some(parent_id),
     version: ProjectPolicyVersion::INITIAL,
-    pools: PolicyDirective::Inherit,
-    repositories: PolicyDirective::Inherit,
-    secret_profiles: PolicyDirective::Inherit,
-    identity_profiles: PolicyDirective::Inherit,
-    runtimes: PolicyDirective::Inherit,
-    cache: PolicyDirective::Inherit,
-    artifacts: PolicyDirective::Inherit,
-    concurrency: PolicyDirective::Inherit,
-    retention: PolicyDirective::Inherit,
+    definition: ProjectPolicyDefinition {
+      pools: PolicyDirective::Inherit,
+      repositories: PolicyDirective::Inherit,
+      secret_profiles: PolicyDirective::Inherit,
+      identity_profiles: PolicyDirective::Inherit,
+      runtimes: PolicyDirective::Inherit,
+      cache: PolicyDirective::Inherit,
+      artifacts: PolicyDirective::Inherit,
+      concurrency: PolicyDirective::Inherit,
+      retention: PolicyDirective::Inherit,
+    },
   }
+}
+
+#[test]
+fn policy_layer_keeps_the_flat_persisted_document_shape() {
+  let mut value = serde_json::to_value(root_policy()).unwrap();
+
+  assert!(value.get("definition").is_none());
+  assert!(value.get("pools").is_some());
+  assert_eq!(
+    serde_json::from_value::<ProjectPolicyLayer>(value.clone()).unwrap(),
+    root_policy()
+  );
+
+  value.as_object_mut().unwrap().insert("unknown".into(), true.into());
+  assert!(serde_json::from_value::<ProjectPolicyLayer>(value).is_err());
 }
 
 #[test]
@@ -106,29 +126,30 @@ fn inherit_preserves_every_parent_category_and_source_version() {
 fn narrow_intersects_grants_and_lowers_every_ceiling() {
   let root = root_policy();
   let mut child = inheriting_child(project(2), root.project_id);
-  child.pools = PolicyDirective::Narrow(BTreeSet::from([pool(2), pool(3)]));
-  child.repositories = PolicyDirective::Narrow(BTreeSet::from([repository(2), repository(3)]));
-  child.secret_profiles = PolicyDirective::Narrow(BTreeSet::from([secret("release"), secret("unknown")]));
-  child.identity_profiles = PolicyDirective::Narrow(BTreeSet::from([identity("reader"), identity("unknown")]));
-  child.runtimes = PolicyDirective::Narrow(BTreeSet::from([RuntimeClass::OciProcess]));
-  child.cache = PolicyDirective::Narrow(CachePolicy {
+  child.definition.pools = PolicyDirective::Narrow(BTreeSet::from([pool(2), pool(3)]));
+  child.definition.repositories = PolicyDirective::Narrow(BTreeSet::from([repository(2), repository(3)]));
+  child.definition.secret_profiles = PolicyDirective::Narrow(BTreeSet::from([secret("release"), secret("unknown")]));
+  child.definition.identity_profiles =
+    PolicyDirective::Narrow(BTreeSet::from([identity("reader"), identity("unknown")]));
+  child.definition.runtimes = PolicyDirective::Narrow(BTreeSet::from([RuntimeClass::OciProcess]));
+  child.definition.cache = PolicyDirective::Narrow(CachePolicy {
     namespaces: BTreeSet::from([namespace("project/release"), namespace("foreign")]),
     read: false,
     write: true,
     max_bytes: 600,
   });
-  child.artifacts = PolicyDirective::Narrow(ArtifactPolicy {
+  child.definition.artifacts = PolicyDirective::Narrow(ArtifactPolicy {
     artifact_count: 7,
     artifact_bytes: 900,
     report_count: 6,
     report_bytes: 700,
     single_output_bytes: 400,
   });
-  child.concurrency = PolicyDirective::Narrow(ConcurrencyPolicy {
+  child.definition.concurrency = PolicyDirective::Narrow(ConcurrencyPolicy {
     active_builds: 8,
     active_jobs: 12,
   });
-  child.retention = PolicyDirective::Narrow(RetentionPolicy {
+  child.definition.retention = PolicyDirective::Narrow(RetentionPolicy {
     build_seconds: 900,
     log_seconds: 800,
     artifact_seconds: 700,
@@ -158,29 +179,29 @@ fn narrow_intersects_grants_and_lowers_every_ceiling() {
 fn narrower_replacements_are_exact_instead_of_intersections() {
   let root = root_policy();
   let mut child = inheriting_child(project(2), root.project_id);
-  child.pools = PolicyDirective::Replace(BTreeSet::from([pool(1)]));
-  child.repositories = PolicyDirective::Replace(BTreeSet::new());
-  child.secret_profiles = PolicyDirective::Replace(BTreeSet::from([secret("ci")]));
-  child.identity_profiles = PolicyDirective::Replace(BTreeSet::new());
-  child.runtimes = PolicyDirective::Replace(BTreeSet::from([RuntimeClass::Native]));
-  child.cache = PolicyDirective::Replace(CachePolicy {
+  child.definition.pools = PolicyDirective::Replace(BTreeSet::from([pool(1)]));
+  child.definition.repositories = PolicyDirective::Replace(BTreeSet::new());
+  child.definition.secret_profiles = PolicyDirective::Replace(BTreeSet::from([secret("ci")]));
+  child.definition.identity_profiles = PolicyDirective::Replace(BTreeSet::new());
+  child.definition.runtimes = PolicyDirective::Replace(BTreeSet::from([RuntimeClass::Native]));
+  child.definition.cache = PolicyDirective::Replace(CachePolicy {
     namespaces: BTreeSet::from([namespace("project/main")]),
     read: true,
     write: false,
     max_bytes: 500,
   });
-  child.artifacts = PolicyDirective::Replace(ArtifactPolicy {
+  child.definition.artifacts = PolicyDirective::Replace(ArtifactPolicy {
     artifact_count: 1,
     artifact_bytes: 100,
     report_count: 0,
     report_bytes: 0,
     single_output_bytes: 100,
   });
-  child.concurrency = PolicyDirective::Replace(ConcurrencyPolicy {
+  child.definition.concurrency = PolicyDirective::Replace(ConcurrencyPolicy {
     active_builds: 1,
     active_jobs: 2,
   });
-  child.retention = PolicyDirective::Replace(RetentionPolicy {
+  child.definition.retention = PolicyDirective::Replace(RetentionPolicy {
     build_seconds: 100,
     log_seconds: 90,
     artifact_seconds: 80,
@@ -200,10 +221,10 @@ fn narrower_replacements_are_exact_instead_of_intersections() {
 fn a_descendant_cannot_restore_a_grant_removed_by_an_ancestor() {
   let root = root_policy();
   let mut child = inheriting_child(project(2), root.project_id);
-  child.pools = PolicyDirective::Narrow(BTreeSet::from([pool(1)]));
+  child.definition.pools = PolicyDirective::Narrow(BTreeSet::from([pool(1)]));
 
   let mut grandchild = inheriting_child(project(3), child.project_id);
-  grandchild.pools = PolicyDirective::Replace(BTreeSet::from([pool(1), pool(2)]));
+  grandchild.definition.pools = PolicyDirective::Replace(BTreeSet::from([pool(1), pool(2)]));
   assert_eq!(
     resolve_project_policy(&[root.clone(), child.clone(), grandchild]).unwrap_err(),
     PolicyResolutionError::BroadenedGrant {
@@ -213,7 +234,7 @@ fn a_descendant_cannot_restore_a_grant_removed_by_an_ancestor() {
   );
 
   let mut intersecting_grandchild = inheriting_child(project(3), child.project_id);
-  intersecting_grandchild.pools = PolicyDirective::Narrow(BTreeSet::from([pool(1), pool(2)]));
+  intersecting_grandchild.definition.pools = PolicyDirective::Narrow(BTreeSet::from([pool(1), pool(2)]));
   let resolved = resolve_project_policy(&[root, child, intersecting_grandchild]).unwrap();
   assert_eq!(resolved.policy.pools, BTreeSet::from([pool(1)]));
 }
@@ -222,9 +243,10 @@ fn a_descendant_cannot_restore_a_grant_removed_by_an_ancestor() {
 fn every_protected_category_rejects_a_broader_replacement() {
   let root = root_policy();
   let mut runtime_root = root.clone();
-  runtime_root.runtimes = PolicyDirective::Replace(BTreeSet::from([RuntimeClass::Native]));
+  runtime_root.definition.runtimes = PolicyDirective::Replace(BTreeSet::from([RuntimeClass::Native]));
   let mut runtime_child = inheriting_child(project(2), runtime_root.project_id);
-  runtime_child.runtimes = PolicyDirective::Replace(BTreeSet::from([RuntimeClass::Native, RuntimeClass::OciProcess]));
+  runtime_child.definition.runtimes =
+    PolicyDirective::Replace(BTreeSet::from([RuntimeClass::Native, RuntimeClass::OciProcess]));
   assert_eq!(
     resolve_project_policy(&[runtime_root, runtime_child]).unwrap_err(),
     PolicyResolutionError::BroadenedGrant {
@@ -236,23 +258,24 @@ fn every_protected_category_rejects_a_broader_replacement() {
   let cases = [
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.pools = PolicyDirective::Replace(BTreeSet::from([pool(1), pool(2), pool(3)]));
+      child.definition.pools = PolicyDirective::Replace(BTreeSet::from([pool(1), pool(2), pool(3)]));
       (PolicyCategory::Pools, child)
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.repositories = PolicyDirective::Replace(BTreeSet::from([repository(1), repository(2), repository(3)]));
+      child.definition.repositories =
+        PolicyDirective::Replace(BTreeSet::from([repository(1), repository(2), repository(3)]));
       (PolicyCategory::Repositories, child)
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.secret_profiles =
+      child.definition.secret_profiles =
         PolicyDirective::Replace(BTreeSet::from([secret("ci"), secret("release"), secret("extra")]));
       (PolicyCategory::SecretProfiles, child)
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.identity_profiles = PolicyDirective::Replace(BTreeSet::from([
+      child.definition.identity_profiles = PolicyDirective::Replace(BTreeSet::from([
         identity("reader"),
         identity("publisher"),
         identity("admin"),
@@ -261,7 +284,7 @@ fn every_protected_category_rejects_a_broader_replacement() {
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.cache = PolicyDirective::Replace(CachePolicy {
+      child.definition.cache = PolicyDirective::Replace(CachePolicy {
         namespaces: BTreeSet::from([
           namespace("project/main"),
           namespace("project/release"),
@@ -275,7 +298,7 @@ fn every_protected_category_rejects_a_broader_replacement() {
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.artifacts = PolicyDirective::Replace(ArtifactPolicy {
+      child.definition.artifacts = PolicyDirective::Replace(ArtifactPolicy {
         artifact_count: 11,
         artifact_bytes: 1_000,
         report_count: 8,
@@ -286,7 +309,7 @@ fn every_protected_category_rejects_a_broader_replacement() {
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.concurrency = PolicyDirective::Replace(ConcurrencyPolicy {
+      child.definition.concurrency = PolicyDirective::Replace(ConcurrencyPolicy {
         active_builds: 11,
         active_jobs: 20,
       });
@@ -294,7 +317,7 @@ fn every_protected_category_rejects_a_broader_replacement() {
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
-      child.retention = PolicyDirective::Replace(RetentionPolicy {
+      child.definition.retention = PolicyDirective::Replace(RetentionPolicy {
         build_seconds: 1_001,
         log_seconds: 900,
         artifact_seconds: 800,
@@ -321,47 +344,47 @@ fn root_requires_an_explicit_replacement_for_every_category() {
   let cases = [
     {
       let mut value = root.clone();
-      value.pools = PolicyDirective::Inherit;
+      value.definition.pools = PolicyDirective::Inherit;
       (PolicyCategory::Pools, value)
     },
     {
       let mut value = root.clone();
-      value.repositories = PolicyDirective::Inherit;
+      value.definition.repositories = PolicyDirective::Inherit;
       (PolicyCategory::Repositories, value)
     },
     {
       let mut value = root.clone();
-      value.secret_profiles = PolicyDirective::Inherit;
+      value.definition.secret_profiles = PolicyDirective::Inherit;
       (PolicyCategory::SecretProfiles, value)
     },
     {
       let mut value = root.clone();
-      value.identity_profiles = PolicyDirective::Inherit;
+      value.definition.identity_profiles = PolicyDirective::Inherit;
       (PolicyCategory::IdentityProfiles, value)
     },
     {
       let mut value = root.clone();
-      value.runtimes = PolicyDirective::Inherit;
+      value.definition.runtimes = PolicyDirective::Inherit;
       (PolicyCategory::Runtime, value)
     },
     {
       let mut value = root.clone();
-      value.cache = PolicyDirective::Inherit;
+      value.definition.cache = PolicyDirective::Inherit;
       (PolicyCategory::Cache, value)
     },
     {
       let mut value = root.clone();
-      value.artifacts = PolicyDirective::Inherit;
+      value.definition.artifacts = PolicyDirective::Inherit;
       (PolicyCategory::Artifacts, value)
     },
     {
       let mut value = root.clone();
-      value.concurrency = PolicyDirective::Inherit;
+      value.definition.concurrency = PolicyDirective::Inherit;
       (PolicyCategory::Concurrency, value)
     },
     {
       let mut value = root.clone();
-      value.retention = PolicyDirective::Inherit;
+      value.definition.retention = PolicyDirective::Inherit;
       (PolicyCategory::Retention, value)
     },
   ];
@@ -380,7 +403,7 @@ fn root_requires_an_explicit_replacement_for_every_category() {
 #[test]
 fn artifact_shape_is_validated_once_for_policy_and_configuration_consumers() {
   let mut root = root_policy();
-  root.artifacts = PolicyDirective::Replace(ArtifactPolicy {
+  root.definition.artifacts = PolicyDirective::Replace(ArtifactPolicy {
     artifact_count: 1,
     artifact_bytes: 0,
     report_count: 0,

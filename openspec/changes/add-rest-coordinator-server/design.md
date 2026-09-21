@@ -80,7 +80,6 @@ API and application:
 
 - `octacity-server-api-rest`: management REST and build-log search DTOs, routing, bounded decoding, OpenAPI, and mapping to commands and queries;
 - `octacity-server-api-agent`: existing agent-protocol HTTP routes;
-- `octacity-server-api-webhook`: bounded raw webhook HTTP ingress and transport error mapping;
 - `octacity-server-application`: typed CQRS commands, queries, handlers, transaction coordination, Build Result projections, and error mapping.
 
 Core:
@@ -94,7 +93,6 @@ Core:
 - `octacity-server-secrets`: logical secret references, policy, and short-lived grant interfaces;
 - `octacity-server-cache`: cache authority, namespace policy, and session lifecycle;
 - `octacity-server-artifacts`: logical upload, publication, download, and retention state;
-- `octacity-server-audit`: immutable audit facts and redaction classifications.
 
 Protocols and infrastructure:
 
@@ -103,12 +101,11 @@ Protocols and infrastructure:
 - `octacity-agent-provisioning-protocol`: future provision/observe/terminate contract, without a production adapter in v1;
 - `octacity-server-store`: atomic persistence interfaces, the authoritative `LogIndexWorkStore` watermark source, the backend-neutral `LogSearchIndex` projection port, and adapter-neutral contract tests;
 - `octacity-server-store-postgres`: migrations, SQLx rows, transactions, locks, PostgreSQL full-text and literal log-search projection, and persistence implementation;
-- `octacity-server-webhook`: verified webhook-provider registry and bounded process host;
-- `octacity-server-vcs`: verified adapter registry and bounded process host;
 - `octacity-vcs-git`: first VCS implementation;
 - `octacity-artifact-store`: backend-neutral object capabilities and verification interface;
 - `octacity-artifact-s3`: S3-compatible implementation;
-- `octacity-observability`: stable metric/trace vocabulary, cardinality policy, and server/agent instrumentation helpers.
+
+Delivery-scoped packages are introduced only with their owning implementation task. The names and boundaries for `octacity-server-api-webhook`, `octacity-server-audit`, `octacity-server-webhook`, `octacity-server-vcs`, and `octacity-observability` remain reserved by this design, but no empty Cargo packages represent them before tasks 6.3, 6.4, 6.6, 8.1, and 8.2 deliver their invariants and consumers.
 
 A crate is not created for a table or a thin forwarding interface. Each listed crate owns non-trivial invariants, a versioned protocol, a coherent server-wide semantic vocabulary, or an independently enforceable dependency direction. `octacity-server-domain` is deliberately limited to cross-cutting server value objects so it cannot become a miscellaneous utilities or aggregate-implementation crate. Future auth, GraphQL, Kafka/NATS, Vault, GitHub, Gerrit, vSphere, and Proxmox adapters are added only when implemented, not as empty crates.
 
@@ -194,6 +191,8 @@ Kafka and NATS are future `EventBus` adapters for wakeups, fan-out, and integrat
 `octacity-server-api-rest` exposes `/api/v1/...` management resources. The first release performs no operator authentication or RBAC. Startup requires an explicit acknowledgement when the management listener is reachable beyond loopback, and documentation requires network-level isolation.
 
 Agent routes remain independently authenticated with enrollment and registration credentials. Webhook routes authenticate provider deliveries. Liveness and readiness remain bounded and unauthenticated.
+
+The webhook listener is not bound or advertised until tasks 6.3 and 6.4 provide its authenticated adapter and application path. The reserved `webhook_bind` setting is rejected during configuration validation before any socket is opened; the composition root never substitutes an empty placeholder router for a security-sensitive ingress.
 
 The composition root evaluates readiness under one aggregate deadline and records a stable non-secret dependency name plus an unavailable-or-timeout reason only on initial state and transitions. Object-storage readiness performs a complete process-unique PUT/GET/COPY/GET/DELETE qualification, uses `HeadObject` on its own retained marker for cheap checks without requiring bucket-list permission, and repeats complete qualification after a configured interval or immediately after availability loss or a failed artifact operation. Qualification and invalidation are serialized so an older successful probe cannot hide a concurrent operation failure. Operators of versioned buckets MUST expire noncurrent versions and delete markers under the health-probe prefix.
 
@@ -283,7 +282,7 @@ Implementation proceeds through executable vertical slices:
 1. **Workspace and contracts**: establish `cli/server/agent/shared`, crate ownership, dependency checks, protocol crates, domain vocabulary, configuration, and a minimal composition root.
 2. **Store foundation**: atomic store, authoritative log-index watermark, and `LogSearchIndex` contracts; PostgreSQL adapter, migrations, agent credentials, idempotency, audit, outbox, readiness, and restart tests.
 3. **Projects, pipelines, and manual builds**: hierarchy, policy, repositories, pipeline DAGs, build configurations, manual triggers, Attempt materialization, JobSpec signing, and queries.
-4. **Static-agent vertical slice**: pools, placement scheduler, leases, heartbeat, events, completion, orchestrator transitions, drain, expiry, and a released Native agent running a multi-node pipeline sequentially.
+4. **Static-agent vertical slice**: pools, placement scheduler, leases, heartbeat, events, completion, orchestrator transitions, drain, expiry, and checksummed released Agents running a multi-node pipeline sequentially through Linux Native and an Apple Silicon macOS-hosted Linux Microsandbox guest.
 5. **REST completion**: all initial management commands and queries, OpenAPI, CLI examples, long-poll event reads, bounded build-log search, and trusted-network deployment guardrails.
 6. **Artifacts, logs, cache, and secrets**: backend-neutral contracts, S3 adapter, immutable redacted log chunks, PostgreSQL search projection and rebuild, Octa L2, logical secret references, and provider-isolation tests.
 7. **Triggers, webhooks, and VCS**: durable schedules/internal events, webhook protocol and manual mode, managed-provider protocol, VCS protocol/host, Git adapter, deduplication, and retry.
@@ -315,7 +314,7 @@ Phases 1-4 form the minimum useful server. Later phases remain independently gat
 2. Add server core, application, protocol, API, infrastructure, and composition crates without enabling mutation routes.
 3. Split the existing artifact interface from its S3 adapter without changing the agent artifact wire contract.
 4. Deploy PostgreSQL, S3-compatible storage, signing material, agent credential material, and one server replica in a test trusted network.
-5. Create projects, pipeline, build configuration, manual Build, Agent Pool, and enrollment token through REST; pass the multi-node Native vertical slice.
+5. Create projects, pipeline, build configuration, manual Build, Agent Pool, and enrollment token through REST; pass the multi-node released-Agent vertical slices on Linux Native and Apple Silicon macOS with a Linux Microsandbox guest.
 6. Enable artifacts, immutable log archival, PostgreSQL log search, cache, secrets, schedules, webhooks, and VCS independently behind validated configuration.
 7. Run the complete Agent Ready matrix before declaring the first production server version.
 8. Rehearse forward schema migration and previous-binary rollback within a declared compatibility window; restore database and object storage as one consistency unit when backward compatibility is impossible.

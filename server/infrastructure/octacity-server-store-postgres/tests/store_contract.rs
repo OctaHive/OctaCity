@@ -6,18 +6,20 @@ use std::{fmt::Debug, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use authoritative_fixture::seed_authoritative_prerequisites;
-use octacity_server_domain::{EntityKind, PipelineId, PoolId, ProjectId, Timestamp, TriggerId};
-use octacity_server_job::JobFailureClass;
+use octacity_server_domain::{AgentVersion, EntityKind, PipelineId, PoolId, ProjectId, Timestamp, TriggerId};
+use octacity_server_job::{JobFailureClass, JobState};
+use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
-  AgentCredentialStore as _, AgentRegistrationProof, AppendJobEvents, BuildRunControlStore as _, CredentialSecret,
-  DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind,
-  JobEventReadStore as _, JobExecutionStore as _, LeaseAccess, LeaseFence, MutationDisposition, ReadJobEvents,
-  RegisterAgent, StoreError, TriggerAcceptanceStore as _,
+  AgentCredentialStore as _, AgentRegistrationProof, AgentStore as _, AppendJobEvents, BuildControlStore as _,
+  BuildQueryStore as _, CredentialSecret, DurableJobEvent, EventSequence, FreshRegistrationCredential, IdempotencyKey,
+  JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobEventReadStore as _,
+  JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, MutationDisposition, ReadJobEvents, ReassignAgentPool,
+  RegisterAgent, RegistrationValidity, StoreError, TriggerAcceptanceStore as _,
   testing::{
     MutationEvidenceCounts, MutationEvidenceProbe, agent_credential_store_contract_fixture,
-    authoritative_store_contract_fixture, retry_request, verify_agent_credential_store_contract,
-    verify_authoritative_store_contract, verify_configuration_store_contract, verify_pipeline_store_contract,
-    verify_project_store_contract,
+    authoritative_store_contract_fixture, compatible_snapshot, retry_request, verify_agent_credential_store_contract,
+    verify_agent_pool_store_contract, verify_authoritative_store_contract, verify_configuration_store_contract,
+    verify_pipeline_store_contract, verify_project_store_contract,
   },
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
@@ -81,6 +83,56 @@ async fn postgres_satisfies_the_authoritative_store_contract() {
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn active_lease_prevents_postgres_agent_pool_reassignment() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let execution = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  execution.accept_trigger(fixture.request.clone()).await.unwrap();
+  let claim = JobClaim::new(
+    id(850),
+    LeaseFence::from_bytes([8; 32]),
+    fixture.agent_id,
+    fixture.registration_epoch,
+    fixture.allowed_pool,
+    compatible_snapshot(),
+    LeaseWindow::new(time(1_000), time(10_000)).unwrap(),
+  )
+  .unwrap();
+  assert!(matches!(
+    execution.claim_ready_job(claim).await.unwrap(),
+    JobClaimOutcome::Claimed(_)
+  ));
+
+  let management = PostgresStore::new(database.pool.clone());
+  let result = management
+    .reassign_agent_pool(ReassignAgentPool {
+      agent_id: fixture.agent_id,
+      expected_version: AgentVersion::INITIAL,
+      target_pool_id: fixture.other_pool,
+      idempotency_key: IdempotencyKey::new("active-lease-reassignment").unwrap(),
+      reassigned_at: time(2_000),
+    })
+    .await;
+  assert_eq!(
+    result.unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Lease
+    }
+  );
+  let stored_pool: uuid::Uuid = sqlx::query_scalar("SELECT pool_id FROM agents WHERE id = $1")
+    .bind(fixture.agent_id.as_uuid())
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+  assert_eq!(stored_pool, fixture.allowed_pool.as_uuid());
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
   let database = TestDatabase::migrated().await;
   let fixture = authoritative_store_contract_fixture();
@@ -96,12 +148,12 @@ async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
     fixture.agent_id,
     fixture.registration_epoch,
     fixture.allowed_pool,
-    time(1_000),
-    time(253_402_300_799_000),
+    compatible_snapshot(),
+    LeaseWindow::new(time(1_000), time(253_402_300_799_000)).unwrap(),
   )
   .unwrap();
   let grant = match store.claim_ready_job(claim).await.unwrap() {
-    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => panic!("root Job must be claimable"),
   };
   let access = LeaseAccess {
@@ -128,6 +180,7 @@ async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
   .unwrap();
   store
     .complete_job(JobCompletion {
+      completion_id: octacity_server_store::IdempotencyKey::new("rollback-completion").unwrap(),
       lease: access,
       final_sequence: Some(EventSequence::new(1).unwrap()),
       kind: JobCompletionKind::Failed(JobFailureClass::Execution),
@@ -213,6 +266,17 @@ async fn postgres_satisfies_the_project_store_contract() {
   let result = tokio::spawn(verify_project_store_contract(store, evidence)).await;
   database.cleanup().await;
   result.expect("PostgreSQL Project-store contract failed");
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_satisfies_the_agent_pool_store_contract() {
+  let database = TestDatabase::migrated().await;
+  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
+  let result = tokio::spawn(verify_agent_pool_store_contract(store, evidence)).await;
+  database.cleanup().await;
+  result.expect("PostgreSQL Agent Pool-store contract failed");
 }
 
 #[tokio::test]
@@ -317,8 +381,10 @@ async fn agent_credentials_are_hashed_at_rest_and_replay_survives_adapter_restar
     MutationDisposition::Replayed
   );
   let registration = RegisterAgent::new(
-    id(700),
-    CredentialSecret::from_bytes([0x61; 32]),
+    FreshRegistrationCredential {
+      id: id(700),
+      secret: CredentialSecret::from_bytes([0x61; 32]),
+    },
     fixture.agent_id,
     octacity_server_domain::AgentName::new("at-rest-agent").unwrap(),
     AgentRegistrationProof::Enrollment {
@@ -326,9 +392,11 @@ async fn agent_credentials_are_hashed_at_rest_and_replay_survives_adapter_restar
       credential: fixture.enrollment.credential,
     },
     octacity_server_store::AgentPlatform::new("linux", "amd64").unwrap(),
-    json!({"host_platform": "linux-amd64"}),
-    time(200),
-    time(900),
+    registration_inventory(),
+    RegistrationValidity {
+      registered_at: time(200),
+      expires_at: time(900),
+    },
   )
   .unwrap();
   let expected_hash = registration.credential.digest().as_bytes();
@@ -363,8 +431,10 @@ async fn concurrent_enrollment_consumption_creates_exactly_one_agent() {
 
   let request = |registration: u64, agent: u64, secret: u8| {
     RegisterAgent::new(
-      id(registration),
-      CredentialSecret::from_bytes([secret; 32]),
+      FreshRegistrationCredential {
+        id: id(registration),
+        secret: CredentialSecret::from_bytes([secret; 32]),
+      },
       id(agent),
       octacity_server_domain::AgentName::new(format!("concurrent-agent-{agent}")).unwrap(),
       AgentRegistrationProof::Enrollment {
@@ -372,9 +442,11 @@ async fn concurrent_enrollment_consumption_creates_exactly_one_agent() {
         credential: fixture.enrollment.credential.clone(),
       },
       octacity_server_store::AgentPlatform::new("linux", "amd64").unwrap(),
-      json!({"host_platform": "linux-amd64"}),
-      time(200),
-      time(900),
+      registration_inventory(),
+      RegistrationValidity {
+        registered_at: time(200),
+        expires_at: time(900),
+      },
     )
     .unwrap()
   };
@@ -416,6 +488,14 @@ async fn seed_credential_pool(pool: &PgPool, enrollment: &octacity_server_store:
   .execute(pool)
   .await
   .unwrap();
+}
+
+fn registration_inventory() -> octacity_protocol::AgentInventory {
+  serde_json::from_str::<octacity_protocol::RegisterAgentRequest>(include_str!(
+    "../../../../shared/protocol-fixtures/coordinator/register-request-v1.json"
+  ))
+  .unwrap()
+  .inventory
 }
 
 #[tokio::test]
@@ -466,11 +546,11 @@ async fn verify_classified_outcomes(pool: &PgPool) -> Result<(), Box<dyn std::er
     fixture.agent_id,
     fixture.registration_epoch,
     fixture.allowed_pool,
-    time(1_000),
-    time(2_000),
+    compatible_snapshot(),
+    LeaseWindow::new(time(1_000), time(2_000))?,
   )?;
-  let grant = match store.claim_ready_job(claim).await? {
-    JobClaimOutcome::Claimed(grant) => grant,
+  let grant = match store.claim_ready_job(claim.clone()).await? {
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => return Err("seeded root Job was not claimable".into()),
   };
   let access = LeaseAccess {
@@ -512,11 +592,11 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     fixture.agent_id,
     fixture.registration_epoch,
     fixture.allowed_pool,
-    time(1_000),
-    time(253_402_300_799_000),
+    compatible_snapshot(),
+    LeaseWindow::new(time(1_000), time(253_402_300_799_000))?,
   )?;
-  let grant = match store.claim_ready_job(claim).await? {
-    JobClaimOutcome::Claimed(grant) => grant,
+  let grant = match store.claim_ready_job(claim.clone()).await? {
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => return Err("seeded root Job was not claimable".into()),
   };
   let access = LeaseAccess {
@@ -536,12 +616,13 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   assert!(empty_page.events.is_empty());
   assert_eq!(empty_page.cursor, 1);
   let completion = JobCompletion {
+    completion_id: octacity_server_store::IdempotencyKey::new("restart-completion")?,
     lease: access,
     final_sequence: Some(EventSequence::new(1)?),
     kind: JobCompletionKind::Succeeded,
     completed_at: time(2_000),
   };
-  let completed = store.complete_job(completion).await?;
+  let completed = store.complete_job(completion.clone()).await?;
   let signed_after_unblock: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE signed_job_spec IS NOT NULL")
     .fetch_one(pool)
     .await?;
@@ -569,7 +650,10 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     recovered.accept_trigger(request.clone()).await?.disposition,
     MutationDisposition::Replayed
   );
-  assert_eq!(recovered.claim_ready_job(claim).await?, JobClaimOutcome::Claimed(grant));
+  assert_eq!(
+    recovered.claim_ready_job(claim.clone()).await?,
+    JobClaimOutcome::Claimed(Box::new(grant.clone()))
+  );
   assert_eq!(recovered.append_job_events(event).await?, appended);
   assert_eq!(
     recovered
@@ -597,11 +681,50 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     ..claim
   };
   assert_eq!(
-    recovered.claim_ready_job(mismatched_claim).await.unwrap_err(),
-    StoreError::Conflict {
-      entity: EntityKind::Lease
-    }
+    recovered.claim_ready_job(mismatched_claim).await?,
+    JobClaimOutcome::Claimed(Box::new(grant))
   );
+
+  let child_claim = JobClaim::new(
+    id(801),
+    LeaseFence::from_bytes([9; 32]),
+    fixture.agent_id,
+    fixture.registration_epoch,
+    fixture.allowed_pool,
+    compatible_snapshot(),
+    LeaseWindow::new(time(3_000), time(253_402_300_799_000))?,
+  )?;
+  let child = match recovered.claim_ready_job(child_claim).await? {
+    JobClaimOutcome::Claimed(grant) => *grant,
+    JobClaimOutcome::Empty => return Err("unblocked child Job was not claimable".into()),
+  };
+  let child_access = LeaseAccess {
+    lease_id: child.lease_id,
+    fence: child.fence,
+    agent_id: child.agent_id,
+    registration_epoch: child.registration_epoch,
+  };
+  recovered.append_job_events(one_event(child_access)).await?;
+  recovered
+    .complete_job(JobCompletion {
+      completion_id: IdempotencyKey::new("child-completion")?,
+      lease: child_access,
+      final_sequence: Some(EventSequence::new(1)?),
+      kind: JobCompletionKind::Succeeded,
+      completed_at: time(4_000),
+    })
+    .await?;
+
+  let build = recovered.build(request.build.id).await?;
+  let attempt = recovered.attempt(request.attempt_id).await?;
+  let child_diagnostics = recovered.job(child.job_id).await?;
+  assert_eq!(build.state, BuildState::Succeeded);
+  assert_eq!(attempt.state, AttemptState::Succeeded);
+  assert_eq!(attempt.jobs.len(), 2);
+  assert!(attempt.jobs.iter().all(|job| job.state == JobState::Succeeded));
+  assert_eq!(child_diagnostics.event_cursor, 1);
+  assert_eq!(child_diagnostics.assignment.unwrap().agent_id, fixture.agent_id);
+  assert_eq!(child_diagnostics.terminal.unwrap().state, JobState::Succeeded);
 
   Ok(())
 }

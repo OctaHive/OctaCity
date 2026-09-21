@@ -29,6 +29,8 @@ pub const MAX_AGENT_REQUIREMENT_LABELS: usize = 64;
 pub const MAX_CONFIGURATION_LABEL_BYTES: usize = 128;
 /// Maximum attempts, including the first, allowed by one retry policy.
 pub const MAX_RETRY_ATTEMPTS: u16 = 100;
+/// Maximum active Jobs allowed for one Build Configuration version.
+pub const MAX_BUILD_CONFIGURATION_JOB_CONCURRENCY: u32 = 10_000;
 
 /// Provider-neutral rules for selecting source revisions from a Repository.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -471,6 +473,8 @@ impl ConfigurationRetryPolicy {
 pub struct BuildConfigurationDefinition {
   /// Whether Triggers may create new Builds from this version.
   pub enabled: bool,
+  /// Maximum active Jobs across Builds of this Configuration version.
+  pub job_concurrency_limit: u32,
   /// Exact immutable Repository version selected by this version.
   pub repository_id: RepositoryId,
   /// Exact immutable Repository version number.
@@ -500,6 +504,9 @@ pub struct BuildConfigurationDefinition {
 impl BuildConfigurationDefinition {
   /// Revalidates the complete immutable definition at an adapter seam.
   pub fn validate(&self) -> Result<(), StoreInputError> {
+    if self.job_concurrency_limit == 0 || self.job_concurrency_limit > MAX_BUILD_CONFIGURATION_JOB_CONCURRENCY {
+      return Err(StoreInputError::InvalidBuildConfiguration);
+    }
     self.parameters.validate()?;
     self.triggers.validate()?;
     self.agent_requirements.validate()?;

@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "id": "66666666-6666-4666-8666-666666666666",
+      "name": "linux-native",
+      "version": 1,
+      "definition": {
+        "enabled": true,
+        "drain_state": "accepting",
+        "admission_policy": {
+          "mode": "allowlist",
+          "platforms": [
+            {
+              "operating_system": "linux",
+              "architecture": "amd64"
+            }
+          ]
+        },
+        "concurrency_limit": 4,
+        "fairness_policy": "priority_fifo",
+        "static_capacity_limit": 8
+      },
+      "published_at_unix_ms": 1758211200000
+    }
+  ],
+  "next_cursor": null
+}

@@ -1,3 +1,4 @@
+use octacity_protocol::AgentInventory;
 use octacity_server_domain::{
   AgentId, AgentName, EntityKind, PoolId, PoolVersion, RegistrationCredentialId, Timestamp,
 };
@@ -181,10 +182,10 @@ async fn persist_agent_and_registration(
   if authority.create_agent {
     sqlx::query(
       "INSERT INTO agents \
-         (id, name, pool_id, pool_version, state, inventory, version, created_at, updated_at, \
+         (id, name, pool_id, pool_version, state, inventory, version, created_at, updated_at, last_seen_at, \
           platform_operating_system, platform_architecture) \
        VALUES ($1, $2, $3, $4, 'online', $5, 1, to_timestamp($6::double precision / 1000.0), \
-               to_timestamp($6::double precision / 1000.0), $7, $8)",
+               to_timestamp($6::double precision / 1000.0), to_timestamp($6::double precision / 1000.0), $7, $8)",
     )
     .bind(request.agent_id.as_uuid())
     .bind(request.agent_name.as_str())
@@ -199,8 +200,9 @@ async fn persist_agent_and_registration(
     .map_err(|error| classify(error, EntityKind::Agent))?;
   } else {
     sqlx::query(
-      "UPDATE agents SET inventory = $1, state = 'online', version = version + 1, \
-         updated_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
+      "UPDATE agents SET inventory = $1, state = CASE WHEN state = 'draining' THEN state ELSE 'online' END, version = version + 1, \
+         updated_at = to_timestamp($2::double precision / 1000.0), \
+         last_seen_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
     )
     .bind(Json(request.inventory.clone()))
     .bind(request.registered_at.unix_millis())
@@ -382,8 +384,7 @@ struct RequestFingerprint {
   agent_name: AgentName,
   proof: ProofFingerprint,
   platform: octacity_server_store::AgentPlatform,
-  inventory: Value,
-  expires_at: Timestamp,
+  inventory: AgentInventory,
 }
 
 impl From<&RegisterAgent> for RequestFingerprint {
@@ -413,7 +414,6 @@ impl From<&RegisterAgent> for RequestFingerprint {
       proof,
       platform: request.platform.clone(),
       inventory: request.inventory.clone(),
-      expires_at: request.expires_at,
     }
   }
 }

@@ -12,10 +12,30 @@ pub enum StoreOperation {
   MoveProject,
   /// Delete one unreferenced Project using an optimistic version precondition.
   DeleteProject,
+  /// Publish the next immutable Project policy version.
+  PublishProjectPolicy,
   /// Read one Project together with its ancestry.
   ReadProject,
   /// List one bounded page of direct child Projects.
   ListProjects,
+  /// Create one static Agent Pool and its initial version.
+  CreateAgentPool,
+  /// Append the next immutable Agent Pool version.
+  PublishAgentPoolVersion,
+  /// Read one exact Agent Pool version.
+  ReadAgentPoolVersion,
+  /// List one bounded page of current Agent Pools.
+  ListAgentPools,
+  /// Delete one unreferenced Agent Pool.
+  DeleteAgentPool,
+  /// Read one enrolled Agent.
+  ReadAgent,
+  /// List one bounded page of enrolled Agents.
+  ListAgents,
+  /// Move one idle Agent to another Pool.
+  ReassignAgentPool,
+  /// Place one Agent into graceful or forced drain.
+  DrainAgent,
   /// Create one Pipeline identity and immutable initial version.
   CreatePipeline,
   /// Append exactly the next immutable Pipeline version.
@@ -34,10 +54,18 @@ pub enum StoreOperation {
   PublishBuildConfigurationVersion,
   /// Read one exact immutable Build Configuration version.
   ReadBuildConfigurationVersion,
+  /// Create one immutable Trigger definition.
+  CreateTriggerDefinition,
   /// Deduplicate a Trigger and persist its complete initial Build graph.
   AcceptTrigger,
   /// Select one compatible ready Job and create its current Lease.
   ClaimReadyJob,
+  /// Renew one current Lease and select its control directive.
+  RenewLease,
+  /// Claim a bounded durable batch of expired Leases.
+  ClaimExpiredLeases,
+  /// Fence and recover one durably claimed expired Lease.
+  RecoverExpiredLease,
   /// Append one contiguous idempotent batch of Job events.
   AppendJobEvents,
   /// Read one bounded ordered page from a Job event stream.
@@ -67,6 +95,21 @@ pub enum StoreInputError {
   /// A Project page size is zero or exceeds the store contract bound.
   #[error("a project page size is outside its allowed range")]
   InvalidProjectPageSize,
+  /// An Agent Pool page size is zero or exceeds the store contract bound.
+  #[error("an agent pool page size is outside its allowed range")]
+  InvalidAgentPoolPageSize,
+  /// An Agent page size is zero or exceeds the store contract bound.
+  #[error("an agent page size is outside its allowed range")]
+  InvalidAgentPageSize,
+  /// A durable worker owner, deadline, or batch size is invalid.
+  #[error("a durable worker claim is invalid")]
+  InvalidWorkerClaim,
+  /// An Agent Pool admission policy is empty or exceeds its bound.
+  #[error("an agent pool admission policy is invalid")]
+  InvalidPoolAdmissionPolicy,
+  /// An Agent Pool capacity is zero, inconsistent, or exceeds its bound.
+  #[error("an agent pool capacity policy is invalid")]
+  InvalidPoolCapacity,
   /// A Pipeline DAG failed structural revalidation at the adapter seam.
   #[error("an immutable pipeline snapshot is invalid")]
   InvalidPipelineSnapshot,
@@ -79,6 +122,9 @@ pub enum StoreInputError {
   /// A Trigger occurrence is malformed or violates source-specific invariants.
   #[error("a normalized trigger occurrence is invalid")]
   InvalidNormalizedTrigger,
+  /// A Build's typed effective scheduling policy is outside its valid range.
+  #[error("an immutable build scheduling policy is invalid")]
+  InvalidBuildSchedulingPolicy,
   /// The normalized occurrence and materialized Build target different configuration versions.
   #[error("a normalized trigger target does not match the build configuration")]
   TriggerTargetMismatch,
@@ -163,6 +209,9 @@ pub enum StoreInputError {
   /// An Agent platform label is empty, malformed, or too long.
   #[error("an agent platform is invalid")]
   InvalidAgentPlatform,
+  /// A registration inventory is incomplete or violates the shared protocol contract.
+  #[error("an agent inventory is invalid")]
+  InvalidAgentInventory,
   /// A Lease must expire strictly after it is claimed.
   #[error("a lease expiry must be later than its claim time")]
   InvalidLeaseWindow,

@@ -16,14 +16,14 @@ use crate::{
   state::{attempt_state, build_state, parse_job_state},
 };
 
-pub(super) struct AppliedOrchestration {
-  pub(super) ready_jobs: Vec<Uuid>,
-  pub(super) skipped_jobs: Vec<Uuid>,
-  pub(super) attempt_state: AttemptState,
-  pub(super) build_state: BuildState,
+pub(crate) struct AppliedOrchestration {
+  pub(crate) ready_jobs: Vec<Uuid>,
+  pub(crate) skipped_jobs: Vec<Uuid>,
+  pub(crate) attempt_state: AttemptState,
+  pub(crate) build_state: BuildState,
 }
 
-pub(super) async fn reconcile_and_apply(
+pub(crate) async fn reconcile_and_apply(
   transaction: &mut Transaction<'_, Postgres>,
   signer: &JobSpecSigner,
   attempt_id: Uuid,
@@ -195,6 +195,7 @@ async fn enqueue_ready(
   if enqueued.rows_affected() != ready.len() as u64 {
     return Err(StoreError::Unavailable);
   }
+  crate::ready_queue_notification::notify_after_commit(transaction).await?;
   Ok(())
 }
 

@@ -9,12 +9,12 @@ use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
 use crate::testing::{
-  InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe, authoritative_store_contract_fixture, retry_request,
-  trigger_request,
+  InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe, authoritative_store_contract_fixture,
+  compatible_snapshot, retry_request, trigger_request,
 };
 use crate::{
   AcceptTrigger, AppendJobEvents, AuthoritativeStore, CancelBuild, DurableJobEvent, EventSequence, IdempotencyKey,
-  JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence,
+  JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence, LeaseWindow,
   MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation, SuppressTrigger,
   TriggerAcceptanceProbe, TriggerCausality, TriggerCause, TriggerEvaluationOutcome, TriggerIntentDigest,
 };
@@ -241,18 +241,24 @@ where
     1_000,
     CONTRACT_LEASE_EXPIRY_MILLIS,
   );
-  let grant = match store.claim_ready_job(root_claim).await.unwrap() {
-    JobClaimOutcome::Claimed(grant) => grant,
+  let grant = match store.claim_ready_job(root_claim.clone()).await.unwrap() {
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => panic!("root job must be claimable"),
   };
   assert_eq!(grant.job_id, root_job);
+  assert_eq!(grant.pool_id, root_claim.pool_id);
+  assert_eq!(grant.registration_epoch, root_claim.registration_epoch);
+  assert_eq!(grant.claimed_at, root_claim.claimed_at);
+  assert_eq!(grant.expires_at, root_claim.expires_at);
+  assert_eq!(grant.fence, root_claim.fence);
+  assert_eq!(format!("{:?}", grant.fence), "LeaseFence([REDACTED])");
   let claim_replay = JobClaim {
     claimed_at: time(1_001),
-    ..root_claim
+    ..root_claim.clone()
   };
   assert_eq!(
     store.claim_ready_job(claim_replay).await.unwrap(),
-    JobClaimOutcome::Claimed(grant),
+    JobClaimOutcome::Claimed(Box::new(grant.clone())),
     "a claim replay must ignore a newly observed server claim time"
   );
   let mismatched_claim = JobClaim {
@@ -260,11 +266,9 @@ where
     ..root_claim
   };
   assert_eq!(
-    store.claim_ready_job(mismatched_claim).await.unwrap_err(),
-    StoreError::Conflict {
-      entity: EntityKind::Lease
-    },
-    "one idempotency identity cannot be reused for different content"
+    store.claim_ready_job(mismatched_claim).await.unwrap(),
+    JobClaimOutcome::Claimed(Box::new(grant.clone())),
+    "a claim replay must ignore server-derived lease times"
   );
   assert_eq!(
     store
@@ -339,6 +343,7 @@ where
   assert_eq!(historical.inserted, 0);
 
   let premature = JobCompletion {
+    completion_id: IdempotencyKey::new("root-completion").unwrap(),
     lease: access,
     final_sequence: Some(EventSequence::new(4).unwrap()),
     kind: JobCompletionKind::Succeeded,
@@ -353,12 +358,13 @@ where
     }
   );
   let completion = JobCompletion {
+    completion_id: IdempotencyKey::new("root-completion").unwrap(),
     lease: access,
     final_sequence: Some(EventSequence::new(3).unwrap()),
     kind: JobCompletionKind::Succeeded,
     completed_at: time(3_000),
   };
-  let completed = store.complete_job(completion).await.unwrap();
+  let completed = store.complete_job(completion.clone()).await.unwrap();
   assert_eq!(completed.disposition, MutationDisposition::Applied);
   assert_eq!(completed.ready_jobs, [child_job]);
   assert!(completed.skipped_jobs.is_empty());
@@ -366,11 +372,22 @@ where
   assert_eq!(completed.build_state, BuildState::Running);
   let replayed_completion = JobCompletion {
     completed_at: time(3_001),
-    ..completion
+    ..completion.clone()
   };
   let mut expected_replay = completed.clone();
   expected_replay.disposition = MutationDisposition::Replayed;
   assert_eq!(store.complete_job(replayed_completion).await.unwrap(), expected_replay);
+  let conflicting_identity = JobCompletion {
+    completion_id: IdempotencyKey::new("different-root-completion").unwrap(),
+    ..completion.clone()
+  };
+  assert_eq!(
+    store.complete_job(conflicting_identity).await.unwrap_err(),
+    StoreError::Conflict {
+      entity: EntityKind::Job
+    },
+    "one fenced attempt must not accept a second terminal identity"
+  );
 
   let child_grant = match store
     .claim_ready_job(claim(
@@ -384,7 +401,7 @@ where
     .await
     .unwrap()
   {
-    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => panic!("successful completion must enqueue the child atomically"),
   };
   assert_eq!(child_grant.job_id, child_job);
@@ -435,6 +452,7 @@ where
   };
   let cancelled_completion = store
     .complete_job(JobCompletion {
+      completion_id: IdempotencyKey::new("cancelled-child-completion").unwrap(),
       lease: child_access,
       final_sequence: None,
       kind: JobCompletionKind::Failed(JobFailureClass::Execution),
@@ -506,7 +524,7 @@ where
     .await
     .unwrap()
   {
-    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => panic!("the independent root must be claimable"),
   };
   assert_eq!(failed_grant.job_id, independent_root);
@@ -517,12 +535,13 @@ where
     registration_epoch: failed_grant.registration_epoch,
   };
   let failure = JobCompletion {
+    completion_id: IdempotencyKey::new("failed-root-completion").unwrap(),
     lease: failed_access,
     final_sequence: None,
     kind: JobCompletionKind::Failed(JobFailureClass::Infrastructure),
     completed_at: time(4_100),
   };
-  let failed = store.complete_job(failure).await.unwrap();
+  let failed = store.complete_job(failure.clone()).await.unwrap();
   assert!(failed.ready_jobs.is_empty());
   assert_eq!(failed.skipped_jobs, [independent_child]);
   assert_eq!(failed.failure_class, Some(JobFailureClass::Infrastructure));
@@ -531,7 +550,7 @@ where
   let replayed_failure = store
     .complete_job(JobCompletion {
       completed_at: time(4_101),
-      ..failure
+      ..failure.clone()
     })
     .await
     .unwrap();
@@ -657,8 +676,8 @@ fn claim(
     agent_id,
     registration_epoch,
     pool,
-    time(claimed_at),
-    time(expires_at),
+    compatible_snapshot(),
+    LeaseWindow::new(time(claimed_at), time(expires_at)).unwrap(),
   )
   .unwrap()
 }

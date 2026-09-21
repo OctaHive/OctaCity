@@ -130,6 +130,7 @@ impl EventSpool {
       lease_id: self.fence.lease_id.clone(),
       fencing_token: self.fence.fencing_token.clone(),
       stream_sequence: sequence,
+      occurred_at_unix_ms: unix_now_millis(),
       kind,
     };
     envelope
@@ -231,6 +232,14 @@ impl EventSpool {
   fn unacknowledged_records(&self) -> usize {
     self.records.len()
   }
+}
+
+fn unix_now_millis() -> i64 {
+  let millis = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_millis();
+  i64::try_from(millis).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

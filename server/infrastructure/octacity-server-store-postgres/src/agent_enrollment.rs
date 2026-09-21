@@ -23,7 +23,6 @@ pub(crate) async fn execute(
     pool_id: request.pool_id,
     pool_version: request.pool_version,
     expected_platform: request.expected_platform.clone(),
-    expires_at: request.expires_at,
   };
   let identity = MutationIdentity::new(
     MutationKind::IssueAgentEnrollment,
@@ -122,7 +121,6 @@ struct RequestFingerprint {
   pool_id: PoolId,
   pool_version: PoolVersion,
   expected_platform: ExpectedAgentPlatform,
-  expires_at: Timestamp,
 }
 
 #[derive(Deserialize, Serialize)]

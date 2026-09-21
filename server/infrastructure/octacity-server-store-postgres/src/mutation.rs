@@ -69,15 +69,24 @@ pub(crate) enum MutationKind {
   RenameProject,
   MoveProject,
   DeleteProject,
+  PublishProjectPolicy,
+  CreateAgentPool,
+  PublishAgentPoolVersion,
+  DeleteAgentPool,
+  ReassignAgentPool,
+  DrainAgent,
   CreatePipeline,
   PublishPipelineVersion,
   CreateRepository,
   PublishRepositoryVersion,
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
+  CreateTriggerDefinition,
   AcceptTrigger,
   SuppressTrigger,
   ClaimReadyJob,
+  RenewLease,
+  RecoverExpiredLease,
   AppendJobEvents,
   CompleteJob,
   CancelBuild,
@@ -125,6 +134,42 @@ impl MutationKind {
         "project",
         "project.deleted"
       ),
+      Self::PublishProjectPolicy => metadata!(
+        b"octacity.publish-project-policy.v1\0",
+        "publish-project-policy",
+        "project_policy",
+        "project-policy.version-published"
+      ),
+      Self::CreateAgentPool => metadata!(
+        b"octacity.create-agent-pool.v1\0",
+        "create-agent-pool",
+        "pool",
+        "agent-pool.created"
+      ),
+      Self::PublishAgentPoolVersion => metadata!(
+        b"octacity.publish-agent-pool-version.v1\0",
+        "publish-agent-pool-version",
+        "pool",
+        "agent-pool.version-published"
+      ),
+      Self::DeleteAgentPool => metadata!(
+        b"octacity.delete-agent-pool.v1\0",
+        "delete-agent-pool",
+        "pool",
+        "agent-pool.deleted"
+      ),
+      Self::ReassignAgentPool => metadata!(
+        b"octacity.reassign-agent-pool.v1\0",
+        "reassign-agent-pool",
+        "agent",
+        "agent.pool-reassigned"
+      ),
+      Self::DrainAgent => metadata!(
+        b"octacity.drain-agent.v1\0",
+        "drain-agent",
+        "agent",
+        "agent.drain-requested"
+      ),
       Self::CreatePipeline => metadata!(
         b"octacity.create-pipeline.v1\0",
         "create-pipeline",
@@ -161,6 +206,12 @@ impl MutationKind {
         "build_configuration",
         "build-configuration.version-published"
       ),
+      Self::CreateTriggerDefinition => metadata!(
+        b"octacity.create-trigger-definition.v1\0",
+        "create-trigger-definition",
+        "trigger",
+        "trigger.created"
+      ),
       Self::AcceptTrigger => metadata!(
         b"octacity.accept-trigger.v2\0",
         "accept-trigger",
@@ -178,6 +229,13 @@ impl MutationKind {
         "claim-ready-job",
         "job",
         "job.claimed"
+      ),
+      Self::RenewLease => metadata!(b"octacity.renew-lease.v1\0", "renew-lease", "lease", "lease.heartbeat"),
+      Self::RecoverExpiredLease => metadata!(
+        b"octacity.recover-expired-lease.v1\0",
+        "recover-expired-lease",
+        "lease",
+        "lease.expired-recovered"
       ),
       Self::AppendJobEvents => metadata!(
         b"octacity.append-job-events.v1\0",

@@ -13,6 +13,41 @@ to a labeled, provisioned self-hosted runner. It is the release gate for real
 kernel and hypervisor behavior; the portable CI matrix remains independent of
 privileged host configuration.
 
+For the released-Agent gate, prepare one Apple Silicon macOS host and one
+ARM64 Linux host, then run `tools/runner/register-backend-runner.sh` in a
+separate terminal on each. The wizard executes the real backend preflight,
+opens the repository registration page, registers an ephemeral one-job runner,
+and opens the workflow page. Select the `released-agent` suite; it schedules
+only Linux Native and macOS Microsandbox, so an unrelated containerd runner is
+not required. The one-hour GitHub registration token is read without echo and
+is never written to disk. Because self-hosted runners execute repository code,
+use this procedure only for a trusted revision and do not enable it for
+unreviewed public pull requests.
+
+The Linux host needs one initial cgroup installation:
+
+```shell
+sudo tools/runner/install-linux-native-cgroup.sh "$USER"
+```
+
+This installs a boot-persistent cgroup-v2 tree with sibling `runner` and
+`jobs` leaves. The wizard starts the Actions runner through the installed
+`octacity-in-cgroup` wrapper, while the Native backend receives the clean
+`jobs` subtree. The dedicated Native work and cache filesystems must also be
+mounted before the wizard runs. `tools/runner/preflight-backend-runner.sh`
+fails closed if any runtime, release checksum, Docker daemon, cgroup
+controller, or real backend contract is unavailable.
+
+The Linux Native and Apple Silicon macOS Microsandbox jobs also build a
+deterministic Agent release-candidate archive, verify its external and internal
+checksums, extract it outside the Cargo target tree, and run
+`release_vertical_slice`. That black-box test starts the real REST server over
+PostgreSQL, creates a two-node Pipeline, launches the packaged Agent, waits for
+both dependent Jobs to execute, drains the Agent through management REST, and
+retains the release manifests, Build/Attempt/Job documents, events, and Agent
+logs as workflow artifacts. The macOS job executes a Linux guest through
+Microsandbox; host-native execution is deliberately Linux-only.
+
 All tests require:
 
 ```shell
@@ -46,13 +81,20 @@ filesystem whose total capacity does not exceed the configured workspace
 limit. Then run:
 
 ```shell
-export OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT=/sys/fs/cgroup/octacity-contract
+export OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT=/sys/fs/cgroup/octacity/jobs
 export OCTACITY_CONTRACT_NATIVE_WORK_ROOT=/var/lib/octacity-contract/native
+export OCTACITY_RELEASE_NATIVE_CACHE_ROOT=/var/lib/octacity-contract/native-cache
 export OCTACITY_CONTRACT_NATIVE_BWRAP=/usr/bin/bwrap
 export OCTACITY_CONTRACT_NATIVE_PATH=/usr/local/bin:/usr/bin:/bin
 cargo test -p octacity-job --test backend_contract \
   native_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
+
+`OCTACITY_RELEASE_NATIVE_CACHE_ROOT` must be a separate dedicated filesystem
+mount whose capacity does not exceed `OCTACITY_CONTRACT_WORKSPACE_BYTES`.
+The release gate configures two bounded cache scopes and uses no remote cache;
+the mount is still required because Native jobs must never be able to grow a
+host cache outside a physical boundary.
 
 ## Microsandbox
 
@@ -80,6 +122,13 @@ export OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=denied.contract.example
 cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
+
+The released-Agent vertical slice additionally requires Docker on both
+self-hosted runners so its composite action can start disposable pinned
+PostgreSQL and MinIO containers. The runner service environment supplies the
+backend variables above and the checksummed
+`OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`; the workflow supplies the packaged Agent
+root, real dependency endpoints, selected backend, and evidence directory.
 
 ## Containerd process isolation
 

@@ -1,10 +1,10 @@
 use std::fmt;
 
+use octacity_protocol::AgentInventory;
 use octacity_server_domain::{
   AgentId, AgentName, EnrollmentCredentialId, PoolId, PoolVersion, RegistrationCredentialId, Timestamp,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
 
@@ -95,7 +95,7 @@ impl fmt::Debug for CredentialDigest {
 }
 
 /// Provider-neutral Agent host platform used by enrollment admission policy.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct AgentPlatform {
   operating_system: String,
   architecture: String,
@@ -234,6 +234,24 @@ pub enum AgentRegistrationProof {
   },
 }
 
+/// Fresh credential material generated for one new registration epoch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FreshRegistrationCredential {
+  /// Stable identity of the fresh registration and its idempotency record.
+  pub id: RegistrationCredentialId,
+  /// Fresh bearer secret; adapters persist only its digest.
+  pub secret: CredentialSecret,
+}
+
+/// Authoritative validity window for one registration epoch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegistrationValidity {
+  /// Authoritative registration time.
+  pub registered_at: Timestamp,
+  /// Exclusive registration expiry.
+  pub expires_at: Timestamp,
+}
+
 /// Complete atomic request to create and supersede an Agent registration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterAgent {
@@ -250,7 +268,7 @@ pub struct RegisterAgent {
   /// Platform measured by the registering process.
   pub platform: AgentPlatform,
   /// Complete validated scheduler-visible inventory.
-  pub inventory: Value,
+  pub inventory: AgentInventory,
   /// Authoritative registration time.
   pub registered_at: Timestamp,
   /// Exclusive registration expiry.
@@ -259,40 +277,37 @@ pub struct RegisterAgent {
 
 impl RegisterAgent {
   /// Validates the registration lifetime and structured inventory envelope.
-  #[allow(clippy::too_many_arguments)]
   pub fn new(
-    credential_id: RegistrationCredentialId,
-    credential: CredentialSecret,
+    credential: FreshRegistrationCredential,
     agent_id: AgentId,
     agent_name: AgentName,
     proof: AgentRegistrationProof,
     platform: AgentPlatform,
-    inventory: Value,
-    registered_at: Timestamp,
-    expires_at: Timestamp,
+    inventory: AgentInventory,
+    validity: RegistrationValidity,
   ) -> Result<Self, StoreError> {
     let request = Self {
-      credential_id,
-      credential,
+      credential_id: credential.id,
+      credential: credential.secret,
       agent_id,
       agent_name,
       proof,
       platform,
       inventory,
-      registered_at,
-      expires_at,
+      registered_at: validity.registered_at,
+      expires_at: validity.expires_at,
     };
     request.validate()?;
     Ok(request)
   }
 
-  /// Revalidates the lifetime and bounded inventory at an adapter seam.
+  /// Revalidates the lifetime and complete bounded inventory at an adapter seam.
   pub fn validate(&self) -> Result<(), StoreError> {
     require_credential_window(StoreOperation::RegisterAgent, self.registered_at, self.expires_at)?;
-    if !self.inventory.is_object() {
+    if self.inventory.validate().is_err() {
       return Err(StoreError::invalid(
         StoreOperation::RegisterAgent,
-        StoreInputError::JsonDocumentMustBeObject,
+        StoreInputError::InvalidAgentInventory,
       ));
     }
     if serde_json::to_vec(&self.inventory).map_or(true, |encoded| encoded.len() > MAX_AGENT_INVENTORY_BYTES) {
@@ -346,6 +361,8 @@ pub struct AuthenticatedAgentRegistration {
   pub pool_id: PoolId,
   /// Immutable Pool policy version retained from enrollment.
   pub pool_version: PoolVersion,
+  /// Static host capacity retained from the validated registration inventory.
+  pub host_capacity: octacity_protocol::HostCapacity,
   /// Exclusive registration expiry.
   pub expires_at: Timestamp,
 }

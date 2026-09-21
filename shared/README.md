@@ -14,14 +14,12 @@ single-product ownership as well as unapproved implementation dependencies.
 | Path | Contract | Product consumers | Status |
 | --- | --- | --- | --- |
 | `octacity-protocol` | Versioned agent/server wire messages and signed execution intent | Agent, server | Active |
-| `octacity-observability` | Stable metric, trace, redaction, and cardinality vocabulary | Agent, server | Scaffolded; implemented by task 8.2 |
 | `protocol-fixtures` | Language-neutral golden documents for `octacity-protocol` | Agent, server | Active test data |
 
-The observability crate is explicitly marked `scaffold = true` and therefore
-must remain dependency-free and unused. Its declared ownership reserves the
-planned shared contract; task 8.2 must remove the marker and add the vocabulary
-and both product consumers together. Server-only HTTP telemetry stays in the
-REST adapter until that contract exists.
+The `octacity-observability` ownership name is reserved, but task 8.2 creates
+the package only when it can add the vocabulary and both product consumers
+together. Server-only HTTP telemetry stays in the REST adapter until that
+shared contract exists.
 
 ## What stays outside
 

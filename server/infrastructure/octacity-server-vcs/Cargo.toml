@@ -1,9 +1,0 @@
-[package]
-name = "octacity-server-vcs"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
-publish = false
-description = "Verified VCS adapter host for the OctaCity server"

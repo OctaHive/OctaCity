@@ -60,14 +60,11 @@ fn main() -> ExitCode {
 fn validate(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
   let config = ServerConfig::load(&path)?;
   println!(
-    "server configuration is valid (management listener {}, security trusted_network_unauthenticated, external acknowledgement {}, agent listener {}, webhook listener {})",
+    "server configuration is valid (management listener {}, security trusted_network_unauthenticated, external acknowledgement {}, agent listener {})",
     config.management_bind(),
     config.unauthenticated_management_acknowledged(),
     config
       .agent_bind()
-      .map_or_else(|| "disabled".to_owned(), |address| address.to_string()),
-    config
-      .webhook_bind()
       .map_or_else(|| "disabled".to_owned(), |address| address.to_string()),
   );
   Ok(())
@@ -79,7 +76,6 @@ async fn run(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
   info!(
     management_addr = %runtime.management_addr(),
     agent_addr = ?runtime.agent_addr(),
-    webhook_addr = ?runtime.webhook_addr(),
     management_security_mode = "trusted_network_unauthenticated",
     "server started"
   );

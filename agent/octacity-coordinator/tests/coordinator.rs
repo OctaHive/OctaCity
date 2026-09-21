@@ -363,15 +363,38 @@ fn snapshot() -> HostSnapshot {
   }
 }
 
+fn idle_snapshot() -> HostSnapshot {
+  HostSnapshot {
+    active_job: None,
+    ..snapshot()
+  }
+}
+
 fn client(
   server: &MockServer,
   max_attempts: usize,
   request_timeout: Duration,
   max_body_bytes: usize,
 ) -> HttpCoordinatorClient {
+  client_with_credential(
+    server,
+    "enrollment-token",
+    max_attempts,
+    request_timeout,
+    max_body_bytes,
+  )
+}
+
+fn client_with_credential(
+  server: &MockServer,
+  credential_value: &str,
+  max_attempts: usize,
+  request_timeout: Duration,
+  max_body_bytes: usize,
+) -> HttpCoordinatorClient {
   let directory = tempfile::tempdir().unwrap();
   let credential = directory.path().join("credential");
-  fs::write(&credential, "enrollment-token\n").unwrap();
+  fs::write(&credential, format!("{credential_value}\n")).unwrap();
   // The client reads the credential during construction, so the temporary
   // directory can disappear before the first request.
   HttpCoordinatorClient::new(HttpCoordinatorConfig {
@@ -470,6 +493,35 @@ async fn retries_disconnects_and_retryable_statuses_with_one_idempotency_key() {
 }
 
 #[tokio::test]
+async fn successful_registration_promotes_the_enrollment_bearer_for_later_calls() {
+  let server = MockServer::start(vec![
+    Action::Register { request_id: None },
+    Action::Register { request_id: None },
+  ])
+  .await;
+  let client = client_with_credential(
+    &server,
+    "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+    1,
+    Duration::from_secs(1),
+    4096,
+  );
+
+  client.register(&inventory(), CancellationToken::new()).await.unwrap();
+  client.register(&inventory(), CancellationToken::new()).await.unwrap();
+
+  let records = server.records.lock().unwrap();
+  assert_eq!(
+    records[0].authorization,
+    "Bearer enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+  );
+  assert_eq!(
+    records[1].authorization,
+    "Bearer registration.registration-1.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
+  );
+}
+
+#[tokio::test]
 async fn rejects_mismatched_and_oversized_responses() {
   let server = MockServer::start(vec![Action::Register {
     request_id: Some("stale-request".to_owned()),
@@ -511,6 +563,7 @@ async fn shutdown_cancels_a_blocked_long_poll_and_requests_time_out() {
           Duration::from_secs(1),
           Duration::from_secs(1),
           true,
+          &idle_snapshot(),
           shutdown,
         )
         .await
@@ -557,6 +610,7 @@ async fn sends_fenced_lease_and_heartbeat_documents_to_exact_endpoints() {
       Duration::from_secs(1),
       Duration::from_secs(10),
       true,
+      &idle_snapshot(),
       CancellationToken::new(),
     )
     .await
@@ -600,6 +654,7 @@ async fn appends_fenced_events_and_completes_with_stable_idempotency() {
     lease_id: lease.lease_id.clone(),
     fencing_token: lease.fencing_token.clone(),
     stream_sequence: 1,
+    occurred_at_unix_ms: 1,
     kind: AttemptEventKind::Agent {
       event: AgentLifecycleEvent::StateChanged {
         state: JobLifecycleState::Preparing,

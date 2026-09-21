@@ -1,6 +1,7 @@
 use std::{
   collections::BTreeSet,
   sync::{Arc, Mutex},
+  time::Duration,
 };
 
 use async_trait::async_trait;
@@ -10,25 +11,33 @@ use axum::{
 };
 use octacity_server_api_rest::{
   management_router_with_application,
-  v1::{ErrorCode, MANAGEMENT_OPERATIONS, ManagementApplication},
+  v1::{
+    AgentManagementApplication, BuildManagementApplication, CatalogManagementApplication,
+    ConfigurationManagementApplication, DefinitionManagementApplication, ErrorCode, ExecutionManagementApplication,
+    JobEventManagementApplication, MANAGEMENT_OPERATIONS, ManagementApplication, ManagementApplicationHandlers,
+    ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  },
 };
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, Command, CommandHandler, CreateBuildConfigurationCommand,
-  CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand, DeleteProjectCommand,
-  GetBuildConfigurationQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, JobEventPageProjection,
-  JobEventProjection, ListProjectsQuery, ManualTriggerError, MoveProjectCommand,
-  PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand, PublishRepositoryVersionCommand, Query,
-  QueryHandler, ReadJobEventsQuery, RenameProjectCommand,
+  AcceptManualTriggerCommand, ApplicationError, CancelBuildCommand, Command, CommandHandler, CreateAgentPoolCommand,
+  CreateBuildConfigurationCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
+  CreateTriggerDefinitionCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
+  GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery,
+  GetProjectQuery, GetRepositoryQuery, IssueAgentEnrollmentCommand, JobEventPageProjection, JobEventProjection,
+  ListAgentPoolsQuery, ListAgentsQuery, ListProjectsQuery, ManualTriggerError, MoveProjectCommand,
+  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery,
+  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand,
 };
-use tokio::{
-  io::{AsyncReadExt as _, AsyncWriteExt as _},
-  net::{TcpListener, TcpStream},
-};
+use tokio::net::TcpListener;
 use tower::ServiceExt as _;
 
 mod support;
 
-use support::assert_json_matches_component;
+use support::{
+  agent_pool_create_body, agent_pool_publish_body, assert_json_matches_component, configuration_version_body,
+  documented_http_requests, repository_body, repository_version_body, request_examples, send_documented_request,
+};
 
 const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/management-rest-v1.md");
 
@@ -89,8 +98,25 @@ unavailable_query!(GetPipelineQuery, "get_pipeline");
 unavailable_command!(PublishRepositoryVersionCommand, "publish_repository");
 unavailable_query!(GetRepositoryQuery, "get_repository");
 unavailable_command!(PublishBuildConfigurationVersionCommand, "publish_configuration");
+unavailable_command!(PublishProjectPolicyCommand, "publish_project_policy");
+unavailable_command!(CreateTriggerDefinitionCommand, "create_trigger_definition");
 unavailable_query!(GetBuildConfigurationQuery, "get_configuration");
 unavailable_query!(ReadJobEventsQuery, "read_job_events");
+unavailable_command!(CreateAgentPoolCommand, "create_agent_pool");
+unavailable_command!(PublishAgentPoolVersionCommand, "publish_agent_pool");
+unavailable_command!(DeleteAgentPoolCommand, "delete_agent_pool");
+unavailable_query!(GetAgentPoolQuery, "get_agent_pool");
+unavailable_query!(ListAgentPoolsQuery, "list_agent_pools");
+unavailable_query!(GetAgentQuery, "get_agent");
+unavailable_query!(ListAgentsQuery, "list_agents");
+unavailable_command!(ReassignAgentPoolCommand, "reassign_agent_pool");
+unavailable_command!(DrainAgentCommand, "drain_agent");
+unavailable_command!(IssueAgentEnrollmentCommand, "issue_agent_enrollment");
+unavailable_query!(GetBuildQuery, "get_build");
+unavailable_query!(GetAttemptQuery, "get_attempt");
+unavailable_query!(GetJobQuery, "get_job");
+unavailable_command!(CancelBuildCommand, "cancel_build");
+unavailable_command!(RetryBuildCommand, "retry_build");
 
 #[async_trait]
 impl CommandHandler<CreateProjectCommand> for RecordingApplication {
@@ -219,6 +245,7 @@ impl CommandHandler<CreateBuildConfigurationCommand> for RecordingApplication {
           "name": command.name,
           "version": 1,
           "enabled": definition["enabled"],
+          "job_concurrency_limit": definition["job_concurrency_limit"],
           "repository_id": definition["repository_id"],
           "repository_version": definition["repository_version"],
           "pipeline_id": definition["pipeline_id"],
@@ -287,26 +314,55 @@ impl QueryHandler<ReadJobEventsQuery> for JobEventApplication {
   }
 }
 
+fn recording_management_application<E>(
+  application: Arc<RecordingApplication>,
+  job_events: Arc<E>,
+) -> ManagementApplication
+where
+  E: QueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
+{
+  ManagementApplication::new(
+    ["native".to_owned()],
+    Duration::from_secs(900),
+    octacity_server_application::AgentEnrollmentSecretKey::new([7; 32]),
+    ManagementApplicationHandlers::new(
+      CatalogManagementApplication::new(
+        ProjectManagementApplication::new(Arc::clone(&application)),
+        PipelineManagementApplication::new(Arc::clone(&application)),
+        ConfigurationManagementApplication::new(Arc::clone(&application)),
+        DefinitionManagementApplication::new(Arc::clone(&application)),
+      ),
+      AgentManagementApplication::new(
+        Arc::clone(&application),
+        Arc::clone(&application),
+        Arc::clone(&application),
+      ),
+      ExecutionManagementApplication::new(
+        BuildManagementApplication::new(Arc::clone(&application)),
+        ManualTriggerManagementApplication::new(application),
+        JobEventManagementApplication::new(job_events),
+      ),
+    ),
+  )
+  .unwrap()
+}
+
 #[tokio::test]
-async fn every_section_four_route_dispatches_only_through_application_handlers() {
+async fn every_registered_route_dispatches_only_through_application_handlers() {
   let application = Arc::new(RecordingApplication::default());
   let routes = management_router_with_application(
     || true,
-    ManagementApplication::new(
-      ["native".to_owned()],
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-    )
-    .unwrap(),
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
   let project_id = "11111111-1111-4111-8111-111111111111";
   let pipeline_id = "22222222-2222-4222-8222-222222222222";
   let repository_id = "33333333-3333-4333-8333-333333333333";
   let configuration_id = "44444444-4444-4444-8444-444444444444";
   let job_id = "55555555-5555-4555-8555-555555555555";
+  let pool_id = "66666666-6666-4666-8666-666666666666";
+  let agent_id = "77777777-7777-4777-8777-777777777777";
+  let build_id = "99999999-9999-4999-8999-999999999999";
+  let attempt_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
   let requests = vec![
     json_request(
@@ -329,6 +385,13 @@ async fn every_section_four_route_dispatches_only_through_application_handlers()
       "move-project",
       Some("\"1\""),
       r#"{"parent_id":null}"#,
+    ),
+    json_request(
+      "POST",
+      &format!("/api/v1/projects/{project_id}/policy-versions"),
+      "publish-project-policy",
+      None,
+      r#"{"policy":{"pools":{"mode":"replace","value":[]},"repositories":{"mode":"replace","value":[]},"secret_profiles":{"mode":"replace","value":[]},"identity_profiles":{"mode":"replace","value":[]},"runtimes":{"mode":"replace","value":[]},"cache":{"mode":"replace","value":{"namespaces":[],"read":false,"write":false,"max_bytes":0}},"artifacts":{"mode":"replace","value":{"artifact_count":0,"artifact_bytes":0,"report_count":0,"report_bytes":0,"single_output_bytes":0}},"concurrency":{"mode":"replace","value":{"active_builds":1,"active_jobs":1}},"retention":{"mode":"replace","value":{"build_seconds":1,"log_seconds":1,"artifact_seconds":1,"cache_seconds":1}}}}"#,
     ),
     empty_request(
       "DELETE",
@@ -388,15 +451,83 @@ async fn every_section_four_route_dispatches_only_through_application_handlers()
     ),
     json_request(
       "POST",
+      "/api/v1/trigger-definitions/manual",
+      "create-trigger-definition",
+      None,
+      &format!(
+        r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"definition":{{}}}}"#
+      ),
+    ),
+    json_request(
+      "POST",
       "/api/v1/triggers/manual",
       "release-main-2026-09-18",
       None,
       include_str!("../fixtures/v1/accept-manual-trigger-request.json"),
     ),
+    empty_request("GET", &format!("/api/v1/builds/{build_id}"), None),
+    empty_request(
+      "POST",
+      &format!("/api/v1/builds/{build_id}/cancel"),
+      Some(("cancel-build", "\"1\"")),
+    ),
+    empty_request(
+      "POST",
+      &format!("/api/v1/builds/{build_id}/retry"),
+      Some(("retry-build", "\"1\"")),
+    ),
+    empty_request("GET", &format!("/api/v1/attempts/{attempt_id}"), None),
+    empty_request("GET", &format!("/api/v1/jobs/{job_id}"), None),
     empty_request(
       "GET",
       &format!("/api/v1/jobs/{job_id}/events?after=0&limit=100&wait_ms=0"),
       None,
+    ),
+    json_request(
+      "POST",
+      "/api/v1/agent-enrollments",
+      "issue-agent-enrollment",
+      None,
+      &format!(
+        r#"{{"pool_id":"{pool_id}","pool_version":1,"expected_platform":{{"operating_system":"linux","architecture":"amd64"}}}}"#
+      ),
+    ),
+    json_request(
+      "POST",
+      "/api/v1/agent-pools",
+      "create-agent-pool",
+      None,
+      agent_pool_create_body(),
+    ),
+    json_request(
+      "POST",
+      &format!("/api/v1/agent-pools/{pool_id}/versions"),
+      "publish-agent-pool",
+      Some("\"1\""),
+      agent_pool_publish_body(),
+    ),
+    empty_request("GET", &format!("/api/v1/agent-pools/{pool_id}/versions/1"), None),
+    empty_request("GET", "/api/v1/agent-pools?limit=10", None),
+    empty_request(
+      "DELETE",
+      &format!("/api/v1/agent-pools/{pool_id}"),
+      Some(("delete-agent-pool", "\"1\"")),
+    ),
+    empty_request("GET", &format!("/api/v1/agents/{agent_id}"), None),
+    empty_request("GET", "/api/v1/agents?limit=10", None),
+    json_request(
+      "POST",
+      &format!("/api/v1/agents/{agent_id}/pool"),
+      "reassign-agent-pool",
+      Some("\"1\""),
+      &format!(r#"{{"pool_id":"{pool_id}"}}"#),
+    ),
+    json_request(
+      "POST",
+      &format!("/api/v1/agents/{agent_id}/drain"),
+      "drain-agent",
+      Some("\"1\""),
+      r#"{"mode":"graceful"}"#,
     ),
   ];
 
@@ -411,6 +542,7 @@ async fn every_section_four_route_dispatches_only_through_application_handlers()
       "create_project",
       "rename_project",
       "move_project",
+      "publish_project_policy",
       "delete_project",
       "get_project",
       "list_projects",
@@ -423,8 +555,24 @@ async fn every_section_four_route_dispatches_only_through_application_handlers()
       "create_configuration",
       "publish_configuration",
       "get_configuration",
+      "create_trigger_definition",
       "accept_manual_trigger",
+      "get_build",
+      "cancel_build",
+      "retry_build",
+      "get_attempt",
+      "get_job",
       "read_job_events",
+      "issue_agent_enrollment",
+      "create_agent_pool",
+      "publish_agent_pool",
+      "get_agent_pool",
+      "list_agent_pools",
+      "delete_agent_pool",
+      "get_agent",
+      "list_agents",
+      "reassign_agent_pool",
+      "drain_agent",
     ]
   );
 }
@@ -434,15 +582,7 @@ async fn transport_rejections_do_not_reach_an_application_handler() {
   let application = Arc::new(RecordingApplication::default());
   let routes = management_router_with_application(
     || true,
-    ManagementApplication::new(
-      ["native".to_owned()],
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-    )
-    .unwrap(),
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
 
   let response = routes
@@ -478,15 +618,7 @@ async fn unsupported_api_versions_return_the_stable_version_error() {
   let application = Arc::new(RecordingApplication::default());
   let routes = management_router_with_application(
     || true,
-    ManagementApplication::new(
-      ["native".to_owned()],
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-    )
-    .unwrap(),
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
 
   let response = routes
@@ -505,15 +637,7 @@ async fn job_event_parameters_and_page_use_the_stable_rest_contract() {
   let application = Arc::new(RecordingApplication::default());
   let routes = management_router_with_application(
     || true,
-    ManagementApplication::new(
-      ["native".to_owned()],
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::new(JobEventApplication),
-    )
-    .unwrap(),
+    recording_management_application(Arc::clone(&application), Arc::new(JobEventApplication)),
   );
 
   let response = routes
@@ -557,15 +681,7 @@ async fn every_documented_section_four_request_reaches_a_running_contract_server
   let application = Arc::new(RecordingApplication::successful_workflow());
   let routes = management_router_with_application(
     || true,
-    ManagementApplication::new(
-      ["native".to_owned()],
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-    )
-    .unwrap(),
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
   let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
   let address = listener.local_addr().unwrap();
@@ -603,15 +719,7 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
   let application = Arc::new(RecordingApplication::default());
   let routes = management_router_with_application(
     || true,
-    ManagementApplication::new(
-      ["native".to_owned()],
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-      Arc::clone(&application),
-    )
-    .unwrap(),
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
 
   let response = routes
@@ -787,49 +895,11 @@ fn concrete_path(path: &str) -> String {
     .replace("{pipeline_id}", "22222222-2222-4222-8222-222222222222")
     .replace("{repository_id}", "33333333-3333-4333-8333-333333333333")
     .replace("{configuration_id}", "44444444-4444-4444-8444-444444444444")
+    .replace("{build_id}", "99999999-9999-4999-8999-999999999999")
+    .replace("{attempt_id}", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     .replace("{job_id}", "55555555-5555-4555-8555-555555555555")
+    .replace("{pool_id}", "66666666-6666-4666-8666-666666666666")
     .replace("{version}", "1")
-}
-
-#[derive(Debug)]
-struct DocumentedHttpRequest {
-  method: String,
-  target: String,
-  headers: Vec<(String, String)>,
-  body: String,
-}
-
-fn documented_http_requests(document: &str) -> Vec<DocumentedHttpRequest> {
-  let document = document.replace("\r\n", "\n");
-  document
-    .split("```http\n")
-    .skip(1)
-    .map(|remainder| remainder.split_once("\n```").expect("HTTP example fence must close").0)
-    .map(|block| {
-      let (head, body) = block
-        .split_once("\n\n")
-        .expect("HTTP example must separate headers and body");
-      let mut lines = head.lines();
-      let request_line = lines.next().expect("HTTP example must have a request line");
-      let mut request_line = request_line.split_whitespace();
-      let method = request_line.next().expect("HTTP method is required").to_owned();
-      let target = request_line.next().expect("HTTP target is required").to_owned();
-      assert_eq!(request_line.next(), Some("HTTP/1.1"));
-      assert_eq!(request_line.next(), None);
-      let headers = lines
-        .map(|line| {
-          let (name, value) = line.split_once(':').expect("HTTP header must contain ':'");
-          (name.trim().to_owned(), value.trim().to_owned())
-        })
-        .collect();
-      DocumentedHttpRequest {
-        method,
-        target,
-        headers,
-        body: body.trim_end().to_owned(),
-      }
-    })
-    .collect()
 }
 
 #[test]
@@ -837,72 +907,6 @@ fn documented_http_requests_support_windows_line_endings() {
   let document = DOCUMENTED_SECTION_FOUR_WORKFLOW.replace('\n', "\r\n");
 
   assert_eq!(documented_http_requests(&document).len(), 5);
-}
-
-async fn send_documented_request(address: std::net::SocketAddr, request: &DocumentedHttpRequest) -> u16 {
-  let mut stream = TcpStream::connect(address).await.unwrap();
-  let mut encoded = format!("{} {} HTTP/1.1\r\nHost: {address}\r\n", request.method, request.target);
-  for (name, value) in &request.headers {
-    if !name.eq_ignore_ascii_case("host") && !name.eq_ignore_ascii_case("content-length") {
-      encoded.push_str(&format!("{name}: {value}\r\n"));
-    }
-  }
-  encoded.push_str(&format!(
-    "Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-    request.body.len(),
-    request.body
-  ));
-  stream.write_all(encoded.as_bytes()).await.unwrap();
-
-  let mut response = Vec::new();
-  stream.read_to_end(&mut response).await.unwrap();
-  let response = String::from_utf8(response).unwrap();
-  response
-    .lines()
-    .next()
-    .expect("HTTP response must have a status line")
-    .split_whitespace()
-    .nth(1)
-    .expect("HTTP response status is required")
-    .parse()
-    .unwrap()
-}
-
-fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
-  let mut create_pipeline: serde_json::Value =
-    serde_json::from_str(include_str!("../fixtures/v1/create-pipeline-request.json")).unwrap();
-  create_pipeline["dag"]["nodes"][0]["execution"]["octafile"] = serde_json::Value::Null;
-  create_pipeline["dag"]["nodes"][0]["execution"]["concurrency"] = serde_json::Value::Null;
-  let create_configuration: serde_json::Value =
-    serde_json::from_str(include_str!("../fixtures/v1/create-build-configuration-request.json")).unwrap();
-  let repository_version: serde_json::Value = serde_json::from_str(&repository_version_body()).unwrap();
-  vec![
-    (
-      "CreateProjectRequest",
-      serde_json::from_str(include_str!("../fixtures/v1/create-project-request.json")).unwrap(),
-    ),
-    ("RenameProjectRequest", serde_json::json!({"name": "Renamed"})),
-    ("MoveProjectRequest", serde_json::json!({"parent_id": null})),
-    ("CreatePipelineRequest", create_pipeline.clone()),
-    (
-      "PublishPipelineVersionRequest",
-      serde_json::json!({"dag": create_pipeline["dag"]}),
-    ),
-    (
-      "CreateRepositoryRequest",
-      serde_json::json!({"project_id": "project", "name": "Source", "definition": repository_version["definition"]}),
-    ),
-    ("PublishRepositoryVersionRequest", repository_version),
-    ("CreateBuildConfigurationRequest", create_configuration.clone()),
-    (
-      "PublishBuildConfigurationVersionRequest",
-      serde_json::json!({"definition": create_configuration["definition"]}),
-    ),
-    (
-      "AcceptManualTriggerRequest",
-      serde_json::from_str(include_str!("../fixtures/v1/accept-manual-trigger-request.json")).unwrap(),
-    ),
-  ]
 }
 
 fn json_request(method: &str, uri: &str, idempotency_key: &str, version: Option<&str>, body: &str) -> Request<Body> {
@@ -923,24 +927,4 @@ fn empty_request(method: &str, uri: &str, mutation: Option<(&str, &str)>) -> Req
     request = request.header("idempotency-key", key).header("if-match", version);
   }
   request.body(Body::empty()).unwrap()
-}
-
-fn repository_body(project_id: &str) -> String {
-  let version: serde_json::Value = serde_json::from_str(&repository_version_body()).unwrap();
-  serde_json::to_string(&serde_json::json!({
-    "project_id": project_id,
-    "name": "Source",
-    "definition": version["definition"],
-  }))
-  .unwrap()
-}
-
-fn repository_version_body() -> String {
-  r#"{"definition":{"vcs_integration_id":"55555555-5555-4555-8555-555555555555","repository_locator":"https://example.test/source.git","selection":{"allowed_references":["refs/heads/main"],"default_reference":"refs/heads/main","allow_exact_revision":true}}}"#.to_owned()
-}
-
-fn configuration_version_body() -> String {
-  let create: serde_json::Value =
-    serde_json::from_str(include_str!("../fixtures/v1/create-build-configuration-request.json")).unwrap();
-  serde_json::to_string(&serde_json::json!({"definition": create["definition"]})).unwrap()
 }

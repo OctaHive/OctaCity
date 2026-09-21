@@ -247,6 +247,8 @@ pub struct ImmutableBuildInput {
   pub input_snapshot: Value,
   /// Effective inherited policy frozen for this Build.
   pub effective_policy_snapshot: Value,
+  /// Typed Project-wide active-Job ceiling captured from the same policy snapshot.
+  pub project_job_concurrency_limit: u32,
   /// Durable ready-queue priority copied to materialized root Jobs.
   pub priority: i64,
 }
@@ -255,7 +257,11 @@ impl ImmutableBuildInput {
   /// Validates immutable source and JSON snapshot shape.
   pub fn validate(&self) -> Result<(), StoreInputError> {
     require_bounded_json_object(&self.input_snapshot)?;
-    require_bounded_json_object(&self.effective_policy_snapshot)
+    require_bounded_json_object(&self.effective_policy_snapshot)?;
+    if self.project_job_concurrency_limit == 0 {
+      return Err(StoreInputError::InvalidBuildSchedulingPolicy);
+    }
+    Ok(())
   }
 }
 

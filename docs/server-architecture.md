@@ -54,7 +54,6 @@ provider crate name.
 | `octacity-server` | Process composition and concrete adapter selection | Domain decisions or reusable transport contracts |
 | `octacity-server-api-rest` | Management REST DTOs, decoding, routing, OpenAPI, HTTP error mapping | Transactions, domain state, database rows |
 | `octacity-server-api-agent` | HTTP adaptation of the shared server-Agent protocol | Agent execution or placement decisions |
-| `octacity-server-api-webhook` | Bounded raw webhook HTTP ingress | Provider authentication, normalization, Trigger decisions |
 | `octacity-server-application` | Transport-independent commands, queries, handlers, projections, transaction coordination, and cross-module Project-policy resolution | HTTP DTOs and concrete infrastructure |
 | `octacity-server-domain` | Server-only identities, versions, bounded values, timestamps, and typed errors | Aggregates, transport DTOs, persistence rows |
 | `octacity-server-trigger` | Trigger normalization, occurrence deduplication, and Trigger evaluation state | Ready-Job placement or provider payloads |
@@ -65,18 +64,16 @@ provider crate name.
 | `octacity-server-secrets` | Logical secret references, policy, and short-lived grant interfaces | Provider credentials and durable raw secret values |
 | `octacity-server-cache` | Cache namespace authority and fenced session lifecycle | Octa action-key or task-result semantics |
 | `octacity-server-artifacts` | Logical upload, verification, publication, visibility, and retention state | Bucket names, object keys, provider credentials |
-| `octacity-server-audit` | Immutable audit facts and redaction classifications | Diagnostic telemetry |
 | `octacity-server-store` | Backend-neutral atomic persistence and log-search ports | SQL rows, SQL transactions, PostgreSQL syntax |
 | `octacity-webhook-provider-protocol` | Versioned provider-neutral webhook adapter messages | Provider payload types and process supervision |
 | `octacity-vcs-protocol` | Versioned provider-neutral VCS adapter messages | Git implementation and build workspaces |
 | `octacity-agent-provisioning-protocol` | Versioned future provision/observe/terminate contract | vSphere, Proxmox, or other production adapters |
-| `octacity-server-webhook` | Verified webhook-adapter registry and bounded process host | Provider-specific payload models |
-| `octacity-server-vcs` | Verified VCS-adapter registry and bounded process host | Repository code execution |
 | `octacity-server-store-postgres` | PostgreSQL schema, declarative constraints, rows, locking, transactions, and store-port implementation | Application commands, stored business routines, and domain policy |
 | `octacity-artifact-store` | Backend-neutral immutable-byte interface | Logical Artifact lifecycle and storage-provider details |
 | `octacity-artifact-s3` | S3-compatible implementation of the Artifact Store port | Logical Artifact policy and public S3 details |
 | `octacity-protocol` | Shared signed JobSpec, server-Agent, and Artifact-transfer wire contracts | Server domain entities and HTTP routes |
-| `octacity-observability` | Shared metric, trace, redaction, and cardinality vocabulary | Audit truth and exporter-specific state |
+
+Planned ownership names are not compiled as empty packages. Tasks 6.3, 6.4, 6.6, 8.1, and 8.2 introduce `octacity-server-webhook`, `octacity-server-api-webhook`, `octacity-server-vcs`, `octacity-server-audit`, and `octacity-observability` only when their implementations and consumers exist.
 
 The Artifact Store port lives in the core layer. Its S3-compatible adapter is
 an infrastructure crate selected only by a composition root; neither the core
@@ -103,10 +100,13 @@ Process readiness is composed only in `octacity-server`. The REST adapter sees
 a constant-time boolean callback and therefore has no dependency on SQLx, S3,
 signing keys, secret providers, or worker implementations. A supervised
 monitor refreshes that snapshot under an aggregate deadline. Migrations,
-PostgreSQL, object storage, and signing capability are unconditional checks;
-future configured mandatory secret providers and workers must be added by the
-composition root through the additional-required-check seam when their
-implementations arrive. The first successful object-storage check verifies the
+PostgreSQL, object storage, signing capability, and the lease-expiry worker are
+unconditional checks. Future configured mandatory secret providers and workers
+must be added by the composition root through the same additional-required-check
+seam. The expiry worker claims bounded batches in PostgreSQL with an owner and
+deadline, fences the expired Lease, and only then requeues or terminally fails
+the Job. Process timers merely wake the worker; the durable Lease and claim rows
+remain authoritative across restart and replica races. The first successful object-storage check verifies the
 actual bounded PUT, GET, COPY, and DELETE capability set with process-unique
 probe objects. Healthy recurring checks use `HeadObject` on the process-owned
 marker, so readiness adds no bucket-list permission. The configured capability
@@ -120,6 +120,14 @@ and takes the migration lock only while the schema is behind. The monitor logs
 only initial state and transitions, with a stable non-secret dependency name
 and unavailable/timeout reason. Liveness remains process-local and independent
 of this snapshot.
+
+The same composition root constructs the production management application
+from typed Project, Pipeline, Repository, Build Configuration, Pool, Agent,
+enrollment, Trigger, Build-run and Job-event handlers. It separately constructs
+the authenticated Agent application for registration, placement, heartbeat,
+event append and terminal completion. Both share the PostgreSQL adapters, but
+only operations that can create a Ready Job receive the active JobSpec signer.
+Health-only routers remain test components and are not the production wiring.
 
 Several entries above currently contain only ownership documentation because
 task 1.2 established the dependency boundaries before their implementation
@@ -170,11 +178,22 @@ An enrollment credential is bound to an exact Agent Pool version, an optional
 exact platform policy, and an exclusive expiry. Its first successful
 registration consumes it atomically. A process restart proves possession of
 the current registration credential and creates the next positive epoch in the
-same transaction that revokes the old registration. Exact retries are keyed by
-the newly proposed registration identity and recover the original outcome;
-using the consumed enrollment credential or a superseded registration under a
-new identity is rejected. HTTP authentication and mapping to the shared Agent
-DTOs are added at the Agent API seam in task 5.3.
+same transaction that revokes the old registration. Exact retries derive the
+proposed registration identity from the presented credential and
+shared-protocol `request_id`, so a lost response recovers the original outcome
+even when the server observes a later time. Using a consumed enrollment
+credential or a superseded registration under a new identity is rejected. The
+Agent API validates the complete shared `AgentInventory`, maps the request
+through the application service, and never exposes store rows.
+
+Credential files contain an opaque dot-separated token. Enrollment tokens use
+`enrollment.<credential-uuid>.<base64url-secret>`. After registration the Agent
+keeps the same 256-bit secret in memory and promotes the token to
+`registration.<registration-uuid>.<base64url-secret>`; the raw secret is never
+logged or persisted by the server. Every poll, heartbeat, event append, upload,
+cache, and completion use case authenticates this current registration before
+performing work. A new registration revokes the old epoch, and fenced lease
+mutations also verify that their registration has not been revoked.
 
 ## Store transaction and projection invariants
 

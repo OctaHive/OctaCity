@@ -162,8 +162,12 @@ impl AcquireLeaseRequest {
   pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
     request(self.protocol_version, &self.request_id)?;
     identifier("registration_id", &self.registration_id)?;
-    if self.wait_seconds == 0 {
-      return invalid("wait_seconds must be greater than zero");
+    if self.wait_seconds == 0 || self.wait_seconds > super::MAX_LEASE_WAIT_SECONDS {
+      return invalid("wait_seconds is outside the protocol bounds");
+    }
+    self.snapshot.validate_shape()?;
+    if self.snapshot.active_job.is_some() {
+      return invalid("lease acquisition snapshot must describe an idle agent");
     }
     Ok(())
   }
@@ -247,6 +251,10 @@ impl HostSnapshot {
     {
       return invalid("host snapshot exceeds registered capacity");
     }
+    self.validate_shape()
+  }
+
+  fn validate_shape(&self) -> Result<(), CoordinatorProtocolError> {
     if let Some(job) = &self.active_job {
       job.validate()?;
     }
@@ -635,7 +643,7 @@ fn response(
   Ok(())
 }
 
-fn identifier(name: &str, value: &str) -> Result<(), CoordinatorProtocolError> {
+pub(super) fn identifier(name: &str, value: &str) -> Result<(), CoordinatorProtocolError> {
   if value.is_empty() || value.len() > MAX_COORDINATOR_IDENTIFIER_BYTES || value.chars().any(char::is_control) {
     return invalid(format!(
       "{name} must contain 1 to {MAX_COORDINATOR_IDENTIFIER_BYTES} bytes without control characters"
@@ -692,6 +700,6 @@ fn sha256(name: &str, value: &str) -> Result<(), CoordinatorProtocolError> {
   Ok(())
 }
 
-fn invalid<T>(message: impl Into<String>) -> Result<T, CoordinatorProtocolError> {
+pub(super) fn invalid<T>(message: impl Into<String>) -> Result<T, CoordinatorProtocolError> {
   Err(CoordinatorProtocolError::new(message))
 }

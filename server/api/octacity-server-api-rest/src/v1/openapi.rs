@@ -1,6 +1,9 @@
 use serde_json::{Map, Value, json};
 
-use octacity_server_application::{MAX_JOB_EVENT_PAGE_SIZE, MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE};
+use octacity_server_application::{
+  MAX_AGENT_LIST_PAGE_SIZE, MAX_AGENT_POOL_ADMISSION_PLATFORMS, MAX_AGENT_POOL_LIST_PAGE_SIZE,
+  MAX_AGENT_POOL_STATIC_CAPACITY, MAX_JOB_EVENT_PAGE_SIZE, MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE,
+};
 
 use super::{API_PREFIX, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES};
 
@@ -49,7 +52,7 @@ macro_rules! operation {
   };
 }
 
-/// Complete inventory of management operations registered by section 4.
+/// Complete inventory of management operations registered through task 5.9.
 pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
   operation!(
     "GET",
@@ -134,6 +137,18 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     true,
     true
+  ),
+  operation!(
+    "POST",
+    "/api/v1/projects/{project_id}/policy-versions",
+    "publishProjectPolicyVersion",
+    "Projects",
+    "Publish a Project policy version",
+    Some("PublishProjectPolicyRequest"),
+    "ProjectPolicyMutationResponse",
+    "201",
+    true,
+    false
   ),
   operation!(
     "POST",
@@ -245,6 +260,18 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
   ),
   operation!(
     "POST",
+    "/api/v1/trigger-definitions/manual",
+    "createManualTriggerDefinition",
+    "Triggers",
+    "Create a manual Trigger definition",
+    Some("CreateManualTriggerDefinitionRequest"),
+    "TriggerDefinitionMutationResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
     "/api/v1/triggers/manual",
     "acceptManualTrigger",
     "Triggers",
@@ -253,6 +280,66 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "TriggerEvaluationResponse",
     "200",
     true,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/builds/{build_id}",
+    "getBuild",
+    "Builds",
+    "Get a Build and its current Attempt",
+    None,
+    "BuildResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/builds/{build_id}/cancel",
+    "cancelBuild",
+    "Builds",
+    "Cancel an active Build",
+    None,
+    "CancelBuildResponse",
+    "200",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/builds/{build_id}/retry",
+    "retryBuild",
+    "Builds",
+    "Retry a failed Build",
+    None,
+    "RetryBuildResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/attempts/{attempt_id}",
+    "getAttempt",
+    "Builds",
+    "Get an Attempt diagnostic DAG",
+    None,
+    "AttemptResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/jobs/{job_id}",
+    "getJob",
+    "Jobs",
+    "Get Job execution diagnostics",
+    None,
+    "JobResource",
+    "200",
+    false,
     false
   ),
   operation!(
@@ -266,6 +353,126 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/agent-pools",
+    "createAgentPool",
+    "Agent Pools",
+    "Create a static Agent Pool",
+    Some("CreateAgentPoolRequest"),
+    "AgentPoolMutationResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/agent-pools",
+    "listAgentPools",
+    "Agent Pools",
+    "List current Agent Pool versions",
+    None,
+    "AgentPoolPage",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/agent-pools/{pool_id}/versions",
+    "publishAgentPoolVersion",
+    "Agent Pools",
+    "Publish an Agent Pool version",
+    Some("PublishAgentPoolVersionRequest"),
+    "AgentPoolMutationResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    "GET",
+    "/api/v1/agent-pools/{pool_id}/versions/{version}",
+    "getAgentPoolVersion",
+    "Agent Pools",
+    "Get an Agent Pool version",
+    None,
+    "AgentPoolResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "DELETE",
+    "/api/v1/agent-pools/{pool_id}",
+    "deleteAgentPool",
+    "Agent Pools",
+    "Delete an unreferenced Agent Pool",
+    None,
+    "DeleteAgentPoolResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    "POST",
+    "/api/v1/agent-enrollments",
+    "issueAgentEnrollment",
+    "Agents",
+    "Issue a single-use Agent enrollment credential",
+    Some("IssueAgentEnrollmentRequest"),
+    "IssueAgentEnrollmentResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/agents",
+    "listAgents",
+    "Agents",
+    "List enrolled Agents",
+    None,
+    "AgentPage",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/agents/{agent_id}",
+    "getAgent",
+    "Agents",
+    "Get an enrolled Agent",
+    None,
+    "AgentResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/agents/{agent_id}/pool",
+    "reassignAgentPool",
+    "Agents",
+    "Move an idle Agent to another Pool",
+    Some("ReassignAgentPoolRequest"),
+    "AgentMutationResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    "POST",
+    "/api/v1/agents/{agent_id}/drain",
+    "drainAgent",
+    "Agents",
+    "Drain an Agent and its current Lease",
+    Some("DrainAgentRequest"),
+    "AgentMutationResponse",
+    "200",
+    true,
+    true
   ),
 ];
 
@@ -361,7 +568,11 @@ fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "pipeline_id",
     "repository_id",
     "configuration_id",
+    "build_id",
+    "attempt_id",
     "job_id",
+    "pool_id",
+    "agent_id",
     "version",
   ] {
     if operation.path.contains(&format!("{{{name}}}")) {
@@ -390,6 +601,48 @@ fn parameters(operation: &ManagementOperation) -> Vec<Value> {
           "type": "integer",
           "minimum": 1,
           "maximum": MAX_PROJECT_LIST_PAGE_SIZE,
+          "default": super::adapter::DEFAULT_PAGE_LIMIT
+        }
+      }),
+    ]);
+  }
+  if operation.operation_id == "listAgentPools" {
+    parameters.extend([
+      json!({
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES}
+      }),
+      json!({
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": MAX_AGENT_POOL_LIST_PAGE_SIZE,
+          "default": super::adapter::DEFAULT_PAGE_LIMIT
+        }
+      }),
+    ]);
+  }
+  if operation.operation_id == "listAgents" {
+    parameters.extend([
+      json!({
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES}
+      }),
+      json!({
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": MAX_AGENT_LIST_PAGE_SIZE,
           "default": super::adapter::DEFAULT_PAGE_LIMIT
         }
       }),

@@ -5,25 +5,60 @@ use thiserror::Error;
 
 mod dependencies;
 
-pub(crate) use dependencies::{ObjectStorageConfig, PostgresConfig, SigningConfig};
+pub(crate) use dependencies::{
+  AgentCredentialConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, SigningConfig,
+};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_SHUTDOWN_GRACE_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_READINESS_CHECK_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_AGENT_REGISTRATION_LIFETIME_MILLISECONDS: u64 = 30 * 24 * 60 * 60 * 1000;
+const MAX_AGENT_ENROLLMENT_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
+const MAX_AGENT_RETRY_DELAY_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_AGENT_LEASE_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
+const MAX_LEASE_EXPIRY_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS: u64 = 60 * 1000;
 
 /// Validated operator configuration for the server process.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+  #[serde(default = "default_management_bind")]
   management_bind: SocketAddr,
+  #[serde(default)]
   agent_bind: Option<SocketAddr>,
+  #[serde(default)]
   webhook_bind: Option<SocketAddr>,
+  #[serde(default)]
   acknowledge_unauthenticated_management: bool,
+  #[serde(default = "default_shutdown_grace_milliseconds")]
   shutdown_grace_milliseconds: u64,
+  #[serde(default = "default_readiness_check_interval_milliseconds")]
   readiness_check_interval_milliseconds: u64,
+  #[serde(default = "default_readiness_check_timeout_milliseconds")]
   readiness_check_timeout_milliseconds: u64,
+  #[serde(default = "default_agent_registration_lifetime_milliseconds")]
+  agent_registration_lifetime_milliseconds: u64,
+  #[serde(default = "default_agent_enrollment_lifetime_milliseconds")]
+  agent_enrollment_lifetime_milliseconds: u64,
+  #[serde(default = "default_agent_max_retry_delay_milliseconds")]
+  agent_max_retry_delay_milliseconds: u64,
+  #[serde(default = "default_agent_lease_lifetime_milliseconds")]
+  agent_lease_lifetime_milliseconds: u64,
+  #[serde(default = "default_lease_expiry_poll_interval_milliseconds")]
+  lease_expiry_poll_interval_milliseconds: u64,
+  #[serde(default = "default_lease_expiry_claim_lifetime_milliseconds")]
+  lease_expiry_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_lease_expiry_batch_size")]
+  lease_expiry_batch_size: u16,
+  #[serde(default = "default_ready_job_listener_reconnect_milliseconds")]
+  ready_job_listener_reconnect_milliseconds: u64,
+  supported_pipeline_capabilities: Vec<String>,
   postgres: PostgresConfig,
   object_storage: ObjectStorageConfig,
   signing: SigningConfig,
+  agent_credentials: AgentCredentialConfig,
+  job_spec: JobSpecConfig,
 }
 
 impl ServerConfig {
@@ -36,22 +71,10 @@ impl ServerConfig {
   }
 
   fn parse_bounded(contents: &str, path: Option<PathBuf>) -> Result<Self, ServerConfigError> {
-    let config: UnvalidatedServerConfig = toml::from_str(contents).map_err(|source| ServerConfigError::Parse {
+    let config: Self = toml::from_str(contents).map_err(|source| ServerConfigError::Parse {
       path,
       source: Box::new(source),
     })?;
-    let config = Self {
-      management_bind: config.management_bind,
-      agent_bind: config.agent_bind,
-      webhook_bind: config.webhook_bind,
-      acknowledge_unauthenticated_management: config.acknowledge_unauthenticated_management,
-      shutdown_grace_milliseconds: config.shutdown_grace_milliseconds,
-      readiness_check_interval_milliseconds: config.readiness_check_interval_milliseconds,
-      readiness_check_timeout_milliseconds: config.readiness_check_timeout_milliseconds,
-      postgres: config.postgres,
-      object_storage: config.object_storage,
-      signing: config.signing,
-    };
     config.validate()?;
     Ok(config)
   }
@@ -88,11 +111,6 @@ impl ServerConfig {
     self.agent_bind
   }
 
-  /// Optional address for authenticated webhook delivery ingress.
-  pub const fn webhook_bind(&self) -> Option<SocketAddr> {
-    self.webhook_bind
-  }
-
   /// Whether external unauthenticated management access was explicitly acknowledged.
   pub const fn unauthenticated_management_acknowledged(&self) -> bool {
     self.acknowledge_unauthenticated_management
@@ -118,6 +136,50 @@ impl ServerConfig {
     Duration::from_millis(self.readiness_check_timeout_milliseconds)
   }
 
+  /// Lifetime of one process registration before the Agent must register again.
+  pub const fn agent_registration_lifetime(&self) -> Duration {
+    Duration::from_millis(self.agent_registration_lifetime_milliseconds)
+  }
+
+  /// Lifetime of one single-use Agent enrollment credential.
+  pub const fn agent_enrollment_lifetime(&self) -> Duration {
+    Duration::from_millis(self.agent_enrollment_lifetime_milliseconds)
+  }
+
+  /// Retry-delay ceiling advertised to registered Agents.
+  pub const fn agent_max_retry_delay_milliseconds(&self) -> u64 {
+    self.agent_max_retry_delay_milliseconds
+  }
+
+  /// Initial lifetime of a newly committed Job Lease.
+  pub const fn agent_lease_lifetime(&self) -> Duration {
+    Duration::from_millis(self.agent_lease_lifetime_milliseconds)
+  }
+
+  /// Interval between authoritative scans for expired Leases.
+  pub const fn lease_expiry_poll_interval(&self) -> Duration {
+    Duration::from_millis(self.lease_expiry_poll_interval_milliseconds)
+  }
+
+  /// Exclusive ownership window for one expired-Lease worker claim.
+  pub const fn lease_expiry_claim_lifetime(&self) -> Duration {
+    Duration::from_millis(self.lease_expiry_claim_lifetime_milliseconds)
+  }
+
+  /// Maximum expired Leases recovered in one worker pass.
+  pub const fn lease_expiry_batch_size(&self) -> u16 {
+    self.lease_expiry_batch_size
+  }
+
+  /// Delay before reconnecting a failed PostgreSQL ready-Job notification listener.
+  pub const fn ready_job_listener_reconnect_delay(&self) -> Duration {
+    Duration::from_millis(self.ready_job_listener_reconnect_milliseconds)
+  }
+
+  pub(crate) fn supported_pipeline_capabilities(&self) -> &[String] {
+    &self.supported_pipeline_capabilities
+  }
+
   pub(crate) const fn postgres(&self) -> &PostgresConfig {
     &self.postgres
   }
@@ -130,16 +192,28 @@ impl ServerConfig {
     &self.signing
   }
 
+  pub(crate) const fn agent_credentials(&self) -> &AgentCredentialConfig {
+    &self.agent_credentials
+  }
+
+  pub(crate) const fn job_spec(&self) -> &JobSpecConfig {
+    &self.job_spec
+  }
+
   fn validate(&self) -> Result<(), ServerConfigError> {
     if self.management_externally_reachable() && !self.acknowledge_unauthenticated_management {
       return Err(ServerConfigError::Invalid(
         "acknowledge_unauthenticated_management must be true when management_bind is not loopback".to_owned(),
       ));
     }
+    if self.webhook_bind.is_some() {
+      return Err(ServerConfigError::Invalid(
+        "webhook_bind is unavailable until authenticated webhook ingress is implemented".to_owned(),
+      ));
+    }
     let listeners = [
       ("management_bind", Some(self.management_bind)),
       ("agent_bind", self.agent_bind),
-      ("webhook_bind", self.webhook_bind),
     ];
     for (index, (left_name, left)) in listeners.iter().enumerate() {
       for (right_name, right) in &listeners[index + 1..] {
@@ -172,33 +246,65 @@ impl ServerConfig {
         "readiness_check_timeout_milliseconds must be between 1 and {MAX_READINESS_CHECK_MILLISECONDS}"
       )));
     }
+    if self.agent_registration_lifetime_milliseconds == 0
+      || self.agent_registration_lifetime_milliseconds > MAX_AGENT_REGISTRATION_LIFETIME_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "agent_registration_lifetime_milliseconds must be between 1 and {MAX_AGENT_REGISTRATION_LIFETIME_MILLISECONDS}"
+      )));
+    }
+    if self.agent_enrollment_lifetime_milliseconds == 0
+      || self.agent_enrollment_lifetime_milliseconds > MAX_AGENT_ENROLLMENT_LIFETIME_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "agent_enrollment_lifetime_milliseconds must be between 1 and {MAX_AGENT_ENROLLMENT_LIFETIME_MILLISECONDS}"
+      )));
+    }
+    if self.agent_max_retry_delay_milliseconds == 0
+      || self.agent_max_retry_delay_milliseconds > MAX_AGENT_RETRY_DELAY_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "agent_max_retry_delay_milliseconds must be between 1 and {MAX_AGENT_RETRY_DELAY_MILLISECONDS}"
+      )));
+    }
+    if self.agent_lease_lifetime_milliseconds == 0
+      || self.agent_lease_lifetime_milliseconds > MAX_AGENT_LEASE_LIFETIME_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "agent_lease_lifetime_milliseconds must be between 1 and {MAX_AGENT_LEASE_LIFETIME_MILLISECONDS}"
+      )));
+    }
+    if self.lease_expiry_poll_interval_milliseconds == 0
+      || self.lease_expiry_poll_interval_milliseconds > MAX_LEASE_EXPIRY_WORKER_MILLISECONDS
+      || self.lease_expiry_claim_lifetime_milliseconds == 0
+      || self.lease_expiry_claim_lifetime_milliseconds > MAX_LEASE_EXPIRY_WORKER_MILLISECONDS
+      || self.lease_expiry_batch_size == 0
+      || self.lease_expiry_batch_size > octacity_server_store::MAX_LEASE_EXPIRY_BATCH_SIZE
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "lease expiry worker intervals and batch must be positive and bounded by {MAX_LEASE_EXPIRY_WORKER_MILLISECONDS} ms / {} items",
+        octacity_server_store::MAX_LEASE_EXPIRY_BATCH_SIZE
+      )));
+    }
+    if self.ready_job_listener_reconnect_milliseconds == 0
+      || self.ready_job_listener_reconnect_milliseconds > MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "ready_job_listener_reconnect_milliseconds must be between 1 and {MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS}"
+      )));
+    }
     self.postgres.validate().map_err(ServerConfigError::Invalid)?;
     self.object_storage.validate().map_err(ServerConfigError::Invalid)?;
     self.signing.validate().map_err(ServerConfigError::Invalid)?;
+    self.agent_credentials.validate().map_err(ServerConfigError::Invalid)?;
+    self.job_spec.validate().map_err(ServerConfigError::Invalid)?;
+    octacity_server_application::ManagementInputFactory::validate_policy(
+      &self.supported_pipeline_capabilities,
+      self.agent_enrollment_lifetime(),
+    )
+    .map_err(|_| ServerConfigError::Invalid("supported_pipeline_capabilities is invalid".to_owned()))?;
     Ok(())
   }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UnvalidatedServerConfig {
-  #[serde(default = "default_management_bind")]
-  management_bind: SocketAddr,
-  #[serde(default)]
-  agent_bind: Option<SocketAddr>,
-  #[serde(default)]
-  webhook_bind: Option<SocketAddr>,
-  #[serde(default)]
-  acknowledge_unauthenticated_management: bool,
-  #[serde(default = "default_shutdown_grace_milliseconds")]
-  shutdown_grace_milliseconds: u64,
-  #[serde(default = "default_readiness_check_interval_milliseconds")]
-  readiness_check_interval_milliseconds: u64,
-  #[serde(default = "default_readiness_check_timeout_milliseconds")]
-  readiness_check_timeout_milliseconds: u64,
-  postgres: PostgresConfig,
-  object_storage: ObjectStorageConfig,
-  signing: SigningConfig,
 }
 
 fn default_management_bind() -> SocketAddr {
@@ -223,6 +329,38 @@ const fn default_readiness_check_interval_milliseconds() -> u64 {
 
 const fn default_readiness_check_timeout_milliseconds() -> u64 {
   2_000
+}
+
+const fn default_agent_registration_lifetime_milliseconds() -> u64 {
+  24 * 60 * 60 * 1000
+}
+
+const fn default_agent_enrollment_lifetime_milliseconds() -> u64 {
+  15 * 60 * 1000
+}
+
+const fn default_agent_max_retry_delay_milliseconds() -> u64 {
+  30_000
+}
+
+const fn default_agent_lease_lifetime_milliseconds() -> u64 {
+  5 * 60 * 1000
+}
+
+const fn default_lease_expiry_poll_interval_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_lease_expiry_claim_lifetime_milliseconds() -> u64 {
+  30_000
+}
+
+const fn default_lease_expiry_batch_size() -> u16 {
+  32
+}
+
+const fn default_ready_job_listener_reconnect_milliseconds() -> u64 {
+  1_000
 }
 
 /// Failure to read, decode, or validate server configuration.

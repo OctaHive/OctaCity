@@ -9,7 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use octacity_protocol::{NetworkPolicy, OctaSpec, OutputLimits, PlatformSpec, RuntimeSpec, RuntimeTarget};
+use octacity_protocol::{NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpec, RuntimeTarget};
 use octacity_server_domain::{
   AgentId, AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind,
   ImmutableRevision, JobId, LeaseId, PipelineId, PipelineNodeId, PipelineVersion, PoolId, PoolVersion, ProjectId,
@@ -28,26 +28,27 @@ use serde_json::json;
 
 use crate::test_support::{id, time};
 use crate::{
-  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, BuildRunControlStore, CancelBuild,
+  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, BuildControlStore, CancelBuild,
   CancellationDisposition, CompletionDisposition, EventDigest, EventSequence, IdempotencyKey, ImmutableBuildInput,
-  JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore, LeaseAccess, LeaseGrant, LogIndexPosition,
-  LogIndexWorkStore, MaterializedJob, MaterializedJobPayload, MutationDisposition, NormalizedTriggerOccurrence,
-  RegistrationEpoch, RetryBuild, RetryDisposition, StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome,
-  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
-  TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget, complete_job_state,
-  retry_graph_is_equivalent, start_job_execution,
+  JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore, LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome,
+  LeaseHeartbeatStore, LogIndexPosition, LogIndexWorkStore, MaterializedJob, MaterializedJobPayload,
+  MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, RenewLease, RetryBuild, RetryDisposition,
+  StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore,
+  TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerIntentDigest,
+  TriggerKind, TriggerMetadata, TriggerTarget, complete_job_state, retry_graph_is_equivalent, start_job_execution,
 };
 
+mod build_control;
 mod fixtures;
 mod lease_events;
-mod run_control;
 mod state;
 mod trigger;
 
 pub(crate) use fixtures::trigger_request;
-pub use fixtures::{job_spec_template, retry_request};
+pub use fixtures::{compatible_inventory, compatible_snapshot, job_spec_template, retry_request};
 pub(crate) use state::*;
 
+pub use crate::agent_testing::InMemoryAgentStore;
 pub use crate::authoritative_contract_testing::{verify_authoritative_store_contract, verify_in_memory_store_contract};
 pub use crate::configuration_contract_testing::{
   verify_configuration_store_contract, verify_in_memory_configuration_store_contract,
@@ -63,6 +64,8 @@ pub use crate::log_search_contract_testing::{
 pub use crate::log_search_testing::InMemoryLogSearchIndex;
 pub use crate::pipeline_contract_testing::{verify_in_memory_pipeline_store_contract, verify_pipeline_store_contract};
 pub use crate::pipeline_testing::InMemoryPipelineStore;
+pub use crate::pool_contract_testing::{verify_agent_pool_store_contract, verify_in_memory_agent_pool_store_contract};
+pub use crate::pool_testing::{InMemoryAgentPoolStore, PoolReferenceKind};
 pub use crate::project_contract_testing::{verify_in_memory_project_store_contract, verify_project_store_contract};
 pub use crate::project_testing::InMemoryProjectStore;
 
@@ -162,6 +165,7 @@ impl InMemoryStore {
           pool_version: PoolVersion::INITIAL,
           expires_at,
           revoked,
+          inventory: Some(fixtures::compatible_inventory(agent_id)),
         },
       );
     }
@@ -299,13 +303,20 @@ impl JobExecutionStore for InMemoryStore {
 }
 
 #[async_trait]
-impl BuildRunControlStore for InMemoryStore {
+impl LeaseHeartbeatStore for InMemoryStore {
+  async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
+    lease_events::renew(self, request).await
+  }
+}
+
+#[async_trait]
+impl BuildControlStore for InMemoryStore {
   async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
-    run_control::cancel(self, request).await
+    build_control::cancel(self, request).await
   }
 
   async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
-    run_control::retry(self, request).await
+    build_control::retry(self, request).await
   }
 }
 

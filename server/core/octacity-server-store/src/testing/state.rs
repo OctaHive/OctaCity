@@ -20,6 +20,8 @@ pub(crate) struct MemoryState {
   pub(super) ready_jobs: BTreeSet<JobId>,
   pub(super) next_enqueue_order: u64,
   pub(super) leases: BTreeMap<LeaseId, LeaseGrant>,
+  pub(super) lease_states: BTreeMap<LeaseId, octacity_server_scheduler::LeaseState>,
+  pub(super) lease_heartbeats: BTreeMap<IdempotencyKey, HeartbeatRecord>,
   pub(crate) pools: BTreeMap<(PoolId, PoolVersion), PoolEligibility>,
   pub(crate) registrations: BTreeMap<(AgentId, RegistrationEpoch), RegistrationEligibility>,
   pub(super) claims: BTreeMap<LeaseId, ClaimRecord>,
@@ -70,29 +72,34 @@ impl DerefMut for MemoryTransaction<'_> {
 pub(crate) struct PoolEligibility {
   pub(super) enabled: bool,
   pub(super) accepting: bool,
+  pub(super) concurrency_limit: usize,
 }
 
 impl PoolEligibility {
   pub(crate) const ACCEPTING: Self = Self {
     enabled: true,
     accepting: true,
+    concurrency_limit: 1,
   };
   pub(super) const DISABLED: Self = Self {
     enabled: false,
     accepting: true,
+    concurrency_limit: 1,
   };
   pub(super) const DRAINING: Self = Self {
     enabled: true,
     accepting: false,
+    concurrency_limit: 1,
   };
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct RegistrationEligibility {
   pub(crate) pool_id: PoolId,
   pub(crate) pool_version: PoolVersion,
   pub(crate) expires_at: Timestamp,
   pub(crate) revoked: bool,
+  pub(crate) inventory: Option<octacity_protocol::AgentInventory>,
 }
 
 #[derive(Clone)]
@@ -112,6 +119,12 @@ pub(super) struct MemoryAttempt {
   pub(super) build_id: BuildId,
   pub(super) number: AttemptNumber,
   pub(super) state: AttemptState,
+}
+
+#[derive(Clone)]
+pub(super) struct HeartbeatRecord {
+  pub(super) request: RenewLease,
+  pub(super) outcome: LeaseHeartbeatOutcome,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,7 +157,7 @@ pub(super) struct RetryRecord {
   pub(super) outcome: RetryDisposition,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ClaimRecord {
   pub(super) request: JobClaim,
   pub(super) outcome: JobClaimOutcome,

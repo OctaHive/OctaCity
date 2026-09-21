@@ -1,5 +1,8 @@
 use super::*;
-use octacity_protocol::{PlatformArchitecture, PlatformOs};
+use octacity_protocol::{
+  AgentInventory, BackendHealth, BackendHealthStatus, HostCapacity, HostSnapshot, OctaInventory, PlatformArchitecture,
+  PlatformOs, PlatformSpec, RuntimeCapability, RuntimeMode, SourcePluginInventory,
+};
 use octacity_server_domain::RuntimeClass;
 use octacity_server_job::JobRequirements;
 
@@ -21,7 +24,11 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
     repository_version: RepositoryVersion::INITIAL,
     immutable_revision: ImmutableRevision::new("0123456789abcdef").unwrap(),
     input_snapshot: json!({"parameter": "value"}),
-    effective_policy_snapshot: json!({"allowed_pool": pool.to_string()}),
+    effective_policy_snapshot: json!({
+      "allowed_pool": pool.to_string(),
+      "project": {"policy": {"concurrency": {"active_jobs": 4}}}
+    }),
+    project_job_concurrency_limit: 4,
     priority: 10,
   };
   let trigger = NormalizedTriggerOccurrence::root(
@@ -50,6 +57,73 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
     time(500),
   )
   .unwrap()
+}
+
+/// Builds an inventory compatible with the authoritative Job fixture.
+pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
+  const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  AgentInventory {
+    agent_id: agent_id.to_string(),
+    agent_version: "0.1.0".to_owned(),
+    coordinator_protocols: vec![octacity_protocol::COORDINATOR_PROTOCOL_VERSION],
+    labels: BTreeMap::new(),
+    host_platform: PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    },
+    host_capacity: HostCapacity {
+      logical_cpu_count: 2,
+      total_memory_bytes: 4_096,
+      work_disk_total_bytes: 8_192,
+      state_disk_total_bytes: 8_192,
+      virtualization_available: false,
+    },
+    runtimes: vec![RuntimeCapability {
+      backend: "native".to_owned(),
+      mode: RuntimeMode::Native,
+      platform: PlatformSpec {
+        os: PlatformOs::Linux,
+        architecture: PlatformArchitecture::Amd64,
+      },
+      isolation: None,
+    }],
+    octa: OctaInventory {
+      version: "0.4.0".to_owned(),
+      runner_sha256: DIGEST.to_owned(),
+      build_commit: None,
+      runner_protocols: vec![3],
+      event_schemas: vec![3],
+      plugin_protocols: vec![1],
+      octafile_versions: vec![1],
+      features: Vec::new(),
+      plugins: Vec::new(),
+    },
+    source_plugins: vec![SourcePluginInventory {
+      name: "git".to_owned(),
+      version: "1.0.0".to_owned(),
+      protocol_min: 1,
+      protocol_max: 1,
+      platforms: vec!["linux-x86_64".to_owned()],
+      sha256: DIGEST.to_owned(),
+    }],
+    cache: None,
+  }
+}
+
+/// Builds a current idle snapshot compatible with the authoritative Job fixture.
+pub fn compatible_snapshot() -> HostSnapshot {
+  HostSnapshot {
+    available_cpu_millis: 2_000,
+    available_memory_bytes: 4_096,
+    work_disk_free_bytes: 8_192,
+    state_disk_free_bytes: 8_192,
+    active_job: None,
+    backends: vec![BackendHealth {
+      backend: "native".to_owned(),
+      status: BackendHealthStatus::Ready,
+      message: None,
+    }],
+  }
 }
 
 fn materialized_job(

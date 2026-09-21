@@ -6,22 +6,34 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod agent_model;
+mod agent_port;
+mod build_control;
+mod build_query;
+mod build_query_port;
 mod configuration_model;
 mod configuration_port;
 mod credential_port;
 mod credentials;
+mod definition_model;
+mod definition_port;
 mod error;
 mod idempotency;
 mod job_model;
+mod lease_recovery;
+mod lease_recovery_port;
 mod log_search;
 mod log_search_port;
 mod model;
 mod pipeline_model;
 mod pipeline_port;
+mod pool_model;
+mod pool_port;
 mod port;
 mod project_model;
+mod project_policy;
+mod project_policy_port;
 mod project_port;
-mod run_control;
 mod trigger_port;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -58,11 +70,30 @@ mod pipeline_contract_testing;
 mod pipeline_testing;
 
 #[cfg(any(test, feature = "test-support"))]
+mod pool_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod pool_contract_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod agent_testing;
+
+#[cfg(any(test, feature = "test-support"))]
 mod test_support;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub use agent_model::{
+  AgentDrainMode, AgentPage, AgentStatus, DrainAgent, DrainAgentOutcome, EnrolledAgent, ListAgents,
+  MAX_AGENT_PAGE_SIZE, ReassignAgentPool, ReassignAgentPoolOutcome,
+};
+pub use agent_port::AgentStore;
+pub use build_control::{
+  CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
+};
+pub use build_query::{AttemptRecord, BuildRecord, JobAssignmentRecord, JobQueueRecord, JobRecord, JobTerminalRecord};
+pub use build_query_port::BuildQueryStore;
 pub use configuration_model::{
   BuildConfigurationDefinition, BuildConfigurationMutationOutcome, ConfigurationAgentRequirements,
   ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
@@ -78,16 +109,26 @@ pub use credential_port::AgentCredentialStore;
 pub use credentials::{
   AgentCredentialTarget, AgentPlatform, AgentRegistrationOutcome, AgentRegistrationProof,
   AuthenticateAgentRegistration, AuthenticatedAgentRegistration, CredentialDigest, CredentialSecret,
-  ExpectedAgentPlatform, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, MAX_AGENT_INVENTORY_BYTES,
-  MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RevokeAgentCredential,
+  ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, IssueAgentEnrollmentOutcome,
+  MAX_AGENT_INVENTORY_BYTES, MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RegistrationValidity,
+  RevokeAgentCredential,
 };
+pub use definition_model::{
+  CreateTriggerDefinition, ProjectPolicyMutationOutcome, PublishProjectPolicy, TriggerDefinitionMutationOutcome,
+};
+pub use definition_port::DefinitionStore;
 pub use error::{StoreError, StoreInputError, StoreOperation};
 pub use idempotency::{IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES};
 pub use job_model::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, JobEventPage, LeaseAccess, LeaseGrant, ReadJobEvents, complete_job_state,
-  start_job_execution,
+  JobCompletion, JobCompletionKind, JobEventPage, LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome, LeaseWindow,
+  ReadJobEvents, RenewLease, complete_job_state, start_job_execution,
 };
+pub use lease_recovery::{
+  ClaimExpiredLeases, ExpiredLeaseClaim, LeaseRecoveryAction, MAX_LEASE_EXPIRY_BATCH_SIZE, MAX_WORKER_OWNER_BYTES,
+  RecoverExpiredLease, RecoverExpiredLeaseOutcome, WorkerOwner,
+};
+pub use lease_recovery_port::LeaseRecoveryStore;
 pub use log_search::{
   BuildLogStream, DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCursor, LogSearchDocument,
   LogSearchError, LogSearchFreshness, LogSearchHit, LogSearchInputError, LogSearchMode, LogSearchMutationDisposition,
@@ -107,21 +148,29 @@ pub use octacity_server_domain::{ArtifactPolicy, ImmutableRevision, NetworkHost,
 pub use octacity_server_domain::{EnrollmentCredentialId, LogChunkId, LogIndexingWorkId, RegistrationCredentialId};
 pub use octacity_server_trigger::{
   NormalizedTriggerOccurrence, TriggerCausality, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
-  TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent, TriggerTarget,
+  TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent, TriggerOccurrenceState,
+  TriggerTarget,
 };
 pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
 pub use pipeline_port::PipelineStore;
+pub use pool_model::{
+  AgentPoolDefinition, AgentPoolMutationOutcome, AgentPoolPage, CreateAgentPool, DeleteAgentPool,
+  DeleteAgentPoolOutcome, ListAgentPools, MAX_AGENT_POOL_PAGE_SIZE, MAX_POOL_ADMISSION_PLATFORMS,
+  MAX_POOL_STATIC_CAPACITY, PoolAdmissionPolicy, PoolFairnessPolicy, PublishAgentPoolVersion, PublishedAgentPool,
+  validate_pool_drain_transition,
+};
+pub use pool_port::AgentPoolStore;
 pub use port::{
-  AuthoritativeStore, BuildRunControlStore, JobEventReadStore, JobExecutionStore, TriggerAcceptanceStore,
+  AuthoritativeStore, BuildControlStore, JobEventReadStore, JobExecutionStore, LeaseHeartbeatStore,
+  TriggerAcceptanceStore,
 };
 pub use project_model::{
   CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MAX_PROJECT_PAGE_SIZE, MoveProject, Project,
   ProjectDetails, ProjectHierarchyError, ProjectMutationOutcome, ProjectPage, RenameProject, validate_project_ancestry,
 };
+pub use project_policy::ProjectPolicyDocument;
+pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
-pub use run_control::{
-  CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
-};
 pub use trigger_port::TriggerDefinitionStore;
 
 #[cfg(test)]
@@ -156,6 +205,20 @@ mod tests {
       Err(StoreError::invalid(
         StoreOperation::AcceptTrigger,
         StoreInputError::TooManyJobs,
+      )),
+    );
+  }
+
+  #[test]
+  fn accepted_build_requires_a_positive_typed_job_concurrency_limit() {
+    let mut request = authoritative_store_contract_fixture().request;
+    request.build.project_job_concurrency_limit = 0;
+
+    assert_eq!(
+      request.validate(),
+      Err(StoreError::invalid(
+        StoreOperation::AcceptTrigger,
+        StoreInputError::InvalidBuildSchedulingPolicy,
       )),
     );
   }
@@ -205,6 +268,11 @@ mod tests {
   #[test]
   fn in_memory_adapter_satisfies_the_configuration_store_contract() {
     super::testing::verify_in_memory_configuration_store_contract();
+  }
+
+  #[test]
+  fn in_memory_adapter_satisfies_the_agent_pool_store_contract() {
+    super::testing::verify_in_memory_agent_pool_store_contract();
   }
 
   #[test]

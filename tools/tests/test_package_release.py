@@ -83,6 +83,9 @@ class PackageReleaseTests(unittest.TestCase):
                 plugin = archive.extractfile("source-plugins/git/plugin.toml").read().decode()
                 self.assertIn('platforms = ["linux-x86_64"]', plugin)
                 self.assertIn(PACKAGE_RELEASE.sha256(root / "source"), plugin)
+                self.assertIn('[settings]\ngit_path = "/usr/bin/git"', plugin)
+                self.assertIn("allow_file = false", plugin)
+                self.assertIn("max_diagnostic_bytes = 65536", plugin)
                 checksums = archive.extractfile("SHA256SUMS").read().decode().splitlines()
                 checked = set()
                 for line in checksums:
@@ -106,6 +109,7 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertNotIn("native_linux_cgroup_root", config)
                 plugin = archive.read("source-plugins/git/plugin.toml").decode()
                 self.assertIn('executable = "octacity-source-git.exe"', plugin)
+                self.assertIn('git_path = "C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe"', plugin)
 
     def test_linux_arm64_archive_contains_arm_runtime_identity_and_labels(self):
         with tempfile.TemporaryDirectory() as temporary:

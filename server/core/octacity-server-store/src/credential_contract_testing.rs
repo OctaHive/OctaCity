@@ -2,15 +2,15 @@
 
 use std::sync::Arc;
 
+use octacity_protocol::RegisterAgentRequest;
 use octacity_server_domain::{AgentId, AgentName, EntityKind, PoolId, PoolVersion};
-use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
 use crate::testing::{InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe};
 use crate::{
   AgentCredentialStore, AgentCredentialTarget, AgentPlatform, AgentRegistrationProof, AuthenticateAgentRegistration,
-  ExpectedAgentPlatform, IssueAgentEnrollment, MutationDisposition, RegisterAgent, RegistrationEpoch,
-  RevokeAgentCredential, StoreError, StoreOperation,
+  ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, MutationDisposition, RegisterAgent,
+  RegistrationEpoch, RegistrationValidity, RevokeAgentCredential, StoreError, StoreOperation,
 };
 
 /// Deterministic identities and requests used by the reusable credential contract.
@@ -99,10 +99,11 @@ where
   assert_eq!(registered.registration_epoch, RegistrationEpoch::new(1).unwrap());
   let mut first_replay = first;
   first_replay.registered_at = time(201);
+  first_replay.expires_at = time(901);
   assert_eq!(
     store.register_agent(first_replay).await.unwrap().disposition,
     MutationDisposition::Replayed,
-    "a registration replay must ignore a newly observed server registration time"
+    "a registration replay must ignore server-derived registration times"
   );
 
   let consumed_replay = registration(
@@ -326,15 +327,19 @@ fn registration(
   registered_at: i64,
 ) -> RegisterAgent {
   RegisterAgent::new(
-    id(credential_id),
-    crate::CredentialSecret::from_bytes([secret; 32]),
+    FreshRegistrationCredential {
+      id: id(credential_id),
+      secret: crate::CredentialSecret::from_bytes([secret; 32]),
+    },
     agent_id,
     AgentName::new("contract-agent").unwrap(),
     proof,
     platform(),
-    json!({"host_platform": "linux-amd64"}),
-    time(registered_at),
-    time(900),
+    registration_inventory(),
+    RegistrationValidity {
+      registered_at: time(registered_at),
+      expires_at: time(900),
+    },
   )
   .unwrap()
 }
@@ -359,4 +364,12 @@ fn enrollment_request(
 
 fn platform() -> AgentPlatform {
   AgentPlatform::new("linux", "amd64").unwrap()
+}
+
+fn registration_inventory() -> octacity_protocol::AgentInventory {
+  serde_json::from_str::<RegisterAgentRequest>(include_str!(
+    "../../../../shared/protocol-fixtures/coordinator/register-request-v1.json"
+  ))
+  .unwrap()
+  .inventory
 }

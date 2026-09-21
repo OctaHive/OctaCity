@@ -89,6 +89,7 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 # depending on the same libraries.
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     "octacity-server-job": frozenset({"base64", "ed25519-dalek"}),
+    "octacity-server-secrets": frozenset({"hmac"}),
 }
 
 SHARED_SOURCE_RULES = (

@@ -13,6 +13,7 @@ pub use model::{
   ManualTriggerOutcome, RevisionResolutionError, RevisionResolutionRequest,
 };
 pub use ports::{
-  EffectiveProjectPolicySource, ManualTriggerContextProvider, RevisionResolver, StoreBackedManualTriggerContext,
+  EffectiveProjectPolicySource, ExactRevisionResolver, ManualTriggerContextProvider, RevisionResolver,
+  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,
 };
 pub use service::ManualTriggerService;

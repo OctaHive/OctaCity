@@ -19,6 +19,7 @@ impl CoordinatorClient for ScriptedClient {
     _wait: Duration,
     _lease_safety_margin: Duration,
     _accept_jobs: bool,
+    _snapshot: &HostSnapshot,
     cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     if let Some(result) = self.leases.lock().unwrap().pop_front() {
@@ -174,10 +175,10 @@ async fn poller_exposes_no_work_then_a_verified_lease() {
   .unwrap();
 
   assert!(matches!(
-    poller.next(true, CancellationToken::new()).await.unwrap(),
+    poller.next(true, &snapshot(), CancellationToken::new()).await.unwrap(),
     LeasePollOutcome::NoWork { retry_after } if retry_after == Duration::from_millis(1)
   ));
-  let LeasePollOutcome::Lease(lease) = poller.next(true, CancellationToken::new()).await.unwrap() else {
+  let LeasePollOutcome::Lease(lease) = poller.next(true, &snapshot(), CancellationToken::new()).await.unwrap() else {
     panic!("expected a lease");
   };
   assert_eq!(lease.spec.job_id, "job-1");
@@ -207,7 +208,7 @@ async fn poller_rejects_a_job_signature_that_does_not_match_the_lease() {
   )
   .unwrap();
   assert!(matches!(
-    poller.next(true, CancellationToken::new()).await,
+    poller.next(true, &snapshot(), CancellationToken::new()).await,
     Err(CoordinatorError::JobSpec(_))
   ));
 }
@@ -235,7 +236,7 @@ async fn poller_rejects_a_lease_while_local_admission_is_paused() {
   .unwrap();
 
   assert!(matches!(
-    poller.next(false, CancellationToken::new()).await,
+    poller.next(false, &snapshot(), CancellationToken::new()).await,
     Err(CoordinatorError::Invalid(message)) if message.contains("not accepting jobs")
   ));
 }

@@ -7,3 +7,8 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Secret-reference and delegated-grant domain for OctaCity"
+
+[dependencies]
+hmac.workspace = true
+sha2.workspace = true
+zeroize.workspace = true

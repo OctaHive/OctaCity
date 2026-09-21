@@ -3,6 +3,7 @@ use std::{path::Path, sync::Arc};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use octacity_artifact_s3::{S3ArtifactStore, S3ArtifactStoreConfig};
+use octacity_server_application::{AgentEnrollmentSecretKey, JobSpecToolchainPolicy};
 use octacity_server_job::JobSpecSigner;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use thiserror::Error;
@@ -14,8 +15,18 @@ use crate::ServerConfig;
 
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
 const SIGNING_KEY_BYTES: usize = 32;
+const AGENT_ENROLLMENT_KEY_BYTES: usize = 32;
+const MAX_JOB_SPEC_POLICY_BYTES: u64 = 1024 * 1024;
 
-impl ReadinessChecks {
+pub(crate) struct RuntimeDependencies {
+  pub(crate) readiness: ReadinessChecks,
+  pub(crate) postgres: sqlx::PgPool,
+  pub(crate) job_spec_signer: Arc<JobSpecSigner>,
+  pub(crate) job_spec_toolchain: JobSpecToolchainPolicy,
+  pub(crate) agent_enrollment_secret_key: AgentEnrollmentSecretKey,
+}
+
+impl RuntimeDependencies {
   pub(crate) async fn from_config(config: &ServerConfig) -> Result<Self, ReadinessSetupError> {
     let database_url = read_credential("PostgreSQL URL", &config.postgres().url_file).await?;
     let connect_options =
@@ -45,15 +56,74 @@ impl ReadinessChecks {
     })
     .map_err(ReadinessSetupError::ObjectStorageConfig)?;
 
-    let signing_key = read_signing_key(&config.signing().key_id, &config.signing().key_file).await?;
-    Ok(Self::new(
+    let signing_key = Arc::new(read_signing_key(&config.signing().key_id, &config.signing().key_file).await?);
+    let agent_enrollment_secret_key =
+      read_agent_enrollment_key(&config.agent_credentials().enrollment_key_file).await?;
+    let job_spec_toolchain = load_job_spec_toolchain(&config.job_spec().policy_file).await?;
+    let readiness = ReadinessChecks::new(
       Arc::new(MigrationCheck { pool: pool.clone() }),
-      Arc::new(PostgresCheck { pool }),
+      Arc::new(PostgresCheck { pool: pool.clone() }),
       Arc::new(ObjectStorageCheck(object_storage)),
-      Arc::new(SigningMaterialCheck(signing_key)),
+      Arc::new(SigningMaterialCheck(signing_key.clone())),
       std::iter::empty(),
-    ))
+    );
+    Ok(Self {
+      readiness,
+      postgres: pool,
+      job_spec_signer: signing_key,
+      job_spec_toolchain,
+      agent_enrollment_secret_key,
+    })
   }
+}
+
+async fn read_agent_enrollment_key(path: &Path) -> Result<AgentEnrollmentSecretKey, ReadinessSetupError> {
+  let encoded = read_credential("Agent enrollment derivation key", path).await?;
+  let decoded =
+    Zeroizing::new(
+      STANDARD
+        .decode(encoded.as_bytes())
+        .map_err(|_| ReadinessSetupError::InvalidCredential {
+          purpose: "Agent enrollment derivation key",
+        })?,
+    );
+  let mut bytes: [u8; AGENT_ENROLLMENT_KEY_BYTES] =
+    decoded
+      .as_slice()
+      .try_into()
+      .map_err(|_| ReadinessSetupError::InvalidCredential {
+        purpose: "Agent enrollment derivation key",
+      })?;
+  let key = AgentEnrollmentSecretKey::new(bytes);
+  bytes.zeroize();
+  Ok(key)
+}
+
+async fn load_job_spec_toolchain(path: &Path) -> Result<JobSpecToolchainPolicy, ReadinessSetupError> {
+  let file = tokio::fs::File::open(path)
+    .await
+    .map_err(|source| ReadinessSetupError::ReadJobSpecPolicy {
+      path: path.to_owned(),
+      source,
+    })?;
+  let mut bytes = Vec::new();
+  file
+    .take(MAX_JOB_SPEC_POLICY_BYTES + 1)
+    .read_to_end(&mut bytes)
+    .await
+    .map_err(|source| ReadinessSetupError::ReadJobSpecPolicy {
+      path: path.to_owned(),
+      source,
+    })?;
+  if bytes.len() as u64 > MAX_JOB_SPEC_POLICY_BYTES {
+    return Err(ReadinessSetupError::JobSpecPolicyTooLarge { path: path.to_owned() });
+  }
+  let policy = serde_json::from_slice::<JobSpecToolchainPolicy>(&bytes)
+    .map_err(|_| ReadinessSetupError::InvalidJobSpecPolicy { path: path.to_owned() })?;
+  policy
+    .validate()
+    .map_err(|_| ReadinessSetupError::InvalidJobSpecPolicy { path: path.to_owned() })?;
+  Ok(policy)
 }
 
 struct MigrationCheck {
@@ -105,7 +175,7 @@ impl ReadinessCheck for ObjectStorageCheck {
   }
 }
 
-struct SigningMaterialCheck(JobSpecSigner);
+struct SigningMaterialCheck(Arc<JobSpecSigner>);
 
 #[async_trait]
 impl ReadinessCheck for SigningMaterialCheck {
@@ -256,6 +326,26 @@ fn validate_unix_credential_metadata(mode: u32, owner_uid: u32, effective_uid: u
 /// Failure to load static material required by the readiness checks.
 #[derive(Debug, Error)]
 pub enum ReadinessSetupError {
+  /// The JobSpec toolchain policy file could not be opened or read.
+  #[error("failed to read JobSpec policy file '{path}': {source}")]
+  ReadJobSpecPolicy {
+    /// Configured policy path.
+    path: std::path::PathBuf,
+    /// Underlying filesystem error.
+    source: std::io::Error,
+  },
+  /// The JobSpec toolchain policy exceeded its parser limit.
+  #[error("JobSpec policy file '{path}' exceeds the {MAX_JOB_SPEC_POLICY_BYTES}-byte limit")]
+  JobSpecPolicyTooLarge {
+    /// Configured policy path.
+    path: std::path::PathBuf,
+  },
+  /// The JobSpec toolchain policy was malformed or semantically invalid.
+  #[error("JobSpec policy file '{path}' is invalid")]
+  InvalidJobSpecPolicy {
+    /// Configured policy path.
+    path: std::path::PathBuf,
+  },
   /// A credential file could not be opened or read.
   #[error("failed to read {purpose} file '{path}': {source}")]
   ReadCredential {

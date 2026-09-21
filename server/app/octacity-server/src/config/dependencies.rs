@@ -74,6 +74,30 @@ pub(crate) struct SigningConfig {
   pub(crate) key_file: PathBuf,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AgentCredentialConfig {
+  pub(crate) enrollment_key_file: PathBuf,
+}
+
+impl AgentCredentialConfig {
+  pub(crate) fn validate(&self) -> Result<(), String> {
+    validate_path("agent_credentials.enrollment_key_file", &self.enrollment_key_file)
+  }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct JobSpecConfig {
+  pub(crate) policy_file: PathBuf,
+}
+
+impl JobSpecConfig {
+  pub(crate) fn validate(&self) -> Result<(), String> {
+    validate_path("job_spec.policy_file", &self.policy_file)
+  }
+}
+
 impl SigningConfig {
   pub(crate) fn validate(&self) -> Result<(), String> {
     if !octacity_protocol::valid_signing_key_id(&self.key_id) {

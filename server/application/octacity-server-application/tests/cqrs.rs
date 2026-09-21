@@ -388,6 +388,7 @@ fn configuration_definition(
 ) -> BuildConfigurationDefinition {
   BuildConfigurationDefinition {
     enabled: true,
+    job_concurrency_limit: 2,
     repository_id,
     repository_version: RepositoryVersion::INITIAL,
     pipeline_id,

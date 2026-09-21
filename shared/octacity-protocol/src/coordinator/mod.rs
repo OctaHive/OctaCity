@@ -11,17 +11,23 @@ use thiserror::Error;
 use zeroize::Zeroize as _;
 
 pub use octa_cache_protocol::{
-  TASK_RESULT_CACHE_FEATURE_V1 as CACHE_FEATURE_V1, TASK_RESULT_CACHE_HTTP_FEATURE_V1 as CACHE_HTTP_FEATURE_V1,
+  ACTION_KEY_FORMAT_V1 as CACHE_ACTION_KEY_FORMAT_V1, TASK_RESULT_CACHE_FEATURE_V1 as CACHE_FEATURE_V1,
+  TASK_RESULT_CACHE_HTTP_FEATURE_V1 as CACHE_HTTP_FEATURE_V1,
 };
 
 use crate::{CachePolicy, OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope};
 
+mod credential;
 mod validation;
+
+pub use credential::{AGENT_CREDENTIAL_SECRET_BYTES, AgentCredentialKind, AgentCredentialToken};
 
 /// Server-agent transport version implemented by these DTOs.
 pub const COORDINATOR_PROTOCOL_VERSION: u16 = 1;
 /// Maximum UTF-8 length of a request or opaque protocol identifier.
 pub const MAX_COORDINATOR_IDENTIFIER_BYTES: usize = 256;
+/// Greatest lease long-poll duration accepted by protocol v1.
+pub const MAX_LEASE_WAIT_SECONDS: u64 = 60;
 /// Maximum scheduler labels or inventory entries of one kind.
 pub const MAX_INVENTORY_ENTRIES: usize = 1024;
 /// Maximum UTF-8 length of an advisory health message.
@@ -216,6 +222,8 @@ pub struct AcquireLeaseRequest {
   /// A false value keeps the registration and drain channel live without
   /// allowing the coordinator to assign work that cannot be materialized.
   pub accept_jobs: bool,
+  /// Fresh advisory capacity and backend health used for this placement decision.
+  pub snapshot: HostSnapshot,
 }
 
 /// Result of one lease long poll.
@@ -439,6 +447,8 @@ pub struct AttemptEventEnvelope {
   pub fencing_token: String,
   /// Global contiguous sequence across runner and agent events for the attempt.
   pub stream_sequence: u64,
+  /// Agent-observed Unix time in milliseconds, persisted with the immutable spool record.
+  pub occurred_at_unix_ms: i64,
   /// Producer-specific event kept inside the common ordered envelope.
   pub kind: AttemptEventKind,
 }

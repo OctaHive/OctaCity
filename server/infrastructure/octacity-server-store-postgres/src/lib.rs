@@ -10,25 +10,37 @@ mod accept_trigger;
 mod agent_credential_auth;
 mod agent_credential_revocation;
 mod agent_enrollment;
+mod agent_mutation;
+mod agent_query;
 mod agent_registration;
+mod agent_row;
 mod attempt_materialization;
 mod build_configuration_mutation;
+mod build_query;
 mod cancel_build;
 mod configuration_query;
 mod configuration_row;
 mod database;
+mod definition_mutation;
 mod job_claim;
 mod job_completion;
 mod job_event_query;
 mod job_events;
 mod lease;
+mod lease_heartbeat;
+mod lease_recovery;
 mod mutation;
 mod pipeline_mutation;
 mod pipeline_query;
 mod pipeline_row;
+mod pool_mutation;
+mod pool_query;
+mod pool_row;
 mod project_mutation;
+mod project_policy_query;
 mod project_query;
 mod project_row;
+mod ready_queue_notification;
 mod repository_mutation;
 mod retry_build;
 mod state;
@@ -38,6 +50,9 @@ mod trigger_query;
 use sqlx::{PgPool, migrate::MigrateError};
 
 pub use store::{PostgresAuthoritativeStore, PostgresStore};
+
+/// PostgreSQL notification channel emitted after a ready-queue transaction commits.
+pub const READY_JOB_NOTIFICATION_CHANNEL: &str = "octacity_ready_jobs";
 
 /// Ordered embedded forward migrations for the authoritative PostgreSQL store.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();

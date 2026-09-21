@@ -145,6 +145,9 @@ pub(crate) async fn enqueue_roots(
   if inserted.rows_affected() != roots.len() as u64 {
     return Err(StoreError::Unavailable);
   }
+  if !roots.is_empty() {
+    crate::ready_queue_notification::notify_after_commit(transaction).await?;
+  }
   Ok(roots)
 }
 

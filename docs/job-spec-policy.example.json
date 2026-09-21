@@ -1,0 +1,19 @@
+{
+  "source": {
+    "provider": "git",
+    "plugin_version": "0.1.0",
+    "plugin_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "repository_parameter": "url"
+  },
+  "octa": {
+    "version": "0.3.0",
+    "runner_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "runner_protocol": 1,
+    "event_schema": 1,
+    "plugin_protocol": 1,
+    "plugin_digests": {
+      "shell": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  },
+  "validity": 3600
+}

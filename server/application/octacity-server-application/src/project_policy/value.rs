@@ -149,6 +149,33 @@ pub struct ProjectPolicy {
   pub retention: RetentionPolicy,
 }
 
+/// Policy directives persisted as one immutable Project policy version.
+///
+/// Identity, ancestry, and version are assigned from authoritative Project
+/// state and therefore are deliberately absent from this input document.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectPolicyDefinition {
+  /// Agent Pool inheritance instruction.
+  pub pools: PolicyDirective<BTreeSet<PoolId>>,
+  /// Repository inheritance instruction.
+  pub repositories: PolicyDirective<BTreeSet<RepositoryId>>,
+  /// Secret-profile inheritance instruction.
+  pub secret_profiles: PolicyDirective<BTreeSet<SecretProfileName>>,
+  /// Workload-identity-profile inheritance instruction.
+  pub identity_profiles: PolicyDirective<BTreeSet<IdentityProfileName>>,
+  /// Runtime inheritance instruction.
+  pub runtimes: PolicyDirective<BTreeSet<RuntimeClass>>,
+  /// Cache inheritance instruction.
+  pub cache: PolicyDirective<CachePolicy>,
+  /// Artifact inheritance instruction.
+  pub artifacts: PolicyDirective<ArtifactPolicy>,
+  /// Concurrency inheritance instruction.
+  pub concurrency: PolicyDirective<ConcurrencyPolicy>,
+  /// Retention inheritance instruction.
+  pub retention: PolicyDirective<RetentionPolicy>,
+}
+
 /// Explicit operation applied to one inherited policy category.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "mode", content = "value", rename_all = "snake_case", deny_unknown_fields)]
@@ -171,24 +198,9 @@ pub struct ProjectPolicyLayer {
   pub parent_id: Option<ProjectId>,
   /// Immutable policy version selected for resolution.
   pub version: ProjectPolicyVersion,
-  /// Agent Pool inheritance instruction.
-  pub pools: PolicyDirective<BTreeSet<PoolId>>,
-  /// Repository inheritance instruction.
-  pub repositories: PolicyDirective<BTreeSet<RepositoryId>>,
-  /// Secret-profile inheritance instruction.
-  pub secret_profiles: PolicyDirective<BTreeSet<SecretProfileName>>,
-  /// Workload-identity-profile inheritance instruction.
-  pub identity_profiles: PolicyDirective<BTreeSet<IdentityProfileName>>,
-  /// Runtime inheritance instruction.
-  pub runtimes: PolicyDirective<BTreeSet<RuntimeClass>>,
-  /// Cache inheritance instruction.
-  pub cache: PolicyDirective<CachePolicy>,
-  /// Artifact inheritance instruction.
-  pub artifacts: PolicyDirective<ArtifactPolicy>,
-  /// Concurrency inheritance instruction.
-  pub concurrency: PolicyDirective<ConcurrencyPolicy>,
-  /// Retention inheritance instruction.
-  pub retention: PolicyDirective<RetentionPolicy>,
+  /// Policy directives contributed by this Project version.
+  #[serde(flatten)]
+  pub definition: ProjectPolicyDefinition,
 }
 
 /// Project and immutable policy version contributing to an effective snapshot.

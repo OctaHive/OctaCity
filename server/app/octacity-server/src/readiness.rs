@@ -1,5 +1,5 @@
 use std::sync::{
-  Arc,
+  Arc, Mutex,
   atomic::{AtomicBool, Ordering},
 };
 
@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 mod dependencies;
 
 pub use dependencies::ReadinessSetupError;
+pub(crate) use dependencies::RuntimeDependencies;
 
 /// One bounded check required before the server may accept mutations.
 ///
@@ -51,6 +52,11 @@ impl ReadinessChecks {
     Self { checks }
   }
 
+  /// Adds one composition-selected supervised worker to the readiness gate.
+  pub(crate) fn push(&mut self, check: SharedCheck) {
+    self.checks.push(check);
+  }
+
   async fn evaluate(&self, timeout: std::time::Duration) -> ReadinessEvaluation {
     let deadline = tokio::time::Instant::now() + timeout;
     for check in &self.checks {
@@ -65,6 +71,53 @@ impl ReadinessChecks {
       }
     }
     ReadinessEvaluation::READY
+  }
+}
+
+/// Mutable health signal owned by one supervised background worker.
+pub(crate) struct WorkerHealth {
+  healthy: AtomicBool,
+  last_success: Mutex<Option<std::time::Instant>>,
+  stale_after: std::time::Duration,
+}
+
+impl WorkerHealth {
+  pub(crate) fn new(stale_after: std::time::Duration) -> Self {
+    Self {
+      healthy: AtomicBool::new(false),
+      last_success: Mutex::new(None),
+      stale_after,
+    }
+  }
+
+  pub(crate) fn mark_success(&self) {
+    if let Ok(mut last_success) = self.last_success.lock() {
+      *last_success = Some(std::time::Instant::now());
+      self.healthy.store(true, Ordering::Release);
+    } else {
+      self.healthy.store(false, Ordering::Release);
+    }
+  }
+
+  pub(crate) fn mark_failure(&self) {
+    self.healthy.store(false, Ordering::Release);
+  }
+}
+
+#[async_trait]
+impl ReadinessCheck for WorkerHealth {
+  fn name(&self) -> &'static str {
+    "lease-expiry-worker"
+  }
+
+  async fn check(&self) -> bool {
+    self.healthy.load(Ordering::Acquire)
+      && self
+        .last_success
+        .lock()
+        .ok()
+        .and_then(|last_success| *last_success)
+        .is_some_and(|last_success| last_success.elapsed() <= self.stale_after)
   }
 }
 
@@ -275,6 +328,25 @@ mod tests {
       checks.evaluate(std::time::Duration::from_millis(5)).await,
       ReadinessEvaluation::failed("pending-worker", ReadinessFailureKind::TimedOut)
     );
+  }
+
+  #[tokio::test]
+  async fn worker_health_requires_a_recent_successful_pass() {
+    let health = WorkerHealth::new(std::time::Duration::from_millis(5));
+    assert!(
+      !health.check().await,
+      "a worker must not be healthy before its first pass"
+    );
+
+    health.mark_success();
+    assert!(health.check().await);
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    assert!(!health.check().await, "a stalled worker must eventually lose readiness");
+
+    health.mark_success();
+    assert!(health.check().await);
+    health.mark_failure();
+    assert!(!health.check().await);
   }
 
   #[tokio::test]

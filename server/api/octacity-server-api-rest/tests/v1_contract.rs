@@ -1,8 +1,9 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
-  AcceptManualTriggerRequest, ContractValueError, CreateBuildConfigurationRequest, CreatePipelineRequest,
-  CreateProjectRequest, Cursor, CursorPage, ErrorCode, ErrorResponse, IdempotencyKey, MAX_CURSOR_BYTES,
-  MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
+  AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ContractValueError, CreateAgentPoolRequest,
+  CreateBuildConfigurationRequest, CreatePipelineRequest, CreateProjectRequest, Cursor, CursorPage, DrainAgentRequest,
+  ErrorCode, ErrorResponse, IdempotencyKey, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
+  MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -13,6 +14,11 @@ const CREATE_PIPELINE: &str = include_str!("../fixtures/v1/create-pipeline-reque
 const CREATE_CONFIGURATION: &str = include_str!("../fixtures/v1/create-build-configuration-request.json");
 const ACCEPT_MANUAL_TRIGGER: &str = include_str!("../fixtures/v1/accept-manual-trigger-request.json");
 const ERROR_RESPONSE: &str = include_str!("../fixtures/v1/error-response.json");
+const CREATE_AGENT_POOL: &str = include_str!("../fixtures/v1/create-agent-pool-request.json");
+const AGENT_POOL_PAGE: &str = include_str!("../fixtures/v1/agent-pool-page.json");
+const AGENT_PAGE: &str = include_str!("../fixtures/v1/agent-page.json");
+const ISSUE_AGENT_ENROLLMENT: &str = include_str!("../fixtures/v1/issue-agent-enrollment-request.json");
+const ISSUED_AGENT_ENROLLMENT: &str = include_str!("../fixtures/v1/issue-agent-enrollment-response.json");
 
 #[test]
 fn v1_golden_documents_round_trip_without_application_types() {
@@ -22,6 +28,17 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<CreateBuildConfigurationRequest>(CREATE_CONFIGURATION);
   assert_golden::<AcceptManualTriggerRequest>(ACCEPT_MANUAL_TRIGGER);
   assert_golden::<ErrorResponse>(ERROR_RESPONSE);
+  assert_golden::<CreateAgentPoolRequest>(CREATE_AGENT_POOL);
+  assert_golden::<CursorPage<AgentPoolResource>>(AGENT_POOL_PAGE);
+  assert_golden::<CursorPage<AgentResource>>(AGENT_PAGE);
+  assert_golden::<IssueAgentEnrollmentRequest>(ISSUE_AGENT_ENROLLMENT);
+  assert_golden::<IssueAgentEnrollmentResponse>(ISSUED_AGENT_ENROLLMENT);
+}
+
+#[test]
+fn agent_enrollment_response_debug_output_redacts_the_bearer() {
+  let response: IssueAgentEnrollmentResponse = serde_json::from_str(ISSUED_AGENT_ENROLLMENT).unwrap();
+  assert!(!format!("{response:?}").contains(&response.credential));
 }
 
 #[test]
@@ -49,6 +66,24 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
   let mut error: Value = serde_json::from_str(ERROR_RESPONSE).unwrap();
   error["diagnostic"] = json!("provider-private-details");
   assert!(serde_json::from_value::<ErrorResponse>(error).is_err());
+
+  let mut pool: Value = serde_json::from_str(CREATE_AGENT_POOL).unwrap();
+  pool["definition"]["provider_template"] = json!("private-infrastructure-detail");
+  assert!(serde_json::from_value::<CreateAgentPoolRequest>(pool).is_err());
+
+  let mut pool_page: Value = serde_json::from_str(AGENT_POOL_PAGE).unwrap();
+  pool_page["items"][0]["active_lease_ids"] = json!([]);
+  assert!(serde_json::from_value::<CursorPage<AgentPoolResource>>(pool_page).is_err());
+
+  let mut agent_page: Value = serde_json::from_str(AGENT_PAGE).unwrap();
+  agent_page["items"][0]["registration_credential"] = json!("must-never-leak");
+  assert!(serde_json::from_value::<CursorPage<AgentResource>>(agent_page).is_err());
+
+  assert!(serde_json::from_value::<DrainAgentRequest>(json!({"mode": "graceful", "command": "shell"})).is_err());
+
+  let mut enrollment: Value = serde_json::from_str(ISSUE_AGENT_ENROLLMENT).unwrap();
+  enrollment["registration_credential"] = json!("must-never-be-accepted");
+  assert!(serde_json::from_value::<IssueAgentEnrollmentRequest>(enrollment).is_err());
 }
 
 #[test]

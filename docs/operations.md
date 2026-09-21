@@ -40,9 +40,24 @@ no runtime until an operator configures a supported backend. The procedures belo
 run validation with the same identity and isolation settings as the service;
 validating as an unrelated administrator would test the wrong ownership model.
 
-The enrollment token authenticates agent registration. Server signing keys
-authenticate leased `JobSpec` documents and are independent. Never place
-either value in a service environment variable or command line.
+The enrollment token authenticates agent registration. It is an opaque value
+issued by the server in the form
+`enrollment.<credential-uuid>.<base64url-secret>`; operators must copy it
+without decoding or editing it. After successful registration the running
+Agent promotes it in memory to the corresponding registration credential.
+Server signing keys authenticate leased `JobSpec` documents and are
+independent. Never place either value in a service environment variable or
+command line.
+
+Issue the credential on the trusted management network with
+`POST /api/v1/agent-enrollments`. The request binds an exact Pool version and,
+optionally, an exact operating-system/architecture pair; it also supplies 32
+cryptographically random bytes as URL-safe unpadded base64. The server controls
+the expiry using `agent_enrollment_lifetime_milliseconds`, persists only the
+secret digest, and returns the full bearer only in this response. Repeating an
+identical request with the same `Idempotency-Key` recovers the same bearer;
+reusing that key for different input is rejected. See the complete example in
+[Management REST v1](management-rest-v1.md#6-issue-a-one-time-enrollment-credential).
 
 ### Linux systemd
 
@@ -213,10 +228,9 @@ commands continue to write compact or JSON logs to stderr.
 ## Drain, rotate, and upgrade
 
 Drain is a control-plane operation, not a privileged local agent command.
-Phase 8 implements and tests the agent-side `drain` directive; the released
-server command that issues it belongs to Phase 9. Until that command exists,
-stop a test deployment only when the coordinator shows that it has no active
-lease. A draining agent
+Use the management API's version-guarded Agent drain operation, or publish the
+next Pool version with `graceful_drain` or `forced_drain`. Graceful drain lets
+the current Lease finish; forced drain requests fenced cancellation. A draining agent
 stops acquiring leases, finishes or cancels its active lease according to the
 fenced directive, persists terminal delivery, and exits. Wait for the service
 to stop before changing files.

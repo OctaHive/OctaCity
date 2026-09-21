@@ -116,12 +116,14 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
     sqlx::query(
       "INSERT INTO build_configuration_versions \
          (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
-          pipeline_version, configuration_snapshot, published_at) \
-       VALUES ($1, 0, true, $2, 1, $3, 1, '{}', now())",
+          pipeline_version, configuration_snapshot, job_concurrency_limit, allowed_pool_ids, retry_max_attempts, \
+          retries_infrastructure, published_at) \
+       VALUES ($1, 0, true, $2, 1, $3, 1, '{}', 1, ARRAY[$4], 1, false, now())",
     )
     .bind(id(48))
     .bind(id(16))
     .bind(id(20))
+    .bind(id(96))
     .execute(pool)
     .await,
     "build_configuration_versions_positive_version",
@@ -130,12 +132,14 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
     sqlx::query(
       "INSERT INTO build_configuration_versions \
          (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
-          pipeline_version, configuration_snapshot, published_at) \
-       VALUES ($1, 2, true, $2, 1, $3, 1, '[]', now())",
+          pipeline_version, configuration_snapshot, job_concurrency_limit, allowed_pool_ids, retry_max_attempts, \
+          retries_infrastructure, published_at) \
+       VALUES ($1, 2, true, $2, 1, $3, 1, '[]', 1, ARRAY[$4], 1, false, now())",
     )
     .bind(id(48))
     .bind(id(16))
     .bind(id(20))
+    .bind(id(96))
     .execute(pool)
     .await,
     "build_configuration_versions_snapshot_object",
@@ -294,12 +298,14 @@ async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
   sqlx::query(
     "INSERT INTO build_configuration_versions \
        (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
-        pipeline_version, configuration_snapshot, published_at) \
-     VALUES ($1, 1, true, $2, 1, $3, 1, '{}', now())",
+        pipeline_version, configuration_snapshot, job_concurrency_limit, allowed_pool_ids, retry_max_attempts, \
+        retries_infrastructure, published_at) \
+     VALUES ($1, 1, true, $2, 1, $3, 1, '{}', 1, ARRAY[$4], 1, false, now())",
   )
   .bind(id(48))
   .bind(id(16))
   .bind(id(20))
+  .bind(id(96))
   .execute(pool)
   .await?;
   sqlx::query(
@@ -350,8 +356,8 @@ async fn seed_authoritative_graph(pool: &PgPool) -> Result<(), Error> {
     "INSERT INTO builds \
        (id, project_id, build_configuration_id, build_configuration_version, pipeline_id, pipeline_version, \
         repository_id, repository_version, trigger_occurrence_id, immutable_revision, input_snapshot, \
-        effective_policy_snapshot, priority, state, version, created_at, updated_at) \
-     VALUES ($1, $2, $3, 1, $4, 1, $5, 1, $6, 'revision', '{}', '{}', 0, 'running', 1, now(), now())",
+        effective_policy_snapshot, project_job_concurrency_limit, priority, state, version, created_at, updated_at) \
+     VALUES ($1, $2, $3, 1, $4, 1, $5, 1, $6, 'revision', '{}', '{}', 1, 0, 'running', 1, now(), now())",
   )
   .bind(id(144))
   .bind(id(1))
@@ -441,8 +447,10 @@ async fn insert_ready_entry(pool: &PgPool, job: u128) -> Result<PgQueryResult, E
 async fn insert_lease(pool: &PgPool, lease: u128, job: u128) -> Result<PgQueryResult, Error> {
   sqlx::query(
     "INSERT INTO leases \
-       (id, job_id, pool_id, pool_version, registration_id, fence_hash, state, version, leased_at, expires_at) \
-     VALUES ($1, $2, $3, 1, $4, decode(repeat('01', 32), 'hex'), 'active', 1, now(), now() + interval '5 minutes')",
+       (id, job_id, pool_id, pool_version, registration_id, registration_epoch, fence_hash, state, version, \
+        leased_at, expires_at) \
+     VALUES ($1, $2, $3, 1, $4, 1, decode(repeat('01', 32), 'hex'), 'active', 1, now(), \
+             now() + interval '5 minutes')",
   )
   .bind(id(lease))
   .bind(id(job))

@@ -97,16 +97,28 @@ pub(super) fn canonical_path(name: &str, path: &Path) -> Result<PathBuf, ConfigE
     .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))
 }
 
-/// Requires the coordinator endpoint to use authenticated TLS.
+/// Requires TLS except for a loopback-only development coordinator.
 pub(super) fn validate_server_url(value: &str) -> Result<(), ConfigError> {
   let url = parse_absolute_url("server_url", value)?;
-  if url.scheme_str() != Some("https") {
-    return invalid("server_url must use https");
+  let loopback_http = url.scheme_str() == Some("http") && url.host().is_some_and(is_loopback_host);
+  if url.scheme_str() != Some("https") && !loopback_http {
+    return invalid("server_url must use https (or loopback http for local integration)");
   }
   if url.path_and_query().is_some_and(|path| path.as_str() != "/") {
     return invalid("server_url must contain only scheme, host, and optional port");
   }
   Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+  let host = host
+    .strip_prefix('[')
+    .and_then(|host| host.strip_suffix(']'))
+    .unwrap_or(host);
+  host.eq_ignore_ascii_case("localhost")
+    || host
+      .parse::<std::net::IpAddr>()
+      .is_ok_and(|address| address.is_loopback())
 }
 
 /// Accepts and canonicalizes one origin used by the runtime upload allowlist.

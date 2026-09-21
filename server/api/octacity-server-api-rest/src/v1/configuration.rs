@@ -258,6 +258,8 @@ pub struct RetryPolicy {
 pub struct BuildConfigurationDefinition {
   /// Whether new Triggers may target this version.
   pub enabled: bool,
+  /// Maximum active Jobs across Builds of this Configuration version.
+  pub job_concurrency_limit: u32,
   /// Exact Repository identity.
   pub repository_id: String,
   /// Exact immutable Repository version.

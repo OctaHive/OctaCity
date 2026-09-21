@@ -6,13 +6,24 @@
 
 #![forbid(unsafe_code)]
 
+mod agent_cqrs;
+mod agent_enrollment;
+mod agent_execution;
+mod agent_heartbeat;
+mod agent_lease;
+mod agent_placement;
+mod agent_registration;
+mod build_cqrs;
 mod configuration_cqrs;
 mod cqrs;
+mod definition_cqrs;
 mod error;
 mod job_event_cqrs;
+mod lease_expiry;
 mod management_input;
 mod manual_trigger;
 mod pipeline_cqrs;
+mod pool_cqrs;
 mod project_cqrs;
 mod project_policy;
 mod projections;
@@ -27,26 +38,63 @@ use octacity_server_store::{
 };
 use thiserror::Error;
 
+pub use agent_cqrs::{
+  AgentCapacityProjection, AgentCommandOutcome, AgentHandlers, AgentInventoryProjection, AgentPageProjection,
+  AgentProjection, AgentStatusProjection, DrainAgentCommand, GetAgentQuery, ListAgentsQuery, ReassignAgentPoolCommand,
+};
+pub use agent_enrollment::{AgentEnrollmentHandler, IssueAgentEnrollmentCommand, IssueAgentEnrollmentCommandOutcome};
+pub use agent_execution::{
+  AgentExecutionError, AgentExecutionService, AgentExecutionUseCases, AppendAgentEventsInput, CompleteAgentLeaseInput,
+};
+pub use agent_heartbeat::{AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatService, AgentHeartbeatUseCases};
+pub use agent_placement::{
+  AcquireAgentLeaseInput, AgentLeaseError, AgentLeaseOutcome, AgentLeaseService, AgentLeaseUseCases, ReadyJobWaiter,
+};
+pub use agent_registration::{
+  AgentOperation, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationService,
+  AgentRegistrationUseCases, AuthorizeAgentInput, AuthorizedAgent,
+};
+pub use build_cqrs::{
+  AttemptDetailsProjection, BuildDetailsProjection, BuildHandlers, CancelBuildCommand, CancelBuildCommandOutcome,
+  GetAttemptQuery, GetBuildQuery, GetJobQuery, RetryBuildCommand, RetryBuildCommandOutcome,
+};
 pub use configuration_cqrs::{
   BuildConfigurationCommandOutcome, BuildConfigurationHandlers, CreateBuildConfigurationCommand,
   CreateRepositoryCommand, GetBuildConfigurationQuery, GetRepositoryQuery, PublishBuildConfigurationVersionCommand,
   PublishRepositoryVersionCommand, RepositoryCommandOutcome,
 };
 pub use cqrs::{Command, CommandHandler, MutationDisposition, Query, QueryHandler};
+pub use definition_cqrs::{
+  CreateTriggerDefinitionCommand, DefinitionHandlers, ProjectPolicyCommandOutcome, PublishProjectPolicyCommand,
+  TriggerDefinitionCommandOutcome,
+};
 pub use error::{ApplicationError, ApplicationFailure};
 pub use job_event_cqrs::{
   JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
 };
-pub use management_input::{ManagementInputError, ManagementInputFactory, ManualTriggerInput};
+pub use lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
+pub use management_input::{
+  ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput,
+};
 pub use manual_trigger::{
-  AcceptManualTriggerCommand, EffectiveProjectPolicySource, EffectiveProjectPolicySourceError, JobSpecToolchainPolicy,
-  ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
+  AcceptManualTriggerCommand, EffectiveProjectPolicySource, EffectiveProjectPolicySourceError, ExactRevisionResolver,
+  JobSpecToolchainPolicy, ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
   ManualTriggerContextProvider, ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome,
   ManualTriggerService, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
-  StoreBackedManualTriggerContext,
+  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,
 };
+pub use octacity_server_secrets::AgentEnrollmentSecretKey;
+pub use octacity_server_store::AgentDrainMode;
+pub use octacity_server_store::RegistrationEpoch;
+pub use octacity_server_store::{LeaseGrant, LeaseHeartbeatOutcome};
 pub use pipeline_cqrs::{
   CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
+};
+pub use pool_cqrs::{
+  AgentPlatformProjection, AgentPoolAdmissionPolicyProjection, AgentPoolCommandOutcome, AgentPoolDrainStateProjection,
+  AgentPoolFairnessPolicyProjection, AgentPoolHandlers, AgentPoolPageProjection, AgentPoolProjection,
+  CreateAgentPoolCommand, DeleteAgentPoolCommand, DeleteAgentPoolCommandOutcome, GetAgentPoolQuery,
+  ListAgentPoolsQuery, PublishAgentPoolVersionCommand,
 };
 pub use project_cqrs::{
   CreateProjectCommand, DeleteProjectCommand, DeleteProjectCommandOutcome, GetProjectQuery, ListProjectsQuery,
@@ -55,7 +103,8 @@ pub use project_cqrs::{
 pub use project_policy::{
   ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
   MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource, ProjectPolicy,
-  ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName, resolve_project_policy,
+  ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName,
+  resolve_project_policy,
 };
 pub use projections::{
   AgentRequirementsProjection, ArtifactPolicyProjection, AttemptProjection, BuildConfigurationProjection,
@@ -73,6 +122,14 @@ pub use transaction::CommandTransaction;
 
 /// Maximum number of Projects accepted by one management list query.
 pub const MAX_PROJECT_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_PROJECT_PAGE_SIZE;
+/// Maximum number of Agent Pools accepted by one management list query.
+pub const MAX_AGENT_POOL_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_AGENT_POOL_PAGE_SIZE;
+/// Maximum number of Agents accepted by one management list query.
+pub const MAX_AGENT_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_AGENT_PAGE_SIZE;
+/// Maximum exact platforms accepted by one Agent Pool admission allowlist.
+pub const MAX_AGENT_POOL_ADMISSION_PLATFORMS: usize = octacity_server_store::MAX_POOL_ADMISSION_PLATFORMS;
+/// Maximum statically configured Agent capacity of one Pool.
+pub const MAX_AGENT_POOL_STATIC_CAPACITY: u32 = octacity_server_store::MAX_POOL_STATIC_CAPACITY;
 /// Maximum number of Job events accepted by one management read query.
 pub const MAX_JOB_EVENT_PAGE_SIZE: u16 = octacity_server_store::MAX_JOB_EVENT_READ_PAGE_SIZE as u16;
 

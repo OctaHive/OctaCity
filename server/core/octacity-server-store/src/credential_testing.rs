@@ -3,10 +3,10 @@
 use std::collections::BTreeMap;
 
 use async_trait::async_trait;
+use octacity_protocol::AgentInventory;
 use octacity_server_domain::{
   AgentId, AgentName, EnrollmentCredentialId, EntityKind, PoolId, PoolVersion, RegistrationCredentialId, Timestamp,
 };
-use serde_json::Value;
 
 use crate::{
   AgentCredentialStore, AgentCredentialTarget, AgentPlatform, AgentRegistrationOutcome, AgentRegistrationProof,
@@ -40,7 +40,6 @@ struct EnrollmentFingerprint {
   pool_id: PoolId,
   pool_version: PoolVersion,
   expected_platform: ExpectedAgentPlatform,
-  expires_at: Timestamp,
 }
 
 #[derive(Clone)]
@@ -58,8 +57,7 @@ struct RegistrationFingerprint {
   agent_name: AgentName,
   proof: ProofFingerprint,
   platform: AgentPlatform,
-  inventory: Value,
-  expires_at: Timestamp,
+  inventory: AgentInventory,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,7 +99,6 @@ impl AgentCredentialStore for InMemoryStore {
       pool_id: request.pool_id,
       pool_version: request.pool_version,
       expected_platform: request.expected_platform.clone(),
-      expires_at: request.expires_at,
     };
     if let Some(existing) = state.credentials.enrollments.get(&request.credential_id) {
       if existing.fingerprint == fingerprint {
@@ -310,6 +307,7 @@ impl AgentCredentialStore for InMemoryStore {
         pool_version: plan.pool_version,
         expires_at: request.expires_at,
         revoked: false,
+        inventory: Some(request.inventory.clone()),
       },
     );
     record_evidence(&mut state, evidence_identity);
@@ -342,6 +340,12 @@ impl AgentCredentialStore for InMemoryStore {
       registration_epoch: registration.outcome.registration_epoch,
       pool_id: registration.outcome.pool_id,
       pool_version: registration.outcome.pool_version,
+      host_capacity: state
+        .registrations
+        .get(&(registration.outcome.agent_id, registration.outcome.registration_epoch))
+        .and_then(|registration| registration.inventory.as_ref())
+        .map(|inventory| inventory.host_capacity.clone())
+        .ok_or(StoreError::Unavailable)?,
       expires_at: registration.outcome.expires_at,
     })
   }
@@ -440,7 +444,6 @@ fn registration_fingerprint(request: &RegisterAgent) -> RegistrationFingerprint 
     proof,
     platform: request.platform.clone(),
     inventory: request.inventory.clone(),
-    expires_at: request.expires_at,
   }
 }
 

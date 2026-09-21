@@ -3,7 +3,7 @@ use octacity_server_domain::{
 };
 use octacity_server_store::{
   BuildConfigurationDefinition, BuildConfigurationMutationOutcome, CreateBuildConfiguration, MutationDisposition,
-  PublishBuildConfigurationVersion, PublishedBuildConfiguration, StoreError, StoreOperation,
+  PublishBuildConfigurationVersion, PublishedBuildConfiguration, RetryClass, StoreError, StoreOperation,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -227,6 +227,13 @@ async fn require_references(
   }
 
   let pool_ids: Vec<_> = definition.allowed_pools.iter().map(|pool| pool.as_uuid()).collect();
+  for pool_id in &definition.allowed_pools {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+      .bind(format!("octacity.agent-pool.{pool_id}"))
+      .execute(&mut **transaction)
+      .await
+      .map_err(unavailable)?;
+  }
   let count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id) FROM pools WHERE id = ANY($1)")
     .bind(&pool_ids)
     .fetch_one(&mut **transaction)
@@ -266,12 +273,18 @@ async fn insert_version(
   let version = number(version.get(), operation)?;
   let repository_version = number(definition.repository_version.get(), operation)?;
   let pipeline_version = number(definition.pipeline_version.get(), operation)?;
+  let job_concurrency_limit = i64::from(definition.job_concurrency_limit);
+  let allowed_pool_ids: Vec<_> = definition.allowed_pools.iter().map(|pool| pool.as_uuid()).collect();
+  let retry_max_attempts = i64::from(definition.retry.max_attempts);
+  let retries_infrastructure = definition.retry.retry_on.contains(&RetryClass::InfrastructureFailure);
   let snapshot = serde_json::to_value(definition).map_err(|_| StoreError::Unavailable)?;
   sqlx::query(
     "INSERT INTO build_configuration_versions \
        (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
-        pipeline_version, configuration_snapshot, published_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, to_timestamp($9::double precision / 1000.0))",
+        pipeline_version, configuration_snapshot, job_concurrency_limit, allowed_pool_ids, retry_max_attempts, \
+        retries_infrastructure, published_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
+             to_timestamp($13::double precision / 1000.0))",
   )
   .bind(configuration_id.as_uuid())
   .bind(version)
@@ -281,6 +294,10 @@ async fn insert_version(
   .bind(definition.pipeline_id.as_uuid())
   .bind(pipeline_version)
   .bind(Json(snapshot))
+  .bind(job_concurrency_limit)
+  .bind(allowed_pool_ids)
+  .bind(retry_max_attempts)
+  .bind(retries_infrastructure)
   .bind(published_at_millis)
   .execute(&mut **transaction)
   .await

@@ -2,9 +2,9 @@ use async_trait::async_trait;
 
 use crate::{
   AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, CancelBuild, CancellationDisposition,
-  CompletionDisposition, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, ReadJobEvents, RetryBuild,
-  RetryDisposition, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
-  TriggerEvaluationOutcome,
+  CompletionDisposition, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, LeaseHeartbeatOutcome, ReadJobEvents,
+  RenewLease, RetryBuild, RetryDisposition, StoreError, SuppressTrigger, SuppressTriggerOutcome,
+  TriggerAcceptanceProbe, TriggerEvaluationOutcome,
 };
 
 /// Atomic persistence used by Trigger acceptance.
@@ -23,6 +23,14 @@ pub trait TriggerAcceptanceStore: Send + Sync {
 
   /// Commits one terminal suppressed occurrence without Build or queue state.
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError>;
+}
+
+/// Atomic persistence used only by the latency-sensitive Lease heartbeat path.
+#[async_trait]
+pub trait LeaseHeartbeatStore: Send + Sync {
+  /// Validates current ownership, renews an eligible Lease, and returns one
+  /// control directive without depending on event or telemetry ingestion.
+  async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError>;
 }
 
 /// Atomic persistence used by Job placement and execution.
@@ -53,7 +61,7 @@ pub trait JobEventReadStore: Send + Sync {
 
 /// Atomic persistence used by Build cancellation and retry.
 #[async_trait]
-pub trait BuildRunControlStore: Send + Sync {
+pub trait BuildControlStore: Send + Sync {
   /// Persists one idempotent Build cancellation intent and atomically removes
   /// queued work or requests cancellation from current Lease owners.
   async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError>;
@@ -68,9 +76,9 @@ pub trait BuildRunControlStore: Send + Sync {
 /// Every method inherited from the operation-specific ports is one transaction
 /// boundary. Applications SHOULD depend on the narrowest port that serves
 /// their use case; adapter contract suites use this composite interface.
-pub trait AuthoritativeStore: TriggerAcceptanceStore + JobExecutionStore + BuildRunControlStore + Send + Sync {}
+pub trait AuthoritativeStore: TriggerAcceptanceStore + JobExecutionStore + BuildControlStore + Send + Sync {}
 
 impl<T> AuthoritativeStore for T where
-  T: TriggerAcceptanceStore + JobExecutionStore + BuildRunControlStore + Send + Sync + ?Sized
+  T: TriggerAcceptanceStore + JobExecutionStore + BuildControlStore + Send + Sync + ?Sized
 {
 }

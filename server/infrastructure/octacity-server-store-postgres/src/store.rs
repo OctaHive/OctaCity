@@ -2,23 +2,30 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use octacity_server_domain::{
-  BuildConfigurationId, BuildConfigurationVersion, PipelineId, PipelineVersion, ProjectId, RepositoryId,
-  RepositoryVersion,
+  BuildConfigurationId, BuildConfigurationVersion, PipelineId, PipelineVersion, PoolId, PoolVersion, ProjectId,
+  RepositoryId, RepositoryVersion,
 };
 use octacity_server_job::JobSpecSigner;
 use octacity_server_store::{
-  AcceptTrigger, AcceptTriggerOutcome, AgentCredentialStore, AgentRegistrationOutcome, AppendJobEvents,
-  AppendJobEventsOutcome, AuthenticateAgentRegistration, AuthenticatedAgentRegistration,
-  BuildConfigurationMutationOutcome, BuildRunControlStore, CancelBuild, CancellationDisposition, CompletionDisposition,
-  ConfigurationStore, CreateBuildConfiguration, CreateProject, CreateRepository, DeleteProject, DeleteProjectOutcome,
-  IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage,
-  JobEventReadStore, JobExecutionStore, ListProjects, LogIndexPosition, LogIndexWorkStore, MoveProject,
-  MutationDisposition, PipelineMutationOutcome, PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage,
-  ProjectStore, PublishBuildConfigurationVersion, PublishPipelineVersion, PublishRepositoryVersion,
-  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents, RegisterAgent, RenameProject,
-  RepositoryMutationOutcome, RetryBuild, RetryDisposition, RevokeAgentCredential, StoreError, SuppressTrigger,
-  SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionRef, TriggerDefinitionStore,
-  TriggerEvaluationOutcome, TriggerKind, TriggerTarget,
+  AcceptTrigger, AcceptTriggerOutcome, AgentCredentialStore, AgentPage, AgentPoolMutationOutcome, AgentPoolPage,
+  AgentPoolStore, AgentRegistrationOutcome, AgentStore, AppendJobEvents, AppendJobEventsOutcome,
+  AuthenticateAgentRegistration, AuthenticatedAgentRegistration, BuildConfigurationMutationOutcome, BuildControlStore,
+  BuildQueryStore, BuildRecord, CancelBuild, CancellationDisposition, ClaimExpiredLeases, CompletionDisposition,
+  ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateProject, CreateRepository,
+  CreateTriggerDefinition, DefinitionStore, DeleteAgentPool, DeleteAgentPoolOutcome, DeleteProject,
+  DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, ExpiredLeaseClaim, IssueAgentEnrollment,
+  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore,
+  JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents,
+  ListProjects, LogIndexPosition, LogIndexWorkStore, MoveProject, MutationDisposition, PipelineMutationOutcome,
+  PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument,
+  ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion,
+  PublishBuildConfigurationVersion, PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion,
+  PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents,
+  ReassignAgentPool, ReassignAgentPoolOutcome, RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent,
+  RenameProject, RenewLease, RepositoryMutationOutcome, RetryBuild, RetryDisposition, RevokeAgentCredential,
+  StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore,
+  TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationOutcome,
+  TriggerKind, TriggerTarget,
 };
 use sqlx::PgPool;
 
@@ -88,6 +95,34 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
 }
 
 #[async_trait]
+impl LeaseHeartbeatStore for PostgresStore {
+  async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
+    crate::lease_heartbeat::execute(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl LeaseHeartbeatStore for PostgresAuthoritativeStore {
+  async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
+    crate::lease_heartbeat::execute(&self.store.pool, request).await
+  }
+}
+
+#[async_trait]
+impl LeaseRecoveryStore for PostgresAuthoritativeStore {
+  async fn claim_expired_leases(&self, request: ClaimExpiredLeases) -> Result<Vec<ExpiredLeaseClaim>, StoreError> {
+    crate::lease_recovery::claim(&self.store.pool, request).await
+  }
+
+  async fn recover_expired_lease(
+    &self,
+    request: RecoverExpiredLease,
+  ) -> Result<RecoverExpiredLeaseOutcome, StoreError> {
+    crate::lease_recovery::recover(&self.store.pool, &self.job_spec_signer, request).await
+  }
+}
+
+#[async_trait]
 impl JobEventReadStore for PostgresStore {
   async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
     crate::job_event_query::read(&self.pool, request).await
@@ -102,13 +137,63 @@ impl JobEventReadStore for PostgresAuthoritativeStore {
 }
 
 #[async_trait]
-impl BuildRunControlStore for PostgresAuthoritativeStore {
+impl BuildControlStore for PostgresAuthoritativeStore {
   async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
     crate::cancel_build::execute(&self.store.pool, request).await
   }
 
   async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
     crate::retry_build::execute(&self.store.pool, &self.job_spec_signer, request).await
+  }
+}
+
+#[async_trait]
+impl BuildQueryStore for PostgresStore {
+  async fn build(&self, build_id: octacity_server_domain::BuildId) -> Result<BuildRecord, StoreError> {
+    crate::build_query::build(&self.pool, build_id).await
+  }
+
+  async fn attempt(
+    &self,
+    attempt_id: octacity_server_domain::AttemptId,
+  ) -> Result<octacity_server_store::AttemptRecord, StoreError> {
+    crate::build_query::attempt(&self.pool, attempt_id).await
+  }
+
+  async fn job(&self, job_id: octacity_server_domain::JobId) -> Result<octacity_server_store::JobRecord, StoreError> {
+    crate::build_query::job(&self.pool, job_id).await
+  }
+
+  async fn latest_attempt(
+    &self,
+    build_id: octacity_server_domain::BuildId,
+  ) -> Result<octacity_server_store::AttemptRecord, StoreError> {
+    crate::build_query::latest_attempt(&self.pool, build_id).await
+  }
+}
+
+#[async_trait]
+impl BuildQueryStore for PostgresAuthoritativeStore {
+  async fn build(&self, build_id: octacity_server_domain::BuildId) -> Result<BuildRecord, StoreError> {
+    self.store.build(build_id).await
+  }
+
+  async fn attempt(
+    &self,
+    attempt_id: octacity_server_domain::AttemptId,
+  ) -> Result<octacity_server_store::AttemptRecord, StoreError> {
+    self.store.attempt(attempt_id).await
+  }
+
+  async fn job(&self, job_id: octacity_server_domain::JobId) -> Result<octacity_server_store::JobRecord, StoreError> {
+    self.store.job(job_id).await
+  }
+
+  async fn latest_attempt(
+    &self,
+    build_id: octacity_server_domain::BuildId,
+  ) -> Result<octacity_server_store::AttemptRecord, StoreError> {
+    self.store.latest_attempt(build_id).await
   }
 }
 
@@ -148,6 +233,78 @@ impl ProjectStore for PostgresStore {
 
   async fn delete_project(&self, request: DeleteProject) -> Result<DeleteProjectOutcome, StoreError> {
     crate::project_mutation::delete(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl ProjectPolicyStore for PostgresStore {
+  async fn project_policy_lineage(&self, project_id: ProjectId) -> Result<Vec<ProjectPolicyDocument>, StoreError> {
+    crate::project_policy_query::lineage(&self.pool, project_id).await
+  }
+}
+
+#[async_trait]
+impl DefinitionStore for PostgresStore {
+  async fn publish_project_policy(
+    &self,
+    request: PublishProjectPolicy,
+  ) -> Result<ProjectPolicyMutationOutcome, StoreError> {
+    crate::definition_mutation::publish_policy(&self.pool, request).await
+  }
+
+  async fn create_trigger_definition(
+    &self,
+    request: CreateTriggerDefinition,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    crate::definition_mutation::create_trigger(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl AgentPoolStore for PostgresStore {
+  async fn create_agent_pool(&self, request: CreateAgentPool) -> Result<AgentPoolMutationOutcome, StoreError> {
+    crate::pool_mutation::create(&self.pool, request).await
+  }
+
+  async fn publish_agent_pool_version(
+    &self,
+    request: PublishAgentPoolVersion,
+  ) -> Result<AgentPoolMutationOutcome, StoreError> {
+    crate::pool_mutation::publish(&self.pool, request).await
+  }
+
+  async fn agent_pool_version(&self, pool_id: PoolId, version: PoolVersion) -> Result<PublishedAgentPool, StoreError> {
+    crate::pool_query::read(&self.pool, pool_id, version).await
+  }
+
+  async fn list_agent_pools(&self, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
+    crate::pool_query::list(&self.pool, request).await
+  }
+
+  async fn delete_agent_pool(&self, request: DeleteAgentPool) -> Result<DeleteAgentPoolOutcome, StoreError> {
+    crate::pool_mutation::delete(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl AgentStore for PostgresStore {
+  async fn agent(
+    &self,
+    agent_id: octacity_server_domain::AgentId,
+  ) -> Result<octacity_server_store::EnrolledAgent, StoreError> {
+    crate::agent_query::read(&self.pool, agent_id).await
+  }
+
+  async fn list_agents(&self, request: ListAgents) -> Result<AgentPage, StoreError> {
+    crate::agent_query::list(&self.pool, request).await
+  }
+
+  async fn reassign_agent_pool(&self, request: ReassignAgentPool) -> Result<ReassignAgentPoolOutcome, StoreError> {
+    crate::agent_mutation::reassign(&self.pool, request).await
+  }
+
+  async fn drain_agent(&self, request: DrainAgent) -> Result<DrainAgentOutcome, StoreError> {
+    crate::agent_mutation::drain(&self.pool, request).await
   }
 }
 

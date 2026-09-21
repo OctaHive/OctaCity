@@ -264,6 +264,8 @@ pub struct BuildConfigurationProjection {
   pub version: BuildConfigurationVersion,
   /// Whether new Triggers may target this version.
   pub enabled: bool,
+  /// Maximum active Jobs across Builds of this Configuration version.
+  pub job_concurrency_limit: u32,
   /// Exact immutable Repository reference.
   pub repository_id: RepositoryId,
   /// Exact immutable Repository version.
@@ -402,6 +404,7 @@ impl TryFrom<PublishedBuildConfiguration> for BuildConfigurationProjection {
       name: configuration.name,
       version: configuration.version,
       enabled: definition.enabled,
+      job_concurrency_limit: definition.job_concurrency_limit,
       repository_id: definition.repository_id,
       repository_version: definition.repository_version,
       pipeline_id: definition.pipeline_id,

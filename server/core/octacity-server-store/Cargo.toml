@@ -18,6 +18,7 @@ octacity-server-domain = { path = "../octacity-server-domain" }
 octacity-server-job = { path = "../octacity-server-job" }
 octacity-server-orchestrator = { path = "../octacity-server-orchestrator" }
 octacity-server-pipeline = { path = "../octacity-server-pipeline" }
+octacity-server-scheduler = { path = "../octacity-server-scheduler" }
 octacity-server-trigger = { path = "../octacity-server-trigger" }
 serde.workspace = true
 serde_json.workspace = true

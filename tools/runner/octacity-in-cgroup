@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CGROUP_RUNNER=/sys/fs/cgroup/octacity/runner
+
+if [[ $EUID -ne 0 ]]; then
+  echo "octacity-in-cgroup must be started through sudo" >&2
+  exit 1
+fi
+if (( $# < 2 )); then
+  echo "usage: octacity-in-cgroup USER COMMAND [ARG ...]" >&2
+  exit 2
+fi
+
+runner_user=$1
+shift
+runner_group=$(id -gn "$runner_user")
+runner_home=$(getent passwd "$runner_user" | cut -d: -f6)
+[[ -n $runner_home ]] || {
+  echo "cannot resolve home directory for $runner_user" >&2
+  exit 1
+}
+
+if [[ ! -w "$CGROUP_RUNNER/cgroup.procs" ]]; then
+  echo "OctaCity runner cgroup is unavailable; run install-linux-native-cgroup.sh first" >&2
+  exit 1
+fi
+
+# The runner stays in a sibling leaf of the backend's clean jobs subtree. This
+# lets an unprivileged pre-exec hook move a child into a job cgroup without
+# violating cgroup v2's no-internal-process rule.
+echo $$ > "$CGROUP_RUNNER/cgroup.procs"
+exec setpriv --reuid="$runner_user" --regid="$runner_group" --init-groups -- \
+  env HOME="$runner_home" USER="$runner_user" LOGNAME="$runner_user" \
+  PATH="$runner_home/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$@"

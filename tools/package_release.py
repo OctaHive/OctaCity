@@ -32,11 +32,17 @@ class PlatformLayout(NamedTuple):
     plugin_name: str
     service_asset: str
     config_asset: str
+    git_executable: str
 
 
 PLATFORMS = {
     "linux-amd64": PlatformLayout(
-        "linux-x86_64", "octacity-agent", "octacity-source-git", "systemd/octacity-agent.service", "agent.example.toml"
+        "linux-x86_64",
+        "octacity-agent",
+        "octacity-source-git",
+        "systemd/octacity-agent.service",
+        "agent.example.toml",
+        "/usr/bin/git",
     ),
     "linux-arm64": PlatformLayout(
         "linux-aarch64",
@@ -44,6 +50,7 @@ PLATFORMS = {
         "octacity-source-git",
         "systemd/octacity-agent.service",
         "agent.linux-arm64.example.toml",
+        "/usr/bin/git",
     ),
     "windows-amd64": PlatformLayout(
         "windows-x86_64",
@@ -51,6 +58,7 @@ PLATFORMS = {
         "octacity-source-git.exe",
         "windows/install-service.ps1",
         "agent.windows.example.toml",
+        r"C:\Program Files\Git\cmd\git.exe",
     ),
     "macos-arm64": PlatformLayout(
         "macos-aarch64",
@@ -58,6 +66,7 @@ PLATFORMS = {
         "octacity-source-git",
         "launchd/com.octahive.octacity-agent.plist",
         "agent.macos.example.toml",
+        "/usr/bin/git",
     ),
 }
 FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
@@ -165,6 +174,11 @@ def stage_release(
                 f'executable = "{plugin_name}"',
                 f'sha256 = "{plugin_digest}"',
                 f'platforms = ["{source_platform}"]',
+                "",
+                "[settings]",
+                f"git_path = {json.dumps(layout.git_executable)}",
+                "allow_file = false",
+                "max_diagnostic_bytes = 65536",
                 "",
             ]
         ),

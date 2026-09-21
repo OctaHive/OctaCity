@@ -9,6 +9,7 @@ publish = false
 description = "Versioned provider-neutral agent-provisioning adapter protocol for OctaCity"
 
 [dependencies]
+octacity-adapter-protocol = { path = "../octacity-adapter-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

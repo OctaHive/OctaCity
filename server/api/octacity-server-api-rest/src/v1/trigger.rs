@@ -5,6 +5,48 @@ use serde_json::Value;
 
 use super::MutationDisposition;
 
+/// Request body for publishing an immutable Project policy version.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishProjectPolicyRequest {
+  /// Complete strict policy-directive document.
+  pub policy: Value,
+}
+
+/// REST result of a Project policy publication.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectPolicyResource {
+  /// Owning Project identity.
+  pub project_id: String,
+  /// Exact immutable policy version.
+  pub version: u64,
+}
+
+/// Request body for creating a manual Trigger definition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateManualTriggerDefinitionRequest {
+  /// Target Build Configuration identity.
+  pub configuration_id: String,
+  /// Exact immutable Build Configuration version.
+  pub configuration_version: u64,
+  /// Whether occurrences may be accepted.
+  pub enabled: bool,
+  /// Manual Trigger-specific bounded definition document.
+  pub definition: Value,
+}
+
+/// REST result of creating a Trigger definition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TriggerDefinitionResource {
+  /// Stable Trigger identity.
+  pub id: String,
+  /// Exact immutable Trigger version.
+  pub version: u64,
+}
+
 /// Source expression supplied by a manual Build request.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case", deny_unknown_fields)]

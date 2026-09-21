@@ -21,6 +21,9 @@ pub enum ApplicationFailure {
 /// Transport-independent failure from a typed application handler.
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+  /// Typed application input violated a command-specific invariant.
+  #[error("application input is invalid")]
+  InvalidInput,
   /// An authoritative backend-neutral port rejected or could not complete the operation.
   #[error("authoritative application port failed")]
   Store(#[from] StoreError),
@@ -30,6 +33,12 @@ pub enum ApplicationError {
 }
 
 impl ApplicationError {
+  /// Constructs a transport-neutral invalid-input failure.
+  #[must_use]
+  pub const fn invalid() -> Self {
+    Self::InvalidInput
+  }
+
   /// Constructs an unavailable dependency failure for adapter-boundary tests.
   #[must_use]
   pub const fn unavailable() -> Self {
@@ -40,6 +49,7 @@ impl ApplicationError {
   #[must_use]
   pub const fn classification(&self) -> ApplicationFailure {
     match self {
+      Self::InvalidInput => ApplicationFailure::Invalid,
       Self::Store(StoreError::InvalidInput { .. }) => ApplicationFailure::Invalid,
       Self::Store(StoreError::NotFound { .. }) => ApplicationFailure::NotFound,
       Self::Store(StoreError::Conflict { .. } | StoreError::Duplicate { .. }) => ApplicationFailure::Conflict,

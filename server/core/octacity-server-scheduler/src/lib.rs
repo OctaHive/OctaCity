@@ -15,7 +15,9 @@
 #![deny(missing_docs)]
 
 mod lease;
+mod placement;
 mod pool;
 
 pub use lease::{LeaseEvent, LeaseState};
-pub use pool::{PoolDrainEvent, PoolDrainState};
+pub use placement::is_compatible;
+pub use pool::{PoolDrainEvent, PoolDrainState, PoolDrainTransitionError};

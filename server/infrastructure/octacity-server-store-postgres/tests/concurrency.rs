@@ -15,7 +15,8 @@ use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, EventSequence, JobClaim,
   JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  MaterializedJob, MutationDisposition, TriggerAcceptanceStore as _, testing::authoritative_store_contract_fixture,
+  LeaseWindow, MaterializedJob, MutationDisposition, TriggerAcceptanceStore as _,
+  testing::authoritative_store_contract_fixture,
 };
 use octacity_server_store_postgres::PostgresAuthoritativeStore;
 use serde_json::json;
@@ -187,7 +188,7 @@ async fn concurrent_event_and_completion_replays_have_one_dag_transition() {
     .await
     .unwrap()
   {
-    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => panic!("seeded root Job must be claimable"),
   };
   let access = LeaseAccess {
@@ -230,13 +231,14 @@ async fn concurrent_event_and_completion_replays_have_one_dag_transition() {
     );
 
     let completion = JobCompletion {
+      completion_id: octacity_server_store::IdempotencyKey::new("concurrent-completion").unwrap(),
       lease: access,
       final_sequence: Some(EventSequence::new(2).unwrap()),
       kind: JobCompletionKind::Succeeded,
       completed_at: time(3_000),
     };
     let barrier = Arc::new(Barrier::new(2));
-    let left_task = tokio::spawn(complete_after_barrier(left, completion, barrier.clone()));
+    let left_task = tokio::spawn(complete_after_barrier(left, completion.clone(), barrier.clone()));
     let right_task = tokio::spawn(complete_after_barrier(right, completion, barrier));
     let completed = [left_task.await.unwrap().unwrap(), right_task.await.unwrap().unwrap()];
     assert_eq!(
@@ -680,10 +682,13 @@ async fn seed_matching_agent(pool: &sqlx::PgPool, agent: AgentId, allowed_pool: 
   sqlx::query(
     "INSERT INTO agent_registrations \
        (id, agent_id, epoch, credential_hash, inventory, registered_at, expires_at) \
-     VALUES ($1, $2, 1, decode(repeat('03', 32), 'hex'), '{}', to_timestamp(0), '9999-12-31 23:59:59+00')",
+     VALUES ($1, $2, 1, decode(repeat('03', 32), 'hex'), $3, to_timestamp(0), '9999-12-31 23:59:59+00')",
   )
   .bind(uuid::Uuid::from_u128(703))
   .bind(agent.as_uuid())
+  .bind(sqlx::types::Json(octacity_server_store::testing::compatible_inventory(
+    agent,
+  )))
   .execute(pool)
   .await
   .unwrap();
@@ -702,8 +707,12 @@ fn claim(
     agent_id,
     registration_epoch,
     pool_id,
-    Timestamp::from_unix_millis(1_000).unwrap(),
-    Timestamp::from_unix_millis(253_402_300_799_000).unwrap(),
+    octacity_server_store::testing::compatible_snapshot(),
+    LeaseWindow::new(
+      Timestamp::from_unix_millis(1_000).unwrap(),
+      Timestamp::from_unix_millis(253_402_300_799_000).unwrap(),
+    )
+    .unwrap(),
   )
   .unwrap()
 }
@@ -760,13 +769,14 @@ fn materialized_job(
 
 fn claimed(outcome: JobClaimOutcome) -> octacity_server_store::LeaseGrant {
   match outcome {
-    JobClaimOutcome::Claimed(grant) => grant,
+    JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => panic!("a seeded root Job must be claimable"),
   }
 }
 
 fn successful_completion(grant: octacity_server_store::LeaseGrant, completed_at: i64) -> JobCompletion {
   JobCompletion {
+    completion_id: octacity_server_store::IdempotencyKey::new(format!("completion-{}", grant.lease_id)).unwrap(),
     lease: LeaseAccess {
       lease_id: grant.lease_id,
       fence: grant.fence,

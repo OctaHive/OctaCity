@@ -203,7 +203,7 @@ fn resolve_value<T: ProtectedPolicy>(
 /// raise a ceiling removed by an ancestor.
 pub fn resolve_project_policy(layers: &[ProjectPolicyLayer]) -> Result<EffectiveProjectPolicy, PolicyResolutionError> {
   for layer in layers {
-    let artifacts = match &layer.artifacts {
+    let artifacts = match &layer.definition.artifacts {
       PolicyDirective::Replace(value) | PolicyDirective::Narrow(value) => Some(value),
       PolicyDirective::Inherit => None,
     };
@@ -222,19 +222,31 @@ pub fn resolve_project_policy(layers: &[ProjectPolicyLayer]) -> Result<Effective
   }
 
   let mut policy = ProjectPolicy {
-    pools: root_value(root.project_id, PolicyCategory::Pools, &root.pools)?,
-    repositories: root_value(root.project_id, PolicyCategory::Repositories, &root.repositories)?,
-    secret_profiles: root_value(root.project_id, PolicyCategory::SecretProfiles, &root.secret_profiles)?,
+    pools: root_value(root.project_id, PolicyCategory::Pools, &root.definition.pools)?,
+    repositories: root_value(
+      root.project_id,
+      PolicyCategory::Repositories,
+      &root.definition.repositories,
+    )?,
+    secret_profiles: root_value(
+      root.project_id,
+      PolicyCategory::SecretProfiles,
+      &root.definition.secret_profiles,
+    )?,
     identity_profiles: root_value(
       root.project_id,
       PolicyCategory::IdentityProfiles,
-      &root.identity_profiles,
+      &root.definition.identity_profiles,
     )?,
-    runtimes: root_value(root.project_id, PolicyCategory::Runtime, &root.runtimes)?,
-    cache: root_value(root.project_id, PolicyCategory::Cache, &root.cache)?,
-    artifacts: root_value(root.project_id, PolicyCategory::Artifacts, &root.artifacts)?,
-    concurrency: root_value(root.project_id, PolicyCategory::Concurrency, &root.concurrency)?,
-    retention: root_value(root.project_id, PolicyCategory::Retention, &root.retention)?,
+    runtimes: root_value(root.project_id, PolicyCategory::Runtime, &root.definition.runtimes)?,
+    cache: root_value(root.project_id, PolicyCategory::Cache, &root.definition.cache)?,
+    artifacts: root_value(root.project_id, PolicyCategory::Artifacts, &root.definition.artifacts)?,
+    concurrency: root_value(
+      root.project_id,
+      PolicyCategory::Concurrency,
+      &root.definition.concurrency,
+    )?,
+    retention: root_value(root.project_id, PolicyCategory::Retention, &root.definition.retention)?,
   };
   let mut sources = Vec::with_capacity(layers.len());
   let mut seen = BTreeSet::new();
@@ -259,49 +271,59 @@ pub fn resolve_project_policy(layers: &[ProjectPolicyLayer]) -> Result<Effective
     }
 
     policy = ProjectPolicy {
-      pools: resolve_value(layer.project_id, PolicyCategory::Pools, &policy.pools, &layer.pools)?,
+      pools: resolve_value(
+        layer.project_id,
+        PolicyCategory::Pools,
+        &policy.pools,
+        &layer.definition.pools,
+      )?,
       repositories: resolve_value(
         layer.project_id,
         PolicyCategory::Repositories,
         &policy.repositories,
-        &layer.repositories,
+        &layer.definition.repositories,
       )?,
       secret_profiles: resolve_value(
         layer.project_id,
         PolicyCategory::SecretProfiles,
         &policy.secret_profiles,
-        &layer.secret_profiles,
+        &layer.definition.secret_profiles,
       )?,
       identity_profiles: resolve_value(
         layer.project_id,
         PolicyCategory::IdentityProfiles,
         &policy.identity_profiles,
-        &layer.identity_profiles,
+        &layer.definition.identity_profiles,
       )?,
       runtimes: resolve_value(
         layer.project_id,
         PolicyCategory::Runtime,
         &policy.runtimes,
-        &layer.runtimes,
+        &layer.definition.runtimes,
       )?,
-      cache: resolve_value(layer.project_id, PolicyCategory::Cache, &policy.cache, &layer.cache)?,
+      cache: resolve_value(
+        layer.project_id,
+        PolicyCategory::Cache,
+        &policy.cache,
+        &layer.definition.cache,
+      )?,
       artifacts: resolve_value(
         layer.project_id,
         PolicyCategory::Artifacts,
         &policy.artifacts,
-        &layer.artifacts,
+        &layer.definition.artifacts,
       )?,
       concurrency: resolve_value(
         layer.project_id,
         PolicyCategory::Concurrency,
         &policy.concurrency,
-        &layer.concurrency,
+        &layer.definition.concurrency,
       )?,
       retention: resolve_value(
         layer.project_id,
         PolicyCategory::Retention,
         &policy.retention,
-        &layer.retention,
+        &layer.definition.retention,
       )?,
     };
     sources.push(PolicySource {

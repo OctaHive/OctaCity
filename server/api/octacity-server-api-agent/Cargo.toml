@@ -7,3 +7,16 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Agent protocol API adapter for the OctaCity server"
+
+[dependencies]
+async-trait.workspace = true
+axum.workspace = true
+octacity-protocol = { path = "../../../shared/octacity-protocol" }
+octacity-server-application = { path = "../../application/octacity-server-application" }
+serde.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio.workspace = true
+tower = { workspace = true, features = ["util"] }

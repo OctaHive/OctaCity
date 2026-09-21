@@ -109,6 +109,7 @@ impl ManualTriggerService {
       immutable_revision,
       input_snapshot: input_snapshot(&prepared)?,
       effective_policy_snapshot: effective_policy_snapshot(&context)?,
+      project_job_concurrency_limit: context.effective_policy.policy.concurrency.active_jobs,
       priority: command.priority,
     };
     let request = AcceptTrigger::new(

@@ -498,7 +498,7 @@ dependencies = [
  "bytes",
  "fastrand",
  "hex",
- "hmac",
+ "hmac 0.13.0",
  "http 0.2.12",
  "http 1.5.0",
  "http-body 1.1.0",
@@ -524,7 +524,7 @@ dependencies = [
  "bytes",
  "form_urlencoded",
  "hex",
- "hmac",
+ "hmac 0.13.0",
  "http 0.2.12",
  "http 1.5.0",
  "percent-encoding",
@@ -1691,6 +1691,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer 0.10.4",
  "crypto-common 0.1.7",
+ "subtle",
 ]
 
 [[package]]
@@ -2298,7 +2299,16 @@ version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa26c720c68b866f2c96ef5c1264b3e6f473fe5d4ce61cd44bbe913e553018"
 dependencies = [
- "hmac",
+ "hmac 0.13.0",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]
@@ -3904,6 +3914,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-adapter-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "octacity-agent"
 version = "0.1.0"
 dependencies = [
@@ -3938,6 +3956,7 @@ dependencies = [
 name = "octacity-agent-provisioning-protocol"
 version = "0.1.0"
 dependencies = [
+ "octacity-adapter-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4183,10 +4202,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "octacity-observability"
-version = "0.1.0"
-
-[[package]]
 name = "octacity-output"
 version = "0.1.0"
 dependencies = [
@@ -4290,15 +4305,23 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "clap",
+ "ed25519-dalek",
+ "octa-plugin-lock",
  "octacity-artifact-s3",
  "octacity-protocol",
+ "octacity-server-api-agent",
  "octacity-server-api-rest",
+ "octacity-server-application",
+ "octacity-server-domain",
  "octacity-server-job",
+ "octacity-server-store",
  "octacity-server-store-postgres",
  "reqwest",
  "rustix",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.10.9",
  "sqlx",
  "tempfile",
  "thiserror 2.0.20",
@@ -4314,6 +4337,16 @@ dependencies = [
 [[package]]
 name = "octacity-server-api-agent"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "octacity-protocol",
+ "octacity-server-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
 
 [[package]]
 name = "octacity-server-api-rest"
@@ -4332,10 +4365,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "octacity-server-api-webhook"
-version = "0.1.0"
-
-[[package]]
 name = "octacity-server-application"
 version = "0.1.0"
 dependencies = [
@@ -4345,6 +4374,8 @@ dependencies = [
  "octacity-server-job",
  "octacity-server-orchestrator",
  "octacity-server-pipeline",
+ "octacity-server-scheduler",
+ "octacity-server-secrets",
  "octacity-server-store",
  "octacity-server-trigger",
  "serde",
@@ -4359,10 +4390,6 @@ version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
 ]
-
-[[package]]
-name = "octacity-server-audit"
-version = "0.1.0"
 
 [[package]]
 name = "octacity-server-cache"
@@ -4420,12 +4447,24 @@ dependencies = [
 name = "octacity-server-scheduler"
 version = "0.1.0"
 dependencies = [
+ "octacity-protocol",
  "octacity-server-domain",
+ "octacity-server-job",
+ "octacity-server-pipeline",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
 name = "octacity-server-secrets"
 version = "0.1.0"
+dependencies = [
+ "hmac 0.12.1",
+ "sha2 0.10.9",
+ "zeroize",
+]
 
 [[package]]
 name = "octacity-server-store"
@@ -4437,6 +4476,7 @@ dependencies = [
  "octacity-server-job",
  "octacity-server-orchestrator",
  "octacity-server-pipeline",
+ "octacity-server-scheduler",
  "octacity-server-trigger",
  "serde",
  "serde_json",
@@ -4455,6 +4495,7 @@ dependencies = [
  "octacity-server-job",
  "octacity-server-orchestrator",
  "octacity-server-pipeline",
+ "octacity-server-scheduler",
  "octacity-server-store",
  "serde",
  "serde_json",
@@ -4473,14 +4514,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
 ]
-
-[[package]]
-name = "octacity-server-vcs"
-version = "0.1.0"
-
-[[package]]
-name = "octacity-server-webhook"
-version = "0.1.0"
 
 [[package]]
 name = "octacity-source"
@@ -4532,6 +4565,7 @@ name = "octacity-vcs-protocol"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "octacity-adapter-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4542,6 +4576,7 @@ name = "octacity-webhook-provider-protocol"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "octacity-adapter-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -6050,7 +6085,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hkdf",
- "hmac",
+ "hmac 0.13.0",
  "itoa",
  "log",
  "md-5",

@@ -247,6 +247,7 @@ impl CoordinatorClient for LifecycleCoordinator {
     _wait: Duration,
     _lease_safety_margin: Duration,
     _accept_jobs: bool,
+    _snapshot: &HostSnapshot,
     _cancellation: CancellationToken,
   ) -> Result<AcquireLeaseResponse, CoordinatorError> {
     unreachable!()
