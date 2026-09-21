@@ -4,7 +4,7 @@ use super::*;
 #[cfg(unix)]
 use octacity_source_plugin::SourcePluginManifest;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::symlink;
 use tokio::io::AsyncReadExt as _;
 
 // Lifecycle-classification tests deliberately do not exercise timeout policy.
@@ -142,14 +142,14 @@ fn scripted_plugin(messages_after_request: &[&str]) -> (tempfile::TempDir, Insta
 fn source_plugin_with_body(body: &str) -> (tempfile::TempDir, InstalledSourcePlugin) {
   let directory = tempfile::tempdir().unwrap();
   let executable = directory.path().join("fixture-source");
-  let mut script = String::from(
-    "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"fixture\",\"plugin_version\":\"1.0.0\"}'\nIFS= read -r request\n",
-  );
-  script.push_str(body);
-  std::fs::write(&executable, script).unwrap();
-  let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
-  permissions.set_mode(0o700);
-  std::fs::set_permissions(&executable, permissions).unwrap();
+  // Keep the executable inode immutable: Linux may reject a freshly written
+  // shebang file with ETXTBSY when lifecycle tests run in parallel.
+  std::fs::write(directory.path().join("fixture-body"), body).unwrap();
+  symlink(
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/source-plugin.sh"),
+    &executable,
+  )
+  .unwrap();
 
   let plugin = InstalledSourcePlugin {
     manifest: SourcePluginManifest {
@@ -301,7 +301,10 @@ async fn times_out_and_stops_a_running_source_plugin() {
     )
     .await
     .unwrap_err();
-  assert!(matches!(error, SourceHostError::TimedOut { .. }));
+  assert!(
+    matches!(error, SourceHostError::TimedOut { .. }),
+    "unexpected error: {error}"
+  );
 }
 
 #[cfg(unix)]
@@ -354,7 +357,10 @@ async fn force_stops_a_plugin_that_ignores_the_timeout() {
     )
     .await
     .unwrap_err();
-  assert!(matches!(error, SourceHostError::TimedOut { .. }));
+  assert!(
+    matches!(error, SourceHostError::TimedOut { .. }),
+    "unexpected error: {error}"
+  );
 }
 
 #[cfg(unix)]

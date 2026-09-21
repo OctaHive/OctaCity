@@ -904,7 +904,8 @@ fn concrete_path(path: &str) -> String {
 
 #[test]
 fn documented_http_requests_support_windows_line_endings() {
-  let document = DOCUMENTED_SECTION_FOUR_WORKFLOW.replace('\n', "\r\n");
+  let unix_document = DOCUMENTED_SECTION_FOUR_WORKFLOW.replace("\r\n", "\n");
+  let document = unix_document.replace('\n', "\r\n");
 
   assert_eq!(documented_http_requests(&document).len(), 5);
 }
