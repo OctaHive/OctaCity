@@ -10,22 +10,29 @@ use octacity_server_store::{
   AcceptTrigger, AcceptTriggerOutcome, AgentCredentialStore, AgentPage, AgentPoolMutationOutcome, AgentPoolPage,
   AgentPoolStore, AgentRegistrationOutcome, AgentStore, AppendJobEvents, AppendJobEventsOutcome,
   AuthenticateAgentRegistration, AuthenticatedAgentRegistration, BuildConfigurationMutationOutcome, BuildControlStore,
-  BuildQueryStore, BuildRecord, CancelBuild, CancellationDisposition, ClaimExpiredLeases, CompletionDisposition,
-  ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateProject, CreateRepository,
-  CreateTriggerDefinition, DefinitionStore, DeleteAgentPool, DeleteAgentPoolOutcome, DeleteProject,
-  DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, ExpiredLeaseClaim, IssueAgentEnrollment,
-  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore,
-  JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents,
-  ListProjects, LogIndexPosition, LogIndexWorkStore, MoveProject, MutationDisposition, PipelineMutationOutcome,
-  PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument,
-  ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion,
-  PublishBuildConfigurationVersion, PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion,
-  PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents,
-  ReassignAgentPool, ReassignAgentPoolOutcome, RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent,
-  RenameProject, RenewLease, RepositoryMutationOutcome, RetryBuild, RetryDisposition, RevokeAgentCredential,
-  StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore,
-  TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationOutcome,
-  TriggerKind, TriggerTarget,
+  BuildQueryStore, BuildRecord, CancelBuild, CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases,
+  ClaimInternalTriggerEvents, ClaimTriggerEvaluations, CompleteInternalTriggerEvent, CompleteScheduleClaim,
+  CompleteTriggerEvaluation, CompletionDisposition, ConfigurationStore, CreateAgentPool, CreateBuildConfiguration,
+  CreateManagedWebhook, CreateProject, CreateRepository, CreateSchedule, CreateTriggerDefinition,
+  CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool, DeleteAgentPoolOutcome, DeleteProject,
+  DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim, ExpiredLeaseClaim, FailTriggerEvaluation,
+  InternalTriggerEventClaim, InternalTriggerEventStore, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim,
+  JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore, JobExecutionStore, LeaseHeartbeatOutcome,
+  LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents, ListProjects, LogIndexPosition,
+  LogIndexWorkStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord,
+  ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore,
+  ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome,
+  ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishPipelineVersion,
+  PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline,
+  PublishedRepository, ReadJobEvents, ReassignAgentPool, ReassignAgentPoolOutcome, RecordManagedWebhookRegistration,
+  RecordTriggerEvaluationRevision, RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject,
+  RenewLease, RepositoryMutationOutcome, ReserveTriggerEvaluation, RetryBuild, RetryDisposition, RevokeAgentCredential,
+  ScheduleRecord, ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome, SuppressWebhookDelivery,
+  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionMutationOutcome, TriggerDefinitionRef,
+  TriggerDefinitionStore, TriggerEvaluationClaim, TriggerEvaluationOutcome, TriggerEvaluationReservation,
+  TriggerEvaluationWorkStore, TriggerKind, TriggerTarget, UnmanagedWebhookMutationOutcome, WebhookConfigurationStore,
+  WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
+  WebhookIntegrationRecord,
 };
 use sqlx::PgPool;
 
@@ -80,6 +87,38 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
 }
 
 #[async_trait]
+impl TriggerEvaluationWorkStore for PostgresStore {
+  async fn reserve_trigger_evaluation(
+    &self,
+    request: ReserveTriggerEvaluation,
+  ) -> Result<TriggerEvaluationReservation, StoreError> {
+    crate::trigger_evaluation::reserve(&self.pool, request).await
+  }
+
+  async fn claim_trigger_evaluations(
+    &self,
+    request: ClaimTriggerEvaluations,
+  ) -> Result<Vec<TriggerEvaluationClaim>, StoreError> {
+    crate::trigger_evaluation::claim(&self.pool, request).await
+  }
+
+  async fn complete_trigger_evaluation(&self, request: CompleteTriggerEvaluation) -> Result<(), StoreError> {
+    crate::trigger_evaluation::complete(&self.pool, request).await
+  }
+
+  async fn record_trigger_evaluation_revision(
+    &self,
+    request: RecordTriggerEvaluationRevision,
+  ) -> Result<(), StoreError> {
+    crate::trigger_evaluation::record_revision(&self.pool, request).await
+  }
+
+  async fn fail_trigger_evaluation(&self, request: FailTriggerEvaluation) -> Result<(), StoreError> {
+    crate::trigger_evaluation::fail(&self.pool, request).await
+  }
+}
+
+#[async_trait]
 impl JobExecutionStore for PostgresAuthoritativeStore {
   async fn claim_ready_job(&self, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
     crate::job_claim::execute(&self.store.pool, request).await
@@ -98,6 +137,23 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
 impl LeaseHeartbeatStore for PostgresStore {
   async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
     crate::lease_heartbeat::execute(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl InternalTriggerEventStore for PostgresStore {
+  async fn claim_internal_trigger_events(
+    &self,
+    request: ClaimInternalTriggerEvents,
+  ) -> Result<Vec<InternalTriggerEventClaim>, StoreError> {
+    crate::internal_trigger::claim(&self.pool, request).await
+  }
+
+  async fn complete_internal_trigger_event(
+    &self,
+    request: CompleteInternalTriggerEvent,
+  ) -> Result<MutationDisposition, StoreError> {
+    crate::internal_trigger::complete(&self.pool, request).await
   }
 }
 
@@ -210,6 +266,129 @@ impl TriggerDefinitionStore for PostgresStore {
 }
 
 #[async_trait]
+impl WebhookConfigurationStore for PostgresStore {
+  async fn create_unmanaged_webhook(
+    &self,
+    request: CreateUnmanagedWebhook,
+  ) -> Result<UnmanagedWebhookMutationOutcome, StoreError> {
+    crate::external_trigger::create(&self.pool, request).await
+  }
+
+  async fn create_managed_webhook(
+    &self,
+    request: CreateManagedWebhook,
+  ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
+    crate::external_trigger::create_managed(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl ManagedWebhookRegistrationStore for PostgresStore {
+  async fn managed_webhook(
+    &self,
+    integration_id: octacity_server_domain::IntegrationId,
+  ) -> Result<ManagedWebhookRecord, StoreError> {
+    crate::external_trigger::read_managed(&self.pool, integration_id).await
+  }
+}
+
+#[async_trait]
+impl ManagedWebhookOperationStore for PostgresStore {
+  async fn enqueue_managed_webhook_operation(
+    &self,
+    request: octacity_server_store::EnqueueManagedWebhookOperation,
+  ) -> Result<MutationDisposition, StoreError> {
+    crate::external_trigger::enqueue_managed_operation(&self.pool, request).await
+  }
+
+  async fn claim_managed_webhook_operations(
+    &self,
+    request: octacity_server_store::ClaimManagedWebhookOperations,
+  ) -> Result<Vec<octacity_server_store::ManagedWebhookOperationClaim>, StoreError> {
+    crate::external_trigger::claim_managed_operations(&self.pool, request).await
+  }
+
+  async fn record_managed_webhook_registration(
+    &self,
+    request: RecordManagedWebhookRegistration,
+  ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
+    crate::external_trigger::record_managed(&self.pool, request).await
+  }
+
+  async fn fail_managed_webhook_operation(
+    &self,
+    request: octacity_server_store::FailManagedWebhookOperation,
+  ) -> Result<(), StoreError> {
+    crate::external_trigger::fail_managed_operation(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl WebhookIntegrationReader for PostgresStore {
+  async fn webhook_integration(
+    &self,
+    integration_id: octacity_server_domain::IntegrationId,
+  ) -> Result<WebhookIntegrationRecord, StoreError> {
+    crate::external_trigger::read(&self.pool, integration_id).await
+  }
+}
+
+#[async_trait]
+impl WebhookDeliveryAdmissionStore for PostgresStore {
+  async fn enqueue_webhook_delivery(
+    &self,
+    request: octacity_server_store::EnqueueWebhookDelivery,
+  ) -> Result<octacity_server_store::MutationDisposition, StoreError> {
+    crate::external_trigger::enqueue_delivery(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl WebhookDeliveryWorkStore for PostgresStore {
+  async fn claim_webhook_deliveries(
+    &self,
+    request: octacity_server_store::ClaimWebhookDeliveries,
+  ) -> Result<Vec<octacity_server_store::WebhookDeliveryClaim>, StoreError> {
+    crate::external_trigger::claim_deliveries(&self.pool, request).await
+  }
+
+  async fn record_webhook_event(
+    &self,
+    request: octacity_server_store::RecordWebhookEvent,
+  ) -> Result<octacity_server_store::RecordWebhookEventOutcome, StoreError> {
+    crate::external_trigger::record_event(&self.pool, request).await
+  }
+
+  async fn fail_webhook_delivery(&self, request: octacity_server_store::FailWebhookDelivery) -> Result<(), StoreError> {
+    crate::external_trigger::fail_delivery(&self.pool, request).await
+  }
+
+  async fn complete_webhook_delivery(
+    &self,
+    request: octacity_server_store::CompleteWebhookDelivery,
+  ) -> Result<octacity_server_store::MutationDisposition, StoreError> {
+    crate::external_trigger::complete_delivery(&self.pool, request).await
+  }
+
+  async fn suppress_webhook_delivery(
+    &self,
+    request: SuppressWebhookDelivery,
+  ) -> Result<MutationDisposition, StoreError> {
+    crate::external_trigger::suppress_delivery(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl WebhookDeliveryQueryStore for PostgresStore {
+  async fn webhook_delivery(
+    &self,
+    delivery_id: octacity_server_store::WebhookDeliveryId,
+  ) -> Result<octacity_server_store::WebhookDeliveryDiagnostic, StoreError> {
+    crate::external_trigger::delivery_diagnostic(&self.pool, delivery_id).await
+  }
+}
+
+#[async_trait]
 impl ProjectStore for PostgresStore {
   async fn create_project(&self, request: CreateProject) -> Result<ProjectMutationOutcome, StoreError> {
     crate::project_mutation::create(&self.pool, request).await
@@ -257,6 +436,29 @@ impl DefinitionStore for PostgresStore {
     request: CreateTriggerDefinition,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
     crate::definition_mutation::create_trigger(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl ScheduleStore for PostgresStore {
+  async fn create_schedule(&self, request: CreateSchedule) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    crate::schedule::create(&self.pool, request).await
+  }
+
+  async fn schedule(
+    &self,
+    trigger_id: octacity_server_domain::TriggerId,
+    version: octacity_server_domain::TriggerVersion,
+  ) -> Result<ScheduleRecord, StoreError> {
+    crate::schedule::read(&self.pool, trigger_id, version).await
+  }
+
+  async fn claim_due_schedules(&self, request: ClaimDueSchedules) -> Result<Vec<DueScheduleClaim>, StoreError> {
+    crate::schedule::claim(&self.pool, request).await
+  }
+
+  async fn complete_schedule_claim(&self, request: CompleteScheduleClaim) -> Result<MutationDisposition, StoreError> {
+    crate::schedule::complete(&self.pool, request).await
   }
 }
 

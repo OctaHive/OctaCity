@@ -2,11 +2,12 @@ use std::sync::Arc;
 
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, CancelBuildCommand, CommandHandler, CreateAgentPoolCommand,
-  CreateBuildConfigurationCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
-  CreateTriggerDefinitionCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
-  GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery,
-  GetProjectQuery, GetRepositoryQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery,
-  ListProjectsQuery, ManualTriggerError, MoveProjectCommand, PublishAgentPoolVersionCommand,
+  CreateBuildConfigurationCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
+  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
+  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetAttemptQuery,
+  GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
+  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListProjectsQuery,
+  ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
   PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand, RenameProjectCommand,
   RetryBuildCommand,
@@ -44,8 +45,13 @@ type BuildCancel = dyn CommandHandler<CancelBuildCommand, Error = ApplicationErr
 type BuildRetry = dyn CommandHandler<RetryBuildCommand, Error = ApplicationError>;
 type ProjectPolicyPublish = dyn CommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>;
 type TriggerDefinitionCreate = dyn CommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>;
+type UnmanagedWebhookCreate = dyn CommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>;
+type ManagedWebhookCreate = dyn CommandHandler<CreateManagedWebhookCommand, Error = ApplicationError>;
+type ManagedWebhookManage = dyn CommandHandler<ManageWebhookRegistrationCommand, Error = ApplicationError>;
 type ManualTriggerAccept = dyn CommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError>;
 type JobEventsRead = dyn QueryHandler<ReadJobEventsQuery, Error = ApplicationError>;
+type ScheduleCreate = dyn CommandHandler<CreateScheduleCommand, Error = ApplicationError>;
+type ScheduleGet = dyn QueryHandler<GetScheduleQuery, Error = ApplicationError>;
 
 /// Type-erased Project handlers consumed by REST.
 pub struct ProjectManagementApplication {
@@ -229,19 +235,50 @@ impl BuildManagementApplication {
 pub struct DefinitionManagementApplication {
   pub(super) publish_project_policy: Arc<ProjectPolicyPublish>,
   pub(super) create_trigger: Arc<TriggerDefinitionCreate>,
+  pub(super) create_unmanaged_webhook: Arc<UnmanagedWebhookCreate>,
+  pub(super) create_managed_webhook: Arc<ManagedWebhookCreate>,
+  pub(super) manage_webhook_registration: Arc<ManagedWebhookManage>,
+}
+
+/// Type-erased durable schedule management handlers consumed by REST.
+pub struct ScheduleManagementApplication {
+  pub(super) create: Arc<ScheduleCreate>,
+  pub(super) get: Arc<ScheduleGet>,
+}
+
+impl ScheduleManagementApplication {
+  /// Erases one schedule service behind its command and query capabilities.
+  pub fn new<S>(service: Arc<S>) -> Self
+  where
+    S: CommandHandler<CreateScheduleCommand, Error = ApplicationError>
+      + QueryHandler<GetScheduleQuery, Error = ApplicationError>
+      + 'static,
+  {
+    Self {
+      create: service.clone(),
+      get: service,
+    }
+  }
 }
 
 impl DefinitionManagementApplication {
   /// Erases one definition service behind its endpoint capabilities.
-  pub fn new<D>(service: Arc<D>) -> Self
+  pub fn new<D, W>(service: Arc<D>, webhooks: Arc<W>) -> Self
   where
     D: CommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>
       + CommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>
+      + 'static,
+    W: CommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>
+      + CommandHandler<CreateManagedWebhookCommand, Error = ApplicationError>
+      + CommandHandler<ManageWebhookRegistrationCommand, Error = ApplicationError>
       + 'static,
   {
     Self {
       publish_project_policy: service.clone(),
       create_trigger: service,
+      create_unmanaged_webhook: webhooks.clone(),
+      create_managed_webhook: webhooks.clone(),
+      manage_webhook_registration: webhooks,
     }
   }
 }
@@ -278,6 +315,7 @@ pub struct CatalogManagementApplication {
   pub(super) pipelines: PipelineManagementApplication,
   pub(super) configurations: ConfigurationManagementApplication,
   pub(super) definitions: DefinitionManagementApplication,
+  pub(super) schedules: ScheduleManagementApplication,
 }
 
 impl CatalogManagementApplication {
@@ -287,12 +325,14 @@ impl CatalogManagementApplication {
     pipelines: PipelineManagementApplication,
     configurations: ConfigurationManagementApplication,
     definitions: DefinitionManagementApplication,
+    schedules: ScheduleManagementApplication,
   ) -> Self {
     Self {
       projects,
       pipelines,
       configurations,
       definitions,
+      schedules,
     }
   }
 }

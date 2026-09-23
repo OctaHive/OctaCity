@@ -90,7 +90,13 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     "octacity-server-job": frozenset({"base64", "ed25519-dalek"}),
     "octacity-server-secrets": frozenset({"hmac"}),
+    "octacity-server-trigger": frozenset({"chrono", "chrono-tz", "cron"}),
 }
+
+# Shared infrastructure modules contain reusable mechanics rather than a
+# concrete adapter selection. Keep this exception package-specific so ordinary
+# infrastructure crates cannot couple to one another.
+INFRASTRUCTURE_SUPPORT_PACKAGES = frozenset({"octacity-server-adapter-host"})
 
 SHARED_SOURCE_RULES = (
     (
@@ -413,7 +419,10 @@ def check(graph: Graph) -> list[Violation]:
                 )
             )
             continue
-        if target.role == "infrastructure" and source.role not in {"composition", "test"}:
+        infrastructure_support = (
+            source.role == "infrastructure" and target.name in INFRASTRUCTURE_SUPPORT_PACKAGES
+        )
+        if target.role == "infrastructure" and source.role not in {"composition", "test"} and not infrastructure_support:
             violations.append(
                 Violation(
                     "ARCH003_ADAPTER_SELECTION",
@@ -422,7 +431,7 @@ def check(graph: Graph) -> list[Violation]:
             )
             continue
         allowed = ALLOWED_TARGETS.get(source.role, frozenset())
-        if target.role not in allowed:
+        if target.role not in allowed and not infrastructure_support:
             violations.append(
                 Violation(
                     "ARCH002_INVALID_DIRECTION",

@@ -1,5 +1,6 @@
-use std::{fs::File, io::Read as _, net::SocketAddr, path::Path, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, fs::File, io::Read as _, net::SocketAddr, path::Path, path::PathBuf, time::Duration};
 
+use octacity_server_domain::IntegrationId;
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -17,7 +18,72 @@ const MAX_AGENT_ENROLLMENT_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
 const MAX_AGENT_RETRY_DELAY_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_AGENT_LEASE_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
 const MAX_LEASE_EXPIRY_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_SCHEDULE_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_WEBHOOK_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_WEBHOOK_WORKER_ATTEMPTS: u16 = 100;
+const MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
+const MAX_TRIGGER_EVALUATION_ATTEMPTS: u16 = 100;
 const MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS: u64 = 60 * 1000;
+const MAX_WEBHOOK_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
+const WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
+const TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
+const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
+
+#[derive(Clone, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VcsIntegrationConfig {
+  integration_id: IntegrationId,
+  adapter_id: String,
+  adapter_sha256: String,
+  credential_handle: String,
+}
+
+impl std::fmt::Debug for VcsIntegrationConfig {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("VcsIntegrationConfig")
+      .field("integration_id", &self.integration_id)
+      .field("adapter_id", &self.adapter_id)
+      .field("adapter_sha256", &self.adapter_sha256)
+      .field("credential_handle", &"<redacted>")
+      .finish()
+  }
+}
+
+impl VcsIntegrationConfig {
+  pub(crate) const fn integration_id(&self) -> IntegrationId {
+    self.integration_id
+  }
+
+  pub(crate) fn adapter_id(&self) -> &str {
+    &self.adapter_id
+  }
+
+  pub(crate) fn adapter_sha256(&self) -> &str {
+    &self.adapter_sha256
+  }
+
+  pub(crate) fn credential_handle(&self) -> &str {
+    &self.credential_handle
+  }
+
+  fn validate(&self) -> bool {
+    let valid_field = |value: &str| {
+      !value.is_empty()
+        && value.len() <= octacity_vcs_protocol::MAX_FIELD_BYTES
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+    };
+    valid_field(&self.adapter_id)
+      && valid_field(&self.credential_handle)
+      && self.adapter_sha256.len() == 64
+      && self
+        .adapter_sha256
+        .bytes()
+        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+  }
+}
 
 /// Validated operator configuration for the server process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -29,6 +95,34 @@ pub struct ServerConfig {
   agent_bind: Option<SocketAddr>,
   #[serde(default)]
   webhook_bind: Option<SocketAddr>,
+  #[serde(default)]
+  webhook_public_base_url: Option<String>,
+  #[serde(default)]
+  webhook_adapter_registry: Option<PathBuf>,
+  #[serde(default = "default_webhook_operation_timeout_milliseconds")]
+  webhook_operation_timeout_milliseconds: u64,
+  #[serde(default = "default_webhook_cancellation_grace_milliseconds")]
+  webhook_cancellation_grace_milliseconds: u64,
+  #[serde(default)]
+  vcs_adapter_registry: Option<PathBuf>,
+  #[serde(default)]
+  vcs_integrations: Vec<VcsIntegrationConfig>,
+  #[serde(default = "default_vcs_operation_timeout_milliseconds")]
+  vcs_operation_timeout_milliseconds: u64,
+  #[serde(default = "default_vcs_cancellation_grace_milliseconds")]
+  vcs_cancellation_grace_milliseconds: u64,
+  #[serde(default = "default_trigger_evaluation_poll_interval_milliseconds")]
+  trigger_evaluation_poll_interval_milliseconds: u64,
+  #[serde(default = "default_trigger_evaluation_claim_lifetime_milliseconds")]
+  trigger_evaluation_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_trigger_evaluation_batch_size")]
+  trigger_evaluation_batch_size: u16,
+  #[serde(default = "default_vcs_retry_max_attempts")]
+  vcs_retry_max_attempts: u16,
+  #[serde(default = "default_vcs_retry_initial_milliseconds")]
+  vcs_retry_initial_milliseconds: u64,
+  #[serde(default = "default_vcs_retry_maximum_milliseconds")]
+  vcs_retry_maximum_milliseconds: u64,
   #[serde(default)]
   acknowledge_unauthenticated_management: bool,
   #[serde(default = "default_shutdown_grace_milliseconds")]
@@ -51,6 +145,47 @@ pub struct ServerConfig {
   lease_expiry_claim_lifetime_milliseconds: u64,
   #[serde(default = "default_lease_expiry_batch_size")]
   lease_expiry_batch_size: u16,
+  #[serde(default = "default_schedule_poll_interval_milliseconds")]
+  schedule_poll_interval_milliseconds: u64,
+  #[serde(default = "default_schedule_claim_lifetime_milliseconds")]
+  schedule_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_schedule_batch_size")]
+  schedule_batch_size: u16,
+  #[serde(default = "default_internal_trigger_poll_interval_milliseconds")]
+  internal_trigger_poll_interval_milliseconds: u64,
+  #[serde(default = "default_internal_trigger_claim_lifetime_milliseconds")]
+  internal_trigger_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_internal_trigger_batch_size")]
+  internal_trigger_batch_size: u16,
+  #[serde(
+    default = "default_webhook_worker_poll_interval_milliseconds",
+    alias = "webhook_delivery_poll_interval_milliseconds"
+  )]
+  webhook_worker_poll_interval_milliseconds: u64,
+  #[serde(
+    default = "default_webhook_worker_claim_lifetime_milliseconds",
+    alias = "webhook_delivery_claim_lifetime_milliseconds"
+  )]
+  webhook_worker_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_webhook_delivery_batch_size")]
+  webhook_delivery_batch_size: u16,
+  #[serde(default = "default_managed_webhook_batch_size")]
+  managed_webhook_batch_size: u16,
+  #[serde(
+    default = "default_webhook_worker_max_attempts",
+    alias = "webhook_delivery_max_attempts"
+  )]
+  webhook_worker_max_attempts: u16,
+  #[serde(
+    default = "default_webhook_worker_initial_retry_milliseconds",
+    alias = "webhook_delivery_initial_retry_milliseconds"
+  )]
+  webhook_worker_initial_retry_milliseconds: u64,
+  #[serde(
+    default = "default_webhook_worker_maximum_retry_milliseconds",
+    alias = "webhook_delivery_maximum_retry_milliseconds"
+  )]
+  webhook_worker_maximum_retry_milliseconds: u64,
   #[serde(default = "default_ready_job_listener_reconnect_milliseconds")]
   ready_job_listener_reconnect_milliseconds: u64,
   supported_pipeline_capabilities: Vec<String>,
@@ -109,6 +244,84 @@ impl ServerConfig {
   /// Optional address for authenticated Agent protocol ingress.
   pub const fn agent_bind(&self) -> Option<SocketAddr> {
     self.agent_bind
+  }
+
+  /// Optional address for authenticated webhook ingress.
+  pub const fn webhook_bind(&self) -> Option<SocketAddr> {
+    self.webhook_bind
+  }
+
+  /// Validated public origin used to construct operator-facing callback URLs.
+  pub fn webhook_callback_origin(&self) -> Option<octacity_server_application::WebhookCallbackOrigin> {
+    self
+      .webhook_public_base_url
+      .as_ref()
+      .map(|value| octacity_server_application::WebhookCallbackOrigin::new(value.clone()).expect("config is validated"))
+  }
+
+  /// Operator-owned directory containing verified webhook adapters.
+  pub fn webhook_adapter_registry(&self) -> Option<&Path> {
+    self.webhook_adapter_registry.as_deref()
+  }
+
+  /// Absolute deadline for one provider verification operation.
+  pub const fn webhook_operation_timeout(&self) -> Duration {
+    Duration::from_millis(self.webhook_operation_timeout_milliseconds)
+  }
+
+  /// Grace allowed for cooperative adapter cancellation before force-stop.
+  pub const fn webhook_cancellation_grace(&self) -> Duration {
+    Duration::from_millis(self.webhook_cancellation_grace_milliseconds)
+  }
+
+  /// Operator-owned directory containing verified VCS adapters.
+  pub fn vcs_adapter_registry(&self) -> Option<&Path> {
+    self.vcs_adapter_registry.as_deref()
+  }
+
+  /// Configured provider-neutral VCS integrations.
+  pub(crate) fn vcs_integrations(&self) -> &[VcsIntegrationConfig] {
+    &self.vcs_integrations
+  }
+
+  /// Absolute deadline for one VCS adapter operation.
+  pub const fn vcs_operation_timeout(&self) -> Duration {
+    Duration::from_millis(self.vcs_operation_timeout_milliseconds)
+  }
+
+  /// Grace allowed for cooperative VCS cancellation before force-stop.
+  pub const fn vcs_cancellation_grace(&self) -> Duration {
+    Duration::from_millis(self.vcs_cancellation_grace_milliseconds)
+  }
+
+  /// Interval between scans for manual Trigger evaluations awaiting a VCS retry.
+  pub const fn trigger_evaluation_poll_interval(&self) -> Duration {
+    Duration::from_millis(self.trigger_evaluation_poll_interval_milliseconds)
+  }
+
+  /// Exclusive ownership window for a bounded batch of manual Trigger evaluations.
+  pub const fn trigger_evaluation_claim_lifetime(&self) -> Duration {
+    Duration::from_millis(self.trigger_evaluation_claim_lifetime_milliseconds)
+  }
+
+  /// Maximum manual Trigger evaluations advanced in one worker pass.
+  pub const fn trigger_evaluation_batch_size(&self) -> u16 {
+    self.trigger_evaluation_batch_size
+  }
+
+  /// Maximum VCS evaluation attempts before retaining a dead letter.
+  pub const fn vcs_retry_max_attempts(&self) -> u16 {
+    self.vcs_retry_max_attempts
+  }
+
+  /// Initial exponential delay after a transient VCS failure.
+  pub const fn vcs_retry_initial_milliseconds(&self) -> u64 {
+    self.vcs_retry_initial_milliseconds
+  }
+
+  /// Ceiling for exponential VCS retry delays.
+  pub const fn vcs_retry_maximum_milliseconds(&self) -> u64 {
+    self.vcs_retry_maximum_milliseconds
   }
 
   /// Whether external unauthenticated management access was explicitly acknowledged.
@@ -171,6 +384,71 @@ impl ServerConfig {
     self.lease_expiry_batch_size
   }
 
+  /// Interval between authoritative scans for due schedules.
+  pub const fn schedule_poll_interval(&self) -> Duration {
+    Duration::from_millis(self.schedule_poll_interval_milliseconds)
+  }
+
+  /// Exclusive ownership window for one due-schedule worker claim.
+  pub const fn schedule_claim_lifetime(&self) -> Duration {
+    Duration::from_millis(self.schedule_claim_lifetime_milliseconds)
+  }
+
+  /// Maximum due schedules evaluated in one worker pass.
+  pub const fn schedule_batch_size(&self) -> u16 {
+    self.schedule_batch_size
+  }
+
+  /// Interval between authoritative scans for terminal Build outbox events.
+  pub const fn internal_trigger_poll_interval(&self) -> Duration {
+    Duration::from_millis(self.internal_trigger_poll_interval_milliseconds)
+  }
+
+  /// Exclusive ownership window for one internal-Trigger outbox claim.
+  pub const fn internal_trigger_claim_lifetime(&self) -> Duration {
+    Duration::from_millis(self.internal_trigger_claim_lifetime_milliseconds)
+  }
+
+  /// Maximum terminal Build events delivered in one worker pass.
+  pub const fn internal_trigger_batch_size(&self) -> u16 {
+    self.internal_trigger_batch_size
+  }
+
+  /// Shared poll interval for delivery verification and managed webhook work.
+  pub const fn webhook_worker_poll_interval(&self) -> Duration {
+    Duration::from_millis(self.webhook_worker_poll_interval_milliseconds)
+  }
+
+  /// Shared exclusive ownership window for one webhook worker claim.
+  pub const fn webhook_worker_claim_lifetime(&self) -> Duration {
+    Duration::from_millis(self.webhook_worker_claim_lifetime_milliseconds)
+  }
+
+  /// Maximum webhook receipts advanced in one worker pass.
+  pub const fn webhook_delivery_batch_size(&self) -> u16 {
+    self.webhook_delivery_batch_size
+  }
+
+  /// Maximum managed provider operations advanced in one worker pass.
+  pub const fn managed_webhook_batch_size(&self) -> u16 {
+    self.managed_webhook_batch_size
+  }
+
+  /// Maximum webhook adapter attempts before dead-lettering.
+  pub const fn webhook_worker_max_attempts(&self) -> u16 {
+    self.webhook_worker_max_attempts
+  }
+
+  /// Initial exponential retry delay for transient adapter failures.
+  pub const fn webhook_worker_initial_retry_milliseconds(&self) -> u64 {
+    self.webhook_worker_initial_retry_milliseconds
+  }
+
+  /// Ceiling for exponential webhook adapter retry delays.
+  pub const fn webhook_worker_maximum_retry_milliseconds(&self) -> u64 {
+    self.webhook_worker_maximum_retry_milliseconds
+  }
+
   /// Delay before reconnecting a failed PostgreSQL ready-Job notification listener.
   pub const fn ready_job_listener_reconnect_delay(&self) -> Duration {
     Duration::from_millis(self.ready_job_listener_reconnect_milliseconds)
@@ -206,14 +484,59 @@ impl ServerConfig {
         "acknowledge_unauthenticated_management must be true when management_bind is not loopback".to_owned(),
       ));
     }
-    if self.webhook_bind.is_some() {
+    let webhook_companions = self.webhook_public_base_url.is_some() || self.webhook_adapter_registry.is_some();
+    if self.webhook_bind.is_some()
+      != (self.webhook_public_base_url.is_some() && self.webhook_adapter_registry.is_some())
+      || self.webhook_bind.is_none() && webhook_companions
+    {
       return Err(ServerConfigError::Invalid(
-        "webhook_bind is unavailable until authenticated webhook ingress is implemented".to_owned(),
+        "webhook_bind, webhook_public_base_url, and webhook_adapter_registry must be configured together".to_owned(),
+      ));
+    }
+    if let Some(base) = &self.webhook_public_base_url
+      && octacity_server_application::WebhookCallbackOrigin::new(base.clone()).is_err()
+    {
+      return Err(ServerConfigError::Invalid(
+        "webhook_public_base_url must be a credential-free HTTP(S) origin without a path, query, fragment, or trailing slash"
+          .to_owned(),
+      ));
+    }
+    if self
+      .webhook_adapter_registry
+      .as_ref()
+      .is_some_and(|path| path.as_os_str().is_empty())
+    {
+      return Err(ServerConfigError::Invalid(
+        "webhook_adapter_registry must not be empty".to_owned(),
+      ));
+    }
+    if self.vcs_adapter_registry.is_some() != !self.vcs_integrations.is_empty() {
+      return Err(ServerConfigError::Invalid(
+        "vcs_adapter_registry and at least one vcs_integrations entry must be configured together".to_owned(),
+      ));
+    }
+    if self
+      .vcs_adapter_registry
+      .as_ref()
+      .is_some_and(|path| path.as_os_str().is_empty())
+      || self.vcs_integrations.iter().any(|integration| !integration.validate())
+      || self
+        .vcs_integrations
+        .iter()
+        .map(VcsIntegrationConfig::integration_id)
+        .collect::<BTreeSet<_>>()
+        .len()
+        != self.vcs_integrations.len()
+    {
+      return Err(ServerConfigError::Invalid(
+        "VCS integration identities, adapter pins, and credential handles must be non-empty, bounded, and unique"
+          .to_owned(),
       ));
     }
     let listeners = [
       ("management_bind", Some(self.management_bind)),
       ("agent_bind", self.agent_bind),
+      ("webhook_bind", self.webhook_bind),
     ];
     for (index, (left_name, left)) in listeners.iter().enumerate() {
       for (right_name, right) in &listeners[index + 1..] {
@@ -286,11 +609,116 @@ impl ServerConfig {
         octacity_server_store::MAX_LEASE_EXPIRY_BATCH_SIZE
       )));
     }
+    if self.schedule_poll_interval_milliseconds == 0
+      || self.schedule_poll_interval_milliseconds > MAX_SCHEDULE_WORKER_MILLISECONDS
+      || self.schedule_claim_lifetime_milliseconds == 0
+      || self.schedule_claim_lifetime_milliseconds > MAX_SCHEDULE_WORKER_MILLISECONDS
+      || self.schedule_batch_size == 0
+      || self.schedule_batch_size > octacity_server_store::MAX_SCHEDULE_CLAIM_BATCH_SIZE
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "schedule worker intervals and batch must be positive and bounded by {MAX_SCHEDULE_WORKER_MILLISECONDS} ms / {} items",
+        octacity_server_store::MAX_SCHEDULE_CLAIM_BATCH_SIZE
+      )));
+    }
+    if self.internal_trigger_poll_interval_milliseconds == 0
+      || self.internal_trigger_poll_interval_milliseconds > MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS
+      || self.internal_trigger_claim_lifetime_milliseconds == 0
+      || self.internal_trigger_claim_lifetime_milliseconds > MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS
+      || self.internal_trigger_batch_size == 0
+      || self.internal_trigger_batch_size > octacity_server_store::MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "internal Trigger worker intervals and batch must be positive and bounded by {MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS} ms / {} items",
+        octacity_server_store::MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE
+      )));
+    }
+    if self.webhook_worker_poll_interval_milliseconds == 0
+      || self.webhook_worker_poll_interval_milliseconds > MAX_WEBHOOK_WORKER_MILLISECONDS
+      || self.webhook_worker_claim_lifetime_milliseconds == 0
+      || self.webhook_worker_claim_lifetime_milliseconds > MAX_WEBHOOK_WORKER_MILLISECONDS
+      || self.webhook_delivery_batch_size == 0
+      || self.webhook_delivery_batch_size > octacity_server_store::MAX_WEBHOOK_DELIVERY_BATCH_SIZE
+      || self.managed_webhook_batch_size == 0
+      || self.managed_webhook_batch_size > octacity_server_store::MAX_MANAGED_WEBHOOK_OPERATION_BATCH_SIZE
+      || self.webhook_worker_max_attempts == 0
+      || self.webhook_worker_max_attempts > MAX_WEBHOOK_WORKER_ATTEMPTS
+      || self.webhook_worker_initial_retry_milliseconds == 0
+      || self.webhook_worker_maximum_retry_milliseconds < self.webhook_worker_initial_retry_milliseconds
+      || self.webhook_worker_maximum_retry_milliseconds > MAX_WEBHOOK_WORKER_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "webhook worker policy must be positive and bounded by {MAX_WEBHOOK_WORKER_MILLISECONDS} ms / {} delivery items / {} managed items / {MAX_WEBHOOK_WORKER_ATTEMPTS} attempts",
+        octacity_server_store::MAX_WEBHOOK_DELIVERY_BATCH_SIZE,
+        octacity_server_store::MAX_MANAGED_WEBHOOK_OPERATION_BATCH_SIZE,
+      )));
+    }
     if self.ready_job_listener_reconnect_milliseconds == 0
       || self.ready_job_listener_reconnect_milliseconds > MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS
     {
       return Err(ServerConfigError::Invalid(format!(
         "ready_job_listener_reconnect_milliseconds must be between 1 and {MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS}"
+      )));
+    }
+    if self.webhook_operation_timeout_milliseconds == 0
+      || self.webhook_operation_timeout_milliseconds > MAX_WEBHOOK_OPERATION_MILLISECONDS
+      || self.webhook_cancellation_grace_milliseconds == 0
+      || self.webhook_cancellation_grace_milliseconds > MAX_WEBHOOK_OPERATION_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "webhook operation timeouts must be between 1 and {MAX_WEBHOOK_OPERATION_MILLISECONDS} milliseconds"
+      )));
+    }
+    if self.vcs_operation_timeout_milliseconds == 0
+      || self.vcs_operation_timeout_milliseconds > MAX_VCS_OPERATION_MILLISECONDS
+      || self.vcs_cancellation_grace_milliseconds == 0
+      || self.vcs_cancellation_grace_milliseconds > MAX_VCS_OPERATION_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "VCS operation timeouts must be between 1 and {MAX_VCS_OPERATION_MILLISECONDS} milliseconds"
+      )));
+    }
+    if self.trigger_evaluation_poll_interval_milliseconds == 0
+      || self.trigger_evaluation_poll_interval_milliseconds > MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS
+      || self.trigger_evaluation_claim_lifetime_milliseconds == 0
+      || self.trigger_evaluation_claim_lifetime_milliseconds > MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS
+      || self.trigger_evaluation_batch_size == 0
+      || self.trigger_evaluation_batch_size > octacity_server_store::MAX_TRIGGER_EVALUATION_BATCH_SIZE
+      || self.vcs_retry_max_attempts == 0
+      || self.vcs_retry_max_attempts > MAX_TRIGGER_EVALUATION_ATTEMPTS
+      || self.vcs_retry_initial_milliseconds == 0
+      || self.vcs_retry_maximum_milliseconds < self.vcs_retry_initial_milliseconds
+      || self.vcs_retry_maximum_milliseconds > MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "manual Trigger retry policy must be positive and bounded by {MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS} ms / {} items / {MAX_TRIGGER_EVALUATION_ATTEMPTS} attempts",
+        octacity_server_store::MAX_TRIGGER_EVALUATION_BATCH_SIZE,
+      )));
+    }
+    let trigger_evaluation_batch_budget = self
+      .vcs_operation_timeout_milliseconds
+      .checked_add(self.vcs_cancellation_grace_milliseconds)
+      .and_then(|operation| operation.checked_mul(u64::from(self.trigger_evaluation_batch_size)))
+      .and_then(|batch| batch.checked_add(TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS));
+    if trigger_evaluation_batch_budget
+      .is_none_or(|budget| budget >= self.trigger_evaluation_claim_lifetime_milliseconds)
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "manual Trigger claim lifetime must exceed the sequential VCS budget plus the {TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
+      )));
+    }
+    let webhook_batch_budget = self
+      .webhook_operation_timeout_milliseconds
+      .checked_add(self.webhook_cancellation_grace_milliseconds)
+      .and_then(|operation| {
+        operation.checked_mul(u64::from(
+          self.webhook_delivery_batch_size.max(self.managed_webhook_batch_size),
+        ))
+      })
+      .and_then(|batch| batch.checked_add(WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS));
+    if webhook_batch_budget.is_none_or(|budget| budget >= self.webhook_worker_claim_lifetime_milliseconds) {
+      return Err(ServerConfigError::Invalid(format!(
+        "webhook worker claim lifetime must exceed the sequential adapter budget plus the {WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
       )));
     }
     self.postgres.validate().map_err(ServerConfigError::Invalid)?;
@@ -359,8 +787,100 @@ const fn default_lease_expiry_batch_size() -> u16 {
   32
 }
 
+const fn default_schedule_poll_interval_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_schedule_claim_lifetime_milliseconds() -> u64 {
+  30_000
+}
+
+const fn default_schedule_batch_size() -> u16 {
+  32
+}
+
+const fn default_internal_trigger_poll_interval_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_internal_trigger_claim_lifetime_milliseconds() -> u64 {
+  30_000
+}
+
+const fn default_internal_trigger_batch_size() -> u16 {
+  32
+}
+
+const fn default_webhook_worker_poll_interval_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_webhook_worker_claim_lifetime_milliseconds() -> u64 {
+  30_000
+}
+
+const fn default_webhook_delivery_batch_size() -> u16 {
+  4
+}
+
+const fn default_managed_webhook_batch_size() -> u16 {
+  4
+}
+
+const fn default_webhook_worker_max_attempts() -> u16 {
+  5
+}
+
+const fn default_webhook_worker_initial_retry_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_webhook_worker_maximum_retry_milliseconds() -> u64 {
+  60_000
+}
+
 const fn default_ready_job_listener_reconnect_milliseconds() -> u64 {
   1_000
+}
+
+const fn default_webhook_operation_timeout_milliseconds() -> u64 {
+  5_000
+}
+
+const fn default_webhook_cancellation_grace_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_vcs_operation_timeout_milliseconds() -> u64 {
+  30_000
+}
+
+const fn default_vcs_cancellation_grace_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_trigger_evaluation_poll_interval_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_trigger_evaluation_claim_lifetime_milliseconds() -> u64 {
+  180_000
+}
+
+const fn default_trigger_evaluation_batch_size() -> u16 {
+  4
+}
+
+const fn default_vcs_retry_max_attempts() -> u16 {
+  5
+}
+
+const fn default_vcs_retry_initial_milliseconds() -> u64 {
+  1_000
+}
+
+const fn default_vcs_retry_maximum_milliseconds() -> u64 {
+  60_000
 }
 
 /// Failure to read, decode, or validate server configuration.

@@ -126,13 +126,84 @@ fn management_and_agent_ingress_are_independently_configured() {
 }
 
 #[test]
-fn webhook_ingress_cannot_be_advertised_before_it_is_authenticated() {
+fn webhook_ingress_requires_its_authenticated_configuration() {
   let configured = valid_configuration().replace(
     "management_bind = \"127.0.0.1:0\"",
     "management_bind = \"127.0.0.1:0\"\nwebhook_bind = \"127.0.0.1:0\"",
   );
   let error = ServerConfig::parse_toml(&configured).unwrap_err();
-  assert!(error.to_string().contains("authenticated webhook ingress"));
+  assert!(error.to_string().contains("must be configured together"));
+
+  let configured = valid_configuration().replace(
+    "management_bind = \"127.0.0.1:0\"",
+    "management_bind = \"127.0.0.1:0\"\nwebhook_bind = \"127.0.0.1:0\"\nwebhook_public_base_url = \"https://hooks.example.test\"\nwebhook_adapter_registry = \"webhook-adapters\"",
+  );
+  let config = ServerConfig::parse_toml(&configured).unwrap();
+  assert_eq!(config.webhook_bind().unwrap().ip(), std::net::Ipv4Addr::LOCALHOST);
+  assert_eq!(
+    config.webhook_callback_origin().as_ref().map(|origin| origin.as_str()),
+    Some("https://hooks.example.test")
+  );
+
+  for invalid_origin in [
+    "https://user@hooks.example.test",
+    "https://hooks.example.test/path",
+    "https://hooks.example.test/",
+    "https://hooks.example.test:invalid",
+  ] {
+    let invalid = configured.replace("https://hooks.example.test", invalid_origin);
+    assert!(ServerConfig::parse_toml(&invalid).is_err());
+  }
+}
+
+#[test]
+fn adapter_configuration_is_complete_unique_and_claim_safe() {
+  let registry_only = valid_configuration().replace(
+    "supported_pipeline_capabilities = [\"native\"]",
+    "supported_pipeline_capabilities = [\"native\"]\nvcs_adapter_registry = \"vcs-adapters\"",
+  );
+  assert!(ServerConfig::parse_toml(&registry_only).is_err());
+
+  let integration = r#"
+vcs_adapter_registry = "vcs-adapters"
+
+[[vcs_integrations]]
+integration_id = "00000000-0000-0000-0000-000000000201"
+adapter_id = "git"
+adapter_sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+credential_handle = "secret:repository"
+"#;
+  let configured = valid_configuration().replace(
+    "supported_pipeline_capabilities = [\"native\"]",
+    &format!("supported_pipeline_capabilities = [\"native\"]\n{integration}"),
+  );
+  let parsed = ServerConfig::parse_toml(&configured).unwrap();
+  let debug = format!("{parsed:?}");
+  assert!(!debug.contains("secret:repository"));
+  assert!(debug.contains("<redacted>"));
+
+  let duplicate = configured.replace(
+    "credential_handle = \"secret:repository\"",
+    "credential_handle = \"secret:repository\"\n\n[[vcs_integrations]]\nintegration_id = \"00000000-0000-0000-0000-000000000201\"\nadapter_id = \"git\"\nadapter_sha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\ncredential_handle = \"secret:other\"",
+  );
+  assert!(ServerConfig::parse_toml(&duplicate).is_err());
+
+  let unsafe_claim = valid_configuration().replace(
+    "supported_pipeline_capabilities = [\"native\"]",
+    "supported_pipeline_capabilities = [\"native\"]\nwebhook_operation_timeout_milliseconds = 5000\nwebhook_cancellation_grace_milliseconds = 1000\nwebhook_delivery_batch_size = 1\nwebhook_worker_claim_lifetime_milliseconds = 7000",
+  );
+  let error = ServerConfig::parse_toml(&unsafe_claim).unwrap_err();
+  assert!(error.to_string().contains("sequential adapter budget"));
+}
+
+#[test]
+fn legacy_delivery_named_webhook_worker_settings_remain_accepted() {
+  let legacy = valid_configuration().replace(
+    "supported_pipeline_capabilities = [\"native\"]",
+    "supported_pipeline_capabilities = [\"native\"]\nwebhook_delivery_poll_interval_milliseconds = 1000\nwebhook_delivery_claim_lifetime_milliseconds = 30000\nwebhook_delivery_max_attempts = 5\nwebhook_delivery_initial_retry_milliseconds = 1000\nwebhook_delivery_maximum_retry_milliseconds = 60000",
+  );
+
+  ServerConfig::parse_toml(&legacy).expect("legacy webhook worker names must remain compatible");
 }
 
 fn valid_configuration() -> &'static str {

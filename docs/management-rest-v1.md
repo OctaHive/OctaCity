@@ -18,9 +18,9 @@ The current boundary assumes these server-owned resources already exist:
 - VCS integration `55555555-5555-4555-8555-555555555555`;
 - enabled manual Trigger `77777777-7777-4777-8777-777777777777`, version 1.
 
-The Pool is created through the endpoint documented below. VCS-integration and
-Trigger-definition management arrive with later tasks, so operators currently
-provision those two definitions through controlled bootstrap data. In the
+The Pool is created through the endpoint documented below. VCS-integration
+management arrives with a later task. Manual, scheduled, and
+external webhook Trigger definitions are created through management REST. In the
 requests below, replace each illustrative resource identity with the
 `resource.id` returned by the preceding create response:
 
@@ -275,6 +275,86 @@ Idempotency-Key: example-release-main-1
 The response is `200 OK`. An accepted result contains the Trigger occurrence,
 Build, Attempt, and initially ready Job identities. A policy-suppressed result
 contains the durable Trigger occurrence identity and creates no queued work.
+The server records the command before resolving a mutable reference. If VCS is
+temporarily unavailable, the immediate response is the stable `unavailable`
+error and a leased worker continues the same occurrence with bounded retries.
+Repeating the request while that work is pending does not start a concurrent
+resolution. Once resolved, the immutable revision is checkpointed before Build
+creation, so retrying a failed Build transaction cannot follow a moved branch;
+a completed retry returns the original Build outcome.
+
+### Durable scheduled Triggers
+
+`POST /api/v1/trigger-definitions/scheduled` creates the Trigger and its first
+calendar cursor atomically. The request supplies an IANA timezone, a
+seven-field cron expression, an explicit `run_once` or bounded `catch_up`
+missed-run policy, and the source, parameters, and queue priority used for each
+occurrence. `GET /api/v1/schedules/{trigger_id}/versions/{version}` returns the
+validated definition and `next_occurrence_at_unix_ms` cursor.
+
+The server claims due schedules in bounded PostgreSQL batches with a process
+owner and expiry. A crash leaves the cursor unchanged; after expiry another
+replica reclaims the same stable `schedule:<source-time>` occurrence. Trigger
+deduplication then replays an existing Build instead of creating another one.
+
+### Unmanaged webhook integrations
+
+`POST /api/v1/webhook-integrations/unmanaged` atomically creates a server-owned
+integration and its immutable external Trigger. The response contains a
+`callback_url` and secret-free `verification` requirements. It never asks for
+provider administration credentials: the operator creates the remote hook and
+configures the protected verification material separately under the supplied
+logical handle.
+
+```json
+{
+  "configuration_id": "44444444-4444-4444-8444-444444444444",
+  "configuration_version": 1,
+  "enabled": true,
+  "adapter_id": "github",
+  "adapter_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verification_material_handle": "secret:webhook-release",
+  "verification_headers": ["x-github-delivery", "x-hub-signature-256"],
+  "repository_id": "33333333-3333-4333-8333-333333333333",
+  "event_kind": "push",
+  "parameters": {"profile": "release"},
+  "priority": 50
+}
+```
+
+The public callback is served only on the independently configured
+`webhook_bind` listener. It durably stores the exact body and configured header
+allowlist, then returns `202 Accepted` with a server-owned delivery identity.
+A replica-safe worker sends the receipt to the digest-pinned provider adapter.
+Only an authenticated normalized event reaches the Trigger Engine; repeated
+provider delivery identities complete as duplicates and cannot create another
+Trigger occurrence or Build. Transient adapter failures use bounded retries;
+permanent and exhausted failures retain secret-free dead-letter diagnostics.
+
+### Managed webhook integrations
+
+`POST /api/v1/webhook-integrations/managed` atomically creates the same
+server-owned integration and external Trigger and queues creation through the
+digest-pinned adapter. The request adds an
+`administration_credential_handle`; the handle and its resolved credential are
+never returned by management REST. The initial response contains the callback
+and no registration until the worker has observed one. Later lifecycle
+responses may include only the opaque remote registration identity and
+normalized `active`, `disabled`, or `missing` state.
+
+The complete provider-neutral lifecycle is available through:
+
+- `POST /api/v1/webhook-integrations/managed/{integration_id}/observe`;
+- `POST /api/v1/webhook-integrations/managed/{integration_id}/rotate`;
+- `DELETE /api/v1/webhook-integrations/managed/{integration_id}`.
+
+Every operation requires `Idempotency-Key`. Only a leased worker contacts the
+provider; request handlers merely validate capability and persist intent. If
+the provider applied the operation but its response was lost, recovery reuses
+the same integration identity and provider idempotency key. An adapter that does not
+advertise a requested optional capability returns the stable
+`capability_unavailable` response; unmanaged configuration remains available.
+No production GitHub or Gerrit adapter is required by this contract.
 
 ## 6. Issue a one-time enrollment credential
 

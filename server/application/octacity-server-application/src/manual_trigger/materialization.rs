@@ -22,8 +22,12 @@ pub(super) struct ManualBuildIdentities {
 
 impl ManualBuildIdentities {
   pub(super) fn occurrence_id(command: &ManualTriggerCommand) -> TriggerOccurrenceId {
+    Self::occurrence_id_for("manual", command)
+  }
+
+  pub(super) fn occurrence_id_for(kind: &str, command: &ManualTriggerCommand) -> TriggerOccurrenceId {
     let occurrence_name = format!(
-      "manual:{}:{}",
+      "{kind}:{}:{}",
       command.trigger.version.get(),
       command.deduplication_identity
     );

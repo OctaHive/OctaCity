@@ -149,6 +149,10 @@ where
     &self,
     command: CreateTriggerDefinitionCommand,
   ) -> Result<TriggerDefinitionCommandOutcome, Self::Error> {
+    if command.kind == TriggerKind::Internal {
+      serde_json::from_value::<crate::InternalTriggerDefinition>(command.definition.clone())
+        .map_err(|_| ApplicationError::invalid())?;
+    }
     let outcome = self
       .create_trigger_definition(CreateTriggerDefinition {
         id: command.id,

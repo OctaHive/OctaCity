@@ -17,11 +17,16 @@ octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-artifact-s3 = { path = "../../infrastructure/octacity-artifact-s3" }
 octacity-server-api-agent = { path = "../../api/octacity-server-api-agent" }
 octacity-server-api-rest = { path = "../../api/octacity-server-api-rest" }
+octacity-server-api-webhook = { path = "../../api/octacity-server-api-webhook" }
 octacity-server-application = { path = "../../application/octacity-server-application" }
 octacity-server-domain = { path = "../../core/octacity-server-domain" }
 octacity-server-job = { path = "../../core/octacity-server-job" }
 octacity-server-store = { path = "../../core/octacity-server-store" }
 octacity-server-store-postgres = { path = "../../infrastructure/octacity-server-store-postgres" }
+octacity-server-webhook = { path = "../../infrastructure/octacity-server-webhook" }
+octacity-server-vcs = { path = "../../infrastructure/octacity-server-vcs" }
+octacity-vcs-protocol = { path = "../../protocols/octacity-vcs-protocol" }
+octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

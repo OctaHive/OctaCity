@@ -31,6 +31,14 @@ pub(super) fn validate_context(
   command: &ManualTriggerCommand,
   context: &ManualTriggerContext,
 ) -> Result<(), ManualTriggerInputError> {
+  validate_context_for(command, context, TriggerKind::Manual)
+}
+
+pub(super) fn validate_context_for(
+  command: &ManualTriggerCommand,
+  context: &ManualTriggerContext,
+  kind: TriggerKind,
+) -> Result<(), ManualTriggerInputError> {
   let definition = &context.configuration.definition;
   if context.configuration.id != command.target.configuration_id
     || context.configuration.version != command.target.configuration_version
@@ -46,8 +54,13 @@ pub(super) fn validate_context(
   {
     return Err(ManualTriggerInputError::ContextMismatch);
   }
-  if !definition.triggers.allowed.contains(&TriggerKind::Manual) {
-    return Err(ManualTriggerInputError::ManualTriggerNotAllowed);
+  if !definition.triggers.allowed.contains(&kind) {
+    return Err(match kind {
+      TriggerKind::Scheduled => ManualTriggerInputError::ScheduledTriggerNotAllowed,
+      TriggerKind::Internal => ManualTriggerInputError::InternalTriggerNotAllowed,
+      TriggerKind::External => ManualTriggerInputError::ExternalTriggerNotAllowed,
+      TriggerKind::Manual => ManualTriggerInputError::ManualTriggerNotAllowed,
+    });
   }
   let policy = &context.effective_policy.policy;
   if !policy.repositories.contains(&context.repository.id) {

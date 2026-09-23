@@ -12,6 +12,7 @@ pub(crate) struct MemoryState {
   pub(super) accepted: BTreeMap<TriggerOccurrenceId, AcceptedRecord>,
   pub(super) suppressed: BTreeMap<TriggerOccurrenceId, SuppressedRecord>,
   pub(super) evaluated_by_deduplication: BTreeMap<TriggerDeduplicationKey, TriggerOccurrenceId>,
+  pub(super) schedules: BTreeMap<TriggerDefinitionRef, ScheduleMemoryRecord>,
   pub(super) builds: BTreeMap<BuildId, BuildState>,
   pub(super) attempts: BTreeMap<AttemptId, MemoryAttempt>,
   pub(super) jobs: BTreeMap<JobId, MemoryJob>,
@@ -155,6 +156,13 @@ pub(super) struct CancellationRecord {
 pub(super) struct RetryRecord {
   pub(super) request: RetryBuild,
   pub(super) outcome: RetryDisposition,
+}
+
+#[derive(Clone)]
+pub(super) struct ScheduleMemoryRecord {
+  pub(super) record: ScheduleRecord,
+  pub(super) idempotency_key: IdempotencyKey,
+  pub(super) claim: Option<(WorkerOwner, Timestamp)>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

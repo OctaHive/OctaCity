@@ -1,0 +1,23 @@
+[package]
+name = "octacity-server-vcs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Verified VCS adapter registry and bounded process host for OctaCity"
+
+[dependencies]
+octacity-server-adapter-host = { path = "../octacity-server-adapter-host" }
+octacity-vcs-protocol = { path = "../../protocols/octacity-vcs-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

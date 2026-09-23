@@ -1,3 +1,56 @@
+use axum::{
+  body::Body,
+  http::{Request, request::Builder},
+};
+
+pub fn concrete_path(path: &str) -> String {
+  path
+    .replace("{project_id}", "11111111-1111-4111-8111-111111111111")
+    .replace("{pipeline_id}", "22222222-2222-4222-8222-222222222222")
+    .replace("{repository_id}", "33333333-3333-4333-8333-333333333333")
+    .replace("{configuration_id}", "44444444-4444-4444-8444-444444444444")
+    .replace("{trigger_id}", "88888888-8888-4888-8888-888888888888")
+    .replace("{build_id}", "99999999-9999-4999-8999-999999999999")
+    .replace("{attempt_id}", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    .replace("{job_id}", "55555555-5555-4555-8555-555555555555")
+    .replace("{pool_id}", "66666666-6666-4666-8666-666666666666")
+    .replace("{integration_id}", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+    .replace("{version}", "1")
+}
+
+pub fn json_request(
+  method: &str,
+  uri: &str,
+  idempotency_key: &str,
+  version: Option<&str>,
+  body: &str,
+) -> Request<Body> {
+  let request = Request::builder()
+    .method(method)
+    .uri(uri)
+    .header("content-type", "application/json")
+    .header("idempotency-key", idempotency_key);
+  request_with_version(request, version)
+    .body(Body::from(body.to_owned()))
+    .unwrap()
+}
+
+pub fn empty_request(method: &str, uri: &str, mutation: Option<(&str, &str)>) -> Request<Body> {
+  let request = Request::builder().method(method).uri(uri);
+  let request = match mutation {
+    Some((key, version)) => request.header("idempotency-key", key).header("if-match", version),
+    None => request,
+  };
+  request.body(Body::empty()).unwrap()
+}
+
+fn request_with_version(request: Builder, version: Option<&str>) -> Builder {
+  match version {
+    Some(version) => request.header("if-match", version),
+    None => request,
+  }
+}
+
 pub fn repository_body(project_id: &str) -> String {
   let version: serde_json::Value = serde_json::from_str(&repository_version_body()).unwrap();
   serde_json::to_string(&serde_json::json!({
@@ -73,6 +126,40 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
         "configuration_version": 1,
         "enabled": true,
         "definition": {}
+      }),
+    ),
+    (
+      "CreateScheduledTriggerDefinitionRequest",
+      serde_json::json!({
+        "configuration_id": "configuration",
+        "configuration_version": 1,
+        "enabled": true,
+        "schedule": {
+          "expression": "0 0 9 * * Mon-Fri *",
+          "timezone": "Europe/Moscow",
+          "missed_run_policy": {"kind": "catch_up", "maximum_occurrences": 4}
+        },
+        "build": {
+          "source": {"kind": "exact_revision", "value": "0123456789abcdef"},
+          "parameters": {},
+          "priority": 0
+        }
+      }),
+    ),
+    (
+      "CreateUnmanagedWebhookRequest",
+      serde_json::json!({
+        "configuration_id": "configuration",
+        "configuration_version": 1,
+        "enabled": true,
+        "adapter_id": "github",
+        "adapter_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verification_material_handle": "secret:webhook",
+        "verification_headers": ["x-hub-signature-256"],
+        "repository_id": "repository",
+        "event_kind": "push",
+        "parameters": {},
+        "priority": 0
       }),
     ),
     (

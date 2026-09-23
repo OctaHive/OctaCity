@@ -18,7 +18,11 @@ mod credentials;
 mod definition_model;
 mod definition_port;
 mod error;
+mod external_trigger_model;
+mod external_trigger_port;
 mod idempotency;
+mod internal_trigger_model;
+mod internal_trigger_port;
 mod job_model;
 mod lease_recovery;
 mod lease_recovery_port;
@@ -34,7 +38,12 @@ mod project_model;
 mod project_policy;
 mod project_policy_port;
 mod project_port;
+mod schedule_model;
+mod schedule_port;
+mod trigger_evaluation_model;
+mod trigger_evaluation_port;
 mod trigger_port;
+mod webhook_delivery_model;
 
 #[cfg(any(test, feature = "test-support"))]
 mod log_search_testing;
@@ -118,7 +127,25 @@ pub use definition_model::{
 };
 pub use definition_port::DefinitionStore;
 pub use error::{StoreError, StoreInputError, StoreOperation};
+pub use external_trigger_model::{
+  ClaimManagedWebhookOperations, CreateManagedWebhook, CreateUnmanagedWebhook, EnqueueManagedWebhookOperation,
+  FailManagedWebhookOperation, MAX_MANAGED_WEBHOOK_OPERATION_BATCH_SIZE, MAX_WEBHOOK_ADAPTER_ID_BYTES,
+  MAX_WEBHOOK_HEADER_NAME_BYTES, MAX_WEBHOOK_MATERIAL_HANDLE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
+  ManagedWebhookDefinition, ManagedWebhookMutationOutcome, ManagedWebhookOperation, ManagedWebhookOperationClaim,
+  ManagedWebhookRecord, ManagedWebhookRegistration, ManagedWebhookRegistrationStatus, RecordManagedWebhookRegistration,
+  UnmanagedWebhookDefinition, UnmanagedWebhookMutationOutcome, WEBHOOK_ADAPTER_SHA256_BYTES, WebhookIntegrationRecord,
+  canonical_webhook_headers,
+};
+pub use external_trigger_port::{
+  ManagedWebhookOperationStore, ManagedWebhookRegistrationStore, WebhookConfigurationStore,
+  WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
+};
 pub use idempotency::{IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES};
+pub use internal_trigger_model::{
+  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventClaim, InternalTriggerMatch,
+  MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE, MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT,
+};
+pub use internal_trigger_port::InternalTriggerEventStore;
 pub use job_model::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
   JobCompletion, JobCompletionKind, JobEventPage, LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome, LeaseWindow,
@@ -147,9 +174,10 @@ pub use model::{
 pub use octacity_server_domain::{ArtifactPolicy, ImmutableRevision, NetworkHost, RuntimeClass, SourceReference};
 pub use octacity_server_domain::{EnrollmentCredentialId, LogChunkId, LogIndexingWorkId, RegistrationCredentialId};
 pub use octacity_server_trigger::{
-  NormalizedTriggerOccurrence, TriggerCausality, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
-  TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent, TriggerOccurrenceState,
-  TriggerTarget,
+  InternalTriggerProtection, MAX_INTERNAL_TRIGGER_DEPTH, MissedRunPolicy, NormalizedTriggerOccurrence,
+  ScheduleDefinition, TriggerCausality, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEventKind,
+  TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent, TriggerOccurrenceState, TriggerTarget,
+  derive_internal_causality, validate_internal_ancestry,
 };
 pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
 pub use pipeline_port::PipelineStore;
@@ -171,10 +199,31 @@ pub use project_model::{
 pub use project_policy::ProjectPolicyDocument;
 pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
+pub use schedule_model::{
+  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MAX_SCHEDULE_CLAIM_BATCH_SIZE,
+  ScheduleRecord,
+};
+pub use schedule_port::ScheduleStore;
+pub use trigger_evaluation_model::{
+  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, MAX_TRIGGER_EVALUATION_BATCH_SIZE,
+  MAX_TRIGGER_EVALUATION_DIAGNOSTIC_BYTES, MAX_TRIGGER_EVALUATION_PAYLOAD_BYTES, RecordTriggerEvaluationRevision,
+  ReserveTriggerEvaluation, TriggerEvaluationClaim, TriggerEvaluationReservation,
+};
+pub use trigger_evaluation_port::TriggerEvaluationWorkStore;
 pub use trigger_port::TriggerDefinitionStore;
+pub use webhook_delivery_model::{
+  ClaimWebhookDeliveries, CompleteWebhookDelivery, EnqueueWebhookDelivery, FailWebhookDelivery,
+  MAX_STORED_WEBHOOK_BODY_BYTES, MAX_WEBHOOK_DELIVERY_BATCH_SIZE, MAX_WEBHOOK_DIAGNOSTIC_BYTES,
+  MAX_WEBHOOK_HEADER_VALUE_BYTES, MAX_WEBHOOK_METADATA_ENTRIES, MAX_WEBHOOK_METADATA_NAME_BYTES,
+  MAX_WEBHOOK_VALUE_BYTES, NormalizedWebhookEvent, RecordWebhookEvent, RecordWebhookEventOutcome,
+  SuppressWebhookDelivery, WebhookDeliveryClaim, WebhookDeliveryDiagnostic, WebhookDeliveryId, WebhookDeliveryState,
+  WebhookDeliveryWork, WebhookFailureCode,
+};
 
 #[cfg(test)]
 mod tests {
+  use std::collections::{BTreeMap, BTreeSet};
+
   use octacity_server_domain::{BuildId, Timestamp};
   use serde_json::json;
 
@@ -185,8 +234,9 @@ mod tests {
   use super::{
     AppendJobEvents, DurableJobEvent, EventSequence, IdempotencyKey, JobEventKind, LeaseAccess, LeaseFence,
     ListProjects, MAX_IDEMPOTENCY_KEY_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_PAYLOAD_BYTES,
-    MAX_MATERIALIZED_JOBS, MAX_PROJECT_PAGE_SIZE, MutationDisposition, RegistrationEpoch, StoreError, StoreInputError,
-    StoreOperation, TriggerAcceptanceStore,
+    MAX_MATERIALIZED_JOBS, MAX_PROJECT_PAGE_SIZE, MAX_WEBHOOK_HEADER_NAME_BYTES, MutationDisposition,
+    RegistrationEpoch, StoreError, StoreInputError, StoreOperation, TriggerAcceptanceStore, TriggerEventKind,
+    UnmanagedWebhookDefinition, WEBHOOK_ADAPTER_SHA256_BYTES, canonical_webhook_headers,
   };
 
   #[test]
@@ -364,5 +414,31 @@ mod tests {
         })
       );
     }
+  }
+
+  #[test]
+  fn webhook_header_validation_is_shared_by_construction_and_store_revalidation() {
+    for invalid in [
+      vec!["x-signature".to_owned(), "x-signature".to_owned()],
+      vec!["X-Signature".to_owned()],
+      vec!["x".repeat(MAX_WEBHOOK_HEADER_NAME_BYTES + 1)],
+    ] {
+      assert_eq!(
+        canonical_webhook_headers(invalid),
+        Err(StoreInputError::InvalidWebhookDefinition)
+      );
+    }
+
+    let definition = UnmanagedWebhookDefinition {
+      adapter_id: "fixture".to_owned(),
+      adapter_sha256: "0".repeat(WEBHOOK_ADAPTER_SHA256_BYTES),
+      verification_material_handle: "secret:webhook".to_owned(),
+      verification_headers: BTreeSet::from(["x".repeat(MAX_WEBHOOK_HEADER_NAME_BYTES + 1)]),
+      repository_id: super::test_support::id(101),
+      event_kind: TriggerEventKind::new("push").unwrap(),
+      parameters: BTreeMap::new(),
+      priority: 0,
+    };
+    assert_eq!(definition.validate(), Err(StoreInputError::InvalidWebhookDefinition));
   }
 }

@@ -1,0 +1,16 @@
+{
+  "configuration_id": "44444444-4444-4444-8444-444444444444",
+  "configuration_version": 1,
+  "enabled": true,
+  "adapter_id": "github",
+  "adapter_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "verification_material_handle": "secret:webhook-verification",
+  "verification_headers": [
+    "x-hub-signature-256"
+  ],
+  "administration_credential_handle": "secret:github-administration",
+  "repository_id": "33333333-3333-4333-8333-333333333333",
+  "event_kind": "push",
+  "parameters": {},
+  "priority": 0
+}

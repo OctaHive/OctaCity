@@ -22,6 +22,16 @@ pub trait ManualTriggerContextProvider: Send + Sync {
     &self,
     trigger: TriggerDefinitionRef,
     target: TriggerTarget,
+  ) -> Result<ManualTriggerContext, ManualTriggerContextError> {
+    self.load_for(trigger, target, TriggerKind::Manual).await
+  }
+
+  /// Validates an exact Trigger kind and loads the same immutable Build context.
+  async fn load_for(
+    &self,
+    trigger: TriggerDefinitionRef,
+    target: TriggerTarget,
+    kind: TriggerKind,
   ) -> Result<ManualTriggerContext, ManualTriggerContextError>;
 }
 
@@ -110,14 +120,15 @@ where
   S: ConfigurationStore + PipelineStore + TriggerDefinitionStore + 'static,
   P: EffectiveProjectPolicySource + 'static,
 {
-  async fn load(
+  async fn load_for(
     &self,
     trigger: TriggerDefinitionRef,
     target: TriggerTarget,
+    kind: TriggerKind,
   ) -> Result<ManualTriggerContext, ManualTriggerContextError> {
     self
       .store
-      .require_enabled_trigger(trigger, TriggerKind::Manual, target)
+      .require_enabled_trigger(trigger, kind, target)
       .await
       .map_err(ManualTriggerContextError::Store)?;
     let configuration = self

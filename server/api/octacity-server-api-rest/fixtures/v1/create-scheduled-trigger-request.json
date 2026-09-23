@@ -1,0 +1,23 @@
+{
+  "configuration_id": "44444444-4444-4444-8444-444444444444",
+  "configuration_version": 1,
+  "enabled": true,
+  "schedule": {
+    "expression": "0 0 9 * * Mon-Fri *",
+    "timezone": "Europe/Moscow",
+    "missed_run_policy": {
+      "kind": "catch_up",
+      "maximum_occurrences": 4
+    }
+  },
+  "build": {
+    "source": {
+      "kind": "exact_revision",
+      "value": "0123456789abcdef"
+    },
+    "parameters": {
+      "profile": "release"
+    },
+    "priority": 10
+  }
+}

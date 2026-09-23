@@ -12,6 +12,10 @@ description = "Opt-in end-to-end contracts for OctaCity phase six"
 name = "protocol_minio"
 path = "tests/protocol_minio.rs"
 
+[[test]]
+name = "webhook_contract"
+path = "tests/webhook_contract.rs"
+
 [dev-dependencies]
 async-trait.workspace = true
 aws-sdk-s3.workspace = true
@@ -28,7 +32,9 @@ octacity-lifecycle = { path = "../../../agent/octacity-lifecycle" }
 octacity-output = { path = "../../../agent/octacity-output" }
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-runner = { path = "../../../agent/octacity-runner" }
+octacity-server-api-webhook = { path = "../../api/octacity-server-api-webhook" }
 octacity-source = { path = "../../../agent/octacity-source" }
+octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }
 reqwest.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

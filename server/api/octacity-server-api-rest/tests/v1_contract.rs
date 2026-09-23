@@ -1,9 +1,10 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
   AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ContractValueError, CreateAgentPoolRequest,
-  CreateBuildConfigurationRequest, CreatePipelineRequest, CreateProjectRequest, Cursor, CursorPage, DrainAgentRequest,
-  ErrorCode, ErrorResponse, IdempotencyKey, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
-  MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
+  CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest,
+  CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse,
+  IdempotencyKey, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES,
+  MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -13,6 +14,8 @@ const PROJECT_PAGE: &str = include_str!("../fixtures/v1/project-page.json");
 const CREATE_PIPELINE: &str = include_str!("../fixtures/v1/create-pipeline-request.json");
 const CREATE_CONFIGURATION: &str = include_str!("../fixtures/v1/create-build-configuration-request.json");
 const ACCEPT_MANUAL_TRIGGER: &str = include_str!("../fixtures/v1/accept-manual-trigger-request.json");
+const CREATE_SCHEDULED_TRIGGER: &str = include_str!("../fixtures/v1/create-scheduled-trigger-request.json");
+const CREATE_MANAGED_WEBHOOK: &str = include_str!("../fixtures/v1/create-managed-webhook-request.json");
 const ERROR_RESPONSE: &str = include_str!("../fixtures/v1/error-response.json");
 const CREATE_AGENT_POOL: &str = include_str!("../fixtures/v1/create-agent-pool-request.json");
 const AGENT_POOL_PAGE: &str = include_str!("../fixtures/v1/agent-pool-page.json");
@@ -27,6 +30,8 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<CreatePipelineRequest>(CREATE_PIPELINE);
   assert_golden::<CreateBuildConfigurationRequest>(CREATE_CONFIGURATION);
   assert_golden::<AcceptManualTriggerRequest>(ACCEPT_MANUAL_TRIGGER);
+  assert_golden::<CreateScheduledTriggerDefinitionRequest>(CREATE_SCHEDULED_TRIGGER);
+  assert_golden::<CreateManagedWebhookRequest>(CREATE_MANAGED_WEBHOOK);
   assert_golden::<ErrorResponse>(ERROR_RESPONSE);
   assert_golden::<CreateAgentPoolRequest>(CREATE_AGENT_POOL);
   assert_golden::<CursorPage<AgentPoolResource>>(AGENT_POOL_PAGE);
@@ -39,6 +44,14 @@ fn v1_golden_documents_round_trip_without_application_types() {
 fn agent_enrollment_response_debug_output_redacts_the_bearer() {
   let response: IssueAgentEnrollmentResponse = serde_json::from_str(ISSUED_AGENT_ENROLLMENT).unwrap();
   assert!(!format!("{response:?}").contains(&response.credential));
+}
+
+#[test]
+fn managed_webhook_request_debug_output_redacts_protected_handles() {
+  let request: CreateManagedWebhookRequest = serde_json::from_str(CREATE_MANAGED_WEBHOOK).unwrap();
+  let debug = format!("{request:?}");
+  assert!(!debug.contains(&request.verification_material_handle));
+  assert!(!debug.contains(&request.administration_credential_handle));
 }
 
 #[test]
@@ -62,6 +75,14 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
   let mut trigger: Value = serde_json::from_str(ACCEPT_MANUAL_TRIGGER).unwrap();
   trigger["accepted_at_unix_ms"] = json!(1_700_000_000_000_i64);
   assert!(serde_json::from_value::<AcceptManualTriggerRequest>(trigger).is_err());
+
+  let mut schedule: Value = serde_json::from_str(CREATE_SCHEDULED_TRIGGER).unwrap();
+  schedule["schedule"]["database_timezone"] = json!("UTC");
+  assert!(serde_json::from_value::<CreateScheduledTriggerDefinitionRequest>(schedule).is_err());
+
+  let mut managed_webhook: Value = serde_json::from_str(CREATE_MANAGED_WEBHOOK).unwrap();
+  managed_webhook["provider_private_configuration"] = json!({"token": "must-never-be-accepted"});
+  assert!(serde_json::from_value::<CreateManagedWebhookRequest>(managed_webhook).is_err());
 
   let mut error: Value = serde_json::from_str(ERROR_RESPONSE).unwrap();
   error["diagnostic"] = json!("provider-private-details");

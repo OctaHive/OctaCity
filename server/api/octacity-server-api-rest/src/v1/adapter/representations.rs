@@ -1,5 +1,23 @@
 use super::*;
 
+pub(super) fn schedule_resource(
+  projection: ScheduleProjection,
+  request_id: &RequestId,
+) -> Result<ScheduleResource, ApiError> {
+  Ok(ScheduleResource {
+    trigger_id: projection.trigger.id.to_string(),
+    trigger_version: projection.trigger.version.get(),
+    configuration_id: projection.target.configuration_id.to_string(),
+    configuration_version: projection.target.configuration_version.get(),
+    enabled: projection.enabled,
+    schedule: serde_json::from_value(encode(projection.schedule, request_id)?)
+      .map_err(|_| internal_conversion(request_id))?,
+    next_occurrence_at_unix_ms: projection.next_occurrence_at.unix_millis(),
+    build: serde_json::from_value(encode(projection.build, request_id)?)
+      .map_err(|_| internal_conversion(request_id))?,
+  })
+}
+
 pub(super) fn project_mutation(outcome: ProjectCommandOutcome) -> MutationResponse<ProjectResource> {
   MutationResponse {
     disposition: mutation_disposition(outcome.disposition),

@@ -76,14 +76,16 @@ impl ReadinessChecks {
 
 /// Mutable health signal owned by one supervised background worker.
 pub(crate) struct WorkerHealth {
+  name: &'static str,
   healthy: AtomicBool,
   last_success: Mutex<Option<std::time::Instant>>,
   stale_after: std::time::Duration,
 }
 
 impl WorkerHealth {
-  pub(crate) fn new(stale_after: std::time::Duration) -> Self {
+  pub(crate) fn new(name: &'static str, stale_after: std::time::Duration) -> Self {
     Self {
+      name,
       healthy: AtomicBool::new(false),
       last_success: Mutex::new(None),
       stale_after,
@@ -107,7 +109,7 @@ impl WorkerHealth {
 #[async_trait]
 impl ReadinessCheck for WorkerHealth {
   fn name(&self) -> &'static str {
-    "lease-expiry-worker"
+    self.name
   }
 
   async fn check(&self) -> bool {
@@ -332,7 +334,8 @@ mod tests {
 
   #[tokio::test]
   async fn worker_health_requires_a_recent_successful_pass() {
-    let health = WorkerHealth::new(std::time::Duration::from_millis(5));
+    let health = WorkerHealth::new("test-worker", std::time::Duration::from_millis(5));
+    assert_eq!(health.name(), "test-worker");
     assert!(
       !health.check().await,
       "a worker must not be healthy before its first pass"

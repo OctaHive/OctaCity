@@ -33,14 +33,16 @@ use crate::{
   JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore, LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome,
   LeaseHeartbeatStore, LogIndexPosition, LogIndexWorkStore, MaterializedJob, MaterializedJobPayload,
   MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, RenewLease, RetryBuild, RetryDisposition,
-  StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore,
-  TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerIntentDigest,
-  TriggerKind, TriggerMetadata, TriggerTarget, complete_job_state, retry_graph_is_equivalent, start_job_execution,
+  ScheduleRecord, StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
+  TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEvaluationOutcome,
+  TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget, WorkerOwner, complete_job_state,
+  retry_graph_is_equivalent, start_job_execution,
 };
 
 mod build_control;
 mod fixtures;
 mod lease_events;
+mod schedule;
 mod state;
 mod trigger;
 

@@ -53,6 +53,7 @@ provider crate name.
 | --- | --- | --- |
 | `octacity-server` | Process composition and concrete adapter selection | Domain decisions or reusable transport contracts |
 | `octacity-server-api-rest` | Management REST DTOs, decoding, routing, OpenAPI, HTTP error mapping | Transactions, domain state, database rows |
+| `octacity-server-api-webhook` | Exact-body public webhook routing, bounded decoding, and mapping to typed application delivery commands | Provider SDKs, adapter process supervision, Trigger persistence |
 | `octacity-server-api-agent` | HTTP adaptation of the shared server-Agent protocol | Agent execution or placement decisions |
 | `octacity-server-application` | Transport-independent commands, queries, handlers, projections, transaction coordination, and cross-module Project-policy resolution | HTTP DTOs and concrete infrastructure |
 | `octacity-server-domain` | Server-only identities, versions, bounded values, timestamps, and typed errors | Aggregates, transport DTOs, persistence rows |
@@ -69,11 +70,21 @@ provider crate name.
 | `octacity-vcs-protocol` | Versioned provider-neutral VCS adapter messages | Git implementation and build workspaces |
 | `octacity-agent-provisioning-protocol` | Versioned future provision/observe/terminate contract | vSphere, Proxmox, or other production adapters |
 | `octacity-server-store-postgres` | PostgreSQL schema, declarative constraints, rows, locking, transactions, and store-port implementation | Application commands, stored business routines, and domain policy |
+| `octacity-server-adapter-host` | Shared registry filesystem checks, executable digest verification, bounded framing, cancellation, timeout, and process cleanup | Provider manifests, wire-message semantics, capability policy, and adapter selection |
+| `octacity-server-webhook` | Operator-installed webhook-adapter discovery, capability gating, and webhook protocol policy over the shared host | Public webhook HTTP routing, provider SDKs, Trigger evaluation, and durable delivery retry |
+| `octacity-server-vcs` | Operator-installed VCS-adapter discovery, capability gating, credential-handle isolation, and VCS protocol policy over the shared host | Git implementation, repository execution, build workspaces, and provider SDKs |
+| `octacity-vcs-git` | Read-only Git refs, immutable commit selection, tree browsing, and bounded content reads through an ephemeral bare object database | Build workspaces, checkout, repository hooks, Octafile evaluation, and source execution |
 | `octacity-artifact-store` | Backend-neutral immutable-byte interface | Logical Artifact lifecycle and storage-provider details |
 | `octacity-artifact-s3` | S3-compatible implementation of the Artifact Store port | Logical Artifact policy and public S3 details |
 | `octacity-protocol` | Shared signed JobSpec, server-Agent, and Artifact-transfer wire contracts | Server domain entities and HTTP routes |
 
-Planned ownership names are not compiled as empty packages. Tasks 6.3, 6.4, 6.6, 8.1, and 8.2 introduce `octacity-server-webhook`, `octacity-server-api-webhook`, `octacity-server-vcs`, `octacity-server-audit`, and `octacity-observability` only when their implementations and consumers exist.
+Planned ownership names are not compiled as empty packages. Tasks 6.3 and 6.4
+have introduced `octacity-server-webhook` over the shared verified process host and
+`octacity-server-api-webhook` with its exact-body authenticated ingress.
+Tasks 6.6 and 6.7 have introduced `octacity-server-vcs` with its verified
+process host and `octacity-vcs-git` as the first read-only implementation.
+Tasks 8.1 and 8.2 introduce `octacity-server-audit` and
+`octacity-observability` only when their implementations and consumers exist.
 
 The Artifact Store port lives in the core layer. Its S3-compatible adapter is
 an infrastructure crate selected only by a composition root; neither the core
@@ -150,10 +161,11 @@ wire compatibility promise.
 | Seam | Contract owner | Host or consumers | Trust and translation rule |
 | --- | --- | --- | --- |
 | Management commands and queries | `octacity-server-application` | REST now; future GraphQL | Each transport owns its DTOs and maps them to application types |
+| Public webhook delivery | `octacity-server-api-webhook` | Provider callbacks | The dedicated listener durably admits exact bounded bytes and allowlisted headers, returns a receipt identity, and never waits for adapter execution |
 | Server-Agent coordination | `octacity-protocol` | `octacity-server-api-agent`, `octacity-coordinator` | Enrollment, registration epoch, Lease fence, and signed JobSpec remain mandatory |
 | Artifact transfer | `octacity-protocol::artifact` | Server Artifact domain and Agent output flow | Only logical identifiers and short-lived opaque capabilities cross the seam |
-| Webhook provider process | `octacity-webhook-provider-protocol` | `octacity-server-webhook` | Exact raw delivery is authenticated before a normalized event reaches the Trigger Engine |
-| VCS provider process | `octacity-vcs-protocol` | `octacity-server-vcs` | Mutable refs resolve once to immutable revisions; repository content is bounded data only |
+| Webhook provider process | `octacity-webhook-provider-protocol` | `octacity-server-webhook` | Exact raw delivery is authenticated before normalization; optional managed create, observe, rotate, and delete use stable idempotency identities, protected credential handles, and durable bounded retry state |
+| VCS provider process | `octacity-vcs-protocol` | `octacity-server-vcs` | Configured integration identities select an operator-pinned adapter and protected credential handle; mutable refs resolve once to immutable revisions, while repository content remains bounded data only |
 | Agent provisioning process | `octacity-agent-provisioning-protocol` | Future infrastructure host | No production adapter or dynamic-provisioning readiness dependency exists in v1 |
 | Authoritative store ports | `octacity-server-store` | PostgreSQL adapter; deterministic in-memory test adapter | Initial ports expose implemented atomic coordination, credential, and log-index watermark use cases and grow with feature implementations; SQL types never cross an interface |
 | Build-log search ports | `octacity-server-store::{LogIndexWorkStore, LogSearchIndex}` | Authoritative store plus PostgreSQL projection; deterministic in-memory test adapters | The application reads the committed watermark from the authoritative port and combines it with contiguous projection progress; PostgreSQL query syntax and physical log locations do not cross either interface |
@@ -209,7 +221,14 @@ adapter surface: Trigger acceptance, Job execution, and Build run control have
 separate interfaces. `AuthoritativeStore` is only their composite adapter
 contract. Manual Trigger context loading also uses a dedicated Trigger-definition
 query and verifies the exact enabled manual Trigger version and target before
-any mutable VCS reference is resolved.
+any mutable VCS reference is resolved. The REST command reserves its stable
+intent and canonical payload in `trigger_evaluation_work` before that external
+read. The request and recovery worker share one fenced claim; transient VCS
+failures use a bounded policy, while permanent or exhausted failures remain as
+secret-free dead letters. The first successful mutable-reference result is
+checkpointed as an immutable revision under that claim before Build creation,
+so a later store retry cannot observe a moved branch. A completed replay reaches
+the authoritative Trigger acceptance record before it could invoke VCS again.
 
 The PostgreSQL package exposes a plain `PostgresStore` for configuration,
 Project, Pipeline, credential, and indexing ports. Only
@@ -398,6 +417,46 @@ structural checks and foreign keys, and keeps the unique source-scoped
 deduplication key. The existing atomic Trigger-acceptance operation and its
 in-memory/PostgreSQL contract verify that duplicate occurrences expose at most
 one Build.
+
+Public webhook ingress first commits a raw receipt with a server-owned identity
+and returns `202 Accepted`. A durable worker claims verification work with an
+owner and expiry, invokes the pinned adapter, and atomically records the
+provider-neutral event under the integration-scoped provider delivery identity.
+If the integration was disabled before processing, the worker moves the receipt
+to the terminal `suppressed` state without invoking the adapter or evaluating a
+Trigger. This also closes the race where a receipt was admitted immediately
+before the integration was disabled.
+An exact duplicate completes without new Trigger work; conflicting normalized
+data under the same provider identity is dead-lettered. The canonical receipt
+then evaluates the Trigger with a stable composite identity. A crash before
+completion therefore replays the same occurrence and Build. Only transient
+adapter failures receive bounded exponential retries; exhausted and permanent
+failures retain attempt counts and secret-free diagnostics, while raw bodies
+and header values are cleared from terminal records.
+Delivery verification and managed-registration work intentionally share one
+operator-level polling, claim-lifetime, and retry policy because both invoke
+the same bounded webhook adapter host. Their batch sizes remain independent so
+one workload cannot silently enlarge the other workload's sequential claim
+budget.
+
+Terminal Build transitions publish `build.succeeded`, `build.failed`, or
+`build.cancelled` facts through the same transactional outbox commit as the
+authoritative state change. The internal-Trigger worker claims bounded batches
+with a process owner and expiry, reloads authoritative Build and occurrence
+state, and evaluates every enabled immutable Trigger definition that existed
+when the source event committed. A crash before claim completion causes
+at-least-once redelivery; each downstream occurrence uses the outbox entry as
+its stable source identity, so replay reaches the existing Build instead of
+creating another one.
+
+Internal causality has two independent guards. An exact Trigger definition may
+appear only once from the root occurrence through the candidate, which rejects
+direct and indirect cycles such as `A -> B -> A`. A non-repeating chain is also
+limited to 32 internal derivations. Protected candidates create no Build, but
+the worker completes their source event after processing other candidates, so
+a causal loop cannot become an unbounded retry loop. PostgreSQL stores claims
+and lineage; the cycle and depth decisions remain in `octacity-server-trigger`
+and are shared by every adapter.
 
 `ManualTriggerService` completes the manual path without exposing persistence
 or VCS protocol details to a transport. It loads the exact immutable Build

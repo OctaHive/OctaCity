@@ -1,0 +1,18 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-refs-01",
+  "command": {
+    "operation": "list_references",
+    "payload": {
+      "repository": {
+        "operation_id": "operation-refs-01",
+        "repository_id": "repository-01",
+        "repository_locator": "https://example.invalid/repository.git",
+        "credential_handle": "credential-handle-01"
+      },
+      "cursor": null,
+      "page_size": 100,
+      "prefix": "refs/heads/"
+    }
+  }
+}

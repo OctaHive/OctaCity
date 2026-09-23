@@ -1,7 +1,6 @@
 use std::{
   collections::BTreeSet,
   sync::{Arc, Mutex},
-  time::Duration,
 };
 
 use async_trait::async_trait;
@@ -11,23 +10,19 @@ use axum::{
 };
 use octacity_server_api_rest::{
   management_router_with_application,
-  v1::{
-    AgentManagementApplication, BuildManagementApplication, CatalogManagementApplication,
-    ConfigurationManagementApplication, DefinitionManagementApplication, ErrorCode, ExecutionManagementApplication,
-    JobEventManagementApplication, MANAGEMENT_OPERATIONS, ManagementApplication, ManagementApplicationHandlers,
-    ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  },
+  v1::{ErrorCode, MANAGEMENT_OPERATIONS},
 };
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, CancelBuildCommand, Command, CommandHandler, CreateAgentPoolCommand,
-  CreateBuildConfigurationCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
-  CreateTriggerDefinitionCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
-  GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery,
-  GetProjectQuery, GetRepositoryQuery, IssueAgentEnrollmentCommand, JobEventPageProjection, JobEventProjection,
-  ListAgentPoolsQuery, ListAgentsQuery, ListProjectsQuery, ManualTriggerError, MoveProjectCommand,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand,
-  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand,
+  CreateBuildConfigurationCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
+  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
+  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetAttemptQuery,
+  GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
+  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListProjectsQuery,
+  ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PublishAgentPoolVersionCommand,
+  PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
+  PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  RenameProjectCommand, RetryBuildCommand,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
@@ -35,8 +30,10 @@ use tower::ServiceExt as _;
 mod support;
 
 use support::{
-  agent_pool_create_body, agent_pool_publish_body, assert_json_matches_component, configuration_version_body,
-  documented_http_requests, repository_body, repository_version_body, request_examples, send_documented_request,
+  JobEventApplication, agent_pool_create_body, agent_pool_publish_body, assert_component_exists,
+  assert_json_matches_component, assert_required_header, concrete_path, configuration_version_body,
+  documented_http_requests, empty_request, json_request, recording_management_application, repository_body,
+  repository_version_body, request_examples, send_documented_request,
 };
 
 const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/management-rest-v1.md");
@@ -45,6 +42,7 @@ const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/ma
 struct RecordingApplication {
   calls: Mutex<Vec<&'static str>>,
   successful_workflow: bool,
+  capability_unavailable_for_managed: bool,
 }
 
 impl RecordingApplication {
@@ -52,6 +50,7 @@ impl RecordingApplication {
     Self {
       calls: Mutex::default(),
       successful_workflow: true,
+      capability_unavailable_for_managed: false,
     }
   }
 
@@ -100,6 +99,9 @@ unavailable_query!(GetRepositoryQuery, "get_repository");
 unavailable_command!(PublishBuildConfigurationVersionCommand, "publish_configuration");
 unavailable_command!(PublishProjectPolicyCommand, "publish_project_policy");
 unavailable_command!(CreateTriggerDefinitionCommand, "create_trigger_definition");
+unavailable_command!(CreateScheduleCommand, "create_schedule");
+unavailable_command!(CreateUnmanagedWebhookCommand, "create_unmanaged_webhook");
+unavailable_query!(GetScheduleQuery, "get_schedule");
 unavailable_query!(GetBuildConfigurationQuery, "get_configuration");
 unavailable_query!(ReadJobEventsQuery, "read_job_events");
 unavailable_command!(CreateAgentPoolCommand, "create_agent_pool");
@@ -117,6 +119,40 @@ unavailable_query!(GetAttemptQuery, "get_attempt");
 unavailable_query!(GetJobQuery, "get_job");
 unavailable_command!(CancelBuildCommand, "cancel_build");
 unavailable_command!(RetryBuildCommand, "retry_build");
+
+#[async_trait]
+impl CommandHandler<CreateManagedWebhookCommand> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn handle_command(
+    &self,
+    _command: CreateManagedWebhookCommand,
+  ) -> Result<<CreateManagedWebhookCommand as Command>::Outcome, Self::Error> {
+    self.record("create_managed_webhook");
+    if self.capability_unavailable_for_managed {
+      Err(ApplicationError::capability_unavailable())
+    } else {
+      Err(ApplicationError::unavailable())
+    }
+  }
+}
+
+#[async_trait]
+impl CommandHandler<ManageWebhookRegistrationCommand> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn handle_command(
+    &self,
+    _command: ManageWebhookRegistrationCommand,
+  ) -> Result<<ManageWebhookRegistrationCommand as Command>::Outcome, Self::Error> {
+    self.record("manage_webhook_registration");
+    if self.capability_unavailable_for_managed {
+      Err(ApplicationError::capability_unavailable())
+    } else {
+      Err(ApplicationError::unavailable())
+    }
+  }
+}
 
 #[async_trait]
 impl CommandHandler<CreateProjectCommand> for RecordingApplication {
@@ -292,61 +328,6 @@ impl CommandHandler<AcceptManualTriggerCommand> for RecordingApplication {
   }
 }
 
-struct JobEventApplication;
-
-#[async_trait]
-impl QueryHandler<ReadJobEventsQuery> for JobEventApplication {
-  type Error = ApplicationError;
-
-  async fn handle_query(&self, query: ReadJobEventsQuery) -> Result<JobEventPageProjection, Self::Error> {
-    assert_eq!(query.after_sequence, 4);
-    assert_eq!(query.limit, 2);
-    assert_eq!(query.wait.as_millis(), 25);
-    Ok(JobEventPageProjection {
-      events: vec![JobEventProjection {
-        sequence: 5,
-        kind: "progress".to_owned(),
-        occurred_at_unix_ms: 1_234,
-        payload: serde_json::json!({"step": "compile"}),
-      }],
-      cursor: 5,
-    })
-  }
-}
-
-fn recording_management_application<E>(
-  application: Arc<RecordingApplication>,
-  job_events: Arc<E>,
-) -> ManagementApplication
-where
-  E: QueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
-{
-  ManagementApplication::new(
-    ["native".to_owned()],
-    Duration::from_secs(900),
-    octacity_server_application::AgentEnrollmentSecretKey::new([7; 32]),
-    ManagementApplicationHandlers::new(
-      CatalogManagementApplication::new(
-        ProjectManagementApplication::new(Arc::clone(&application)),
-        PipelineManagementApplication::new(Arc::clone(&application)),
-        ConfigurationManagementApplication::new(Arc::clone(&application)),
-        DefinitionManagementApplication::new(Arc::clone(&application)),
-      ),
-      AgentManagementApplication::new(
-        Arc::clone(&application),
-        Arc::clone(&application),
-        Arc::clone(&application),
-      ),
-      ExecutionManagementApplication::new(
-        BuildManagementApplication::new(Arc::clone(&application)),
-        ManualTriggerManagementApplication::new(application),
-        JobEventManagementApplication::new(job_events),
-      ),
-    ),
-  )
-  .unwrap()
-}
-
 #[tokio::test]
 async fn every_registered_route_dispatches_only_through_application_handlers() {
   let application = Arc::new(RecordingApplication::default());
@@ -363,6 +344,8 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
   let agent_id = "77777777-7777-4777-8777-777777777777";
   let build_id = "99999999-9999-4999-8999-999999999999";
   let attempt_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let schedule_id = "88888888-8888-4888-8888-888888888888";
+  let integration_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
   let requests = vec![
     json_request(
@@ -458,6 +441,49 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
         r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"definition":{{}}}}"#
       ),
     ),
+    json_request(
+      "POST",
+      "/api/v1/trigger-definitions/scheduled",
+      "create-schedule",
+      None,
+      &format!(
+        r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"schedule":{{"expression":"0 * * * * * *","timezone":"UTC","missed_run_policy":{{"kind":"run_once"}}}},"build":{{"source":{{"kind":"exact_revision","value":"0123456789abcdef"}},"parameters":{{}},"priority":0}}}}"#
+      ),
+    ),
+    json_request(
+      "POST",
+      "/api/v1/webhook-integrations/unmanaged",
+      "create-unmanaged-webhook",
+      None,
+      &format!(
+        r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"adapter_id":"github","adapter_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verification_material_handle":"secret:webhook","verification_headers":["x-hub-signature-256"],"repository_id":"{repository_id}","event_kind":"push","parameters":{{}},"priority":0}}"#
+      ),
+    ),
+    json_request(
+      "POST",
+      "/api/v1/webhook-integrations/managed",
+      "create-managed-webhook",
+      None,
+      &format!(
+        r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"adapter_id":"github","adapter_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verification_material_handle":"secret:webhook","verification_headers":["x-hub-signature-256"],"administration_credential_handle":"secret:github-admin","repository_id":"{repository_id}","event_kind":"push","parameters":{{}},"priority":0}}"#
+      ),
+    ),
+    empty_request(
+      "POST",
+      &format!("/api/v1/webhook-integrations/managed/{integration_id}/observe"),
+      Some(("observe-managed-webhook", "\"1\"")),
+    ),
+    empty_request(
+      "POST",
+      &format!("/api/v1/webhook-integrations/managed/{integration_id}/rotate"),
+      Some(("rotate-managed-webhook", "\"1\"")),
+    ),
+    empty_request(
+      "DELETE",
+      &format!("/api/v1/webhook-integrations/managed/{integration_id}"),
+      Some(("delete-managed-webhook", "\"1\"")),
+    ),
+    empty_request("GET", &format!("/api/v1/schedules/{schedule_id}/versions/1"), None),
     json_request(
       "POST",
       "/api/v1/triggers/manual",
@@ -556,6 +582,13 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "publish_configuration",
       "get_configuration",
       "create_trigger_definition",
+      "create_schedule",
+      "create_unmanaged_webhook",
+      "create_managed_webhook",
+      "manage_webhook_registration",
+      "manage_webhook_registration",
+      "manage_webhook_registration",
+      "get_schedule",
       "accept_manual_trigger",
       "get_build",
       "cancel_build",
@@ -575,6 +608,32 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "drain_agent",
     ]
   );
+}
+
+#[tokio::test]
+async fn unsupported_managed_registration_capability_has_a_stable_rest_error() {
+  let application = Arc::new(RecordingApplication {
+    capability_unavailable_for_managed: true,
+    ..RecordingApplication::default()
+  });
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
+  );
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/webhook-integrations/managed",
+      "unsupported-managed-webhook",
+      None,
+      include_str!("../fixtures/v1/create-managed-webhook-request.json"),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["code"], serde_json::json!(ErrorCode::CapabilityUnavailable));
 }
 
 #[tokio::test]
@@ -804,6 +863,12 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
         "#/components/responses/ManagementError"
       );
     }
+    if operation.operation_id.contains("ManagedWebhook") {
+      assert_eq!(
+        documented["responses"]["422"]["$ref"],
+        "#/components/responses/ManagementError"
+      );
+    }
     assert_required_header(documented, "Idempotency-Key", operation.idempotent_mutation);
     assert_required_header(documented, "If-Match", operation.optimistic_precondition);
 
@@ -834,6 +899,10 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       operation.path
     );
   }
+
+  let managed_response = &document["components"]["schemas"]["ManagedWebhookResource"]["properties"];
+  assert!(managed_response.get("administration_credential_handle").is_none());
+  assert!(managed_response.get("verification_material_handle").is_none());
 
   let error_codes = [
     ErrorCode::InvalidRequest,
@@ -871,35 +940,28 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
   for (schema, body) in request_examples() {
     assert_json_matches_component(&document, schema, &body);
   }
-}
-
-fn assert_component_exists(document: &serde_json::Value, schema: &str) {
-  assert!(
-    document["components"]["schemas"].get(schema).is_some(),
-    "missing component schema {schema}"
+  assert_json_matches_component(
+    &document,
+    "ScheduleResource",
+    &serde_json::json!({
+      "trigger_id": "88888888-8888-4888-8888-888888888888",
+      "trigger_version": 1,
+      "configuration_id": "44444444-4444-4444-8444-444444444444",
+      "configuration_version": 1,
+      "enabled": true,
+      "schedule": {
+        "expression": "0 0 9 * * Mon-Fri *",
+        "timezone": "Europe/Moscow",
+        "missed_run_policy": {"kind": "run_once"}
+      },
+      "next_occurrence_at_unix_ms": 1_700_000_000_000_i64,
+      "build": {
+        "source": {"kind": "exact_revision", "value": "0123456789abcdef"},
+        "parameters": {},
+        "priority": 0
+      }
+    }),
   );
-}
-
-fn assert_required_header(operation: &serde_json::Value, name: &str, expected: bool) {
-  let actual = operation["parameters"]
-    .as_array()
-    .into_iter()
-    .flatten()
-    .any(|parameter| parameter["in"] == "header" && parameter["name"] == name && parameter["required"] == true);
-  assert_eq!(actual, expected, "header drift for {name}");
-}
-
-fn concrete_path(path: &str) -> String {
-  path
-    .replace("{project_id}", "11111111-1111-4111-8111-111111111111")
-    .replace("{pipeline_id}", "22222222-2222-4222-8222-222222222222")
-    .replace("{repository_id}", "33333333-3333-4333-8333-333333333333")
-    .replace("{configuration_id}", "44444444-4444-4444-8444-444444444444")
-    .replace("{build_id}", "99999999-9999-4999-8999-999999999999")
-    .replace("{attempt_id}", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
-    .replace("{job_id}", "55555555-5555-4555-8555-555555555555")
-    .replace("{pool_id}", "66666666-6666-4666-8666-666666666666")
-    .replace("{version}", "1")
 }
 
 #[test]
@@ -908,24 +970,4 @@ fn documented_http_requests_support_windows_line_endings() {
   let document = unix_document.replace('\n', "\r\n");
 
   assert_eq!(documented_http_requests(&document).len(), 5);
-}
-
-fn json_request(method: &str, uri: &str, idempotency_key: &str, version: Option<&str>, body: &str) -> Request<Body> {
-  let mut request = Request::builder()
-    .method(method)
-    .uri(uri)
-    .header("content-type", "application/json")
-    .header("idempotency-key", idempotency_key);
-  if let Some(version) = version {
-    request = request.header("if-match", version);
-  }
-  request.body(Body::from(body.to_owned())).unwrap()
-}
-
-fn empty_request(method: &str, uri: &str, mutation: Option<(&str, &str)>) -> Request<Body> {
-  let mut request = Request::builder().method(method).uri(uri);
-  if let Some((key, version)) = mutation {
-    request = request.header("idempotency-key", key).header("if-match", version);
-  }
-  request.body(Body::empty()).unwrap()
 }

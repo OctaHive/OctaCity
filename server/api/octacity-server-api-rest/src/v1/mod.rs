@@ -22,7 +22,7 @@ pub use adapter::{
   ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
   JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
   ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  router as management_routes,
+  ScheduleManagementApplication, router as management_routes,
 };
 pub use agent::*;
 pub use common::*;

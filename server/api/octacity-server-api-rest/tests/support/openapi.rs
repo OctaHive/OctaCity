@@ -1,5 +1,21 @@
 use serde_json::Value;
 
+pub fn assert_component_exists(document: &Value, schema: &str) {
+  assert!(
+    document["components"]["schemas"].get(schema).is_some(),
+    "missing component schema {schema}"
+  );
+}
+
+pub fn assert_required_header(operation: &Value, name: &str, expected: bool) {
+  let actual = operation["parameters"]
+    .as_array()
+    .into_iter()
+    .flatten()
+    .any(|parameter| parameter["in"] == "header" && parameter["name"] == name && parameter["required"] == true);
+  assert_eq!(actual, expected, "header drift for {name}");
+}
+
 pub fn assert_json_matches_component(document: &Value, component: &str, value: &Value) {
   let schema = &document["components"]["schemas"][component];
   if let Err(error) = validate(document, schema, value, component) {

@@ -143,7 +143,8 @@ impl Response {
       request.protocol_version,
       &request.request_id,
     )
-    .map_err(|_| ProtocolError::CorrelationMismatch)
+    .map_err(|_| ProtocolError::CorrelationMismatch)?;
+    validate_outcome_for(&request.command, &self.outcome)
   }
 }
 
@@ -287,21 +288,36 @@ pub enum Command {
 }
 
 /// Common repository access fields.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepositoryAccess {
   /// Stable identity of this in-flight operation.
   pub operation_id: String,
   /// Server-owned logical repository identity.
   pub repository_id: String,
+  /// Credential-free repository locator from the immutable repository snapshot.
+  pub repository_locator: String,
   /// Host-owned credential handle, never raw provider credentials.
   pub credential_handle: String,
+}
+
+impl std::fmt::Debug for RepositoryAccess {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("RepositoryAccess")
+      .field("operation_id", &self.operation_id)
+      .field("repository_id", &self.repository_id)
+      .field("repository_locator", &"<redacted>")
+      .field("credential_handle", &"<redacted>")
+      .finish()
+  }
 }
 
 impl RepositoryAccess {
   fn validate(&self) -> Result<(), ProtocolError> {
     field("operation_id", &self.operation_id)?;
     field("repository_id", &self.repository_id)?;
+    field("repository_locator", &self.repository_locator)?;
     field("credential_handle", &self.credential_handle)
   }
 }
@@ -689,20 +705,57 @@ fn validate_metadata(values: &BTreeMap<String, String>) -> Result<(), ProtocolEr
   Ok(())
 }
 
+fn validate_outcome_for(command: &Command, outcome: &Outcome) -> Result<(), ProtocolError> {
+  let valid = match (command, outcome) {
+    (Command::ListReferences(request), Outcome::References(page)) => {
+      page.entries.len() <= usize::from(request.page_size)
+    }
+    (Command::ReadCommit(request), Outcome::Commit(commit)) => commit.revision == request.revision,
+    (Command::ListTree(request), Outcome::Tree(page)) => page.entries.len() <= usize::from(request.page_size),
+    (Command::ReadFile(request), Outcome::File(file)) => {
+      let decoded_length = STANDARD.decode(&file.content_base64).map(|content| content.len());
+      file.path == request.path
+        && file.offset == request.offset
+        && decoded_length.is_ok_and(|length| length <= request.max_bytes as usize)
+    }
+    (Command::ResolveRevision(request), Outcome::Resolved(resolved)) => resolved.reference == request.reference,
+    (Command::Cancel(request), Outcome::Acknowledged { operation_id }) => operation_id == &request.target_operation_id,
+    (Command::Cancel(_), Outcome::Failure(failure)) => failure.class == FailureClass::Cancelled,
+    (Command::Cancel(_), _) => false,
+    (_, Outcome::Failure(_)) => true,
+    _ => false,
+  };
+  if valid {
+    Ok(())
+  } else {
+    Err(ProtocolError::Invalid(
+      "response outcome does not match the requested VCS operation",
+    ))
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  const FIXTURE: &str = include_str!("../fixtures/resolve-revision-v1.json");
+  const FIXTURES: [&str; 5] = [
+    include_str!("../fixtures/list-references-v1.json"),
+    include_str!("../fixtures/read-commit-v1.json"),
+    include_str!("../fixtures/list-tree-v1.json"),
+    include_str!("../fixtures/read-file-v1.json"),
+    include_str!("../fixtures/resolve-revision-v1.json"),
+  ];
 
   #[test]
-  fn golden_fixture_round_trips_and_nested_unknown_fields_are_rejected() {
-    let request = decode_request(FIXTURE.as_bytes()).unwrap();
-    let expected: serde_json::Value = serde_json::from_str(FIXTURE).unwrap();
-    assert_eq!(serde_json::to_value(request).unwrap(), expected);
-    let mut unknown = expected;
-    unknown["command"]["payload"]["checkout"] = serde_json::json!(true);
-    assert!(decode_request(&serde_json::to_vec(&unknown).unwrap()).is_err());
+  fn operation_fixtures_round_trip_and_nested_unknown_fields_are_rejected() {
+    for fixture in FIXTURES {
+      let request = decode_request(fixture.as_bytes()).unwrap();
+      let expected: serde_json::Value = serde_json::from_str(fixture).unwrap();
+      assert_eq!(serde_json::to_value(request).unwrap(), expected);
+      let mut unknown = expected;
+      unknown["command"]["payload"]["checkout"] = serde_json::json!(true);
+      assert!(decode_request(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    }
   }
 
   #[test]
@@ -711,7 +764,7 @@ mod tests {
       decode_request(&vec![b' '; MAX_VCS_MESSAGE_BYTES + 1]),
       Err(ProtocolError::LimitExceeded("encoded message"))
     );
-    let request = decode_request(FIXTURE.as_bytes()).unwrap();
+    let request = decode_request(include_str!("../fixtures/resolve-revision-v1.json").as_bytes()).unwrap();
     let response = Response {
       protocol_version: VCS_PROTOCOL_VERSION,
       request_id: "different-request".to_owned(),
@@ -780,5 +833,44 @@ mod tests {
       page(MAX_PAGE_ENTRIES + 1),
       Err(ProtocolError::LimitExceeded("page size"))
     );
+  }
+
+  #[test]
+  fn response_semantics_are_bounded_by_the_correlated_request() {
+    let request = Request {
+      protocol_version: VCS_PROTOCOL_VERSION,
+      request_id: "request-01".to_owned(),
+      command: Command::ReadFile(ReadFile {
+        repository: RepositoryAccess {
+          operation_id: "operation-01".to_owned(),
+          repository_id: "repository-01".to_owned(),
+          repository_locator: "https://example.invalid/repository.git".to_owned(),
+          credential_handle: "secret:repository".to_owned(),
+        },
+        revision: "abc".to_owned(),
+        path: "README.md".to_owned(),
+        offset: 4,
+        max_bytes: 4,
+      }),
+    };
+    let response = Response {
+      protocol_version: VCS_PROTOCOL_VERSION,
+      request_id: request.request_id.clone(),
+      outcome: Outcome::File(FileContent {
+        path: "README.md".to_owned(),
+        offset: 4,
+        content_base64: STANDARD.encode(b"too large"),
+        truncated: false,
+      }),
+    };
+    assert!(matches!(
+      response.validate_for(&request),
+      Err(ProtocolError::Invalid(_))
+    ));
+
+    let debug = format!("{request:?}");
+    assert!(!debug.contains("secret:repository"));
+    assert!(!debug.contains("example.invalid"));
+    assert!(debug.contains("<redacted>"));
   }
 }

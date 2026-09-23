@@ -3,6 +3,7 @@ use serde_json::{Map, Value, json};
 use octacity_server_application::{
   MAX_AGENT_LIST_PAGE_SIZE, MAX_AGENT_POOL_ADMISSION_PLATFORMS, MAX_AGENT_POOL_LIST_PAGE_SIZE,
   MAX_AGENT_POOL_STATIC_CAPACITY, MAX_JOB_EVENT_PAGE_SIZE, MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE,
+  MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES, MAX_SCHEDULE_TIMEZONE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
 };
 
 use super::{API_PREFIX, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES};
@@ -52,7 +53,7 @@ macro_rules! operation {
   };
 }
 
-/// Complete inventory of management operations registered through task 5.9.
+/// Complete inventory of registered management operations.
 pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
   operation!(
     "GET",
@@ -268,6 +269,90 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "TriggerDefinitionMutationResponse",
     "201",
     true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/trigger-definitions/scheduled",
+    "createScheduledTriggerDefinition",
+    "Triggers",
+    "Create a durable scheduled Trigger definition",
+    Some("CreateScheduledTriggerDefinitionRequest"),
+    "TriggerDefinitionMutationResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/webhook-integrations/unmanaged",
+    "createUnmanagedWebhookIntegration",
+    "Webhook Integrations",
+    "Create an unmanaged webhook integration",
+    Some("CreateUnmanagedWebhookRequest"),
+    "UnmanagedWebhookResource",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/webhook-integrations/managed",
+    "createManagedWebhookIntegration",
+    "Webhook Integrations",
+    "Create a provider-managed webhook integration",
+    Some("CreateManagedWebhookRequest"),
+    "ManagedWebhookResource",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/webhook-integrations/managed/{integration_id}/observe",
+    "observeManagedWebhookIntegration",
+    "Webhook Integrations",
+    "Observe a managed remote webhook registration",
+    None,
+    "ManagedWebhookResource",
+    "200",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/webhook-integrations/managed/{integration_id}/rotate",
+    "rotateManagedWebhookIntegration",
+    "Webhook Integrations",
+    "Rotate a managed remote webhook registration",
+    None,
+    "ManagedWebhookResource",
+    "200",
+    true,
+    false
+  ),
+  operation!(
+    "DELETE",
+    "/api/v1/webhook-integrations/managed/{integration_id}",
+    "deleteManagedWebhookIntegration",
+    "Webhook Integrations",
+    "Delete a managed remote webhook registration",
+    None,
+    "ManagedWebhookResource",
+    "200",
+    true,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/schedules/{trigger_id}/versions/{version}",
+    "getSchedule",
+    "Triggers",
+    "Get a durable schedule",
+    None,
+    "ScheduleResource",
+    "200",
+    false,
     false
   ),
   operation!(
@@ -573,6 +658,7 @@ fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "job_id",
     "pool_id",
     "agent_id",
+    "integration_id",
     "version",
   ] {
     if operation.path.contains(&format!("{{{name}}}")) {
@@ -725,6 +811,12 @@ fn responses(operation: &ManagementOperation) -> Value {
   }
   if operation.optimistic_precondition {
     responses.insert("428".to_owned(), error_response("Optimistic precondition required"));
+  }
+  if operation.operation_id.contains("ManagedWebhook") {
+    responses.insert(
+      "422".to_owned(),
+      error_response("Selected adapter capability unavailable"),
+    );
   }
   Value::Object(responses)
 }

@@ -1,38 +1,57 @@
 use std::{
   collections::{BTreeMap, BTreeSet},
   future::Future,
-  sync::{Arc, Mutex},
+  sync::{
+    Arc, Barrier, Mutex,
+    atomic::{AtomicUsize, Ordering},
+  },
   task::{Context, Poll, Waker},
 };
 
 use async_trait::async_trait;
 use octacity_protocol::{OctaSpec, PlatformArchitecture, PlatformOs};
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ArtifactPolicy, CachePolicy, CommandHandler, ConcurrencyPolicy, EffectiveProjectPolicy,
-  IdentityProfileName, JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
-  JobSpecToolchainPolicy, JobTerminalOutcomeProjection, ManualSourceSelection, ManualTriggerCommand,
-  ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider, ManualTriggerError,
-  ManualTriggerInputError, ManualTriggerOutcome, ManualTriggerService, MutationDisposition as ApplicationDisposition,
-  PolicySource, RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, RuntimeClass,
-  SecretProfileName,
+  AcceptManualTriggerCommand, AcceptWebhookDeliveryCommand, ApplicationFailure, ArtifactPolicy,
+  AuthenticatedWebhookEvent, CachePolicy, CommandHandler, ConcurrencyPolicy, CreateManagedWebhookCommand,
+  DurableManualTriggerService, DurableRetryPolicy, EffectiveProjectPolicy, IdentityProfileName,
+  JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobSpecToolchainPolicy,
+  JobTerminalOutcomeProjection, ManageWebhookRegistrationCommand, ManagedWebhookRegistration,
+  ManagedWebhookRegistrationRequest, ManagedWebhookRegistrationStatus, ManagedWebhookRegistrationWorker,
+  ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
+  ManualTriggerContextProvider, ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome,
+  ManualTriggerRetryWorker, ManualTriggerService, MutationDisposition as ApplicationDisposition, PolicySource,
+  RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, RuntimeClass, ScheduleWorker,
+  ScheduledBuildDefinition, SecretProfileName, VerifyWebhookDelivery, WebhookCallbackOrigin, WebhookDeliveryVerifier,
+  WebhookDeliveryWorker, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
+  WebhookVerificationError,
 };
 use octacity_server_domain::{
-  AgentId, AttemptId, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, BuildId,
+  AgentId, AttemptId, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, BuildId, EntityKind,
   ImmutableRevision, IntegrationId, JobId, JobName, JobVersion, LeaseId, PipelineId, PipelineName, PipelineNodeId,
   PipelineVersion, PoolId, ProjectId, ProjectPolicyVersion, RepositoryId, RepositoryName, RepositoryVersion,
-  SourceReference, Timestamp, TriggerId, TriggerIdentity, TriggerVersion,
+  SourceReference, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_job::{JobState, SourcePluginPolicy};
 use octacity_server_pipeline::{
   CapabilityCatalog, DependencyPolicy, ExecutionCapability, PipelineEdge, PipelineNode, PublishablePipelineDag,
 };
+use octacity_server_store::testing::InMemoryStore;
 use octacity_server_store::{
-  AcceptTrigger, AcceptTriggerOutcome, BuildConfigurationDefinition, ConfigurationAgentRequirements,
-  ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
-  ConfigurationTriggerPolicy, MutationDisposition as StoreDisposition, ParameterDefinition, ParameterSchema,
-  ParameterType, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, RepositoryDefinition,
-  RepositorySelectionPolicy, RetryClass, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
-  TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerKind, TriggerTarget,
+  AcceptTrigger, AcceptTriggerOutcome, BuildConfigurationDefinition, ClaimDueSchedules, ClaimTriggerEvaluations,
+  CompleteTriggerEvaluation, ConfigurationAgentRequirements, ConfigurationCachePolicy, ConfigurationNetworkPolicy,
+  ConfigurationRetryPolicy, ConfigurationRuntimePolicy, ConfigurationTriggerPolicy, CreateManagedWebhook,
+  CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, EnqueueManagedWebhookOperation,
+  FailManagedWebhookOperation, FailTriggerEvaluation, IdempotencyKey, ManagedWebhookMutationOutcome,
+  ManagedWebhookOperation, ManagedWebhookOperationClaim, ManagedWebhookOperationStore, ManagedWebhookRecord,
+  ManagedWebhookRegistrationStore, MissedRunPolicy, MutationDisposition as StoreDisposition, ParameterDefinition,
+  ParameterSchema, ParameterType, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository,
+  RecordManagedWebhookRegistration, RepositoryDefinition, RepositorySelectionPolicy, ReserveTriggerEvaluation,
+  RetryClass, ScheduleDefinition, ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome,
+  TriggerAcceptanceProbe, TriggerCausality, TriggerDefinitionRef, TriggerEvaluationClaim, TriggerEvaluationOutcome,
+  TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerEventKind, TriggerKind, TriggerTarget,
+  UnmanagedWebhookDefinition, UnmanagedWebhookMutationOutcome, WebhookConfigurationStore,
+  WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
+  WebhookIntegrationRecord, WorkerOwner,
 };
 use serde_json::json;
 
@@ -173,6 +192,12 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
   });
 }
 
+#[path = "manual_trigger/retry.rs"]
+mod retry;
+#[path = "manual_trigger/schedule.rs"]
+mod schedule;
+#[path = "manual_trigger/webhook.rs"]
+mod webhook;
 #[test]
 fn invalid_source_is_rejected_before_vcs_or_store_side_effects() {
   run(async {
@@ -236,6 +261,82 @@ fn disabled_configuration_is_durably_suppressed_and_replayed_without_vcs() {
     assert_eq!(replayed_occurrence_id, trigger_occurrence_id);
     assert_eq!(store.suppressions.lock().unwrap().len(), 1);
     assert!(resolver.requests.lock().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn retried_internal_event_creates_one_causally_linked_build() {
+  run(async {
+    let mut fixture = fixture();
+    fixture
+      .context
+      .configuration
+      .definition
+      .triggers
+      .allowed
+      .insert(TriggerKind::Internal);
+    fixture.command.deduplication_identity = TriggerIdentity::new("internal:outbox-1").unwrap();
+    fixture.command.observed_at = time(300);
+    let store = Arc::new(RecordingStore::default());
+    let service = ManualTriggerService::new(
+      store.clone(),
+      Arc::new(StaticContext(fixture.context)),
+      Arc::new(RecordingResolver::succeed("0123456789abcdef")),
+    );
+    let root_occurrence_id = id(50);
+    let parent_occurrence_id = id(51);
+    let causality = TriggerCausality::derived(root_occurrence_id, parent_occurrence_id, 1);
+    let source_build_id = id::<BuildId>(52);
+    let event_kind = TriggerEventKind::new("build.succeeded").unwrap();
+
+    let first = service
+      .accept_internal(
+        fixture.command.clone(),
+        time(400),
+        source_build_id,
+        event_kind.clone(),
+        causality,
+      )
+      .await
+      .unwrap();
+    let replay_service = ManualTriggerService::new(
+      store.clone(),
+      Arc::new(UnreachableContext),
+      Arc::new(RecordingResolver::succeed("unused")),
+    );
+    let replayed = replay_service
+      .accept_internal(
+        fixture.command,
+        time(500),
+        source_build_id,
+        event_kind.clone(),
+        causality,
+      )
+      .await
+      .unwrap();
+
+    assert!(matches!(
+      first,
+      ManualTriggerOutcome::Accepted {
+        disposition: ApplicationDisposition::Applied,
+        ..
+      }
+    ));
+    assert!(matches!(
+      replayed,
+      ManualTriggerOutcome::Accepted {
+        disposition: ApplicationDisposition::Replayed,
+        ..
+      }
+    ));
+    let requests = store.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].trigger.causality, causality);
+    assert!(matches!(
+      &requests[0].trigger.cause,
+      octacity_server_store::TriggerCause::Internal { source_build_id: id, event_kind: kind }
+        if *id == source_build_id && *kind == event_kind
+    ));
   });
 }
 
@@ -524,10 +625,11 @@ struct StaticContext(ManualTriggerContext);
 
 #[async_trait]
 impl ManualTriggerContextProvider for StaticContext {
-  async fn load(
+  async fn load_for(
     &self,
     _trigger: TriggerDefinitionRef,
     _target: TriggerTarget,
+    _kind: TriggerKind,
   ) -> Result<ManualTriggerContext, ManualTriggerContextError> {
     Ok(self.0.clone())
   }
@@ -537,10 +639,11 @@ struct UnreachableContext;
 
 #[async_trait]
 impl ManualTriggerContextProvider for UnreachableContext {
-  async fn load(
+  async fn load_for(
     &self,
     _trigger: TriggerDefinitionRef,
     _target: TriggerTarget,
+    _kind: TriggerKind,
   ) -> Result<ManualTriggerContext, ManualTriggerContextError> {
     panic!("an accepted manual Trigger must replay before loading mutable context")
   }
@@ -550,10 +653,11 @@ struct RejectingContext;
 
 #[async_trait]
 impl ManualTriggerContextProvider for RejectingContext {
-  async fn load(
+  async fn load_for(
     &self,
     _trigger: TriggerDefinitionRef,
     _target: TriggerTarget,
+    _kind: TriggerKind,
   ) -> Result<ManualTriggerContext, ManualTriggerContextError> {
     Err(ManualTriggerContextError::Store(StoreError::NotFound {
       entity: octacity_server_domain::EntityKind::Trigger,
@@ -723,6 +827,7 @@ impl_from_uuid!(
   PipelineId,
   BuildConfigurationId,
   PoolId,
+  TriggerOccurrenceId,
   IntegrationId,
   TriggerId,
   BuildId,

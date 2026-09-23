@@ -89,5 +89,34 @@ class ArchitecturePolicyTests(unittest.TestCase):
                     ["ARCH008_SHARED_REPRESENTATION"],
                 )
 
+    def test_only_named_infrastructure_support_packages_may_be_shared_by_adapters(self):
+        def package(name: str) -> ARCHITECTURE.Package:
+            return ARCHITECTURE.Package(
+                name=name,
+                manifest_path=REPOSITORY / name / "Cargo.toml",
+                role="infrastructure",
+                dependencies=(),
+                external_dependencies=(),
+                shared_contract=None,
+                shared_consumers=(),
+                shared_scaffold=False,
+                shared_policy_valid=True,
+            )
+
+        source = package("fixture-adapter")
+        support = package("octacity-server-adapter-host")
+        concrete = package("fixture-concrete-adapter")
+        graph = ARCHITECTURE.Graph(
+            packages=(source, support, concrete),
+            edges=(
+                ARCHITECTURE.Edge(source=source, target=support, kind="normal"),
+                ARCHITECTURE.Edge(source=source, target=concrete, kind="normal"),
+            ),
+        )
+
+        violations = ARCHITECTURE.check(graph)
+        self.assertEqual([violation.code for violation in violations], ["ARCH003_ADAPTER_SELECTION"])
+        self.assertIn(concrete.name, violations[0].message)
+
 if __name__ == "__main__":
     unittest.main()

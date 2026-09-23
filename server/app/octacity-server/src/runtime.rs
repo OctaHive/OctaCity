@@ -1,8 +1,4 @@
-use std::{
-  net::SocketAddr,
-  sync::Arc,
-  time::{SystemTime, UNIX_EPOCH},
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use thiserror::Error;
 use tokio::{
@@ -12,6 +8,19 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+mod application;
+mod vcs;
+mod webhook;
+mod workers;
+
+use application::{ApplicationAssembly, ApplicationComponents, management_application};
+use vcs::HostedRevisionResolver;
+use webhook::{HostedWebhookVerifier, UnavailableWebhookVerifier};
+use workers::{
+  EXPIRY_WORKER_NAME, INTERNAL_TRIGGER_WORKER_NAME, MANAGED_WEBHOOK_WORKER_NAME, MANUAL_TRIGGER_RETRY_WORKER_NAME,
+  SCHEDULE_WORKER_NAME, WEBHOOK_DELIVERY_WORKER_NAME,
+};
+
 use octacity_server_api_agent::{AgentApiConfig, ReadyJobNotificationHub, agent_router};
 use octacity_server_api_rest::{
   JobEventNotificationHub,
@@ -20,17 +29,23 @@ use octacity_server_api_rest::{
     ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
     JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
     ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+    ScheduleManagementApplication,
   },
 };
+use octacity_server_api_webhook::{WebhookApplication, webhook_router};
 use octacity_server_application::{
   AgentEnrollmentHandler, AgentExecutionService, AgentHandlers, AgentHeartbeatService, AgentLeaseService,
   AgentPoolHandlers, AgentRegistrationService, BuildConfigurationHandlers, BuildHandlers, DefinitionHandlers,
-  ExactRevisionResolver, JobEventLongPoll, JobSpecToolchainPolicy, LeaseExpiryWorker, ManualTriggerService,
-  PipelineHandlers, ProjectHandlers, StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,
+  DurableManualTriggerService, DurableRetryPolicy, InternalTriggerWorker, JobEventLongPoll, JobSpecToolchainPolicy,
+  LeaseExpiryWorker, ManagedWebhookRegistrationWorker, ManualTriggerRetryWorker, ManualTriggerService,
+  PipelineHandlers, ProjectHandlers, RevisionResolver, ScheduleHandlers, ScheduleWorker,
+  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, WebhookDeliveryVerifier,
+  WebhookDeliveryWorker, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
 };
-use octacity_server_domain::Timestamp;
 use octacity_server_store::WorkerOwner;
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
+use octacity_server_vcs::VcsAdapterRegistry;
+use octacity_server_webhook::WebhookAdapterRegistry;
 
 use crate::{
   ServerConfig,
@@ -42,6 +57,7 @@ use crate::{
 pub struct ServerRuntime {
   management_addr: SocketAddr,
   agent_addr: Option<SocketAddr>,
+  webhook_addr: Option<SocketAddr>,
   shutdown_grace: std::time::Duration,
   readiness: Arc<ReadinessState>,
   cancellation: CancellationToken,
@@ -53,9 +69,42 @@ pub struct ServerRuntime {
 
 type ListenerTaskResult = Result<&'static str, (&'static str, std::io::Error)>;
 
+enum RuntimeTaskExit {
+  Listener(Option<Result<ListenerTaskResult, tokio::task::JoinError>>),
+  Readiness(Result<(), tokio::task::JoinError>),
+  Workers(Result<(), tokio::task::JoinError>),
+  Notifications(Result<(), tokio::task::JoinError>),
+}
+
+struct DurableWorkers {
+  expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
+  expiry_health: Arc<WorkerHealth>,
+  schedules: ScheduleWorker<PostgresStore>,
+  schedule_owner: WorkerOwner,
+  schedule_health: Arc<WorkerHealth>,
+  internal_triggers: InternalTriggerWorker<PostgresStore>,
+  internal_trigger_owner: WorkerOwner,
+  internal_trigger_health: Arc<WorkerHealth>,
+  manual_trigger_retries: ManualTriggerRetryWorker,
+  manual_trigger_retry_owner: WorkerOwner,
+  manual_trigger_retry_health: Arc<WorkerHealth>,
+  webhook_deliveries: Option<(WebhookDeliveryWorker, WorkerOwner, Arc<WorkerHealth>)>,
+  managed_webhooks: Option<(ManagedWebhookRegistrationWorker, WorkerOwner, Arc<WorkerHealth>)>,
+}
+
+struct RuntimeComponents {
+  agent_router: axum::Router,
+  management_application: Option<ManagementApplication>,
+  webhook_router: Option<axum::Router>,
+  workers: Option<DurableWorkers>,
+  ready_job_notifications: Option<(sqlx::PgPool, Arc<ReadyJobNotificationHub>)>,
+  cancellation: CancellationToken,
+}
+
 impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
+    let cancellation = CancellationToken::new();
     let mut dependencies = RuntimeDependencies::from_config(&config)
       .await
       .map_err(ServerRuntimeError::ReadinessSetup)?;
@@ -69,21 +118,90 @@ impl ServerRuntime {
       dependencies.postgres,
       dependencies.job_spec_signer,
     ));
-    let management_application = management_application(
-      registration_store.clone(),
-      placement_store.clone(),
-      dependencies.job_spec_toolchain,
-      config.supported_pipeline_capabilities(),
-      config.agent_enrollment_lifetime(),
-      dependencies.agent_enrollment_secret_key,
-    )?;
+    let webhook_configuration = match (config.webhook_adapter_registry(), config.webhook_callback_origin()) {
+      (Some(registry), Some(callback_origin)) => Some((
+        Arc::new(WebhookAdapterRegistry::discover(registry).map_err(ServerRuntimeError::WebhookRegistry)?),
+        callback_origin,
+        config.webhook_operation_timeout(),
+        config.webhook_cancellation_grace(),
+      )),
+      (None, None) => None,
+      _ => unreachable!("validated webhook configuration is all-or-none"),
+    };
+    let revision_resolver: Arc<dyn RevisionResolver> = match config.vcs_adapter_registry() {
+      Some(registry) => Arc::new(HostedRevisionResolver::new(
+        Arc::new(VcsAdapterRegistry::discover(registry).map_err(ServerRuntimeError::VcsRegistry)?),
+        config.vcs_integrations(),
+        config.vcs_operation_timeout(),
+        config.vcs_cancellation_grace(),
+        cancellation.child_token(),
+      )),
+      None => Arc::new(octacity_server_application::ExactRevisionResolver),
+    };
+    let webhook_retry_policy = DurableRetryPolicy::new(
+      config.webhook_worker_max_attempts(),
+      config.webhook_worker_initial_retry_milliseconds(),
+      config.webhook_worker_maximum_retry_milliseconds(),
+    )
+    .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let vcs_retry_policy = DurableRetryPolicy::new(
+      config.vcs_retry_max_attempts(),
+      config.vcs_retry_initial_milliseconds(),
+      config.vcs_retry_maximum_milliseconds(),
+    )
+    .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let ApplicationComponents {
+      management: management_application,
+      trigger_service,
+      manual_trigger_retries,
+      webhook_ingress,
+      webhook_verifier,
+      webhook_provider,
+    } = management_application(ApplicationAssembly {
+      store: registration_store.clone(),
+      authoritative_store: placement_store.clone(),
+      toolchain: dependencies.job_spec_toolchain,
+      supported_pipeline_capabilities: config.supported_pipeline_capabilities().to_vec(),
+      agent_enrollment_lifetime: config.agent_enrollment_lifetime(),
+      agent_enrollment_secret_key: dependencies.agent_enrollment_secret_key,
+      webhook_configuration,
+      revision_resolver,
+      cancellation: cancellation.child_token(),
+      vcs_retry_policy,
+      trigger_claim_lifetime: config.trigger_evaluation_claim_lifetime(),
+    })?;
     let worker_health = Arc::new(WorkerHealth::new(
+      EXPIRY_WORKER_NAME,
       config
         .lease_expiry_poll_interval()
         .saturating_add(config.lease_expiry_claim_lifetime())
         .saturating_add(config.readiness_check_interval()),
     ));
     dependencies.readiness.push(worker_health.clone());
+    let schedule_health = Arc::new(WorkerHealth::new(
+      SCHEDULE_WORKER_NAME,
+      config
+        .schedule_poll_interval()
+        .saturating_add(config.schedule_claim_lifetime())
+        .saturating_add(config.readiness_check_interval()),
+    ));
+    dependencies.readiness.push(schedule_health.clone());
+    let internal_trigger_health = Arc::new(WorkerHealth::new(
+      INTERNAL_TRIGGER_WORKER_NAME,
+      config
+        .internal_trigger_poll_interval()
+        .saturating_add(config.internal_trigger_claim_lifetime())
+        .saturating_add(config.readiness_check_interval()),
+    ));
+    dependencies.readiness.push(internal_trigger_health.clone());
+    let manual_trigger_retry_health = Arc::new(WorkerHealth::new(
+      MANUAL_TRIGGER_RETRY_WORKER_NAME,
+      config
+        .trigger_evaluation_poll_interval()
+        .saturating_add(config.trigger_evaluation_claim_lifetime())
+        .saturating_add(config.readiness_check_interval()),
+    ));
+    dependencies.readiness.push(manual_trigger_retry_health.clone());
     let expiry_worker = LeaseExpiryWorker::new(
       placement_store.clone(),
       WorkerOwner::new(format!("server:{}", uuid::Uuid::new_v4()))
@@ -102,25 +220,97 @@ impl ServerRuntime {
     let execution_service = AgentExecutionService::new(registration_service.clone(), placement_store);
     let heartbeat_service = AgentHeartbeatService::new(
       registration_service.clone(),
-      registration_store,
+      registration_store.clone(),
       config.agent_lease_lifetime(),
     )
     .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?;
     let api_config =
       AgentApiConfig::new(config.agent_max_retry_delay_milliseconds()).ok_or(ServerRuntimeError::InvalidAgentPolicy)?;
+    let webhook_deliveries = if config.webhook_bind().is_some() {
+      let health = Arc::new(WorkerHealth::new(
+        WEBHOOK_DELIVERY_WORKER_NAME,
+        config
+          .webhook_worker_poll_interval()
+          .saturating_add(config.webhook_worker_claim_lifetime())
+          .saturating_add(config.readiness_check_interval()),
+      ));
+      dependencies.readiness.push(health.clone());
+      Some((
+        WebhookDeliveryWorker::new(
+          registration_store.clone(),
+          registration_store.clone(),
+          trigger_service.clone(),
+          webhook_verifier,
+          webhook_retry_policy,
+        ),
+        WorkerOwner::new(format!("webhook-delivery:{}", uuid::Uuid::new_v4()))
+          .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+        health,
+      ))
+    } else {
+      None
+    };
+    let managed_webhooks = config
+      .webhook_callback_origin()
+      .map(|callback_origin| {
+        let health = Arc::new(WorkerHealth::new(
+          MANAGED_WEBHOOK_WORKER_NAME,
+          config
+            .webhook_worker_poll_interval()
+            .saturating_add(config.webhook_worker_claim_lifetime())
+            .saturating_add(config.readiness_check_interval()),
+        ));
+        dependencies.readiness.push(health.clone());
+        Ok::<_, ServerRuntimeError>((
+          ManagedWebhookRegistrationWorker::new(
+            registration_store.clone(),
+            webhook_provider,
+            callback_origin,
+            webhook_retry_policy,
+          ),
+          WorkerOwner::new(format!("managed-webhook:{}", uuid::Uuid::new_v4()))
+            .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+          health,
+        ))
+      })
+      .transpose()?;
+    let webhook_router = config
+      .webhook_bind()
+      .map(|_| webhook_router(WebhookApplication::new(webhook_ingress)));
     Self::start_with_components(
       config,
       dependencies.readiness,
-      agent_router(
-        registration_service,
-        Arc::new(lease_service),
-        Arc::new(heartbeat_service),
-        Arc::new(execution_service),
-        api_config,
-      ),
-      Some(management_application),
-      Some((expiry_worker, worker_health)),
-      Some((notification_pool, ready_jobs)),
+      RuntimeComponents {
+        agent_router: agent_router(
+          registration_service,
+          Arc::new(lease_service),
+          Arc::new(heartbeat_service),
+          Arc::new(execution_service),
+          api_config,
+        ),
+        management_application: Some(management_application),
+        webhook_router,
+        workers: Some(DurableWorkers {
+          expiry: expiry_worker,
+          expiry_health: worker_health,
+          schedules: ScheduleWorker::new(registration_store.clone(), trigger_service.clone()),
+          schedule_owner: WorkerOwner::new(format!("schedule:{}", uuid::Uuid::new_v4()))
+            .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+          schedule_health,
+          internal_triggers: InternalTriggerWorker::new(registration_store.clone(), trigger_service),
+          internal_trigger_owner: WorkerOwner::new(format!("internal-trigger:{}", uuid::Uuid::new_v4()))
+            .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+          internal_trigger_health,
+          manual_trigger_retries,
+          manual_trigger_retry_owner: WorkerOwner::new(format!("manual-trigger:worker:{}", uuid::Uuid::new_v4()))
+            .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+          manual_trigger_retry_health,
+          webhook_deliveries,
+          managed_webhooks,
+        }),
+        ready_job_notifications: Some((notification_pool, ready_jobs)),
+        cancellation,
+      },
     )
     .await
   }
@@ -131,25 +321,49 @@ impl ServerRuntime {
     config: ServerConfig,
     checks: ReadinessChecks,
   ) -> Result<Self, ServerRuntimeError> {
-    Self::start_with_components(config, checks, axum::Router::new(), None, None, None).await
+    Self::start_with_components(
+      config,
+      checks,
+      RuntimeComponents {
+        agent_router: axum::Router::new(),
+        management_application: None,
+        webhook_router: None,
+        workers: None,
+        ready_job_notifications: None,
+        cancellation: CancellationToken::new(),
+      },
+    )
+    .await
   }
 
   async fn start_with_components(
     config: ServerConfig,
     checks: ReadinessChecks,
-    agent_router: axum::Router,
-    management_application: Option<ManagementApplication>,
-    expiry_worker: Option<(LeaseExpiryWorker<PostgresAuthoritativeStore>, Arc<WorkerHealth>)>,
-    ready_job_notifications: Option<(sqlx::PgPool, Arc<ReadyJobNotificationHub>)>,
+    components: RuntimeComponents,
   ) -> Result<Self, ServerRuntimeError> {
+    let RuntimeComponents {
+      agent_router,
+      management_application,
+      webhook_router,
+      workers,
+      ready_job_notifications,
+      cancellation,
+    } = components;
+    if config.webhook_bind().is_some() != webhook_router.is_some() {
+      return Err(ServerRuntimeError::InvalidManagementPolicy);
+    }
     let management_listener = bind_listener("management", config.management_bind()).await?;
     let agent_listener = bind_optional_listener("agent", config.agent_bind()).await?;
+    let webhook_listener = bind_optional_listener("webhook", config.webhook_bind()).await?;
     let management_addr = inspect_listener("management", &management_listener)?;
     let agent_addr = agent_listener
       .as_ref()
       .map(|listener| inspect_listener("agent", listener))
       .transpose()?;
-    let cancellation = CancellationToken::new();
+    let webhook_addr = webhook_listener
+      .as_ref()
+      .map(|listener| inspect_listener("webhook", listener))
+      .transpose()?;
     let monitor = ReadinessMonitor::start(
       checks,
       config.readiness_check_interval(),
@@ -159,15 +373,8 @@ impl ServerRuntime {
     .await;
     let readiness = monitor.state();
     let readiness_task = monitor.into_task();
-    let worker_task = expiry_worker.map(|(worker, health)| {
-      spawn_expiry_worker(
-        worker,
-        health,
-        config.lease_expiry_poll_interval(),
-        config.lease_expiry_claim_lifetime(),
-        cancellation.child_token(),
-      )
-    });
+    let worker_task =
+      workers.map(|workers| workers::spawn_durable_workers(workers, &config, cancellation.child_token()));
     let notification_task = ready_job_notifications.map(|(pool, hub)| {
       spawn_ready_job_listener(
         pool,
@@ -181,7 +388,7 @@ impl ServerRuntime {
       config.management_externally_reachable(),
       config.unauthenticated_management_acknowledged(),
       agent_addr.is_some(),
-      false,
+      webhook_addr.is_some(),
     );
     let management_router = match management_application {
       Some(application) => octacity_server_api_rest::management_router_with_application_and_metadata(
@@ -208,10 +415,20 @@ impl ServerRuntime {
         cancellation.child_token(),
       );
     }
-    info!(%management_addr, ?agent_addr, "server listeners ready");
+    if let (Some(listener), Some(router)) = (webhook_listener, webhook_router) {
+      spawn_listener(
+        &mut listener_tasks,
+        "webhook",
+        listener,
+        router,
+        cancellation.child_token(),
+      );
+    }
+    info!(%management_addr, ?agent_addr, ?webhook_addr, "server listeners ready");
     Ok(Self {
       management_addr,
       agent_addr,
+      webhook_addr,
       shutdown_grace: config.shutdown_grace(),
       readiness,
       cancellation,
@@ -232,13 +449,54 @@ impl ServerRuntime {
     self.agent_addr
   }
 
-  /// Waits until any configured ingress listener exits unexpectedly.
+  /// Actual bound webhook address when authenticated webhook ingress is configured.
+  pub const fn webhook_addr(&self) -> Option<SocketAddr> {
+    self.webhook_addr
+  }
+
+  /// Waits until any supervised process task exits unexpectedly.
   ///
   /// Process entry points should select this future against their shutdown
-  /// signal so a failed listener cannot leave an apparently healthy process.
+  /// signal so a failed listener or background worker cannot leave an
+  /// apparently healthy process.
   pub async fn wait(&mut self) -> Result<(), ServerRuntimeError> {
-    let Some(result) = self.listener_tasks.join_next().await else {
-      return Err(ServerRuntimeError::UnexpectedExit);
+    let exit = tokio::select! {
+      result = self.listener_tasks.join_next() => RuntimeTaskExit::Listener(result),
+      result = wait_for_optional_task(&mut self.readiness_task) => RuntimeTaskExit::Readiness(result),
+      result = wait_for_optional_task(&mut self.worker_task) => RuntimeTaskExit::Workers(result),
+      result = wait_for_optional_task(&mut self.notification_task) => RuntimeTaskExit::Notifications(result),
+    };
+    let failure = match exit {
+      RuntimeTaskExit::Listener(result) => match result {
+        Some(Ok(Ok(ingress))) => ServerRuntimeError::ListenerUnexpectedExit { ingress },
+        Some(Ok(Err((ingress, source)))) => ServerRuntimeError::Serve { ingress, source },
+        Some(Err(source)) => ServerRuntimeError::ListenerTask(source),
+        None => ServerRuntimeError::UnexpectedExit,
+      },
+      RuntimeTaskExit::Readiness(result) => {
+        self.readiness_task.take();
+        result.map_or_else(ServerRuntimeError::ReadinessTask, |()| {
+          ServerRuntimeError::SupervisedTaskUnexpectedExit {
+            task: "readiness-monitor",
+          }
+        })
+      }
+      RuntimeTaskExit::Workers(result) => {
+        self.worker_task.take();
+        result.map_or_else(ServerRuntimeError::WorkerTask, |()| {
+          ServerRuntimeError::SupervisedTaskUnexpectedExit {
+            task: "durable-workers",
+          }
+        })
+      }
+      RuntimeTaskExit::Notifications(result) => {
+        self.notification_task.take();
+        result.map_or_else(ServerRuntimeError::NotificationTask, |()| {
+          ServerRuntimeError::SupervisedTaskUnexpectedExit {
+            task: "ready-job-notifications",
+          }
+        })
+      }
     };
     self.readiness.set(false);
     self.cancellation.cancel();
@@ -258,11 +516,7 @@ impl ServerRuntime {
     {
       return Err(ServerRuntimeError::NotificationTask(source));
     }
-    match result {
-      Ok(Ok(ingress)) => Err(ServerRuntimeError::ListenerUnexpectedExit { ingress }),
-      Ok(Err((ingress, source))) => Err(ServerRuntimeError::Serve { ingress, source }),
-      Err(source) => Err(ServerRuntimeError::ListenerTask(source)),
-    }
+    Err(failure)
   }
 
   /// Stops admission, cancels the process tree, and waits for bounded drain.
@@ -353,124 +607,6 @@ impl Drop for ServerRuntime {
   }
 }
 
-fn management_application(
-  store: Arc<PostgresStore>,
-  authoritative_store: Arc<PostgresAuthoritativeStore>,
-  toolchain: JobSpecToolchainPolicy,
-  supported_pipeline_capabilities: &[String],
-  agent_enrollment_lifetime: std::time::Duration,
-  agent_enrollment_secret_key: octacity_server_application::AgentEnrollmentSecretKey,
-) -> Result<ManagementApplication, ServerRuntimeError> {
-  let projects = Arc::new(ProjectHandlers::new(store.clone()));
-  let pipelines = Arc::new(PipelineHandlers::new(store.clone()));
-  let configurations = Arc::new(BuildConfigurationHandlers::new(store.clone()));
-  let pools = Arc::new(AgentPoolHandlers::new(store.clone()));
-  let agents = Arc::new(AgentHandlers::new(store.clone()));
-  let enrollments = Arc::new(AgentEnrollmentHandler::new(store.clone()));
-  let builds = Arc::new(BuildHandlers::new(authoritative_store.clone()));
-  let definitions = Arc::new(DefinitionHandlers::new(store.clone()));
-  let policy_source = Arc::new(StoreBackedEffectiveProjectPolicySource::new(store.clone()));
-  let trigger_context = Arc::new(StoreBackedManualTriggerContext::new(
-    store.clone(),
-    policy_source,
-    toolchain,
-  ));
-  let manual_triggers = Arc::new(ManualTriggerService::new(
-    authoritative_store,
-    trigger_context,
-    Arc::new(ExactRevisionResolver),
-  ));
-  let job_events = Arc::new(JobEventLongPoll::new(
-    store,
-    Arc::new(JobEventNotificationHub::default()),
-  ));
-  ManagementApplication::new(
-    supported_pipeline_capabilities.iter().cloned(),
-    agent_enrollment_lifetime,
-    agent_enrollment_secret_key,
-    ManagementApplicationHandlers::new(
-      CatalogManagementApplication::new(
-        ProjectManagementApplication::new(projects),
-        PipelineManagementApplication::new(pipelines),
-        ConfigurationManagementApplication::new(configurations),
-        DefinitionManagementApplication::new(definitions),
-      ),
-      AgentManagementApplication::new(pools, agents, enrollments),
-      ExecutionManagementApplication::new(
-        BuildManagementApplication::new(builds),
-        ManualTriggerManagementApplication::new(manual_triggers),
-        JobEventManagementApplication::new(job_events),
-      ),
-    ),
-  )
-  .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)
-}
-
-fn spawn_expiry_worker(
-  worker: LeaseExpiryWorker<PostgresAuthoritativeStore>,
-  health: Arc<WorkerHealth>,
-  poll_interval: std::time::Duration,
-  claim_lifetime: std::time::Duration,
-  cancellation: CancellationToken,
-) -> JoinHandle<()> {
-  tokio::spawn(async move {
-    struct UnhealthyOnDrop(Arc<WorkerHealth>);
-    impl Drop for UnhealthyOnDrop {
-      fn drop(&mut self) {
-        self.0.mark_failure();
-      }
-    }
-    let _unhealthy_on_drop = UnhealthyOnDrop(health.clone());
-    loop {
-      tokio::select! {
-        biased;
-        () = cancellation.cancelled() => return,
-        () = tokio::time::sleep(poll_interval) => {}
-      }
-      let now_millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_millis()).ok());
-      let claim_millis = i64::try_from(claim_lifetime.as_millis()).ok();
-      let Some((observed_at, claim_expires_at)) = now_millis
-        .zip(claim_millis)
-        .and_then(|(now, lifetime)| now.checked_add(lifetime).map(|until| (now, until)))
-        .and_then(|(now, until)| {
-          Timestamp::from_unix_millis(now)
-            .ok()
-            .zip(Timestamp::from_unix_millis(until).ok())
-        })
-      else {
-        health.mark_failure();
-        warn!("lease expiry worker could not represent the system clock");
-        continue;
-      };
-      match tokio::time::timeout(claim_lifetime, worker.run_once(observed_at, claim_expires_at)).await {
-        Ok(Ok(outcome)) => {
-          health.mark_success();
-          if outcome.claimed > 0 {
-            info!(
-              claimed = outcome.claimed,
-              requeued = outcome.requeued,
-              failed = outcome.failed,
-              cancelled = outcome.cancelled,
-              "expired leases recovered"
-            );
-          }
-        }
-        Ok(Err(error)) => {
-          health.mark_failure();
-          warn!(%error, "lease expiry worker pass failed");
-        }
-        Err(_) => {
-          health.mark_failure();
-          warn!(?claim_lifetime, "lease expiry worker pass timed out");
-        }
-      }
-    }
-  })
-}
-
 fn spawn_ready_job_listener(
   pool: sqlx::PgPool,
   hub: Arc<ReadyJobNotificationHub>,
@@ -558,6 +694,13 @@ fn spawn_listener(
   });
 }
 
+async fn wait_for_optional_task(task: &mut Option<JoinHandle<()>>) -> Result<(), tokio::task::JoinError> {
+  match task {
+    Some(task) => task.await,
+    None => std::future::pending().await,
+  }
+}
+
 /// Failure to start, serve, or gracefully stop the server process.
 #[derive(Debug, Error)]
 pub enum ServerRuntimeError {
@@ -570,6 +713,12 @@ pub enum ServerRuntimeError {
   /// Management input or executable-policy configuration was invalid.
   #[error("management application policy is invalid")]
   InvalidManagementPolicy,
+  /// Operator-installed webhook adapter registry failed strict verification.
+  #[error("webhook adapter registry is invalid: {0}")]
+  WebhookRegistry(octacity_server_webhook::RegistryError),
+  /// Operator-installed VCS adapter registry failed strict verification.
+  #[error("VCS adapter registry is invalid: {0}")]
+  VcsRegistry(octacity_server_vcs::RegistryError),
   /// One independently configured listener could not bind its address.
   #[error("failed to bind {ingress} listener at {address}: {source}")]
   Bind {
@@ -602,12 +751,18 @@ pub enum ServerRuntimeError {
   /// The supervised readiness monitor panicked or was cancelled unexpectedly.
   #[error("readiness monitor task failed: {0}")]
   ReadinessTask(tokio::task::JoinError),
-  /// The supervised lease-expiry worker panicked or was cancelled unexpectedly.
-  #[error("lease expiry worker task failed: {0}")]
+  /// The supervised durable-worker group panicked or was cancelled unexpectedly.
+  #[error("durable worker task failed: {0}")]
   WorkerTask(tokio::task::JoinError),
   /// The process-local PostgreSQL notification listener panicked or was cancelled unexpectedly.
   #[error("ready-Job notification task failed: {0}")]
   NotificationTask(tokio::task::JoinError),
+  /// A supervised process task returned without a shutdown request.
+  #[error("supervised task {task} exited unexpectedly")]
+  SupervisedTaskUnexpectedExit {
+    /// Stable non-sensitive task name.
+    task: &'static str,
+  },
   /// The listener stopped without a requested shutdown.
   #[error("management listener exited unexpectedly")]
   UnexpectedExit,
@@ -623,196 +778,4 @@ pub enum ServerRuntimeError {
 }
 
 #[cfg(test)]
-mod tests {
-  use async_trait::async_trait;
-  use reqwest::StatusCode;
-
-  use super::*;
-  use crate::readiness::ReadinessCheck;
-
-  struct HealthyCheck;
-
-  #[async_trait]
-  impl ReadinessCheck for HealthyCheck {
-    fn name(&self) -> &'static str {
-      "test-dependency"
-    }
-
-    async fn check(&self) -> bool {
-      true
-    }
-  }
-
-  fn healthy_checks() -> ReadinessChecks {
-    let check = || Arc::new(HealthyCheck) as Arc<dyn ReadinessCheck>;
-    ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
-  }
-
-  fn test_config() -> ServerConfig {
-    ServerConfig::parse_toml(
-      r#"
-management_bind = "127.0.0.1:0"
-agent_bind = "127.0.0.1:0"
-shutdown_grace_milliseconds = 1000
-supported_pipeline_capabilities = ["native"]
-readiness_check_interval_milliseconds = 10
-readiness_check_timeout_milliseconds = 100
-
-[postgres]
-url_file = "postgres-url"
-
-[object_storage]
-endpoint = "http://127.0.0.1:9000"
-region = "us-east-1"
-bucket = "octacity-artifacts"
-access_key_file = "object-access-key"
-secret_key_file = "object-secret-key"
-
-[signing]
-key_id = "test-key"
-key_file = "signing-key"
-
-[agent_credentials]
-enrollment_key_file = "agent-enrollment-key"
-
-[job_spec]
-policy_file = "job-spec-policy.json"
-"#,
-    )
-    .unwrap()
-  }
-
-  #[tokio::test]
-  async fn startup_separates_ingress_and_exposes_operational_metadata() {
-    let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
-      .await
-      .unwrap();
-    let client = reqwest::Client::new();
-    let origin = format!("http://{}", runtime.management_addr());
-
-    for (path, expected_body) in [
-      ("/health/live", r#"{"status":"live"}"#),
-      ("/health/ready", r#"{"status":"ready"}"#),
-    ] {
-      let response = client.get(format!("{origin}{path}")).send().await.unwrap();
-      assert_eq!(response.status(), StatusCode::OK);
-      assert!(response.headers().contains_key("x-request-id"));
-      assert_eq!(response.text().await.unwrap(), expected_body);
-    }
-
-    let metadata: serde_json::Value = client
-      .get(format!("{origin}/api/v1/operations/metadata"))
-      .send()
-      .await
-      .unwrap()
-      .json()
-      .await
-      .unwrap();
-    assert_eq!(
-      metadata["security"]["management"]["mode"],
-      "trusted_network_unauthenticated"
-    );
-    assert_eq!(metadata["security"]["management"]["operator_authentication"], false);
-    assert_eq!(metadata["security"]["agent"]["authentication_required"], true);
-    assert_eq!(metadata["security"]["webhook"]["authentication_required"], true);
-    assert_eq!(metadata["ingress"]["agent_enabled"], true);
-    assert_eq!(metadata["ingress"]["webhook_enabled"], false);
-    assert_eq!(metadata["ingress"]["listeners_separate"], true);
-
-    let response = client
-      .get(format!("http://{}/health/live", runtime.agent_addr().unwrap()))
-      .send()
-      .await
-      .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-
-    runtime.shutdown().await.unwrap();
-  }
-
-  #[tokio::test]
-  async fn shutdown_cancels_the_listener_and_waits_for_its_task() {
-    let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
-      .await
-      .unwrap();
-    let addresses = [runtime.management_addr(), runtime.agent_addr().unwrap()];
-    for address in addresses {
-      assert!(tokio::net::TcpListener::bind(address).await.is_err());
-    }
-
-    runtime.shutdown().await.unwrap();
-
-    for address in addresses {
-      let replacement = tokio::net::TcpListener::bind(address)
-        .await
-        .expect("shutdown must release every ingress listener");
-      assert_eq!(replacement.local_addr().unwrap(), address);
-    }
-  }
-
-  #[tokio::test]
-  async fn wait_reports_a_listener_that_stops_without_shutdown() {
-    let cancellation = CancellationToken::new();
-    let readiness_cancellation = cancellation.child_token();
-    let mut listener_tasks = JoinSet::new();
-    listener_tasks.spawn(async { Ok("management") });
-    let mut runtime = ServerRuntime {
-      management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
-      agent_addr: None,
-      shutdown_grace: std::time::Duration::from_secs(1),
-      readiness: Arc::new(ReadinessState::default()),
-      cancellation,
-      listener_tasks,
-      readiness_task: Some(tokio::spawn(async move {
-        readiness_cancellation.cancelled().await;
-      })),
-      worker_task: None,
-      notification_task: None,
-    };
-
-    assert!(matches!(
-      runtime.wait().await,
-      Err(ServerRuntimeError::ListenerUnexpectedExit { ingress: "management" })
-    ));
-  }
-
-  #[tokio::test]
-  async fn dropping_runtime_aborts_owned_listener_work() {
-    struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
-
-    impl Drop for DropSignal {
-      fn drop(&mut self) {
-        if let Some(sender) = self.0.take() {
-          let _ = sender.send(());
-        }
-      }
-    }
-
-    let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
-    let (dropped_sender, dropped_receiver) = tokio::sync::oneshot::channel();
-    let mut listener_tasks = JoinSet::new();
-    listener_tasks.spawn(async move {
-      let _drop_signal = DropSignal(Some(dropped_sender));
-      let _ = started_sender.send(());
-      std::future::pending::<()>().await;
-      Ok("management")
-    });
-    let runtime = ServerRuntime {
-      management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
-      agent_addr: None,
-      shutdown_grace: std::time::Duration::from_secs(1),
-      readiness: Arc::new(ReadinessState::default()),
-      cancellation: CancellationToken::new(),
-      listener_tasks,
-      readiness_task: Some(tokio::spawn(std::future::pending())),
-      worker_task: None,
-      notification_task: None,
-    };
-
-    started_receiver.await.unwrap();
-    drop(runtime);
-    tokio::time::timeout(std::time::Duration::from_secs(1), dropped_receiver)
-      .await
-      .expect("aborted listener future must be dropped")
-      .unwrap();
-  }
-}
+mod tests;

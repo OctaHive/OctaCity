@@ -23,6 +23,7 @@ members = [
   "server/app/octacity-server",
   "server/api/octacity-server-api-agent",
   "server/api/octacity-server-api-rest",
+  "server/api/octacity-server-api-webhook",
   "server/application/octacity-server-application",
   "server/core/octacity-artifact-store",
   "server/core/octacity-server-artifacts",
@@ -36,7 +37,11 @@ members = [
   "server/core/octacity-server-store",
   "server/core/octacity-server-trigger",
   "server/infrastructure/octacity-artifact-s3",
+  "server/infrastructure/octacity-server-adapter-host",
   "server/infrastructure/octacity-server-store-postgres",
+  "server/infrastructure/octacity-server-vcs",
+  "server/infrastructure/octacity-server-webhook",
+  "server/infrastructure/octacity-vcs-git",
   "server/protocols/octacity-adapter-protocol",
   "server/protocols/octacity-agent-provisioning-protocol",
   "server/protocols/octacity-vcs-protocol",
@@ -57,8 +62,11 @@ async-trait = "0.1.89"
 aws-sdk-s3 = { version = "1.147.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio"] }
 axum = "0.8.9"
 base64 = "0.22.1"
+chrono = "0.4.42"
+chrono-tz = "0.10.4"
 hmac = "0.12.1"
 clap = { version = "4.5.47", features = ["derive"] }
+cron = "0.17.0"
 containerd-client = "=0.9.0"
 ed25519-dalek = "2.2.0"
 fs4 = "1.1.0"

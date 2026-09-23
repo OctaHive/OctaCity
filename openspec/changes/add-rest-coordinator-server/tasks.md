@@ -61,14 +61,14 @@
 
 ## 6. Scheduled, Internal, and External Triggers
 
-- [ ] 6.1 Implement durable schedules with timezone, next occurrence, missed-run policy, bounded catch-up, claim ownership, stable occurrence identity, typed application handlers, and management REST adapters; verify clock boundaries, restart, concurrent replicas, and duplicate claims create at most one Build, and extend the OpenAPI drift test.
-- [ ] 6.2 Implement internal domain-event triggers through transactional outbox delivery with documented cycle/depth protection; verify retries and causal loops cannot create duplicate or unbounded Builds.
-- [ ] 6.3 Implement the webhook-provider protocol and bounded process host for verification, normalization, optional managed registration, cancellation, classified errors, digest pinning, and credential isolation; verify malformed, spoofed, oversized, crashed, hanging, and replaced adapter cases.
-- [ ] 6.4 Implement unmanaged webhook configuration with typed application handlers and management REST adapters that return callback and verification requirements without provider administration credentials; verify a manually configured authenticated delivery reaches the Trigger Engine exactly once and extend the OpenAPI drift test.
-- [ ] 6.5 Implement managed webhook registration application interfaces, management REST adapters, and conformance fixtures without requiring a production GitHub or Gerrit adapter in the first release; verify create, observe, rotate, delete, lost response, and unsupported-operation semantics and extend the OpenAPI drift test.
-- [ ] 6.6 Implement the VCS protocol, verified registry, and bounded process host for refs, commits, trees, file content, immutable revision resolution, cancellation, and credentials; verify protocol limits and adapter failure classification.
-- [ ] 6.7 Implement `octacity-vcs-git` without executing repository content or materializing a build workspace; verify bounded branch/tag listing, commit selection, tree/content browsing, and immutable resolution.
-- [ ] 6.8 Persist webhook delivery identities, normalized events, transient adapter retries, and dead-letter diagnostics; verify restart and repeated failure preserve causality without duplicate Trigger occurrences or Builds.
+- [x] 6.1 Implement durable schedules with timezone, next occurrence, missed-run policy, bounded catch-up, claim ownership, stable occurrence identity, typed application handlers, and management REST adapters; verify clock boundaries, restart, concurrent replicas, and duplicate claims create at most one Build, and extend the OpenAPI drift test.
+- [x] 6.2 Implement internal domain-event triggers through transactional outbox delivery with documented cycle/depth protection; verify retries and causal loops cannot create duplicate or unbounded Builds.
+- [x] 6.3 Implement the webhook-provider protocol and bounded process host for verification, normalization, optional managed registration, cancellation, classified errors, digest pinning, and credential isolation; verify malformed, spoofed, oversized, crashed, hanging, and replaced adapter cases.
+- [x] 6.4 Implement unmanaged webhook configuration with typed application handlers and management REST adapters that return callback and verification requirements without provider administration credentials; verify a manually configured authenticated delivery reaches the Trigger Engine exactly once and extend the OpenAPI drift test.
+- [x] 6.5 Implement managed webhook registration application interfaces, management REST adapters, and conformance fixtures without requiring a production GitHub or Gerrit adapter in the first release; verify create, observe, rotate, delete, lost response, and unsupported-operation semantics and extend the OpenAPI drift test.
+- [x] 6.6 Implement the VCS protocol, verified registry, and bounded process host for refs, commits, trees, file content, immutable revision resolution, cancellation, and credentials; verify protocol limits and adapter failure classification.
+- [x] 6.7 Implement `octacity-vcs-git` without executing repository content or materializing a build workspace; verify bounded branch/tag listing, commit selection, tree/content browsing, and immutable resolution.
+- [x] 6.8 Persist webhook delivery identities, normalized events, transient adapter retries, and dead-letter diagnostics; verify restart and repeated failure preserve causality without duplicate Trigger occurrences or Builds.
 
 ## 7. Artifacts, Cache, and Secrets
 

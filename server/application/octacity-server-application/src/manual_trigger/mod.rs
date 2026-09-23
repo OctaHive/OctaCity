@@ -5,6 +5,7 @@ mod materialization;
 mod model;
 mod ports;
 mod preparation;
+mod retry;
 mod service;
 
 pub use model::{
@@ -15,5 +16,8 @@ pub use model::{
 pub use ports::{
   EffectiveProjectPolicySource, ExactRevisionResolver, ManualTriggerContextProvider, RevisionResolver,
   StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,
+};
+pub use retry::{
+  DurableManualTriggerService, ManualTriggerRetryBatchOutcome, ManualTriggerRetryWorker, ManualTriggerRetryWorkerError,
 };
 pub use service::ManualTriggerService;

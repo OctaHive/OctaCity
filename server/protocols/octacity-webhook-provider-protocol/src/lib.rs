@@ -285,6 +285,13 @@ impl VerifyDelivery {
       identifier(field, value)?;
     }
     bounded_map(&self.headers, MAX_HEADERS)?;
+    if self.headers.keys().any(|name| {
+      name
+        .bytes()
+        .any(|byte| !(byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'))
+    }) {
+      return Err(ProtocolError::Invalid("header names must be lowercase ASCII tokens"));
+    }
     if self.body_base64.len() > MAX_DELIVERY_BASE64_BYTES {
       return Err(ProtocolError::LimitExceeded("delivery body"));
     }
@@ -299,7 +306,7 @@ impl VerifyDelivery {
 }
 
 /// Common idempotent managed-registration operation.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedRegistrationOperation {
   /// Stable identity of this in-flight operation.
@@ -312,6 +319,19 @@ pub struct ManagedRegistrationOperation {
   pub callback_url: String,
   /// Host-owned provider-administration credential handle.
   pub credential_handle: String,
+}
+
+impl std::fmt::Debug for ManagedRegistrationOperation {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("ManagedRegistrationOperation")
+      .field("operation_id", &self.operation_id)
+      .field("integration_id", &self.integration_id)
+      .field("idempotency_key", &self.idempotency_key)
+      .field("callback_url", &self.callback_url)
+      .field("credential_handle", &"<redacted>")
+      .finish()
+  }
 }
 
 impl ManagedRegistrationOperation {
@@ -519,6 +539,12 @@ mod tests {
   use super::*;
 
   const FIXTURE: &str = include_str!("../fixtures/verify-delivery-v1.json");
+  const MANAGED_FIXTURES: [&str; 4] = [
+    include_str!("../fixtures/create-registration-v1.json"),
+    include_str!("../fixtures/observe-registration-v1.json"),
+    include_str!("../fixtures/rotate-registration-v1.json"),
+    include_str!("../fixtures/delete-registration-v1.json"),
+  ];
 
   #[test]
   fn golden_fixture_round_trips_and_unknown_fields_are_rejected() {
@@ -528,6 +554,20 @@ mod tests {
     let mut unknown = expected;
     unknown["command"]["payload"]["provider_payload"] = serde_json::json!({});
     assert!(decode_request(&serde_json::to_vec(&unknown).unwrap()).is_err());
+  }
+
+  #[test]
+  fn managed_registration_conformance_fixtures_are_strict_and_secret_safe() {
+    for fixture in MANAGED_FIXTURES {
+      let request = decode_request(fixture.as_bytes()).unwrap();
+      let expected: serde_json::Value = serde_json::from_str(fixture).unwrap();
+      assert_eq!(serde_json::to_value(&request).unwrap(), expected);
+      assert!(!format!("{request:?}").contains("provider-administration-handle"));
+
+      let mut unknown = expected;
+      unknown["command"]["payload"]["provider_private_configuration"] = serde_json::json!({});
+      assert!(decode_request(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    }
   }
 
   #[test]
@@ -580,6 +620,19 @@ mod tests {
       body_base64: STANDARD.encode(vec![0_u8; MAX_DELIVERY_BYTES + 1]),
     };
     assert!(oversized.validate().is_err());
+    let uppercase_header = VerifyDelivery {
+      operation_id: "op".to_owned(),
+      integration_id: "integration".to_owned(),
+      verification_material_handle: "secret".to_owned(),
+      headers: [("X-Signature".to_owned(), "signature".to_owned())]
+        .into_iter()
+        .collect(),
+      body_base64: STANDARD.encode(b"payload"),
+    };
+    assert_eq!(
+      uppercase_header.validate(),
+      Err(ProtocolError::Invalid("header names must be lowercase ASCII tokens"))
+    );
     assert!(
       Failure {
         class: FailureClass::Permanent,

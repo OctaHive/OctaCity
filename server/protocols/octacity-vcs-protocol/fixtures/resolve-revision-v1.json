@@ -7,6 +7,7 @@
       "repository": {
         "operation_id": "operation-01",
         "repository_id": "repository-01",
+        "repository_locator": "https://example.invalid/repository.git",
         "credential_handle": "credential-handle-01"
       },
       "reference": "refs/heads/main"

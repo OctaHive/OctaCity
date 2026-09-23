@@ -9,16 +9,19 @@ use std::{
 
 use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_protocol::{PlatformArchitecture, PlatformOs};
-use octacity_server_domain::{AgentId, EntityKind, JobId, LeaseId, PipelineNodeId, RuntimeClass, Timestamp};
+use octacity_server_domain::{
+  AgentId, EntityKind, JobId, LeaseId, PipelineNodeId, RuntimeClass, Timestamp, TriggerId, TriggerVersion,
+};
 use octacity_server_job::JobRequirements;
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
-  AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, EventSequence, JobClaim,
-  JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  LeaseWindow, MaterializedJob, MutationDisposition, TriggerAcceptanceStore as _,
-  testing::authoritative_store_contract_fixture,
+  AppendJobEvents, AppendJobEventsOutcome, ClaimDueSchedules, CompletionDisposition, CreateSchedule,
+  CreateTriggerDefinition, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion,
+  JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, MaterializedJob,
+  MissedRunPolicy, MutationDisposition, ScheduleDefinition, ScheduleStore as _, TriggerAcceptanceStore as _,
+  TriggerKind, WorkerOwner, testing::authoritative_store_contract_fixture,
 };
-use octacity_server_store_postgres::PostgresAuthoritativeStore;
+use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
 use serde_json::json;
 use support::TestDatabase;
 use tokio::sync::Barrier;
@@ -364,9 +367,8 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
   let fixture = authoritative_store_contract_fixture();
   let build_id = fixture.request.build.id;
   let configuration_id = fixture.request.build.configuration_id;
-  let configuration_version = i64::try_from(fixture.request.build.configuration_version.get()).unwrap();
-  let trigger_id = fixture.request.trigger.trigger.id;
-  let trigger_version = i64::try_from(fixture.request.trigger.trigger.version.get()).unwrap();
+  let configuration_version = fixture.request.build.configuration_version;
+  let schedule_trigger_id = TriggerId::from_uuid(uuid::Uuid::from_u128(741)).unwrap();
   seed_authoritative_prerequisites(&database.pool, &fixture)
     .await
     .unwrap();
@@ -374,37 +376,40 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
     .accept_trigger(fixture.request)
     .await
     .unwrap();
-  sqlx::query(
-    "INSERT INTO schedules \
-       (trigger_id, trigger_version, expression, timezone, next_occurrence_at, missed_run_policy) \
-     VALUES ($1, $2, '* * * * *', 'UTC', to_timestamp(0), '{}')",
-  )
-  .bind(trigger_id.as_uuid())
-  .bind(trigger_version)
-  .execute(&database.pool)
-  .await
-  .unwrap();
+  let schedule = ScheduleDefinition {
+    expression: "* * * * * * *".to_owned(),
+    timezone: "UTC".to_owned(),
+    missed_run_policy: MissedRunPolicy::RunOnce,
+  };
+  PostgresStore::new(database.pool.clone())
+    .create_schedule(CreateSchedule {
+      trigger: CreateTriggerDefinition {
+        id: schedule_trigger_id,
+        version: TriggerVersion::INITIAL,
+        configuration_id,
+        configuration_version,
+        kind: TriggerKind::Scheduled,
+        enabled: true,
+        definition: json!({}),
+        idempotency_key: IdempotencyKey::new("schedule-concurrency").unwrap(),
+        created_at: Timestamp::from_unix_millis(0).unwrap(),
+      },
+      next_occurrence_at: Timestamp::from_unix_millis(1_000).unwrap(),
+      schedule,
+    })
+    .await
+    .unwrap();
   let left_pool = independent_pool(&database.pool).await;
   let right_pool = independent_pool(&database.pool).await;
+  let left_store = PostgresStore::new(left_pool.clone());
+  let right_store = PostgresStore::new(right_pool.clone());
   let verify_pool = database.pool.clone();
 
   let result = tokio::spawn(async move {
     let barrier = Arc::new(Barrier::new(2));
     let (left_claim, right_claim) = tokio::join!(
-      claim_schedule(
-        &left_pool,
-        "server-a",
-        configuration_id,
-        configuration_version,
-        barrier.clone()
-      ),
-      claim_schedule(
-        &right_pool,
-        "server-b",
-        configuration_id,
-        configuration_version,
-        barrier
-      )
+      claim_schedule(left_store.clone(), "server-a", barrier.clone()),
+      claim_schedule(right_store.clone(), "server-b", barrier)
     );
     assert_eq!(
       [left_claim.unwrap(), right_claim.unwrap()]
@@ -413,13 +418,6 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
         .count(),
       1
     );
-    let schedule_occurrences: i64 =
-      sqlx::query_scalar("SELECT COUNT(*) FROM trigger_occurrences WHERE deduplication_identity = 'schedule:epoch-0'")
-        .fetch_one(&verify_pool)
-        .await
-        .unwrap();
-    assert_eq!(schedule_occurrences, 1);
-
     let barrier = Arc::new(Barrier::new(2));
     let (left_attempt, right_attempt) = tokio::join!(
       insert_second_attempt(
@@ -532,56 +530,20 @@ async fn complete_after_barrier(
 }
 
 async fn claim_schedule(
-  pool: &sqlx::PgPool,
+  store: PostgresStore,
   owner: &str,
-  configuration_id: octacity_server_domain::BuildConfigurationId,
-  configuration_version: i64,
   barrier: Arc<Barrier>,
-) -> Result<bool, sqlx::Error> {
+) -> Result<bool, octacity_server_store::StoreError> {
   barrier.wait().await;
-  let mut transaction = pool.begin().await?;
-  let claimed: Option<(uuid::Uuid, i64)> = sqlx::query_as(
-    "WITH due AS (\
-       SELECT trigger_id, trigger_version \
-       FROM schedules \
-       WHERE next_occurrence_at <= now() \
-         AND (claim_expires_at IS NULL OR claim_expires_at <= now()) \
-       ORDER BY next_occurrence_at, trigger_id, trigger_version \
-       LIMIT 1 \
-       FOR UPDATE SKIP LOCKED\
-     ) \
-     UPDATE schedules AS schedule \
-     SET claim_owner = $1, claim_expires_at = now() + interval '1 minute' \
-     FROM due \
-     WHERE schedule.trigger_id = due.trigger_id AND schedule.trigger_version = due.trigger_version \
-     RETURNING schedule.trigger_id, schedule.trigger_version",
-  )
-  .bind(owner)
-  .fetch_optional(&mut *transaction)
-  .await?;
-  if let Some((trigger_id, trigger_version)) = claimed {
-    sqlx::query(
-      "INSERT INTO trigger_occurrences \
-         (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
-          deduplication_identity, cause, causality, provider_metadata, source_time, state, request_digest, \
-          created_at, updated_at) \
-       VALUES ($1, $2, $3, $4, $5, 'scheduled', 'schedule:epoch-0', '{\"kind\":\"scheduled\"}', \
-               jsonb_build_object('root_occurrence_id', $1, 'parent_occurrence_id', NULL, 'depth', 0), '{}', \
-               to_timestamp(0), 'accepted', decode(repeat('04', 32), 'hex'), now(), now())",
-    )
-    .bind(uuid::Uuid::from_u128(740))
-    .bind(trigger_id)
-    .bind(trigger_version)
-    .bind(configuration_id.as_uuid())
-    .bind(configuration_version)
-    .execute(&mut *transaction)
-    .await?;
-    transaction.commit().await?;
-    Ok(true)
-  } else {
-    transaction.commit().await?;
-    Ok(false)
-  }
+  store
+    .claim_due_schedules(ClaimDueSchedules::new(
+      WorkerOwner::new(owner)?,
+      Timestamp::from_unix_millis(1_000).unwrap(),
+      Timestamp::from_unix_millis(2_000).unwrap(),
+      1,
+    )?)
+    .await
+    .map(|claims| claims.len() == 1)
 }
 
 async fn insert_second_attempt(

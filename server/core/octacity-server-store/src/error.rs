@@ -56,8 +56,58 @@ pub enum StoreOperation {
   ReadBuildConfigurationVersion,
   /// Create one immutable Trigger definition.
   CreateTriggerDefinition,
+  /// Atomically create an unmanaged webhook integration and external Trigger.
+  CreateUnmanagedWebhook,
+  /// Read one unmanaged webhook integration.
+  ReadUnmanagedWebhook,
+  /// Reserve one managed webhook integration and external Trigger.
+  CreateManagedWebhook,
+  /// Read one managed webhook integration.
+  ReadManagedWebhook,
+  /// Commit one normalized managed-registration result.
+  RecordManagedWebhookRegistration,
+  /// Enqueue one idempotent managed-provider operation.
+  EnqueueManagedWebhookOperation,
+  /// Claim due managed-provider operations.
+  ClaimManagedWebhookOperations,
+  /// Schedule retry or dead-letter one managed-provider operation.
+  FailManagedWebhookOperation,
+  /// Durably admit one raw webhook receipt.
+  EnqueueWebhookDelivery,
+  /// Claim due webhook verification or Trigger work.
+  ClaimWebhookDeliveries,
+  /// Commit one authenticated normalized webhook event.
+  RecordWebhookEvent,
+  /// Schedule a retry or retain a webhook dead letter.
+  FailWebhookDelivery,
+  /// Complete one normalized webhook receipt.
+  CompleteWebhookDelivery,
+  /// Read secret-free webhook delivery diagnostics.
+  ReadWebhookDelivery,
+  /// Create one immutable scheduled Trigger and its durable cursor.
+  CreateSchedule,
+  /// Read one durable schedule.
+  ReadSchedule,
+  /// Claim a bounded batch of due schedules.
+  ClaimDueSchedules,
+  /// Advance one owned schedule claim after evaluation.
+  CompleteScheduleClaim,
+  /// Claim terminal Build events from the transactional outbox.
+  ClaimInternalTriggerEvents,
+  /// Mark one owned internal-Trigger source event delivered.
+  CompleteInternalTriggerEvent,
   /// Deduplicate a Trigger and persist its complete initial Build graph.
   AcceptTrigger,
+  /// Persist and initially claim one manual Trigger evaluation.
+  ReserveTriggerEvaluation,
+  /// Claim due manual Trigger evaluations.
+  ClaimTriggerEvaluations,
+  /// Persist one immutable revision checkpoint for durable Trigger evaluation.
+  RecordTriggerEvaluationRevision,
+  /// Complete one owned manual Trigger evaluation.
+  CompleteTriggerEvaluation,
+  /// Retry or dead-letter one owned manual Trigger evaluation.
+  FailTriggerEvaluation,
   /// Select one compatible ready Job and create its current Lease.
   ClaimReadyJob,
   /// Renew one current Lease and select its control directive.
@@ -104,6 +154,9 @@ pub enum StoreInputError {
   /// A durable worker owner, deadline, or batch size is invalid.
   #[error("a durable worker claim is invalid")]
   InvalidWorkerClaim,
+  /// One internal event matches more Trigger definitions than one bounded delivery permits.
+  #[error("an internal trigger event has too many matching definitions")]
+  TooManyInternalTriggerMatches,
   /// An Agent Pool admission policy is empty or exceeds its bound.
   #[error("an agent pool admission policy is invalid")]
   InvalidPoolAdmissionPolicy,
@@ -122,6 +175,15 @@ pub enum StoreInputError {
   /// A Trigger occurrence is malformed or violates source-specific invariants.
   #[error("a normalized trigger occurrence is invalid")]
   InvalidNormalizedTrigger,
+  /// A durable Trigger-evaluation payload or diagnostic is invalid.
+  #[error("a durable trigger evaluation is invalid")]
+  InvalidTriggerEvaluation,
+  /// An unmanaged webhook definition is malformed or exceeds its bounds.
+  #[error("an unmanaged webhook definition is invalid")]
+  InvalidWebhookDefinition,
+  /// A webhook delivery, normalized event, or diagnostic is malformed or exceeds its bounds.
+  #[error("a webhook delivery is invalid")]
+  InvalidWebhookDelivery,
   /// A Build's typed effective scheduling policy is outside its valid range.
   #[error("an immutable build scheduling policy is invalid")]
   InvalidBuildSchedulingPolicy,

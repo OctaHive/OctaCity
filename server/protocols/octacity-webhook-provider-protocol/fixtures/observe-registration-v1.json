@@ -1,0 +1,15 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-observe",
+  "command": {
+    "operation": "observe_registration",
+    "payload": {
+      "operation_id": "operation-observe",
+      "integration_id": "integration-01",
+      "idempotency_key": "managed-observe-01",
+      "callback_url": "https://hooks.example.test/webhooks/v1/integrations/integration-01",
+      "credential_handle": "provider-administration-handle"
+    }
+  }
+}
+

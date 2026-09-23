@@ -1,7 +1,8 @@
 # Webhook provider protocol v1
 
-Status: wire contract implemented by `octacity-webhook-provider-protocol`;
-bounded process hosting and production provider adapters are not implemented.
+Status: wire contract, conformance fixtures, bounded process hosting, public
+webhook ingress, and unmanaged and managed application/REST lifecycles are
+implemented. Production provider adapters are intentionally not included.
 
 ## Purpose and boundary
 
@@ -14,11 +15,22 @@ repository event.
 ```text
 provider HTTP delivery
   -> bounded webhook ingress
+  -> durable raw receipt + server delivery identity
+  -> replica-safe delivery worker claim
   -> selected adapter receives exact body + allowlisted headers
   -> adapter verifies provider authentication
-  -> adapter returns AuthenticatedRepositoryEvent
-  -> trigger engine deduplicates integration_id + delivery_id
+  -> durable AuthenticatedRepositoryEvent deduplicated by integration_id + delivery_id
+  -> trigger engine evaluates the canonical normalized event idempotently
 ```
+
+The public callback returns `202 Accepted` with a server-owned `delivery_id`
+after the raw receipt is committed; it does not wait for adapter execution or
+Build creation. Only transient adapter failures are retried, using the
+server-owned bounded exponential policy. Permanent failures and exhausted
+retries retain a secret-free dead-letter code, diagnostic, and attempt count.
+Raw body and header values are removed after normalization or dead-lettering.
+Receipts belonging to a disabled integration become terminal `suppressed`
+records before adapter execution; their raw body and headers are cleared too.
 
 Provider request bodies, signature formats, administration credentials, and
 SDK types remain inside the adapter. The normalized event contains no GitHub,
@@ -41,6 +53,68 @@ data, headers, or webhook bytes.
 
 V1 adapters must advertise `verify_delivery`. Managed `create`, `observe`,
 `rotate`, and `delete` are independent optional capabilities.
+
+## Installed adapter registry
+
+The host discovers adapters only from an operator-owned registry. Each adapter
+occupies one real directory whose name equals `adapter_id` and contains a
+strict `adapter.toml` plus a normalized relative executable path. The manifest
+declares version `1`, the executable SHA-256, protocol range, and every
+capability. Unknown fields, symbolic links, path traversal, incompatible
+versions, oversized manifests or executables, unsafe Unix write permissions,
+and digest mismatches reject the registry entry.
+
+Callers resolve both `adapter_id` and the configured executable digest. The
+host hashes the canonical regular executable during discovery, immediately
+before spawn, and again after spawn but before writing any request. A replaced
+adapter therefore receives no webhook body, header, or credential handle. The
+v1 host caps executable size at 256 MiB so verification work is bounded.
+
+An installation manifest has this shape:
+
+```toml
+manifest_version = 1
+adapter_id = "example"
+executable = "adapter"
+executable_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+[protocol]
+min = 1
+max = 1
+
+[capabilities]
+verify_delivery = true
+create_registration = false
+observe_registration = false
+rotate_registration = false
+delete_registration = false
+```
+
+## Process lifecycle
+
+Each operation runs in a fresh process with an empty inherited environment,
+the adapter directory as its working directory, and only bounded stdin,
+stdout, and stderr pipes. The host checks the advertised capability before
+spawn, sends one JSON line, accepts one correlated response line, rejects
+extra stdout, caps retained stderr at 64 KiB, and never includes stderr in a
+returned diagnostic because an adapter might write protected material there.
+
+The operation timeout covers spawn verification, request delivery, response,
+and clean process exit. Caller cancellation or timeout sends the protocol
+`cancel` command when the original operation has an identity, permits one
+bounded grace period, and then terminates and reaps the complete adapter
+process group. A terminal response cannot override a cancellation or timeout
+that has already begun.
+
+Host failures use stable invalid-request, unsupported, permanent, transient,
+cancelled, and protocol-fault classes. Valid provider `failure` outcomes keep
+their protocol class and optional bounded retry advice unchanged; the durable
+retry policy remains server-owned. Claims have an owner and expiry, so another
+replica can resume verification or Trigger evaluation after a process crash.
+The normalized provider identity is committed before Trigger evaluation, and
+the Trigger Engine uses an integration-scoped stable identity, preventing a
+restarted worker or repeated provider delivery from creating another
+occurrence or Build.
 
 ## Encoding and envelopes
 
@@ -70,8 +144,11 @@ A response echoes `protocol_version` and `request_id`, then returns one tagged
 response cannot be applied to another request merely because its operation
 type matches.
 
-The golden v1 request is
+The golden v1 delivery request is
 [`verify-delivery-v1.json`](../../server/protocols/octacity-webhook-provider-protocol/fixtures/verify-delivery-v1.json).
+The same fixture directory contains strict create, observe, rotate, and delete
+registration requests used by adapters as the managed-registration conformance
+set.
 
 ## Operations
 
@@ -155,7 +232,8 @@ elapsed-time ceilings; an adapter cannot request unbounded retry.
 - header or metadata value: 4096 UTF-8 bytes;
 - failure diagnostic: 4096 UTF-8 bytes.
 
-Control characters are rejected in bounded textual fields. Diagnostics must
+Control characters are rejected in bounded textual fields, and supplied
+header names must be lowercase ASCII tokens. Diagnostics must
 not contain raw bodies, signature material, credential values, or provider
 administration secrets.
 

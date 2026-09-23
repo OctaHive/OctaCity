@@ -363,6 +363,7 @@ fn facts(outcome: &CancellationDisposition) -> MutationFacts {
       "build_id": outcome.build_id,
       "cancelled_jobs": outcome.cancelled_jobs,
       "cancelling_jobs": outcome.cancelling_jobs,
+      "build_state": crate::state::build_state(outcome.build_state),
       "schema_version": 1,
     }),
   }

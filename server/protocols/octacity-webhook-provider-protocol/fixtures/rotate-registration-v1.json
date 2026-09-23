@@ -1,0 +1,15 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-rotate",
+  "command": {
+    "operation": "rotate_registration",
+    "payload": {
+      "operation_id": "operation-rotate",
+      "integration_id": "integration-01",
+      "idempotency_key": "managed-rotate-01",
+      "callback_url": "https://hooks.example.test/webhooks/v1/integrations/integration-01",
+      "credential_handle": "provider-administration-handle"
+    }
+  }
+}
+

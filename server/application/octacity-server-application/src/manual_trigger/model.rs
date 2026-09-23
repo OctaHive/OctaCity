@@ -29,7 +29,8 @@ pub enum ManualSourceSelection {
 }
 
 /// Transport-independent intent to create one manual Build.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ManualTriggerCommand {
   /// Exact immutable Trigger definition selected by the caller.
   pub trigger: TriggerDefinitionRef,
@@ -48,7 +49,8 @@ pub struct ManualTriggerCommand {
 }
 
 /// Complete application command for accepting one manual Trigger occurrence.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AcceptManualTriggerCommand {
   /// Stable caller intent and immutable Trigger target.
   pub trigger: ManualTriggerCommand,
@@ -202,6 +204,15 @@ pub enum ManualTriggerInputError {
   /// The selected Build Configuration version does not allow manual Triggers.
   #[error("build configuration does not allow manual triggers")]
   ManualTriggerNotAllowed,
+  /// The selected Build Configuration version does not allow scheduled Triggers.
+  #[error("build configuration does not allow scheduled triggers")]
+  ScheduledTriggerNotAllowed,
+  /// The selected Build Configuration version does not allow internal Triggers.
+  #[error("build configuration does not allow internal triggers")]
+  InternalTriggerNotAllowed,
+  /// The selected Build Configuration version does not allow external Triggers.
+  #[error("build configuration does not allow external triggers")]
+  ExternalTriggerNotAllowed,
   /// No default mutable reference is configured for the Repository version.
   #[error("repository has no default source reference")]
   DefaultReferenceMissing,

@@ -1,0 +1,15 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-delete",
+  "command": {
+    "operation": "delete_registration",
+    "payload": {
+      "operation_id": "operation-delete",
+      "integration_id": "integration-01",
+      "idempotency_key": "managed-delete-01",
+      "callback_url": "https://hooks.example.test/webhooks/v1/integrations/integration-01",
+      "credential_handle": "provider-administration-handle"
+    }
+  }
+}
+

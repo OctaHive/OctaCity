@@ -9,6 +9,9 @@ publish = false
 description = "Normalized Trigger domain for OctaCity"
 
 [dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+cron.workspace = true
 octacity-server-domain = { path = "../octacity-server-domain" }
 serde.workspace = true
 serde_json.workspace = true

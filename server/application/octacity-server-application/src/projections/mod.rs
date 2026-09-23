@@ -41,6 +41,9 @@ pub enum ProjectionError {
   /// A Build Configuration snapshot violates its authoritative core invariants.
   #[error("build configuration snapshot is invalid")]
   InvalidConfigurationSnapshot,
+  /// A durable schedule contains an invalid calendar or Build definition.
+  #[error("schedule snapshot is invalid")]
+  InvalidScheduleSnapshot,
   /// A Build snapshot does not match the strict server-owned snapshot schema.
   #[error("build snapshot is invalid")]
   InvalidBuildSnapshot,

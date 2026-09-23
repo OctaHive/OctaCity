@@ -14,6 +14,18 @@ The current workspace contains:
   port;
 - `octacity-artifact-s3`: S3-compatible adapter used by the Phase 6 contract
   server;
+- `octacity-webhook-provider-protocol`: strict provider-neutral verification,
+  normalization, managed-registration, cancellation, and failure messages;
+- `octacity-server-adapter-host`: shared executable verification, bounded
+  framing, cancellation, timeout, and process cleanup for server adapters;
+- `octacity-server-webhook`: operator-installed webhook-adapter registry with
+  provider capabilities and protocol-specific supervision;
+- `octacity-vcs-protocol`: strict provider-neutral references, commits, trees,
+  bounded file content, immutable resolution, cancellation, and failures;
+- `octacity-server-vcs`: operator-installed VCS-adapter registry with capability
+  gating, credential-handle redaction, and protocol-specific supervision;
+- `octacity-vcs-git`: read-only Git VCS adapter that browses ephemeral bare
+  object databases without checkout or repository-code execution;
 - `octacity-cache-session`: agent-owned L1 placement and short-lived remote
   cache authority preparation without implementing cache semantics;
 - `octacity-protocol`: strict, signed server-agent job types;
@@ -85,11 +97,40 @@ The server becomes ready only after its PostgreSQL migrations, database,
 mandatory S3-compatible bucket, and JobSpec signing material are usable. When
 `agent_bind` is configured, the independently authenticated Agent listener
 serves registration at `/api/v1/agents/register` and lease long polling at
-`/api/v1/agents/{agent_id}/leases:acquire`. A minimal `server.toml` is:
+`/api/v1/agents/{agent_id}/leases:acquire`. When `webhook_bind` is configured,
+the separate webhook listener durably admits bounded raw deliveries. A worker
+then authenticates them through an operator-installed, SHA-256-pinned provider
+adapter before dispatching normalized events to the Trigger Engine. The
+management API supports both manual remote-hook setup and
+create/observe/rotate/delete through adapters that advertise those optional
+managed capabilities. Management commands persist retryable provider work
+before returning; leased workers perform the remote operation and retain
+bounded retry or terminal diagnostics, so a restart cannot lose accepted
+intent. Delivery verification and managed-registration workers intentionally
+share the `webhook_worker_*` polling, claim, and retry policy; their independent
+batch-size settings bound each workload separately. Manual Trigger intent is
+likewise persisted before a mutable VCS lookup, and transient resolution
+failures resume from leased work without creating another Build. Exact
+revisions remain a local fast path. The repository intentionally ships no
+production GitHub or Gerrit webhook adapter. A minimal `server.toml` is:
 
 ```toml
 management_bind = "127.0.0.1:8080"
 agent_bind = "127.0.0.1:8081"
+webhook_bind = "127.0.0.1:8082"
+webhook_public_base_url = "https://hooks.example.test"
+webhook_adapter_registry = "/etc/octacity/webhook-adapters"
+webhook_operation_timeout_milliseconds = 5000
+webhook_cancellation_grace_milliseconds = 1000
+vcs_adapter_registry = "/etc/octacity/vcs-adapters"
+vcs_operation_timeout_milliseconds = 30000
+vcs_cancellation_grace_milliseconds = 1000
+trigger_evaluation_poll_interval_milliseconds = 1000
+trigger_evaluation_claim_lifetime_milliseconds = 180000
+trigger_evaluation_batch_size = 4
+vcs_retry_max_attempts = 5
+vcs_retry_initial_milliseconds = 1000
+vcs_retry_maximum_milliseconds = 60000
 shutdown_grace_milliseconds = 10000
 readiness_check_interval_milliseconds = 5000
 readiness_check_timeout_milliseconds = 2000
@@ -100,8 +141,27 @@ agent_lease_lifetime_milliseconds = 300000
 lease_expiry_poll_interval_milliseconds = 1000
 lease_expiry_claim_lifetime_milliseconds = 30000
 lease_expiry_batch_size = 32
+schedule_poll_interval_milliseconds = 1000
+schedule_claim_lifetime_milliseconds = 30000
+schedule_batch_size = 32
+internal_trigger_poll_interval_milliseconds = 1000
+internal_trigger_claim_lifetime_milliseconds = 30000
+internal_trigger_batch_size = 32
+webhook_worker_poll_interval_milliseconds = 1000
+webhook_worker_claim_lifetime_milliseconds = 30000
+webhook_delivery_batch_size = 4
+managed_webhook_batch_size = 4
+webhook_worker_max_attempts = 5
+webhook_worker_initial_retry_milliseconds = 1000
+webhook_worker_maximum_retry_milliseconds = 60000
 ready_job_listener_reconnect_milliseconds = 1000
 supported_pipeline_capabilities = ["native"]
+
+[[vcs_integrations]]
+integration_id = "00000000-0000-0000-0000-000000000201"
+adapter_id = "git"
+adapter_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+credential_handle = "secret:repository-main"
 
 [postgres]
 url_file = "/run/secrets/octacity-postgres-url"
@@ -164,10 +224,12 @@ cargo run -p octacity-server -- run server.toml
 ```
 
 It exposes `/health/live`, `/health/ready`, `/api/v1/openapi.json`, the
-management API, and—when `agent_bind` is configured—the authenticated Agent
-registration, lease, heartbeat, event, and completion API. Management v1 is
+management API, and—when configured—the authenticated Agent API and webhook
+callback `/webhooks/v1/integrations/{integration_id}` on their independent
+listeners. Management v1 is
 currently unauthenticated and belongs only on the configured trusted network;
-Agent routes always require enrollment or current-registration credentials.
+Agent routes always require enrollment or current-registration credentials,
+and webhook bodies always require provider verification.
 Liveness is process-local. Readiness is a periodically refreshed, bounded
 snapshot and can recover after PostgreSQL or object storage becomes available
 again without restarting the process. Safe structured logs identify the failed

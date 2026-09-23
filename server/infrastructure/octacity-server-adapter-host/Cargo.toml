@@ -1,0 +1,20 @@
+[package]
+name = "octacity-server-adapter-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Shared verified registry and bounded process execution for OctaCity server adapters"
+
+[dependencies]
+processkit.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

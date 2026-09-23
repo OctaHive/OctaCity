@@ -82,6 +82,13 @@ pub(crate) enum MutationKind {
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
   CreateTriggerDefinition,
+  CreateUnmanagedWebhook,
+  CreateManagedWebhook,
+  CompleteManagedWebhookCreate,
+  ObserveManagedWebhook,
+  RotateManagedWebhook,
+  DeleteManagedWebhook,
+  CreateSchedule,
   AcceptTrigger,
   SuppressTrigger,
   ClaimReadyJob,
@@ -211,6 +218,48 @@ impl MutationKind {
         "create-trigger-definition",
         "trigger",
         "trigger.created"
+      ),
+      Self::CreateUnmanagedWebhook => metadata!(
+        b"octacity.create-unmanaged-webhook.v1\0",
+        "create-unmanaged-webhook",
+        "integration",
+        "webhook-integration.created"
+      ),
+      Self::CreateManagedWebhook => metadata!(
+        b"octacity.create-managed-webhook.v1\0",
+        "create-managed-webhook",
+        "integration",
+        "webhook-integration.managed-created"
+      ),
+      Self::CompleteManagedWebhookCreate => metadata!(
+        b"octacity.complete-managed-webhook-create.v1\0",
+        "complete-managed-webhook-create",
+        "integration",
+        "webhook-integration.registration-created"
+      ),
+      Self::ObserveManagedWebhook => metadata!(
+        b"octacity.observe-managed-webhook.v1\0",
+        "observe-managed-webhook",
+        "integration",
+        "webhook-integration.registration-observed"
+      ),
+      Self::RotateManagedWebhook => metadata!(
+        b"octacity.rotate-managed-webhook.v1\0",
+        "rotate-managed-webhook",
+        "integration",
+        "webhook-integration.registration-rotated"
+      ),
+      Self::DeleteManagedWebhook => metadata!(
+        b"octacity.delete-managed-webhook.v1\0",
+        "delete-managed-webhook",
+        "integration",
+        "webhook-integration.registration-deleted"
+      ),
+      Self::CreateSchedule => metadata!(
+        b"octacity.create-schedule.v1\0",
+        "create-schedule",
+        "trigger",
+        "schedule.created"
       ),
       Self::AcceptTrigger => metadata!(
         b"octacity.accept-trigger.v2\0",

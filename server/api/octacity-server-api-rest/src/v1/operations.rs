@@ -50,7 +50,11 @@ impl OperationalMetadata {
       capabilities: vec![
         CapabilityMetadata::available("operational_metadata"),
         CapabilityMetadata::unavailable("agent_coordination"),
-        CapabilityMetadata::unavailable("webhook_ingestion"),
+        if webhook_ingress_enabled {
+          CapabilityMetadata::available("webhook_ingestion")
+        } else {
+          CapabilityMetadata::unavailable("webhook_ingestion")
+        },
         CapabilityMetadata::unavailable("dynamic_agent_provisioning"),
       ],
     }

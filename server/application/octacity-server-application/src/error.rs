@@ -12,6 +12,8 @@ pub enum ApplicationFailure {
   NotFound,
   /// Current authoritative state conflicts with the request.
   Conflict,
+  /// The selected installed adapter does not advertise the requested capability.
+  CapabilityUnavailable,
   /// A required authoritative dependency is temporarily unavailable.
   Unavailable,
   /// Safe projection or another internal invariant failed.
@@ -24,6 +26,9 @@ pub enum ApplicationError {
   /// Typed application input violated a command-specific invariant.
   #[error("application input is invalid")]
   InvalidInput,
+  /// A selected adapter does not implement an optional operation.
+  #[error("application capability is unavailable")]
+  CapabilityUnavailable,
   /// An authoritative backend-neutral port rejected or could not complete the operation.
   #[error("authoritative application port failed")]
   Store(#[from] StoreError),
@@ -45,11 +50,18 @@ impl ApplicationError {
     Self::Store(StoreError::Unavailable)
   }
 
+  /// Constructs a stable optional-capability failure.
+  #[must_use]
+  pub const fn capability_unavailable() -> Self {
+    Self::CapabilityUnavailable
+  }
+
   /// Returns a transport-neutral failure classification.
   #[must_use]
   pub const fn classification(&self) -> ApplicationFailure {
     match self {
       Self::InvalidInput => ApplicationFailure::Invalid,
+      Self::CapabilityUnavailable => ApplicationFailure::CapabilityUnavailable,
       Self::Store(StoreError::InvalidInput { .. }) => ApplicationFailure::Invalid,
       Self::Store(StoreError::NotFound { .. }) => ApplicationFailure::NotFound,
       Self::Store(StoreError::Conflict { .. } | StoreError::Duplicate { .. }) => ApplicationFailure::Conflict,

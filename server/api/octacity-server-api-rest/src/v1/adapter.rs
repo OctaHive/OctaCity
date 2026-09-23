@@ -24,8 +24,8 @@ use octacity_server_application::{
   PipelineCommandOutcome, PipelineProjection, PlatformArchitectureProjection as ApplicationPlatformArchitecture,
   PlatformOsProjection as ApplicationPlatformOs, ProjectCommandOutcome, ProjectPageProjection, ProjectProjection,
   RepositoryCommandOutcome, RepositoryProjection, RetryBuildCommandOutcome,
-  RetryClassProjection as ApplicationRetryClass, RuntimeClassProjection as ApplicationRuntimeClass,
-  TriggerKindProjection as ApplicationTriggerKind,
+  RetryClassProjection as ApplicationRetryClass, RuntimeClassProjection as ApplicationRuntimeClass, ScheduleProjection,
+  ScheduledTriggerDefinitionInput, TriggerKindProjection as ApplicationTriggerKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -37,26 +37,34 @@ use super::{
   AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptSummaryResource, BuildConfigurationDefinition,
   BuildConfigurationResource, BuildResource, CachePolicy, CancelBuildResponse, CreateAgentPoolRequest,
   CreateBuildConfigurationRequest, CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest,
-  CreateRepositoryRequest, Cursor, CursorPage, DagEdgeResource, DeleteAgentPoolResponse, DeleteProjectResponse,
-  DependencyPolicy, DrainAgentRequest, ErrorCode, IDEMPOTENCY_KEY_HEADER, IdempotencyKey, IssueAgentEnrollmentRequest,
-  IssueAgentEnrollmentResponse, JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource,
-  JobResource, JobTerminalResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
+  CreateRepositoryRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource,
+  DeleteAgentPoolResponse, DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode,
+  IDEMPOTENCY_KEY_HEADER, IdempotencyKey, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
+  JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource,
+  JobTerminalResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
   OPTIMISTIC_PRECONDITION_HEADER, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
   PipelineNode, PipelineResource, PlatformArchitecture, PlatformOs, ProjectDetails, ProjectPolicyResource,
   ProjectResource, PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest,
   PublishPipelineVersionRequest, PublishProjectPolicyRequest, PublishRepositoryVersionRequest,
   ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy,
-  RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, TriggerDefinitionResource,
-  TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
+  RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, ScheduleResource,
+  TriggerDefinitionResource, TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
 };
 use crate::RequestId;
 
 mod agent;
 mod agent_pool;
 mod application;
+mod configuration;
 mod error;
 mod execution;
+mod job_event;
+mod manual_trigger;
+mod pipeline;
+mod project;
 mod representations;
+mod schedule;
+mod webhook;
 
 use agent::{drain_agent, get_agent, issue_agent_enrollment, list_agents, reassign_agent_pool};
 use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agent_pools, publish_agent_pool};
@@ -65,11 +73,26 @@ pub use application::{
   AgentManagementApplication, BuildManagementApplication, CatalogManagementApplication,
   ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
   JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+};
+use configuration::{
+  create_build_configuration, create_repository, get_build_configuration, get_repository, publish_build_configuration,
+  publish_repository,
 };
 use error::ApiError;
 use execution::{cancel_build, get_attempt, get_build, get_job, retry_build};
+use job_event::read_job_events;
+use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition};
+use pipeline::{create_pipeline, get_pipeline, publish_pipeline};
+use project::{
+  create_project, delete_project, get_project, list_projects, move_project, publish_project_policy, rename_project,
+};
 use representations::*;
+use schedule::{create_scheduled_trigger_definition, get_schedule};
+use webhook::{
+  create_managed_webhook, create_unmanaged_webhook, delete_managed_webhook, observe_managed_webhook,
+  rotate_managed_webhook,
+};
 
 const MAX_MANAGEMENT_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const DEFAULT_PAGE_LIMIT: u16 = 50;
@@ -88,6 +111,7 @@ pub struct ManagementApplication {
   agents: AgentEndpoints,
   builds: BuildManagementApplication,
   definitions: DefinitionManagementApplication,
+  schedules: ScheduleManagementApplication,
   manual_triggers: ManualTriggerManagementApplication,
   job_events: JobEventManagementApplication,
 }
@@ -110,6 +134,7 @@ impl ManagementApplication {
       pipelines,
       configurations,
       definitions,
+      schedules,
     } = catalog;
     let ExecutionManagementApplication {
       builds,
@@ -133,6 +158,7 @@ impl ManagementApplication {
       agents,
       builds,
       definitions,
+      schedules,
       manual_triggers,
       job_events,
     })
@@ -197,6 +223,34 @@ pub fn router(application: ManagementApplication) -> Router {
       &format!("{API_PREFIX}/trigger-definitions/manual"),
       post(create_manual_trigger_definition),
     )
+    .route(
+      &format!("{API_PREFIX}/trigger-definitions/scheduled"),
+      post(create_scheduled_trigger_definition),
+    )
+    .route(
+      &format!("{API_PREFIX}/webhook-integrations/unmanaged"),
+      post(create_unmanaged_webhook),
+    )
+    .route(
+      &format!("{API_PREFIX}/webhook-integrations/managed"),
+      post(create_managed_webhook),
+    )
+    .route(
+      &format!("{API_PREFIX}/webhook-integrations/managed/{{integration_id}}/observe"),
+      post(observe_managed_webhook),
+    )
+    .route(
+      &format!("{API_PREFIX}/webhook-integrations/managed/{{integration_id}}/rotate"),
+      post(rotate_managed_webhook),
+    )
+    .route(
+      &format!("{API_PREFIX}/webhook-integrations/managed/{{integration_id}}"),
+      axum::routing::delete(delete_managed_webhook),
+    )
+    .route(
+      &format!("{API_PREFIX}/schedules/{{trigger_id}}/versions/{{version}}"),
+      get(get_schedule),
+    )
     .route(&format!("{API_PREFIX}/triggers/manual"), post(accept_manual_trigger))
     .route(&format!("{API_PREFIX}/builds/{{build_id}}"), get(get_build))
     .route(&format!("{API_PREFIX}/builds/{{build_id}}/cancel"), post(cancel_build))
@@ -235,542 +289,6 @@ pub fn router(application: ManagementApplication) -> Router {
 
 async fn openapi() -> Json<Value> {
   Json(super::openapi_document())
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProjectListParameters {
-  parent_id: Option<String>,
-  after: Option<Cursor>,
-  #[serde(default = "default_page_limit")]
-  limit: u16,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct JobEventReadParameters {
-  #[serde(default)]
-  after: u64,
-  #[serde(default = "default_job_event_limit")]
-  limit: u16,
-  #[serde(default)]
-  wait_ms: u64,
-}
-
-async fn create_project(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  headers: HeaderMap,
-  payload: Result<Json<CreateProjectRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let idempotency_key = idempotency_key(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .create_project(
-      Uuid::new_v4(),
-      body.parent_id.as_deref(),
-      body.name,
-      idempotency_key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .projects
-    .create
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::CREATED, Json(project_mutation(outcome))))
-}
-
-async fn rename_project(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(project_id): Path<String>,
-  headers: HeaderMap,
-  payload: Result<Json<RenameProjectRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = precondition(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .rename_project(
-      &project_id,
-      expected.version(),
-      body.name,
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .projects
-    .rename
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(project_mutation(outcome))))
-}
-
-async fn move_project(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(project_id): Path<String>,
-  headers: HeaderMap,
-  payload: Result<Json<MoveProjectRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = precondition(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .move_project(
-      &project_id,
-      expected.version(),
-      body.parent_id.as_deref(),
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .projects
-    .move_project
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(project_mutation(outcome))))
-}
-
-async fn delete_project(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(project_id): Path<String>,
-  headers: HeaderMap,
-) -> Result<impl IntoResponse, ApiError> {
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = precondition(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .delete_project(&project_id, expected.version(), key.as_str(), now_unix_ms(&request_id)?)
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .projects
-    .delete
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(delete_project_response(outcome))))
-}
-
-async fn publish_project_policy(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(project_id): Path<String>,
-  headers: HeaderMap,
-  payload: Result<Json<PublishProjectPolicyRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = optional_precondition(&headers, &request_id)?.map(VersionPrecondition::version);
-  let command = application
-    .inputs
-    .publish_project_policy(
-      &project_id,
-      expected,
-      body.policy,
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .definitions
-    .publish_project_policy
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((
-    StatusCode::CREATED,
-    Json(MutationResponse {
-      disposition: mutation_disposition(outcome.disposition),
-      resource: ProjectPolicyResource {
-        project_id: outcome.project_id.to_string(),
-        version: outcome.version.get(),
-      },
-    }),
-  ))
-}
-
-async fn get_project(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(project_id): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-  let query = application
-    .inputs
-    .get_project(&project_id)
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let projection = application
-    .projects
-    .get
-    .handle_query(query)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(project_details(projection))))
-}
-
-async fn list_projects(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  parameters: Result<Query<ProjectListParameters>, QueryRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
-  let query = application
-    .inputs
-    .list_projects(
-      parameters.parent_id.as_deref(),
-      parameters.after.as_ref().map(Cursor::as_str),
-      parameters.limit,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let page = application
-    .projects
-    .list
-    .handle_query(query)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(project_page(page, &request_id)?)))
-}
-
-async fn create_pipeline(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  headers: HeaderMap,
-  payload: Result<Json<CreatePipelineRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .create_pipeline(
-      Uuid::new_v4(),
-      &body.project_id,
-      body.name,
-      pipeline_document(body.dag),
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .pipelines
-    .create
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::CREATED, Json(pipeline_mutation(outcome))))
-}
-
-async fn publish_pipeline(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(pipeline_id): Path<String>,
-  headers: HeaderMap,
-  payload: Result<Json<PublishPipelineVersionRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = precondition(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .publish_pipeline(
-      &pipeline_id,
-      expected.version(),
-      pipeline_document(body.dag),
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .pipelines
-    .publish
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(pipeline_mutation(outcome))))
-}
-
-async fn get_pipeline(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path((pipeline_id, version)): Path<(String, u64)>,
-) -> Result<impl IntoResponse, ApiError> {
-  let query = application
-    .inputs
-    .get_pipeline(&pipeline_id, version)
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let projection = application
-    .pipelines
-    .get
-    .handle_query(query)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(pipeline_resource(projection))))
-}
-
-async fn create_repository(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  headers: HeaderMap,
-  payload: Result<Json<CreateRepositoryRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .create_repository(
-      Uuid::new_v4(),
-      &body.project_id,
-      body.name,
-      encode(body.definition, &request_id)?,
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .configurations
-    .create_repository
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::CREATED, Json(repository_mutation(outcome))))
-}
-
-async fn publish_repository(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(repository_id): Path<String>,
-  headers: HeaderMap,
-  payload: Result<Json<PublishRepositoryVersionRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = precondition(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .publish_repository(
-      &repository_id,
-      expected.version(),
-      encode(body.definition, &request_id)?,
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .configurations
-    .publish_repository
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(repository_mutation(outcome))))
-}
-
-async fn get_repository(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path((repository_id, version)): Path<(String, u64)>,
-) -> Result<impl IntoResponse, ApiError> {
-  let query = application
-    .inputs
-    .get_repository(&repository_id, version)
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let projection = application
-    .configurations
-    .get_repository
-    .handle_query(query)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(repository_resource(projection))))
-}
-
-async fn create_build_configuration(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  headers: HeaderMap,
-  payload: Result<Json<CreateBuildConfigurationRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .create_build_configuration(
-      Uuid::new_v4(),
-      &body.project_id,
-      body.name,
-      configuration_document(body.definition, &request_id)?,
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .configurations
-    .create_configuration
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::CREATED, Json(configuration_mutation(outcome))))
-}
-
-async fn publish_build_configuration(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(configuration_id): Path<String>,
-  headers: HeaderMap,
-  payload: Result<Json<PublishBuildConfigurationVersionRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let expected = precondition(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .publish_build_configuration(
-      &configuration_id,
-      expected.version(),
-      configuration_document(body.definition, &request_id)?,
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .configurations
-    .publish_configuration
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(configuration_mutation(outcome))))
-}
-
-async fn get_build_configuration(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path((configuration_id, version)): Path<(String, u64)>,
-) -> Result<impl IntoResponse, ApiError> {
-  let query = application
-    .inputs
-    .get_build_configuration(&configuration_id, version)
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let projection = application
-    .configurations
-    .get_configuration
-    .handle_query(query)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(configuration_resource(projection))))
-}
-
-async fn accept_manual_trigger(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  headers: HeaderMap,
-  payload: Result<Json<AcceptManualTriggerRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  if key.as_str() != body.deduplication_identity {
-    return Err(ApiError::new(
-      StatusCode::CONFLICT,
-      ErrorCode::IdempotencyConflict,
-      "manual Trigger Idempotency-Key must equal deduplication_identity",
-      &request_id,
-    ));
-  }
-  let command = application
-    .inputs
-    .accept_manual_trigger(
-      ManualTriggerInput {
-        trigger_id: body.trigger_id,
-        trigger_version: body.trigger_version,
-        configuration_id: body.configuration_id,
-        configuration_version: body.configuration_version,
-        deduplication_identity: body.deduplication_identity,
-        source: encode(body.source, &request_id)?,
-        parameters: body.parameters,
-        priority: body.priority,
-      },
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .manual_triggers
-    .0
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(trigger_response(outcome))))
-}
-
-async fn create_manual_trigger_definition(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  headers: HeaderMap,
-  payload: Result<Json<CreateManualTriggerDefinitionRequest>, JsonRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let body = body(payload, &request_id)?;
-  let key = idempotency_key(&headers, &request_id)?;
-  let command = application
-    .inputs
-    .create_manual_trigger_definition(
-      ManualTriggerDefinitionInput {
-        id: Uuid::new_v4(),
-        configuration_id: body.configuration_id,
-        configuration_version: body.configuration_version,
-        enabled: body.enabled,
-        definition: body.definition,
-      },
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let outcome = application
-    .definitions
-    .create_trigger
-    .handle_command(command)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((
-    StatusCode::CREATED,
-    Json(MutationResponse {
-      disposition: mutation_disposition(outcome.disposition),
-      resource: TriggerDefinitionResource {
-        id: outcome.trigger_id.to_string(),
-        version: outcome.version.get(),
-      },
-    }),
-  ))
-}
-
-async fn read_job_events(
-  State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
-  Path(job_id): Path<String>,
-  parameters: Result<Query<JobEventReadParameters>, QueryRejection>,
-) -> Result<impl IntoResponse, ApiError> {
-  let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
-  let query = application
-    .inputs
-    .read_job_events(
-      &job_id,
-      parameters.after,
-      parameters.limit,
-      std::time::Duration::from_millis(parameters.wait_ms),
-    )
-    .map_err(|error| invalid_input(error, &request_id))?;
-  let page = application
-    .job_events
-    .0
-    .handle_query(query)
-    .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
-  Ok((StatusCode::OK, Json(job_event_page(page))))
 }
 
 async fn api_not_found(Extension(request_id): Extension<RequestId>, OriginalUri(uri): OriginalUri) -> ApiError {
@@ -905,6 +423,12 @@ fn application_error(failure: ApplicationFailure, request_id: &RequestId) -> Api
       StatusCode::CONFLICT,
       ErrorCode::Conflict,
       "authoritative state conflicts with the request",
+      request_id,
+    ),
+    ApplicationFailure::CapabilityUnavailable => ApiError::new(
+      StatusCode::UNPROCESSABLE_ENTITY,
+      ErrorCode::CapabilityUnavailable,
+      "the selected adapter does not support this operation",
       request_id,
     ),
     ApplicationFailure::Unavailable => ApiError::new(

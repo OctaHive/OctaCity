@@ -15,13 +15,22 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod internal;
 mod occurrence;
+mod schedule;
 mod state;
 
+pub use internal::{
+  InternalTriggerProtection, MAX_INTERNAL_TRIGGER_DEPTH, derive_internal_causality, validate_internal_ancestry,
+};
 pub use occurrence::{
   MAX_TRIGGER_EVENT_KIND_BYTES, MAX_TRIGGER_METADATA_BYTES, MAX_TRIGGER_METADATA_ENTRIES,
   MAX_TRIGGER_METADATA_KEY_BYTES, MAX_TRIGGER_REVISION_BYTES, NormalizedTriggerOccurrence, TriggerCausality,
   TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEventKind, TriggerInputError, TriggerKind,
   TriggerMetadata, TriggerOccurrenceIntent, TriggerTarget,
+};
+pub use schedule::{
+  DueScheduleOccurrences, MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES, MAX_SCHEDULE_TIMEZONE_BYTES,
+  MissedRunPolicy, ScheduleDefinition, ScheduleInputError,
 };
 pub use state::{TriggerOccurrenceEvent, TriggerOccurrenceState};

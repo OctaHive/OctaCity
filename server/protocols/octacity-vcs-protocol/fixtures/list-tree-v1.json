@@ -1,0 +1,19 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-tree-01",
+  "command": {
+    "operation": "list_tree",
+    "payload": {
+      "repository": {
+        "operation_id": "operation-tree-01",
+        "repository_id": "repository-01",
+        "repository_locator": "https://example.invalid/repository.git",
+        "credential_handle": "credential-handle-01"
+      },
+      "revision": "0123456789abcdef",
+      "path": "src",
+      "cursor": null,
+      "page_size": 100
+    }
+  }
+}
