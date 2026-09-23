@@ -157,30 +157,41 @@ fn validate_regular_file(path: &Path, executable: bool) -> Result<(), GitAdapter
   if !metadata.file_type().is_file() {
     return Err(GitAdapterConfigError::Invalid("expected a regular file, not a symlink"));
   }
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::PermissionsExt as _;
-    let mode = metadata.permissions().mode();
-    if executable && mode & 0o111 == 0 {
-      return Err(GitAdapterConfigError::Invalid("git_path is not executable"));
-    }
-    if mode & 0o022 != 0 || (!executable && mode & 0o077 != 0) {
-      return Err(GitAdapterConfigError::Invalid("unsafe filesystem permissions"));
-    }
+  validate_file_permissions(&metadata, executable)
+}
+
+#[cfg(unix)]
+fn validate_file_permissions(metadata: &fs::Metadata, executable: bool) -> Result<(), GitAdapterConfigError> {
+  use std::os::unix::fs::PermissionsExt as _;
+
+  let mode = metadata.permissions().mode();
+  if executable && mode & 0o111 == 0 {
+    return Err(GitAdapterConfigError::Invalid("git_path is not executable"));
+  }
+  if mode & 0o022 != 0 || (!executable && mode & 0o077 != 0) {
+    return Err(GitAdapterConfigError::Invalid("unsafe filesystem permissions"));
   }
   Ok(())
 }
 
+#[cfg(not(unix))]
+fn validate_file_permissions(_: &fs::Metadata, _: bool) -> Result<(), GitAdapterConfigError> {
+  Ok(())
+}
+
+#[cfg(unix)]
 fn validate_permissions(metadata: &fs::Metadata, private: bool) -> Result<(), GitAdapterConfigError> {
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::PermissionsExt as _;
-    let forbidden = if private { 0o077 } else { 0o022 };
-    if metadata.permissions().mode() & forbidden != 0 {
-      return Err(GitAdapterConfigError::Invalid("unsafe directory permissions"));
-    }
+  use std::os::unix::fs::PermissionsExt as _;
+
+  let forbidden = if private { 0o077 } else { 0o022 };
+  if metadata.permissions().mode() & forbidden != 0 {
+    return Err(GitAdapterConfigError::Invalid("unsafe directory permissions"));
   }
-  let _ = private;
+  Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_permissions(_: &fs::Metadata, _: bool) -> Result<(), GitAdapterConfigError> {
   Ok(())
 }
 

@@ -53,6 +53,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "log_indexing_work",
     "log_search_build_tombstones",
     "log_search_documents",
+    "managed_webhook_operations",
     "outbox_entries",
     "pipeline_versions",
     "pipelines",
@@ -64,8 +65,12 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "repository_versions",
     "retention_work",
     "schedules",
+    "trigger_evaluation_work",
     "trigger_occurrences",
     "triggers",
+    "webhook_deliveries",
+    "webhook_integrations",
+    "webhook_normalized_events",
     "worker_claims",
   ]
   .into_iter()
