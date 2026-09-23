@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, fs, path::Path};
 
+#[cfg(unix)]
 use sha2::Sha256;
 use tempfile::TempDir;
 
