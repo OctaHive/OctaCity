@@ -6,6 +6,8 @@
 
 mod adapter;
 mod agent;
+mod artifact;
+mod cache;
 mod common;
 mod configuration;
 mod execution;
@@ -18,13 +20,15 @@ mod project;
 mod trigger;
 
 pub use adapter::{
-  AgentManagementApplication, BuildManagementApplication, CatalogManagementApplication,
-  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
-  JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
+  AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
+  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
+  ExecutionManagementApplication, JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
   ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
   ScheduleManagementApplication, router as management_routes,
 };
 pub use agent::*;
+pub use artifact::*;
+pub use cache::*;
 pub use common::*;
 pub use configuration::*;
 pub use execution::*;

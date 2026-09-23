@@ -1,10 +1,11 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
-  AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ContractValueError, CreateAgentPoolRequest,
-  CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest,
-  CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse,
-  IdempotencyKey, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES,
-  MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
+  AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ArtifactDownload, ArtifactOutputType, ArtifactResource,
+  CacheSessionResource, CacheSessionState, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
+  CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest,
+  Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, IssueAgentEnrollmentRequest,
+  IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource,
+  VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -52,6 +53,67 @@ fn managed_webhook_request_debug_output_redacts_protected_handles() {
   let debug = format!("{request:?}");
   assert!(!debug.contains(&request.verification_material_handle));
   assert!(!debug.contains(&request.administration_credential_handle));
+}
+
+#[test]
+fn artifact_download_is_strict_and_redacts_its_short_lived_capability() {
+  let download = ArtifactDownload {
+    artifact: ArtifactResource {
+      id: "artifact-1".to_owned(),
+      build_id: "build-1".to_owned(),
+      attempt_id: "attempt-1".to_owned(),
+      job_id: "job-1".to_owned(),
+      name: "report.json".to_owned(),
+      output_type: ArtifactOutputType::Report {
+        format: "plugin.example/report-v2".to_owned(),
+      },
+      media_type: "application/json".to_owned(),
+      size_bytes: 42,
+      sha256: "ab".repeat(32),
+      published_at_unix_ms: 1_700_000_000_000,
+    },
+    get_url: "https://storage.invalid/short-lived-secret".to_owned(),
+    expires_at_unix_ms: 1_700_000_060_000,
+  };
+
+  assert!(!format!("{download:?}").contains(&download.get_url));
+  let mut value = serde_json::to_value(download).unwrap();
+  value["object_key"] = json!("physical/provider/key");
+  assert!(serde_json::from_value::<ArtifactDownload>(value).is_err());
+}
+
+#[test]
+fn cache_session_diagnostics_are_strict_and_contain_no_credential_material() {
+  let diagnostic = CacheSessionResource {
+    id: "cache-session-1".to_owned(),
+    project_id: "project-1".to_owned(),
+    build_id: "build-1".to_owned(),
+    job_id: "job-1".to_owned(),
+    agent_id: "agent-1".to_owned(),
+    registration_epoch: 1,
+    lease_id: "lease-1".to_owned(),
+    namespace: "project/main".to_owned(),
+    read: true,
+    write: false,
+    quota_bytes: 1_024,
+    created_at_unix_ms: 1_000,
+    expires_at_unix_ms: 2_000,
+    retention_until_unix_ms: 3_000,
+    state: CacheSessionState::Active,
+    revoked_at_unix_ms: None,
+  };
+  let mut value = serde_json::to_value(diagnostic).unwrap();
+  for forbidden in [
+    "credential",
+    "credential_hash",
+    "bearer_token",
+    "scope_id",
+    "fencing_token",
+  ] {
+    assert!(value.get(forbidden).is_none());
+  }
+  value["bearer_token"] = json!("secret");
+  assert!(serde_json::from_value::<CacheSessionResource>(value).is_err());
 }
 
 #[test]

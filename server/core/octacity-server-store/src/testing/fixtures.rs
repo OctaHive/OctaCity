@@ -1,7 +1,7 @@
 use super::*;
 use octacity_protocol::{
-  AgentInventory, BackendHealth, BackendHealthStatus, HostCapacity, HostSnapshot, OctaInventory, PlatformArchitecture,
-  PlatformOs, PlatformSpec, RuntimeCapability, RuntimeMode, SourcePluginInventory,
+  AgentInventory, BackendHealth, BackendHealthStatus, CacheCapability, CachePolicy, HostCapacity, HostSnapshot,
+  OctaInventory, PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeCapability, RuntimeMode, SourcePluginInventory,
 };
 use octacity_server_domain::RuntimeClass;
 use octacity_server_job::JobRequirements;
@@ -26,7 +26,11 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
     input_snapshot: json!({"parameter": "value"}),
     effective_policy_snapshot: json!({
       "allowed_pool": pool.to_string(),
-      "project": {"policy": {"concurrency": {"active_jobs": 4}}}
+      "project": {"policy": {
+        "concurrency": {"active_jobs": 4},
+        "cache": {"namespaces": ["project-cache"], "read": true, "write": true, "max_bytes": 1048576},
+        "retention": {"cache_seconds": 3600}
+      }}
     }),
     project_job_concurrency_limit: 4,
     priority: 10,
@@ -95,7 +99,10 @@ pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
       event_schemas: vec![3],
       plugin_protocols: vec![1],
       octafile_versions: vec![1],
-      features: Vec::new(),
+      features: vec![
+        octacity_protocol::CACHE_FEATURE_V1.to_owned(),
+        octacity_protocol::CACHE_HTTP_FEATURE_V1.to_owned(),
+      ],
       plugins: Vec::new(),
     },
     source_plugins: vec![SourcePluginInventory {
@@ -106,7 +113,11 @@ pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
       platforms: vec!["linux-x86_64".to_owned()],
       sha256: DIGEST.to_owned(),
     }],
-    cache: None,
+    cache: Some(CacheCapability {
+      runner_protocol: 3,
+      action_key_format: octacity_protocol::CACHE_ACTION_KEY_FORMAT_V1,
+      remote_http: true,
+    }),
   }
 }
 
@@ -199,6 +210,11 @@ pub fn retry_request(request: &AcceptTrigger, base: u64, key: &str, requested_at
 
 /// Derives deterministic stable execution intent for adapter-only fixtures.
 pub fn job_spec_template(build_id: BuildId, node: &str) -> JobSpecTemplate {
+  job_spec_template_with_cache(build_id, node, None)
+}
+
+/// Derives deterministic stable execution intent with an explicit cache policy.
+pub fn job_spec_template_with_cache(build_id: BuildId, node: &str, cache: Option<CachePolicy>) -> JobSpecTemplate {
   const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   let build = JobSpecBuildSnapshot::new(
     build_id,
@@ -232,7 +248,7 @@ pub fn job_spec_template(build_id: BuildId, node: &str) -> JobSpecTemplate {
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
-    None,
+    cache,
     OutputLimits {
       artifact_count: 0,
       artifact_bytes: 0,

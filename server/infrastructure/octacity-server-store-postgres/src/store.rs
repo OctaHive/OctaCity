@@ -8,31 +8,34 @@ use octacity_server_domain::{
 use octacity_server_job::JobSpecSigner;
 use octacity_server_store::{
   AcceptTrigger, AcceptTriggerOutcome, AgentCredentialStore, AgentPage, AgentPoolMutationOutcome, AgentPoolPage,
-  AgentPoolStore, AgentRegistrationOutcome, AgentStore, AppendJobEvents, AppendJobEventsOutcome,
-  AuthenticateAgentRegistration, AuthenticatedAgentRegistration, BuildConfigurationMutationOutcome, BuildControlStore,
-  BuildQueryStore, BuildRecord, CancelBuild, CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases,
-  ClaimInternalTriggerEvents, ClaimTriggerEvaluations, CompleteInternalTriggerEvent, CompleteScheduleClaim,
-  CompleteTriggerEvaluation, CompletionDisposition, ConfigurationStore, CreateAgentPool, CreateBuildConfiguration,
-  CreateManagedWebhook, CreateProject, CreateRepository, CreateSchedule, CreateTriggerDefinition,
-  CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool, DeleteAgentPoolOutcome, DeleteProject,
-  DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim, ExpiredLeaseClaim, FailTriggerEvaluation,
-  InternalTriggerEventClaim, InternalTriggerEventStore, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim,
-  JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore, JobExecutionStore, LeaseHeartbeatOutcome,
-  LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents, ListProjects, LogIndexPosition,
-  LogIndexWorkStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord,
-  ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore,
-  ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome,
-  ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishPipelineVersion,
-  PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline,
-  PublishedRepository, ReadJobEvents, ReassignAgentPool, ReassignAgentPoolOutcome, RecordManagedWebhookRegistration,
+  AgentPoolStore, AgentRegistrationOutcome, AgentStore, AppendJobEvents, AppendJobEventsOutcome, ArtifactRecord,
+  ArtifactRecordStore, ArtifactUploadRecord, ArtifactVerificationResult, AuthenticateAgentRegistration,
+  AuthenticatedAgentRegistration, AuthorizeCacheSession, BeginArtifactUpload, BeginArtifactUploadOutcome,
+  BeginCacheSession, BeginCacheSessionOutcome, BuildConfigurationMutationOutcome, BuildControlStore, BuildQueryStore,
+  BuildRecord, CacheAuthorizationOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild, CancellationDisposition,
+  ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimTriggerEvaluations,
+  CompleteInternalTriggerEvent, CompleteScheduleClaim, CompleteTriggerEvaluation, CompletionDisposition,
+  ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateManagedWebhook, CreateProject, CreateRepository,
+  CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool,
+  DeleteAgentPoolOutcome, DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim,
+  ExpiredLeaseClaim, FailTriggerEvaluation, InternalTriggerEventClaim, InternalTriggerEventStore, IssueAgentEnrollment,
+  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore,
+  JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents,
+  ListBuildCacheSessions, ListProjects, ListPublishedArtifacts, LogIndexPosition, LogIndexWorkStore,
+  ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord, ManagedWebhookRegistrationStore,
+  MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore, ProjectDetails, ProjectMutationOutcome,
+  ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore,
+  PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishPipelineVersion, PublishProjectPolicy,
+  PublishRepositoryVersion, PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository,
+  ReadJobEvents, ReassignAgentPool, ReassignAgentPoolOutcome, RecordManagedWebhookRegistration,
   RecordTriggerEvaluationRevision, RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject,
-  RenewLease, RepositoryMutationOutcome, ReserveTriggerEvaluation, RetryBuild, RetryDisposition, RevokeAgentCredential,
-  ScheduleRecord, ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome, SuppressWebhookDelivery,
-  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionMutationOutcome, TriggerDefinitionRef,
-  TriggerDefinitionStore, TriggerEvaluationClaim, TriggerEvaluationOutcome, TriggerEvaluationReservation,
-  TriggerEvaluationWorkStore, TriggerKind, TriggerTarget, UnmanagedWebhookMutationOutcome, WebhookConfigurationStore,
-  WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
-  WebhookIntegrationRecord,
+  RenewLease, RepositoryMutationOutcome, ReserveArtifact, ReserveTriggerEvaluation, RetryBuild, RetryDisposition,
+  RevokeAgentCredential, RevokeCacheSession, ScheduleRecord, ScheduleStore, StoreError, SuppressTrigger,
+  SuppressTriggerOutcome, SuppressWebhookDelivery, TransitionArtifact, TriggerAcceptanceProbe, TriggerAcceptanceStore,
+  TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationClaim,
+  TriggerEvaluationOutcome, TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerKind, TriggerTarget,
+  UnmanagedWebhookMutationOutcome, VerifyArtifactUpload, WebhookConfigurationStore, WebhookDeliveryAdmissionStore,
+  WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader, WebhookIntegrationRecord,
 };
 use sqlx::PgPool;
 
@@ -47,6 +50,96 @@ impl PostgresStore {
   #[must_use]
   pub const fn new(pool: PgPool) -> Self {
     Self { pool }
+  }
+}
+
+#[async_trait]
+impl ArtifactRecordStore for PostgresStore {
+  async fn reserve_artifact(&self, request: ReserveArtifact) -> Result<ArtifactRecord, StoreError> {
+    crate::artifact::reserve(&self.pool, request).await
+  }
+
+  async fn artifact(&self, artifact_id: octacity_server_domain::ArtifactId) -> Result<ArtifactRecord, StoreError> {
+    crate::artifact::read(&self.pool, artifact_id).await
+  }
+
+  async fn transition_artifact(&self, request: TransitionArtifact) -> Result<ArtifactRecord, StoreError> {
+    crate::artifact::transition(&self.pool, request).await
+  }
+
+  async fn begin_artifact_upload(
+    &self,
+    request: BeginArtifactUpload,
+  ) -> Result<BeginArtifactUploadOutcome, StoreError> {
+    crate::artifact::begin_upload(&self.pool, request).await
+  }
+
+  async fn artifact_upload(
+    &self,
+    upload_id: octacity_server_domain::ArtifactUploadId,
+  ) -> Result<ArtifactUploadRecord, StoreError> {
+    crate::artifact::read_upload(&self.pool, upload_id).await
+  }
+
+  async fn begin_artifact_verification(
+    &self,
+    request: VerifyArtifactUpload,
+  ) -> Result<ArtifactUploadRecord, StoreError> {
+    crate::artifact::begin_verification(&self.pool, request).await
+  }
+
+  async fn finish_artifact_verification(
+    &self,
+    request: VerifyArtifactUpload,
+    result: ArtifactVerificationResult,
+  ) -> Result<ArtifactUploadRecord, StoreError> {
+    crate::artifact::finish_verification(&self.pool, request, result).await
+  }
+
+  async fn published_artifact(
+    &self,
+    artifact_id: octacity_server_domain::ArtifactId,
+  ) -> Result<ArtifactUploadRecord, StoreError> {
+    crate::artifact::published(&self.pool, artifact_id).await
+  }
+
+  async fn list_published_artifacts(
+    &self,
+    query: ListPublishedArtifacts,
+  ) -> Result<Vec<ArtifactUploadRecord>, StoreError> {
+    crate::artifact::list_published(&self.pool, query).await
+  }
+}
+
+#[async_trait]
+impl CacheSessionStore for PostgresStore {
+  async fn begin_cache_session(&self, request: BeginCacheSession) -> Result<BeginCacheSessionOutcome, StoreError> {
+    crate::cache::begin(&self.pool, request).await
+  }
+
+  async fn revoke_cache_session(&self, request: RevokeCacheSession) -> Result<MutationDisposition, StoreError> {
+    crate::cache::revoke(&self.pool, request).await
+  }
+
+  async fn authorize_cache_session(
+    &self,
+    request: AuthorizeCacheSession,
+  ) -> Result<CacheAuthorizationOutcome, StoreError> {
+    crate::cache::authorize(&self.pool, request).await
+  }
+
+  async fn cache_session(
+    &self,
+    session_id: octacity_server_domain::CacheSessionId,
+  ) -> Result<CacheSessionRecord, StoreError> {
+    crate::cache::read(&self.pool, session_id).await
+  }
+
+  async fn list_build_cache_sessions(
+    &self,
+    request: ListBuildCacheSessions,
+  ) -> Result<Vec<CacheSessionRecord>, StoreError> {
+    crate::cache::list(&self.pool, request).await
   }
 }
 

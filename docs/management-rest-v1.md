@@ -427,9 +427,55 @@ cancel directive to current Lease owners. Retry is accepted only for an
 eligible terminal Build and creates the next immutable Attempt from the frozen
 Build inputs.
 
-Use `/api/v1/openapi.json` as the authoritative schema inventory. Log search,
-artifact publication, cache sessions, and mutable VCS revision resolution are
-implemented by their later feature tasks.
+## 9. Discover and download Build outputs
+
+Published artifacts and reports are discoverable by logical identity. These
+responses preserve Build, Attempt, and Job provenance, logical name, open
+report format, media type, exact byte size, SHA-256, and publication time:
+
+```shell
+curl --fail-with-body \
+  'http://octacity.example.test:8080/api/v1/builds/BUILD_ID/artifacts?limit=50'
+
+curl --fail-with-body \
+  http://octacity.example.test:8080/api/v1/artifacts/ARTIFACT_ID
+```
+
+Download authority is intentionally short-lived and must be requested when it
+is needed:
+
+```shell
+curl --fail-with-body -X POST \
+  http://octacity.example.test:8080/api/v1/artifacts/ARTIFACT_ID/download
+```
+
+The response contains an opaque `get_url` and its expiry. It never exposes an
+object-store bucket, physical key, access key, persistent URL, generation, or
+ETag. SHA-256 and exact size are the content identity; ETag is not.
+
+## 10. Inspect cache-session authority
+
+Operators can inspect the sessions created for a Build or one exact session:
+
+```shell
+curl --fail-with-body \
+  'http://octacity.example.test:8080/api/v1/builds/BUILD_ID/cache-sessions?limit=50'
+
+curl --fail-with-body \
+  http://octacity.example.test:8080/api/v1/cache-sessions/CACHE_SESSION_ID
+```
+
+Diagnostics expose the logical namespace, narrowed read/write permissions,
+quota, retention deadline, Lease/registration binding, and the effective
+`active`, `revoked`, `expired`, or `fenced` state. They never expose a bearer,
+credential digest, Lease fence, L1 scope identifier, or physical cache-store
+location. Session authorization itself also returns only a generic rejection
+for a wrong namespace, expired or revoked session, stale Lease, or invalid
+credential, so it cannot be used to discover another namespace.
+
+Use `/api/v1/openapi.json` as the authoritative schema inventory. Log search
+and mutable VCS revision resolution are implemented by their later feature
+tasks.
 
 ## Agent inventory and Pool assignment
 

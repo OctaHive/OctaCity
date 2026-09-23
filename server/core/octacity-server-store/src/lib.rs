@@ -8,9 +8,13 @@
 
 mod agent_model;
 mod agent_port;
+mod artifact_model;
+mod artifact_port;
 mod build_control;
 mod build_query;
 mod build_query_port;
+mod cache_model;
+mod cache_port;
 mod configuration_model;
 mod configuration_port;
 mod credential_port;
@@ -88,6 +92,18 @@ mod pool_contract_testing;
 mod agent_testing;
 
 #[cfg(any(test, feature = "test-support"))]
+mod artifact_contract_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod artifact_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod cache_contract_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod cache_testing;
+
+#[cfg(any(test, feature = "test-support"))]
 mod test_support;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -98,11 +114,22 @@ pub use agent_model::{
   MAX_AGENT_PAGE_SIZE, ReassignAgentPool, ReassignAgentPoolOutcome,
 };
 pub use agent_port::AgentStore;
+pub use artifact_model::{
+  ArtifactTransitionAuthority, ArtifactUploadRecord, ArtifactVerificationResult, BeginArtifactUpload,
+  BeginArtifactUploadOutcome, ListPublishedArtifacts, MAX_ARTIFACT_PAGE_SIZE, ReserveArtifact, TransitionArtifact,
+  VerifyArtifactUpload, artifact_authority_is_valid,
+};
+pub use artifact_port::ArtifactRecordStore;
 pub use build_control::{
   CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
 };
 pub use build_query::{AttemptRecord, BuildRecord, JobAssignmentRecord, JobQueueRecord, JobRecord, JobTerminalRecord};
 pub use build_query_port::BuildQueryStore;
+pub use cache_model::{
+  AuthorizeCacheSession, BeginCacheSession, BeginCacheSessionOutcome, CacheAuthorization, CacheAuthorizationOutcome,
+  CacheSessionRecord, ListBuildCacheSessions, MAX_CACHE_SESSION_PAGE_SIZE, RevokeCacheSession, cache_scope_id,
+};
+pub use cache_port::CacheSessionStore;
 pub use configuration_model::{
   BuildConfigurationDefinition, BuildConfigurationMutationOutcome, ConfigurationAgentRequirements,
   ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
@@ -170,6 +197,14 @@ pub use model::{
   MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS, MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob,
   MaterializedJobPayload, MutationDisposition, RegistrationEpoch, SuppressTrigger, SuppressTriggerOutcome,
   TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest, TriggerIntentDigestError,
+};
+pub use octacity_server_artifacts::{
+  ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
+  ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType,
+};
+pub use octacity_server_cache::{
+  CacheCredentialDigest, CacheNamespace, CacheNamespacePolicy, CacheOperation, CachePermissions, CacheSessionState,
+  ProjectCachePolicy,
 };
 pub use octacity_server_domain::{ArtifactPolicy, ImmutableRevision, NetworkHost, RuntimeClass, SourceReference};
 pub use octacity_server_domain::{EnrollmentCredentialId, LogChunkId, LogIndexingWorkId, RegistrationCredentialId};

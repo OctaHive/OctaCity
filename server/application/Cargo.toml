@@ -1,0 +1,31 @@
+[package]
+name = "octacity-server-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Transport-independent CQRS application layer for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+octacity-artifact-store = { path = "../core/octacity-artifact-store" }
+octacity-protocol = { path = "../../shared/octacity-protocol" }
+octacity-server-cache = { path = "../core/octacity-server-cache" }
+octacity-server-domain = { path = "../core/octacity-server-domain" }
+octacity-server-job = { path = "../core/octacity-server-job" }
+octacity-server-orchestrator = { path = "../core/octacity-server-orchestrator" }
+octacity-server-pipeline = { path = "../core/octacity-server-pipeline" }
+octacity-server-scheduler = { path = "../core/octacity-server-scheduler" }
+octacity-server-secrets = { path = "../core/octacity-server-secrets" }
+octacity-server-store = { path = "../core/octacity-server-store" }
+octacity-server-trigger = { path = "../core/octacity-server-trigger" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+url.workspace = true
+
+[dev-dependencies]
+octacity-server-store = { path = "../core/octacity-server-store", features = ["test-support"] }

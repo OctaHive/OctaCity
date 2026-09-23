@@ -165,15 +165,17 @@ async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
   store.append_job_events(one_event(access)).await.unwrap();
   sqlx::query(
     "INSERT INTO artifacts \
-       (id, build_id, attempt_id, job_id, logical_name, media_type, report_format, byte_length, sha256, \
-        object_identity, object_generation, state, retention_until, published_at) \
-     VALUES ($1, $2, $3, $4, 'result.txt', 'text/plain', NULL, 3, $5, \
-             'object/history', 'generation-1', 'published', NULL, now())",
+       (id, build_id, attempt_id, job_id, lease_id, logical_name, artifact_type, media_type, report_format, \
+        byte_length, sha256, object_identity, object_generation, state, retention_until, version, created_at, \
+        published_at) \
+     VALUES ($1, $2, $3, $4, $5, 'result.txt', 'artifact', 'text/plain', NULL, 3, $6, \
+             'object/history', 'generation-1', 'published', NULL, 1, now(), now())",
   )
   .bind(id::<octacity_server_domain::ArtifactId>(901).as_uuid())
   .bind(request.build.id.as_uuid())
   .bind(request.attempt_id.as_uuid())
   .bind(grant.job_id.as_uuid())
+  .bind(grant.lease_id.as_uuid())
   .bind(vec![0x41_u8; 32])
   .execute(&database.pool)
   .await

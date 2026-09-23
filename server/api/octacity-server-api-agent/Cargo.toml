@@ -12,7 +12,7 @@ description = "Agent protocol API adapter for the OctaCity server"
 async-trait.workspace = true
 axum.workspace = true
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
-octacity-server-application = { path = "../../application/octacity-server-application" }
+octacity-server-application = { path = "../../application" }
 serde.workspace = true
 tokio.workspace = true
 

@@ -134,6 +134,32 @@ pub enum StoreOperation {
   AuthenticateAgentRegistration,
   /// Revoke one enrollment or registration credential.
   RevokeAgentCredential,
+  /// Reserve one pending logical Artifact under a current Lease.
+  ReserveArtifact,
+  /// Read one logical Artifact record.
+  ReadArtifact,
+  /// Apply one logical Artifact lifecycle transition.
+  TransitionArtifact,
+  /// Reserve one logical Artifact and pending upload idempotently.
+  BeginArtifactUpload,
+  /// Read one pending or completed Artifact upload.
+  ReadArtifactUpload,
+  /// Begin independent verification of uploaded bytes.
+  BeginArtifactVerification,
+  /// Commit the result of independent byte verification.
+  FinishArtifactVerification,
+  /// List visible logical outputs of one Build.
+  ListPublishedArtifacts,
+  /// Begin one fenced short-lived cache session.
+  BeginCacheSession,
+  /// Revoke one fenced cache session idempotently.
+  RevokeCacheSession,
+  /// Authorize one namespace-scoped cache operation.
+  AuthorizeCacheSession,
+  /// Read one secret-free cache-session diagnostic.
+  ReadCacheSession,
+  /// List bounded cache-session diagnostics for one Build.
+  ListCacheSessions,
 }
 
 /// Invalid caller input rejected before any authoritative state changes.
@@ -286,6 +312,12 @@ pub enum StoreInputError {
   /// A retry must name an Attempt number after the initial Attempt.
   #[error("a retry attempt number must be greater than one")]
   InvalidRetryAttempt,
+  /// Artifact identity, retention, or transition authority is invalid.
+  #[error("an artifact record request is invalid")]
+  InvalidArtifact,
+  /// Cache session identity, policy, expiry, or page size is invalid.
+  #[error("a cache session request is invalid")]
+  InvalidCacheSession,
 }
 
 /// Backend-neutral failure from an authoritative atomic operation.

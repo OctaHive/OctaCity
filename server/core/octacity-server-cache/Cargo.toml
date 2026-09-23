@@ -9,4 +9,10 @@ publish = false
 description = "Remote-cache authority domain for the OctaCity server"
 
 [dependencies]
+hmac.workspace = true
+octa-cache-protocol.workspace = true
+octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-server-domain = { path = "../octacity-server-domain" }
+serde.workspace = true
+sha2.workspace = true
+zeroize.workspace = true

@@ -26,7 +26,7 @@
     },
     {
       "name": "octacity-server",
-      "manifest_path": "/workspace/server/app/octacity-server/Cargo.toml",
+      "manifest_path": "/workspace/server/app/Cargo.toml",
       "dependencies": [
         {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
       ]

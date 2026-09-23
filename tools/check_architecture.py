@@ -88,6 +88,12 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 # package-specific so another core crate cannot acquire private-key handling by
 # depending on the same libraries.
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
+    # URL syntax is validated at the application boundary before an endpoint is
+    # included in a short-lived Agent capability.
+    "octacity-server-application": frozenset({"url"}),
+    # Cache namespace syntax follows Octa's public protocol while HMAC protects
+    # the server-private credential derivation boundary.
+    "octacity-server-cache": frozenset({"hmac", "octa-cache-protocol"}),
     "octacity-server-job": frozenset({"base64", "ed25519-dalek"}),
     "octacity-server-secrets": frozenset({"hmac"}),
     "octacity-server-trigger": frozenset({"chrono", "chrono-tz", "cron"}),

@@ -20,12 +20,14 @@ use octacity_protocol::{
   RegisterAgentResponse,
 };
 use octacity_server_application::{
-  AcquireAgentLeaseInput, AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput,
-  AgentHeartbeatUseCases, AgentLeaseError, AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError,
-  AgentRegistrationInput, AgentRegistrationUseCases, AppendAgentEventsInput, CompleteAgentLeaseInput,
-  LeaseHeartbeatOutcome,
+  AcquireAgentLeaseInput, AgentArtifactTransferUseCases, AgentCacheSessionUseCases, AgentExecutionError,
+  AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatUseCases, AgentLeaseError,
+  AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationUseCases,
+  AppendAgentEventsInput, CompleteAgentLeaseInput, LeaseHeartbeatOutcome,
 };
 
+mod artifact;
+mod cache;
 mod ready_job;
 
 pub use ready_job::ReadyJobNotificationHub;
@@ -54,28 +56,75 @@ impl AgentApiConfig {
   }
 }
 
-/// Builds the independently authenticated Agent ingress routes.
-pub fn agent_router(
+/// Complete application dependencies required by the Agent protocol surface.
+#[derive(Clone)]
+pub struct AgentRouterDependencies {
   registrations: Arc<dyn AgentRegistrationUseCases>,
   leases: Arc<dyn AgentLeaseUseCases>,
   heartbeats: Arc<dyn AgentHeartbeatUseCases>,
   execution: Arc<dyn AgentExecutionUseCases>,
-  config: AgentApiConfig,
-) -> Router {
+  artifacts: Arc<dyn AgentArtifactTransferUseCases>,
+  cache: Arc<dyn AgentCacheSessionUseCases>,
+}
+
+impl AgentRouterDependencies {
+  /// Creates the complete dependency set for all registered Agent routes.
+  pub fn new(
+    registrations: Arc<dyn AgentRegistrationUseCases>,
+    leases: Arc<dyn AgentLeaseUseCases>,
+    heartbeats: Arc<dyn AgentHeartbeatUseCases>,
+    execution: Arc<dyn AgentExecutionUseCases>,
+    artifacts: Arc<dyn AgentArtifactTransferUseCases>,
+    cache: Arc<dyn AgentCacheSessionUseCases>,
+  ) -> Self {
+    Self {
+      registrations,
+      leases,
+      heartbeats,
+      execution,
+      artifacts,
+      cache,
+    }
+  }
+}
+
+/// Builds the independently authenticated Agent ingress routes.
+pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfig) -> Router {
+  let AgentRouterDependencies {
+    registrations,
+    leases,
+    heartbeats,
+    execution,
+    artifacts,
+    cache,
+  } = dependencies;
+  let state = AgentState {
+    registrations,
+    leases,
+    heartbeats,
+    execution,
+    artifacts,
+    cache,
+    config,
+  };
   Router::new()
     .route("/api/v1/agents/register", post(register_agent))
     .route("/api/v1/agents/{agent_id}/leases:acquire", post(acquire_lease))
     .route("/api/v1/leases/{lease_id}/heartbeat", post(heartbeat))
     .route("/api/v1/leases/{lease_id}/events:append", post(append_events))
     .route("/api/v1/leases/{lease_id}/complete", post(complete_lease))
+    .route(
+      "/api/v1/leases/{lease_id}/artifacts:begin",
+      post(artifact::begin_upload),
+    )
+    .route(
+      "/api/v1/leases/{lease_id}/artifacts:complete",
+      post(artifact::complete_upload),
+    )
+    .route("/api/v1/leases/{lease_id}/cache:begin", post(cache::begin_session))
+    .route("/api/v1/leases/{lease_id}/cache:revoke", post(cache::revoke_session))
     .layer(DefaultBodyLimit::max(MAX_AGENT_BODY_BYTES))
-    .with_state(AgentState {
-      registrations,
-      leases,
-      heartbeats,
-      execution,
-      config,
-    })
+    .with_state(state)
 }
 
 #[derive(Clone)]
@@ -84,6 +133,8 @@ struct AgentState {
   leases: Arc<dyn AgentLeaseUseCases>,
   heartbeats: Arc<dyn AgentHeartbeatUseCases>,
   execution: Arc<dyn AgentExecutionUseCases>,
+  artifacts: Arc<dyn AgentArtifactTransferUseCases>,
+  cache: Arc<dyn AgentCacheSessionUseCases>,
   config: AgentApiConfig,
 }
 

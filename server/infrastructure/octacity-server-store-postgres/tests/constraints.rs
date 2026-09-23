@@ -249,7 +249,7 @@ async fn verify_constraints(pool: &PgPool) -> Result<(), Box<dyn std::error::Err
   insert_published_artifact(pool, 209).await?;
   expect_constraint(
     insert_published_artifact(pool, 210).await,
-    "artifacts_published_job_name_idx",
+    "artifacts_job_logical_name_key",
   )?;
 
   Ok(())
@@ -476,15 +476,16 @@ async fn insert_event(pool: &PgPool, sequence: i64) -> Result<PgQueryResult, Err
 async fn insert_published_artifact(pool: &PgPool, artifact: u128) -> Result<PgQueryResult, Error> {
   sqlx::query(
     "INSERT INTO artifacts \
-       (id, build_id, attempt_id, job_id, logical_name, media_type, byte_length, sha256, object_identity, \
-        object_generation, state, published_at) \
-     VALUES ($1, $2, $3, $4, 'result.tar', 'application/x-tar', 10, \
-             decode(repeat('aa', 32), 'hex'), $5, 'generation', 'published', now())",
+       (id, build_id, attempt_id, job_id, lease_id, logical_name, artifact_type, media_type, byte_length, sha256, \
+        object_identity, object_generation, state, version, created_at, published_at) \
+     VALUES ($1, $2, $3, $4, $5, 'result.tar', 'artifact', 'application/x-tar', 10, \
+             decode(repeat('aa', 32), 'hex'), $6, 'generation', 'published', 1, now(), now())",
   )
   .bind(id(artifact))
   .bind(id(144))
   .bind(id(161))
   .bind(id(177))
+  .bind(id(193))
   .bind(format!("artifact-{artifact}"))
   .execute(pool)
   .await

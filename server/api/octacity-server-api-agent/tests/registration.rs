@@ -1,6 +1,9 @@
-use std::sync::{
-  Arc,
-  atomic::{AtomicBool, Ordering},
+use std::{
+  collections::BTreeMap,
+  sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+  },
 };
 
 use async_trait::async_trait;
@@ -9,18 +12,44 @@ use axum::{
   http::{Request, StatusCode, header},
 };
 use octacity_protocol::{
-  AcquireLeaseRequest, AcquireLeaseResponse, AppendEventsRequest, AppendEventsResponse, CompleteLeaseRequest,
-  CompleteLeaseResponse, CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse,
-  HostSnapshot, RegisterAgentRequest, RegisterAgentResponse,
+  AcquireLeaseRequest, AcquireLeaseResponse, AppendEventsRequest, AppendEventsResponse, BeginCacheSessionRequest,
+  BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION,
+  CachePolicy, CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse,
+  CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostSnapshot, LeaseFence,
+  OutputKind, OutputUploadMetadata, RegisterAgentRequest, RegisterAgentResponse, RemoteCacheGrant,
+  RevokeCacheSessionRequest, RevokeCacheSessionResponse,
 };
-use octacity_server_api_agent::{AgentApiConfig, agent_router};
+use octacity_server_api_agent::{AgentApiConfig, AgentRouterDependencies, agent_router as build_agent_router};
 use octacity_server_application::{
-  AcquireAgentLeaseInput, AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput,
+  AcquireAgentLeaseInput, AgentArtifactError, AgentArtifactTransferUseCases, AgentCacheSessionError,
+  AgentCacheSessionUseCases, AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput,
   AgentHeartbeatUseCases, AgentLeaseError, AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError,
   AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationUseCases, AppendAgentEventsInput,
-  AuthorizeAgentInput, AuthorizedAgent, CompleteAgentLeaseInput, LeaseHeartbeatOutcome, RegistrationEpoch,
+  AuthorizeAgentInput, AuthorizedAgent, BeginAgentArtifactUploadInput, BeginAgentCacheSessionInput,
+  CompleteAgentArtifactUploadInput, CompleteAgentLeaseInput, LeaseHeartbeatOutcome, RegistrationEpoch,
+  RevokeAgentCacheSessionInput,
 };
 use tower::ServiceExt as _;
+
+fn agent_router(
+  registrations: Arc<dyn AgentRegistrationUseCases>,
+  leases: Arc<dyn AgentLeaseUseCases>,
+  heartbeats: Arc<dyn AgentHeartbeatUseCases>,
+  execution: Arc<dyn AgentExecutionUseCases>,
+  config: AgentApiConfig,
+) -> axum::Router {
+  build_agent_router(
+    AgentRouterDependencies::new(
+      registrations,
+      leases,
+      heartbeats,
+      execution,
+      Arc::new(ArtifactApplication),
+      Arc::new(CacheApplication),
+    ),
+    config,
+  )
+}
 
 struct RecordingApplication {
   called: AtomicBool,
@@ -92,6 +121,69 @@ impl AgentLeaseUseCases for FailedPlacement {
 }
 
 struct MissingCompletionEvents;
+
+struct ArtifactApplication;
+
+struct CacheApplication;
+
+#[async_trait]
+impl AgentCacheSessionUseCases for CacheApplication {
+  async fn begin_session(
+    &self,
+    input: BeginAgentCacheSessionInput,
+  ) -> Result<BeginCacheSessionResponse, AgentCacheSessionError> {
+    Ok(BeginCacheSessionResponse {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: input.request.request_id,
+      session_id: "cache-session-1".to_owned(),
+      scope_id: "project-scope-1".to_owned(),
+      remote: Some(RemoteCacheGrant {
+        endpoint: "https://cache.example/v1".to_owned(),
+        bearer_token: "opaque-cache-bearer".to_owned(),
+        expires_at: 4_000_000_000,
+      }),
+    })
+  }
+
+  async fn revoke_session(
+    &self,
+    input: RevokeAgentCacheSessionInput,
+  ) -> Result<RevokeCacheSessionResponse, AgentCacheSessionError> {
+    Ok(RevokeCacheSessionResponse {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: input.request.request_id,
+      session_id: input.request.session_id,
+    })
+  }
+}
+
+#[async_trait]
+impl AgentArtifactTransferUseCases for ArtifactApplication {
+  async fn begin_upload(
+    &self,
+    input: BeginAgentArtifactUploadInput,
+  ) -> Result<BeginOutputUploadResponse, AgentArtifactError> {
+    Ok(BeginOutputUploadResponse {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: input.request.request_id,
+      upload_id: "upload-1".to_owned(),
+      put_url: "https://objects.example/upload?signature=opaque".to_owned(),
+      required_headers: BTreeMap::from([("x-checksum".to_owned(), "opaque".to_owned())]),
+      expires_at: 4_000_000_000,
+    })
+  }
+
+  async fn complete_upload(
+    &self,
+    input: CompleteAgentArtifactUploadInput,
+  ) -> Result<CompleteOutputUploadResponse, AgentArtifactError> {
+    Ok(CompleteOutputUploadResponse {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: input.request.request_id,
+      upload_id: input.request.upload_id,
+    })
+  }
+}
 
 #[async_trait]
 impl AgentExecutionUseCases for MissingCompletionEvents {
@@ -404,6 +496,145 @@ async fn premature_completion_is_explicitly_retryable() {
   error.validate(&completion.request_id).unwrap();
   assert_eq!(error.code, "events_missing");
   assert!(error.retryable);
+}
+
+#[tokio::test]
+async fn artifact_routes_use_the_existing_fenced_agent_protocol() {
+  let application = Arc::new(RecordingApplication {
+    called: AtomicBool::new(false),
+    lease_called: AtomicBool::new(false),
+    heartbeat_called: AtomicBool::new(false),
+  });
+  let router = agent_router(
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    application,
+    AgentApiConfig::new(5_000).unwrap(),
+  );
+  let lease = LeaseFence {
+    lease_id: "lease-1".to_owned(),
+    job_id: "job-1".to_owned(),
+    attempt: 1,
+    fencing_token: "fence-1".to_owned(),
+  };
+  let begin = BeginOutputUploadRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "artifact-begin-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease: lease.clone(),
+    upload_key: "output-1".to_owned(),
+    output: OutputUploadMetadata {
+      run_id: 1,
+      task_id: 2,
+      kind: OutputKind::Artifact,
+      name: "dist.tar".to_owned(),
+      content_type: Some("application/x-tar".to_owned()),
+      report_format: None,
+      transport_content_type: "application/x-tar".to_owned(),
+      size_bytes: 42,
+      sha256: "42".repeat(32),
+    },
+  };
+  let response = router
+    .clone()
+    .oneshot(agent_request(
+      "/api/v1/leases/lease-1/artifacts:begin",
+      &begin.request_id,
+      &begin,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let begun: BeginOutputUploadResponse = serde_json::from_slice(&body).unwrap();
+  begun.validate(&begin.request_id, 1).unwrap();
+
+  let complete = CompleteOutputUploadRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "artifact-complete-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease,
+    upload_id: begun.upload_id.clone(),
+  };
+  let response = router
+    .oneshot(agent_request(
+      "/api/v1/leases/lease-1/artifacts:complete",
+      &complete.request_id,
+      &complete,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let completed: CompleteOutputUploadResponse = serde_json::from_slice(&body).unwrap();
+  completed.validate(&complete.request_id, &complete.upload_id).unwrap();
+}
+
+#[tokio::test]
+async fn cache_routes_use_the_existing_fenced_agent_protocol() {
+  let application = Arc::new(RecordingApplication {
+    called: AtomicBool::new(false),
+    lease_called: AtomicBool::new(false),
+    heartbeat_called: AtomicBool::new(false),
+  });
+  let router = agent_router(
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    application,
+    AgentApiConfig::new(5_000).unwrap(),
+  );
+  let lease = LeaseFence {
+    lease_id: "lease-1".to_owned(),
+    job_id: "job-1".to_owned(),
+    attempt: 1,
+    fencing_token: "fence-1".to_owned(),
+  };
+  let begin = BeginCacheSessionRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "cache-begin-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease: lease.clone(),
+    cache: CachePolicy {
+      namespace: "project/main".to_owned(),
+      read: true,
+      write: false,
+    },
+  };
+  let response = router
+    .clone()
+    .oneshot(agent_request(
+      "/api/v1/leases/lease-1/cache:begin",
+      &begin.request_id,
+      &begin,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let begun: BeginCacheSessionResponse = serde_json::from_slice(&body).unwrap();
+  begun.validate(&begin.request_id, 1).unwrap();
+
+  let revoke = RevokeCacheSessionRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "cache-revoke-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    lease,
+    session_id: begun.session_id,
+  };
+  let response = router
+    .oneshot(agent_request(
+      "/api/v1/leases/lease-1/cache:revoke",
+      &revoke.request_id,
+      &revoke,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let revoked: RevokeCacheSessionResponse = serde_json::from_slice(&body).unwrap();
+  revoked.validate(&revoke.request_id, &revoke.session_id).unwrap();
 }
 
 fn agent_request<T: serde::Serialize>(path: &str, request_id: &str, body: &T) -> Request<Body> {

@@ -3997,6 +3997,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "uuid",
  "zeroize",
 ]
@@ -4006,6 +4007,7 @@ name = "octacity-artifact-store"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "octacity-server-artifacts",
  "octacity-server-domain",
  "thiserror 2.0.20",
 ]
@@ -4425,7 +4427,9 @@ name = "octacity-server-application"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "octacity-artifact-store",
  "octacity-protocol",
+ "octacity-server-cache",
  "octacity-server-domain",
  "octacity-server-job",
  "octacity-server-orchestrator",
@@ -4437,6 +4441,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "url",
  "uuid",
 ]
 
@@ -4445,13 +4450,20 @@ name = "octacity-server-artifacts"
 version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "octacity-server-cache"
 version = "0.1.0"
 dependencies = [
+ "hmac 0.12.1",
+ "octa-cache-protocol",
+ "octacity-protocol",
  "octacity-server-domain",
+ "serde",
+ "sha2 0.10.9",
+ "zeroize",
 ]
 
 [[package]]
@@ -4528,6 +4540,8 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "octacity-protocol",
+ "octacity-server-artifacts",
+ "octacity-server-cache",
  "octacity-server-domain",
  "octacity-server-job",
  "octacity-server-orchestrator",
@@ -4548,6 +4562,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "octacity-protocol",
+ "octacity-server-cache",
  "octacity-server-domain",
  "octacity-server-job",
  "octacity-server-orchestrator",

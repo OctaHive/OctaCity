@@ -12,8 +12,8 @@ The current workspace contains:
 
 - `octacity-artifact-store`: backend-neutral server-side artifact persistence
   port;
-- `octacity-artifact-s3`: S3-compatible adapter used by the Phase 6 contract
-  server;
+- `octacity-artifact-s3`: S3-compatible implementation of the backend-neutral
+  Artifact Store contract;
 - `octacity-webhook-provider-protocol`: strict provider-neutral verification,
   normalization, managed-registration, cancellation, and failure messages;
 - `octacity-server-adapter-host`: shared executable verification, bounded
@@ -177,6 +177,8 @@ secret_key_file = "/run/secrets/octacity-s3-secret-key"
 force_path_style = false
 operation_timeout_milliseconds = 5000
 capability_recheck_interval_milliseconds = 300000
+upload_capability_lifetime_milliseconds = 300000
+download_capability_lifetime_milliseconds = 60000
 
 [signing]
 key_id = "server-key-2026-09"
@@ -184,6 +186,11 @@ key_file = "/run/secrets/octacity-jobspec-ed25519-key"
 
 [agent_credentials]
 enrollment_key_file = "/run/secrets/octacity-agent-enrollment-key"
+
+[cache]
+endpoint = "https://cache.example"
+credential_key_file = "/run/secrets/octacity-cache-credential-key"
+session_lifetime_milliseconds = 300000
 
 [job_spec]
 policy_file = "/etc/octacity/job-spec-policy.json"
@@ -194,6 +201,8 @@ PostgreSQL file contains a connection URL, the object-store files contain the
 two S3 credentials, and the signing file contains the standard-base64 encoding
 of exactly 32 Ed25519 private-key bytes. The Agent enrollment key file likewise
 contains standard-base64 encoding of an independently generated 32-byte key.
+The cache credential key is another independent standard-base64 32-byte key;
+it derives short-lived session bearers and is never shared with Agents.
 Their contents are bounded, never
 included in diagnostics, and loaded before the management listener binds.
 `signing.key_id` is the non-secret identifier agents use to select the matching

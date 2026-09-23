@@ -21,3 +21,4 @@ zeroize.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
+tokio-util.workspace = true

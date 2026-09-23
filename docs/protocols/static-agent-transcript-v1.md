@@ -4,7 +4,7 @@ This transcript records the server-observable sequence for the first
 PostgreSQL-backed static-Agent slice. Credentials and fencing values are
 redacted; identifiers are symbolic because exact values are generated for each
 run. The executable integration test is
-`server/app/octacity-server/tests/postgres_runtime.rs`, while every wire
+`server/app/tests/postgres_runtime.rs`, while every wire
 document below has a strict golden fixture in
 `shared/protocol-fixtures/coordinator/`.
 

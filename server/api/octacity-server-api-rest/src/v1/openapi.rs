@@ -1,9 +1,9 @@
 use serde_json::{Map, Value, json};
 
 use octacity_server_application::{
-  MAX_AGENT_LIST_PAGE_SIZE, MAX_AGENT_POOL_ADMISSION_PLATFORMS, MAX_AGENT_POOL_LIST_PAGE_SIZE,
-  MAX_AGENT_POOL_STATIC_CAPACITY, MAX_JOB_EVENT_PAGE_SIZE, MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE,
-  MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES, MAX_SCHEDULE_TIMEZONE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
+  MAX_AGENT_LIST_PAGE_SIZE, MAX_AGENT_POOL_LIST_PAGE_SIZE, MAX_ARTIFACT_LIST_PAGE_SIZE, MAX_JOB_EVENT_PAGE_SIZE,
+  MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE, MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES,
+  MAX_SCHEDULE_TIMEZONE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
 };
 
 use super::{API_PREFIX, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES};
@@ -34,6 +34,32 @@ pub struct ManagementOperation {
   pub idempotent_mutation: bool,
   /// Whether the operation requires an optimistic `If-Match` precondition.
   pub optimistic_precondition: bool,
+  parameter_profile: ParameterProfile,
+  capability_unavailable_response: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ParameterProfile {
+  #[default]
+  None,
+  ProjectList,
+  AgentPoolList,
+  AgentList,
+  JobEvents,
+  ArtifactList,
+  CacheSessionList,
+}
+
+impl ManagementOperation {
+  const fn with_parameters(mut self, profile: ParameterProfile) -> Self {
+    self.parameter_profile = profile;
+    self
+  }
+
+  const fn with_capability_unavailable_response(mut self) -> Self {
+    self.capability_unavailable_response = true;
+    self
+  }
 }
 
 macro_rules! operation {
@@ -49,6 +75,8 @@ macro_rules! operation {
       success_status: $status,
       idempotent_mutation: $mutation,
       optimistic_precondition: $precondition,
+      parameter_profile: ParameterProfile::None,
+      capability_unavailable_response: false,
     }
   };
 }
@@ -90,7 +118,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_parameters(ParameterProfile::ProjectList),
   operation!(
     "GET",
     "/api/v1/projects/{project_id}",
@@ -306,7 +335,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "201",
     true,
     false
-  ),
+  )
+  .with_capability_unavailable_response(),
   operation!(
     "POST",
     "/api/v1/webhook-integrations/managed/{integration_id}/observe",
@@ -318,7 +348,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     true,
     false
-  ),
+  )
+  .with_capability_unavailable_response(),
   operation!(
     "POST",
     "/api/v1/webhook-integrations/managed/{integration_id}/rotate",
@@ -330,7 +361,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     true,
     false
-  ),
+  )
+  .with_capability_unavailable_response(),
   operation!(
     "DELETE",
     "/api/v1/webhook-integrations/managed/{integration_id}",
@@ -342,7 +374,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     true,
     false
-  ),
+  )
+  .with_capability_unavailable_response(),
   operation!(
     "GET",
     "/api/v1/schedules/{trigger_id}/versions/{version}",
@@ -438,7 +471,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_parameters(ParameterProfile::JobEvents),
   operation!(
     "POST",
     "/api/v1/agent-pools",
@@ -462,7 +496,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_parameters(ParameterProfile::AgentPoolList),
   operation!(
     "POST",
     "/api/v1/agent-pools/{pool_id}/versions",
@@ -522,7 +557,8 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_parameters(ParameterProfile::AgentList),
   operation!(
     "GET",
     "/api/v1/agents/{agent_id}",
@@ -558,6 +594,68 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "200",
     true,
     true
+  ),
+  operation!(
+    "GET",
+    "/api/v1/builds/{build_id}/artifacts",
+    "listBuildArtifacts",
+    "Artifacts",
+    "List published logical outputs for a Build",
+    None,
+    "ArtifactPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::ArtifactList),
+  operation!(
+    "GET",
+    "/api/v1/artifacts/{artifact_id}",
+    "getArtifact",
+    "Artifacts",
+    "Get published logical output metadata",
+    None,
+    "ArtifactResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/artifacts/{artifact_id}/download",
+    "authorizeArtifactDownload",
+    "Artifacts",
+    "Create a short-lived Artifact download capability",
+    None,
+    "ArtifactDownload",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/builds/{build_id}/cache-sessions",
+    "listBuildCacheSessions",
+    "Cache",
+    "List secret-free cache-session diagnostics for a Build",
+    None,
+    "CacheSessionPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CacheSessionList),
+  operation!(
+    "GET",
+    "/api/v1/cache-sessions/{cache_session_id}",
+    "getCacheSession",
+    "Cache",
+    "Get secret-free cache-session diagnostics",
+    None,
+    "CacheSessionResource",
+    "200",
+    false,
+    false
   ),
 ];
 
@@ -646,147 +744,6 @@ fn operation_document(operation: &ManagementOperation) -> Value {
   Value::Object(document)
 }
 
-fn parameters(operation: &ManagementOperation) -> Vec<Value> {
-  let mut parameters = Vec::new();
-  for name in [
-    "project_id",
-    "pipeline_id",
-    "repository_id",
-    "configuration_id",
-    "build_id",
-    "attempt_id",
-    "job_id",
-    "pool_id",
-    "agent_id",
-    "integration_id",
-    "version",
-  ] {
-    if operation.path.contains(&format!("{{{name}}}")) {
-      parameters.push(json!({
-        "name": name,
-        "in": "path",
-        "required": true,
-        "schema": if name == "version" { positive_integer() } else { non_empty_string() }
-      }));
-    }
-  }
-  if operation.operation_id == "listProjects" {
-    parameters.extend([
-      json!({"name": "parent_id", "in": "query", "required": false, "schema": non_empty_string()}),
-      json!({
-        "name": "after",
-        "in": "query",
-        "required": false,
-        "schema": {"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES}
-      }),
-      json!({
-        "name": "limit",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": MAX_PROJECT_LIST_PAGE_SIZE,
-          "default": super::adapter::DEFAULT_PAGE_LIMIT
-        }
-      }),
-    ]);
-  }
-  if operation.operation_id == "listAgentPools" {
-    parameters.extend([
-      json!({
-        "name": "after",
-        "in": "query",
-        "required": false,
-        "schema": {"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES}
-      }),
-      json!({
-        "name": "limit",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": MAX_AGENT_POOL_LIST_PAGE_SIZE,
-          "default": super::adapter::DEFAULT_PAGE_LIMIT
-        }
-      }),
-    ]);
-  }
-  if operation.operation_id == "listAgents" {
-    parameters.extend([
-      json!({
-        "name": "after",
-        "in": "query",
-        "required": false,
-        "schema": {"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES}
-      }),
-      json!({
-        "name": "limit",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": MAX_AGENT_LIST_PAGE_SIZE,
-          "default": super::adapter::DEFAULT_PAGE_LIMIT
-        }
-      }),
-    ]);
-  }
-  if operation.operation_id == "readJobEvents" {
-    parameters.extend([
-      json!({
-        "name": "after",
-        "in": "query",
-        "required": false,
-        "schema": {"type": "integer", "format": "uint64", "minimum": 0, "default": 0}
-      }),
-      json!({
-        "name": "limit",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": MAX_JOB_EVENT_PAGE_SIZE,
-          "default": super::adapter::DEFAULT_JOB_EVENT_LIMIT
-        }
-      }),
-      json!({
-        "name": "wait_ms",
-        "in": "query",
-        "required": false,
-        "schema": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "maximum": MAX_JOB_EVENT_WAIT.as_millis(),
-          "default": 0
-        }
-      }),
-    ]);
-  }
-  if operation.idempotent_mutation {
-    parameters.push(json!({
-      "name": "Idempotency-Key",
-      "in": "header",
-      "required": true,
-      "schema": {"type": "string", "minLength": 1, "maxLength": MAX_IDEMPOTENCY_KEY_BYTES}
-    }));
-  }
-  if operation.optimistic_precondition {
-    parameters.push(json!({
-      "name": "If-Match",
-      "in": "header",
-      "required": true,
-      "description": "Canonical strong ETag carrying a positive resource version, for example \"7\".",
-      "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
-    }));
-  }
-  parameters
-}
-
 fn responses(operation: &ManagementOperation) -> Value {
   let mut responses = Map::new();
   responses.insert(
@@ -812,7 +769,7 @@ fn responses(operation: &ManagementOperation) -> Value {
   if operation.optimistic_precondition {
     responses.insert("428".to_owned(), error_response("Optimistic precondition required"));
   }
-  if operation.operation_id.contains("ManagedWebhook") {
+  if operation.capability_unavailable_response {
     responses.insert(
       "422".to_owned(),
       error_response("Selected adapter capability unavailable"),
@@ -825,8 +782,10 @@ fn error_response(description: &str) -> Value {
   json!({"description": description, "$ref": "#/components/responses/ManagementError"})
 }
 
+mod parameters;
 mod schema;
 
+use parameters::parameters;
 use schema::component_schemas;
 
 fn versioned_resource(definition_schema: &str) -> Value {

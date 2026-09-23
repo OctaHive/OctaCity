@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, CancelBuildCommand, CommandHandler, CreateAgentPoolCommand,
-  CreateBuildConfigurationCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
-  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
-  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetAttemptQuery,
-  GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
-  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListProjectsQuery,
+  AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, CancelBuildCommand, CommandHandler,
+  CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateManagedWebhookCommand, CreatePipelineCommand,
+  CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand,
+  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
+  GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery,
+  GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
+  ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListProjectsQuery,
   ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
   PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand, RenameProjectCommand,
@@ -52,6 +53,11 @@ type ManualTriggerAccept = dyn CommandHandler<AcceptManualTriggerCommand, Error 
 type JobEventsRead = dyn QueryHandler<ReadJobEventsQuery, Error = ApplicationError>;
 type ScheduleCreate = dyn CommandHandler<CreateScheduleCommand, Error = ApplicationError>;
 type ScheduleGet = dyn QueryHandler<GetScheduleQuery, Error = ApplicationError>;
+type ArtifactGet = dyn QueryHandler<GetArtifactQuery, Error = ApplicationError>;
+type ArtifactList = dyn QueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>;
+type ArtifactDownload = dyn QueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>;
+type CacheSessionGet = dyn QueryHandler<GetCacheSessionQuery, Error = ApplicationError>;
+type CacheSessionList = dyn QueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>;
 
 /// Type-erased Project handlers consumed by REST.
 pub struct ProjectManagementApplication {
@@ -309,6 +315,51 @@ impl JobEventManagementApplication {
   }
 }
 
+/// Type-erased logical Artifact query handlers consumed by REST.
+pub struct ArtifactManagementApplication {
+  pub(super) get: Arc<ArtifactGet>,
+  pub(super) list: Arc<ArtifactList>,
+  pub(super) download: Arc<ArtifactDownload>,
+}
+
+impl ArtifactManagementApplication {
+  /// Erases one Artifact service behind its management query capabilities.
+  pub fn new<A>(service: Arc<A>) -> Self
+  where
+    A: QueryHandler<GetArtifactQuery, Error = ApplicationError>
+      + QueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>
+      + QueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>
+      + 'static,
+  {
+    Self {
+      get: service.clone(),
+      list: service.clone(),
+      download: service,
+    }
+  }
+}
+
+/// Type-erased secret-free cache-session diagnostic queries consumed by REST.
+pub struct CacheManagementApplication {
+  pub(super) get: Arc<CacheSessionGet>,
+  pub(super) list: Arc<CacheSessionList>,
+}
+
+impl CacheManagementApplication {
+  /// Erases one cache-session service behind management query capabilities.
+  pub fn new<C>(service: Arc<C>) -> Self
+  where
+    C: QueryHandler<GetCacheSessionQuery, Error = ApplicationError>
+      + QueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>
+      + 'static,
+  {
+    Self {
+      get: service.clone(),
+      list: service,
+    }
+  }
+}
+
 /// Catalog-oriented management handlers.
 pub struct CatalogManagementApplication {
   pub(super) projects: ProjectManagementApplication,
@@ -342,6 +393,8 @@ pub struct ExecutionManagementApplication {
   pub(super) builds: BuildManagementApplication,
   pub(super) manual_triggers: ManualTriggerManagementApplication,
   pub(super) job_events: JobEventManagementApplication,
+  pub(super) artifacts: ArtifactManagementApplication,
+  pub(super) cache: CacheManagementApplication,
 }
 
 impl ExecutionManagementApplication {
@@ -350,11 +403,15 @@ impl ExecutionManagementApplication {
     builds: BuildManagementApplication,
     manual_triggers: ManualTriggerManagementApplication,
     job_events: JobEventManagementApplication,
+    artifacts: ArtifactManagementApplication,
+    cache: CacheManagementApplication,
   ) -> Self {
     Self {
       builds,
       manual_triggers,
       job_events,
+      artifacts,
+      cache,
     }
   }
 }

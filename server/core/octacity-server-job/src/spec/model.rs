@@ -277,6 +277,12 @@ impl JobSpecTemplate {
     }
   }
 
+  /// Borrows the exact signed cache policy, when this Job may use remote cache.
+  #[must_use]
+  pub fn cache_policy(&self) -> Option<&CachePolicy> {
+    self.policy.cache.as_ref()
+  }
+
   pub(super) const fn execution(&self) -> &JobExecutionTemplate {
     &self.execution
   }

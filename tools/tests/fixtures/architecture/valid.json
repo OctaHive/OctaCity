@@ -4,7 +4,7 @@
   "packages": [
     {
       "name": "octacity-server",
-      "manifest_path": "/workspace/server/app/octacity-server/Cargo.toml",
+      "manifest_path": "/workspace/server/app/Cargo.toml",
       "dependencies": [
         {"name": "fixture-api", "kind": null, "path": "/workspace/server/api/fixture-api"},
         {"name": "fixture-postgres", "kind": null, "path": "/workspace/server/infrastructure/fixture-postgres"},
@@ -17,13 +17,13 @@
       "dependencies": [
         {"name": "axum", "kind": null, "path": null},
         {"name": "tower", "kind": "dev", "path": null},
-        {"name": "fixture-application", "kind": null, "path": "/workspace/server/application/fixture-application"},
+        {"name": "fixture-application", "kind": null, "path": "/workspace/server/application"},
         {"name": "fixture-shared", "kind": null, "path": "/workspace/shared/fixture-shared"}
       ]
     },
     {
       "name": "fixture-application",
-      "manifest_path": "/workspace/server/application/fixture-application/Cargo.toml",
+      "manifest_path": "/workspace/server/application/Cargo.toml",
       "dependencies": [
         {"name": "async-trait", "kind": null, "path": null},
         {"name": "fixture-core", "kind": null, "path": "/workspace/server/core/fixture-core"},

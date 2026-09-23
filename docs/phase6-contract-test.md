@@ -73,6 +73,9 @@ cargo test -p octacity-phase6-contract-tests --test protocol_minio \
   -- --ignored --exact --nocapture
 ```
 
-The separate `s3_store_satisfies_the_minio_contract` test exercises storage
-idempotency, direct download, deletion, and rejection of bytes that do not
-match the SHA-256 bound into the presigned request.
+The separate `s3_store_satisfies_the_minio_contract` test exercises upload,
+independent size and SHA-256 verification even when object metadata lies,
+idempotent publication, short-lived upload and download expiration, direct
+download, deletion, a forced storage outage, full capability requalification,
+and recovery against the same MinIO service. Failed verification and outage
+paths assert that no download capability can be issued for unpublished bytes.

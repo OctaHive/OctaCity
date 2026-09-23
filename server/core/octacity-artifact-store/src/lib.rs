@@ -10,10 +10,9 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use async_trait::async_trait;
+use octacity_server_artifacts::{ArtifactContentDigest, ArtifactMediaType};
 pub use octacity_server_domain::{ArtifactId, ArtifactUploadId};
 use thiserror::Error;
-
-const MAX_CONTENT_TYPE_BYTES: usize = 256;
 
 /// Immutable identity and expected bytes of one output upload.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,8 +21,8 @@ pub struct ArtifactObject {
   upload_id: ArtifactUploadId,
   size_bytes: u64,
   sha256: String,
-  sha256_bytes: [u8; 32],
-  content_type: String,
+  digest: ArtifactContentDigest,
+  content_type: ArtifactMediaType,
 }
 
 impl ArtifactObject {
@@ -36,22 +35,15 @@ impl ArtifactObject {
     content_type: impl Into<String>,
   ) -> Result<Self, ArtifactObjectError> {
     let sha256 = sha256.into();
-    let sha256_bytes = decode_sha256(&sha256).ok_or(ArtifactObjectError::InvalidSha256)?;
-
-    let content_type = content_type.into();
-    if content_type.is_empty()
-      || content_type.len() > MAX_CONTENT_TYPE_BYTES
-      || content_type.chars().any(char::is_control)
-    {
-      return Err(ArtifactObjectError::InvalidContentType);
-    }
+    let digest = ArtifactContentDigest::from_lower_hex(&sha256).map_err(|_| ArtifactObjectError::InvalidSha256)?;
+    let content_type = ArtifactMediaType::new(content_type).map_err(|_| ArtifactObjectError::InvalidContentType)?;
 
     Ok(Self {
       artifact_id,
       upload_id,
       size_bytes,
       sha256,
-      sha256_bytes,
+      digest,
       content_type,
     })
   }
@@ -83,13 +75,13 @@ impl ArtifactObject {
   /// Returns the decoded SHA-256 content identity.
   #[must_use]
   pub const fn sha256_bytes(&self) -> [u8; 32] {
-    self.sha256_bytes
+    self.digest.as_bytes()
   }
 
   /// Returns the transport media type, not a report format.
   #[must_use]
   pub fn content_type(&self) -> &str {
-    &self.content_type
+    self.content_type.as_str()
   }
 }
 
@@ -99,7 +91,7 @@ pub enum ArtifactObjectError {
   /// The digest is not exactly 64 lowercase hexadecimal characters.
   #[error("artifact SHA-256 must be 64 lowercase hexadecimal characters")]
   InvalidSha256,
-  /// The media type is empty, oversized, or contains control characters.
+  /// The media type is empty, untrimmed, oversized, or contains control characters.
   #[error("artifact content type is invalid")]
   InvalidContentType,
 }
@@ -266,29 +258,6 @@ impl std::fmt::Debug for DownloadAuthorization {
       .field("url", &"<redacted>")
       .field("expires_in", &self.expires_in)
       .finish()
-  }
-}
-
-fn decode_sha256(value: &str) -> Option<[u8; 32]> {
-  if value.len() != 64
-    || !value
-      .bytes()
-      .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-  {
-    return None;
-  }
-  let mut result = [0_u8; 32];
-  for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
-    result[index] = (hex_digit(pair[0]) << 4) | hex_digit(pair[1]);
-  }
-  Some(result)
-}
-
-fn hex_digit(value: u8) -> u8 {
-  match value {
-    b'0'..=b'9' => value - b'0',
-    b'a'..=b'f' => value - b'a' + 10,
-    _ => unreachable!("decode_sha256 validates every hexadecimal digit"),
   }
 }
 

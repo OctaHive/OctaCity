@@ -55,6 +55,8 @@ use crate::RequestId;
 mod agent;
 mod agent_pool;
 mod application;
+mod artifact;
+mod cache;
 mod configuration;
 mod error;
 mod execution;
@@ -66,15 +68,20 @@ mod representations;
 mod schedule;
 mod webhook;
 
+pub(crate) use artifact::DEFAULT_ARTIFACT_LIMIT;
+
 use agent::{drain_agent, get_agent, issue_agent_enrollment, list_agents, reassign_agent_pool};
 use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agent_pools, publish_agent_pool};
 use application::{AgentEndpoints, AgentPoolManagementApplication};
 pub use application::{
-  AgentManagementApplication, BuildManagementApplication, CatalogManagementApplication,
-  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
-  JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
+  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
+  ExecutionManagementApplication, JobEventManagementApplication, ManagementApplicationHandlers,
+  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ScheduleManagementApplication,
 };
+use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
+use cache::{get_cache_session, list_build_cache_sessions};
 use configuration::{
   create_build_configuration, create_repository, get_build_configuration, get_repository, publish_build_configuration,
   publish_repository,
@@ -97,6 +104,7 @@ use webhook::{
 const MAX_MANAGEMENT_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const DEFAULT_PAGE_LIMIT: u16 = 50;
 pub(super) const DEFAULT_JOB_EVENT_LIMIT: u16 = 100;
+pub(super) const DEFAULT_CACHE_SESSION_LIMIT: u16 = 50;
 
 /// Typed application handlers used by the v1 management REST adapter.
 ///
@@ -114,6 +122,8 @@ pub struct ManagementApplication {
   schedules: ScheduleManagementApplication,
   manual_triggers: ManualTriggerManagementApplication,
   job_events: JobEventManagementApplication,
+  artifacts: ArtifactManagementApplication,
+  cache: CacheManagementApplication,
 }
 
 impl ManagementApplication {
@@ -140,6 +150,8 @@ impl ManagementApplication {
       builds,
       manual_triggers,
       job_events,
+      artifacts,
+      cache,
     } = execution;
     let AgentManagementApplication {
       pools: agent_pools,
@@ -161,6 +173,8 @@ impl ManagementApplication {
       schedules,
       manual_triggers,
       job_events,
+      artifacts,
+      cache,
     })
   }
 }
@@ -253,6 +267,23 @@ pub fn router(application: ManagementApplication) -> Router {
     )
     .route(&format!("{API_PREFIX}/triggers/manual"), post(accept_manual_trigger))
     .route(&format!("{API_PREFIX}/builds/{{build_id}}"), get(get_build))
+    .route(
+      &format!("{API_PREFIX}/builds/{{build_id}}/artifacts"),
+      get(list_build_artifacts),
+    )
+    .route(&format!("{API_PREFIX}/artifacts/{{artifact_id}}"), get(get_artifact))
+    .route(
+      &format!("{API_PREFIX}/artifacts/{{artifact_id}}/download"),
+      post(authorize_artifact_download),
+    )
+    .route(
+      &format!("{API_PREFIX}/builds/{{build_id}}/cache-sessions"),
+      get(list_build_cache_sessions),
+    )
+    .route(
+      &format!("{API_PREFIX}/cache-sessions/{{cache_session_id}}"),
+      get(get_cache_session),
+    )
     .route(&format!("{API_PREFIX}/builds/{{build_id}}/cancel"), post(cancel_build))
     .route(&format!("{API_PREFIX}/builds/{{build_id}}/retry"), post(retry_build))
     .route(&format!("{API_PREFIX}/attempts/{{attempt_id}}"), get(get_attempt))

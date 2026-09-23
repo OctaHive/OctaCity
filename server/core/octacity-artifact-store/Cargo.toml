@@ -9,5 +9,6 @@ description = "Backend-neutral server-side artifact storage boundary for OctaCit
 
 [dependencies]
 async-trait.workspace = true
+octacity-server-artifacts = { path = "../octacity-server-artifacts" }
 octacity-server-domain = { path = "../octacity-server-domain" }
 thiserror.workspace = true

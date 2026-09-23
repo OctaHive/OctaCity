@@ -13,6 +13,7 @@ pub fn concrete_path(path: &str) -> String {
     .replace("{build_id}", "99999999-9999-4999-8999-999999999999")
     .replace("{attempt_id}", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
     .replace("{job_id}", "55555555-5555-4555-8555-555555555555")
+    .replace("{artifact_id}", "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
     .replace("{pool_id}", "66666666-6666-4666-8666-666666666666")
     .replace("{integration_id}", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
     .replace("{version}", "1")

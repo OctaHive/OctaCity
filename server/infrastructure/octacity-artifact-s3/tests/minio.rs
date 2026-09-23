@@ -2,21 +2,37 @@
 //!
 //! Set `OCTACITY_MINIO_ENDPOINT`, `OCTACITY_MINIO_ACCESS_KEY`, and
 //! `OCTACITY_MINIO_SECRET_KEY`, then run this ignored test explicitly. The test
-//! creates and removes its own bucket and validates direct PUT, verified
-//! publication, idempotent completion, download, corruption rejection, and
-//! empty objects, and deletion through the public `ArtifactStore` boundary.
+//! creates and removes its own bucket and validates direct PUT, independently
+//! verified publication, idempotent completion, short-lived capabilities,
+//! outage recovery, corruption rejection, empty objects, and deletion through
+//! the public `ArtifactStore` boundary.
 
-use std::{env, time::Duration};
+use std::{
+  env,
+  sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+  },
+  time::Duration,
+};
 
 use aws_sdk_s3::{
   Client,
   config::{BehaviorVersion, Credentials, Region},
+  primitives::ByteStream,
 };
 use octacity_artifact_s3::{S3ArtifactStore, S3ArtifactStoreConfig};
-use octacity_artifact_store::{ArtifactId, ArtifactObject, ArtifactStore, ArtifactUploadId, UploadAuthorization};
+use octacity_artifact_store::{
+  ArtifactId, ArtifactIntegrityError, ArtifactObject, ArtifactStore, ArtifactStoreError, ArtifactStoreOperation,
+  ArtifactUploadId, UploadAuthorization,
+};
 use reqwest::header::{HeaderName, HeaderValue};
 use sha2::{Digest as _, Sha256};
+use tokio::{io::copy_bidirectional, net::TcpListener, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+
+const TEST_PREFIX: &str = "artifact-contract";
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured MinIO service"]
@@ -28,29 +44,42 @@ async fn s3_store_satisfies_the_minio_contract() {
   let bucket = format!("octacity-test-{}", Uuid::new_v4().simple());
   let client = minio_client(&endpoint, &region, &access_key, &secret_key);
   client.create_bucket().bucket(&bucket).send().await.unwrap();
+  let proxy = FaultProxy::start(&endpoint).await;
 
   let store = S3ArtifactStore::new(S3ArtifactStoreConfig {
-    endpoint,
+    endpoint: proxy.endpoint(),
     region,
     bucket: bucket.clone(),
-    prefix: "phase6".to_owned(),
+    prefix: TEST_PREFIX.to_owned(),
     access_key: zeroize::Zeroizing::new(access_key),
     secret_key: zeroize::Zeroizing::new(secret_key),
     force_path_style: true,
-    operation_timeout: Duration::from_secs(30),
+    operation_timeout: Duration::from_secs(2),
     capability_recheck_interval: Duration::from_secs(300),
   })
   .unwrap();
   store.health_check().await.unwrap();
   store.health_check().await.unwrap();
+
+  verify_upload_download_and_delete(&store).await;
+  verify_mismatched_generations_remain_unpublished(&client, &bucket, &store).await;
+  verify_capability_expiration(&store).await;
+  verify_outage_and_recovery(&proxy, &store).await;
+
+  delete_test_objects(&client, &bucket).await;
+  client.delete_bucket().bucket(bucket).send().await.unwrap();
+  proxy.shutdown().await;
+}
+
+async fn verify_upload_download_and_delete(store: &S3ArtifactStore) {
   let bytes = b"verified-minio-artifact";
   let stored = object(bytes);
-  upload(&store, &stored, bytes).await;
+  upload(store, &stored, bytes).await;
   store.complete_upload(&stored).await.unwrap();
   store.complete_upload(&stored).await.unwrap();
 
   let empty = object(b"");
-  upload(&store, &empty, b"").await;
+  upload(store, &empty, b"").await;
   store.complete_upload(&empty).await.unwrap();
   let empty_download = store.authorize_download(&empty, Duration::from_secs(60)).await.unwrap();
   assert!(
@@ -88,8 +117,118 @@ async fn s3_store_satisfies_the_minio_contract() {
       .await
       .is_err()
   );
-  delete_test_objects(&client, &bucket).await;
-  client.delete_bucket().bucket(bucket).send().await.unwrap();
+}
+
+async fn verify_mismatched_generations_remain_unpublished(client: &Client, bucket: &str, store: &S3ArtifactStore) {
+  let digest_mismatch = object(b"expected");
+  inject_pending_generation(client, bucket, &digest_mismatch, b"altered!").await;
+  assert!(matches!(
+    store.complete_upload(&digest_mismatch).await,
+    Err(ArtifactStoreError::Integrity {
+      reason: ArtifactIntegrityError::DigestMismatch | ArtifactIntegrityError::BodyMismatch
+    })
+  ));
+  assert!(matches!(
+    store
+      .authorize_download(&digest_mismatch, Duration::from_secs(60))
+      .await,
+    Err(ArtifactStoreError::NotFound)
+  ));
+
+  let size_mismatch = object(b"expected-size");
+  inject_pending_generation(client, bucket, &size_mismatch, b"short").await;
+  assert!(matches!(
+    store.complete_upload(&size_mismatch).await,
+    Err(ArtifactStoreError::Integrity {
+      reason: ArtifactIntegrityError::SizeMismatch
+    })
+  ));
+  assert!(matches!(
+    store.authorize_download(&size_mismatch, Duration::from_secs(60)).await,
+    Err(ArtifactStoreError::NotFound)
+  ));
+}
+
+async fn verify_capability_expiration(store: &S3ArtifactStore) {
+  let pending = object(b"expired-upload");
+  let expired_upload = store.authorize_upload(&pending, Duration::from_secs(1)).await.unwrap();
+
+  let published = object(b"expired-download");
+  upload(store, &published, b"expired-download").await;
+  store.complete_upload(&published).await.unwrap();
+  let expired_download = store
+    .authorize_download(&published, Duration::from_secs(1))
+    .await
+    .unwrap();
+
+  tokio::time::sleep(Duration::from_secs(2)).await;
+  assert!(
+    !put_request(expired_upload, b"expired-upload")
+      .send()
+      .await
+      .unwrap()
+      .status()
+      .is_success()
+  );
+  assert!(!reqwest::get(expired_download.url).await.unwrap().status().is_success());
+  assert!(matches!(
+    store.complete_upload(&pending).await,
+    Err(ArtifactStoreError::NotFound)
+  ));
+  assert!(matches!(
+    store.authorize_download(&pending, Duration::from_secs(60)).await,
+    Err(ArtifactStoreError::NotFound)
+  ));
+  store.delete(&published).await.unwrap();
+}
+
+async fn verify_outage_and_recovery(proxy: &FaultProxy, store: &S3ArtifactStore) {
+  let bytes = b"survives-storage-outage";
+  let object = object(bytes);
+  upload(store, &object, bytes).await;
+
+  proxy.set_available(false);
+  assert!(matches!(
+    store.complete_upload(&object).await,
+    Err(
+      ArtifactStoreError::Backend {
+        operation: ArtifactStoreOperation::CompleteUpload
+      } | ArtifactStoreError::TimedOut {
+        operation: ArtifactStoreOperation::CompleteUpload
+      }
+    )
+  ));
+
+  proxy.set_available(true);
+  store.health_check().await.unwrap();
+  assert!(matches!(
+    store.authorize_download(&object, Duration::from_secs(60)).await,
+    Err(ArtifactStoreError::NotFound)
+  ));
+  store.complete_upload(&object).await.unwrap();
+  let download = store
+    .authorize_download(&object, Duration::from_secs(60))
+    .await
+    .unwrap();
+  assert_eq!(
+    reqwest::get(download.url).await.unwrap().bytes().await.unwrap(),
+    bytes.as_slice()
+  );
+  store.delete(&object).await.unwrap();
+}
+
+async fn inject_pending_generation(client: &Client, bucket: &str, object: &ArtifactObject, bytes: &'static [u8]) {
+  client
+    .put_object()
+    .bucket(bucket)
+    .key(format!("{TEST_PREFIX}/uploads/{}", object.upload_id()))
+    .content_type(object.content_type())
+    .metadata("octacity-sha256", object.sha256())
+    .metadata("octacity-size", object.size_bytes().to_string())
+    .body(ByteStream::from_static(bytes))
+    .send()
+    .await
+    .unwrap();
 }
 
 async fn delete_test_objects(client: &Client, bucket: &str) {
@@ -156,4 +295,85 @@ fn object(bytes: &[u8]) -> ArtifactObject {
     "application/octet-stream",
   )
   .unwrap()
+}
+
+struct FaultProxy {
+  endpoint: String,
+  control: Arc<ProxyControl>,
+  shutdown: CancellationToken,
+  task: JoinHandle<()>,
+}
+
+struct ProxyControl {
+  available: AtomicBool,
+  connections: Mutex<CancellationToken>,
+}
+
+impl FaultProxy {
+  async fn start(upstream_endpoint: &str) -> Self {
+    let upstream = reqwest::Url::parse(upstream_endpoint).unwrap();
+    assert_eq!(upstream.scheme(), "http", "the MinIO contract proxy expects HTTP");
+    let upstream_host = upstream.host_str().unwrap().to_owned();
+    let upstream_port = upstream.port_or_known_default().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let control = Arc::new(ProxyControl {
+      available: AtomicBool::new(true),
+      connections: Mutex::new(CancellationToken::new()),
+    });
+    let shutdown = CancellationToken::new();
+    let task_control = Arc::clone(&control);
+    let task_shutdown = shutdown.clone();
+    let task = tokio::spawn(async move {
+      loop {
+        let accepted = tokio::select! {
+          () = task_shutdown.cancelled() => break,
+          accepted = listener.accept() => accepted,
+        };
+        let Ok((mut client, _)) = accepted else {
+          break;
+        };
+        if !task_control.available.load(Ordering::SeqCst) {
+          continue;
+        }
+        let connection_cancellation = task_control.connections.lock().unwrap().clone();
+        let upstream_host = upstream_host.clone();
+        tokio::spawn(async move {
+          let Ok(mut upstream) = tokio::net::TcpStream::connect((upstream_host.as_str(), upstream_port)).await else {
+            return;
+          };
+          tokio::select! {
+            () = connection_cancellation.cancelled() => {}
+            _ = copy_bidirectional(&mut client, &mut upstream) => {}
+          }
+        });
+      }
+    });
+    Self {
+      endpoint,
+      control,
+      shutdown,
+      task,
+    }
+  }
+
+  fn endpoint(&self) -> String {
+    self.endpoint.clone()
+  }
+
+  fn set_available(&self, available: bool) {
+    if available {
+      *self.control.connections.lock().unwrap() = CancellationToken::new();
+      self.control.available.store(true, Ordering::SeqCst);
+    } else {
+      self.control.available.store(false, Ordering::SeqCst);
+      self.control.connections.lock().unwrap().cancel();
+    }
+  }
+
+  async fn shutdown(self) {
+    self.control.connections.lock().unwrap().cancel();
+    self.shutdown.cancel();
+    self.task.await.unwrap();
+  }
 }

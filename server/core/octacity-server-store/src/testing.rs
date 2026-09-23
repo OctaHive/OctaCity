@@ -47,11 +47,20 @@ mod state;
 mod trigger;
 
 pub(crate) use fixtures::trigger_request;
-pub use fixtures::{compatible_inventory, compatible_snapshot, job_spec_template, retry_request};
+pub use fixtures::{
+  compatible_inventory, compatible_snapshot, job_spec_template, job_spec_template_with_cache, retry_request,
+};
 pub(crate) use state::*;
 
 pub use crate::agent_testing::InMemoryAgentStore;
+pub use crate::artifact_contract_testing::{
+  ArtifactRecordStoreContractFixture, ArtifactUploadStoreContractFixture, verify_artifact_record_store_contract,
+  verify_artifact_upload_store_contract,
+};
+pub use crate::artifact_testing::{ArtifactLeaseFixture, InMemoryArtifactRecordStore};
 pub use crate::authoritative_contract_testing::{verify_authoritative_store_contract, verify_in_memory_store_contract};
+pub use crate::cache_contract_testing::{CacheSessionStoreContractFixture, verify_cache_session_store_contract};
+pub use crate::cache_testing::{CacheLeaseFixture, InMemoryCacheSessionStore};
 pub use crate::configuration_contract_testing::{
   verify_configuration_store_contract, verify_in_memory_configuration_store_contract,
 };

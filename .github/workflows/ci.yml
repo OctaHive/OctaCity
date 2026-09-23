@@ -144,7 +144,7 @@ jobs:
           done
           docker logs octacity-coverage-postgres
           exit 1
-      - name: Cover the S3-compatible storage adapter
+      - name: Cover the MinIO Artifact Store contract
         env:
           OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
           OCTACITY_MINIO_ACCESS_KEY: octacity
@@ -168,6 +168,14 @@ jobs:
         run: >-
           cargo llvm-cov --no-clean --all-features
           -p octacity-server-store-postgres --test constraints --
+          --ignored
+        working-directory: octacity
+      - name: Cover fenced Artifact lifecycle records
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test artifact_records --
           --ignored
         working-directory: octacity
       - name: Cover the authoritative PostgreSQL store contract

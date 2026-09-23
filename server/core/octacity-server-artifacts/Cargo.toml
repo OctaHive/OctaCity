@@ -10,3 +10,4 @@ description = "Logical artifact lifecycle domain for the OctaCity server"
 
 [dependencies]
 octacity-server-domain = { path = "../octacity-server-domain" }
+thiserror.workspace = true

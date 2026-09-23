@@ -115,6 +115,11 @@ opaque_id!(
 );
 opaque_id!(LeaseId, EntityKind::Lease, "Opaque identity of a fenced Job lease.");
 opaque_id!(
+  CacheSessionId,
+  EntityKind::CacheSession,
+  "Opaque identity of one short-lived remote-cache session."
+);
+opaque_id!(
   ArtifactId,
   EntityKind::Artifact,
   "Opaque identity of a logical Artifact."
