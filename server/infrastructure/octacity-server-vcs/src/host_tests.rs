@@ -1,8 +1,10 @@
-use octacity_vcs_protocol::{
-  Capabilities, Command as VcsCommand, Outcome, ProtocolRange, RepositoryAccess, ResolveRevision,
-};
+use octacity_vcs_protocol::RepositoryAccess;
+#[cfg(unix)]
+use octacity_vcs_protocol::{Capabilities, Command as VcsCommand, Outcome, ProtocolRange, ResolveRevision};
+#[cfg(unix)]
 use tokio_util::sync::CancellationToken;
 
+#[cfg(unix)]
 use super::*;
 
 #[test]

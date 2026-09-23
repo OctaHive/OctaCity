@@ -1,9 +1,12 @@
+use octacity_webhook_provider_protocol::ManagedRegistrationOperation;
+#[cfg(unix)]
 use octacity_webhook_provider_protocol::{
-  AuthenticatedRepositoryEvent, Capabilities, Command as WebhookCommand, ManagedRegistrationOperation, Outcome,
-  ProtocolRange, VerifyDelivery,
+  AuthenticatedRepositoryEvent, Capabilities, Command as WebhookCommand, Outcome, ProtocolRange, VerifyDelivery,
 };
+#[cfg(unix)]
 use tokio_util::sync::CancellationToken;
 
+#[cfg(unix)]
 use super::*;
 
 #[test]
