@@ -59,7 +59,8 @@ docker run --detach --rm --name octacity-phase6-minio \
   -p 127.0.0.1:19000:9000 \
   -e MINIO_ROOT_USER=octacity \
   -e MINIO_ROOT_PASSWORD=octacity-secret \
-  quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e server /data
+  docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
+  server /bitnami/minio/data
 
 OCTACITY_MINIO_ENDPOINT=http://127.0.0.1:19000 \
 OCTACITY_MINIO_ACCESS_KEY=octacity \
