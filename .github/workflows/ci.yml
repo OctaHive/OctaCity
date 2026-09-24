@@ -194,6 +194,22 @@ jobs:
           -p octacity-server-store-postgres --test concurrency --
           --ignored
         working-directory: octacity
+      - name: Cover PostgreSQL internal Trigger contracts
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test internal_triggers --
+          --ignored
+        working-directory: octacity
+      - name: Cover PostgreSQL Build-log search contracts
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          cargo llvm-cov --no-clean --all-features
+          -p octacity-server-store-postgres --test log_search_index --
+          --ignored
+        working-directory: octacity
       - name: Stop coverage services
         if: always()
         run: |
