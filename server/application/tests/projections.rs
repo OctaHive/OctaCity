@@ -326,6 +326,12 @@ fn build_input(project_id: ProjectId) -> ImmutableBuildInput {
       "project": effective_policy(project_id),
       "job_spec_toolchain": toolchain(),
     }),
+    retention: octacity_server_store::BuildRetentionDeadlines {
+      metadata: time(60_000),
+      logs: time(60_000),
+      artifacts: time(60_000),
+      reports: time(60_000),
+    },
     project_job_concurrency_limit: 4,
     priority: 10,
   }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use octacity_server_application::{
-  InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker,
+  BuildRetentionWorker, InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker,
   ManualTriggerRetryWorker, ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_domain::Timestamp;
@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::{DurableWorkerError, ServerConfig, readiness::WorkerHealth};
+use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
   pub(super) expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
@@ -30,6 +30,9 @@ pub(super) struct DurableWorkers {
   pub(super) log_indexing: LogIndexingWorker<PostgresStore, PostgresLogSearchIndex>,
   pub(super) log_index_owner: WorkerOwner,
   pub(super) log_index_health: Arc<WorkerHealth>,
+  pub(super) retention: BuildRetentionWorker<PostgresStore, PostgresLogSearchIndex>,
+  pub(super) retention_owner: WorkerOwner,
+  pub(super) retention_health: Arc<WorkerHealth>,
   pub(super) manual_trigger_retries: ManualTriggerRetryWorker,
   pub(super) manual_trigger_retry_owner: WorkerOwner,
   pub(super) manual_trigger_retry_health: Arc<WorkerHealth>,
@@ -40,6 +43,7 @@ pub(super) struct DurableWorkers {
 pub(super) const EXPIRY_WORKER_NAME: &str = "lease-expiry-worker";
 pub(super) const INTERNAL_TRIGGER_WORKER_NAME: &str = "internal-trigger-worker";
 pub(super) const LOG_INDEX_WORKER_NAME: &str = "log-index-worker";
+pub(super) const RETENTION_WORKER_NAME: &str = "build-retention-worker";
 pub(super) const MANAGED_WEBHOOK_WORKER_NAME: &str = "managed-webhook-worker";
 pub(super) const MANUAL_TRIGGER_RETRY_WORKER_NAME: &str = "manual-trigger-retry-worker";
 pub(super) const SCHEDULE_WORKER_NAME: &str = "schedule-worker";
@@ -54,6 +58,7 @@ pub(super) fn spawn_durable_workers(
   let schedule_policy = config.schedule_worker();
   let internal_trigger_policy = config.internal_trigger_worker();
   let log_index_policy = config.log_index_worker().worker();
+  let retention_policy = config.retention_worker();
   let trigger_evaluation_policy = config.trigger_evaluation_worker().worker();
   let webhook_policy = config.webhook_worker();
   let webhook_delivery_policy = webhook_policy.delivery().worker();
@@ -89,6 +94,13 @@ pub(super) fn spawn_durable_workers(
     log_index_policy.poll_interval(),
     log_index_policy.claim_lifetime(),
     log_index_policy.batch_size(),
+    cancellation.child_token(),
+  );
+  let retention = spawn_retention_worker(
+    workers.retention,
+    workers.retention_owner,
+    workers.retention_health,
+    retention_policy,
     cancellation.child_token(),
   );
   let manual_trigger_retries = spawn_manual_trigger_retry_worker(
@@ -127,6 +139,7 @@ pub(super) fn spawn_durable_workers(
     (SCHEDULE_WORKER_NAME, schedules),
     (INTERNAL_TRIGGER_WORKER_NAME, internal_triggers),
     (LOG_INDEX_WORKER_NAME, log_indexing),
+    (RETENTION_WORKER_NAME, retention),
     (MANUAL_TRIGGER_RETRY_WORKER_NAME, manual_trigger_retries),
   ];
   if let Some(task) = webhook_deliveries {
@@ -136,6 +149,46 @@ pub(super) fn spawn_durable_workers(
     tasks.push((MANAGED_WEBHOOK_WORKER_NAME, task));
   }
   spawn_worker_supervisor(tasks, cancellation)
+}
+
+fn spawn_retention_worker(
+  worker: BuildRetentionWorker<PostgresStore, PostgresLogSearchIndex>,
+  owner: WorkerOwner,
+  health: Arc<WorkerHealth>,
+  policy: RetentionWorkerPolicy,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  let worker_policy = policy.retrying().worker();
+  let work_batch_size = worker_policy.batch_size();
+  let object_batch_size = policy.object_batch_size();
+  let worker = Arc::new(worker);
+  spawn_worker_loop(
+    RETENTION_WORKER_NAME,
+    health,
+    worker_policy.poll_interval(),
+    worker_policy.claim_lifetime(),
+    cancellation,
+    move |observed_at, claim_expires_at| {
+      let worker = worker.clone();
+      let owner = owner.clone();
+      async move {
+        worker
+          .run_once(owner, observed_at, claim_expires_at, work_batch_size, object_batch_size)
+          .await
+      }
+    },
+    |outcome| {
+      if outcome.claimed > 0 {
+        info!(
+          claimed = outcome.claimed,
+          completed = outcome.completed,
+          pending = outcome.pending,
+          retries = outcome.retries_scheduled,
+          "Build Result retention work advanced"
+        );
+      }
+    },
+  )
 }
 
 fn spawn_log_index_worker(

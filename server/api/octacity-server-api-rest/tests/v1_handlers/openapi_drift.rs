@@ -201,6 +201,34 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     .find(|parameter| parameter["name"] == "limit")
     .unwrap();
   assert_eq!(cache_limit["schema"]["maximum"], 100);
+  let log_search = &document["paths"]["/api/v1/projects/{project_id}/build-logs/search"]["get"];
+  assert_eq!(log_search["operationId"], "searchBuildLogs");
+  let search_parameters = log_search["parameters"].as_array().unwrap();
+  let query = search_parameters
+    .iter()
+    .find(|parameter| parameter["name"] == "query")
+    .unwrap();
+  assert_eq!(query["required"], true);
+  assert_eq!(query["schema"]["maxLength"], 1024);
+  let mode = search_parameters
+    .iter()
+    .find(|parameter| parameter["name"] == "mode")
+    .unwrap();
+  assert_eq!(mode["schema"]["$ref"], "#/components/schemas/BuildLogSearchMode");
+  assert_eq!(
+    document["components"]["schemas"]["BuildLogSearchMode"]["enum"],
+    serde_json::json!(["full_text", "literal"])
+  );
+  let log_page = document["components"]["schemas"]["BuildLogSearchPage"]["properties"]
+    .as_object()
+    .unwrap();
+  assert!(log_page.contains_key("freshness"));
+  let log_hit = document["components"]["schemas"]["BuildLogSearchHit"]["properties"]
+    .as_object()
+    .unwrap();
+  for backend_field in ["bucket", "object_key", "tsvector", "postgres_rank"] {
+    assert!(log_hit.get(backend_field).is_none());
+  }
 
   for (schema, body) in request_examples() {
     assert_json_matches_component(&document, schema, &body);
@@ -226,5 +254,10 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
         "priority": 0
       }
     }),
+  );
+  assert_json_matches_component(
+    &document,
+    "BuildLogSearchPage",
+    &serde_json::from_str(include_str!("../../fixtures/v1/build-log-search-page.json")).unwrap(),
   );
 }

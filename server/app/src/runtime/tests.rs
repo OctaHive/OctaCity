@@ -13,6 +13,8 @@ use crate::{
 
 struct HealthyCheck;
 
+static LISTENER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[async_trait]
 impl ReadinessCheck for HealthyCheck {
   fn name(&self) -> &'static str {
@@ -70,6 +72,7 @@ policy_file = "job-spec-policy.json"
 
 #[tokio::test]
 async fn startup_separates_ingress_and_exposes_operational_metadata() {
+  let _listener_guard = LISTENER_TEST_LOCK.lock().await;
   let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
     .await
     .unwrap();
@@ -117,6 +120,7 @@ async fn startup_separates_ingress_and_exposes_operational_metadata() {
 
 #[tokio::test]
 async fn shutdown_cancels_the_listener_and_waits_for_its_task() {
+  let _listener_guard = LISTENER_TEST_LOCK.lock().await;
   let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
     .await
     .unwrap();

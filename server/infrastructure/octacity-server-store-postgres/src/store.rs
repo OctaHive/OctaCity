@@ -12,34 +12,37 @@ use octacity_server_store::{
   ArtifactRecordStore, ArtifactUploadRecord, ArtifactVerificationResult, AuthenticateAgentRegistration,
   AuthenticatedAgentRegistration, AuthorizeCacheSession, BeginArtifactUpload, BeginArtifactUploadOutcome,
   BeginCacheSession, BeginCacheSessionOutcome, BuildConfigurationMutationOutcome, BuildControlStore, BuildQueryStore,
-  BuildRecord, CacheAuthorizationOutcome, CacheBlobPreparationOutcome, CacheDataAccess, CacheDataStore,
-  CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild,
-  CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimTriggerEvaluations,
-  CompleteInternalTriggerEvent, CompleteScheduleClaim, CompleteTriggerEvaluation, CompletionDisposition,
-  ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateInternalTriggerDefinition, CreateManagedWebhook,
-  CreateProject, CreateRepository, CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore,
-  DeleteAgentPool, DeleteAgentPoolOutcome, DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome,
-  DueScheduleClaim, ExpiredLeaseClaim, FailTriggerEvaluation, InternalTriggerDefinitionPage,
+  BuildRecord, BuildRetentionStore, CacheAuthorizationOutcome, CacheBlobPreparationOutcome, CacheDataAccess,
+  CacheDataStore, CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild,
+  CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimOrphanLogChunks,
+  ClaimRetentionWork, ClaimTriggerEvaluations, CompleteInternalTriggerEvent, CompleteOrphanLogChunk,
+  CompleteRetentionObject, CompleteRetentionSearch, CompleteScheduleClaim, CompleteTriggerEvaluation,
+  CompletionDisposition, ConfigurationStore, CreateAgentPool, CreateBuildConfiguration,
+  CreateInternalTriggerDefinition, CreateManagedWebhook, CreateProject, CreateRepository, CreateSchedule,
+  CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool, DeleteAgentPoolOutcome,
+  DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim, ExpiredLeaseClaim,
+  FailOrphanLogChunk, FailRetentionWork, FailTriggerEvaluation, FinishRetentionPass, InternalTriggerDefinitionPage,
   InternalTriggerDefinitionRecord, InternalTriggerDefinitionStore, InternalTriggerEventClaim,
   InternalTriggerEventStore, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome,
   JobCompletion, JobEventPage, JobEventReadStore, JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore,
   LeaseRecoveryStore, ListAgentPools, ListAgents, ListBuildCacheSessions, ListInternalTriggerDefinitions, ListProjects,
   ListPublishedArtifacts, LogChunkManifestStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore,
-  ManagedWebhookRecord, ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, PipelineMutationOutcome,
-  PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument,
-  ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion,
-  PublishBuildConfigurationVersion, PublishCacheAction, PublishCacheBlob, PublishInternalTriggerVersion,
-  PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool,
-  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents, ReassignAgentPool,
-  ReassignAgentPoolOutcome, RecordManagedWebhookRegistration, RecordTriggerEvaluationRevision, RecoverExpiredLease,
-  RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject, RenewLease, RepositoryMutationOutcome, ReserveArtifact,
-  ReserveTriggerEvaluation, RetryBuild, RetryDisposition, RevokeAgentCredential, RevokeCacheSession, ScheduleRecord,
-  ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome, SuppressWebhookDelivery, TransitionArtifact,
-  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionMutationOutcome, TriggerDefinitionRef,
-  TriggerDefinitionStore, TriggerEvaluationClaim, TriggerEvaluationOutcome, TriggerEvaluationReservation,
-  TriggerEvaluationWorkStore, TriggerKind, TriggerTarget, UnmanagedWebhookMutationOutcome, VerifyArtifactUpload,
-  WebhookConfigurationStore, WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore,
-  WebhookIntegrationReader, WebhookIntegrationRecord,
+  ManagedWebhookRecord, ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, OrphanLogChunkClaim,
+  OrphanLogChunkStore, PipelineMutationOutcome, PipelineStore, PrepareRetentionWork, ProjectDetails,
+  ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome, ProjectPolicyStore,
+  ProjectStore, PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishCacheAction, PublishCacheBlob,
+  PublishInternalTriggerVersion, PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion,
+  PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents,
+  ReassignAgentPool, ReassignAgentPoolOutcome, RecordManagedWebhookRegistration, RecordTriggerEvaluationRevision,
+  RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject, RenewLease, RepositoryMutationOutcome,
+  ReserveArtifact, ReserveTriggerEvaluation, RetentionPassOutcome, RetentionPreparation, RetentionWorkClaim,
+  RetryBuild, RetryDisposition, RevokeAgentCredential, RevokeCacheSession, ScheduleRecord, ScheduleStore,
+  StageOrphanLogChunk, StoreError, SuppressTrigger, SuppressTriggerOutcome, SuppressWebhookDelivery,
+  TransitionArtifact, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionMutationOutcome,
+  TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationClaim, TriggerEvaluationOutcome,
+  TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerKind, TriggerTarget,
+  UnmanagedWebhookMutationOutcome, VerifyArtifactUpload, WebhookConfigurationStore, WebhookDeliveryAdmissionStore,
+  WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader, WebhookIntegrationRecord,
 };
 use sqlx::PgPool;
 
@@ -206,6 +209,55 @@ impl CacheDataStore for PostgresStore {
   }
 }
 
+#[async_trait]
+impl BuildRetentionStore for PostgresStore {
+  async fn claim_retention_work(&self, request: ClaimRetentionWork) -> Result<Vec<RetentionWorkClaim>, StoreError> {
+    crate::retention::claim(&self.pool, request).await
+  }
+
+  async fn prepare_retention_work(&self, request: PrepareRetentionWork) -> Result<RetentionPreparation, StoreError> {
+    crate::retention::prepare(&self.pool, request).await
+  }
+
+  async fn complete_retention_search(&self, request: CompleteRetentionSearch) -> Result<(), StoreError> {
+    crate::retention::complete_search(&self.pool, request).await
+  }
+
+  async fn complete_retention_object(&self, request: CompleteRetentionObject) -> Result<(), StoreError> {
+    crate::retention::complete_object(&self.pool, request).await
+  }
+
+  async fn finish_retention_pass(&self, request: FinishRetentionPass) -> Result<RetentionPassOutcome, StoreError> {
+    crate::retention::finish_pass(&self.pool, request).await
+  }
+
+  async fn fail_retention_work(&self, request: FailRetentionWork) -> Result<(), StoreError> {
+    crate::retention::fail(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl OrphanLogChunkStore for PostgresStore {
+  async fn stage_orphan_log_chunk(&self, request: StageOrphanLogChunk) -> Result<(), StoreError> {
+    crate::retention::stage_orphan(&self.pool, request).await
+  }
+
+  async fn claim_orphan_log_chunks(
+    &self,
+    request: ClaimOrphanLogChunks,
+  ) -> Result<Vec<OrphanLogChunkClaim>, StoreError> {
+    crate::retention::claim_orphans(&self.pool, request).await
+  }
+
+  async fn complete_orphan_log_chunk(&self, request: CompleteOrphanLogChunk) -> Result<(), StoreError> {
+    crate::retention::complete_orphan(&self.pool, request).await
+  }
+
+  async fn fail_orphan_log_chunk(&self, request: FailOrphanLogChunk) -> Result<(), StoreError> {
+    crate::retention::fail_orphan(&self.pool, request).await
+  }
+}
+
 /// PostgreSQL adapter for mutations that cross a signed JobSpec boundary.
 #[derive(Clone)]
 pub struct PostgresAuthoritativeStore {
@@ -308,6 +360,28 @@ impl LogChunkManifestStore for PostgresStore {
 impl LogChunkManifestStore for PostgresAuthoritativeStore {
   async fn log_chunk_is_committed(&self, chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
     crate::job_events::is_chunk_committed(&self.store.pool, chunk_id).await
+  }
+}
+
+#[async_trait]
+impl OrphanLogChunkStore for PostgresAuthoritativeStore {
+  async fn stage_orphan_log_chunk(&self, request: StageOrphanLogChunk) -> Result<(), StoreError> {
+    crate::retention::stage_orphan(&self.store.pool, request).await
+  }
+
+  async fn claim_orphan_log_chunks(
+    &self,
+    request: ClaimOrphanLogChunks,
+  ) -> Result<Vec<OrphanLogChunkClaim>, StoreError> {
+    crate::retention::claim_orphans(&self.store.pool, request).await
+  }
+
+  async fn complete_orphan_log_chunk(&self, request: CompleteOrphanLogChunk) -> Result<(), StoreError> {
+    crate::retention::complete_orphan(&self.store.pool, request).await
+  }
+
+  async fn fail_orphan_log_chunk(&self, request: FailOrphanLogChunk) -> Result<(), StoreError> {
+    crate::retention::fail_orphan(&self.store.pool, request).await
   }
 }
 

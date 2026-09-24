@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use octacity_artifact_store::LogChunkStore;
@@ -7,7 +7,7 @@ use octacity_server_domain::EntityKind;
 use octacity_server_job::JobFailureClass;
 use octacity_server_store::{
   AppendJobEvents, DurableJobEvent, EventSequence, IdempotencyKey, JobCompletion, JobCompletionKind, JobEventKind,
-  JobExecutionStore, StoreError,
+  JobExecutionStore, OrphanLogChunkStore, StageOrphanLogChunk, StoreError,
 };
 use thiserror::Error;
 
@@ -56,6 +56,7 @@ pub struct AgentExecutionService<S> {
   store: Arc<S>,
   log_objects: Option<Arc<dyn LogChunkStore>>,
   log_redactor: LogRedactor,
+  orphan_cleanup_grace: Duration,
 }
 
 impl<S> AgentExecutionService<S> {
@@ -66,6 +67,7 @@ impl<S> AgentExecutionService<S> {
       store,
       log_objects: None,
       log_redactor: LogRedactor::default(),
+      orphan_cleanup_grace: Duration::ZERO,
     }
   }
 
@@ -75,12 +77,14 @@ impl<S> AgentExecutionService<S> {
     store: Arc<S>,
     log_objects: Arc<dyn LogChunkStore>,
     log_redactor: LogRedactor,
+    orphan_cleanup_grace: Duration,
   ) -> Self {
     Self {
       registrations,
       store,
       log_objects: Some(log_objects),
       log_redactor,
+      orphan_cleanup_grace,
     }
   }
 }
@@ -88,7 +92,7 @@ impl<S> AgentExecutionService<S> {
 #[async_trait]
 impl<S> AgentExecutionUseCases for AgentExecutionService<S>
 where
-  S: JobExecutionStore + 'static,
+  S: JobExecutionStore + OrphanLogChunkStore + 'static,
 {
   async fn append_events(&self, input: AppendAgentEventsInput) -> Result<u64, AgentExecutionError> {
     input
@@ -127,6 +131,23 @@ where
     let prepared = prepare_log_archive(input.request.events, durable_through, lease.job_id, &self.log_redactor)?;
     if !prepared.chunks.is_empty() {
       let objects = self.log_objects.as_ref().ok_or(AgentExecutionError::Unavailable)?;
+      let cleanup_after = accepted_at
+        .unix_millis()
+        .checked_add(
+          i64::try_from(self.orphan_cleanup_grace.as_millis()).map_err(|_| AgentExecutionError::Unavailable)?,
+        )
+        .and_then(|value| octacity_server_domain::Timestamp::from_unix_millis(value).ok())
+        .ok_or(AgentExecutionError::Unavailable)?;
+      for (manifest, _) in &prepared.chunks {
+        self
+          .store
+          .stage_orphan_log_chunk(StageOrphanLogChunk {
+            job_id: lease.job_id,
+            manifest: manifest.clone(),
+            cleanup_after,
+          })
+          .await?;
+      }
       for (manifest, bytes) in &prepared.chunks {
         objects
           .put_verified(manifest, bytes.clone())
@@ -134,7 +155,7 @@ where
           .map_err(map_log_store_error)?;
       }
     }
-    let log_chunks = prepared.chunks.iter().map(|(manifest, _)| manifest.clone()).collect();
+    let log_chunks: Vec<_> = prepared.chunks.iter().map(|(manifest, _)| manifest.clone()).collect();
     let events = prepared
       .events
       .into_iter()
@@ -154,12 +175,8 @@ where
       .sequence()
       .get();
     let request = AppendJobEvents::new(lease.access, events, accepted_at)?.with_log_chunks(log_chunks)?;
-    self
-      .store
-      .append_job_events(request)
-      .await
-      .map(|outcome| outcome.acknowledged_through.get().min(submitted_through))
-      .map_err(AgentExecutionError::from)
+    let outcome = self.store.append_job_events(request).await?;
+    Ok(outcome.acknowledged_through.get().min(submitted_through))
   }
 
   async fn complete_lease(&self, input: CompleteAgentLeaseInput) -> Result<(), AgentExecutionError> {
@@ -359,6 +376,7 @@ mod tests {
   struct RecordingStore {
     appends: Mutex<Vec<AppendJobEvents>>,
     completions: Mutex<Vec<JobCompletion>>,
+    staged_orphans: Mutex<Vec<StageOrphanLogChunk>>,
     fail_append: AtomicBool,
   }
 
@@ -413,6 +431,35 @@ mod tests {
         attempt_state: AttemptState::Succeeded,
         build_state: BuildState::Succeeded,
       })
+    }
+  }
+
+  #[async_trait]
+  impl OrphanLogChunkStore for RecordingStore {
+    async fn stage_orphan_log_chunk(&self, request: StageOrphanLogChunk) -> Result<(), StoreError> {
+      self.staged_orphans.lock().unwrap().push(request);
+      Ok(())
+    }
+
+    async fn claim_orphan_log_chunks(
+      &self,
+      _request: octacity_server_store::ClaimOrphanLogChunks,
+    ) -> Result<Vec<octacity_server_store::OrphanLogChunkClaim>, StoreError> {
+      unreachable!("execution routes do not run orphan cleanup")
+    }
+
+    async fn complete_orphan_log_chunk(
+      &self,
+      _request: octacity_server_store::CompleteOrphanLogChunk,
+    ) -> Result<(), StoreError> {
+      unreachable!("execution routes do not run orphan cleanup")
+    }
+
+    async fn fail_orphan_log_chunk(
+      &self,
+      _request: octacity_server_store::FailOrphanLogChunk,
+    ) -> Result<(), StoreError> {
+      unreachable!("execution routes do not run orphan cleanup")
     }
   }
 
@@ -491,6 +538,7 @@ mod tests {
       store.clone(),
       objects.clone(),
       LogRedactor::new([b"private-token".to_vec()]).unwrap(),
+      Duration::from_secs(60),
     );
 
     assert_eq!(run_ready(service.append_events(output_input())), Ok(2));
@@ -512,8 +560,13 @@ mod tests {
     });
     let store = Arc::new(RecordingStore::default());
     let objects = Arc::new(MemoryLogObjects::default());
-    let service =
-      AgentExecutionService::with_log_archive(registrations, store.clone(), objects.clone(), LogRedactor::default());
+    let service = AgentExecutionService::with_log_archive(
+      registrations,
+      store.clone(),
+      objects.clone(),
+      LogRedactor::default(),
+      Duration::from_secs(60),
+    );
 
     objects.unavailable.store(true, Ordering::Release);
     assert_eq!(
@@ -527,10 +580,10 @@ mod tests {
       run_ready(service.append_events(output_input())),
       Err(AgentExecutionError::Unavailable)
     );
-    assert_eq!(
-      objects.objects.lock().unwrap().len(),
-      1,
-      "rollback leaves one invisible orphan"
+    assert_eq!(objects.objects.lock().unwrap().len(), 1);
+    assert!(
+      !store.staged_orphans.lock().unwrap().is_empty(),
+      "a rejected transaction must leave durable cleanup work"
     );
     assert!(store.appends.lock().unwrap().is_empty());
   }

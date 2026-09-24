@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, path::Path, time::Duration};
 
 use super::{
-  AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, RetryingWorkerPolicy,
-  ServerConfig, SigningConfig, VcsIntegrationConfig, WebhookWorkerPolicy, WorkerPolicy,
+  AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, RetentionWorkerPolicy,
+  RetryingWorkerPolicy, ServerConfig, SigningConfig, VcsIntegrationConfig, WebhookWorkerPolicy, WorkerPolicy,
 };
 
 impl ServerConfig {
@@ -162,6 +162,27 @@ impl ServerConfig {
       self.log_index_initial_retry_milliseconds,
       self.log_index_maximum_retry_milliseconds,
     )
+  }
+
+  pub(crate) const fn retention_worker(&self) -> RetentionWorkerPolicy {
+    RetentionWorkerPolicy::new(
+      RetryingWorkerPolicy::new(
+        WorkerPolicy::new(
+          self.retention_poll_interval_milliseconds,
+          self.retention_claim_lifetime_milliseconds,
+          self.retention_work_batch_size,
+        ),
+        self.retention_max_attempts,
+        self.retention_initial_retry_milliseconds,
+        self.retention_maximum_retry_milliseconds,
+      ),
+      self.retention_object_batch_size,
+    )
+  }
+
+  /// Grace between staging a log object and making it eligible for orphan cleanup.
+  pub(crate) const fn orphan_log_cleanup_grace(&self) -> Duration {
+    Duration::from_millis(self.orphan_log_cleanup_grace_milliseconds)
   }
 
   pub(crate) const fn webhook_worker(&self) -> WebhookWorkerPolicy {

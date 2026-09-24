@@ -128,6 +128,10 @@ impl LogSearchIndex for PostgresLogSearchIndex {
        FROM log_search_documents WHERE project_id = ",
     );
     sql.push_bind(query.project_id.as_uuid());
+    sql.push(
+      " AND NOT EXISTS (SELECT 1 FROM builds WHERE builds.id = log_search_documents.build_id \
+       AND NOT builds.logs_visible)",
+    );
     match query.mode {
       LogSearchMode::FullText => {
         sql.push(" AND search_vector @@ plainto_tsquery('simple', ");
@@ -237,6 +241,20 @@ impl LogSearchIndex for PostgresLogSearchIndex {
       .execute(&mut *transaction)
       .await
       .map_err(unavailable)?;
+    sqlx::query(
+      "INSERT INTO log_search_applied_work \
+         (work_id, project_id, position, operation, request_digest, disposition) \
+       SELECT id, project_id, position, 'delete_build', \
+         decode(md5(id::TEXT) || md5('superseded:' || id::TEXT), 'hex'), 'superseded' \
+       FROM log_indexing_work WHERE project_id = $1 AND build_id = $2 AND position < $3 \
+       ON CONFLICT DO NOTHING",
+    )
+    .bind(request.project_id.as_uuid())
+    .bind(request.build_id.as_uuid())
+    .bind(position_number(request.position)?)
+    .execute(&mut *transaction)
+    .await
+    .map_err(unavailable)?;
     record_work(
       &mut transaction,
       AppliedWork {

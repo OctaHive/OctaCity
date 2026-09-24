@@ -73,8 +73,8 @@ fn log_search_freshness_uses_the_authoritative_watermark() {
       .unwrap();
 
     assert_eq!(page.freshness.indexed_through, None);
-    assert_eq!(page.freshness.committed_through, LogIndexPosition::new(2).ok());
-    assert!(!page.freshness.is_caught_up());
+    assert_eq!(page.freshness.committed_through, Some(2));
+    assert!(!page.freshness.caught_up);
   });
 }
 

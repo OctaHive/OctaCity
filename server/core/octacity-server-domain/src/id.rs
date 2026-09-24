@@ -154,3 +154,8 @@ opaque_id!(
   EntityKind::LogIndexingWork,
   "Opaque identity of one durable Build-log indexing operation."
 );
+opaque_id!(
+  RetentionWorkId,
+  EntityKind::RetentionWork,
+  "Opaque identity of one durable Build Result retention operation."
+);

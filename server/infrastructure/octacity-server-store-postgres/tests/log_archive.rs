@@ -7,9 +7,10 @@ use std::sync::Arc;
 use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_server_domain::{AttemptId, JobId, LeaseId, Timestamp};
 use octacity_server_store::{
-  AppendJobEvents, BuildLogStream, DurableJobEvent, EventSequence, JobClaim, JobClaimOutcome, JobEventKind,
-  JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, LogChunkManifest, LogChunkManifestStore as _,
-  LogIndexWorkStore as _, StoreError, TriggerAcceptanceStore as _,
+  AppendJobEvents, BuildLogStream, ClaimOrphanLogChunks, CompleteOrphanLogChunk, DurableJobEvent, EventSequence,
+  JobClaim, JobClaimOutcome, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow,
+  LogChunkManifest, LogChunkManifestStore as _, LogIndexWorkStore as _, OrphanLogChunkStore as _, StageOrphanLogChunk,
+  StoreError, TriggerAcceptanceStore as _, WorkerOwner,
   testing::{authoritative_store_contract_fixture, compatible_snapshot},
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
@@ -44,6 +45,53 @@ async fn concurrent_log_appends_allocate_one_contiguous_project_sequence() {
   let result = verify_concurrent_allocation(&database.pool).await;
   database.cleanup().await;
   result.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn orphan_log_cleanup_is_staged_and_claimed_durably() {
+  let database = TestDatabase::migrated().await;
+  let result = verify_orphan_staging(&database.pool).await;
+  database.cleanup().await;
+  result.unwrap();
+}
+
+async fn verify_orphan_staging(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+  let (_, _, _, job_id) = leased_job(pool).await?;
+  let manifest = LogChunkManifest::prepare(job_id, BuildLogStream::Stdout, 1, 1, b"orphan").unwrap();
+  let store = PostgresStore::new(pool.clone());
+  store
+    .stage_orphan_log_chunk(StageOrphanLogChunk {
+      job_id,
+      manifest: manifest.clone(),
+      cleanup_after: time(1_500),
+    })
+    .await?;
+  let owner = WorkerOwner::new("orphan:test")?;
+  assert!(
+    store
+      .claim_orphan_log_chunks(ClaimOrphanLogChunks::new(owner.clone(), time(1_499), time(2_000), 1)?)
+      .await?
+      .is_empty()
+  );
+  let claims = store
+    .claim_orphan_log_chunks(ClaimOrphanLogChunks::new(owner, time(1_500), time(2_000), 1)?)
+    .await?;
+  assert_eq!(claims.len(), 1);
+  assert_eq!(claims[0].manifest, manifest);
+  store
+    .complete_orphan_log_chunk(CompleteOrphanLogChunk {
+      chunk_id: manifest.chunk_id(),
+      owner: claims[0].owner.clone(),
+      completed_at: time(1_600),
+    })
+    .await?;
+  let state: String = sqlx::query_scalar("SELECT state FROM orphan_log_chunk_work WHERE chunk_id = $1")
+    .bind(manifest.chunk_id().as_uuid())
+    .fetch_one(pool)
+    .await?;
+  assert_eq!(state, "completed");
+  Ok(())
 }
 
 async fn verify_atomic_log_append(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {

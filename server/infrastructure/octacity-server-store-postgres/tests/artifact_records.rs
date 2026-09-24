@@ -30,6 +30,14 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
   seed_authoritative_prerequisites(&database.pool, &fixture).await?;
   let execution = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
   execution.accept_trigger(fixture.request.clone()).await?;
+  sqlx::query(
+    "UPDATE jobs SET job_spec_template = jsonb_set(job_spec_template, '{policy,outputs}', \
+     '{\"artifact_count\":16,\"artifact_bytes\":1048576,\"report_count\":16,\"report_bytes\":1048576,\"single_output_bytes\":1048576}'::jsonb) \
+     WHERE attempt_id = $1",
+  )
+  .bind(fixture.request.attempt_id.as_uuid())
+  .execute(&database.pool)
+  .await?;
   let grant = match execution
     .claim_ready_job(JobClaim::new(
       id(950),

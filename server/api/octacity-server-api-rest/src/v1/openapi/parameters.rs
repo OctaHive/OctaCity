@@ -80,6 +80,40 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         super::super::adapter::DEFAULT_PAGE_LIMIT,
       ),
     ]),
+    ParameterProfile::BuildLogSearch => parameters.extend([
+      json!({
+        "name": "query",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": octacity_server_application::MAX_LOG_SEARCH_QUERY_BYTES
+        }
+      }),
+      json!({
+        "name": "mode",
+        "in": "query",
+        "required": true,
+        "schema": schema_ref("BuildLogSearchMode")
+      }),
+      json!({"name": "build_id", "in": "query", "required": false, "schema": non_empty_string()}),
+      json!({"name": "attempt_id", "in": "query", "required": false, "schema": non_empty_string()}),
+      json!({"name": "job_id", "in": "query", "required": false, "schema": non_empty_string()}),
+      json!({
+        "name": "stream",
+        "in": "query",
+        "required": false,
+        "schema": schema_ref("BuildLogStream")
+      }),
+      json!({"name": "occurred_from_unix_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}),
+      json!({"name": "occurred_through_unix_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}),
+      cursor_parameter(),
+      limit_parameter(
+        octacity_server_application::MAX_LOG_SEARCH_PAGE_SIZE,
+        super::super::adapter::DEFAULT_LOG_SEARCH_LIMIT,
+      ),
+    ]),
   }
   if operation.idempotent_mutation {
     parameters.push(json!({

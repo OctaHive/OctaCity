@@ -59,6 +59,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "log_search_project_positions",
     "managed_webhook_operations",
     "outbox_entries",
+    "orphan_log_chunk_work",
     "pipeline_versions",
     "pipelines",
     "pools",

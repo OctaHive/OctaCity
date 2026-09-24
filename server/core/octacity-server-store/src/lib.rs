@@ -75,6 +75,8 @@ mod project_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod project_testing;
+mod retention_model;
+mod retention_port;
 
 #[cfg(any(test, feature = "test-support"))]
 mod pipeline_contract_testing;
@@ -198,12 +200,13 @@ pub use log_search::{
 };
 pub use log_search_port::{LogIndexWorkQueue, LogIndexWorkStore, LogSearchIndex};
 pub use model::{
-  AcceptTrigger, AcceptTriggerOutcome, EventDigest, EventSequence, ImmutableBuildInput, JobEventKind, LeaseFence,
-  MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES, MAX_JOB_EVENT_BATCH_BYTES,
-  MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_JOB_EVENT_READ_PAGE_SIZE,
-  MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS, MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob,
-  MaterializedJobPayload, MutationDisposition, RegistrationEpoch, SuppressTrigger, SuppressTriggerOutcome,
-  TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest, TriggerIntentDigestError,
+  AcceptTrigger, AcceptTriggerOutcome, BuildRetentionDeadlines, EventDigest, EventSequence, ImmutableBuildInput,
+  JobEventKind, LeaseFence, MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES,
+  MAX_JOB_EVENT_BATCH_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_KIND_BYTES, MAX_JOB_EVENT_PAYLOAD_BYTES,
+  MAX_JOB_EVENT_READ_PAGE_SIZE, MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS,
+  MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob, MaterializedJobPayload, MutationDisposition, RegistrationEpoch,
+  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest,
+  TriggerIntentDigestError,
 };
 pub use octacity_server_artifacts::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
@@ -242,6 +245,14 @@ pub use project_model::{
 pub use project_policy::ProjectPolicyDocument;
 pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
+pub use retention_model::{
+  BuildResultComponent, ClaimOrphanLogChunks, ClaimRetentionWork, CompleteOrphanLogChunk, CompleteRetentionObject,
+  CompleteRetentionSearch, FailOrphanLogChunk, FailRetentionWork, FinishRetentionPass,
+  MAX_RETENTION_FAILURE_CODE_BYTES, MAX_RETENTION_OBJECT_BATCH_SIZE, MAX_RETENTION_WORK_BATCH_SIZE,
+  OrphanLogChunkClaim, PrepareRetentionWork, RetentionObject, RetentionObjectIdentity, RetentionPassOutcome,
+  RetentionPhase, RetentionPreparation, RetentionWorkClaim, StageOrphanLogChunk,
+};
+pub use retention_port::{BuildRetentionStore, OrphanLogChunkStore};
 pub use schedule_model::{
   ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MAX_SCHEDULE_CLAIM_BATCH_SIZE,
   ScheduleRecord,

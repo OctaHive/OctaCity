@@ -287,6 +287,12 @@ impl JobSpecTemplate {
     self.policy.cache.as_ref()
   }
 
+  /// Borrows the immutable output quotas signed for this Job.
+  #[must_use]
+  pub const fn output_limits(&self) -> &OutputLimits {
+    &self.policy.outputs
+  }
+
   pub(super) const fn execution(&self) -> &JobExecutionTemplate {
     &self.execution
   }

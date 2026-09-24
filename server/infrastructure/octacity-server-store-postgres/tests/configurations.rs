@@ -241,8 +241,11 @@ async fn seed_build(
     "INSERT INTO builds \
        (id, project_id, build_configuration_id, build_configuration_version, pipeline_id, pipeline_version, \
         repository_id, repository_version, trigger_occurrence_id, immutable_revision, input_snapshot, \
-        effective_policy_snapshot, project_job_concurrency_limit, priority, state, version, created_at, updated_at) \
-     VALUES ($1, $2, $3, 1, $4, 1, $5, 1, $6, '0123456789abcdef', '{}', '{}', 1, 0, 'running', 1, now(), now())",
+        effective_policy_snapshot, project_job_concurrency_limit, priority, state, version, created_at, updated_at, \
+        metadata_retention_until, log_retention_until, artifact_retention_until, report_retention_until) \
+     VALUES ($1, $2, $3, 1, $4, 1, $5, 1, $6, '0123456789abcdef', '{}', '{}', 1, 0, 'running', 1, now(), now(), \
+             now() + interval '100 years', now() + interval '100 years', now() + interval '100 years', \
+             now() + interval '100 years')",
   )
   .bind(build_id.as_uuid())
   .bind(project_id.as_uuid())

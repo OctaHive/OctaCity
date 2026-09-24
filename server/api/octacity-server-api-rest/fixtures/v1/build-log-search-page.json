@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "chunk_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "build_id": "99999999-9999-4999-8999-999999999999",
+      "attempt_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "job_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "stream": "stderr",
+      "first_sequence": 41,
+      "last_sequence": 44,
+      "occurred_at_unix_ms": 1700000000000,
+      "snippet": "error[E0425]: cannot find value `answer` in this scope"
+    }
+  ],
+  "next_cursor": "1700000000000.eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "freshness": {
+    "indexed_through": 17,
+    "committed_through": 19,
+    "caught_up": false
+  }
+}

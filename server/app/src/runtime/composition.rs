@@ -5,8 +5,9 @@ use octacity_server_api_cache::{CacheDataPlaneApplication, cache_router};
 use octacity_server_api_webhook::{WebhookApplication, webhook_router};
 use octacity_server_application::{
   AgentExecutionService, AgentHeartbeatService, AgentLeaseService, AgentRegistrationService, ArtifactHandlers,
-  CacheDataPlaneService, CacheSessionHandlers, DurableRetryPolicy, InternalTriggerWorker, LeaseExpiryWorker,
-  LogIndexingWorker, ManagedWebhookRegistrationWorker, RevisionResolver, ScheduleWorker, WebhookDeliveryWorker,
+  BuildRetentionWorker, CacheDataPlaneService, CacheSessionHandlers, DurableRetryPolicy, InternalTriggerWorker,
+  LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker, RevisionResolver, ScheduleWorker,
+  WebhookDeliveryWorker,
 };
 use octacity_server_store::WorkerOwner;
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
@@ -22,7 +23,8 @@ use super::{
   vcs::HostedRevisionResolver,
   workers::{
     DurableWorkers, EXPIRY_WORKER_NAME, INTERNAL_TRIGGER_WORKER_NAME, LOG_INDEX_WORKER_NAME,
-    MANAGED_WEBHOOK_WORKER_NAME, MANUAL_TRIGGER_RETRY_WORKER_NAME, SCHEDULE_WORKER_NAME, WEBHOOK_DELIVERY_WORKER_NAME,
+    MANAGED_WEBHOOK_WORKER_NAME, MANUAL_TRIGGER_RETRY_WORKER_NAME, RETENTION_WORKER_NAME, SCHEDULE_WORKER_NAME,
+    WEBHOOK_DELIVERY_WORKER_NAME,
   },
 };
 use crate::{ServerConfig, readiness::WorkerHealth};
@@ -35,6 +37,7 @@ impl ServerRuntime {
     let schedule_policy = config.schedule_worker();
     let internal_trigger_policy = config.internal_trigger_worker();
     let log_index_policy = config.log_index_worker();
+    let retention_policy = config.retention_worker();
     let trigger_evaluation_policy = config.trigger_evaluation_worker();
     let webhook_policy = config.webhook_worker();
     let webhook_delivery_policy = webhook_policy.delivery();
@@ -118,6 +121,12 @@ impl ServerRuntime {
       log_index_policy.maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let retention_retry_policy = DurableRetryPolicy::new(
+      retention_policy.retrying().max_attempts(),
+      retention_policy.retrying().initial_retry_milliseconds(),
+      retention_policy.retrying().maximum_retry_milliseconds(),
+    )
+    .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
     let ApplicationComponents {
       management: management_application,
       trigger_service,
@@ -139,6 +148,7 @@ impl ServerRuntime {
       trigger_claim_lifetime: trigger_evaluation_policy.worker().claim_lifetime(),
       artifacts: artifact_service.clone(),
       cache: cache_service.clone(),
+      log_search_index: log_search_index.clone(),
     })?;
     let worker_health = Arc::new(WorkerHealth::new(
       EXPIRY_WORKER_NAME,
@@ -173,6 +183,16 @@ impl ServerRuntime {
         .saturating_add(config.readiness_check_interval()),
     ));
     resources.readiness.push(log_index_health.clone());
+    let retention_health = Arc::new(WorkerHealth::new(
+      RETENTION_WORKER_NAME,
+      retention_policy
+        .retrying()
+        .worker()
+        .poll_interval()
+        .saturating_add(retention_policy.retrying().worker().claim_lifetime())
+        .saturating_add(config.readiness_check_interval()),
+    ));
+    resources.readiness.push(retention_health.clone());
     let manual_trigger_retry_health = Arc::new(WorkerHealth::new(
       MANUAL_TRIGGER_RETRY_WORKER_NAME,
       trigger_evaluation_policy
@@ -202,6 +222,7 @@ impl ServerRuntime {
       placement_store,
       resources.object_storage.clone(),
       resources.log_redactor.clone(),
+      config.orphan_log_cleanup_grace(),
     );
     let heartbeat_service = AgentHeartbeatService::new(
       registration_service.clone(),
@@ -301,13 +322,23 @@ impl ServerRuntime {
           internal_trigger_health,
           log_indexing: LogIndexingWorker::new(
             registration_store.clone(),
-            log_search_index,
+            log_search_index.clone(),
             resources.object_storage.clone(),
             log_index_retry_policy,
           ),
           log_index_owner: WorkerOwner::new(format!("log-index:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
           log_index_health,
+          retention: BuildRetentionWorker::new(
+            registration_store.clone(),
+            log_search_index,
+            resources.object_storage.clone(),
+            resources.object_storage.clone(),
+            retention_retry_policy,
+          ),
+          retention_owner: WorkerOwner::new(format!("retention:{}", uuid::Uuid::new_v4()))
+            .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+          retention_health,
           manual_trigger_retries,
           manual_trigger_retry_owner: WorkerOwner::new(format!("manual-trigger:worker:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,

@@ -16,7 +16,7 @@ pub(crate) use infrastructure::{
 };
 pub(crate) use integrations::VcsIntegrationConfig;
 pub use loading::ServerConfigError;
-pub(crate) use workers::{RetryingWorkerPolicy, WebhookWorkerPolicy, WorkerPolicy};
+pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWorkerPolicy, WorkerPolicy};
 
 /// Validated operator configuration for the server process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -104,6 +104,22 @@ pub struct ServerConfig {
   log_index_initial_retry_milliseconds: u64,
   #[serde(default = "default_log_index_maximum_retry_milliseconds")]
   log_index_maximum_retry_milliseconds: u64,
+  #[serde(default = "default_retention_poll_interval_milliseconds")]
+  retention_poll_interval_milliseconds: u64,
+  #[serde(default = "default_retention_claim_lifetime_milliseconds")]
+  retention_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_retention_work_batch_size")]
+  retention_work_batch_size: u16,
+  #[serde(default = "default_retention_object_batch_size")]
+  retention_object_batch_size: u16,
+  #[serde(default = "default_retention_max_attempts")]
+  retention_max_attempts: u16,
+  #[serde(default = "default_retention_initial_retry_milliseconds")]
+  retention_initial_retry_milliseconds: u64,
+  #[serde(default = "default_retention_maximum_retry_milliseconds")]
+  retention_maximum_retry_milliseconds: u64,
+  #[serde(default = "default_orphan_log_cleanup_grace_milliseconds")]
+  orphan_log_cleanup_grace_milliseconds: u64,
   #[serde(
     default = "default_webhook_worker_poll_interval_milliseconds",
     alias = "webhook_delivery_poll_interval_milliseconds"

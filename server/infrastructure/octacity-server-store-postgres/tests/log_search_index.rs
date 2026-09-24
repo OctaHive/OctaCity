@@ -77,6 +77,51 @@ async fn postgres_search_uses_expected_indexes_and_matches_technical_and_mixed_l
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn search_never_returns_documents_for_authoritatively_hidden_build_logs() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  authoritative_fixture::seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer())
+    .accept_trigger(fixture.request.clone())
+    .await
+    .unwrap();
+
+  let project_id = fixture.request.build.project_id;
+  let build_id = fixture.request.build.id;
+  let mut indexed_document = document(750, project_id, "content hidden by retention");
+  indexed_document.build_id = build_id;
+  let index = PostgresLogSearchIndex::new(database.pool.clone());
+  index.index(write(751, 1, indexed_document)).await.unwrap();
+  assert_eq!(
+    index
+      .search(search(project_id, "hidden", LogSearchMode::FullText))
+      .await
+      .unwrap()
+      .hits
+      .len(),
+    1
+  );
+
+  sqlx::query("UPDATE builds SET logs_visible = false, logs_hidden_at = to_timestamp(2) WHERE id = $1")
+    .bind(build_id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  assert!(
+    index
+      .search(search(project_id, "hidden", LogSearchMode::FullText))
+      .await
+      .unwrap()
+      .hits
+      .is_empty()
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn document_rebuild_is_idempotent_after_projection_loss() {
   let database = TestDatabase::migrated().await;
   let project_id = id(800);

@@ -233,7 +233,10 @@ pub trait ArtifactStore: Send + Sync {
     expires_in: Duration,
   ) -> Result<DownloadAuthorization, ArtifactStoreError>;
 
-  /// Removes pending and published bytes for an object, idempotently.
+  /// Releases this logical object's pending and published bytes idempotently.
+  ///
+  /// Adapters that physically deduplicate content must reference-count inside
+  /// the adapter and remove shared bytes only after the final logical release.
   async fn delete(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError>;
 }
 
@@ -273,7 +276,10 @@ pub trait LogChunkStore: Send + Sync {
   /// Reads exact verified bytes for indexing and rebuild.
   async fn read_verified(&self, manifest: &LogChunkManifest) -> Result<Vec<u8>, LogChunkStoreError>;
 
-  /// Removes an invisible orphan or logically deleted chunk idempotently.
+  /// Releases an invisible orphan or logically deleted chunk idempotently.
+  ///
+  /// Adapters that physically deduplicate content must reference-count inside
+  /// the adapter and remove shared bytes only after the final logical release.
   async fn delete_chunk(&self, manifest: &LogChunkManifest) -> Result<(), LogChunkStoreError>;
 }
 

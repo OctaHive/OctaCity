@@ -92,6 +92,38 @@ pub(super) const fn default_log_index_maximum_retry_milliseconds() -> u64 {
   60_000
 }
 
+pub(super) const fn default_retention_poll_interval_milliseconds() -> u64 {
+  5_000
+}
+
+pub(super) const fn default_retention_claim_lifetime_milliseconds() -> u64 {
+  15 * 60 * 1_000
+}
+
+pub(super) const fn default_retention_work_batch_size() -> u16 {
+  8
+}
+
+pub(super) const fn default_retention_object_batch_size() -> u16 {
+  16
+}
+
+pub(super) const fn default_retention_max_attempts() -> u16 {
+  20
+}
+
+pub(super) const fn default_retention_initial_retry_milliseconds() -> u64 {
+  1_000
+}
+
+pub(super) const fn default_retention_maximum_retry_milliseconds() -> u64 {
+  5 * 60 * 1_000
+}
+
+pub(super) const fn default_orphan_log_cleanup_grace_milliseconds() -> u64 {
+  15 * 60 * 1_000
+}
+
 pub(super) const fn default_webhook_worker_poll_interval_milliseconds() -> u64 {
   1_000
 }

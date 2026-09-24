@@ -1,11 +1,11 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
   AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ArtifactDownload, ArtifactOutputType, ArtifactResource,
-  CacheSessionResource, CacheSessionState, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
-  CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest,
-  Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
-  IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES,
-  OperationalMetadata, ProjectResource, VersionPrecondition,
+  BuildLogSearchPage, CacheSessionResource, CacheSessionState, ContractValueError, CreateAgentPoolRequest,
+  CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest,
+  CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse,
+  IdempotencyKey, InternalTriggerDefinitionRequest, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
+  MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -24,6 +24,7 @@ const AGENT_POOL_PAGE: &str = include_str!("../fixtures/v1/agent-pool-page.json"
 const AGENT_PAGE: &str = include_str!("../fixtures/v1/agent-page.json");
 const ISSUE_AGENT_ENROLLMENT: &str = include_str!("../fixtures/v1/issue-agent-enrollment-request.json");
 const ISSUED_AGENT_ENROLLMENT: &str = include_str!("../fixtures/v1/issue-agent-enrollment-response.json");
+const BUILD_LOG_SEARCH_PAGE: &str = include_str!("../fixtures/v1/build-log-search-page.json");
 
 #[test]
 fn v1_golden_documents_round_trip_without_application_types() {
@@ -41,6 +42,7 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<CursorPage<AgentResource>>(AGENT_PAGE);
   assert_golden::<IssueAgentEnrollmentRequest>(ISSUE_AGENT_ENROLLMENT);
   assert_golden::<IssueAgentEnrollmentResponse>(ISSUED_AGENT_ENROLLMENT);
+  assert_golden::<BuildLogSearchPage>(BUILD_LOG_SEARCH_PAGE);
 }
 
 #[test]
@@ -116,6 +118,20 @@ fn cache_session_diagnostics_are_strict_and_contain_no_credential_material() {
   }
   value["bearer_token"] = json!("secret");
   assert!(serde_json::from_value::<CacheSessionResource>(value).is_err());
+}
+
+#[test]
+fn build_log_search_results_are_strict_and_backend_neutral() {
+  let page: BuildLogSearchPage = serde_json::from_str(BUILD_LOG_SEARCH_PAGE).unwrap();
+  assert!(!page.freshness.caught_up);
+
+  let mut value = serde_json::to_value(page).unwrap();
+  let hit = value["items"][0].as_object_mut().unwrap();
+  for forbidden in ["bucket", "object_key", "tsvector", "postgres_rank"] {
+    assert!(hit.get(forbidden).is_none());
+  }
+  hit.insert("object_key".to_owned(), json!("private/log/chunk"));
+  assert!(serde_json::from_value::<BuildLogSearchPage>(value).is_err());
 }
 
 #[test]

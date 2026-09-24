@@ -48,6 +48,44 @@ pub(crate) struct RetryingWorkerPolicy {
   maximum_retry_milliseconds: u64,
 }
 
+/// Retention scheduling and retry policy with an independent object-page bound.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RetentionWorkerPolicy {
+  retrying: RetryingWorkerPolicy,
+  object_batch_size: u16,
+}
+
+impl RetentionWorkerPolicy {
+  pub(crate) const fn new(retrying: RetryingWorkerPolicy, object_batch_size: u16) -> Self {
+    Self {
+      retrying,
+      object_batch_size,
+    }
+  }
+
+  pub(crate) const fn retrying(self) -> RetryingWorkerPolicy {
+    self.retrying
+  }
+
+  pub(crate) const fn object_batch_size(self) -> u16 {
+    self.object_batch_size
+  }
+
+  pub(crate) fn is_bounded(
+    self,
+    maximum_duration: Duration,
+    maximum_work_batch: u16,
+    maximum_object_batch: u16,
+    maximum_attempts: u16,
+  ) -> bool {
+    self
+      .retrying
+      .is_bounded(maximum_duration, maximum_work_batch, maximum_attempts)
+      && self.object_batch_size > 0
+      && self.object_batch_size <= maximum_object_batch
+  }
+}
+
 impl RetryingWorkerPolicy {
   pub(crate) const fn new(
     worker: WorkerPolicy,

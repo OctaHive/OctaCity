@@ -223,6 +223,19 @@ async fn persist_log_chunks(
   if request.log_chunks.is_empty() {
     return Ok(());
   }
+  let logs_visible: bool = sqlx::query_scalar("SELECT logs_visible FROM builds WHERE id = $1 FOR UPDATE")
+    .bind(lease.build_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(unavailable)?
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::Build,
+    })?;
+  if !logs_visible {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Build,
+    });
+  }
   sqlx::query(
     "INSERT INTO log_index_project_positions (project_id, committed_through) VALUES ($1, 0) \
      ON CONFLICT (project_id) DO NOTHING",
@@ -278,6 +291,12 @@ async fn persist_log_chunks(
     .execute(&mut **transaction)
     .await
     .map_err(|error| classify(error, EntityKind::LogIndexingWork))?;
+
+    sqlx::query("DELETE FROM orphan_log_chunk_work WHERE chunk_id = $1")
+      .bind(chunk.chunk_id().as_uuid())
+      .execute(&mut **transaction)
+      .await
+      .map_err(unavailable)?;
   }
   let updated = sqlx::query("UPDATE log_index_project_positions SET committed_through = $1 WHERE project_id = $2")
     .bind(position)

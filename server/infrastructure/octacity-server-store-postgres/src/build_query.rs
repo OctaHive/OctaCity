@@ -9,9 +9,9 @@ use octacity_server_domain::{
 use octacity_server_job::{JobFailureClass, JobRequirements, JobSpecTemplate, JobState};
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
-  AttemptRecord, BuildRecord, ImmutableBuildInput, JobAssignmentRecord, JobQueueRecord, JobRecord, JobTerminalRecord,
-  MaterializedJob, NormalizedTriggerOccurrence, StoreError, TriggerCausality, TriggerCause, TriggerDefinitionRef,
-  TriggerMetadata, TriggerOccurrenceState, TriggerTarget,
+  AttemptRecord, BuildRecord, BuildRetentionDeadlines, ImmutableBuildInput, JobAssignmentRecord, JobQueueRecord,
+  JobRecord, JobTerminalRecord, MaterializedJob, NormalizedTriggerOccurrence, StoreError, TriggerCausality,
+  TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerOccurrenceState, TriggerTarget,
 };
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, types::Json};
@@ -42,6 +42,10 @@ pub(crate) async fn build(pool: &PgPool, build_id: BuildId) -> Result<BuildRecor
     "SELECT build.id, build.project_id, build.build_configuration_id, build.build_configuration_version, \
             build.pipeline_id, build.pipeline_version, build.repository_id, build.repository_version, \
             build.immutable_revision, build.input_snapshot, build.effective_policy_snapshot, \
+            FLOOR(EXTRACT(EPOCH FROM build.metadata_retention_until) * 1000)::BIGINT AS metadata_retention_millis, \
+            FLOOR(EXTRACT(EPOCH FROM build.log_retention_until) * 1000)::BIGINT AS log_retention_millis, \
+            FLOOR(EXTRACT(EPOCH FROM build.artifact_retention_until) * 1000)::BIGINT AS artifact_retention_millis, \
+            FLOOR(EXTRACT(EPOCH FROM build.report_retention_until) * 1000)::BIGINT AS report_retention_millis, \
             build.project_job_concurrency_limit, build.priority, \
             build.state, build.version, \
             FLOOR(EXTRACT(EPOCH FROM build.created_at) * 1000)::BIGINT AS created_at_millis, \
@@ -57,7 +61,7 @@ pub(crate) async fn build(pool: &PgPool, build_id: BuildId) -> Result<BuildRecor
             FLOOR(EXTRACT(EPOCH FROM occurrence.updated_at) * 1000)::BIGINT AS trigger_updated_at_millis \
      FROM builds AS build \
      JOIN trigger_occurrences AS occurrence ON occurrence.id = build.trigger_occurrence_id \
-     WHERE build.id = $1",
+     WHERE build.id = $1 AND build.metadata_visible",
   )
   .bind(build_id.as_uuid())
   .fetch_optional(pool)
@@ -71,10 +75,12 @@ pub(crate) async fn build(pool: &PgPool, build_id: BuildId) -> Result<BuildRecor
 
 pub(crate) async fn attempt(pool: &PgPool, attempt_id: AttemptId) -> Result<AttemptRecord, StoreError> {
   let row: AttemptRow = sqlx::query_as(
-    "SELECT id, build_id, attempt_number, retry_of_attempt_id, state, version, \
-            FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
-            FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis \
-     FROM attempts WHERE id = $1",
+    "SELECT attempt.id, attempt.build_id, attempt.attempt_number, attempt.retry_of_attempt_id, \
+            attempt.state, attempt.version, \
+            FLOOR(EXTRACT(EPOCH FROM attempt.created_at) * 1000)::BIGINT AS created_at_millis, \
+            FLOOR(EXTRACT(EPOCH FROM attempt.updated_at) * 1000)::BIGINT AS updated_at_millis \
+     FROM attempts AS attempt JOIN builds AS build ON build.id = attempt.build_id \
+     WHERE attempt.id = $1 AND build.metadata_visible",
   )
   .bind(attempt_id.as_uuid())
   .fetch_optional(pool)
@@ -88,10 +94,12 @@ pub(crate) async fn attempt(pool: &PgPool, attempt_id: AttemptId) -> Result<Atte
 
 pub(crate) async fn latest_attempt(pool: &PgPool, build_id: BuildId) -> Result<AttemptRecord, StoreError> {
   let row: AttemptRow = sqlx::query_as(
-    "SELECT id, build_id, attempt_number, retry_of_attempt_id, state, version, \
-            FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
-            FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis \
-     FROM attempts WHERE build_id = $1 ORDER BY attempt_number DESC LIMIT 1",
+    "SELECT attempt.id, attempt.build_id, attempt.attempt_number, attempt.retry_of_attempt_id, \
+            attempt.state, attempt.version, \
+            FLOOR(EXTRACT(EPOCH FROM attempt.created_at) * 1000)::BIGINT AS created_at_millis, \
+            FLOOR(EXTRACT(EPOCH FROM attempt.updated_at) * 1000)::BIGINT AS updated_at_millis \
+     FROM attempts AS attempt JOIN builds AS build ON build.id = attempt.build_id \
+     WHERE attempt.build_id = $1 AND build.metadata_visible ORDER BY attempt.attempt_number DESC LIMIT 1",
   )
   .bind(build_id.as_uuid())
   .fetch_optional(pool)
@@ -147,6 +155,8 @@ async fn load_job_rows(
             FLOOR(EXTRACT(EPOCH FROM completion.completed_at) * 1000)::BIGINT AS completed_at_millis, \
             COALESCE(event_cursor.sequence, 0)::BIGINT AS event_cursor \
      FROM jobs AS job \
+     JOIN attempts AS attempt ON attempt.id = job.attempt_id \
+     JOIN builds AS build ON build.id = attempt.build_id \
      LEFT JOIN ready_queue_entries AS queue ON queue.job_id = job.id \
      LEFT JOIN LATERAL (\
        SELECT lease.pool_id, registration.agent_id \
@@ -156,7 +166,8 @@ async fn load_job_rows(
      ) AS assignment ON TRUE \
      LEFT JOIN job_completions AS completion ON completion.job_id = job.id \
      LEFT JOIN LATERAL (SELECT MAX(sequence) AS sequence FROM job_events WHERE job_id = job.id) AS event_cursor ON TRUE \
-     WHERE ($1::uuid IS NULL OR job.id = $1) AND ($2::uuid IS NULL OR job.attempt_id = $2) \
+     WHERE build.metadata_visible AND ($1::uuid IS NULL OR job.id = $1) \
+       AND ($2::uuid IS NULL OR job.attempt_id = $2) \
      ORDER BY job.id",
   )
   .bind(job_id)
@@ -201,6 +212,10 @@ struct BuildRow {
   immutable_revision: String,
   input_snapshot: Json<Value>,
   effective_policy_snapshot: Json<Value>,
+  metadata_retention_millis: i64,
+  log_retention_millis: i64,
+  artifact_retention_millis: i64,
+  report_retention_millis: i64,
   project_job_concurrency_limit: i64,
   priority: i64,
   state: String,
@@ -257,6 +272,12 @@ impl TryFrom<BuildRow> for BuildRecord {
         immutable_revision: ImmutableRevision::new(row.immutable_revision).map_err(|_| StoreError::Unavailable)?,
         input_snapshot: row.input_snapshot.0,
         effective_policy_snapshot: row.effective_policy_snapshot.0,
+        retention: BuildRetentionDeadlines {
+          metadata: timestamp(row.metadata_retention_millis)?,
+          logs: timestamp(row.log_retention_millis)?,
+          artifacts: timestamp(row.artifact_retention_millis)?,
+          reports: timestamp(row.report_retention_millis)?,
+        },
         project_job_concurrency_limit: u32::try_from(row.project_job_concurrency_limit)
           .map_err(|_| StoreError::Unavailable)?,
         priority: row.priority,

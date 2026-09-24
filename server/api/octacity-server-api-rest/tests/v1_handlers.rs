@@ -13,23 +13,26 @@ use octacity_server_api_rest::{
   v1::{ErrorCode, MANAGEMENT_OPERATIONS},
 };
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, CancelBuildCommand, Command,
-  CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand,
-  CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
-  CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand,
-  DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery,
-  GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
-  GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
+  AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, BuildLogSearchCursorProjection,
+  BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection,
+  BuildLogStream, CancelBuildCommand, Command, CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
+  CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
+  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
+  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
+  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery, GetInternalTriggerQuery,
+  GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
   ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
-  ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand, ManualTriggerError,
+  ListInternalTriggersQuery, ListProjectsQuery, LogSearchError, ManageWebhookRegistrationCommand, ManualTriggerError,
   MoveProjectCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
   PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
   PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand,
-  RenameProjectCommand, RetryBuildCommand,
+  RenameProjectCommand, RetryBuildCommand, SearchBuildLogsQuery,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
 
+#[path = "v1_handlers/log_search.rs"]
+mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
 mod openapi_drift;
 mod support;
@@ -46,6 +49,7 @@ const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/ma
 #[derive(Default)]
 struct RecordingApplication {
   calls: Mutex<Vec<&'static str>>,
+  log_search_queries: Mutex<Vec<SearchBuildLogsQuery>>,
   successful_workflow: bool,
   capability_unavailable_for_managed: bool,
 }
@@ -54,6 +58,7 @@ impl RecordingApplication {
   fn successful_workflow() -> Self {
     Self {
       calls: Mutex::default(),
+      log_search_queries: Mutex::default(),
       successful_workflow: true,
       capability_unavailable_for_managed: false,
     }
@@ -133,6 +138,49 @@ unavailable_query!(ListBuildArtifactsQuery, "list_build_artifacts");
 unavailable_query!(AuthorizeArtifactDownloadQuery, "authorize_artifact_download");
 unavailable_query!(GetCacheSessionQuery, "get_cache_session");
 unavailable_query!(ListBuildCacheSessionsQuery, "list_build_cache_sessions");
+
+#[async_trait]
+impl QueryHandler<SearchBuildLogsQuery> for RecordingApplication {
+  type Error = BuildLogSearchError;
+
+  async fn handle_query(
+    &self,
+    query: SearchBuildLogsQuery,
+  ) -> Result<<SearchBuildLogsQuery as Query>::Outcome, Self::Error> {
+    self.record("search_build_logs");
+    self.log_search_queries.lock().unwrap().push(query.clone());
+    if !self.successful_workflow {
+      return Err(BuildLogSearchError::SearchIndex(LogSearchError::Unavailable));
+    }
+    let has_cursor = query.search.after.is_some();
+    Ok(BuildLogSearchPageProjection {
+      items: if has_cursor {
+        Vec::new()
+      } else {
+        vec![BuildLogSearchHitProjection {
+          chunk_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".parse().unwrap(),
+          build_id: "99999999-9999-4999-8999-999999999999".parse().unwrap(),
+          attempt_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".parse().unwrap(),
+          job_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".parse().unwrap(),
+          stream: BuildLogStream::Stderr,
+          first_sequence: 41,
+          last_sequence: 44,
+          occurred_at_unix_ms: 1_700_000_000_000,
+          snippet: "error[E0425]: cannot find value `answer` in this scope".to_owned(),
+        }]
+      },
+      next_cursor: (!has_cursor).then(|| BuildLogSearchCursorProjection {
+        occurred_at_unix_ms: 1_700_000_000_000,
+        chunk_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".parse().unwrap(),
+      }),
+      freshness: BuildLogSearchFreshnessProjection {
+        indexed_through: Some(17),
+        committed_through: Some(19),
+        caught_up: false,
+      },
+    })
+  }
+}
 
 #[async_trait]
 impl CommandHandler<CreateManagedWebhookCommand> for RecordingApplication {
@@ -525,6 +573,11 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       &format!("/api/v1/jobs/{job_id}/events?after=0&limit=100&wait_ms=0"),
       None,
     ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/build-logs/search?query=error&mode=full_text"),
+      None,
+    ),
     empty_request("GET", &format!("/api/v1/artifacts/{artifact_id}"), None),
     empty_request("GET", &format!("/api/v1/builds/{build_id}/artifacts?limit=10"), None),
     empty_request("POST", &format!("/api/v1/artifacts/{artifact_id}/download"), None),
@@ -621,6 +674,7 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "get_attempt",
       "get_job",
       "read_job_events",
+      "search_build_logs",
       "get_artifact",
       "list_build_artifacts",
       "authorize_artifact_download",

@@ -47,6 +47,8 @@ pub enum EntityKind {
   LogChunk,
   /// Durable request to update the derived Build-log search projection.
   LogIndexingWork,
+  /// Durable Build Result retention operation.
+  RetentionWork,
 }
 
 impl std::fmt::Display for EntityKind {
@@ -73,6 +75,7 @@ impl std::fmt::Display for EntityKind {
       Self::Orchestration => "orchestration",
       Self::LogChunk => "log_chunk",
       Self::LogIndexingWork => "log_indexing_work",
+      Self::RetentionWork => "retention_work",
     })
   }
 }

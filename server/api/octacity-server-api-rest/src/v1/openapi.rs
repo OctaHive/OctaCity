@@ -49,6 +49,7 @@ enum ParameterProfile {
   ArtifactList,
   CacheSessionList,
   InternalTriggerList,
+  BuildLogSearch,
 }
 
 impl ManagementOperation {
@@ -523,6 +524,19 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     false
   )
   .with_parameters(ParameterProfile::JobEvents),
+  operation!(
+    "GET",
+    "/api/v1/projects/{project_id}/build-logs/search",
+    "searchBuildLogs",
+    "Build Logs",
+    "Search redacted committed Build logs",
+    None,
+    "BuildLogSearchPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::BuildLogSearch),
   operation!(
     "POST",
     "/api/v1/agent-pools",

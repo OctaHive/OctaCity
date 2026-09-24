@@ -33,6 +33,7 @@ mod job_event_cqrs;
 mod lease_expiry;
 mod log_archive;
 mod log_indexing;
+mod log_search;
 mod management_input;
 mod manual_trigger;
 mod pipeline_cqrs;
@@ -40,19 +41,17 @@ mod pool_cqrs;
 mod project_cqrs;
 mod project_policy;
 mod projections;
+mod retention;
 mod retry_policy;
 mod schedule_cqrs;
 mod snapshots;
 mod transaction;
 mod webhook_delivery;
 
-use std::sync::Arc;
-
-use octacity_server_domain::ProjectId;
-use octacity_server_store::{
-  LogIndexWorkStore, LogSearchError, LogSearchFreshness, LogSearchIndex, LogSearchPage, LogSearchQuery, StoreError,
+pub use octacity_server_store::{
+  BuildLogStream, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode, LogSearchQuery,
+  MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, StoreError,
 };
-use thiserror::Error;
 
 pub use agent_cqrs::{
   AgentCapacityProjection, AgentCommandOutcome, AgentHandlers, AgentInventoryProjection, AgentPageProjection,
@@ -116,8 +115,13 @@ pub use job_event_cqrs::{
   JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
 };
 pub use lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
-pub use log_archive::{LogRedactor, OrphanLogChunkCleaner, OrphanLogChunkCleanup};
+pub use log_archive::LogRedactor;
 pub use log_indexing::{LogIndexingBatchOutcome, LogIndexingWorker, LogIndexingWorkerError};
+pub use log_search::{
+  BuildLogSearch, BuildLogSearchCursorInput, BuildLogSearchCursorProjection, BuildLogSearchError,
+  BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchInput, BuildLogSearchPageProjection,
+  GetBuildLogFreshnessQuery, SearchBuildLogsQuery,
+};
 pub use management_input::{
   InternalTriggerDefinitionInput, ManagedWebhookInput, ManagementInputError, ManagementInputFactory,
   ManualTriggerDefinitionInput, ManualTriggerInput, ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
@@ -173,6 +177,7 @@ pub use projections::{
   RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
   Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
 };
+pub use retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};
 pub use retry_policy::{DurableRetryPolicy, DurableRetryPolicyError};
 pub use schedule_cqrs::{
   CreateScheduleCommand, GetScheduleQuery, ScheduleBatchOutcome, ScheduleCommandOutcome, ScheduleHandlers,
@@ -216,126 +221,3 @@ pub const MAX_WEBHOOK_DELIVERY_BYTES: usize = octacity_server_store::MAX_STORED_
 pub const MAX_WEBHOOK_HEADER_NAME_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_NAME_BYTES;
 /// Maximum retained bytes in one allowlisted webhook header value.
 pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_VALUE_BYTES;
-
-/// Typed application query for bounded redacted Build-log search.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SearchBuildLogsQuery {
-  /// Backend-neutral validated search shape.
-  pub search: LogSearchQuery,
-}
-
-impl Query for SearchBuildLogsQuery {
-  type Outcome = LogSearchPage;
-}
-
-/// Typed application query for Build-log projection freshness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct GetBuildLogFreshnessQuery {
-  /// Project whose authoritative and indexed watermarks are requested.
-  pub project_id: ProjectId,
-}
-
-impl Query for GetBuildLogFreshnessQuery {
-  type Outcome = LogSearchFreshness;
-}
-
-/// Application query service that combines authoritative indexing work with a
-/// replaceable derived Build-log search projection.
-pub struct BuildLogSearch<W, I> {
-  work: Arc<W>,
-  index: Arc<I>,
-}
-
-impl<W, I> BuildLogSearch<W, I>
-where
-  W: LogIndexWorkStore,
-  I: LogSearchIndex,
-{
-  /// Creates a query service from authoritative and derived store ports.
-  pub fn new(work: Arc<W>, index: Arc<I>) -> Self {
-    Self { work, index }
-  }
-
-  /// Searches logs and reports freshness against the durable committed watermark.
-  pub async fn search(&self, query: LogSearchQuery) -> Result<LogSearchPage, BuildLogSearchError> {
-    query.validate().map_err(|source| {
-      BuildLogSearchError::SearchIndex(LogSearchError::invalid(
-        octacity_server_store::LogSearchOperation::Search,
-        source,
-      ))
-    })?;
-    let committed_through = self
-      .work
-      .committed_log_index_position(query.project_id)
-      .await
-      .map_err(BuildLogSearchError::AuthoritativeStore)?;
-    self
-      .index
-      .search(query)
-      .await
-      .map(|indexed| LogSearchPage {
-        hits: indexed.hits,
-        next_cursor: indexed.next_cursor,
-        freshness: LogSearchFreshness {
-          indexed_through: indexed.indexed_through,
-          committed_through,
-        },
-      })
-      .map_err(BuildLogSearchError::SearchIndex)
-  }
-
-  /// Reports projection freshness against the durable committed watermark.
-  pub async fn freshness(&self, project_id: ProjectId) -> Result<LogSearchFreshness, BuildLogSearchError> {
-    let committed_through = self
-      .work
-      .committed_log_index_position(project_id)
-      .await
-      .map_err(BuildLogSearchError::AuthoritativeStore)?;
-    let indexed_through = self
-      .index
-      .indexed_through(project_id)
-      .await
-      .map_err(BuildLogSearchError::SearchIndex)?;
-    Ok(LogSearchFreshness {
-      indexed_through,
-      committed_through,
-    })
-  }
-}
-
-#[async_trait::async_trait]
-impl<W, I> QueryHandler<SearchBuildLogsQuery> for BuildLogSearch<W, I>
-where
-  W: LogIndexWorkStore + 'static,
-  I: LogSearchIndex + 'static,
-{
-  type Error = BuildLogSearchError;
-
-  async fn handle_query(&self, query: SearchBuildLogsQuery) -> Result<LogSearchPage, Self::Error> {
-    self.search(query.search).await
-  }
-}
-
-#[async_trait::async_trait]
-impl<W, I> QueryHandler<GetBuildLogFreshnessQuery> for BuildLogSearch<W, I>
-where
-  W: LogIndexWorkStore + 'static,
-  I: LogSearchIndex + 'static,
-{
-  type Error = BuildLogSearchError;
-
-  async fn handle_query(&self, query: GetBuildLogFreshnessQuery) -> Result<LogSearchFreshness, Self::Error> {
-    self.freshness(query.project_id).await
-  }
-}
-
-/// Safe application-level failure from a Build-log search query.
-#[derive(Debug, Error)]
-pub enum BuildLogSearchError {
-  /// The authoritative watermark could not be read.
-  #[error("authoritative log-index watermark is unavailable")]
-  AuthoritativeStore(#[source] StoreError),
-  /// The derived search projection rejected or could not execute the query.
-  #[error("build-log search index failed")]
-  SearchIndex(#[source] LogSearchError),
-}

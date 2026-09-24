@@ -1,10 +1,10 @@
-use std::{fmt, sync::Arc};
+use std::fmt;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use octacity_artifact_store::{LogChunkStore, LogChunkStoreError};
+use octacity_artifact_store::LogChunkStoreError;
 use octacity_protocol::{AttemptEventEnvelope, AttemptEventKind};
 use octacity_server_domain::JobId;
-use octacity_server_store::{BuildLogStream, LogChunkManifest, LogChunkManifestStore, MAX_LOG_CHUNK_BYTES};
+use octacity_server_store::{BuildLogStream, LogChunkManifest, MAX_LOG_CHUNK_BYTES};
 use zeroize::Zeroizing;
 
 use crate::AgentExecutionError;
@@ -279,66 +279,14 @@ fn mask_url_queries(bytes: &mut [u8]) {
   }
 }
 
-/// Result of one safe orphan cleanup attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OrphanLogChunkCleanup {
-  /// No deletion occurred because the manifest is committed and visible.
-  Retained,
-  /// The unreferenced immutable object was removed idempotently.
-  Deleted,
-}
-
-/// Deletes candidate objects only after authoritative visibility is checked.
-pub struct OrphanLogChunkCleaner<S> {
-  manifests: Arc<S>,
-  objects: Arc<dyn LogChunkStore>,
-}
-
-impl<S> OrphanLogChunkCleaner<S>
-where
-  S: LogChunkManifestStore,
-{
-  /// Creates a cleaner from authoritative metadata and its byte store.
-  pub fn new(manifests: Arc<S>, objects: Arc<dyn LogChunkStore>) -> Self {
-    Self { manifests, objects }
-  }
-
-  /// Deletes one known candidate only when no committed visible manifest owns it.
-  pub async fn cleanup(&self, manifest: &LogChunkManifest) -> Result<OrphanLogChunkCleanup, AgentExecutionError> {
-    if self
-      .manifests
-      .log_chunk_is_committed(manifest.chunk_id())
-      .await
-      .map_err(AgentExecutionError::from)?
-    {
-      return Ok(OrphanLogChunkCleanup::Retained);
-    }
-    self
-      .objects
-      .delete_chunk(manifest)
-      .await
-      .map_err(|_| AgentExecutionError::Unavailable)?;
-    Ok(OrphanLogChunkCleanup::Deleted)
-  }
-}
-
 pub(crate) fn map_log_store_error(_: LogChunkStoreError) -> AgentExecutionError {
   AgentExecutionError::Unavailable
 }
 
 #[cfg(test)]
 mod tests {
-  use std::{
-    future::Future,
-    sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
-  };
-
   use super::*;
-  use async_trait::async_trait;
-  use octacity_artifact_store::LogChunkWrite;
   use octacity_protocol::RunnerEventPayload;
-  use octacity_server_store::StoreError;
   use uuid::Uuid;
 
   #[test]
@@ -377,93 +325,6 @@ mod tests {
 
     assert!(!stdout.windows(12).any(|candidate| candidate == b"token-secret"));
     assert_eq!(stdout, b"before ************ after");
-  }
-
-  #[test]
-  fn orphan_cleanup_checks_authoritative_visibility_before_deleting_bytes() {
-    let job = JobId::from_uuid(Uuid::from_u128(1)).unwrap();
-    let manifest = LogChunkManifest::prepare(job, BuildLogStream::Stdout, 1, 1, b"safe").unwrap();
-    let objects = Arc::new(CleanupObjects::new(manifest.clone(), b"safe".to_vec()));
-    let cleaner = OrphanLogChunkCleaner::new(
-      Arc::new(VisibilityStore(false)),
-      objects.clone() as Arc<dyn LogChunkStore>,
-    );
-    assert_eq!(
-      run_ready(cleaner.cleanup(&manifest)),
-      Ok(OrphanLogChunkCleanup::Deleted)
-    );
-    assert!(!*objects.present.lock().unwrap());
-
-    let objects = Arc::new(CleanupObjects::new(manifest.clone(), b"safe".to_vec()));
-    let cleaner = OrphanLogChunkCleaner::new(
-      Arc::new(VisibilityStore(true)),
-      objects.clone() as Arc<dyn LogChunkStore>,
-    );
-    assert_eq!(
-      run_ready(cleaner.cleanup(&manifest)),
-      Ok(OrphanLogChunkCleanup::Retained)
-    );
-    assert!(*objects.present.lock().unwrap());
-  }
-
-  struct VisibilityStore(bool);
-
-  #[async_trait]
-  impl LogChunkManifestStore for VisibilityStore {
-    async fn log_chunk_is_committed(&self, _chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
-      Ok(self.0)
-    }
-  }
-
-  struct CleanupObjects {
-    manifest: LogChunkManifest,
-    bytes: Vec<u8>,
-    present: Mutex<bool>,
-  }
-
-  impl CleanupObjects {
-    fn new(manifest: LogChunkManifest, bytes: Vec<u8>) -> Self {
-      Self {
-        manifest,
-        bytes,
-        present: Mutex::new(true),
-      }
-    }
-  }
-
-  #[async_trait]
-  impl LogChunkStore for CleanupObjects {
-    async fn put_verified(
-      &self,
-      _manifest: &LogChunkManifest,
-      _bytes: Vec<u8>,
-    ) -> Result<LogChunkWrite, LogChunkStoreError> {
-      unreachable!()
-    }
-
-    async fn read_verified(&self, manifest: &LogChunkManifest) -> Result<Vec<u8>, LogChunkStoreError> {
-      if !*self.present.lock().unwrap() || manifest != &self.manifest {
-        return Err(LogChunkStoreError::NotFound);
-      }
-      Ok(self.bytes.clone())
-    }
-
-    async fn delete_chunk(&self, manifest: &LogChunkManifest) -> Result<(), LogChunkStoreError> {
-      if manifest != &self.manifest {
-        return Err(LogChunkStoreError::NotFound);
-      }
-      *self.present.lock().unwrap() = false;
-      Ok(())
-    }
-  }
-
-  fn run_ready<T>(future: impl Future<Output = T>) -> T {
-    let mut future = std::pin::pin!(future);
-    let mut context = Context::from_waker(Waker::noop());
-    match future.as_mut().poll(&mut context) {
-      Poll::Ready(value) => value,
-      Poll::Pending => panic!("in-memory cleanup test unexpectedly waited"),
-    }
   }
 
   fn event(sequence: u64, bytes: &[u8]) -> AttemptEventEnvelope {

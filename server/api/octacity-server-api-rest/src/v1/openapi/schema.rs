@@ -3,6 +3,7 @@ mod artifact;
 mod cache;
 mod core;
 mod execution;
+mod log_search;
 mod operational;
 mod trigger;
 

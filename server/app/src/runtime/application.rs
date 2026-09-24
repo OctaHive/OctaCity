@@ -3,22 +3,23 @@ use std::sync::Arc;
 use octacity_server_api_rest::{
   JobEventNotificationHub,
   v1::{
-    AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
-    CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-    ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
-    ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-    PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+    AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
+    BuildManagementApplication, CacheManagementApplication, CatalogManagementApplication,
+    ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
+    InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
+    ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
+    ProjectManagementApplication, ScheduleManagementApplication,
   },
 };
 use octacity_server_application::{
   AgentEnrollmentHandler, AgentHandlers, AgentPoolHandlers, ArtifactHandlers, BuildConfigurationHandlers,
-  BuildHandlers, CacheSessionHandlers, DefinitionHandlers, DurableManualTriggerService, DurableRetryPolicy,
-  InternalTriggerHandlers, JobEventLongPoll, JobSpecToolchainPolicy, ManualTriggerRetryWorker, ManualTriggerService,
-  PipelineHandlers, ProjectHandlers, RevisionResolver, ScheduleHandlers, StoreBackedEffectiveProjectPolicySource,
-  StoreBackedManualTriggerContext, WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider,
-  WebhookManagementService,
+  BuildHandlers, BuildLogSearch, CacheSessionHandlers, DefinitionHandlers, DurableManualTriggerService,
+  DurableRetryPolicy, InternalTriggerHandlers, JobEventLongPoll, JobSpecToolchainPolicy, ManualTriggerRetryWorker,
+  ManualTriggerService, PipelineHandlers, ProjectHandlers, RevisionResolver, ScheduleHandlers,
+  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, WebhookDeliveryVerifier,
+  WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
 };
-use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
+use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use octacity_server_webhook::WebhookAdapterRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -57,6 +58,7 @@ pub(super) struct ApplicationAssembly {
   pub(super) trigger_claim_lifetime: std::time::Duration,
   pub(super) artifacts: Arc<ArtifactHandlers<PostgresStore, octacity_artifact_s3::S3ArtifactStore>>,
   pub(super) cache: Arc<CacheSessionHandlers<PostgresStore>>,
+  pub(super) log_search_index: Arc<PostgresLogSearchIndex>,
 }
 
 pub(super) fn management_application(
@@ -76,6 +78,7 @@ pub(super) fn management_application(
     trigger_claim_lifetime,
     artifacts,
     cache,
+    log_search_index,
   } = assembly;
   let projects = Arc::new(ProjectHandlers::new(store.clone()));
   let pipelines = Arc::new(PipelineHandlers::new(store.clone()));
@@ -133,9 +136,10 @@ pub(super) fn management_application(
   ));
   let webhook_ingress = Arc::new(WebhookIngressService::new(store.clone(), store.clone()));
   let job_events = Arc::new(JobEventLongPoll::new(
-    store,
+    store.clone(),
     Arc::new(JobEventNotificationHub::default()),
   ));
+  let log_search = Arc::new(BuildLogSearch::new(store, log_search_index));
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -156,6 +160,7 @@ pub(super) fn management_application(
         JobEventManagementApplication::new(job_events),
         ArtifactManagementApplication::new(artifacts),
         CacheManagementApplication::new(cache),
+        BuildLogSearchManagementApplication::new(log_search),
       ),
     ),
   )

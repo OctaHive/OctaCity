@@ -63,7 +63,7 @@ pub(crate) async fn claim(pool: &PgPool, request: ClaimLogIndexWork) -> Result<V
      SELECT claimed.id, claimed.project_id, claimed.position, claimed.build_id, claimed.operation, \
        claimed.attempt_count, claimed.claim_owner, \
        FLOOR(EXTRACT(EPOCH FROM claimed.claim_expires_at) * 1000)::BIGINT AS claim_expires_at_millis, \
-       manifest.id AS chunk_id, manifest.attempt_id, manifest.job_id, manifest.stream, manifest.first_sequence, \
+       claimed.chunk_id, manifest.visible AS chunk_visible, manifest.attempt_id, manifest.job_id, manifest.stream, manifest.first_sequence, \
        manifest.last_sequence, manifest.object_identity, manifest.byte_length, manifest.sha256, \
        FLOOR(EXTRACT(EPOCH FROM manifest.created_at) * 1000)::BIGINT AS occurred_at_millis \
      FROM claimed LEFT JOIN log_chunk_manifests AS manifest ON manifest.id = claimed.chunk_id \
@@ -196,6 +196,7 @@ struct WorkRow {
   claim_owner: Option<String>,
   claim_expires_at_millis: Option<i64>,
   chunk_id: Option<uuid::Uuid>,
+  chunk_visible: Option<bool>,
   attempt_id: Option<uuid::Uuid>,
   job_id: Option<uuid::Uuid>,
   stream: Option<String>,
@@ -217,10 +218,14 @@ impl WorkRow {
       .and_then(|value| LogIndexPosition::new(value).ok())
       .ok_or(StoreError::Unavailable)?;
     let attempt = u16::try_from(self.attempt_count).map_err(|_| StoreError::Unavailable)?;
-    let kind = match self.operation.as_str() {
-      "index" => LogIndexWorkKind::Index(self.document_source()?),
-      "rebuild" => LogIndexWorkKind::Rebuild(self.document_source()?),
-      "delete_build" if self.chunk_id.is_none() => LogIndexWorkKind::DeleteBuild,
+    let kind = match (self.operation.as_str(), self.chunk_visible) {
+      ("index", Some(true)) => LogIndexWorkKind::Index(self.document_source()?),
+      ("rebuild", Some(true)) => LogIndexWorkKind::Rebuild(self.document_source()?),
+      // Retention has already hidden or removed the authoritative manifest.
+      // Applying the Build tombstone advances freshness without reading bytes
+      // that are no longer required to exist.
+      ("index" | "rebuild", _) if self.chunk_id.is_some() => LogIndexWorkKind::DeleteBuild,
+      ("delete_build", _) if self.chunk_id.is_none() => LogIndexWorkKind::DeleteBuild,
       _ => return Err(StoreError::Unavailable),
     };
     let owner = WorkerOwner::new(self.claim_owner.ok_or(StoreError::Unavailable)?)?;

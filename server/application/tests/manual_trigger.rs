@@ -163,6 +163,10 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
     assert!(projected_json.get("signed_job_spec").is_none());
     assert_eq!(request.build.input_snapshot["parameters"]["required"], json!("caller"));
     assert_eq!(request.build.input_snapshot["parameters"]["with_default"], json!(true));
+    assert_eq!(request.build.retention.metadata, time(86_400_200));
+    assert_eq!(request.build.retention.logs, time(86_400_200));
+    assert_eq!(request.build.retention.artifacts, time(86_400_200));
+    assert_eq!(request.build.retention.reports, time(86_400_200));
     let job_spec_template = serde_json::to_string(&root.job_spec_template).unwrap();
     assert!(job_spec_template.contains("ci/secrets.yml"));
     assert!(!job_spec_template.contains("provider_configuration"));

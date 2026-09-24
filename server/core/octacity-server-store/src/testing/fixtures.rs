@@ -1,4 +1,5 @@
 use super::*;
+use crate::BuildRetentionDeadlines;
 use octacity_protocol::{
   AgentInventory, BackendHealth, BackendHealthStatus, CacheCapability, CachePolicy, HostCapacity, HostSnapshot,
   OctaInventory, PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeCapability, RuntimeMode, SourcePluginInventory,
@@ -32,6 +33,12 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
         "retention": {"cache_seconds": 3600}
       }}
     }),
+    retention: BuildRetentionDeadlines {
+      metadata: time(1_000_000),
+      logs: time(1_000_000),
+      artifacts: time(1_000_000),
+      reports: time(1_000_000),
+    },
     project_job_concurrency_limit: 4,
     priority: 10,
   };

@@ -514,9 +514,30 @@ location. Session authorization itself also returns only a generic rejection
 for a wrong namespace, expired or revoked session, stale Lease, or invalid
 credential, so it cannot be used to discover another namespace.
 
-Use `/api/v1/openapi.json` as the authoritative schema inventory. Log search
-and mutable VCS revision resolution are implemented by their later feature
-tasks.
+## 11. Search redacted Build logs
+
+Search is scoped to one Project and requires an explicit `full_text` or
+`literal` mode. Optional Build, Attempt, Job, stream, and inclusive source-time
+filters narrow the result without exposing the search or object-storage
+implementation:
+
+```shell
+curl --fail-with-body \
+  'http://octacity.example.test:8080/api/v1/projects/PROJECT_ID/build-logs/search?query=error%5BE0425%5D&mode=literal&build_id=BUILD_ID&stream=stderr&limit=50'
+```
+
+Each hit contains a logical chunk identity, Build/Attempt/Job provenance,
+stdout or stderr, its contiguous event-sequence range, source time, and a
+bounded redacted snippet. Follow `next_cursor` without interpreting it to read
+the next deterministic page.
+
+The `freshness` object reports `indexed_through`, authoritative
+`committed_through`, and `caught_up`. An empty page with `caught_up: false`
+does not prove that no committed log matches; repeat the search after indexing
+catches up. Regular-expression mode is intentionally unsupported.
+
+Use `/api/v1/openapi.json` as the authoritative schema inventory. Mutable VCS
+revision resolution is implemented by its later feature task.
 
 ## Agent inventory and Pool assignment
 

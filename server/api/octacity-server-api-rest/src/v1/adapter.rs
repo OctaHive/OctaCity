@@ -65,6 +65,7 @@ mod error;
 mod execution;
 mod internal_trigger;
 mod job_event;
+mod log_search;
 mod manual_trigger;
 mod pipeline;
 mod project;
@@ -78,11 +79,12 @@ use agent::{drain_agent, get_agent, issue_agent_enrollment, list_agents, reassig
 use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agent_pools, publish_agent_pool};
 use application::{AgentEndpoints, AgentPoolManagementApplication};
 pub use application::{
-  AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
-  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
-  ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ScheduleManagementApplication,
+  AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
+  BuildManagementApplication, CacheManagementApplication, CatalogManagementApplication,
+  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
+  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplicationHandlers,
+  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use cache::{get_cache_session, list_build_cache_sessions};
@@ -96,6 +98,8 @@ use internal_trigger::{
   create_internal_trigger, get_internal_trigger, list_internal_triggers, publish_internal_trigger,
 };
 use job_event::read_job_events;
+pub(crate) use log_search::DEFAULT_LOG_SEARCH_LIMIT;
+use log_search::search_build_logs;
 use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition};
 use pipeline::{create_pipeline, get_pipeline, publish_pipeline};
 use project::{
@@ -132,6 +136,7 @@ pub struct ManagementApplication {
   job_events: JobEventManagementApplication,
   artifacts: ArtifactManagementApplication,
   cache: CacheManagementApplication,
+  log_search: BuildLogSearchManagementApplication,
 }
 
 impl ManagementApplication {
@@ -161,6 +166,7 @@ impl ManagementApplication {
       job_events,
       artifacts,
       cache,
+      log_search,
     } = execution;
     let AgentManagementApplication {
       pools: agent_pools,
@@ -185,6 +191,7 @@ impl ManagementApplication {
       job_events,
       artifacts,
       cache,
+      log_search,
     })
   }
 }
@@ -335,6 +342,10 @@ pub fn router(application: ManagementApplication) -> Router {
     .route(&format!("{API_PREFIX}/agents/{{agent_id}}/drain"), post(drain_agent))
     .route(&format!("{API_PREFIX}/jobs/{{job_id}}"), get(get_job))
     .route(&format!("{API_PREFIX}/jobs/{{job_id}}/events"), get(read_job_events))
+    .route(
+      &format!("{API_PREFIX}/projects/{{project_id}}/build-logs/search"),
+      get(search_build_logs),
+    )
     .fallback(api_not_found)
     .layer(DefaultBodyLimit::max(MAX_MANAGEMENT_BODY_BYTES))
     .with_state(Arc::new(application))

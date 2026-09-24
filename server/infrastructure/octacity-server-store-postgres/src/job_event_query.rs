@@ -12,7 +12,10 @@ pub(crate) async fn read(pool: &PgPool, request: ReadJobEvents) -> Result<JobEve
   let after_sequence = number(request.after_sequence, StoreOperation::ReadJobEvents)?;
   let rows = sqlx::query_as::<_, JobEventReadRow>(
     "WITH current_job AS (
-       SELECT id FROM jobs WHERE id = $1
+       SELECT job.id, build.logs_visible FROM jobs AS job
+       JOIN attempts AS attempt ON attempt.id = job.attempt_id
+       JOIN builds AS build ON build.id = attempt.build_id
+       WHERE job.id = $1
      ), current_cursor AS (
        SELECT current_job.id AS job_id, COALESCE(MAX(job_events.sequence), 0)::BIGINT AS current_sequence
        FROM current_job LEFT JOIN job_events ON job_events.job_id = current_job.id
@@ -22,6 +25,7 @@ pub(crate) async fn read(pool: &PgPool, request: ReadJobEvents) -> Result<JobEve
               (EXTRACT(EPOCH FROM event_time) * 1000)::BIGINT AS event_time_unix_ms, payload
        FROM job_events
        WHERE job_id = $1 AND sequence > $2
+         AND (event_kind NOT IN ('stdout', 'stderr') OR (SELECT logs_visible FROM current_job))
        ORDER BY sequence ASC
        LIMIT $3
      )

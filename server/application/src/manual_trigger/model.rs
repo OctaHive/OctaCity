@@ -258,6 +258,9 @@ pub enum ManualTriggerInputError {
   /// Configuration output ceilings exceed effective Project policy.
   #[error("artifact policy exceeds effective project policy")]
   ArtifactPolicyTooBroad,
+  /// A configured retention duration cannot be represented as an absolute deadline.
+  #[error("build retention deadline is outside the supported timestamp range")]
+  RetentionDeadlineOutOfRange,
 }
 
 /// Application-level failure while accepting a manual Trigger.

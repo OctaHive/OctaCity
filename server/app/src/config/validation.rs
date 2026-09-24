@@ -13,6 +13,9 @@ const MAX_SCHEDULE_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_LOG_INDEX_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_LOG_INDEX_WORKER_ATTEMPTS: u16 = 100;
+const MAX_RETENTION_WORKER_MILLISECONDS: u64 = 30 * 60 * 1000;
+const MAX_RETENTION_WORKER_ATTEMPTS: u16 = 100;
+const MAX_ORPHAN_LOG_CLEANUP_GRACE_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
 const MAX_WEBHOOK_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_WEBHOOK_WORKER_ATTEMPTS: u16 = 100;
 const MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
@@ -22,6 +25,7 @@ const MAX_WEBHOOK_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 const WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
 const TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
 const LOG_INDEX_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
+const RETENTION_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
 const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 impl ServerConfig {
@@ -182,6 +186,26 @@ impl ServerConfig {
         octacity_server_store::MAX_LOG_INDEX_WORK_BATCH_SIZE
       )));
     }
+    if !self.retention_worker().is_bounded(
+      Duration::from_millis(MAX_RETENTION_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_RETENTION_WORK_BATCH_SIZE,
+      octacity_server_store::MAX_RETENTION_OBJECT_BATCH_SIZE,
+      MAX_RETENTION_WORKER_ATTEMPTS,
+    ) {
+      return Err(ServerConfigError::Invalid(format!(
+        "retention worker policy must be positive and bounded by {MAX_RETENTION_WORKER_MILLISECONDS} ms / {} work items / {} objects / {MAX_RETENTION_WORKER_ATTEMPTS} attempts",
+        octacity_server_store::MAX_RETENTION_WORK_BATCH_SIZE,
+        octacity_server_store::MAX_RETENTION_OBJECT_BATCH_SIZE,
+      )));
+    }
+    if self.orphan_log_cleanup_grace_milliseconds == 0
+      || self.orphan_log_cleanup_grace_milliseconds > MAX_ORPHAN_LOG_CLEANUP_GRACE_MILLISECONDS
+      || self.orphan_log_cleanup_grace() <= self.object_storage.operation_timeout()
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "orphan_log_cleanup_grace_milliseconds must exceed the object-storage operation timeout and be at most {MAX_ORPHAN_LOG_CLEANUP_GRACE_MILLISECONDS}"
+      )));
+    }
     if !self.webhook_worker().is_bounded(
       Duration::from_millis(MAX_WEBHOOK_WORKER_MILLISECONDS),
       octacity_server_store::MAX_WEBHOOK_DELIVERY_BATCH_SIZE,
@@ -275,6 +299,22 @@ impl ServerConfig {
     if log_index_batch_budget.is_none_or(|budget| budget >= log_index_policy.claim_lifetime().as_millis() as u64) {
       return Err(ServerConfigError::Invalid(format!(
         "log-index claim lifetime must exceed the sequential object-read budget plus the {LOG_INDEX_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
+      )));
+    }
+    let retention_policy = self.retention_worker();
+    let retention_worker = retention_policy.retrying().worker();
+    let retention_batch_budget = self
+      .object_storage
+      .operation_timeout()
+      .as_millis()
+      .try_into()
+      .ok()
+      .and_then(|operation: u64| operation.checked_mul(u64::from(retention_policy.object_batch_size())))
+      .and_then(|per_claim| per_claim.checked_mul(u64::from(retention_worker.batch_size())))
+      .and_then(|batch| batch.checked_add(RETENTION_CLAIM_COMPLETION_MARGIN_MILLISECONDS));
+    if retention_batch_budget.is_none_or(|budget| budget >= retention_worker.claim_lifetime().as_millis() as u64) {
+      return Err(ServerConfigError::Invalid(format!(
+        "retention claim lifetime must exceed the sequential object-delete budget plus the {RETENTION_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
       )));
     }
     self.postgres.validate().map_err(ServerConfigError::Invalid)?;

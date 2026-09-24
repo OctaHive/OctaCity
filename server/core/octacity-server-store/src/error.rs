@@ -188,6 +188,26 @@ pub enum StoreOperation {
   PublishCacheAction,
   /// Apply scoped L2 cache retention.
   PruneCache,
+  /// Claim a bounded batch of due Build Result retention work.
+  ClaimRetentionWork,
+  /// Remove component visibility and enumerate bounded cleanup objects.
+  PrepareRetentionWork,
+  /// Record a durable Build-log search tombstone.
+  CompleteRetentionSearch,
+  /// Record one safely released retained object.
+  CompleteRetentionObject,
+  /// Complete or release one bounded retention pass.
+  FinishRetentionPass,
+  /// Schedule another durable retention attempt.
+  FailRetentionWork,
+  /// Stage cleanup before writing one archived log object.
+  StageOrphanLogChunk,
+  /// Claim a bounded batch of due orphan-log cleanup candidates.
+  ClaimOrphanLogChunks,
+  /// Complete one orphan-log cleanup candidate.
+  CompleteOrphanLogChunk,
+  /// Retry or dead-letter one orphan-log cleanup candidate.
+  FailOrphanLogChunk,
 }
 
 /// Invalid caller input rejected before any authoritative state changes.
@@ -244,6 +264,9 @@ pub enum StoreInputError {
   /// A Build's typed effective scheduling policy is outside its valid range.
   #[error("an immutable build scheduling policy is invalid")]
   InvalidBuildSchedulingPolicy,
+  /// A Build Result automatic-retention deadline precedes Build acceptance.
+  #[error("an immutable build retention deadline is invalid")]
+  InvalidBuildRetention,
   /// The normalized occurrence and materialized Build target different configuration versions.
   #[error("a normalized trigger target does not match the build configuration")]
   TriggerTargetMismatch,

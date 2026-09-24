@@ -11,6 +11,7 @@ use serde::Serialize;
 use super::{
   materialization::{
     ManualBuildIdentities, classify_error, effective_policy_snapshot, input_snapshot, materialize_jobs,
+    retention_deadlines,
   },
   model::{
     AcceptManualTriggerCommand, ManualTriggerCommand, ManualTriggerError, ManualTriggerOutcome,
@@ -301,6 +302,7 @@ impl ManualTriggerService {
       immutable_revision,
       input_snapshot: input_snapshot(&prepared)?,
       effective_policy_snapshot: effective_policy_snapshot(&context)?,
+      retention: retention_deadlines(&context, accepted_at)?,
       project_job_concurrency_limit: context.effective_policy.policy.concurrency.active_jobs,
       priority: command.priority,
     };

@@ -247,10 +247,37 @@ pub struct ImmutableBuildInput {
   pub input_snapshot: Value,
   /// Effective inherited policy frozen for this Build.
   pub effective_policy_snapshot: Value,
+  /// Absolute automatic-retention deadlines derived from that frozen policy.
+  pub retention: BuildRetentionDeadlines,
   /// Typed Project-wide active-Job ceiling captured from the same policy snapshot.
   pub project_job_concurrency_limit: u32,
   /// Durable ready-queue priority copied to materialized root Jobs.
   pub priority: i64,
+}
+
+/// Immutable automatic-retention deadlines for one Build Result.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct BuildRetentionDeadlines {
+  /// Deadline after which Build metadata and configuration snapshots may be hidden.
+  pub metadata: Timestamp,
+  /// Deadline after which archived logs may be hidden and deleted.
+  pub logs: Timestamp,
+  /// Deadline after which produced artifact bytes may be hidden and deleted.
+  pub artifacts: Timestamp,
+  /// Deadline after which produced report bytes may be hidden and deleted.
+  pub reports: Timestamp,
+}
+
+impl BuildRetentionDeadlines {
+  fn validate(self, accepted_at: Timestamp) -> Result<(), StoreInputError> {
+    if [self.metadata, self.logs, self.artifacts, self.reports]
+      .into_iter()
+      .any(|deadline| deadline < accepted_at)
+    {
+      return Err(StoreInputError::InvalidBuildRetention);
+    }
+    Ok(())
+  }
 }
 
 impl ImmutableBuildInput {
@@ -420,6 +447,7 @@ impl AcceptTrigger {
       .validate()
       .map_err(|_| StoreInputError::InvalidNormalizedTrigger)
       .and_then(|()| self.build.validate())
+      .and_then(|()| self.build.retention.validate(self.accepted_at))
       .map_err(|source| StoreError::invalid(StoreOperation::AcceptTrigger, source))?;
     if self.trigger.target.configuration_id != self.build.configuration_id
       || self.trigger.target.configuration_version != self.build.configuration_version

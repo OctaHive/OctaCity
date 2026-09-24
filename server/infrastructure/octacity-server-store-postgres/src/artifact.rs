@@ -4,6 +4,7 @@ use octacity_server_domain::{
   ArtifactId, ArtifactName, ArtifactUploadId, ArtifactVersion, AttemptId, BuildId, EntityKind, JobId, LeaseId,
   Timestamp,
 };
+use octacity_server_job::JobSpecTemplate;
 use octacity_server_store::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactReportFormat,
   ArtifactRetentionPolicy, ArtifactState, ArtifactTransitionAuthority, ArtifactType, ArtifactUploadRecord,
@@ -11,7 +12,7 @@ use octacity_server_store::{
   MutationDisposition, ReserveArtifact, StoreError, StoreInputError, StoreOperation, TransitionArtifact,
   VerifyArtifactUpload, artifact_authority_is_valid,
 };
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
 use uuid::Uuid;
 
 use crate::{
@@ -65,6 +66,7 @@ struct ArtifactUploadRow {
   created_at_millis: i64,
   published_at_millis: Option<i64>,
   deleted_at_millis: Option<i64>,
+  component_visible: bool,
 }
 
 macro_rules! upload_query {
@@ -77,11 +79,14 @@ macro_rules! upload_query {
       "artifact.id, artifact.build_id, artifact.attempt_id, artifact.job_id, artifact.lease_id, ",
       "artifact.logical_name, artifact.artifact_type, artifact.media_type, artifact.report_format, ",
       "artifact.byte_length, artifact.sha256, artifact.state, artifact.version, ",
+      "CASE WHEN artifact.artifact_type = 'report' THEN build.reports_visible ELSE build.artifacts_visible END ",
+      "AS component_visible, ",
       "FLOOR(EXTRACT(EPOCH FROM artifact.retention_until) * 1000)::BIGINT AS retention_until_millis, ",
       "FLOOR(EXTRACT(EPOCH FROM artifact.created_at) * 1000)::BIGINT AS created_at_millis, ",
       "FLOOR(EXTRACT(EPOCH FROM artifact.published_at) * 1000)::BIGINT AS published_at_millis, ",
       "FLOOR(EXTRACT(EPOCH FROM artifact.deleted_at) * 1000)::BIGINT AS deleted_at_millis ",
-      "FROM artifact_uploads AS upload JOIN artifacts AS artifact ON artifact.id = upload.artifact_id WHERE ",
+      "FROM artifact_uploads AS upload JOIN artifacts AS artifact ON artifact.id = upload.artifact_id ",
+      "JOIN builds AS build ON build.id = artifact.build_id WHERE ",
       $predicate
     )
   };
@@ -273,6 +278,13 @@ pub(crate) async fn begin_upload(
       disposition: MutationDisposition::Replayed,
     });
   }
+  enforce_output_limits(
+    &mut transaction,
+    request.job_id,
+    &request.artifact_type,
+    request.size_bytes,
+  )
+  .await?;
   let identity = ArtifactIdentity {
     artifact_id: request.artifact_id,
     build_id: BuildId::from_uuid(lease_row.build_id).map_err(|_| StoreError::Unavailable)?,
@@ -284,7 +296,15 @@ pub(crate) async fn begin_upload(
     media_type: request.media_type.clone(),
     size_bytes: request.size_bytes,
     digest: request.digest,
-    retention: ArtifactRetentionPolicy::Keep,
+    retention: ArtifactRetentionPolicy::DeleteAfter(
+      artifact_retention_deadline(
+        &mut transaction,
+        lease_row.build_id,
+        &request.artifact_type,
+        request.reserved_at,
+      )
+      .await?,
+    ),
   };
   let artifact =
     ArtifactRecord::pending(identity, request.reserved_at).map_err(|_| invalid(StoreOperation::BeginArtifactUpload))?;
@@ -331,6 +351,49 @@ pub(crate) async fn begin_upload(
   })
 }
 
+async fn enforce_output_limits(
+  transaction: &mut Transaction<'_, Postgres>,
+  job_id: JobId,
+  artifact_type: &ArtifactType,
+  requested_bytes: u64,
+) -> Result<(), StoreError> {
+  let Json(template): Json<JobSpecTemplate> = sqlx::query_scalar("SELECT job_spec_template FROM jobs WHERE id = $1")
+    .bind(job_id.as_uuid())
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  template.validate().map_err(|_| StoreError::Unavailable)?;
+  let limits = template.output_limits();
+  let (maximum_count, maximum_bytes) = match artifact_type {
+    ArtifactType::Artifact => (u64::from(limits.artifact_count), limits.artifact_bytes),
+    ArtifactType::Report(_) => (u64::from(limits.report_count), limits.report_bytes),
+  };
+  let (retained_count, retained_bytes): (i64, i64) = sqlx::query_as(
+    "SELECT COUNT(*)::BIGINT, COALESCE(SUM(byte_length), 0)::BIGINT FROM artifacts \
+     WHERE job_id = $1 AND artifact_type = $2 AND state <> 'deleted'",
+  )
+  .bind(job_id.as_uuid())
+  .bind(artifact_type.as_str())
+  .fetch_one(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  let exceeds_quota = requested_bytes > limits.single_output_bytes
+    || u64::try_from(retained_count)
+      .ok()
+      .and_then(|value| value.checked_add(1))
+      .is_none_or(|value| value > maximum_count)
+    || u64::try_from(retained_bytes)
+      .ok()
+      .and_then(|value| value.checked_add(requested_bytes))
+      .is_none_or(|value| value > maximum_bytes);
+  if exceeds_quota {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Artifact,
+    });
+  }
+  Ok(())
+}
+
 pub(crate) async fn read_upload(
   pool: &PgPool,
   upload_id: ArtifactUploadId,
@@ -362,15 +425,19 @@ pub(crate) async fn finish_verification(
 }
 
 pub(crate) async fn published(pool: &PgPool, artifact_id: ArtifactId) -> Result<ArtifactUploadRecord, StoreError> {
-  sqlx::query_as::<_, ArtifactUploadRow>(upload_query!("artifact.id = $1 AND artifact.state = 'published'"))
-    .bind(artifact_id.as_uuid())
-    .fetch_optional(pool)
-    .await
-    .map_err(unavailable)?
-    .ok_or(StoreError::NotFound {
-      entity: EntityKind::Artifact,
-    })?
-    .try_into()
+  sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
+    "artifact.id = $1 AND artifact.state = 'published' AND \
+     ((artifact.artifact_type = 'artifact' AND build.artifacts_visible) OR \
+      (artifact.artifact_type = 'report' AND build.reports_visible))"
+  ))
+  .bind(artifact_id.as_uuid())
+  .fetch_optional(pool)
+  .await
+  .map_err(unavailable)?
+  .ok_or(StoreError::NotFound {
+    entity: EntityKind::Artifact,
+  })?
+  .try_into()
 }
 
 pub(crate) async fn list_published(
@@ -381,7 +448,10 @@ pub(crate) async fn list_published(
     return Err(invalid(StoreOperation::ListPublishedArtifacts));
   }
   sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
-    "artifact.build_id = $1 AND artifact.state = 'published' ORDER BY artifact.published_at, artifact.id LIMIT $2"
+    "artifact.build_id = $1 AND artifact.state = 'published' AND \
+     ((artifact.artifact_type = 'artifact' AND build.artifacts_visible) OR \
+      (artifact.artifact_type = 'report' AND build.reports_visible)) \
+     ORDER BY artifact.published_at, artifact.id LIMIT $2"
   ))
   .bind(query.build_id.as_uuid())
   .bind(i64::from(query.limit))
@@ -413,16 +483,20 @@ async fn change_verification(
       lease: request.lease.lease_id,
     });
   }
-  let current: ArtifactUploadRecord =
-    sqlx::query_as::<_, ArtifactUploadRow>(upload_query!("upload.id = $1", for_update))
-      .bind(request.upload_id.as_uuid())
-      .fetch_optional(&mut *transaction)
-      .await
-      .map_err(unavailable)?
-      .ok_or(StoreError::NotFound {
-        entity: EntityKind::ArtifactUpload,
-      })?
-      .try_into()?;
+  let current_row = sqlx::query_as::<_, ArtifactUploadRow>(upload_query!("upload.id = $1", for_update))
+    .bind(request.upload_id.as_uuid())
+    .fetch_optional(&mut *transaction)
+    .await
+    .map_err(unavailable)?
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::ArtifactUpload,
+    })?;
+  if !current_row.component_visible {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Artifact,
+    });
+  }
+  let current: ArtifactUploadRecord = current_row.try_into()?;
   if current.artifact.identity().lease_id != request.lease.lease_id
     || current.artifact.identity().job_id != request.job_id
   {
@@ -460,6 +534,39 @@ async fn change_verification(
   }
   transaction.commit().await.map_err(unavailable)?;
   Ok(updated)
+}
+
+async fn artifact_retention_deadline(
+  transaction: &mut Transaction<'_, Postgres>,
+  build_id: Uuid,
+  artifact_type: &ArtifactType,
+  reserved_at: Timestamp,
+) -> Result<Timestamp, StoreError> {
+  let query = match artifact_type {
+    ArtifactType::Artifact => {
+      "SELECT FLOOR(EXTRACT(EPOCH FROM artifact_retention_until) * 1000)::BIGINT, artifacts_visible \
+       FROM builds WHERE id = $1 FOR UPDATE"
+    }
+    ArtifactType::Report(_) => {
+      "SELECT FLOOR(EXTRACT(EPOCH FROM report_retention_until) * 1000)::BIGINT, reports_visible \
+       FROM builds WHERE id = $1 FOR UPDATE"
+    }
+  };
+  let (milliseconds, visible): (i64, bool) = sqlx::query_as(query)
+    .bind(build_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(unavailable)?
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::Build,
+    })?;
+  let deadline = timestamp(milliseconds)?;
+  if !visible || deadline <= reserved_at {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Build,
+    });
+  }
+  Ok(deadline)
 }
 
 async fn insert_artifact(
@@ -652,6 +759,116 @@ fn artifact_select(for_update: bool) -> &'static str {
 
 fn timestamp(value: i64) -> Result<Timestamp, StoreError> {
   Timestamp::from_unix_millis(value).map_err(|_| StoreError::Unavailable)
+}
+
+pub(crate) async fn retention_page(
+  transaction: &mut Transaction<'_, Postgres>,
+  build_id: BuildId,
+  reports: bool,
+  limit: u16,
+  observed_at: Timestamp,
+) -> Result<Vec<ArtifactUploadRecord>, StoreError> {
+  let rows = if reports {
+    sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
+      "artifact.build_id = $1 AND artifact.artifact_type = 'report' AND NOT build.reports_visible \
+       AND artifact.state <> 'deleted' ORDER BY artifact.id LIMIT $2 FOR UPDATE OF upload, artifact"
+    ))
+    .bind(build_id.as_uuid())
+    .bind(i64::from(limit))
+    .fetch_all(&mut **transaction)
+    .await
+  } else {
+    sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
+      "artifact.build_id = $1 AND artifact.artifact_type = 'artifact' AND NOT build.artifacts_visible \
+       AND artifact.state <> 'deleted' ORDER BY artifact.id LIMIT $2 FOR UPDATE OF upload, artifact"
+    ))
+    .bind(build_id.as_uuid())
+    .bind(i64::from(limit))
+    .fetch_all(&mut **transaction)
+    .await
+  }
+  .map_err(unavailable)?;
+  let mut uploads = Vec::with_capacity(rows.len());
+  for row in rows {
+    let mut upload: ArtifactUploadRecord = row.try_into()?;
+    let event = match upload.artifact.state() {
+      ArtifactState::Published => Some(ArtifactEvent::Expire),
+      ArtifactState::Verifying => Some(ArtifactEvent::VerificationFailed),
+      ArtifactState::Pending | ArtifactState::Expired => None,
+      ArtifactState::Deleted => return Err(StoreError::Unavailable),
+    };
+    if let Some(event) = event {
+      upload.artifact = upload
+        .artifact
+        .transition(
+          upload.artifact.identity(),
+          upload.artifact.version(),
+          event,
+          observed_at,
+        )
+        .map_err(|_| StoreError::Conflict {
+          entity: EntityKind::Artifact,
+        })?;
+      if event == ArtifactEvent::VerificationFailed {
+        update_artifact_and_upload(transaction, &upload, event, StoreOperation::PrepareRetentionWork).await?;
+      } else {
+        let previous_version = upload
+          .artifact
+          .version()
+          .get()
+          .checked_sub(1)
+          .ok_or(StoreError::Unavailable)?;
+        update_artifact(
+          transaction,
+          &upload.artifact,
+          previous_version,
+          StoreOperation::PrepareRetentionWork,
+        )
+        .await?;
+      }
+    }
+    uploads.push(upload);
+  }
+  Ok(uploads)
+}
+
+pub(crate) async fn complete_retention(
+  transaction: &mut Transaction<'_, Postgres>,
+  artifact_id: ArtifactId,
+  completed_at: Timestamp,
+) -> Result<(), StoreError> {
+  let current: ArtifactRecord = lock_artifact(transaction, artifact_id).await?.try_into()?;
+  if current.state() != ArtifactState::Deleted {
+    if !matches!(current.state(), ArtifactState::Pending | ArtifactState::Expired) {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::Artifact,
+      });
+    }
+    let updated = current
+      .transition(
+        current.identity(),
+        current.version(),
+        ArtifactEvent::Delete,
+        completed_at,
+      )
+      .map_err(|_| StoreError::Conflict {
+        entity: EntityKind::Artifact,
+      })?;
+    update_artifact(
+      transaction,
+      &updated,
+      current.version().get(),
+      StoreOperation::CompleteRetentionObject,
+    )
+    .await?;
+  }
+  sqlx::query("UPDATE artifact_uploads SET state = 'deleted', completed_at = COALESCE(completed_at, to_timestamp($1::double precision / 1000.0)) WHERE artifact_id = $2")
+    .bind(completed_at.unix_millis())
+    .bind(artifact_id.as_uuid())
+    .execute(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  Ok(())
 }
 
 const fn invalid(operation: StoreOperation) -> StoreError {

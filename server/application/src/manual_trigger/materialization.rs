@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use octacity_server_domain::{AttemptId, BuildId, ImmutableRevision, JobId, PipelineNodeId, TriggerOccurrenceId};
 use octacity_server_job::JobRequirements;
-use octacity_server_store::{MaterializedJob, MaterializedJobPayload, PublishedPipeline, StoreError};
+use octacity_server_store::{
+  BuildRetentionDeadlines, MaterializedJob, MaterializedJobPayload, PublishedPipeline, StoreError,
+};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -127,6 +129,34 @@ pub(super) fn effective_policy_snapshot(context: &ManualTriggerContext) -> Resul
     project: context.effective_policy.clone(),
     job_spec_toolchain: context.job_spec_toolchain.clone(),
   })
+}
+
+pub(super) fn retention_deadlines(
+  context: &ManualTriggerContext,
+  accepted_at: octacity_server_domain::Timestamp,
+) -> Result<BuildRetentionDeadlines, ManualTriggerError> {
+  let policy = context.effective_policy.policy.retention;
+  Ok(BuildRetentionDeadlines {
+    metadata: retention_deadline(accepted_at, policy.build_seconds)?,
+    logs: retention_deadline(accepted_at, policy.log_seconds)?,
+    artifacts: retention_deadline(accepted_at, policy.artifact_seconds)?,
+    reports: retention_deadline(accepted_at, policy.artifact_seconds)?,
+  })
+}
+
+fn retention_deadline(
+  accepted_at: octacity_server_domain::Timestamp,
+  seconds: u64,
+) -> Result<octacity_server_domain::Timestamp, ManualTriggerError> {
+  let milliseconds = i64::try_from(seconds)
+    .ok()
+    .and_then(|seconds| seconds.checked_mul(1_000))
+    .and_then(|duration| accepted_at.unix_millis().checked_add(duration))
+    .ok_or(ManualTriggerError::Invalid(
+      super::model::ManualTriggerInputError::RetentionDeadlineOutOfRange,
+    ))?;
+  octacity_server_domain::Timestamp::from_unix_millis(milliseconds)
+    .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::RetentionDeadlineOutOfRange))
 }
 
 pub(super) fn encode_snapshot(value: &impl serde::Serialize) -> Result<Value, ManualTriggerError> {
