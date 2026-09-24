@@ -16,18 +16,20 @@ use octacity_server_store::{
   CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild,
   CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimTriggerEvaluations,
   CompleteInternalTriggerEvent, CompleteScheduleClaim, CompleteTriggerEvaluation, CompletionDisposition,
-  ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateManagedWebhook, CreateProject, CreateRepository,
-  CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool,
-  DeleteAgentPoolOutcome, DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim,
-  ExpiredLeaseClaim, FailTriggerEvaluation, InternalTriggerEventClaim, InternalTriggerEventStore, IssueAgentEnrollment,
-  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore,
-  JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents,
-  ListBuildCacheSessions, ListProjects, ListPublishedArtifacts, LogChunkManifestStore, LogIndexPosition,
-  LogIndexWorkStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord,
-  ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore,
-  ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome,
-  ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishCacheAction,
-  PublishCacheBlob, PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool,
+  ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateInternalTriggerDefinition, CreateManagedWebhook,
+  CreateProject, CreateRepository, CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore,
+  DeleteAgentPool, DeleteAgentPoolOutcome, DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome,
+  DueScheduleClaim, ExpiredLeaseClaim, FailTriggerEvaluation, InternalTriggerDefinitionPage,
+  InternalTriggerDefinitionRecord, InternalTriggerDefinitionStore, InternalTriggerEventClaim,
+  InternalTriggerEventStore, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome,
+  JobCompletion, JobEventPage, JobEventReadStore, JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore,
+  LeaseRecoveryStore, ListAgentPools, ListAgents, ListBuildCacheSessions, ListInternalTriggerDefinitions, ListProjects,
+  ListPublishedArtifacts, LogChunkManifestStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore,
+  ManagedWebhookRecord, ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, PipelineMutationOutcome,
+  PipelineStore, ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument,
+  ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion,
+  PublishBuildConfigurationVersion, PublishCacheAction, PublishCacheBlob, PublishInternalTriggerVersion,
+  PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool,
   PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents, ReassignAgentPool,
   ReassignAgentPoolOutcome, RecordManagedWebhookRegistration, RecordTriggerEvaluationRevision, RecoverExpiredLease,
   RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject, RenewLease, RepositoryMutationOutcome, ReserveArtifact,
@@ -52,6 +54,10 @@ impl PostgresStore {
   #[must_use]
   pub const fn new(pool: PgPool) -> Self {
     Self { pool }
+  }
+
+  pub(crate) const fn pool(&self) -> &PgPool {
+    &self.pool
   }
 }
 
@@ -326,6 +332,38 @@ impl InternalTriggerEventStore for PostgresStore {
     request: CompleteInternalTriggerEvent,
   ) -> Result<MutationDisposition, StoreError> {
     crate::internal_trigger::complete(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl InternalTriggerDefinitionStore for PostgresStore {
+  async fn create_internal_trigger_definition(
+    &self,
+    request: CreateInternalTriggerDefinition,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    crate::internal_trigger_definition::create(&self.pool, request).await
+  }
+
+  async fn publish_internal_trigger_version(
+    &self,
+    request: PublishInternalTriggerVersion,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    crate::internal_trigger_definition::publish(&self.pool, request).await
+  }
+
+  async fn internal_trigger_definition(
+    &self,
+    trigger_id: octacity_server_domain::TriggerId,
+    version: octacity_server_domain::TriggerVersion,
+  ) -> Result<InternalTriggerDefinitionRecord, StoreError> {
+    crate::internal_trigger_definition::read(&self.pool, trigger_id, version).await
+  }
+
+  async fn list_internal_trigger_definitions(
+    &self,
+    request: ListInternalTriggerDefinitions,
+  ) -> Result<InternalTriggerDefinitionPage, StoreError> {
+    crate::internal_trigger_definition::list(&self.pool, request).await
   }
 }
 
@@ -748,26 +786,6 @@ impl ConfigurationStore for PostgresStore {
     version: BuildConfigurationVersion,
   ) -> Result<PublishedBuildConfiguration, StoreError> {
     crate::configuration_query::build_configuration(&self.pool, configuration_id, version).await
-  }
-}
-
-#[async_trait]
-impl LogIndexWorkStore for PostgresStore {
-  async fn committed_log_index_position(&self, project_id: ProjectId) -> Result<Option<LogIndexPosition>, StoreError> {
-    let position: Option<i64> =
-      sqlx::query_scalar("SELECT committed_through FROM log_index_project_positions WHERE project_id = $1")
-        .bind(project_id.as_uuid())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(crate::database::unavailable)?;
-    position
-      .map(|position| {
-        u64::try_from(position)
-          .ok()
-          .and_then(|position| LogIndexPosition::new(position).ok())
-          .ok_or(StoreError::Unavailable)
-      })
-      .transpose()
   }
 }
 

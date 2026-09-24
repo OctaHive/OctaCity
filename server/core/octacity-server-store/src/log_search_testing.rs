@@ -11,7 +11,7 @@ use octacity_server_domain::{BuildId, LogChunkId, LogIndexingWorkId, ProjectId};
 use crate::{
   DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCursor, LogSearchDocument, LogSearchError,
   LogSearchHit, LogSearchIndex, LogSearchMode, LogSearchMutationDisposition, LogSearchOperation, LogSearchQuery,
-  MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument,
+  WriteLogSearchDocument, bounded_log_search_snippet,
 };
 
 /// Deterministic process-local log-search projection for application tests.
@@ -236,31 +236,8 @@ fn hit(document: &LogSearchDocument, query: &LogSearchQuery) -> LogSearchHit {
     first_sequence: document.first_sequence,
     last_sequence: document.last_sequence,
     occurred_at: document.occurred_at,
-    snippet: bounded_snippet(&document.redacted_text, &query.text, query.mode),
+    snippet: bounded_log_search_snippet(&document.redacted_text, &query.text, query.mode),
   }
-}
-
-fn bounded_snippet(document: &str, query: &str, mode: LogSearchMode) -> String {
-  if document.len() <= MAX_LOG_SEARCH_SNIPPET_BYTES {
-    return document.to_owned();
-  }
-  let approximate_match = match mode {
-    LogSearchMode::Literal => document.find(query),
-    LogSearchMode::FullText => query
-      .split_whitespace()
-      .next()
-      .and_then(|term| document.to_lowercase().find(&term.to_lowercase())),
-  }
-  .unwrap_or(0);
-  let mut start = approximate_match.saturating_sub(MAX_LOG_SEARCH_SNIPPET_BYTES / 4);
-  while !document.is_char_boundary(start) {
-    start -= 1;
-  }
-  let mut end = (start + MAX_LOG_SEARCH_SNIPPET_BYTES).min(document.len());
-  while !document.is_char_boundary(end) {
-    end -= 1;
-  }
-  document[start..end].to_owned()
 }
 
 #[test]

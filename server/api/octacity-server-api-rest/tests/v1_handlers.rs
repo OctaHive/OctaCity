@@ -14,16 +14,18 @@ use octacity_server_api_rest::{
 };
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, CancelBuildCommand, Command,
-  CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateManagedWebhookCommand,
-  CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand,
-  CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand,
-  DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery,
-  GetBuildQuery, GetCacheSessionQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
-  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListProjectsQuery, ManageWebhookRegistrationCommand, ManualTriggerError,
+  CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand,
+  CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
+  CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand,
+  DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery,
+  GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
+  GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
+  ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
+  ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand, ManualTriggerError,
   MoveProjectCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, QueryHandler,
-  ReadJobEventsQuery, ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand,
+  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
+  PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  RenameProjectCommand, RetryBuildCommand,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
@@ -105,6 +107,10 @@ unavailable_command!(CreateTriggerDefinitionCommand, "create_trigger_definition"
 unavailable_command!(CreateScheduleCommand, "create_schedule");
 unavailable_command!(CreateUnmanagedWebhookCommand, "create_unmanaged_webhook");
 unavailable_query!(GetScheduleQuery, "get_schedule");
+unavailable_command!(CreateInternalTriggerCommand, "create_internal_trigger");
+unavailable_command!(PublishInternalTriggerVersionCommand, "publish_internal_trigger");
+unavailable_query!(GetInternalTriggerQuery, "get_internal_trigger");
+unavailable_query!(ListInternalTriggersQuery, "list_internal_triggers");
 unavailable_query!(GetBuildConfigurationQuery, "get_configuration");
 unavailable_query!(ReadJobEventsQuery, "read_job_events");
 unavailable_command!(CreateAgentPoolCommand, "create_agent_pool");

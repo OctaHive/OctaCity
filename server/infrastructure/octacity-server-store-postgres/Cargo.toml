@@ -10,6 +10,7 @@ description = "PostgreSQL adapter for OctaCity server persistence ports"
 
 [dependencies]
 async-trait.workspace = true
+futures-util.workspace = true
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-server-cache = { path = "../../core/octacity-server-cache" }
 octacity-server-domain = { path = "../../core/octacity-server-domain" }

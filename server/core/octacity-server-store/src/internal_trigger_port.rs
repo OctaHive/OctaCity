@@ -1,8 +1,41 @@
 use async_trait::async_trait;
 
 use crate::{
-  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventClaim, MutationDisposition, StoreError,
+  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
+  InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim,
+  ListInternalTriggerDefinitions, MutationDisposition, PublishInternalTriggerVersion, StoreError,
+  TriggerDefinitionMutationOutcome,
 };
+use octacity_server_domain::{TriggerId, TriggerVersion};
+
+/// Durable management operations for versioned internal Trigger definitions.
+#[async_trait]
+pub trait InternalTriggerDefinitionStore: Send + Sync {
+  /// Creates version one of an internal Trigger.
+  async fn create_internal_trigger_definition(
+    &self,
+    request: CreateInternalTriggerDefinition,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
+
+  /// Publishes exactly the next immutable version.
+  async fn publish_internal_trigger_version(
+    &self,
+    request: PublishInternalTriggerVersion,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
+
+  /// Reads one exact immutable internal Trigger version.
+  async fn internal_trigger_definition(
+    &self,
+    trigger_id: TriggerId,
+    version: TriggerVersion,
+  ) -> Result<InternalTriggerDefinitionRecord, StoreError>;
+
+  /// Lists current versions in deterministic stable-identity order.
+  async fn list_internal_trigger_definitions(
+    &self,
+    request: ListInternalTriggerDefinitions,
+  ) -> Result<InternalTriggerDefinitionPage, StoreError>;
+}
 
 /// Replica-safe delivery of terminal Build events from the transactional outbox.
 #[async_trait]

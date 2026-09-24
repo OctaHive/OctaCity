@@ -22,9 +22,10 @@ mod trigger;
 pub use adapter::{
   AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
   CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ScheduleManagementApplication, router as management_routes,
+  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+  ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;

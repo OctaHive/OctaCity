@@ -8,6 +8,7 @@ mod infrastructure;
 mod integrations;
 mod loading;
 mod validation;
+mod workers;
 
 use defaults::*;
 pub(crate) use infrastructure::{
@@ -15,6 +16,7 @@ pub(crate) use infrastructure::{
 };
 pub(crate) use integrations::VcsIntegrationConfig;
 pub use loading::ServerConfigError;
+pub(crate) use workers::{RetryingWorkerPolicy, WebhookWorkerPolicy, WorkerPolicy};
 
 /// Validated operator configuration for the server process.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -90,6 +92,18 @@ pub struct ServerConfig {
   internal_trigger_claim_lifetime_milliseconds: u64,
   #[serde(default = "default_internal_trigger_batch_size")]
   internal_trigger_batch_size: u16,
+  #[serde(default = "default_log_index_poll_interval_milliseconds")]
+  log_index_poll_interval_milliseconds: u64,
+  #[serde(default = "default_log_index_claim_lifetime_milliseconds")]
+  log_index_claim_lifetime_milliseconds: u64,
+  #[serde(default = "default_log_index_batch_size")]
+  log_index_batch_size: u16,
+  #[serde(default = "default_log_index_max_attempts")]
+  log_index_max_attempts: u16,
+  #[serde(default = "default_log_index_initial_retry_milliseconds")]
+  log_index_initial_retry_milliseconds: u64,
+  #[serde(default = "default_log_index_maximum_retry_milliseconds")]
+  log_index_maximum_retry_milliseconds: u64,
   #[serde(
     default = "default_webhook_worker_poll_interval_milliseconds",
     alias = "webhook_delivery_poll_interval_milliseconds"

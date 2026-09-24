@@ -48,6 +48,82 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Creates a typed source-scoped internal Trigger command.
+  pub fn create_internal_trigger_definition(
+    &self,
+    id: Uuid,
+    input: InternalTriggerDefinitionInput,
+    idempotency_key: &str,
+    now_unix_ms: i64,
+  ) -> Result<CreateInternalTriggerCommand, ManagementInputError> {
+    let definition = internal_trigger_fields(&input)?;
+    Ok(CreateInternalTriggerCommand {
+      id: identifier(id, "trigger id")?,
+      target: definition.target,
+      definition: InternalTriggerDefinition {
+        upstream: definition.upstream,
+        event_kind: definition.event_kind,
+        source: definition.source,
+        parameters: input.parameters,
+        priority: input.priority,
+      },
+      enabled: input.enabled,
+      idempotency_key: parse(idempotency_key, "idempotency key")?,
+      created_at: timestamp(now_unix_ms)?,
+    })
+  }
+
+  /// Creates a typed publication command for the next internal Trigger version.
+  pub fn publish_internal_trigger_version(
+    &self,
+    trigger_id: &str,
+    expected_current_version: u64,
+    input: InternalTriggerDefinitionInput,
+    idempotency_key: &str,
+    now_unix_ms: i64,
+  ) -> Result<PublishInternalTriggerVersionCommand, ManagementInputError> {
+    let definition = internal_trigger_fields(&input)?;
+    Ok(PublishInternalTriggerVersionCommand {
+      id: parse(trigger_id, "trigger id")?,
+      expected_current_version: version(expected_current_version, "trigger version")?,
+      target: definition.target,
+      definition: InternalTriggerDefinition {
+        upstream: definition.upstream,
+        event_kind: definition.event_kind,
+        source: definition.source,
+        parameters: input.parameters,
+        priority: input.priority,
+      },
+      enabled: input.enabled,
+      idempotency_key: parse(idempotency_key, "idempotency key")?,
+      published_at: timestamp(now_unix_ms)?,
+    })
+  }
+
+  /// Creates a typed exact-version internal Trigger query.
+  pub fn get_internal_trigger(
+    &self,
+    trigger_id: &str,
+    version_value: u64,
+  ) -> Result<GetInternalTriggerQuery, ManagementInputError> {
+    Ok(GetInternalTriggerQuery {
+      trigger_id: parse(trigger_id, "trigger id")?,
+      version: version(version_value, "trigger version")?,
+    })
+  }
+
+  /// Creates a typed current-version internal Trigger list query.
+  pub fn list_internal_triggers(
+    &self,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<ListInternalTriggersQuery, ManagementInputError> {
+    Ok(ListInternalTriggersQuery {
+      after: optional_parse(after, "internal trigger cursor")?,
+      limit,
+    })
+  }
+
   /// Creates a typed unmanaged webhook configuration command.
   pub fn create_unmanaged_webhook(
     &self,
@@ -201,4 +277,34 @@ impl ManagementInputFactory {
       accepted_at: now,
     })
   }
+}
+
+struct InternalTriggerFields {
+  upstream: TriggerTarget,
+  target: TriggerTarget,
+  event_kind: octacity_server_store::TerminalBuildEvent,
+  source: InternalTriggerSourceStrategy,
+}
+
+fn internal_trigger_fields(
+  input: &InternalTriggerDefinitionInput,
+) -> Result<InternalTriggerFields, ManagementInputError> {
+  Ok(InternalTriggerFields {
+    upstream: TriggerTarget {
+      configuration_id: parse(&input.upstream_configuration_id, "upstream build configuration id")?,
+      configuration_version: version(
+        input.upstream_configuration_version,
+        "upstream build configuration version",
+      )?,
+    },
+    target: TriggerTarget {
+      configuration_id: parse(&input.configuration_id, "build configuration id")?,
+      configuration_version: version(input.configuration_version, "build configuration version")?,
+    },
+    event_kind: input
+      .event_kind
+      .parse::<octacity_server_store::TerminalBuildEvent>()
+      .map_err(|_| ManagementInputError::Invalid("internal trigger event kind"))?,
+    source: decode(input.source.clone(), "internal trigger source strategy")?,
+  })
 }

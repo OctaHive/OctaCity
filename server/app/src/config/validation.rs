@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, net::SocketAddr};
+use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
 use super::{ServerConfig, ServerConfigError, VcsIntegrationConfig};
 
@@ -11,6 +11,8 @@ const MAX_AGENT_LEASE_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
 const MAX_LEASE_EXPIRY_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_SCHEDULE_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_LOG_INDEX_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_LOG_INDEX_WORKER_ATTEMPTS: u16 = 100;
 const MAX_WEBHOOK_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_WEBHOOK_WORKER_ATTEMPTS: u16 = 100;
 const MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
@@ -19,6 +21,7 @@ const MAX_READY_JOB_LISTENER_RECONNECT_MILLISECONDS: u64 = 60 * 1000;
 const MAX_WEBHOOK_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 const WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
 const TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
+const LOG_INDEX_CLAIM_COMPLETION_MARGIN_MILLISECONDS: u64 = 1_000;
 const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 impl ServerConfig {
@@ -142,56 +145,49 @@ impl ServerConfig {
         "agent_lease_lifetime_milliseconds must be between 1 and {MAX_AGENT_LEASE_LIFETIME_MILLISECONDS}"
       )));
     }
-    if self.lease_expiry_poll_interval_milliseconds == 0
-      || self.lease_expiry_poll_interval_milliseconds > MAX_LEASE_EXPIRY_WORKER_MILLISECONDS
-      || self.lease_expiry_claim_lifetime_milliseconds == 0
-      || self.lease_expiry_claim_lifetime_milliseconds > MAX_LEASE_EXPIRY_WORKER_MILLISECONDS
-      || self.lease_expiry_batch_size == 0
-      || self.lease_expiry_batch_size > octacity_server_store::MAX_LEASE_EXPIRY_BATCH_SIZE
-    {
+    if !self.lease_expiry_worker().is_bounded(
+      Duration::from_millis(MAX_LEASE_EXPIRY_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_LEASE_EXPIRY_BATCH_SIZE,
+    ) {
       return Err(ServerConfigError::Invalid(format!(
         "lease expiry worker intervals and batch must be positive and bounded by {MAX_LEASE_EXPIRY_WORKER_MILLISECONDS} ms / {} items",
         octacity_server_store::MAX_LEASE_EXPIRY_BATCH_SIZE
       )));
     }
-    if self.schedule_poll_interval_milliseconds == 0
-      || self.schedule_poll_interval_milliseconds > MAX_SCHEDULE_WORKER_MILLISECONDS
-      || self.schedule_claim_lifetime_milliseconds == 0
-      || self.schedule_claim_lifetime_milliseconds > MAX_SCHEDULE_WORKER_MILLISECONDS
-      || self.schedule_batch_size == 0
-      || self.schedule_batch_size > octacity_server_store::MAX_SCHEDULE_CLAIM_BATCH_SIZE
-    {
+    if !self.schedule_worker().is_bounded(
+      Duration::from_millis(MAX_SCHEDULE_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_SCHEDULE_CLAIM_BATCH_SIZE,
+    ) {
       return Err(ServerConfigError::Invalid(format!(
         "schedule worker intervals and batch must be positive and bounded by {MAX_SCHEDULE_WORKER_MILLISECONDS} ms / {} items",
         octacity_server_store::MAX_SCHEDULE_CLAIM_BATCH_SIZE
       )));
     }
-    if self.internal_trigger_poll_interval_milliseconds == 0
-      || self.internal_trigger_poll_interval_milliseconds > MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS
-      || self.internal_trigger_claim_lifetime_milliseconds == 0
-      || self.internal_trigger_claim_lifetime_milliseconds > MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS
-      || self.internal_trigger_batch_size == 0
-      || self.internal_trigger_batch_size > octacity_server_store::MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE
-    {
+    if !self.internal_trigger_worker().is_bounded(
+      Duration::from_millis(MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE,
+    ) {
       return Err(ServerConfigError::Invalid(format!(
         "internal Trigger worker intervals and batch must be positive and bounded by {MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS} ms / {} items",
         octacity_server_store::MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE
       )));
     }
-    if self.webhook_worker_poll_interval_milliseconds == 0
-      || self.webhook_worker_poll_interval_milliseconds > MAX_WEBHOOK_WORKER_MILLISECONDS
-      || self.webhook_worker_claim_lifetime_milliseconds == 0
-      || self.webhook_worker_claim_lifetime_milliseconds > MAX_WEBHOOK_WORKER_MILLISECONDS
-      || self.webhook_delivery_batch_size == 0
-      || self.webhook_delivery_batch_size > octacity_server_store::MAX_WEBHOOK_DELIVERY_BATCH_SIZE
-      || self.managed_webhook_batch_size == 0
-      || self.managed_webhook_batch_size > octacity_server_store::MAX_MANAGED_WEBHOOK_OPERATION_BATCH_SIZE
-      || self.webhook_worker_max_attempts == 0
-      || self.webhook_worker_max_attempts > MAX_WEBHOOK_WORKER_ATTEMPTS
-      || self.webhook_worker_initial_retry_milliseconds == 0
-      || self.webhook_worker_maximum_retry_milliseconds < self.webhook_worker_initial_retry_milliseconds
-      || self.webhook_worker_maximum_retry_milliseconds > MAX_WEBHOOK_WORKER_MILLISECONDS
-    {
+    if !self.log_index_worker().is_bounded(
+      Duration::from_millis(MAX_LOG_INDEX_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_LOG_INDEX_WORK_BATCH_SIZE,
+      MAX_LOG_INDEX_WORKER_ATTEMPTS,
+    ) {
+      return Err(ServerConfigError::Invalid(format!(
+        "log-index worker policy must be positive and bounded by {MAX_LOG_INDEX_WORKER_MILLISECONDS} ms / {} items / {MAX_LOG_INDEX_WORKER_ATTEMPTS} attempts",
+        octacity_server_store::MAX_LOG_INDEX_WORK_BATCH_SIZE
+      )));
+    }
+    if !self.webhook_worker().is_bounded(
+      Duration::from_millis(MAX_WEBHOOK_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_WEBHOOK_DELIVERY_BATCH_SIZE,
+      octacity_server_store::MAX_MANAGED_WEBHOOK_OPERATION_BATCH_SIZE,
+      MAX_WEBHOOK_WORKER_ATTEMPTS,
+    ) {
       return Err(ServerConfigError::Invalid(format!(
         "webhook worker policy must be positive and bounded by {MAX_WEBHOOK_WORKER_MILLISECONDS} ms / {} delivery items / {} managed items / {MAX_WEBHOOK_WORKER_ATTEMPTS} attempts",
         octacity_server_store::MAX_WEBHOOK_DELIVERY_BATCH_SIZE,
@@ -223,47 +219,62 @@ impl ServerConfig {
         "VCS operation timeouts must be between 1 and {MAX_VCS_OPERATION_MILLISECONDS} milliseconds"
       )));
     }
-    if self.trigger_evaluation_poll_interval_milliseconds == 0
-      || self.trigger_evaluation_poll_interval_milliseconds > MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS
-      || self.trigger_evaluation_claim_lifetime_milliseconds == 0
-      || self.trigger_evaluation_claim_lifetime_milliseconds > MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS
-      || self.trigger_evaluation_batch_size == 0
-      || self.trigger_evaluation_batch_size > octacity_server_store::MAX_TRIGGER_EVALUATION_BATCH_SIZE
-      || self.vcs_retry_max_attempts == 0
-      || self.vcs_retry_max_attempts > MAX_TRIGGER_EVALUATION_ATTEMPTS
-      || self.vcs_retry_initial_milliseconds == 0
-      || self.vcs_retry_maximum_milliseconds < self.vcs_retry_initial_milliseconds
-      || self.vcs_retry_maximum_milliseconds > MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS
-    {
+    if !self.trigger_evaluation_worker().is_bounded(
+      Duration::from_millis(MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS),
+      octacity_server_store::MAX_TRIGGER_EVALUATION_BATCH_SIZE,
+      MAX_TRIGGER_EVALUATION_ATTEMPTS,
+    ) {
       return Err(ServerConfigError::Invalid(format!(
         "manual Trigger retry policy must be positive and bounded by {MAX_TRIGGER_EVALUATION_WORKER_MILLISECONDS} ms / {} items / {MAX_TRIGGER_EVALUATION_ATTEMPTS} attempts",
         octacity_server_store::MAX_TRIGGER_EVALUATION_BATCH_SIZE,
       )));
     }
+    let trigger_evaluation_policy = self.trigger_evaluation_worker().worker();
     let trigger_evaluation_batch_budget = self
       .vcs_operation_timeout_milliseconds
       .checked_add(self.vcs_cancellation_grace_milliseconds)
-      .and_then(|operation| operation.checked_mul(u64::from(self.trigger_evaluation_batch_size)))
+      .and_then(|operation| operation.checked_mul(u64::from(trigger_evaluation_policy.batch_size())))
       .and_then(|batch| batch.checked_add(TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS));
     if trigger_evaluation_batch_budget
-      .is_none_or(|budget| budget >= self.trigger_evaluation_claim_lifetime_milliseconds)
+      .is_none_or(|budget| budget >= trigger_evaluation_policy.claim_lifetime().as_millis() as u64)
     {
       return Err(ServerConfigError::Invalid(format!(
         "manual Trigger claim lifetime must exceed the sequential VCS budget plus the {TRIGGER_EVALUATION_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
       )));
     }
+    let webhook_policy = self.webhook_worker();
     let webhook_batch_budget = self
       .webhook_operation_timeout_milliseconds
       .checked_add(self.webhook_cancellation_grace_milliseconds)
       .and_then(|operation| {
         operation.checked_mul(u64::from(
-          self.webhook_delivery_batch_size.max(self.managed_webhook_batch_size),
+          webhook_policy
+            .delivery()
+            .worker()
+            .batch_size()
+            .max(webhook_policy.managed_batch_size()),
         ))
       })
       .and_then(|batch| batch.checked_add(WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS));
-    if webhook_batch_budget.is_none_or(|budget| budget >= self.webhook_worker_claim_lifetime_milliseconds) {
+    if webhook_batch_budget
+      .is_none_or(|budget| budget >= webhook_policy.delivery().worker().claim_lifetime().as_millis() as u64)
+    {
       return Err(ServerConfigError::Invalid(format!(
         "webhook worker claim lifetime must exceed the sequential adapter budget plus the {WEBHOOK_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
+      )));
+    }
+    let log_index_policy = self.log_index_worker().worker();
+    let log_index_batch_budget = self
+      .object_storage
+      .operation_timeout()
+      .as_millis()
+      .try_into()
+      .ok()
+      .and_then(|operation: u64| operation.checked_mul(u64::from(log_index_policy.batch_size())))
+      .and_then(|batch| batch.checked_add(LOG_INDEX_CLAIM_COMPLETION_MARGIN_MILLISECONDS));
+    if log_index_batch_budget.is_none_or(|budget| budget >= log_index_policy.claim_lifetime().as_millis() as u64) {
+      return Err(ServerConfigError::Invalid(format!(
+        "log-index claim lifetime must exceed the sequential object-read budget plus the {LOG_INDEX_CLAIM_COMPLETION_MARGIN_MILLISECONDS} ms completion margin"
       )));
     }
     self.postgres.validate().map_err(ServerConfigError::Invalid)?;

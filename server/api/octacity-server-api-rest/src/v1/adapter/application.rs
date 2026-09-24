@@ -2,16 +2,17 @@ use std::sync::Arc;
 
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, CancelBuildCommand, CommandHandler,
-  CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateManagedWebhookCommand, CreatePipelineCommand,
-  CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand,
-  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
-  GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery,
-  GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
-  ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListProjectsQuery,
+  CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand,
+  CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand,
+  CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand,
+  DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery,
+  GetBuildQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery,
+  GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery,
+  ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery,
   ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PublishAgentPoolVersionCommand,
-  PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
-  PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand, RenameProjectCommand,
-  RetryBuildCommand,
+  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery,
+  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand,
 };
 
 type ProjectCreate = dyn CommandHandler<CreateProjectCommand, Error = ApplicationError>;
@@ -53,6 +54,10 @@ type ManualTriggerAccept = dyn CommandHandler<AcceptManualTriggerCommand, Error 
 type JobEventsRead = dyn QueryHandler<ReadJobEventsQuery, Error = ApplicationError>;
 type ScheduleCreate = dyn CommandHandler<CreateScheduleCommand, Error = ApplicationError>;
 type ScheduleGet = dyn QueryHandler<GetScheduleQuery, Error = ApplicationError>;
+type InternalTriggerCreate = dyn CommandHandler<CreateInternalTriggerCommand, Error = ApplicationError>;
+type InternalTriggerPublish = dyn CommandHandler<PublishInternalTriggerVersionCommand, Error = ApplicationError>;
+type InternalTriggerGet = dyn QueryHandler<GetInternalTriggerQuery, Error = ApplicationError>;
+type InternalTriggerList = dyn QueryHandler<ListInternalTriggersQuery, Error = ApplicationError>;
 type ArtifactGet = dyn QueryHandler<GetArtifactQuery, Error = ApplicationError>;
 type ArtifactList = dyn QueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>;
 type ArtifactDownload = dyn QueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>;
@@ -252,6 +257,33 @@ pub struct ScheduleManagementApplication {
   pub(super) get: Arc<ScheduleGet>,
 }
 
+/// Type-erased internal Trigger management handlers consumed by REST.
+pub struct InternalTriggerManagementApplication {
+  pub(super) create: Arc<InternalTriggerCreate>,
+  pub(super) publish: Arc<InternalTriggerPublish>,
+  pub(super) get: Arc<InternalTriggerGet>,
+  pub(super) list: Arc<InternalTriggerList>,
+}
+
+impl InternalTriggerManagementApplication {
+  /// Erases one internal Trigger service behind its command and query capabilities.
+  pub fn new<S>(service: Arc<S>) -> Self
+  where
+    S: CommandHandler<CreateInternalTriggerCommand, Error = ApplicationError>
+      + CommandHandler<PublishInternalTriggerVersionCommand, Error = ApplicationError>
+      + QueryHandler<GetInternalTriggerQuery, Error = ApplicationError>
+      + QueryHandler<ListInternalTriggersQuery, Error = ApplicationError>
+      + 'static,
+  {
+    Self {
+      create: service.clone(),
+      publish: service.clone(),
+      get: service.clone(),
+      list: service,
+    }
+  }
+}
+
 impl ScheduleManagementApplication {
   /// Erases one schedule service behind its command and query capabilities.
   pub fn new<S>(service: Arc<S>) -> Self
@@ -367,6 +399,7 @@ pub struct CatalogManagementApplication {
   pub(super) configurations: ConfigurationManagementApplication,
   pub(super) definitions: DefinitionManagementApplication,
   pub(super) schedules: ScheduleManagementApplication,
+  pub(super) internal_triggers: InternalTriggerManagementApplication,
 }
 
 impl CatalogManagementApplication {
@@ -377,6 +410,7 @@ impl CatalogManagementApplication {
     configurations: ConfigurationManagementApplication,
     definitions: DefinitionManagementApplication,
     schedules: ScheduleManagementApplication,
+    internal_triggers: InternalTriggerManagementApplication,
   ) -> Self {
     Self {
       projects,
@@ -384,6 +418,7 @@ impl CatalogManagementApplication {
       configurations,
       definitions,
       schedules,
+      internal_triggers,
     }
   }
 }

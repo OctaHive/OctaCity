@@ -1,11 +1,11 @@
 use octacity_server_domain::{
-  BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind, Timestamp, TriggerId, TriggerIdentity,
-  TriggerOccurrenceId, TriggerVersion,
+  BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind, ImmutableRevision, Timestamp, TriggerId,
+  TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_store::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventClaim, InternalTriggerMatch,
   MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT, MutationDisposition, NormalizedTriggerOccurrence, StoreError,
-  StoreInputError, StoreOperation, TriggerCausality, TriggerCause, TriggerDefinitionRef, TriggerEventKind,
+  StoreInputError, StoreOperation, TerminalBuildEvent, TriggerCausality, TriggerCause, TriggerDefinitionRef,
   TriggerMetadata, TriggerTarget,
 };
 use sqlx::{FromRow, PgPool, types::Json};
@@ -42,6 +42,20 @@ struct MatchRow {
   build_configuration_id: Uuid,
   build_configuration_version: i64,
   definition: Json<serde_json::Value>,
+}
+
+#[derive(FromRow)]
+struct SourceBuildRow {
+  id: Uuid,
+  build_configuration_id: Uuid,
+  build_configuration_version: i64,
+  immutable_revision: String,
+}
+
+struct SourceBuild {
+  id: BuildId,
+  target: TriggerTarget,
+  revision: ImmutableRevision,
 }
 
 pub(crate) async fn claim(
@@ -89,16 +103,18 @@ async fn load_claim(
   request: &ClaimInternalTriggerEvents,
   event: ClaimedEventRow,
 ) -> Result<InternalTriggerEventClaim, StoreError> {
-  let build_id = source_build(pool, &event).await?;
-  let source_occurrence = source_occurrence(pool, build_id).await?;
+  let build = source_build(pool, &event).await?;
+  let source_occurrence = source_occurrence(pool, build.id).await?;
   let trigger_ancestry = ancestry(pool, source_occurrence.id).await?;
   octacity_server_store::validate_internal_ancestry(&source_occurrence, &trigger_ancestry)
     .map_err(|_| StoreError::Unavailable)?;
-  let event_kind = event_kind(pool, build_id).await?;
-  let matches = matching_triggers(pool, &event_kind, event.occurred_at_millis).await?;
+  let event_kind = event_kind(pool, build.id).await?;
+  let matches = matching_triggers(pool, build.target, &event_kind, event.occurred_at_millis).await?;
   Ok(InternalTriggerEventClaim {
     event_identity: TriggerIdentity::new(event.id.to_string()).map_err(|_| StoreError::Unavailable)?,
-    source_build_id: build_id,
+    source_build_id: build.id,
+    source_revision: build.revision,
+    source_target: build.target,
     source_occurrence,
     trigger_ancestry,
     event_kind,
@@ -109,29 +125,39 @@ async fn load_claim(
   })
 }
 
-async fn source_build(pool: &PgPool, event: &ClaimedEventRow) -> Result<BuildId, StoreError> {
-  let build_id: Option<Uuid> = match event.topic.as_str() {
-    "job.completed" => sqlx::query_scalar(
-      "SELECT attempt.build_id FROM jobs AS job \
-         JOIN attempts AS attempt ON attempt.id = job.attempt_id \
-         WHERE job.id::text = $1",
+async fn source_build(pool: &PgPool, event: &ClaimedEventRow) -> Result<SourceBuild, StoreError> {
+  let row: Option<SourceBuildRow> = match event.topic.as_str() {
+    "job.completed" => sqlx::query_as(
+      "SELECT build.id, build.build_configuration_id, build.build_configuration_version, build.immutable_revision \
+       FROM jobs AS job JOIN attempts AS attempt ON attempt.id = job.attempt_id \
+       JOIN builds AS build ON build.id = attempt.build_id WHERE job.id::text = $1",
     )
     .bind(&event.aggregate_identity)
     .fetch_optional(pool)
     .await
     .map_err(unavailable)?,
-    "build.cancellation-requested" => sqlx::query_scalar("SELECT id FROM builds WHERE id::text = $1")
-      .bind(&event.aggregate_identity)
-      .fetch_optional(pool)
-      .await
-      .map_err(unavailable)?,
+    "build.cancellation-requested" => sqlx::query_as(
+      "SELECT id, build_configuration_id, build_configuration_version, immutable_revision \
+       FROM builds WHERE id::text = $1",
+    )
+    .bind(&event.aggregate_identity)
+    .fetch_optional(pool)
+    .await
+    .map_err(unavailable)?,
     _ => None,
   };
-  build_id
-    .and_then(|id| BuildId::from_uuid(id).ok())
-    .ok_or(StoreError::NotFound {
-      entity: EntityKind::Build,
-    })
+  let row = row.ok_or(StoreError::NotFound {
+    entity: EntityKind::Build,
+  })?;
+  Ok(SourceBuild {
+    id: BuildId::from_uuid(row.id).map_err(|_| StoreError::Unavailable)?,
+    target: TriggerTarget {
+      configuration_id: BuildConfigurationId::from_uuid(row.build_configuration_id)
+        .map_err(|_| StoreError::Unavailable)?,
+      configuration_version: positive_configuration_version(row.build_configuration_version)?,
+    },
+    revision: ImmutableRevision::new(row.immutable_revision).map_err(|_| StoreError::Unavailable)?,
+  })
 }
 
 async fn source_occurrence(pool: &PgPool, build_id: BuildId) -> Result<NormalizedTriggerOccurrence, StoreError> {
@@ -186,35 +212,37 @@ async fn ancestry(
     .collect()
 }
 
-async fn event_kind(pool: &PgPool, build_id: BuildId) -> Result<TriggerEventKind, StoreError> {
+async fn event_kind(pool: &PgPool, build_id: BuildId) -> Result<TerminalBuildEvent, StoreError> {
   let state: String = sqlx::query_scalar("SELECT state FROM builds WHERE id = $1")
     .bind(build_id.as_uuid())
     .fetch_one(pool)
     .await
     .map_err(unavailable)?;
-  let value = match state.as_str() {
-    "succeeded" => "build.succeeded",
-    "failed" => "build.failed",
-    "cancelled" => "build.cancelled",
-    _ => return Err(StoreError::Unavailable),
-  };
-  TriggerEventKind::new(value).map_err(|_| StoreError::Unavailable)
+  TerminalBuildEvent::from_build_state(&state).ok_or(StoreError::Unavailable)
 }
 
 async fn matching_triggers(
   pool: &PgPool,
-  event_kind: &TriggerEventKind,
+  source: TriggerTarget,
+  event_kind: &TerminalBuildEvent,
   occurred_at_millis: i64,
 ) -> Result<Vec<InternalTriggerMatch>, StoreError> {
   let rows = sqlx::query_as::<_, MatchRow>(
-    "SELECT id AS trigger_id, version AS trigger_version, build_configuration_id, \
-       build_configuration_version, definition FROM triggers \
-     WHERE kind = 'internal' AND enabled AND definition ->> 'event_kind' = $1 \
-       AND created_at <= to_timestamp($2::double precision / 1000.0) \
-     ORDER BY id, version LIMIT $3",
+    "SELECT trigger_id, trigger_version, build_configuration_id, build_configuration_version, definition FROM (\
+       SELECT DISTINCT ON (id) id AS trigger_id, version AS trigger_version, build_configuration_id, \
+         build_configuration_version, enabled, definition FROM triggers \
+       WHERE kind = 'internal' AND created_at <= to_timestamp($2::double precision / 1000.0) \
+       ORDER BY id, version DESC\
+     ) AS active \
+     WHERE enabled AND definition ->> 'event_kind' = $1 \
+       AND definition #>> '{upstream,configuration_id}' = $3 \
+       AND definition #>> '{upstream,configuration_version}' = $4 \
+     ORDER BY trigger_id LIMIT $5",
   )
   .bind(event_kind.as_str())
   .bind(occurred_at_millis)
+  .bind(source.configuration_id.to_string())
+  .bind(source.configuration_version.get().to_string())
   .bind(i64::try_from(MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT + 1).map_err(|_| StoreError::Unavailable)?)
   .fetch_all(pool)
   .await

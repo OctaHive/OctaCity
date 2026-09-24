@@ -1,12 +1,12 @@
 use tokio::task::JoinHandle;
 use tracing::info;
 
-use super::{ListenerTaskResult, ServerRuntime, ServerRuntimeError};
+use super::{DurableWorkerError, ListenerTaskResult, ServerRuntime, ServerRuntimeError};
 
 enum RuntimeTaskExit {
   Listener(Option<Result<ListenerTaskResult, tokio::task::JoinError>>),
   Readiness(Result<(), tokio::task::JoinError>),
-  Workers(Result<(), tokio::task::JoinError>),
+  Workers(Result<Result<(), DurableWorkerError>, tokio::task::JoinError>),
   Notifications(Result<(), tokio::task::JoinError>),
 }
 
@@ -40,11 +40,13 @@ impl ServerRuntime {
       }
       RuntimeTaskExit::Workers(result) => {
         self.worker_task.take();
-        result.map_or_else(ServerRuntimeError::WorkerTask, |()| {
-          ServerRuntimeError::SupervisedTaskUnexpectedExit {
+        match result {
+          Err(source) => ServerRuntimeError::WorkerTask(source),
+          Ok(Err(source)) => ServerRuntimeError::DurableWorker(source),
+          Ok(Ok(())) => ServerRuntimeError::SupervisedTaskUnexpectedExit {
             task: "durable-workers",
-          }
-        })
+          },
+        }
       }
       RuntimeTaskExit::Notifications(result) => {
         self.notification_task.take();
@@ -63,10 +65,12 @@ impl ServerRuntime {
     {
       return Err(ServerRuntimeError::ReadinessTask(source));
     }
-    if let Some(worker_task) = self.worker_task.take()
-      && let Err(source) = worker_task.await
-    {
-      return Err(ServerRuntimeError::WorkerTask(source));
+    if let Some(worker_task) = self.worker_task.take() {
+      match worker_task.await {
+        Err(source) => return Err(ServerRuntimeError::WorkerTask(source)),
+        Ok(Err(source)) => return Err(ServerRuntimeError::DurableWorker(source)),
+        Ok(Ok(())) => {}
+      }
     }
     if let Some(notification_task) = self.notification_task.take()
       && let Err(source) = notification_task.await
@@ -105,10 +109,12 @@ impl ServerRuntime {
       if let Err(source) = (&mut readiness_task).await {
         return Err(ServerRuntimeError::ReadinessTask(source));
       }
-      if let Some(task) = worker_task.as_mut()
-        && let Err(source) = task.await
-      {
-        return Err(ServerRuntimeError::WorkerTask(source));
+      if let Some(task) = worker_task.as_mut() {
+        match task.await {
+          Err(source) => return Err(ServerRuntimeError::WorkerTask(source)),
+          Ok(Err(source)) => return Err(ServerRuntimeError::DurableWorker(source)),
+          Ok(Ok(())) => {}
+        }
       }
       if let Some(task) = notification_task.as_mut()
         && let Err(source) = task.await
@@ -164,7 +170,7 @@ impl Drop for ServerRuntime {
   }
 }
 
-async fn wait_for_optional_task(task: &mut Option<JoinHandle<()>>) -> Result<(), tokio::task::JoinError> {
+async fn wait_for_optional_task<T>(task: &mut Option<JoinHandle<T>>) -> Result<T, tokio::task::JoinError> {
   match task {
     Some(task) => task.await,
     None => std::future::pending().await,

@@ -56,6 +56,14 @@ pub enum StoreOperation {
   ReadBuildConfigurationVersion,
   /// Create one immutable Trigger definition.
   CreateTriggerDefinition,
+  /// Create version one of an internal Trigger definition.
+  CreateInternalTriggerDefinition,
+  /// Publish the next immutable internal Trigger definition version.
+  PublishInternalTriggerVersion,
+  /// Read one exact internal Trigger definition version.
+  ReadInternalTriggerDefinition,
+  /// List current internal Trigger definitions.
+  ListInternalTriggerDefinitions,
   /// Atomically create an unmanaged webhook integration and external Trigger.
   CreateUnmanagedWebhook,
   /// Read one unmanaged webhook integration.
@@ -122,6 +130,12 @@ pub enum StoreOperation {
   PrepareJobEventAppend,
   /// Check whether a logical log chunk is durably visible.
   ReadLogChunkManifest,
+  /// Claim a bounded batch of durable Build-log indexing work.
+  ClaimLogIndexWork,
+  /// Mark one owned Build-log indexing item complete.
+  CompleteLogIndexWork,
+  /// Schedule retry or retain a dead letter for Build-log indexing work.
+  FailLogIndexWork,
   /// Read one bounded ordered page from a Job event stream.
   ReadJobEvents,
   /// Commit one terminal Job outcome after its event history is durable.
@@ -191,6 +205,9 @@ pub enum StoreInputError {
   /// An Agent page size is zero or exceeds the store contract bound.
   #[error("an agent page size is outside its allowed range")]
   InvalidAgentPageSize,
+  /// An internal Trigger page size is zero or exceeds its contract bound.
+  #[error("an internal trigger page size is outside its allowed range")]
+  InvalidInternalTriggerPageSize,
   /// A durable worker owner, deadline, or batch size is invalid.
   #[error("a durable worker claim is invalid")]
   InvalidWorkerClaim,
@@ -327,6 +344,9 @@ pub enum StoreInputError {
   /// cover exactly the newly accepted stdout/stderr events.
   #[error("log chunk manifests do not match the event batch")]
   InvalidLogChunkManifest,
+  /// A durable Build-log indexing failure code or retry time is invalid.
+  #[error("durable log-index work failure is invalid")]
+  InvalidLogIndexWorkFailure,
   /// A retry must name an Attempt number after the initial Attempt.
   #[error("a retry attempt number must be greater than one")]
   InvalidRetryAttempt,

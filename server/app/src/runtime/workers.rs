@@ -6,17 +6,17 @@ use std::{
 };
 
 use octacity_server_application::{
-  InternalTriggerWorker, LeaseExpiryWorker, ManagedWebhookRegistrationWorker, ManualTriggerRetryWorker, ScheduleWorker,
-  WebhookDeliveryWorker,
+  InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker,
+  ManualTriggerRetryWorker, ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_domain::Timestamp;
 use octacity_server_store::WorkerOwner;
-use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
+use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::{ServerConfig, readiness::WorkerHealth};
+use crate::{DurableWorkerError, ServerConfig, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
   pub(super) expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
@@ -27,6 +27,9 @@ pub(super) struct DurableWorkers {
   pub(super) internal_triggers: InternalTriggerWorker<PostgresStore>,
   pub(super) internal_trigger_owner: WorkerOwner,
   pub(super) internal_trigger_health: Arc<WorkerHealth>,
+  pub(super) log_indexing: LogIndexingWorker<PostgresStore, PostgresLogSearchIndex>,
+  pub(super) log_index_owner: WorkerOwner,
+  pub(super) log_index_health: Arc<WorkerHealth>,
   pub(super) manual_trigger_retries: ManualTriggerRetryWorker,
   pub(super) manual_trigger_retry_owner: WorkerOwner,
   pub(super) manual_trigger_retry_health: Arc<WorkerHealth>,
@@ -36,6 +39,7 @@ pub(super) struct DurableWorkers {
 
 pub(super) const EXPIRY_WORKER_NAME: &str = "lease-expiry-worker";
 pub(super) const INTERNAL_TRIGGER_WORKER_NAME: &str = "internal-trigger-worker";
+pub(super) const LOG_INDEX_WORKER_NAME: &str = "log-index-worker";
 pub(super) const MANAGED_WEBHOOK_WORKER_NAME: &str = "managed-webhook-worker";
 pub(super) const MANUAL_TRIGGER_RETRY_WORKER_NAME: &str = "manual-trigger-retry-worker";
 pub(super) const SCHEDULE_WORKER_NAME: &str = "schedule-worker";
@@ -45,39 +49,55 @@ pub(super) fn spawn_durable_workers(
   workers: DurableWorkers,
   config: &ServerConfig,
   cancellation: CancellationToken,
-) -> JoinHandle<()> {
+) -> JoinHandle<Result<(), DurableWorkerError>> {
+  let lease_expiry_policy = config.lease_expiry_worker();
+  let schedule_policy = config.schedule_worker();
+  let internal_trigger_policy = config.internal_trigger_worker();
+  let log_index_policy = config.log_index_worker().worker();
+  let trigger_evaluation_policy = config.trigger_evaluation_worker().worker();
+  let webhook_policy = config.webhook_worker();
+  let webhook_delivery_policy = webhook_policy.delivery().worker();
   let expiry = spawn_expiry_worker(
     workers.expiry,
     workers.expiry_health,
-    config.lease_expiry_poll_interval(),
-    config.lease_expiry_claim_lifetime(),
+    lease_expiry_policy.poll_interval(),
+    lease_expiry_policy.claim_lifetime(),
     cancellation.child_token(),
   );
   let schedules = spawn_schedule_worker(
     workers.schedules,
     workers.schedule_owner,
     workers.schedule_health,
-    config.schedule_poll_interval(),
-    config.schedule_claim_lifetime(),
-    config.schedule_batch_size(),
+    schedule_policy.poll_interval(),
+    schedule_policy.claim_lifetime(),
+    schedule_policy.batch_size(),
     cancellation.child_token(),
   );
   let internal_triggers = spawn_internal_trigger_worker(
     workers.internal_triggers,
     workers.internal_trigger_owner,
     workers.internal_trigger_health,
-    config.internal_trigger_poll_interval(),
-    config.internal_trigger_claim_lifetime(),
-    config.internal_trigger_batch_size(),
+    internal_trigger_policy.poll_interval(),
+    internal_trigger_policy.claim_lifetime(),
+    internal_trigger_policy.batch_size(),
+    cancellation.child_token(),
+  );
+  let log_indexing = spawn_log_index_worker(
+    workers.log_indexing,
+    workers.log_index_owner,
+    workers.log_index_health,
+    log_index_policy.poll_interval(),
+    log_index_policy.claim_lifetime(),
+    log_index_policy.batch_size(),
     cancellation.child_token(),
   );
   let manual_trigger_retries = spawn_manual_trigger_retry_worker(
     workers.manual_trigger_retries,
     workers.manual_trigger_retry_owner,
     workers.manual_trigger_retry_health,
-    config.trigger_evaluation_poll_interval(),
-    config.trigger_evaluation_claim_lifetime(),
-    config.trigger_evaluation_batch_size(),
+    trigger_evaluation_policy.poll_interval(),
+    trigger_evaluation_policy.claim_lifetime(),
+    trigger_evaluation_policy.batch_size(),
     cancellation.child_token(),
   );
   let webhook_deliveries = workers.webhook_deliveries.map(|(worker, owner, health)| {
@@ -85,9 +105,9 @@ pub(super) fn spawn_durable_workers(
       worker,
       owner,
       health,
-      config.webhook_worker_poll_interval(),
-      config.webhook_worker_claim_lifetime(),
-      config.webhook_delivery_batch_size(),
+      webhook_delivery_policy.poll_interval(),
+      webhook_delivery_policy.claim_lifetime(),
+      webhook_delivery_policy.batch_size(),
       cancellation.child_token(),
     )
   });
@@ -96,9 +116,9 @@ pub(super) fn spawn_durable_workers(
       worker,
       owner,
       health,
-      config.webhook_worker_poll_interval(),
-      config.webhook_worker_claim_lifetime(),
-      config.managed_webhook_batch_size(),
+      webhook_delivery_policy.poll_interval(),
+      webhook_delivery_policy.claim_lifetime(),
+      webhook_policy.managed_batch_size(),
       cancellation.child_token(),
     )
   });
@@ -106,6 +126,7 @@ pub(super) fn spawn_durable_workers(
     (EXPIRY_WORKER_NAME, expiry),
     (SCHEDULE_WORKER_NAME, schedules),
     (INTERNAL_TRIGGER_WORKER_NAME, internal_triggers),
+    (LOG_INDEX_WORKER_NAME, log_indexing),
     (MANUAL_TRIGGER_RETRY_WORKER_NAME, manual_trigger_retries),
   ];
   if let Some(task) = webhook_deliveries {
@@ -117,10 +138,46 @@ pub(super) fn spawn_durable_workers(
   spawn_worker_supervisor(tasks, cancellation)
 }
 
+fn spawn_log_index_worker(
+  worker: LogIndexingWorker<PostgresStore, PostgresLogSearchIndex>,
+  owner: WorkerOwner,
+  health: Arc<WorkerHealth>,
+  poll_interval: Duration,
+  claim_lifetime: Duration,
+  batch_size: u16,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  let worker = Arc::new(worker);
+  spawn_worker_loop(
+    LOG_INDEX_WORKER_NAME,
+    health,
+    poll_interval,
+    claim_lifetime,
+    cancellation,
+    move |observed_at, claim_expires_at| {
+      let worker = worker.clone();
+      let owner = owner.clone();
+      async move { worker.run_once(owner, observed_at, claim_expires_at, batch_size).await }
+    },
+    |outcome| {
+      if outcome.claimed > 0 {
+        info!(
+          claimed = outcome.claimed,
+          completed = outcome.completed,
+          retries = outcome.retries_scheduled,
+          dead_letters = outcome.dead_letters,
+          lost_claims = outcome.lost_claims,
+          "Build-log indexing work advanced"
+        );
+      }
+    },
+  )
+}
+
 fn spawn_worker_supervisor(
   workers: Vec<(&'static str, JoinHandle<()>)>,
   cancellation: CancellationToken,
-) -> JoinHandle<()> {
+) -> JoinHandle<Result<(), DurableWorkerError>> {
   tokio::spawn(async move {
     let mut tasks = tokio::task::JoinSet::new();
     for (name, task) in workers {
@@ -130,17 +187,17 @@ fn spawn_worker_supervisor(
     let first_exit = tasks.join_next().await;
     if cancellation.is_cancelled() {
       while tasks.join_next().await.is_some() {}
-      return;
+      return Ok(());
     }
 
     cancellation.cancel();
     while tasks.join_next().await.is_some() {}
-    match first_exit {
-      Some(Ok((worker, Ok(())))) => panic!("durable worker {worker} terminated unexpectedly"),
-      Some(Ok((worker, Err(source)))) => panic!("durable worker {worker} failed: {source}"),
-      Some(Err(source)) => panic!("durable worker supervisor failed: {source}"),
-      None => panic!("durable worker supervisor started without workers"),
-    }
+    Err(match first_exit {
+      Some(Ok((worker, Ok(())))) => DurableWorkerError::UnexpectedExit { worker },
+      Some(Ok((worker, Err(source)))) => DurableWorkerError::WorkerTask { worker, source },
+      Some(Err(source)) => DurableWorkerError::SupervisorTask(source),
+      None => DurableWorkerError::NoWorkers,
+    })
   })
 }
 
@@ -445,7 +502,10 @@ mod tests {
     let result = tokio::time::timeout(Duration::from_secs(1), supervisor)
       .await
       .expect("worker failure must stop the worker group");
-    assert!(result.expect_err("worker failure must fail the supervisor").is_panic());
+    assert!(matches!(
+      result.expect("supervisor task must not panic"),
+      Err(DurableWorkerError::WorkerTask { worker: "failed", .. })
+    ));
   }
 
   #[tokio::test]
@@ -458,6 +518,9 @@ mod tests {
     let supervisor = spawn_worker_supervisor(vec![("worker", worker)], cancellation.clone());
 
     cancellation.cancel();
-    supervisor.await.expect("requested cancellation must drain cleanly");
+    assert!(matches!(
+      supervisor.await.expect("supervisor task must not panic"),
+      Ok(())
+    ));
   }
 }

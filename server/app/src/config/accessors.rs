@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, path::Path, time::Duration};
 
 use super::{
-  AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, ServerConfig, SigningConfig,
-  VcsIntegrationConfig,
+  AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, RetryingWorkerPolicy,
+  ServerConfig, SigningConfig, VcsIntegrationConfig, WebhookWorkerPolicy, WorkerPolicy,
 };
 
 impl ServerConfig {
@@ -69,34 +69,17 @@ impl ServerConfig {
     Duration::from_millis(self.vcs_cancellation_grace_milliseconds)
   }
 
-  /// Interval between scans for manual Trigger evaluations awaiting a VCS retry.
-  pub const fn trigger_evaluation_poll_interval(&self) -> Duration {
-    Duration::from_millis(self.trigger_evaluation_poll_interval_milliseconds)
-  }
-
-  /// Exclusive ownership window for a bounded batch of manual Trigger evaluations.
-  pub const fn trigger_evaluation_claim_lifetime(&self) -> Duration {
-    Duration::from_millis(self.trigger_evaluation_claim_lifetime_milliseconds)
-  }
-
-  /// Maximum manual Trigger evaluations advanced in one worker pass.
-  pub const fn trigger_evaluation_batch_size(&self) -> u16 {
-    self.trigger_evaluation_batch_size
-  }
-
-  /// Maximum VCS evaluation attempts before retaining a dead letter.
-  pub const fn vcs_retry_max_attempts(&self) -> u16 {
-    self.vcs_retry_max_attempts
-  }
-
-  /// Initial exponential delay after a transient VCS failure.
-  pub const fn vcs_retry_initial_milliseconds(&self) -> u64 {
-    self.vcs_retry_initial_milliseconds
-  }
-
-  /// Ceiling for exponential VCS retry delays.
-  pub const fn vcs_retry_maximum_milliseconds(&self) -> u64 {
-    self.vcs_retry_maximum_milliseconds
+  pub(crate) const fn trigger_evaluation_worker(&self) -> RetryingWorkerPolicy {
+    RetryingWorkerPolicy::new(
+      WorkerPolicy::new(
+        self.trigger_evaluation_poll_interval_milliseconds,
+        self.trigger_evaluation_claim_lifetime_milliseconds,
+        self.trigger_evaluation_batch_size,
+      ),
+      self.vcs_retry_max_attempts,
+      self.vcs_retry_initial_milliseconds,
+      self.vcs_retry_maximum_milliseconds,
+    )
   }
 
   /// Whether external unauthenticated management access was explicitly acknowledged.
@@ -144,84 +127,57 @@ impl ServerConfig {
     Duration::from_millis(self.agent_lease_lifetime_milliseconds)
   }
 
-  /// Interval between authoritative scans for expired Leases.
-  pub const fn lease_expiry_poll_interval(&self) -> Duration {
-    Duration::from_millis(self.lease_expiry_poll_interval_milliseconds)
+  pub(crate) const fn lease_expiry_worker(&self) -> WorkerPolicy {
+    WorkerPolicy::new(
+      self.lease_expiry_poll_interval_milliseconds,
+      self.lease_expiry_claim_lifetime_milliseconds,
+      self.lease_expiry_batch_size,
+    )
   }
 
-  /// Exclusive ownership window for one expired-Lease worker claim.
-  pub const fn lease_expiry_claim_lifetime(&self) -> Duration {
-    Duration::from_millis(self.lease_expiry_claim_lifetime_milliseconds)
+  pub(crate) const fn schedule_worker(&self) -> WorkerPolicy {
+    WorkerPolicy::new(
+      self.schedule_poll_interval_milliseconds,
+      self.schedule_claim_lifetime_milliseconds,
+      self.schedule_batch_size,
+    )
   }
 
-  /// Maximum expired Leases recovered in one worker pass.
-  pub const fn lease_expiry_batch_size(&self) -> u16 {
-    self.lease_expiry_batch_size
+  pub(crate) const fn internal_trigger_worker(&self) -> WorkerPolicy {
+    WorkerPolicy::new(
+      self.internal_trigger_poll_interval_milliseconds,
+      self.internal_trigger_claim_lifetime_milliseconds,
+      self.internal_trigger_batch_size,
+    )
   }
 
-  /// Interval between authoritative scans for due schedules.
-  pub const fn schedule_poll_interval(&self) -> Duration {
-    Duration::from_millis(self.schedule_poll_interval_milliseconds)
+  pub(crate) const fn log_index_worker(&self) -> RetryingWorkerPolicy {
+    RetryingWorkerPolicy::new(
+      WorkerPolicy::new(
+        self.log_index_poll_interval_milliseconds,
+        self.log_index_claim_lifetime_milliseconds,
+        self.log_index_batch_size,
+      ),
+      self.log_index_max_attempts,
+      self.log_index_initial_retry_milliseconds,
+      self.log_index_maximum_retry_milliseconds,
+    )
   }
 
-  /// Exclusive ownership window for one due-schedule worker claim.
-  pub const fn schedule_claim_lifetime(&self) -> Duration {
-    Duration::from_millis(self.schedule_claim_lifetime_milliseconds)
-  }
-
-  /// Maximum due schedules evaluated in one worker pass.
-  pub const fn schedule_batch_size(&self) -> u16 {
-    self.schedule_batch_size
-  }
-
-  /// Interval between authoritative scans for terminal Build outbox events.
-  pub const fn internal_trigger_poll_interval(&self) -> Duration {
-    Duration::from_millis(self.internal_trigger_poll_interval_milliseconds)
-  }
-
-  /// Exclusive ownership window for one internal-Trigger outbox claim.
-  pub const fn internal_trigger_claim_lifetime(&self) -> Duration {
-    Duration::from_millis(self.internal_trigger_claim_lifetime_milliseconds)
-  }
-
-  /// Maximum terminal Build events delivered in one worker pass.
-  pub const fn internal_trigger_batch_size(&self) -> u16 {
-    self.internal_trigger_batch_size
-  }
-
-  /// Shared poll interval for delivery verification and managed webhook work.
-  pub const fn webhook_worker_poll_interval(&self) -> Duration {
-    Duration::from_millis(self.webhook_worker_poll_interval_milliseconds)
-  }
-
-  /// Shared exclusive ownership window for one webhook worker claim.
-  pub const fn webhook_worker_claim_lifetime(&self) -> Duration {
-    Duration::from_millis(self.webhook_worker_claim_lifetime_milliseconds)
-  }
-
-  /// Maximum webhook receipts advanced in one worker pass.
-  pub const fn webhook_delivery_batch_size(&self) -> u16 {
-    self.webhook_delivery_batch_size
-  }
-
-  /// Maximum managed provider operations advanced in one worker pass.
-  pub const fn managed_webhook_batch_size(&self) -> u16 {
-    self.managed_webhook_batch_size
-  }
-
-  /// Maximum webhook adapter attempts before dead-lettering.
-  pub const fn webhook_worker_max_attempts(&self) -> u16 {
-    self.webhook_worker_max_attempts
-  }
-
-  /// Initial exponential retry delay for transient adapter failures.
-  pub const fn webhook_worker_initial_retry_milliseconds(&self) -> u64 {
-    self.webhook_worker_initial_retry_milliseconds
-  }
-
-  /// Ceiling for exponential webhook adapter retry delays.
-  pub const fn webhook_worker_maximum_retry_milliseconds(&self) -> u64 {
-    self.webhook_worker_maximum_retry_milliseconds
+  pub(crate) const fn webhook_worker(&self) -> WebhookWorkerPolicy {
+    WebhookWorkerPolicy::new(
+      RetryingWorkerPolicy::new(
+        WorkerPolicy::new(
+          self.webhook_worker_poll_interval_milliseconds,
+          self.webhook_worker_claim_lifetime_milliseconds,
+          self.webhook_delivery_batch_size,
+        ),
+        self.webhook_worker_max_attempts,
+        self.webhook_worker_initial_retry_milliseconds,
+        self.webhook_worker_maximum_retry_milliseconds,
+      ),
+      self.managed_webhook_batch_size,
+    )
   }
 
   /// Delay before reconnecting a failed PostgreSQL ready-Job notification listener.

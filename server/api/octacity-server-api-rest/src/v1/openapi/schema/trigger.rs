@@ -120,6 +120,114 @@ pub(super) fn insert_trigger_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "InternalTriggerOutcome".to_owned(),
+    json!({"type": "string", "enum": ["succeeded", "failed", "cancelled"]}),
+  );
+  schemas.insert(
+    "InternalTriggerSource".to_owned(),
+    json!({
+      "oneOf": [
+        object([("kind", json!({"const": "inherit_revision"}))], &["kind"]),
+        object(
+          [("kind", json!({"const": "resolve_target"})), ("source", schema_ref("ManualSource"))],
+          &["kind", "source"]
+        )
+      ],
+      "discriminator": {"propertyName": "kind"}
+    }),
+  );
+  let internal_fields = [
+    ("upstream_configuration_id", non_empty_string()),
+    ("upstream_configuration_version", positive_integer()),
+    ("configuration_id", non_empty_string()),
+    ("configuration_version", positive_integer()),
+    ("outcome", schema_ref("InternalTriggerOutcome")),
+    ("source", schema_ref("InternalTriggerSource")),
+    (
+      "parameters",
+      json!({
+        "type": "object",
+        "additionalProperties": {"oneOf": [{"type": "string"}, {"type": "integer"}, {"type": "boolean"}]}
+      }),
+    ),
+    ("priority", integer()),
+    ("enabled", json!({"type": "boolean"})),
+  ];
+  let internal_required = [
+    "upstream_configuration_id",
+    "upstream_configuration_version",
+    "configuration_id",
+    "configuration_version",
+    "outcome",
+    "source",
+    "parameters",
+    "priority",
+    "enabled",
+  ];
+  schemas.insert(
+    "InternalTriggerDefinitionRequest".to_owned(),
+    object(internal_fields.clone(), &internal_required),
+  );
+  schemas.insert(
+    "InternalTriggerResource".to_owned(),
+    object(
+      [
+        ("id", non_empty_string()),
+        ("version", positive_integer()),
+        ("upstream_configuration_id", non_empty_string()),
+        ("upstream_configuration_version", positive_integer()),
+        ("configuration_id", non_empty_string()),
+        ("configuration_version", positive_integer()),
+        ("outcome", schema_ref("InternalTriggerOutcome")),
+        ("source", schema_ref("InternalTriggerSource")),
+        (
+          "parameters",
+          json!({
+            "type": "object",
+            "additionalProperties": {"oneOf": [{"type": "string"}, {"type": "integer"}, {"type": "boolean"}]}
+          }),
+        ),
+        ("priority", integer()),
+        ("enabled", json!({"type": "boolean"})),
+        ("created_at_unix_ms", integer()),
+      ],
+      &[
+        "id",
+        "version",
+        "upstream_configuration_id",
+        "upstream_configuration_version",
+        "configuration_id",
+        "configuration_version",
+        "outcome",
+        "source",
+        "parameters",
+        "priority",
+        "enabled",
+        "created_at_unix_ms",
+      ],
+    ),
+  );
+  schemas.insert(
+    "InternalTriggerMutationResponse".to_owned(),
+    object(
+      [
+        ("disposition", schema_ref("MutationDisposition")),
+        ("resource", schema_ref("InternalTriggerResource")),
+      ],
+      &["disposition", "resource"],
+    ),
+  );
+  schemas.insert(
+    "InternalTriggerPage".to_owned(),
+    object(
+      [
+        ("items", array(schema_ref("InternalTriggerResource"))),
+        ("next_cursor", json!({"oneOf": [non_empty_string(), {"type": "null"}]})),
+      ],
+      &["items", "next_cursor"],
+    ),
+  );
+  schemas.insert(
     "CreateUnmanagedWebhookRequest".to_owned(),
     object(
       [

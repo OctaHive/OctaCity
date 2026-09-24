@@ -95,7 +95,26 @@ octacity-agent --log-filter octacity_agent=info --log-format json \
 
 The server becomes ready only after its PostgreSQL migrations, database,
 mandatory S3-compatible bucket, and JobSpec signing material are usable. When
-`agent_bind` is configured, the independently authenticated Agent listener
+using Build-log search, PostgreSQL must provide the `pg_trgm` extension. The
+migration role must either be allowed to run `CREATE EXTENSION pg_trgm`, or an
+administrator must install that extension before the server applies migrations;
+otherwise migration readiness remains false rather than silently disabling
+literal-fragment search.
+
+If the derived Build-log search tables are lost or deliberately recreated,
+queue an atomic Project-scoped replay while a server is running:
+
+```shell
+octacity-server rebuild-log-search /etc/octacity/server.toml \
+  --project 00000000-0000-0000-0000-000000000001
+```
+
+The command reconstructs deletion tombstones first, clears only derived search
+state, and requeues existing authoritative log work. Normal workers then read
+retained verified chunks and rebuild the projection in configured bounded
+batches. It does not change archived bytes, Job outcomes, or event cursors.
+
+When `agent_bind` is configured, the independently authenticated Agent listener
 serves registration at `/api/v1/agents/register` and lease long polling at
 `/api/v1/agents/{agent_id}/leases:acquire`. When `cache_bind` is configured, it
 independently serves authenticated Octa HTTP cache v1 traffic;

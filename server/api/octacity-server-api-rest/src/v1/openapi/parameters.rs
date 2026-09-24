@@ -17,6 +17,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "pool_id",
     "agent_id",
     "integration_id",
+    "trigger_id",
     "version",
   ] {
     if operation.path.contains(&format!("{{{name}}}")) {
@@ -72,6 +73,13 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       octacity_server_application::MAX_CACHE_SESSION_LIST_PAGE_SIZE,
       super::super::adapter::DEFAULT_CACHE_SESSION_LIMIT,
     )),
+    ParameterProfile::InternalTriggerList => parameters.extend([
+      cursor_parameter(),
+      limit_parameter(
+        MAX_INTERNAL_TRIGGER_LIST_PAGE_SIZE,
+        super::super::adapter::DEFAULT_PAGE_LIMIT,
+      ),
+    ]),
   }
   if operation.idempotent_mutation {
     parameters.push(json!({

@@ -2,6 +2,31 @@ use std::net::SocketAddr;
 
 use thiserror::Error;
 
+/// Typed failure from the durable-worker supervisor.
+#[derive(Debug, Error)]
+pub enum DurableWorkerError {
+  /// A worker returned without a process shutdown request.
+  #[error("durable worker {worker} terminated unexpectedly")]
+  UnexpectedExit {
+    /// Stable non-sensitive worker name.
+    worker: &'static str,
+  },
+  /// A worker task panicked or was cancelled.
+  #[error("durable worker {worker} failed: {source}")]
+  WorkerTask {
+    /// Stable non-sensitive worker name.
+    worker: &'static str,
+    /// Tokio task failure.
+    source: tokio::task::JoinError,
+  },
+  /// The supervisor's own tracking task failed.
+  #[error("durable worker supervisor failed: {0}")]
+  SupervisorTask(tokio::task::JoinError),
+  /// Construction supplied no worker to supervise.
+  #[error("durable worker supervisor started without workers")]
+  NoWorkers,
+}
+
 /// Failure to start, serve, or gracefully stop the server process.
 #[derive(Debug, Error)]
 pub enum ServerRuntimeError {
@@ -55,6 +80,9 @@ pub enum ServerRuntimeError {
   /// The supervised durable-worker group panicked or was cancelled unexpectedly.
   #[error("durable worker task failed: {0}")]
   WorkerTask(tokio::task::JoinError),
+  /// A durable worker exited or failed with a typed supervisor error.
+  #[error("durable worker group failed: {0}")]
+  DurableWorker(#[from] DurableWorkerError),
   /// The process-local PostgreSQL notification listener panicked or was cancelled unexpectedly.
   #[error("ready-Job notification task failed: {0}")]
   NotificationTask(tokio::task::JoinError),

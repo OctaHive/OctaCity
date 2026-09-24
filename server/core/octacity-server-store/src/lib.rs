@@ -171,10 +171,12 @@ pub use external_trigger_port::{
 };
 pub use idempotency::{IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES};
 pub use internal_trigger_model::{
-  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventClaim, InternalTriggerMatch,
-  MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE, MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT,
+  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
+  InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim, InternalTriggerMatch,
+  ListInternalTriggerDefinitions, MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE, MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT,
+  MAX_INTERNAL_TRIGGER_PAGE_SIZE, PublishInternalTriggerVersion,
 };
-pub use internal_trigger_port::InternalTriggerEventStore;
+pub use internal_trigger_port::{InternalTriggerDefinitionStore, InternalTriggerEventStore};
 pub use job_model::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
   JobCompletion, JobCompletionKind, JobEventAppendPreparation, JobEventPage, LeaseAccess, LeaseGrant,
@@ -187,12 +189,14 @@ pub use lease_recovery::{
 };
 pub use lease_recovery_port::LeaseRecoveryStore;
 pub use log_search::{
-  BuildLogStream, DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCursor, LogSearchDocument,
-  LogSearchError, LogSearchFreshness, LogSearchHit, LogSearchInputError, LogSearchMode, LogSearchMutationDisposition,
-  LogSearchOperation, LogSearchPage, LogSearchQuery, MAX_LOG_SEARCH_DOCUMENT_BYTES, MAX_LOG_SEARCH_PAGE_SIZE,
-  MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument,
+  BuildLogStream, ClaimLogIndexWork, CompleteLogIndexWork, DeleteLogSearchDocuments, FailLogIndexWork,
+  IndexedLogSearchPage, LogIndexDocumentSource, LogIndexPosition, LogIndexWorkClaim, LogIndexWorkKind, LogSearchCursor,
+  LogSearchDocument, LogSearchError, LogSearchFreshness, LogSearchHit, LogSearchInputError, LogSearchMode,
+  LogSearchMutationDisposition, LogSearchOperation, LogSearchPage, LogSearchQuery, MAX_LOG_INDEX_FAILURE_CODE_BYTES,
+  MAX_LOG_INDEX_WORK_BATCH_SIZE, MAX_LOG_SEARCH_DOCUMENT_BYTES, MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES,
+  MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument, bounded_log_search_snippet,
 };
-pub use log_search_port::{LogIndexWorkStore, LogSearchIndex};
+pub use log_search_port::{LogIndexWorkQueue, LogIndexWorkStore, LogSearchIndex};
 pub use model::{
   AcceptTrigger, AcceptTriggerOutcome, EventDigest, EventSequence, ImmutableBuildInput, JobEventKind, LeaseFence,
   MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES, MAX_JOB_EVENT_BATCH_BYTES,
@@ -204,7 +208,7 @@ pub use model::{
 pub use octacity_server_artifacts::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
   ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType, LogChunkDigest, LogChunkManifest,
-  LogChunkManifestError, MAX_LOG_CHUNK_BYTES,
+  LogChunkManifestError, MAX_LOG_CHUNK_BYTES, StoredLogChunkManifest,
 };
 pub use octacity_server_cache::{
   CacheCredentialDigest, CacheNamespace, CacheNamespacePolicy, CacheOperation, CachePermissions, CacheSessionState,
@@ -214,9 +218,9 @@ pub use octacity_server_domain::{ArtifactPolicy, ImmutableRevision, NetworkHost,
 pub use octacity_server_domain::{EnrollmentCredentialId, LogChunkId, LogIndexingWorkId, RegistrationCredentialId};
 pub use octacity_server_trigger::{
   InternalTriggerProtection, MAX_INTERNAL_TRIGGER_DEPTH, MissedRunPolicy, NormalizedTriggerOccurrence,
-  ScheduleDefinition, TriggerCausality, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEventKind,
-  TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent, TriggerOccurrenceState, TriggerTarget,
-  derive_internal_causality, validate_internal_ancestry,
+  ScheduleDefinition, TerminalBuildEvent, TriggerCausality, TriggerCause, TriggerDeduplicationKey,
+  TriggerDefinitionRef, TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent,
+  TriggerOccurrenceState, TriggerTarget, derive_internal_causality, validate_internal_ancestry,
 };
 pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
 pub use pipeline_port::PipelineStore;

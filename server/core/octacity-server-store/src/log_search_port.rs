@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use octacity_server_domain::ProjectId;
 
 use crate::{
-  DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchError, LogSearchMutationDisposition,
-  LogSearchQuery, WriteLogSearchDocument,
+  ClaimLogIndexWork, CompleteLogIndexWork, DeleteLogSearchDocuments, FailLogIndexWork, IndexedLogSearchPage,
+  LogIndexPosition, LogIndexWorkClaim, LogSearchError, LogSearchMutationDisposition, LogSearchQuery,
+  MutationDisposition, StoreError, WriteLogSearchDocument,
 };
 
 /// Backend-neutral derived projection for bounded Build-log search.
@@ -47,4 +48,17 @@ pub trait LogIndexWorkStore: Send + Sync {
     &self,
     project_id: ProjectId,
   ) -> Result<Option<crate::LogIndexPosition>, crate::StoreError>;
+}
+
+/// Durable leased delivery queue for Build-log indexing and rebuild work.
+#[async_trait]
+pub trait LogIndexWorkQueue: Send + Sync {
+  /// Claims a bounded due batch, including work whose previous owner expired.
+  async fn claim_log_index_work(&self, request: ClaimLogIndexWork) -> Result<Vec<LogIndexWorkClaim>, StoreError>;
+
+  /// Completes one item only while the supplied owner holds its live claim.
+  async fn complete_log_index_work(&self, request: CompleteLogIndexWork) -> Result<MutationDisposition, StoreError>;
+
+  /// Releases one live claim for retry or retains it as a dead letter.
+  async fn fail_log_index_work(&self, request: FailLogIndexWork) -> Result<MutationDisposition, StoreError>;
 }

@@ -58,7 +58,11 @@ The server SHALL archive textual stdout and stderr as bounded immutable chunks w
 - **THEN** the chunk remains invisible, retry uses the same logical identity and digest, and retention may safely remove the orphan
 
 ### Requirement: Retention is safe and idempotent
-Retention SHALL remove logical visibility before deleting search documents or bytes, preserve outputs and log chunks referenced by retained builds, and safely retry interrupted deletions.
+Each Build Result component SHALL receive its automatic-retention deadline from the immutable effective project-policy snapshot recorded for that Build. Retention SHALL remove logical visibility before deleting search documents, manifests, or bytes, preserve components whose deadline has not elapsed or whose Build Result has an active retention hold, and safely retry interrupted deletions. A retained component SHALL continue to count toward its applicable storage or capacity quota.
+
+#### Scenario: Configured retention period elapses
+- **WHEN** a Build Result component reaches its recorded automatic-retention deadline without an active hold or another retained reference
+- **THEN** the server durably makes it unavailable and eventually removes its derived search documents, manifests, and object bytes in an idempotent order
 
 #### Scenario: Server stops during deletion
 - **WHEN** retention is interrupted after hiding metadata but before object deletion completes
@@ -67,3 +71,18 @@ Retention SHALL remove logical visibility before deleting search documents or by
 #### Scenario: Stale indexing follows deletion
 - **WHEN** delayed indexing or rebuild work arrives after a Build Result has a durable deletion tombstone
 - **THEN** the projection acknowledges the obsolete work without restoring any searchable document
+
+### Requirement: Build Result retention holds
+The server SHALL allow an operator to place a permanent or time-bounded retention hold, also presented as a pin, on a visible Build Result. A hold SHALL cover the Build metadata, configuration snapshot, logs, artifacts, and reports as one aggregate. It SHALL be stored separately from the original automatic-retention deadlines and SHALL record a bounded reason, creation time, optional expiry, available actor identity, and request identity. Releasing or expiring a hold SHALL NOT extend or recompute any original deadline.
+
+#### Scenario: Operator pins a Build Result
+- **WHEN** an operator places a hold before retention has hidden the Build Result
+- **THEN** every component remains visible and retrievable after its automatic-retention deadline while the hold is active
+
+#### Scenario: Operator releases an overdue hold
+- **WHEN** the last active hold is released or expires after one or more original retention deadlines have elapsed
+- **THEN** those overdue components become eligible for the next retention pass without receiving a new retention period
+
+#### Scenario: Pin races with retention
+- **WHEN** a hold command races with the first retention transition for the same Build Result
+- **THEN** the server atomically accepts the hold before hiding any component or rejects it with a stable conflict after deletion has begun, and never reports a pin for partially deleted data

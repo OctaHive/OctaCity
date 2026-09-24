@@ -21,7 +21,6 @@ struct PolicyFingerprint<'a> {
 
 #[derive(Serialize)]
 struct TriggerFingerprint<'a> {
-  id: octacity_server_domain::TriggerId,
   version: octacity_server_domain::TriggerVersion,
   configuration_id: octacity_server_domain::BuildConfigurationId,
   configuration_version: octacity_server_domain::BuildConfigurationVersion,
@@ -129,7 +128,6 @@ pub(crate) async fn create_trigger(
     request.created_at,
     EntityKind::Trigger,
     &TriggerFingerprint {
-      id: request.id,
       version: request.version,
       configuration_id: request.configuration_id,
       configuration_version: request.configuration_version,

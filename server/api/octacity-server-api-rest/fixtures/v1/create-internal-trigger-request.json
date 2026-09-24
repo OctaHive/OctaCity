@@ -1,0 +1,15 @@
+{
+  "upstream_configuration_id": "00000000-0000-0000-0000-000000000101",
+  "upstream_configuration_version": 3,
+  "configuration_id": "00000000-0000-0000-0000-000000000102",
+  "configuration_version": 5,
+  "outcome": "succeeded",
+  "source": {
+    "kind": "inherit_revision"
+  },
+  "parameters": {
+    "channel": "stable"
+  },
+  "priority": 10,
+  "enabled": true
+}

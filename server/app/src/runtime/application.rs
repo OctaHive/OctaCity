@@ -5,16 +5,16 @@ use octacity_server_api_rest::{
   v1::{
     AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
     CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-    ExecutionManagementApplication, JobEventManagementApplication, ManagementApplication,
-    ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
-    ProjectManagementApplication, ScheduleManagementApplication,
+    ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+    ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+    PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
   },
 };
 use octacity_server_application::{
   AgentEnrollmentHandler, AgentHandlers, AgentPoolHandlers, ArtifactHandlers, BuildConfigurationHandlers,
   BuildHandlers, CacheSessionHandlers, DefinitionHandlers, DurableManualTriggerService, DurableRetryPolicy,
-  JobEventLongPoll, JobSpecToolchainPolicy, ManualTriggerRetryWorker, ManualTriggerService, PipelineHandlers,
-  ProjectHandlers, RevisionResolver, ScheduleHandlers, StoreBackedEffectiveProjectPolicySource,
+  InternalTriggerHandlers, JobEventLongPoll, JobSpecToolchainPolicy, ManualTriggerRetryWorker, ManualTriggerService,
+  PipelineHandlers, ProjectHandlers, RevisionResolver, ScheduleHandlers, StoreBackedEffectiveProjectPolicySource,
   StoreBackedManualTriggerContext, WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider,
   WebhookManagementService,
 };
@@ -86,6 +86,7 @@ pub(super) fn management_application(
   let builds = Arc::new(BuildHandlers::new(authoritative_store.clone()));
   let definitions = Arc::new(DefinitionHandlers::new(store.clone()));
   let schedules = Arc::new(ScheduleHandlers::new(store.clone()));
+  let internal_triggers = Arc::new(InternalTriggerHandlers::new(store.clone()));
   let policy_source = Arc::new(StoreBackedEffectiveProjectPolicySource::new(store.clone()));
   let trigger_context = Arc::new(StoreBackedManualTriggerContext::new(
     store.clone(),
@@ -146,6 +147,7 @@ pub(super) fn management_application(
         ConfigurationManagementApplication::new(configurations),
         DefinitionManagementApplication::new(definitions, webhook_management),
         ScheduleManagementApplication::new(schedules),
+        InternalTriggerManagementApplication::new(internal_triggers),
       ),
       AgentManagementApplication::new(pools, agents, enrollments),
       ExecutionManagementApplication::new(

@@ -44,6 +44,9 @@ pub enum ProjectionError {
   /// A durable schedule contains an invalid calendar or Build definition.
   #[error("schedule snapshot is invalid")]
   InvalidScheduleSnapshot,
+  /// An internal Trigger definition violates its strict persisted schema.
+  #[error("internal trigger snapshot is invalid")]
+  InvalidInternalTriggerSnapshot,
   /// A Build snapshot does not match the strict server-owned snapshot schema.
   #[error("build snapshot is invalid")]
   InvalidBuildSnapshot,

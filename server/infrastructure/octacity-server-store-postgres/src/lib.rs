@@ -26,6 +26,7 @@ mod database;
 mod definition_mutation;
 mod external_trigger;
 mod internal_trigger;
+mod internal_trigger_definition;
 mod job_claim;
 mod job_completion;
 mod job_event_query;
@@ -33,6 +34,8 @@ mod job_events;
 mod lease;
 mod lease_heartbeat;
 mod lease_recovery;
+mod log_index_work;
+mod log_search;
 mod mutation;
 mod pipeline_mutation;
 mod pipeline_query;
@@ -55,6 +58,7 @@ mod trigger_query;
 
 use sqlx::{PgPool, migrate::MigrateError};
 
+pub use log_search::{LogSearchRebuildSummary, PostgresLogSearchIndex};
 pub use store::{PostgresAuthoritativeStore, PostgresStore};
 
 /// PostgreSQL notification channel emitted after a ready-queue transaction commits.

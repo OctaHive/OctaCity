@@ -6,10 +6,10 @@ use octacity_server_api_webhook::{WebhookApplication, webhook_router};
 use octacity_server_application::{
   AgentExecutionService, AgentHeartbeatService, AgentLeaseService, AgentRegistrationService, ArtifactHandlers,
   CacheDataPlaneService, CacheSessionHandlers, DurableRetryPolicy, InternalTriggerWorker, LeaseExpiryWorker,
-  ManagedWebhookRegistrationWorker, RevisionResolver, ScheduleWorker, WebhookDeliveryWorker,
+  LogIndexingWorker, ManagedWebhookRegistrationWorker, RevisionResolver, ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_store::WorkerOwner;
-use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
+use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use octacity_server_vcs::VcsAdapterRegistry;
 use octacity_server_webhook::WebhookAdapterRegistry;
 use tokio_util::sync::CancellationToken;
@@ -21,8 +21,8 @@ use super::{
   listeners::RuntimeComponents,
   vcs::HostedRevisionResolver,
   workers::{
-    DurableWorkers, EXPIRY_WORKER_NAME, INTERNAL_TRIGGER_WORKER_NAME, MANAGED_WEBHOOK_WORKER_NAME,
-    MANUAL_TRIGGER_RETRY_WORKER_NAME, SCHEDULE_WORKER_NAME, WEBHOOK_DELIVERY_WORKER_NAME,
+    DurableWorkers, EXPIRY_WORKER_NAME, INTERNAL_TRIGGER_WORKER_NAME, LOG_INDEX_WORKER_NAME,
+    MANAGED_WEBHOOK_WORKER_NAME, MANUAL_TRIGGER_RETRY_WORKER_NAME, SCHEDULE_WORKER_NAME, WEBHOOK_DELIVERY_WORKER_NAME,
   },
 };
 use crate::{ServerConfig, readiness::WorkerHealth};
@@ -31,10 +31,18 @@ impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
     let cancellation = CancellationToken::new();
+    let lease_expiry_policy = config.lease_expiry_worker();
+    let schedule_policy = config.schedule_worker();
+    let internal_trigger_policy = config.internal_trigger_worker();
+    let log_index_policy = config.log_index_worker();
+    let trigger_evaluation_policy = config.trigger_evaluation_worker();
+    let webhook_policy = config.webhook_worker();
+    let webhook_delivery_policy = webhook_policy.delivery();
     let mut resources = RuntimeResources::from_config(&config)
       .await
       .map_err(ServerRuntimeError::Assembly)?;
     let registration_store = Arc::new(PostgresStore::new(resources.postgres.clone()));
+    let log_search_index = Arc::new(PostgresLogSearchIndex::new(resources.postgres.clone()));
     let notification_pool = resources.postgres.clone();
     let registration_service = Arc::new(
       AgentRegistrationService::new(registration_store.clone(), config.agent_registration_lifetime())
@@ -93,15 +101,21 @@ impl ServerRuntime {
       None => Arc::new(octacity_server_application::ExactRevisionResolver),
     };
     let webhook_retry_policy = DurableRetryPolicy::new(
-      config.webhook_worker_max_attempts(),
-      config.webhook_worker_initial_retry_milliseconds(),
-      config.webhook_worker_maximum_retry_milliseconds(),
+      webhook_delivery_policy.max_attempts(),
+      webhook_delivery_policy.initial_retry_milliseconds(),
+      webhook_delivery_policy.maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
     let vcs_retry_policy = DurableRetryPolicy::new(
-      config.vcs_retry_max_attempts(),
-      config.vcs_retry_initial_milliseconds(),
-      config.vcs_retry_maximum_milliseconds(),
+      trigger_evaluation_policy.max_attempts(),
+      trigger_evaluation_policy.initial_retry_milliseconds(),
+      trigger_evaluation_policy.maximum_retry_milliseconds(),
+    )
+    .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let log_index_retry_policy = DurableRetryPolicy::new(
+      log_index_policy.max_attempts(),
+      log_index_policy.initial_retry_milliseconds(),
+      log_index_policy.maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
     let ApplicationComponents {
@@ -122,39 +136,49 @@ impl ServerRuntime {
       revision_resolver,
       cancellation: cancellation.child_token(),
       vcs_retry_policy,
-      trigger_claim_lifetime: config.trigger_evaluation_claim_lifetime(),
+      trigger_claim_lifetime: trigger_evaluation_policy.worker().claim_lifetime(),
       artifacts: artifact_service.clone(),
       cache: cache_service.clone(),
     })?;
     let worker_health = Arc::new(WorkerHealth::new(
       EXPIRY_WORKER_NAME,
-      config
-        .lease_expiry_poll_interval()
-        .saturating_add(config.lease_expiry_claim_lifetime())
+      lease_expiry_policy
+        .poll_interval()
+        .saturating_add(lease_expiry_policy.claim_lifetime())
         .saturating_add(config.readiness_check_interval()),
     ));
     resources.readiness.push(worker_health.clone());
     let schedule_health = Arc::new(WorkerHealth::new(
       SCHEDULE_WORKER_NAME,
-      config
-        .schedule_poll_interval()
-        .saturating_add(config.schedule_claim_lifetime())
+      schedule_policy
+        .poll_interval()
+        .saturating_add(schedule_policy.claim_lifetime())
         .saturating_add(config.readiness_check_interval()),
     ));
     resources.readiness.push(schedule_health.clone());
     let internal_trigger_health = Arc::new(WorkerHealth::new(
       INTERNAL_TRIGGER_WORKER_NAME,
-      config
-        .internal_trigger_poll_interval()
-        .saturating_add(config.internal_trigger_claim_lifetime())
+      internal_trigger_policy
+        .poll_interval()
+        .saturating_add(internal_trigger_policy.claim_lifetime())
         .saturating_add(config.readiness_check_interval()),
     ));
     resources.readiness.push(internal_trigger_health.clone());
+    let log_index_health = Arc::new(WorkerHealth::new(
+      LOG_INDEX_WORKER_NAME,
+      log_index_policy
+        .worker()
+        .poll_interval()
+        .saturating_add(log_index_policy.worker().claim_lifetime())
+        .saturating_add(config.readiness_check_interval()),
+    ));
+    resources.readiness.push(log_index_health.clone());
     let manual_trigger_retry_health = Arc::new(WorkerHealth::new(
       MANUAL_TRIGGER_RETRY_WORKER_NAME,
-      config
-        .trigger_evaluation_poll_interval()
-        .saturating_add(config.trigger_evaluation_claim_lifetime())
+      trigger_evaluation_policy
+        .worker()
+        .poll_interval()
+        .saturating_add(trigger_evaluation_policy.worker().claim_lifetime())
         .saturating_add(config.readiness_check_interval()),
     ));
     resources.readiness.push(manual_trigger_retry_health.clone());
@@ -162,7 +186,7 @@ impl ServerRuntime {
       placement_store.clone(),
       WorkerOwner::new(format!("server:{}", uuid::Uuid::new_v4()))
         .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
-      config.lease_expiry_batch_size(),
+      lease_expiry_policy.batch_size(),
     )
     .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?;
     let ready_jobs = Arc::new(ReadyJobNotificationHub::default());
@@ -190,9 +214,10 @@ impl ServerRuntime {
     let webhook_deliveries = if config.webhook_bind().is_some() {
       let health = Arc::new(WorkerHealth::new(
         WEBHOOK_DELIVERY_WORKER_NAME,
-        config
-          .webhook_worker_poll_interval()
-          .saturating_add(config.webhook_worker_claim_lifetime())
+        webhook_delivery_policy
+          .worker()
+          .poll_interval()
+          .saturating_add(webhook_delivery_policy.worker().claim_lifetime())
           .saturating_add(config.readiness_check_interval()),
       ));
       resources.readiness.push(health.clone());
@@ -216,9 +241,10 @@ impl ServerRuntime {
       .map(|callback_origin| {
         let health = Arc::new(WorkerHealth::new(
           MANAGED_WEBHOOK_WORKER_NAME,
-          config
-            .webhook_worker_poll_interval()
-            .saturating_add(config.webhook_worker_claim_lifetime())
+          webhook_delivery_policy
+            .worker()
+            .poll_interval()
+            .saturating_add(webhook_delivery_policy.worker().claim_lifetime())
             .saturating_add(config.readiness_check_interval()),
         ));
         resources.readiness.push(health.clone());
@@ -273,6 +299,15 @@ impl ServerRuntime {
           internal_trigger_owner: WorkerOwner::new(format!("internal-trigger:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
           internal_trigger_health,
+          log_indexing: LogIndexingWorker::new(
+            registration_store.clone(),
+            log_search_index,
+            resources.object_storage.clone(),
+            log_index_retry_policy,
+          ),
+          log_index_owner: WorkerOwner::new(format!("log-index:{}", uuid::Uuid::new_v4()))
+            .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
+          log_index_health,
           manual_trigger_retries,
           manual_trigger_retry_owner: WorkerOwner::new(format!("manual-trigger:worker:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,

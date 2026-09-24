@@ -4,7 +4,7 @@ use crate::{NormalizedTriggerOccurrence, TriggerCausality, TriggerDefinitionRef}
 
 /// Maximum number of internal Trigger derivations permitted from one root.
 ///
-/// A Trigger definition may occur only once in a lineage as the primary cycle
+/// A stable Trigger identity may occur only once in a lineage as the primary cycle
 /// guard. This independent ceiling also bounds long acyclic chains and the
 /// amount of ancestry a durable worker must load.
 pub const MAX_INTERNAL_TRIGGER_DEPTH: u16 = 32;
@@ -24,15 +24,15 @@ pub enum InternalTriggerProtection {
 ///
 /// `ancestry` must contain every Trigger definition from the root occurrence
 /// through `parent`, in causal order. Repeating an exact immutable Trigger
-/// definition is a cycle even if another Build Configuration version is now
-/// active. Separate non-repeating chains are limited by
+/// identity is a cycle even if another immutable Trigger version is now active.
+/// Separate non-repeating chains are limited by
 /// [`MAX_INTERNAL_TRIGGER_DEPTH`].
 pub fn derive_internal_causality(
   parent: &NormalizedTriggerOccurrence,
   candidate: TriggerDefinitionRef,
   ancestry: &[TriggerDefinitionRef],
 ) -> Result<TriggerCausality, InternalTriggerProtection> {
-  if ancestry.contains(&candidate) {
+  if ancestry.iter().any(|ancestor| ancestor.id == candidate.id) {
     return Err(InternalTriggerProtection::Cycle);
   }
   let depth = parent
@@ -61,7 +61,7 @@ pub fn validate_internal_ancestry(
     return Err(InternalTriggerProtection::DepthLimit);
   }
   let mut unique = std::collections::BTreeSet::new();
-  if ancestry.iter().any(|trigger| !unique.insert(*trigger)) {
+  if ancestry.iter().any(|trigger| !unique.insert(trigger.id)) {
     return Err(InternalTriggerProtection::Cycle);
   }
   Ok(())
@@ -76,7 +76,7 @@ mod tests {
   };
 
   use super::*;
-  use crate::{TriggerCause, TriggerMetadata, TriggerTarget};
+  use crate::{TriggerCause, TriggerEventKind, TriggerMetadata, TriggerTarget};
 
   #[test]
   fn rejects_a_repeated_trigger_before_deriving_an_occurrence() {
@@ -88,12 +88,54 @@ mod tests {
   }
 
   #[test]
+  fn rejects_a_different_version_of_a_trigger_already_in_the_lineage() {
+    let parent = root_occurrence(definition(1));
+    let candidate = TriggerDefinitionRef {
+      id: definition(1).id,
+      version: TriggerVersion::new(2).unwrap(),
+    };
+    assert_eq!(
+      derive_internal_causality(&parent, candidate, &[definition(1)]),
+      Err(InternalTriggerProtection::Cycle)
+    );
+  }
+
+  #[test]
   fn permits_a_bounded_non_repeating_derivation() {
     let parent = root_occurrence(definition(1));
     assert_eq!(
       derive_internal_causality(&parent, definition(2), &[definition(1)]).unwrap(),
       TriggerCausality::derived(parent.id, parent.id, 1)
     );
+  }
+
+  #[test]
+  fn preserves_root_causality_across_chains_and_fan_out() {
+    let root = root_occurrence(definition(1));
+    let left = derive_internal_causality(&root, definition(2), &[definition(1)]).unwrap();
+    let right = derive_internal_causality(&root, definition(3), &[definition(1)]).unwrap();
+    assert_eq!(left.root_occurrence_id, root.id);
+    assert_eq!(right.root_occurrence_id, root.id);
+    assert_eq!(left.parent_occurrence_id, Some(root.id));
+    assert_eq!(right.parent_occurrence_id, Some(root.id));
+
+    let child = NormalizedTriggerOccurrence::derived(
+      id(81),
+      definition(2),
+      target(),
+      TriggerIdentity::new("internal:child").unwrap(),
+      TriggerCause::Internal {
+        source_build_id: id(82),
+        event_kind: TriggerEventKind::new("build.succeeded").unwrap(),
+      },
+      left,
+      Timestamp::from_unix_millis(1).unwrap(),
+    )
+    .unwrap();
+    let grandchild = derive_internal_causality(&child, definition(4), &[definition(1), definition(2)]).unwrap();
+    assert_eq!(grandchild.root_occurrence_id, root.id);
+    assert_eq!(grandchild.parent_occurrence_id, Some(child.id));
+    assert_eq!(grandchild.depth, 2);
   }
 
   #[test]

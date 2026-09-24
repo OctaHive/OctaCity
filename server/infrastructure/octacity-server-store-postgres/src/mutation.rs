@@ -82,6 +82,7 @@ pub(crate) enum MutationKind {
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
   CreateTriggerDefinition,
+  PublishInternalTriggerVersion,
   CreateUnmanagedWebhook,
   CreateManagedWebhook,
   CompleteManagedWebhookCreate,
@@ -218,6 +219,12 @@ impl MutationKind {
         "create-trigger-definition",
         "trigger",
         "trigger.created"
+      ),
+      Self::PublishInternalTriggerVersion => metadata!(
+        b"octacity.publish-internal-trigger-version.v1\0",
+        "publish-internal-trigger-version",
+        "trigger",
+        "internal-trigger.version-published"
       ),
       Self::CreateUnmanagedWebhook => metadata!(
         b"octacity.create-unmanaged-webhook.v1\0",

@@ -11,13 +11,15 @@ mod composition;
 mod error;
 mod lifecycle;
 mod listeners;
+mod maintenance;
 mod notifications;
 mod vcs;
 mod webhook;
 mod workers;
 
 pub use assembly::RuntimeAssemblyError;
-pub use error::ServerRuntimeError;
+pub use error::{DurableWorkerError, ServerRuntimeError};
+pub use maintenance::{LogSearchMaintenanceError, rebuild_log_search};
 
 type ListenerTaskResult = Result<&'static str, (&'static str, std::io::Error)>;
 
@@ -33,7 +35,7 @@ pub struct ServerRuntime {
   cancellation: CancellationToken,
   listener_tasks: JoinSet<ListenerTaskResult>,
   readiness_task: Option<JoinHandle<()>>,
-  worker_task: Option<JoinHandle<()>>,
+  worker_task: Option<JoinHandle<Result<(), DurableWorkerError>>>,
   notification_task: Option<JoinHandle<()>>,
 }
 

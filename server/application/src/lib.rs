@@ -28,9 +28,11 @@ mod diagnostic;
 mod error;
 mod external_trigger;
 mod internal_trigger;
+mod internal_trigger_management;
 mod job_event_cqrs;
 mod lease_expiry;
 mod log_archive;
+mod log_indexing;
 mod management_input;
 mod manual_trigger;
 mod pipeline_cqrs;
@@ -104,17 +106,21 @@ pub use external_trigger::{
   WebhookDeliveryInputError, WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider,
   WebhookManagementService, WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
 };
-pub use internal_trigger::{
-  InternalTriggerBatchOutcome, InternalTriggerDefinition, InternalTriggerWorker, InternalTriggerWorkerError,
+pub use internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
+pub use internal_trigger_management::{
+  CreateInternalTriggerCommand, GetInternalTriggerQuery, InternalTriggerCommandOutcome, InternalTriggerDefinition,
+  InternalTriggerHandlers, InternalTriggerPageProjection, InternalTriggerProjection, InternalTriggerSourceStrategy,
+  ListInternalTriggersQuery, PublishInternalTriggerVersionCommand,
 };
 pub use job_event_cqrs::{
   JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
 };
 pub use lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
 pub use log_archive::{LogRedactor, OrphanLogChunkCleaner, OrphanLogChunkCleanup};
+pub use log_indexing::{LogIndexingBatchOutcome, LogIndexingWorker, LogIndexingWorkerError};
 pub use management_input::{
-  ManagedWebhookInput, ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput,
-  ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
+  InternalTriggerDefinitionInput, ManagedWebhookInput, ManagementInputError, ManagementInputFactory,
+  ManualTriggerDefinitionInput, ManualTriggerInput, ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
 };
 pub use manual_trigger::{
   AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,
@@ -133,8 +139,8 @@ pub use octacity_server_cache::{
   REMOTE_CACHE_PROTOCOL_HEADER_VALUE_V1, WriteActionRequestV1,
 };
 pub use octacity_server_secrets::AgentEnrollmentSecretKey;
-pub use octacity_server_store::AgentDrainMode;
 pub use octacity_server_store::RegistrationEpoch;
+pub use octacity_server_store::{AgentDrainMode, TerminalBuildEvent};
 pub use octacity_server_store::{LeaseGrant, LeaseHeartbeatOutcome};
 pub use pipeline_cqrs::{
   CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
@@ -192,6 +198,8 @@ pub const MAX_AGENT_POOL_STATIC_CAPACITY: u32 = octacity_server_store::MAX_POOL_
 pub const MAX_JOB_EVENT_PAGE_SIZE: u16 = octacity_server_store::MAX_JOB_EVENT_READ_PAGE_SIZE as u16;
 /// Maximum published Artifacts accepted by one management list query.
 pub const MAX_ARTIFACT_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_ARTIFACT_PAGE_SIZE;
+/// Maximum internal Trigger definitions accepted by one management list query.
+pub const MAX_INTERNAL_TRIGGER_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_INTERNAL_TRIGGER_PAGE_SIZE;
 /// Maximum cache-session diagnostics accepted by one management list query.
 pub const MAX_CACHE_SESSION_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_CACHE_SESSION_PAGE_SIZE;
 /// Maximum UTF-8 bytes in a scheduled Trigger cron expression.

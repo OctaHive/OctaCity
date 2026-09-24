@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use octacity_server_api_rest::v1::{
   AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
   CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ScheduleManagementApplication,
+  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+  ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
 };
 use octacity_server_application::{
   ApplicationError, JobEventPageProjection, JobEventProjection, QueryHandler, ReadJobEventsQuery,
@@ -54,6 +54,7 @@ where
         ConfigurationManagementApplication::new(Arc::clone(&application)),
         DefinitionManagementApplication::new(Arc::clone(&application), Arc::clone(&application)),
         ScheduleManagementApplication::new(Arc::clone(&application)),
+        InternalTriggerManagementApplication::new(Arc::clone(&application)),
       ),
       AgentManagementApplication::new(
         Arc::clone(&application),

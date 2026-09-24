@@ -1,9 +1,9 @@
 use serde_json::{Map, Value, json};
 
 use octacity_server_application::{
-  MAX_AGENT_LIST_PAGE_SIZE, MAX_AGENT_POOL_LIST_PAGE_SIZE, MAX_ARTIFACT_LIST_PAGE_SIZE, MAX_JOB_EVENT_PAGE_SIZE,
-  MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE, MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES,
-  MAX_SCHEDULE_TIMEZONE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
+  MAX_AGENT_LIST_PAGE_SIZE, MAX_AGENT_POOL_LIST_PAGE_SIZE, MAX_ARTIFACT_LIST_PAGE_SIZE,
+  MAX_INTERNAL_TRIGGER_LIST_PAGE_SIZE, MAX_JOB_EVENT_PAGE_SIZE, MAX_JOB_EVENT_WAIT, MAX_PROJECT_LIST_PAGE_SIZE,
+  MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES, MAX_SCHEDULE_TIMEZONE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
 };
 
 use super::{API_PREFIX, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES};
@@ -48,6 +48,7 @@ enum ParameterProfile {
   JobEvents,
   ArtifactList,
   CacheSessionList,
+  InternalTriggerList,
 }
 
 impl ManagementOperation {
@@ -310,6 +311,55 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     "TriggerDefinitionMutationResponse",
     "201",
     true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/trigger-definitions/internal",
+    "createInternalTriggerDefinition",
+    "Triggers",
+    "Create a source-scoped internal Trigger",
+    Some("InternalTriggerDefinitionRequest"),
+    "InternalTriggerMutationResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "GET",
+    "/api/v1/trigger-definitions/internal",
+    "listInternalTriggerDefinitions",
+    "Triggers",
+    "List current internal Trigger versions",
+    None,
+    "InternalTriggerPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::InternalTriggerList),
+  operation!(
+    "POST",
+    "/api/v1/trigger-definitions/internal/{trigger_id}/versions",
+    "publishInternalTriggerDefinitionVersion",
+    "Triggers",
+    "Publish an internal Trigger version",
+    Some("InternalTriggerDefinitionRequest"),
+    "InternalTriggerMutationResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    "GET",
+    "/api/v1/trigger-definitions/internal/{trigger_id}/versions/{version}",
+    "getInternalTriggerDefinitionVersion",
+    "Triggers",
+    "Get an internal Trigger version",
+    None,
+    "InternalTriggerResource",
+    "200",
+    false,
     false
   ),
   operation!(

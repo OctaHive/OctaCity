@@ -1,28 +1,15 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use octacity_server_domain::{Timestamp, TriggerIdentity};
 use octacity_server_store::{
-  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventStore, TriggerEventKind, WorkerOwner,
+  ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, InternalTriggerEventStore, WorkerOwner,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use thiserror::Error;
 
-use crate::{ManualSourceSelection, ManualTriggerCommand, ManualTriggerError, ManualTriggerService};
-
-/// Strict immutable definition of one internal domain-event Trigger.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InternalTriggerDefinition {
-  /// Terminal Build event matched by this definition.
-  pub event_kind: TriggerEventKind,
-  /// Source selection resolved independently for the downstream Build.
-  pub source: ManualSourceSelection,
-  /// Parameter values resolved against the target Build Configuration.
-  pub parameters: BTreeMap<String, Value>,
-  /// Durable ready-queue priority copied to root Jobs.
-  pub priority: i64,
-}
+use crate::{
+  InternalTriggerDefinition, InternalTriggerSourceStrategy, ManualSourceSelection, ManualTriggerCommand,
+  ManualTriggerError, ManualTriggerService,
+};
 
 /// Counts produced by one bounded internal-Trigger outbox pass.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -98,14 +85,14 @@ where
               trigger: matched.trigger,
               target: matched.target,
               deduplication_identity,
-              source: definition.source,
+              source: downstream_source(definition.source, &claim.source_revision),
               parameters: definition.parameters,
               priority: definition.priority,
               observed_at: claim.occurred_at,
             },
             observed_at,
             claim.source_build_id,
-            claim.event_kind.clone(),
+            claim.event_kind.into(),
             causality,
           )
           .await?;
@@ -121,6 +108,16 @@ where
         .await?;
     }
     Ok(outcome)
+  }
+}
+
+fn downstream_source(
+  strategy: InternalTriggerSourceStrategy,
+  upstream_revision: &octacity_server_domain::ImmutableRevision,
+) -> ManualSourceSelection {
+  match strategy {
+    InternalTriggerSourceStrategy::InheritRevision => ManualSourceSelection::ExactRevision(upstream_revision.clone()),
+    InternalTriggerSourceStrategy::ResolveTarget(source) => source,
   }
 }
 
@@ -141,6 +138,7 @@ pub enum InternalTriggerWorkerError {
 #[cfg(test)]
 mod tests {
   use std::{
+    collections::BTreeMap,
     fmt::Debug,
     future::Future,
     str::FromStr,
@@ -154,7 +152,7 @@ mod tests {
   };
   use octacity_server_store::{
     InternalTriggerEventClaim, InternalTriggerMatch, MutationDisposition, NormalizedTriggerOccurrence, StoreError,
-    TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerTarget,
+    TerminalBuildEvent, TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerTarget,
   };
 
   use super::*;
@@ -172,16 +170,19 @@ mod tests {
         claims: Mutex::new(vec![InternalTriggerEventClaim {
           event_identity: TriggerIdentity::new("00000000-0000-0000-0000-000000000099").unwrap(),
           source_build_id: id(2),
+          source_revision: ImmutableRevision::new("abc").unwrap(),
+          source_target: target(),
           source_occurrence: source_occurrence.clone(),
           trigger_ancestry: vec![trigger],
-          event_kind: TriggerEventKind::new("build.succeeded").unwrap(),
+          event_kind: TerminalBuildEvent::Succeeded,
           occurred_at: time(10),
           matches: vec![InternalTriggerMatch {
             trigger,
             target: target(),
             definition: serde_json::to_value(InternalTriggerDefinition {
-              event_kind: TriggerEventKind::new("build.succeeded").unwrap(),
-              source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("abc").unwrap()),
+              upstream: target(),
+              event_kind: TerminalBuildEvent::Succeeded,
+              source: InternalTriggerSourceStrategy::InheritRevision,
               parameters: BTreeMap::new(),
               priority: 0,
             })
@@ -207,6 +208,15 @@ mod tests {
       assert_eq!(outcome.protected_occurrences, 1);
       assert_eq!(*store.completed.lock().unwrap(), 1);
     });
+  }
+
+  #[test]
+  fn inherited_source_uses_the_upstream_immutable_revision() {
+    let revision = ImmutableRevision::new("upstream-commit").unwrap();
+    assert_eq!(
+      downstream_source(InternalTriggerSourceStrategy::InheritRevision, &revision),
+      ManualSourceSelection::ExactRevision(revision)
+    );
   }
 
   struct FakeOutboxStore {

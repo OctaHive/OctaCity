@@ -77,6 +77,30 @@ pub struct LogChunkManifest {
   object_identity: String,
 }
 
+/// Stored fields required to restore one immutable log-chunk manifest.
+///
+/// Grouping the record prevents persistence adapters from accidentally
+/// swapping sequence and size values with identical primitive types.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoredLogChunkManifest {
+  /// Persisted deterministic chunk identity.
+  pub chunk_id: LogChunkId,
+  /// Job whose output produced the chunk.
+  pub job_id: JobId,
+  /// Logical output stream.
+  pub stream: BuildLogStream,
+  /// First represented global event sequence.
+  pub first_sequence: u64,
+  /// Last represented global event sequence.
+  pub last_sequence: u64,
+  /// Exact immutable object length.
+  pub byte_length: u64,
+  /// Exact immutable object digest.
+  pub digest: LogChunkDigest,
+  /// Provider-neutral logical object identity.
+  pub object_identity: String,
+}
+
 impl LogChunkManifest {
   /// Builds the deterministic logical and work identities for verified bytes.
   pub fn prepare(
@@ -93,19 +117,7 @@ impl LogChunkManifest {
       return Err(LogChunkManifestError::InvalidByteLength);
     }
     let digest = LogChunkDigest::digest(bytes);
-    let mut identity = Vec::with_capacity(16 + 1 + 8 + 8 + 32);
-    identity.extend_from_slice(job_id.as_uuid().as_bytes());
-    identity.push(match stream {
-      BuildLogStream::Stdout => 1,
-      BuildLogStream::Stderr => 2,
-    });
-    identity.extend_from_slice(&first_sequence.to_be_bytes());
-    identity.extend_from_slice(&last_sequence.to_be_bytes());
-    identity.extend_from_slice(&digest.as_bytes());
-    let chunk_id = LogChunkId::from_uuid(Uuid::new_v5(&CHUNK_NAMESPACE, &identity))
-      .map_err(|_| LogChunkManifestError::InvalidIdentity)?;
-    let indexing_work_id = LogIndexingWorkId::from_uuid(Uuid::new_v5(&WORK_NAMESPACE, chunk_id.as_uuid().as_bytes()))
-      .map_err(|_| LogChunkManifestError::InvalidIdentity)?;
+    let (chunk_id, indexing_work_id) = identities(job_id, stream, first_sequence, last_sequence, digest)?;
     Ok(Self {
       chunk_id,
       indexing_work_id,
@@ -115,6 +127,40 @@ impl LogChunkManifest {
       byte_length: bytes.len() as u64,
       digest,
       object_identity: format!("log-chunk:v1:{chunk_id}:{digest}"),
+    })
+  }
+
+  /// Restores and revalidates one manifest loaded from authoritative storage.
+  pub fn restore(stored: StoredLogChunkManifest) -> Result<Self, LogChunkManifestError> {
+    let StoredLogChunkManifest {
+      chunk_id,
+      job_id,
+      stream,
+      first_sequence,
+      last_sequence,
+      byte_length,
+      digest,
+      object_identity,
+    } = stored;
+    if first_sequence == 0 || last_sequence < first_sequence {
+      return Err(LogChunkManifestError::InvalidSequenceRange);
+    }
+    if byte_length == 0 || byte_length > MAX_LOG_CHUNK_BYTES as u64 {
+      return Err(LogChunkManifestError::InvalidByteLength);
+    }
+    let (expected_chunk_id, indexing_work_id) = identities(job_id, stream, first_sequence, last_sequence, digest)?;
+    if expected_chunk_id != chunk_id || object_identity != format!("log-chunk:v1:{chunk_id}:{digest}") {
+      return Err(LogChunkManifestError::InvalidIdentity);
+    }
+    Ok(Self {
+      chunk_id,
+      indexing_work_id,
+      stream,
+      first_sequence,
+      last_sequence,
+      byte_length,
+      digest,
+      object_identity,
     })
   }
 
@@ -178,6 +224,29 @@ impl LogChunkManifest {
   }
 }
 
+fn identities(
+  job_id: JobId,
+  stream: BuildLogStream,
+  first_sequence: u64,
+  last_sequence: u64,
+  digest: LogChunkDigest,
+) -> Result<(LogChunkId, LogIndexingWorkId), LogChunkManifestError> {
+  let mut identity = Vec::with_capacity(16 + 1 + 8 + 8 + 32);
+  identity.extend_from_slice(job_id.as_uuid().as_bytes());
+  identity.push(match stream {
+    BuildLogStream::Stdout => 1,
+    BuildLogStream::Stderr => 2,
+  });
+  identity.extend_from_slice(&first_sequence.to_be_bytes());
+  identity.extend_from_slice(&last_sequence.to_be_bytes());
+  identity.extend_from_slice(&digest.as_bytes());
+  let chunk_id = LogChunkId::from_uuid(Uuid::new_v5(&CHUNK_NAMESPACE, &identity))
+    .map_err(|_| LogChunkManifestError::InvalidIdentity)?;
+  let indexing_work_id = LogIndexingWorkId::from_uuid(Uuid::new_v5(&WORK_NAMESPACE, chunk_id.as_uuid().as_bytes()))
+    .map_err(|_| LogChunkManifestError::InvalidIdentity)?;
+  Ok((chunk_id, indexing_work_id))
+}
+
 /// Invalid or mismatched immutable log-chunk data.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum LogChunkManifestError {
@@ -216,5 +285,36 @@ mod tests {
     );
     assert_eq!(first.verify(b"safe output"), Ok(()));
     assert_eq!(first.verify(b"evil output"), Err(LogChunkManifestError::DigestMismatch));
+  }
+
+  #[test]
+  fn restored_manifests_reject_tampered_authoritative_metadata() {
+    let job = JobId::from_uuid(Uuid::from_u128(2)).unwrap();
+    let manifest = LogChunkManifest::prepare(job, BuildLogStream::Stderr, 4, 5, b"redacted output").unwrap();
+    let restored = LogChunkManifest::restore(StoredLogChunkManifest {
+      chunk_id: manifest.chunk_id(),
+      job_id: job,
+      stream: manifest.stream(),
+      first_sequence: manifest.first_sequence(),
+      last_sequence: manifest.last_sequence(),
+      byte_length: manifest.byte_length(),
+      digest: manifest.digest(),
+      object_identity: manifest.object_identity().to_owned(),
+    })
+    .unwrap();
+    assert_eq!(restored, manifest);
+    assert_eq!(
+      LogChunkManifest::restore(StoredLogChunkManifest {
+        chunk_id: manifest.chunk_id(),
+        job_id: job,
+        stream: manifest.stream(),
+        first_sequence: manifest.first_sequence(),
+        last_sequence: manifest.last_sequence(),
+        byte_length: manifest.byte_length(),
+        digest: manifest.digest(),
+        object_identity: "log-chunk:v1:tampered".to_owned(),
+      }),
+      Err(LogChunkManifestError::InvalidIdentity)
+    );
   }
 }

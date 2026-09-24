@@ -1,7 +1,9 @@
-use std::num::NonZeroU64;
+use std::num::{NonZeroU16, NonZeroU64};
 
 pub use octacity_server_artifacts::BuildLogStream;
 use octacity_server_domain::{AttemptId, BuildId, JobId, LogChunkId, LogIndexingWorkId, ProjectId, Timestamp};
+
+use crate::{LogChunkManifest, StoreError, StoreInputError, StoreOperation, WorkerOwner};
 use thiserror::Error;
 
 /// Maximum UTF-8 bytes accepted in one Build-log search query.
@@ -12,6 +14,10 @@ pub const MAX_LOG_SEARCH_DOCUMENT_BYTES: usize = 256 * 1_024;
 pub const MAX_LOG_SEARCH_PAGE_SIZE: u16 = 100;
 /// Maximum UTF-8 bytes returned in one search-result snippet.
 pub const MAX_LOG_SEARCH_SNIPPET_BYTES: usize = 512;
+/// Maximum durable indexing items acquired in one worker transaction.
+pub const MAX_LOG_INDEX_WORK_BATCH_SIZE: u16 = 100;
+/// Maximum UTF-8 bytes retained for one safe indexing failure code.
+pub const MAX_LOG_INDEX_FAILURE_CODE_BYTES: usize = 128;
 
 /// Contiguous project-local position of indexing work in the authoritative outbox.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -153,6 +159,144 @@ pub struct WriteLogSearchDocument {
   pub document: LogSearchDocument,
 }
 
+/// Bounded request to claim durable Build-log indexing work.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimLogIndexWork {
+  /// Process instance acquiring work.
+  pub owner: WorkerOwner,
+  /// Authoritative time used to select due work and stale claims.
+  pub observed_at: Timestamp,
+  /// Exclusive deadline after which another replica may reclaim work.
+  pub claim_expires_at: Timestamp,
+  /// Positive bounded number of work items.
+  pub limit: NonZeroU16,
+}
+
+impl ClaimLogIndexWork {
+  /// Validates the claim window and batch bound.
+  pub fn new(
+    owner: WorkerOwner,
+    observed_at: Timestamp,
+    claim_expires_at: Timestamp,
+    limit: u16,
+  ) -> Result<Self, StoreError> {
+    let limit = NonZeroU16::new(limit)
+      .filter(|value| value.get() <= MAX_LOG_INDEX_WORK_BATCH_SIZE)
+      .ok_or_else(|| StoreError::invalid(StoreOperation::ClaimLogIndexWork, StoreInputError::InvalidWorkerClaim))?;
+    if claim_expires_at <= observed_at {
+      return Err(StoreError::invalid(
+        StoreOperation::ClaimLogIndexWork,
+        StoreInputError::InvalidWorkerClaim,
+      ));
+    }
+    Ok(Self {
+      owner,
+      observed_at,
+      claim_expires_at,
+      limit,
+    })
+  }
+
+  /// Revalidates public fields at the persistence seam.
+  pub fn validate(&self) -> Result<(), StoreError> {
+    if self.limit.get() > MAX_LOG_INDEX_WORK_BATCH_SIZE || self.claim_expires_at <= self.observed_at {
+      return Err(StoreError::invalid(
+        StoreOperation::ClaimLogIndexWork,
+        StoreInputError::InvalidWorkerClaim,
+      ));
+    }
+    Ok(())
+  }
+}
+
+/// Operation carried by one durable Build-log indexing claim.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LogIndexWorkKind {
+  /// Project a newly committed immutable chunk.
+  Index(LogIndexDocumentSource),
+  /// Recreate a retained document after projection loss.
+  Rebuild(LogIndexDocumentSource),
+  /// Remove all derived documents for one Build.
+  DeleteBuild,
+}
+
+/// Authoritative metadata needed to read and project one immutable chunk.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogIndexDocumentSource {
+  /// Verified immutable byte-store manifest.
+  pub manifest: LogChunkManifest,
+  /// Attempt owning the chunk.
+  pub attempt_id: AttemptId,
+  /// Job owning the chunk.
+  pub job_id: JobId,
+  /// Source time used by deterministic result ordering.
+  pub occurred_at: Timestamp,
+}
+
+/// One exclusively owned durable Build-log indexing item.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogIndexWorkClaim {
+  /// Stable indexing-work identity.
+  pub work_id: LogIndexingWorkId,
+  /// Project-local contiguous work position.
+  pub position: LogIndexPosition,
+  /// Project boundary for projection and freshness.
+  pub project_id: ProjectId,
+  /// Build affected by this operation.
+  pub build_id: BuildId,
+  /// Index operation and any immutable chunk metadata it requires.
+  pub kind: LogIndexWorkKind,
+  /// One-based delivery attempt after acquiring this claim.
+  pub attempt: u16,
+  /// Process instance that owns the claim.
+  pub owner: WorkerOwner,
+  /// Exclusive claim deadline.
+  pub claim_expires_at: Timestamp,
+}
+
+/// Marks one owned indexing work item complete.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompleteLogIndexWork {
+  /// Stable work identity returned by the claim.
+  pub work_id: LogIndexingWorkId,
+  /// Process instance returned by the claim.
+  pub owner: WorkerOwner,
+  /// Authoritative completion time, before claim expiry.
+  pub completed_at: Timestamp,
+}
+
+/// Schedules another attempt or retains a terminal indexing dead letter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FailLogIndexWork {
+  /// Stable work identity returned by the claim.
+  pub work_id: LogIndexingWorkId,
+  /// Process instance returned by the claim.
+  pub owner: WorkerOwner,
+  /// Safe bounded failure classification.
+  pub error_code: String,
+  /// Authoritative failure time, before claim expiry.
+  pub failed_at: Timestamp,
+  /// Next eligible attempt, or `None` to retain a dead letter.
+  pub retry_at: Option<Timestamp>,
+}
+
+impl FailLogIndexWork {
+  /// Validates the diagnostic bound and retry ordering.
+  pub fn validate(&self) -> Result<(), StoreError> {
+    if self.error_code.is_empty()
+      || self.error_code.len() > MAX_LOG_INDEX_FAILURE_CODE_BYTES
+      || self.error_code.chars().any(char::is_whitespace)
+      || self.retry_at.is_some_and(|retry_at| retry_at <= self.failed_at)
+    {
+      return Err(StoreError::invalid(
+        StoreOperation::FailLogIndexWork,
+        StoreInputError::InvalidLogIndexWorkFailure,
+      ));
+    }
+    Ok(())
+  }
+}
+
 /// Idempotent request to hide all search documents for one logical Build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeleteLogSearchDocuments {
@@ -218,6 +362,34 @@ pub struct LogSearchHit {
   pub occurred_at: Timestamp,
   /// Bounded redacted context around the match.
   pub snippet: String,
+}
+
+/// Builds a UTF-8-safe bounded context snippet around the first approximate match.
+///
+/// Exact matching remains the responsibility of the selected index adapter;
+/// this helper only keeps snippet sizing identical across implementations.
+#[must_use]
+pub fn bounded_log_search_snippet(document: &str, query: &str, mode: LogSearchMode) -> String {
+  if document.len() <= MAX_LOG_SEARCH_SNIPPET_BYTES {
+    return document.to_owned();
+  }
+  let approximate_match = match mode {
+    LogSearchMode::Literal => document.find(query),
+    LogSearchMode::FullText => query
+      .split_whitespace()
+      .next()
+      .and_then(|term| document.to_lowercase().find(&term.to_lowercase())),
+  }
+  .unwrap_or(0);
+  let mut start = approximate_match.saturating_sub(MAX_LOG_SEARCH_SNIPPET_BYTES / 4);
+  while !document.is_char_boundary(start) {
+    start -= 1;
+  }
+  let mut end = (start + MAX_LOG_SEARCH_SNIPPET_BYTES).min(document.len());
+  while !document.is_char_boundary(end) {
+    end -= 1;
+  }
+  document[start..end].to_owned()
 }
 
 /// One deterministic page of Build-log search results.

@@ -59,6 +59,27 @@ The server SHALL accept manual commands, persisted schedules, authenticated exte
 - **WHEN** a terminal build event matches an enabled internal trigger
 - **THEN** the server creates at most one causally linked downstream build and prevents an undocumented trigger cycle
 
+### Requirement: Source-scoped inter-Build dependencies
+An internal Build-completion Trigger SHALL identify an exact upstream Build Configuration version, one terminal outcome to match, and an exact downstream Build Configuration version. It SHALL NOT match terminal events from unrelated Build Configurations solely because they have the same outcome. The downstream Build SHALL retain the upstream Build and Trigger occurrence in its durable causality, and one upstream Build SHALL create at most one downstream Build per matching Trigger version.
+
+The Trigger SHALL select the downstream source explicitly: either inherit the upstream Build's exact immutable revision when both configurations use the same compatible Repository identity, or resolve an allowed source expression against the downstream configuration. The server SHALL reject an incompatible inherited-revision definition before enabling it. Constant downstream parameters MAY be configured, but arbitrary expressions over upstream logs, outputs, or artifacts SHALL NOT be evaluated by the initial inter-Build dependency contract.
+
+#### Scenario: Successful upstream Build starts its dependent Build
+- **WHEN** the selected upstream Build Configuration version reaches `succeeded` and matches an enabled success Trigger
+- **THEN** the server creates exactly one causally linked Build for the selected downstream Build Configuration version despite delivery retries or server restart
+
+#### Scenario: Unrelated Build succeeds
+- **WHEN** another Build Configuration reaches `succeeded`
+- **THEN** the source-scoped Trigger does not create the downstream Build
+
+#### Scenario: Downstream Build inherits the upstream revision
+- **WHEN** a matching Trigger selects revision inheritance and both configurations reference the same compatible Repository identity
+- **THEN** the downstream Build records the exact immutable revision used by the upstream Build without resolving a mutable branch again
+
+#### Scenario: Inter-Build chain contains a causal cycle
+- **WHEN** configured or versioned internal Triggers would cause a Build occurrence to revisit an ancestor Trigger or exceed the documented depth limit
+- **THEN** the server suppresses the unsafe occurrence durably without creating unbounded Builds
+
 ### Requirement: Immutable build input
 Creating a build SHALL bind the project, build-configuration version, pipeline version, effective project policy, repository, exact immutable source revision, parameters, trigger occurrence, priority, and creation cause into an immutable build record.
 

@@ -17,13 +17,15 @@ use uuid::Uuid;
 
 use crate::{
   AcceptManualTriggerCommand, AgentDrainMode, CancelBuildCommand, CreateAgentPoolCommand,
-  CreateBuildConfigurationCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
-  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
-  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetAttemptQuery,
-  GetBuildConfigurationQuery, GetBuildQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
-  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListProjectsQuery,
-  MAX_JOB_EVENT_WAIT, ManageWebhookRegistrationCommand, ManualSourceSelection, ManualTriggerCommand,
-  MoveProjectCommand, ProjectPolicyDefinition, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
+  CreateBuildConfigurationCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand,
+  CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand,
+  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
+  GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetInternalTriggerQuery, GetJobQuery,
+  GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, InternalTriggerDefinition,
+  InternalTriggerSourceStrategy, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery,
+  ListInternalTriggersQuery, ListProjectsQuery, MAX_JOB_EVENT_WAIT, ManageWebhookRegistrationCommand,
+  ManualSourceSelection, ManualTriggerCommand, MoveProjectCommand, ProjectPolicyDefinition,
+  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
   PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
   ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand, ScheduledBuildDefinition,
 };
@@ -96,6 +98,28 @@ pub struct ScheduledTriggerDefinitionInput {
   pub schedule: Value,
   /// Strict per-occurrence Build input document.
   pub build: Value,
+}
+
+/// Transport-neutral primitive input for one internal Trigger definition version.
+pub struct InternalTriggerDefinitionInput {
+  /// Exact upstream Build Configuration identity.
+  pub upstream_configuration_id: String,
+  /// Exact upstream Build Configuration version.
+  pub upstream_configuration_version: u64,
+  /// Exact downstream Build Configuration identity.
+  pub configuration_id: String,
+  /// Exact downstream Build Configuration version.
+  pub configuration_version: u64,
+  /// Terminal Build event kind.
+  pub event_kind: String,
+  /// Tagged downstream source strategy.
+  pub source: Value,
+  /// Downstream Build parameters.
+  pub parameters: BTreeMap<String, Value>,
+  /// Durable ready-queue priority.
+  pub priority: i64,
+  /// Whether matching source events may create occurrences.
+  pub enabled: bool,
 }
 
 /// Transport-neutral primitive input for an unmanaged webhook integration.

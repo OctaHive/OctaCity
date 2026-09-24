@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, fmt, str::FromStr};
 
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, BuildId, IntegrationId, RepositoryId, Timestamp, TriggerId,
@@ -115,6 +115,66 @@ impl TriggerEventKind {
 impl fmt::Display for TriggerEventKind {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     formatter.write_str(&self.0)
+  }
+}
+
+/// Canonical terminal Build event emitted by the server.
+///
+/// Keeping this closed set in the Trigger domain prevents persistence,
+/// application, and transport adapters from independently spelling the same
+/// event names.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub enum TerminalBuildEvent {
+  /// The Build reached its successful terminal state.
+  #[serde(rename = "build.succeeded")]
+  Succeeded,
+  /// The Build reached its unsuccessful terminal state.
+  #[serde(rename = "build.failed")]
+  Failed,
+  /// The Build was cancelled.
+  #[serde(rename = "build.cancelled")]
+  Cancelled,
+}
+
+impl TerminalBuildEvent {
+  /// Returns the stable event name used by persistence and diagnostics.
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Succeeded => "build.succeeded",
+      Self::Failed => "build.failed",
+      Self::Cancelled => "build.cancelled",
+    }
+  }
+
+  /// Decodes the persisted terminal Build state.
+  #[must_use]
+  pub const fn from_build_state(state: &str) -> Option<Self> {
+    match state.as_bytes() {
+      b"succeeded" => Some(Self::Succeeded),
+      b"failed" => Some(Self::Failed),
+      b"cancelled" => Some(Self::Cancelled),
+      _ => None,
+    }
+  }
+}
+
+impl From<TerminalBuildEvent> for TriggerEventKind {
+  fn from(value: TerminalBuildEvent) -> Self {
+    Self(value.as_str().to_owned())
+  }
+}
+
+impl FromStr for TerminalBuildEvent {
+  type Err = TriggerInputError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    match value {
+      "build.succeeded" => Ok(Self::Succeeded),
+      "build.failed" => Ok(Self::Failed),
+      "build.cancelled" => Ok(Self::Cancelled),
+      _ => Err(TriggerInputError::InvalidEventKind),
+    }
   }
 }
 

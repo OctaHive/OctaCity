@@ -17,15 +17,17 @@ use octacity_server_application::{
   AgentCommandOutcome, AgentEnrollmentSecretKey, AgentPageProjection, AgentPoolCommandOutcome, AgentPoolPageProjection,
   AgentPoolProjection, AgentProjection, ApplicationFailure, AttemptDetailsProjection, BuildConfigurationCommandOutcome,
   BuildConfigurationProjection, BuildDetailsProjection, CancelBuildCommandOutcome, DeleteAgentPoolCommandOutcome,
-  DeleteProjectCommandOutcome, DependencyPolicyProjection as ApplicationDependencyPolicy, JobEventPageProjection,
-  JobProjection, ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput,
-  ManualTriggerOutcome, MutationDisposition as ApplicationMutationDisposition,
-  NetworkPolicyProjection as ApplicationNetworkPolicy, ParameterTypeProjection as ApplicationParameterType,
-  PipelineCommandOutcome, PipelineProjection, PlatformArchitectureProjection as ApplicationPlatformArchitecture,
-  PlatformOsProjection as ApplicationPlatformOs, ProjectCommandOutcome, ProjectPageProjection, ProjectProjection,
-  RepositoryCommandOutcome, RepositoryProjection, RetryBuildCommandOutcome,
-  RetryClassProjection as ApplicationRetryClass, RuntimeClassProjection as ApplicationRuntimeClass, ScheduleProjection,
-  ScheduledTriggerDefinitionInput, TriggerKindProjection as ApplicationTriggerKind,
+  DeleteProjectCommandOutcome, DependencyPolicyProjection as ApplicationDependencyPolicy,
+  InternalTriggerDefinitionInput, InternalTriggerPageProjection, InternalTriggerProjection,
+  InternalTriggerSourceStrategy as ApplicationInternalTriggerSource, JobEventPageProjection, JobProjection,
+  ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput, ManualTriggerOutcome,
+  MutationDisposition as ApplicationMutationDisposition, NetworkPolicyProjection as ApplicationNetworkPolicy,
+  ParameterTypeProjection as ApplicationParameterType, PipelineCommandOutcome, PipelineProjection,
+  PlatformArchitectureProjection as ApplicationPlatformArchitecture, PlatformOsProjection as ApplicationPlatformOs,
+  ProjectCommandOutcome, ProjectPageProjection, ProjectProjection, RepositoryCommandOutcome, RepositoryProjection,
+  RetryBuildCommandOutcome, RetryClassProjection as ApplicationRetryClass,
+  RuntimeClassProjection as ApplicationRuntimeClass, ScheduleProjection, ScheduledTriggerDefinitionInput,
+  TriggerKindProjection as ApplicationTriggerKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -39,9 +41,10 @@ use super::{
   CreateBuildConfigurationRequest, CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest,
   CreateRepositoryRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource,
   DeleteAgentPoolResponse, DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode,
-  IDEMPOTENCY_KEY_HEADER, IdempotencyKey, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
+  IDEMPOTENCY_KEY_HEADER, IdempotencyKey, InternalTriggerDefinitionRequest, InternalTriggerOutcome,
+  InternalTriggerResource, InternalTriggerSource, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
   JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource,
-  JobTerminalResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
+  JobTerminalResource, ManualSource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
   OPTIMISTIC_PRECONDITION_HEADER, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
   PipelineNode, PipelineResource, PlatformArchitecture, PlatformOs, ProjectDetails, ProjectPolicyResource,
   ProjectResource, PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest,
@@ -60,6 +63,7 @@ mod cache;
 mod configuration;
 mod error;
 mod execution;
+mod internal_trigger;
 mod job_event;
 mod manual_trigger;
 mod pipeline;
@@ -76,9 +80,9 @@ use application::{AgentEndpoints, AgentPoolManagementApplication};
 pub use application::{
   AgentManagementApplication, ArtifactManagementApplication, BuildManagementApplication, CacheManagementApplication,
   CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, JobEventManagementApplication, ManagementApplicationHandlers,
-  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ScheduleManagementApplication,
+  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+  ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
+  ProjectManagementApplication, ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use cache::{get_cache_session, list_build_cache_sessions};
@@ -88,6 +92,9 @@ use configuration::{
 };
 use error::ApiError;
 use execution::{cancel_build, get_attempt, get_build, get_job, retry_build};
+use internal_trigger::{
+  create_internal_trigger, get_internal_trigger, list_internal_triggers, publish_internal_trigger,
+};
 use job_event::read_job_events;
 use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition};
 use pipeline::{create_pipeline, get_pipeline, publish_pipeline};
@@ -120,6 +127,7 @@ pub struct ManagementApplication {
   builds: BuildManagementApplication,
   definitions: DefinitionManagementApplication,
   schedules: ScheduleManagementApplication,
+  internal_triggers: InternalTriggerManagementApplication,
   manual_triggers: ManualTriggerManagementApplication,
   job_events: JobEventManagementApplication,
   artifacts: ArtifactManagementApplication,
@@ -145,6 +153,7 @@ impl ManagementApplication {
       configurations,
       definitions,
       schedules,
+      internal_triggers,
     } = catalog;
     let ExecutionManagementApplication {
       builds,
@@ -171,6 +180,7 @@ impl ManagementApplication {
       builds,
       definitions,
       schedules,
+      internal_triggers,
       manual_triggers,
       job_events,
       artifacts,
@@ -240,6 +250,18 @@ pub fn router(application: ManagementApplication) -> Router {
     .route(
       &format!("{API_PREFIX}/trigger-definitions/scheduled"),
       post(create_scheduled_trigger_definition),
+    )
+    .route(
+      &format!("{API_PREFIX}/trigger-definitions/internal"),
+      post(create_internal_trigger).get(list_internal_triggers),
+    )
+    .route(
+      &format!("{API_PREFIX}/trigger-definitions/internal/{{trigger_id}}/versions"),
+      post(publish_internal_trigger),
+    )
+    .route(
+      &format!("{API_PREFIX}/trigger-definitions/internal/{{trigger_id}}/versions/{{version}}"),
+      get(get_internal_trigger),
     )
     .route(
       &format!("{API_PREFIX}/webhook-integrations/unmanaged"),

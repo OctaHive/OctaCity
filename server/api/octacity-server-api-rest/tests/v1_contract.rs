@@ -3,9 +3,9 @@ use octacity_server_api_rest::v1::{
   AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ArtifactDownload, ArtifactOutputType, ArtifactResource,
   CacheSessionResource, CacheSessionState, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
   CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest,
-  Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, IssueAgentEnrollmentRequest,
-  IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource,
-  VersionPrecondition,
+  Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
+  IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES,
+  OperationalMetadata, ProjectResource, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -16,6 +16,7 @@ const CREATE_PIPELINE: &str = include_str!("../fixtures/v1/create-pipeline-reque
 const CREATE_CONFIGURATION: &str = include_str!("../fixtures/v1/create-build-configuration-request.json");
 const ACCEPT_MANUAL_TRIGGER: &str = include_str!("../fixtures/v1/accept-manual-trigger-request.json");
 const CREATE_SCHEDULED_TRIGGER: &str = include_str!("../fixtures/v1/create-scheduled-trigger-request.json");
+const CREATE_INTERNAL_TRIGGER: &str = include_str!("../fixtures/v1/create-internal-trigger-request.json");
 const CREATE_MANAGED_WEBHOOK: &str = include_str!("../fixtures/v1/create-managed-webhook-request.json");
 const ERROR_RESPONSE: &str = include_str!("../fixtures/v1/error-response.json");
 const CREATE_AGENT_POOL: &str = include_str!("../fixtures/v1/create-agent-pool-request.json");
@@ -32,6 +33,7 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<CreateBuildConfigurationRequest>(CREATE_CONFIGURATION);
   assert_golden::<AcceptManualTriggerRequest>(ACCEPT_MANUAL_TRIGGER);
   assert_golden::<CreateScheduledTriggerDefinitionRequest>(CREATE_SCHEDULED_TRIGGER);
+  assert_golden::<InternalTriggerDefinitionRequest>(CREATE_INTERNAL_TRIGGER);
   assert_golden::<CreateManagedWebhookRequest>(CREATE_MANAGED_WEBHOOK);
   assert_golden::<ErrorResponse>(ERROR_RESPONSE);
   assert_golden::<CreateAgentPoolRequest>(CREATE_AGENT_POOL);
@@ -141,6 +143,10 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
   let mut schedule: Value = serde_json::from_str(CREATE_SCHEDULED_TRIGGER).unwrap();
   schedule["schedule"]["database_timezone"] = json!("UTC");
   assert!(serde_json::from_value::<CreateScheduledTriggerDefinitionRequest>(schedule).is_err());
+
+  let mut internal: Value = serde_json::from_str(CREATE_INTERNAL_TRIGGER).unwrap();
+  internal["source"]["fallback_revision"] = json!("must-not-be-accepted");
+  assert!(serde_json::from_value::<InternalTriggerDefinitionRequest>(internal).is_err());
 
   let mut managed_webhook: Value = serde_json::from_str(CREATE_MANAGED_WEBHOOK).unwrap();
   managed_webhook["provider_private_configuration"] = json!({"token": "must-never-be-accepted"});

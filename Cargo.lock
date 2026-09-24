@@ -4594,6 +4594,7 @@ name = "octacity-server-store-postgres"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures-util",
  "octacity-protocol",
  "octacity-server-cache",
  "octacity-server-domain",

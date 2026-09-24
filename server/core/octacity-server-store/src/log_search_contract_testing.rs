@@ -82,7 +82,16 @@ where
   invalid_query.limit = 10;
   assert_eq!(index.search(invalid_query).await.unwrap().hits.len(), 1);
 
-  let mut invalid_write = write(6, 2, first.clone());
+  let validation_project = id::<ProjectId>(6);
+  let validation_document = document(
+    106,
+    validation_project,
+    id::<BuildId>(60),
+    1_500,
+    BuildLogStream::Stdout,
+    "validation retry",
+  );
+  let mut invalid_write = write(6, 1, validation_document.clone());
   invalid_write.document.first_sequence = 0;
   assert!(matches!(
     index.index(invalid_write).await.unwrap_err(),
@@ -92,7 +101,7 @@ where
     }
   ));
   assert_eq!(
-    index.index(write(6, 2, first.clone())).await.unwrap(),
+    index.index(write(6, 1, validation_document)).await.unwrap(),
     LogSearchMutationDisposition::Applied,
     "rejected work must not consume its idempotency identity"
   );

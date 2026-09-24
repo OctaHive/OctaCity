@@ -1,7 +1,8 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use octacity_server::{ServerConfig, ServerRuntime};
+use octacity_server::{ServerConfig, ServerRuntime, rebuild_log_search};
+use octacity_server_domain::ProjectId;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
@@ -30,6 +31,14 @@ enum Command {
     /// Path to the server TOML configuration.
     config: PathBuf,
   },
+  /// Rebuild one Project's derived log-search projection from committed chunks.
+  RebuildLogSearch {
+    /// Path to the server TOML configuration.
+    config: PathBuf,
+    /// Project whose search projection must be rebuilt.
+    #[arg(long)]
+    project: ProjectId,
+  },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -47,6 +56,7 @@ fn main() -> ExitCode {
   let result = match cli.command {
     Command::Validate { config } => validate(config),
     Command::Run { config } => run_async(run(config)),
+    Command::RebuildLogSearch { config, project } => run_async(rebuild(config, project)),
   };
   match result {
     Ok(()) => ExitCode::SUCCESS,
@@ -55,6 +65,18 @@ fn main() -> ExitCode {
       ExitCode::FAILURE
     }
   }
+}
+
+async fn rebuild(path: PathBuf, project_id: ProjectId) -> Result<(), Box<dyn std::error::Error>> {
+  let config = ServerConfig::load(&path)?;
+  let summary = rebuild_log_search(&config, project_id).await?;
+  info!(
+    project_id = %summary.project_id,
+    queued = summary.queued,
+    committed_through = ?summary.committed_through.map(|position| position.get()),
+    "Build-log search rebuild queued"
+  );
+  Ok(())
 }
 
 fn validate(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -158,5 +180,18 @@ mod tests {
   #[test]
   fn rejects_an_invalid_tracing_filter() {
     assert!(init_tracing(Some("[invalid"), LogFormat::Json).is_err());
+  }
+
+  #[test]
+  fn parses_a_project_scoped_log_search_rebuild() {
+    let cli = Cli::try_parse_from([
+      "octacity-server",
+      "rebuild-log-search",
+      "server.toml",
+      "--project",
+      "00000000-0000-0000-0000-000000000001",
+    ])
+    .unwrap();
+    assert!(matches!(cli.command, Command::RebuildLogSearch { .. }));
   }
 }

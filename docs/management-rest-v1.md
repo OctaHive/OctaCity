@@ -297,6 +297,47 @@ owner and expiry. A crash leaves the cursor unchanged; after expiry another
 replica reclaims the same stable `schedule:<source-time>` occurrence. Trigger
 deduplication then replays an existing Build instead of creating another one.
 
+### Source-scoped inter-Build Triggers
+
+An inter-Build dependency is an internal Trigger, not a calendar schedule. The
+management contract provides these operations:
+
+| Method and path | Purpose |
+| --- | --- |
+| `POST /api/v1/trigger-definitions/internal` | Create version 1 |
+| `GET /api/v1/trigger-definitions/internal` | List current versions with cursor pagination |
+| `POST /api/v1/trigger-definitions/internal/{trigger_id}/versions` | Publish the next version using `If-Match` |
+| `GET /api/v1/trigger-definitions/internal/{trigger_id}/versions/{version}` | Read an exact immutable version |
+
+The complete definition names exact upstream and downstream Build
+Configuration versions and one terminal upstream outcome. `inherit_revision`
+reuses the upstream immutable revision and is accepted only when both
+configurations use the same Repository identity and the downstream Repository
+allows exact revisions. `resolve_target` instead carries a normal downstream
+source selection. The downstream configuration must allow the `internal`
+Trigger kind.
+
+```json
+{
+  "upstream_configuration_id": "44444444-4444-4444-8444-444444444444",
+  "upstream_configuration_version": 1,
+  "configuration_id": "88888888-8888-4888-8888-888888888888",
+  "configuration_version": 2,
+  "outcome": "succeeded",
+  "source": {"kind": "inherit_revision"},
+  "parameters": {"profile": "release"},
+  "priority": 50,
+  "enabled": true
+}
+```
+
+Each definition has one upstream and one downstream. Multiple definitions
+provide fan-out, while linked definitions form chains such as `A -> B -> C`.
+The event-time definition version controls matching, so publishing a disabled
+replacement stops later source events without changing occurrences already
+accepted. Durable ancestry rejects stable Trigger identities already present
+in the chain—even under another version—and enforces the bounded depth limit.
+
 ### Unmanaged webhook integrations
 
 `POST /api/v1/webhook-integrations/unmanaged` atomically creates a server-owned

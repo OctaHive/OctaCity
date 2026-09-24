@@ -122,6 +122,82 @@ pub struct TriggerDefinitionResource {
   pub version: u64,
 }
 
+/// Terminal upstream Build outcome matched by an internal Trigger.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InternalTriggerOutcome {
+  /// The upstream Build completed successfully.
+  Succeeded,
+  /// The upstream Build completed unsuccessfully.
+  Failed,
+  /// The upstream Build was cancelled.
+  Cancelled,
+}
+
+/// Explicit source strategy for a downstream Build created by an internal Trigger.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "source", rename_all = "snake_case", deny_unknown_fields)]
+pub enum InternalTriggerSource {
+  /// Reuse the exact immutable revision built by the upstream Build.
+  InheritRevision,
+  /// Resolve source independently under the downstream Repository policy.
+  ResolveTarget(ManualSource),
+}
+
+/// Complete definition used to create or replace an internal Trigger version.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InternalTriggerDefinitionRequest {
+  /// Exact upstream Build Configuration identity.
+  pub upstream_configuration_id: String,
+  /// Exact upstream Build Configuration version.
+  pub upstream_configuration_version: u64,
+  /// Exact downstream Build Configuration identity.
+  pub configuration_id: String,
+  /// Exact downstream Build Configuration version.
+  pub configuration_version: u64,
+  /// Terminal upstream outcome to match.
+  pub outcome: InternalTriggerOutcome,
+  /// Explicit downstream source behavior.
+  pub source: InternalTriggerSource,
+  /// Downstream Build parameters.
+  pub parameters: BTreeMap<String, Value>,
+  /// Durable ready-queue priority.
+  pub priority: i64,
+  /// Whether matching source events may create occurrences.
+  pub enabled: bool,
+}
+
+/// Management representation of one exact internal Trigger version.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InternalTriggerResource {
+  /// Stable Trigger identity.
+  pub id: String,
+  /// Exact immutable Trigger version.
+  pub version: u64,
+  /// Exact upstream Build Configuration identity.
+  pub upstream_configuration_id: String,
+  /// Exact upstream Build Configuration version.
+  pub upstream_configuration_version: u64,
+  /// Exact downstream Build Configuration identity.
+  pub configuration_id: String,
+  /// Exact downstream Build Configuration version.
+  pub configuration_version: u64,
+  /// Terminal upstream outcome to match.
+  pub outcome: InternalTriggerOutcome,
+  /// Explicit downstream source behavior.
+  pub source: InternalTriggerSource,
+  /// Downstream Build parameters.
+  pub parameters: BTreeMap<String, Value>,
+  /// Durable ready-queue priority.
+  pub priority: i64,
+  /// Whether matching source events may create occurrences.
+  pub enabled: bool,
+  /// Authoritative publication time as Unix milliseconds.
+  pub created_at_unix_ms: i64,
+}
+
 /// Request body for creating an operator-managed remote webhook.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

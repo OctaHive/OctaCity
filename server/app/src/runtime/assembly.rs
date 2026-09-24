@@ -32,17 +32,7 @@ pub(crate) struct RuntimeResources {
 
 impl RuntimeResources {
   pub(crate) async fn from_config(config: &ServerConfig) -> Result<Self, RuntimeAssemblyError> {
-    let database_url = read_credential("PostgreSQL URL", &config.postgres().url_file).await?;
-    let connect_options =
-      database_url
-        .parse::<PgConnectOptions>()
-        .map_err(|_| RuntimeAssemblyError::InvalidCredential {
-          purpose: "PostgreSQL URL",
-        })?;
-    let pool = PgPoolOptions::new()
-      .max_connections(config.postgres().max_connections)
-      .acquire_timeout(config.readiness_check_timeout())
-      .connect_lazy_with(connect_options);
+    let (pool, database_url) = postgres_pool(config).await?;
 
     let object_config = config.object_storage();
     let access_key = read_credential("object-store access key", &object_config.access_key_file).await?;
@@ -117,6 +107,23 @@ impl RuntimeResources {
       object_storage,
     })
   }
+}
+
+pub(super) async fn postgres_pool(
+  config: &ServerConfig,
+) -> Result<(sqlx::PgPool, Zeroizing<String>), RuntimeAssemblyError> {
+  let database_url = read_credential("PostgreSQL URL", &config.postgres().url_file).await?;
+  let connect_options =
+    database_url
+      .parse::<PgConnectOptions>()
+      .map_err(|_| RuntimeAssemblyError::InvalidCredential {
+        purpose: "PostgreSQL URL",
+      })?;
+  let pool = PgPoolOptions::new()
+    .max_connections(config.postgres().max_connections)
+    .acquire_timeout(config.readiness_check_timeout())
+    .connect_lazy_with(connect_options);
+  Ok((pool, database_url))
 }
 
 fn decode_fixed_key<const N: usize, T>(

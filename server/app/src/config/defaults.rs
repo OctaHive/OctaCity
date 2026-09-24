@@ -68,6 +68,30 @@ pub(super) const fn default_internal_trigger_batch_size() -> u16 {
   32
 }
 
+pub(super) const fn default_log_index_poll_interval_milliseconds() -> u64 {
+  1_000
+}
+
+pub(super) const fn default_log_index_claim_lifetime_milliseconds() -> u64 {
+  120_000
+}
+
+pub(super) const fn default_log_index_batch_size() -> u16 {
+  16
+}
+
+pub(super) const fn default_log_index_max_attempts() -> u16 {
+  10
+}
+
+pub(super) const fn default_log_index_initial_retry_milliseconds() -> u64 {
+  1_000
+}
+
+pub(super) const fn default_log_index_maximum_retry_milliseconds() -> u64 {
+  60_000
+}
+
 pub(super) const fn default_webhook_worker_poll_interval_milliseconds() -> u64 {
   1_000
 }
