@@ -356,6 +356,7 @@ mod tests {
         workload_identity_profile: None,
       },
       None,
+      None,
       OutputLimits {
         artifact_count: 0,
         artifact_bytes: 0,

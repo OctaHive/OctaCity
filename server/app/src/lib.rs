@@ -16,5 +16,4 @@ mod readiness;
 mod runtime;
 
 pub use config::{ServerConfig, ServerConfigError};
-pub use readiness::ReadinessSetupError;
-pub use runtime::{ServerRuntime, ServerRuntimeError};
+pub use runtime::{RuntimeAssemblyError, ServerRuntime, ServerRuntimeError};

@@ -16,6 +16,7 @@ clap.workspace = true
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-artifact-s3 = { path = "../infrastructure/octacity-artifact-s3" }
 octacity-server-api-agent = { path = "../api/octacity-server-api-agent" }
+octacity-server-api-cache = { path = "../api/octacity-server-api-cache" }
 octacity-server-api-rest = { path = "../api/octacity-server-api-rest" }
 octacity-server-api-webhook = { path = "../api/octacity-server-api-webhook" }
 octacity-server-application = { path = "../application" }
@@ -36,6 +37,7 @@ tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
 

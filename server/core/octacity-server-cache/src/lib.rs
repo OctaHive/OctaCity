@@ -7,6 +7,18 @@
 
 use std::{collections::BTreeSet, fmt, fmt::Write as _, str::FromStr};
 
+mod data_plane;
+
+pub use data_plane::{
+  CacheBlobObject, CacheBlobStore, CacheBlobStoreError, CacheBlobWrite, CacheIntegrityError, verify_blob_bytes,
+};
+pub use octa_cache_protocol::{
+  ActionResultV1, BlobDescriptor, BlobEncoding, Digest, DigestAlgorithm, FindMissingBlobsRequestV1,
+  FindMissingBlobsResponseV1, MAX_ACTION_RESULT_WIRE_BYTES, MAX_REMOTE_CACHE_METADATA_BYTES,
+  REMOTE_CACHE_BLOB_CONTENT_TYPE, REMOTE_CACHE_JSON_CONTENT_TYPE, REMOTE_CACHE_PROTOCOL_HEADER,
+  REMOTE_CACHE_PROTOCOL_HEADER_VALUE_V1, REMOTE_CACHE_PROTOCOL_V1, WriteActionRequestV1,
+};
+
 use hmac::{Hmac, Mac as _};
 use octacity_server_domain::{CacheSessionId, EntityKind, TransitionError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};

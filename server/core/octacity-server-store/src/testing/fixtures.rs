@@ -248,6 +248,7 @@ pub fn job_spec_template_with_cache(build_id: BuildId, node: &str, cache: Option
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
+    None,
     cache,
     OutputLimits {
       artifact_count: 0,

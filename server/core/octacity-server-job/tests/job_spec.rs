@@ -11,6 +11,7 @@ use octacity_server_job::{
   JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate, JobSpecValidity,
   MAX_JOB_SPEC_VALIDITY_SECONDS, SourcePluginPolicy, derive_job_spec_template, sign_ready_job_spec,
 };
+use octacity_server_secrets::SecretProfileName;
 use serde_json::{Value, json};
 
 const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -50,7 +51,7 @@ fn derives_one_deterministic_protocol_valid_envelope() {
   assert_eq!(verified.execution.variables["profile"], "release");
   assert_eq!(verified.execution.variables["retries"], "2");
   assert_eq!(verified.execution.variables["strict"], "true");
-  assert_eq!(verified.execution.secrets_profile, None);
+  assert_eq!(verified.execution.secrets_profile.as_deref(), Some("ci/secrets.yml"));
   assert_eq!(verified.issued_at, 100);
   assert_eq!(verified.expires_at, 700);
 }
@@ -169,6 +170,7 @@ fn policy() -> JobSpecPolicySnapshot {
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
+    Some(SecretProfileName::new("ci/secrets.yml").unwrap()),
     None,
     OutputLimits {
       artifact_count: 2,

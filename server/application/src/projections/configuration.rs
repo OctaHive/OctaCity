@@ -9,7 +9,7 @@ use octacity_server_store::{ConfigurationNetworkPolicy, PublishedBuildConfigurat
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{CacheNamespace, IdentityProfileName};
+use crate::{CacheNamespace, IdentityProfileName, SecretProfileName};
 
 use super::ProjectionError;
 
@@ -284,6 +284,8 @@ pub struct BuildConfigurationProjection {
   pub allowed_pools: BTreeSet<PoolId>,
   /// Runtime, resource, network, and logical identity policy.
   pub runtime: ConfigurationRuntimeProjection,
+  /// Logical Octa secret profile; never secret material.
+  pub secrets_profile: Option<SecretProfileName>,
   /// Logical remote-cache policy.
   pub cache: ConfigurationCacheProjection,
   /// Artifact and report ceilings.
@@ -300,12 +302,7 @@ impl TryFrom<PublishedBuildConfiguration> for BuildConfigurationProjection {
   fn try_from(configuration: PublishedBuildConfiguration) -> Result<Self, Self::Error> {
     let definition = configuration.definition;
     validate_configuration_projection(&definition)?;
-    let workload_identity_profile = definition
-      .runtime
-      .workload_identity_profile
-      .map(IdentityProfileName::new)
-      .transpose()
-      .map_err(|_| ProjectionError::InvalidConfigurationReference)?;
+    let workload_identity_profile = definition.runtime.workload_identity_profile.clone();
     let namespace = definition
       .cache
       .namespace
@@ -425,6 +422,7 @@ impl TryFrom<PublishedBuildConfiguration> for BuildConfigurationProjection {
         network,
         workload_identity_profile,
       },
+      secrets_profile: definition.secrets_profile,
       cache: ConfigurationCacheProjection {
         namespace,
         read: definition.cache.read,
@@ -443,13 +441,6 @@ pub(crate) fn validate_configuration_projection(
   definition
     .validate()
     .map_err(|_| ProjectionError::InvalidConfigurationSnapshot)?;
-  definition
-    .runtime
-    .workload_identity_profile
-    .as_deref()
-    .map(IdentityProfileName::new)
-    .transpose()
-    .map_err(|_| ProjectionError::InvalidConfigurationReference)?;
   definition
     .cache
     .namespace

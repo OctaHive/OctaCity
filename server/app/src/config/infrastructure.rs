@@ -1,3 +1,5 @@
+//! Configuration for concrete infrastructure selected by the composition root.
+
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -5,6 +7,7 @@ use serde::Deserialize;
 const MAX_POSTGRES_CONNECTIONS: u32 = 1_024;
 const MAX_TRANSFER_CAPABILITY_MILLISECONDS: u64 = 60 * 60 * 1_000;
 const MAX_CACHE_SESSION_MILLISECONDS: u64 = 60 * 60 * 1_000;
+const MAX_CACHE_BLOB_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +119,8 @@ pub(crate) struct CacheConfig {
   pub(crate) endpoint: String,
   pub(crate) credential_key_file: PathBuf,
   session_lifetime_milliseconds: u64,
+  #[serde(default = "default_cache_blob_bytes")]
+  max_blob_bytes: u64,
 }
 
 impl CacheConfig {
@@ -128,11 +133,21 @@ impl CacheConfig {
         "cache.session_lifetime_milliseconds must be between 1 and {MAX_CACHE_SESSION_MILLISECONDS}"
       ));
     }
+    if self.max_blob_bytes == 0 || self.max_blob_bytes > MAX_CACHE_BLOB_BYTES || self.max_blob_bytes > usize::MAX as u64
+    {
+      return Err(format!(
+        "cache.max_blob_bytes must be between 1 and {MAX_CACHE_BLOB_BYTES}"
+      ));
+    }
     Ok(())
   }
 
   pub(crate) const fn session_lifetime(&self) -> std::time::Duration {
     std::time::Duration::from_millis(self.session_lifetime_milliseconds)
+  }
+
+  pub(crate) const fn max_blob_bytes(&self) -> u64 {
+    self.max_blob_bytes
   }
 }
 
@@ -189,4 +204,8 @@ const fn default_upload_capability_milliseconds() -> u64 {
 
 const fn default_download_capability_milliseconds() -> u64 {
   60 * 1_000
+}
+
+const fn default_cache_blob_bytes() -> u64 {
+  64 * 1024 * 1024
 }

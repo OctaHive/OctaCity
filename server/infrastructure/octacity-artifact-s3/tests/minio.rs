@@ -24,8 +24,13 @@ use aws_sdk_s3::{
 use octacity_artifact_s3::{S3ArtifactStore, S3ArtifactStoreConfig};
 use octacity_artifact_store::{
   ArtifactId, ArtifactIntegrityError, ArtifactObject, ArtifactStore, ArtifactStoreError, ArtifactStoreOperation,
-  ArtifactUploadId, UploadAuthorization,
+  ArtifactUploadId, LogChunkStore, LogChunkStoreError, LogChunkWrite, UploadAuthorization,
 };
+use octacity_server_artifacts::{BuildLogStream, LogChunkManifest};
+use octacity_server_cache::{
+  BlobDescriptor, BlobEncoding, CacheBlobObject, CacheBlobStore, CacheBlobStoreError, CacheBlobWrite, Digest,
+};
+use octacity_server_domain::JobId;
 use reqwest::header::{HeaderName, HeaderValue};
 use sha2::{Digest as _, Sha256};
 use tokio::{io::copy_bidirectional, net::TcpListener, task::JoinHandle};
@@ -62,6 +67,8 @@ async fn s3_store_satisfies_the_minio_contract() {
   store.health_check().await.unwrap();
 
   verify_upload_download_and_delete(&store).await;
+  verify_cache_blob_contract(&store).await;
+  verify_log_chunk_contract(&store).await;
   verify_mismatched_generations_remain_unpublished(&client, &bucket, &store).await;
   verify_capability_expiration(&store).await;
   verify_outage_and_recovery(&proxy, &store).await;
@@ -69,6 +76,60 @@ async fn s3_store_satisfies_the_minio_contract() {
   delete_test_objects(&client, &bucket).await;
   client.delete_bucket().bucket(bucket).send().await.unwrap();
   proxy.shutdown().await;
+}
+
+async fn verify_log_chunk_contract(store: &S3ArtifactStore) {
+  let bytes = b"redacted stdout".to_vec();
+  let manifest = LogChunkManifest::prepare(
+    JobId::from_uuid(Uuid::new_v4()).unwrap(),
+    BuildLogStream::Stdout,
+    10,
+    12,
+    &bytes,
+  )
+  .unwrap();
+  assert_eq!(
+    store.put_verified(&manifest, bytes.clone()).await.unwrap(),
+    LogChunkWrite::Written
+  );
+  assert_eq!(
+    store.put_verified(&manifest, bytes.clone()).await.unwrap(),
+    LogChunkWrite::AlreadyPresent
+  );
+  assert_eq!(store.read_verified(&manifest).await.unwrap(), bytes);
+  assert_eq!(
+    store.put_verified(&manifest, b"different bytes".to_vec()).await,
+    Err(LogChunkStoreError::Integrity)
+  );
+  store.delete_chunk(&manifest).await.unwrap();
+  assert_eq!(store.read_verified(&manifest).await, Err(LogChunkStoreError::NotFound));
+}
+
+async fn verify_cache_blob_contract(store: &S3ArtifactStore) {
+  let bytes = b"verified-cache-bundle".to_vec();
+  let descriptor = BlobDescriptor {
+    digest: Digest::blake3(&bytes),
+    encoding: BlobEncoding::Identity,
+    encoded_size_bytes: bytes.len() as u64,
+    expanded_size_bytes: bytes.len() as u64,
+    entry_count: 1,
+  };
+  let object = CacheBlobObject::new("a".repeat(64), descriptor).unwrap();
+  assert_eq!(
+    store.put_if_absent(&object, bytes.clone()).await.unwrap(),
+    CacheBlobWrite::Written
+  );
+  assert_eq!(
+    store.put_if_absent(&object, bytes.clone()).await.unwrap(),
+    CacheBlobWrite::AlreadyPresent
+  );
+  assert_eq!(store.read(&object).await.unwrap(), bytes);
+  assert!(matches!(
+    store.put_if_absent(&object, b"different-cache-bytes".to_vec()).await,
+    Err(CacheBlobStoreError::Integrity(_))
+  ));
+  CacheBlobStore::delete(store, &object).await.unwrap();
+  assert_eq!(store.read(&object).await, Err(CacheBlobStoreError::NotFound));
 }
 
 async fn verify_upload_download_and_delete(store: &S3ArtifactStore) {
@@ -109,8 +170,8 @@ async fn verify_upload_download_and_delete(store: &S3ArtifactStore) {
     "MinIO accepted bytes that violate the signed checksum"
   );
 
-  store.delete(&stored).await.unwrap();
-  store.delete(&empty).await.unwrap();
+  ArtifactStore::delete(store, &stored).await.unwrap();
+  ArtifactStore::delete(store, &empty).await.unwrap();
   assert!(
     store
       .authorize_download(&stored, Duration::from_secs(60))
@@ -179,7 +240,7 @@ async fn verify_capability_expiration(store: &S3ArtifactStore) {
     store.authorize_download(&pending, Duration::from_secs(60)).await,
     Err(ArtifactStoreError::NotFound)
   ));
-  store.delete(&published).await.unwrap();
+  ArtifactStore::delete(store, &published).await.unwrap();
 }
 
 async fn verify_outage_and_recovery(proxy: &FaultProxy, store: &S3ArtifactStore) {
@@ -214,7 +275,7 @@ async fn verify_outage_and_recovery(proxy: &FaultProxy, store: &S3ArtifactStore)
     reqwest::get(download.url).await.unwrap().bytes().await.unwrap(),
     bytes.as_slice()
   );
-  store.delete(&object).await.unwrap();
+  ArtifactStore::delete(store, &object).await.unwrap();
 }
 
 async fn inject_pending_generation(client: &Client, bucket: &str, object: &ArtifactObject, bytes: &'static [u8]) {

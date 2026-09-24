@@ -9,6 +9,13 @@ publish = false
 description = "Secret-reference and delegated-grant domain for OctaCity"
 
 [dependencies]
+async-trait.workspace = true
 hmac.workspace = true
+octacity-server-domain = { path = "../octacity-server-domain" }
+serde.workspace = true
 sha2.workspace = true
+thiserror.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

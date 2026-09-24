@@ -10,6 +10,7 @@ description = "Transport-independent CQRS application layer for OctaCity"
 
 [dependencies]
 async-trait.workspace = true
+base64.workspace = true
 octacity-artifact-store = { path = "../core/octacity-artifact-store" }
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-server-cache = { path = "../core/octacity-server-cache" }
@@ -26,6 +27,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 url.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 octacity-server-store = { path = "../core/octacity-server-store", features = ["test-support"] }

@@ -1,6 +1,7 @@
 use octacity_protocol::CachePolicy;
 use octacity_server_cache::{
-  CacheCredentialDigest, CacheNamespace, CacheNamespacePolicy, CacheOperation, CacheSessionState,
+  ActionResultV1, BlobDescriptor, CacheBlobObject, CacheCredentialDigest, CacheNamespace, CacheNamespacePolicy,
+  CacheOperation, CacheSessionState, Digest,
 };
 use octacity_server_domain::{AgentId, BuildId, CacheSessionId, JobId, LeaseId, ProjectId, Timestamp};
 use sha2::{Digest as _, Sha256};
@@ -116,6 +117,89 @@ pub struct AuthorizeCacheSession {
   pub operation: CacheOperation,
   /// Server-observed authorization time.
   pub observed_at: Timestamp,
+}
+
+/// Credential and namespace carried by one L2 cache data-plane request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CacheDataAccess {
+  /// Irreversible digest of the presented bearer.
+  pub credential_digest: CacheCredentialDigest,
+  /// Exact namespace named by the public Octa request.
+  pub namespace: CacheNamespace,
+  /// Server-observed request time.
+  pub observed_at: Timestamp,
+}
+
+/// One independently verified blob ready for atomic metadata publication.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublishCacheBlob {
+  /// Current bearer authority.
+  pub access: CacheDataAccess,
+  /// Exact physical representation whose bytes are already durable.
+  pub blob: BlobDescriptor,
+}
+
+/// One opaque validated Octa action result ready for immutable publication.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublishCacheAction {
+  /// Current bearer authority.
+  pub access: CacheDataAccess,
+  /// Action identity taken from the HTTP route.
+  pub action: Digest,
+  /// Opaque protocol result, including its optional blob reference.
+  pub result: ActionResultV1,
+  /// Exact serialized bytes charged to quota.
+  pub wire_size_bytes: u64,
+}
+
+/// Outcome of create-if-absent metadata publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CachePublicationOutcome {
+  /// New immutable metadata became visible.
+  Published,
+  /// Byte-for-byte equivalent metadata was already visible.
+  AlreadyPresent,
+  /// The immutable key already names different metadata.
+  Conflict,
+  /// Publication would exceed the authoritative Project quota.
+  QuotaExceeded,
+}
+
+/// Result of reserving quota before an immutable blob upload starts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CacheBlobPreparationOutcome {
+  /// Quota is reserved and the exact isolated object must be uploaded or retried.
+  Upload(CacheBlobObject),
+  /// Published metadata and verified bytes are already visible.
+  AlreadyPresent,
+  /// Reservation would exceed the authoritative Project quota.
+  QuotaExceeded,
+}
+
+/// Result of one retention pass after logical visibility changes commit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CacheRetentionOutcome {
+  /// Physical objects no longer referenced by authoritative metadata.
+  pub deleted_blobs: Vec<CacheBlobObject>,
+}
+
+/// Stable physical representation key used by cache metadata adapters.
+#[must_use]
+pub fn cache_blob_key(blob: &BlobDescriptor) -> String {
+  let encoding = match blob.encoding {
+    octacity_server_cache::BlobEncoding::Identity => "identity",
+    octacity_server_cache::BlobEncoding::ZstdV1 => "zstd_v1",
+  };
+  format!(
+    "{}:{encoding}:{}:{}",
+    blob.digest, blob.encoded_size_bytes, blob.entry_count
+  )
+}
+
+/// Stable action metadata key used by cache adapters without recalculation.
+#[must_use]
+pub fn cache_action_key(action: Digest) -> String {
+  action.to_string()
 }
 
 /// Scoped authority returned only after every current-state check succeeds.

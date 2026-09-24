@@ -12,6 +12,7 @@ semantics independently of a particular implementation language.
 | Octa runner v3 | Implemented in Octa | Published by the `octa-runner-protocol` crate | `octa-runner-protocol`, `octacity-runner` |
 | Server-agent transport v1 | Phases 5–7 implemented | [server-agent-v1.md](server-agent-v1.md) | `octacity-protocol`, `octacity-coordinator`, `octacity-lifecycle` |
 | Cache session v1 | Implemented | [cache-session-v1.md](cache-session-v1.md) | `octacity-cache-session`, `octacity-runner` |
+| Octa HTTP cache v1 | Implemented | Published by Octa in `docs/cache-http-v1.md` with schema and golden fixtures in `octa-cache-protocol` | `octacity-server-api-cache`, `octacity-server-application`, `octacity-server-store-postgres` |
 | Webhook provider v1 | Wire contract, bounded host, public ingress, and unmanaged and managed lifecycles implemented; production provider adapters intentionally absent | [webhook-provider-v1.md](webhook-provider-v1.md) | `octacity-webhook-provider-protocol`, `octacity-server-webhook`, `octacity-server-api-webhook` |
 | VCS provider v1 | Wire contract implemented; host and Git adapter pending | [vcs-provider-v1.md](vcs-provider-v1.md) | `octacity-vcs-protocol` |
 | Artifact transfer v1 | Wire contract implemented | [artifact-transfer-v1.md](artifact-transfer-v1.md) | `octacity-protocol` |

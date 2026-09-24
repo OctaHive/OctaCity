@@ -17,6 +17,7 @@ mod artifact_transfer;
 #[cfg(test)]
 mod artifact_transfer_tests;
 mod build_cqrs;
+mod cache_data_plane;
 mod cache_session;
 #[cfg(test)]
 mod cache_session_tests;
@@ -29,6 +30,7 @@ mod external_trigger;
 mod internal_trigger;
 mod job_event_cqrs;
 mod lease_expiry;
+mod log_archive;
 mod management_input;
 mod manual_trigger;
 mod pipeline_cqrs;
@@ -75,6 +77,9 @@ pub use build_cqrs::{
   AttemptDetailsProjection, BuildDetailsProjection, BuildHandlers, CancelBuildCommand, CancelBuildCommandOutcome,
   GetAttemptQuery, GetBuildQuery, GetJobQuery, RetryBuildCommand, RetryBuildCommandOutcome,
 };
+pub use cache_data_plane::{
+  CacheDataPlaneError, CacheDataPlaneService, CacheDataPlaneUseCases, CacheRequestAuthority, CacheWriteResult,
+};
 pub use cache_session::{
   AgentCacheSessionError, AgentCacheSessionUseCases, BeginAgentCacheSessionInput, CacheSessionDiagnosticState,
   CacheSessionHandlers, CacheSessionProjection, GetCacheSessionQuery, ListBuildCacheSessionsQuery,
@@ -106,6 +111,7 @@ pub use job_event_cqrs::{
   JobEventLongPoll, JobEventPageProjection, JobEventProjection, JobEventWaiter, MAX_JOB_EVENT_WAIT, ReadJobEventsQuery,
 };
 pub use lease_expiry::{LeaseExpiryBatchOutcome, LeaseExpiryWorker};
+pub use log_archive::{LogRedactor, OrphanLogChunkCleaner, OrphanLogChunkCleanup};
 pub use management_input::{
   ManagedWebhookInput, ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput,
   ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
@@ -120,6 +126,12 @@ pub use manual_trigger::{
   StoreBackedManualTriggerContext,
 };
 pub use octacity_server_cache::CacheCredentialKey;
+pub use octacity_server_cache::{
+  ActionResultV1, BlobDescriptor, BlobEncoding, Digest, DigestAlgorithm, FindMissingBlobsRequestV1,
+  FindMissingBlobsResponseV1, MAX_ACTION_RESULT_WIRE_BYTES, MAX_REMOTE_CACHE_METADATA_BYTES,
+  REMOTE_CACHE_BLOB_CONTENT_TYPE, REMOTE_CACHE_JSON_CONTENT_TYPE, REMOTE_CACHE_PROTOCOL_HEADER,
+  REMOTE_CACHE_PROTOCOL_HEADER_VALUE_V1, WriteActionRequestV1,
+};
 pub use octacity_server_secrets::AgentEnrollmentSecretKey;
 pub use octacity_server_store::AgentDrainMode;
 pub use octacity_server_store::RegistrationEpoch;

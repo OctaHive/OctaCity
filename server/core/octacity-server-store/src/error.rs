@@ -118,6 +118,10 @@ pub enum StoreOperation {
   RecoverExpiredLease,
   /// Append one contiguous idempotent batch of Job events.
   AppendJobEvents,
+  /// Inspect current cursor before preparing immutable log objects.
+  PrepareJobEventAppend,
+  /// Check whether a logical log chunk is durably visible.
+  ReadLogChunkManifest,
   /// Read one bounded ordered page from a Job event stream.
   ReadJobEvents,
   /// Commit one terminal Job outcome after its event history is durable.
@@ -160,6 +164,16 @@ pub enum StoreOperation {
   ReadCacheSession,
   /// List bounded cache-session diagnostics for one Build.
   ListCacheSessions,
+  /// Query scoped L2 cache blob metadata.
+  ReadCacheBlob,
+  /// Publish scoped L2 cache blob metadata.
+  PublishCacheBlob,
+  /// Query scoped L2 cache action metadata.
+  ReadCacheAction,
+  /// Publish scoped L2 cache action metadata.
+  PublishCacheAction,
+  /// Apply scoped L2 cache retention.
+  PruneCache,
 }
 
 /// Invalid caller input rejected before any authoritative state changes.
@@ -309,6 +323,10 @@ pub enum StoreInputError {
   /// Event sequences inside one request must be contiguous and increasing.
   #[error("an event batch must contain contiguous increasing sequences")]
   NonContiguousEventBatch,
+  /// A log-chunk manifest is malformed, overlaps another chunk, or does not
+  /// cover exactly the newly accepted stdout/stderr events.
+  #[error("log chunk manifests do not match the event batch")]
+  InvalidLogChunkManifest,
   /// A retry must name an Attempt number after the initial Attempt.
   #[error("a retry attempt number must be greater than one")]
   InvalidRetryAttempt,
@@ -318,6 +336,9 @@ pub enum StoreInputError {
   /// Cache session identity, policy, expiry, or page size is invalid.
   #[error("a cache session request is invalid")]
   InvalidCacheSession,
+  /// Cache action or blob metadata violates the published protocol contract.
+  #[error("cache data-plane metadata is invalid")]
+  InvalidCacheData,
 }
 
 /// Backend-neutral failure from an authoritative atomic operation.

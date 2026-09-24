@@ -6,9 +6,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod log;
 mod model;
 mod state;
 
+pub use log::{BuildLogStream, LogChunkDigest, LogChunkManifest, LogChunkManifestError, MAX_LOG_CHUNK_BYTES};
 pub use model::{
   ArtifactContentDigest, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
   ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactType, MAX_ARTIFACT_MEDIA_TYPE_BYTES,

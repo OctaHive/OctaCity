@@ -12,8 +12,9 @@ use async_trait::async_trait;
 use octacity_protocol::{NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpec, RuntimeTarget};
 use octacity_server_domain::{
   AgentId, AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, EntityKind,
-  ImmutableRevision, JobId, LeaseId, PipelineId, PipelineNodeId, PipelineVersion, PoolId, PoolVersion, ProjectId,
-  RepositoryId, RepositoryVersion, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
+  ImmutableRevision, JobId, LeaseId, LogChunkId, PipelineId, PipelineNodeId, PipelineVersion, PoolId, PoolVersion,
+  ProjectId, RepositoryId, RepositoryVersion, Timestamp, TriggerId, TriggerIdentity, TriggerOccurrenceId,
+  TriggerVersion,
 };
 use octacity_server_job::{
   DerivedJobSpec, JobSpecBuildSnapshot, JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate, JobState,
@@ -30,13 +31,14 @@ use crate::test_support::{id, time};
 use crate::{
   AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, BuildControlStore, CancelBuild,
   CancellationDisposition, CompletionDisposition, EventDigest, EventSequence, IdempotencyKey, ImmutableBuildInput,
-  JobClaim, JobClaimOutcome, JobCompletion, JobExecutionStore, LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome,
-  LeaseHeartbeatStore, LogIndexPosition, LogIndexWorkStore, MaterializedJob, MaterializedJobPayload,
-  MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, RenewLease, RetryBuild, RetryDisposition,
-  ScheduleRecord, StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe,
-  TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEvaluationOutcome,
-  TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget, WorkerOwner, complete_job_state,
-  retry_graph_is_equivalent, start_job_execution,
+  JobClaim, JobClaimOutcome, JobCompletion, JobEventAppendPreparation, JobExecutionStore, LeaseAccess, LeaseGrant,
+  LeaseHeartbeatOutcome, LeaseHeartbeatStore, LogChunkManifest, LogChunkManifestStore, LogIndexPosition,
+  LogIndexWorkStore, MaterializedJob, MaterializedJobPayload, MutationDisposition, NormalizedTriggerOccurrence,
+  RegistrationEpoch, RenewLease, RetryBuild, RetryDisposition, ScheduleRecord, StoreError, StoreOperation,
+  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause,
+  TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind,
+  TriggerMetadata, TriggerTarget, WorkerOwner, complete_job_state, retry_graph_is_equivalent, start_job_execution,
+  validate_new_log_chunks,
 };
 
 mod build_control;
@@ -308,8 +310,23 @@ impl JobExecutionStore for InMemoryStore {
     lease_events::append_events(self, request).await
   }
 
+  async fn prepare_job_event_append(
+    &self,
+    lease: LeaseAccess,
+    accepted_at: Timestamp,
+  ) -> Result<crate::JobEventAppendPreparation, StoreError> {
+    lease_events::prepare_append(self, lease, accepted_at).await
+  }
+
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     lease_events::complete(self, request).await
+  }
+}
+
+#[async_trait]
+impl LogChunkManifestStore for InMemoryStore {
+  async fn log_chunk_is_committed(&self, chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
+    Ok(self.lock()?.log_chunks.contains_key(&chunk_id))
   }
 }
 

@@ -22,6 +22,7 @@ members = [
   "agent/octacity-source-plugin",
   "server/app",
   "server/api/octacity-server-api-agent",
+  "server/api/octacity-server-api-cache",
   "server/api/octacity-server-api-rest",
   "server/api/octacity-server-api-webhook",
   "server/application",
@@ -62,6 +63,7 @@ async-trait = "0.1.89"
 aws-sdk-s3 = { version = "1.147.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio"] }
 axum = "0.8.9"
 base64 = "0.22.1"
+blake3 = "1.8.2"
 chrono = "0.4.42"
 chrono-tz = "0.10.4"
 hmac = "0.12.1"
@@ -111,6 +113,7 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 windows-service = "0.8.1"
 zeroize = "1.9.0"
+zstd = "0.13.3"
 
 [profile.release]
 panic = "abort"

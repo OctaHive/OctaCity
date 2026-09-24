@@ -12,8 +12,9 @@ use octacity_server_store::{
   ArtifactRecordStore, ArtifactUploadRecord, ArtifactVerificationResult, AuthenticateAgentRegistration,
   AuthenticatedAgentRegistration, AuthorizeCacheSession, BeginArtifactUpload, BeginArtifactUploadOutcome,
   BeginCacheSession, BeginCacheSessionOutcome, BuildConfigurationMutationOutcome, BuildControlStore, BuildQueryStore,
-  BuildRecord, CacheAuthorizationOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild, CancellationDisposition,
-  ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimTriggerEvaluations,
+  BuildRecord, CacheAuthorizationOutcome, CacheBlobPreparationOutcome, CacheDataAccess, CacheDataStore,
+  CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild,
+  CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimTriggerEvaluations,
   CompleteInternalTriggerEvent, CompleteScheduleClaim, CompleteTriggerEvaluation, CompletionDisposition,
   ConfigurationStore, CreateAgentPool, CreateBuildConfiguration, CreateManagedWebhook, CreateProject, CreateRepository,
   CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool,
@@ -21,21 +22,22 @@ use octacity_server_store::{
   ExpiredLeaseClaim, FailTriggerEvaluation, InternalTriggerEventClaim, InternalTriggerEventStore, IssueAgentEnrollment,
   IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore,
   JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents,
-  ListBuildCacheSessions, ListProjects, ListPublishedArtifacts, LogIndexPosition, LogIndexWorkStore,
-  ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord, ManagedWebhookRegistrationStore,
-  MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore, ProjectDetails, ProjectMutationOutcome,
-  ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore,
-  PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishPipelineVersion, PublishProjectPolicy,
-  PublishRepositoryVersion, PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository,
-  ReadJobEvents, ReassignAgentPool, ReassignAgentPoolOutcome, RecordManagedWebhookRegistration,
-  RecordTriggerEvaluationRevision, RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject,
-  RenewLease, RepositoryMutationOutcome, ReserveArtifact, ReserveTriggerEvaluation, RetryBuild, RetryDisposition,
-  RevokeAgentCredential, RevokeCacheSession, ScheduleRecord, ScheduleStore, StoreError, SuppressTrigger,
-  SuppressTriggerOutcome, SuppressWebhookDelivery, TransitionArtifact, TriggerAcceptanceProbe, TriggerAcceptanceStore,
-  TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationClaim,
-  TriggerEvaluationOutcome, TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerKind, TriggerTarget,
-  UnmanagedWebhookMutationOutcome, VerifyArtifactUpload, WebhookConfigurationStore, WebhookDeliveryAdmissionStore,
-  WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader, WebhookIntegrationRecord,
+  ListBuildCacheSessions, ListProjects, ListPublishedArtifacts, LogChunkManifestStore, LogIndexPosition,
+  LogIndexWorkStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord,
+  ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, PipelineMutationOutcome, PipelineStore,
+  ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome,
+  ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishCacheAction,
+  PublishCacheBlob, PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool,
+  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents, ReassignAgentPool,
+  ReassignAgentPoolOutcome, RecordManagedWebhookRegistration, RecordTriggerEvaluationRevision, RecoverExpiredLease,
+  RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject, RenewLease, RepositoryMutationOutcome, ReserveArtifact,
+  ReserveTriggerEvaluation, RetryBuild, RetryDisposition, RevokeAgentCredential, RevokeCacheSession, ScheduleRecord,
+  ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome, SuppressWebhookDelivery, TransitionArtifact,
+  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionMutationOutcome, TriggerDefinitionRef,
+  TriggerDefinitionStore, TriggerEvaluationClaim, TriggerEvaluationOutcome, TriggerEvaluationReservation,
+  TriggerEvaluationWorkStore, TriggerKind, TriggerTarget, UnmanagedWebhookMutationOutcome, VerifyArtifactUpload,
+  WebhookConfigurationStore, WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore,
+  WebhookIntegrationReader, WebhookIntegrationRecord,
 };
 use sqlx::PgPool;
 
@@ -143,6 +145,61 @@ impl CacheSessionStore for PostgresStore {
   }
 }
 
+#[async_trait]
+impl CacheDataStore for PostgresStore {
+  async fn resolve_cache_namespace(
+    &self,
+    credential_digest: octacity_server_cache::CacheCredentialDigest,
+    observed_at: octacity_server_domain::Timestamp,
+  ) -> Result<octacity_server_cache::CacheNamespace, StoreError> {
+    crate::cache::resolve_namespace(&self.pool, credential_digest, observed_at).await
+  }
+
+  async fn find_missing_cache_blobs(
+    &self,
+    access: CacheDataAccess,
+    blobs: Vec<octacity_server_cache::BlobDescriptor>,
+  ) -> Result<Vec<octacity_server_cache::BlobDescriptor>, StoreError> {
+    crate::cache::find_missing_blobs(&self.pool, access, blobs).await
+  }
+
+  async fn cache_blob(
+    &self,
+    access: CacheDataAccess,
+    blob: octacity_server_cache::BlobDescriptor,
+  ) -> Result<Option<octacity_server_cache::CacheBlobObject>, StoreError> {
+    crate::cache::read_blob(&self.pool, access, blob).await
+  }
+
+  async fn publish_cache_blob(&self, request: PublishCacheBlob) -> Result<CachePublicationOutcome, StoreError> {
+    crate::cache::publish_blob(&self.pool, request).await
+  }
+
+  async fn prepare_cache_blob(
+    &self,
+    access: CacheDataAccess,
+    blob: octacity_server_cache::BlobDescriptor,
+  ) -> Result<CacheBlobPreparationOutcome, StoreError> {
+    crate::cache::prepare_blob(&self.pool, access, blob).await
+  }
+
+  async fn cache_action(
+    &self,
+    access: CacheDataAccess,
+    action: octacity_server_cache::Digest,
+  ) -> Result<Option<octacity_server_cache::ActionResultV1>, StoreError> {
+    crate::cache::read_action(&self.pool, access, action).await
+  }
+
+  async fn publish_cache_action(&self, request: PublishCacheAction) -> Result<CachePublicationOutcome, StoreError> {
+    crate::cache::publish_action(&self.pool, request).await
+  }
+
+  async fn prune_cache(&self, access: CacheDataAccess) -> Result<CacheRetentionOutcome, StoreError> {
+    crate::cache::prune(&self.pool, access).await
+  }
+}
+
 /// PostgreSQL adapter for mutations that cross a signed JobSpec boundary.
 #[derive(Clone)]
 pub struct PostgresAuthoritativeStore {
@@ -221,8 +278,30 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
     crate::job_events::execute(&self.store.pool, request).await
   }
 
+  async fn prepare_job_event_append(
+    &self,
+    lease: octacity_server_store::LeaseAccess,
+    accepted_at: octacity_server_domain::Timestamp,
+  ) -> Result<octacity_server_store::JobEventAppendPreparation, StoreError> {
+    crate::job_events::prepare(&self.store.pool, lease, accepted_at).await
+  }
+
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     crate::job_completion::execute(&self.store.pool, &self.job_spec_signer, request).await
+  }
+}
+
+#[async_trait]
+impl LogChunkManifestStore for PostgresStore {
+  async fn log_chunk_is_committed(&self, chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
+    crate::job_events::is_chunk_committed(&self.pool, chunk_id).await
+  }
+}
+
+#[async_trait]
+impl LogChunkManifestStore for PostgresAuthoritativeStore {
+  async fn log_chunk_is_committed(&self, chunk_id: octacity_server_domain::LogChunkId) -> Result<bool, StoreError> {
+    crate::job_events::is_chunk_committed(&self.store.pool, chunk_id).await
   }
 }
 

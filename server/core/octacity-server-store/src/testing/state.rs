@@ -29,6 +29,7 @@ pub(crate) struct MemoryState {
   pub(super) current_lease_by_job: BTreeMap<JobId, LeaseId>,
   pub(super) events: BTreeMap<JobId, BTreeMap<EventSequence, EventDigest>>,
   pub(super) event_appends: BTreeMap<(LeaseId, EventSequence, EventSequence), EventAppendRecord>,
+  pub(super) log_chunks: BTreeMap<LogChunkId, LogChunkManifest>,
   pub(super) completions: BTreeMap<JobId, CompletionRecord>,
   pub(super) cancellations: BTreeMap<BuildId, CancellationRecord>,
   pub(super) cancellation_keys: BTreeMap<IdempotencyKey, BuildId>,

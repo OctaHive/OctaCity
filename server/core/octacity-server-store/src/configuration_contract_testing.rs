@@ -9,6 +9,7 @@ use octacity_server_domain::{
   PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion,
 };
 use octacity_server_pipeline::ExecutionCapability;
+use octacity_server_secrets::{IdentityProfileName, SecretProfileName};
 use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
@@ -496,8 +497,9 @@ fn build_configuration(
       writable_disk_bytes: 1024 * 1024,
       timeout_seconds: 300,
       network: ConfigurationNetworkPolicy::Disabled,
-      workload_identity_profile: None,
+      workload_identity_profile: Some(IdentityProfileName::new("ci-workload").unwrap()),
     },
+    secrets_profile: Some(SecretProfileName::new("ci/secrets.yml").unwrap()),
     cache: ConfigurationCachePolicy {
       namespace: None,
       read: false,

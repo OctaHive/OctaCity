@@ -163,6 +163,10 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
     assert!(projected_json.get("signed_job_spec").is_none());
     assert_eq!(request.build.input_snapshot["parameters"]["required"], json!("caller"));
     assert_eq!(request.build.input_snapshot["parameters"]["with_default"], json!(true));
+    let job_spec_template = serde_json::to_string(&root.job_spec_template).unwrap();
+    assert!(job_spec_template.contains("ci/secrets.yml"));
+    assert!(!job_spec_template.contains("provider_configuration"));
+    assert!(!job_spec_template.contains("credential"));
     assert_eq!(root.job_spec_template.pipeline_node_id(), &root.pipeline_node_id);
     assert_eq!(resolver.requests.lock().unwrap().len(), 1);
     assert!(matches!(
@@ -215,6 +219,30 @@ fn invalid_source_is_rejected_before_vcs_or_store_side_effects() {
       service.accept(fixture.command, time(200)).await,
       Err(ManualTriggerError::Invalid(
         ManualTriggerInputError::ReferenceNotAllowed
+      ))
+    ));
+    assert!(resolver.requests.lock().unwrap().is_empty());
+    assert!(store.requests.lock().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn secret_profile_outside_effective_policy_is_rejected_before_side_effects() {
+  run(async {
+    let mut fixture = fixture();
+    fixture.context.effective_policy.policy.secret_profiles.clear();
+    let store = Arc::new(RecordingStore::default());
+    let resolver = Arc::new(RecordingResolver::succeed("unused"));
+    let service = ManualTriggerService::new(
+      store.clone(),
+      Arc::new(StaticContext(fixture.context)),
+      resolver.clone(),
+    );
+
+    assert!(matches!(
+      service.accept(fixture.command, time(200)).await,
+      Err(ManualTriggerError::Invalid(
+        ManualTriggerInputError::SecretProfileNotAllowed
       ))
     ));
     assert!(resolver.requests.lock().unwrap().is_empty());
@@ -513,6 +541,7 @@ fn fixture() -> Fixture {
         network: ConfigurationNetworkPolicy::Disabled,
         workload_identity_profile: None,
       },
+      secrets_profile: Some(SecretProfileName::new("ci/secrets.yml").unwrap()),
       cache: ConfigurationCachePolicy {
         namespace: None,
         read: false,
@@ -559,7 +588,7 @@ fn fixture() -> Fixture {
     policy: octacity_server_application::ProjectPolicy {
       pools: BTreeSet::from([shared_pool, policy_only_pool]),
       repositories: BTreeSet::from([repository_id]),
-      secret_profiles: BTreeSet::<SecretProfileName>::new(),
+      secret_profiles: BTreeSet::from([SecretProfileName::new("ci/secrets.yml").unwrap()]),
       identity_profiles: BTreeSet::<IdentityProfileName>::new(),
       runtimes: BTreeSet::from([RuntimeClass::Native]),
       cache: CachePolicy {

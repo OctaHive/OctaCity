@@ -4,6 +4,7 @@ use octacity_protocol::{CachePolicy, OctaSpec, OutputLimits, RuntimeSpec, Signed
 use octacity_server_domain::{
   BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference,
 };
+use octacity_server_secrets::SecretProfileName;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::Value;
 
@@ -116,6 +117,7 @@ pub struct JobSpecPolicySnapshot {
   pub(super) source: SourcePluginPolicy,
   pub(super) octa: OctaSpec,
   pub(super) runtime: RuntimeSpec,
+  pub(super) secrets_profile: Option<SecretProfileName>,
   pub(super) cache: Option<CachePolicy>,
   pub(super) outputs: OutputLimits,
   pub(super) validity: JobSpecValidity,
@@ -127,6 +129,7 @@ impl JobSpecPolicySnapshot {
     source: SourcePluginPolicy,
     octa: OctaSpec,
     runtime: RuntimeSpec,
+    secrets_profile: Option<SecretProfileName>,
     cache: Option<CachePolicy>,
     outputs: OutputLimits,
     validity: JobSpecValidity,
@@ -138,6 +141,7 @@ impl JobSpecPolicySnapshot {
       source,
       octa,
       runtime,
+      secrets_profile,
       cache,
       outputs,
       validity,

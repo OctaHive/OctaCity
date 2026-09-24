@@ -55,6 +55,7 @@ provider crate name.
 | `octacity-server-api-rest` | Management REST DTOs, decoding, routing, OpenAPI, HTTP error mapping | Transactions, domain state, database rows |
 | `octacity-server-api-webhook` | Exact-body public webhook routing, bounded decoding, and mapping to typed application delivery commands | Provider SDKs, adapter process supervision, Trigger persistence |
 | `octacity-server-api-agent` | HTTP adaptation of the shared server-Agent protocol | Agent execution or placement decisions |
+| `octacity-server-api-cache` | Exact bounded adaptation of Octa HTTP cache v1, including protocol headers and media types | Action-key calculation, plugin contracts, quota decisions, or physical object keys |
 | `octacity-server-application` | Transport-independent commands, queries, handlers, projections, transaction coordination, and cross-module Project-policy resolution | HTTP DTOs and concrete infrastructure |
 | `octacity-server-domain` | Server-only identities, versions, bounded values, timestamps, and typed errors | Aggregates, transport DTOs, persistence rows |
 | `octacity-server-trigger` | Trigger normalization, occurrence deduplication, and Trigger evaluation state | Ready-Job placement or provider payloads |
@@ -63,7 +64,7 @@ provider crate name.
 | `octacity-server-orchestrator` | Build, Attempt, and reconciliation transitions; DAG progression decisions | Agent selection or repository code execution |
 | `octacity-server-scheduler` | Ready-Job placement, Lease lifecycle, and Pool drain decisions | Trigger evaluation, DAG traversal, execution |
 | `octacity-server-secrets` | Logical secret references, policy, and short-lived grant interfaces | Provider credentials and durable raw secret values |
-| `octacity-server-cache` | Cache namespace authority and fenced session lifecycle | Octa action-key or task-result semantics |
+| `octacity-server-cache` | Cache namespace authority, fenced session lifecycle, immutable byte-store port, and protocol-level blob integrity | Octa action-key calculation or plugin task contracts |
 | `octacity-server-artifacts` | Logical upload, verification, publication, visibility, and retention state | Bucket names, object keys, provider credentials |
 | `octacity-server-store` | Backend-neutral atomic persistence and log-search ports | SQL rows, SQL transactions, PostgreSQL syntax |
 | `octacity-webhook-provider-protocol` | Versioned provider-neutral webhook adapter messages | Provider payload types and process supervision |
@@ -75,7 +76,7 @@ provider crate name.
 | `octacity-server-vcs` | Operator-installed VCS-adapter discovery, capability gating, credential-handle isolation, and VCS protocol policy over the shared host | Git implementation, repository execution, build workspaces, and provider SDKs |
 | `octacity-vcs-git` | Read-only Git refs, immutable commit selection, tree browsing, and bounded content reads through an ephemeral bare object database | Build workspaces, checkout, repository hooks, Octafile evaluation, and source execution |
 | `octacity-artifact-store` | Backend-neutral immutable-byte interface | Logical Artifact lifecycle and storage-provider details |
-| `octacity-artifact-s3` | S3-compatible implementation of the Artifact Store port | Logical Artifact policy and public S3 details |
+| `octacity-artifact-s3` | S3-compatible implementation of Artifact and cache immutable-byte ports with separate private layouts | Logical policy and public S3 details |
 | `octacity-protocol` | Shared signed JobSpec, server-Agent, and Artifact-transfer wire contracts | Server domain entities and HTTP routes |
 
 Planned ownership names are not compiled as empty packages. Tasks 6.3 and 6.4
@@ -169,9 +170,10 @@ wire compatibility promise.
 | Agent provisioning process | `octacity-agent-provisioning-protocol` | Future infrastructure host | No production adapter or dynamic-provisioning readiness dependency exists in v1 |
 | Authoritative store ports | `octacity-server-store` | PostgreSQL adapter; deterministic in-memory test adapter | Initial ports expose implemented atomic coordination, credential, and log-index watermark use cases and grow with feature implementations; SQL types never cross an interface |
 | Build-log search ports | `octacity-server-store::{LogIndexWorkStore, LogSearchIndex}` | Authoritative store plus PostgreSQL projection; deterministic in-memory test adapters | The application reads the committed watermark from the authoritative port and combines it with contiguous projection progress; PostgreSQL query syntax and physical log locations do not cross either interface |
-| Immutable byte-store port | `octacity-artifact-store` | `octacity-artifact-s3` | Physical bucket, key, credential, and ETag remain adapter-private |
+| Immutable byte-store ports | `octacity-artifact-store::{ArtifactStore, LogChunkStore}` | `octacity-artifact-s3` | Physical bucket, key, credential, and ETag remain adapter-private; log writes are idempotent and independently verified before their manifest can commit |
 | Secret-provider port | `octacity-server-secrets` | Future configured provider adapters | Logical references and scoped grants cross the port; raw values do not enter durable domain state |
 | Octa remote-cache data plane | Published Octa HTTP cache protocol | Cache HTTP adapter and Octa | Server authorizes namespaces and sessions but does not reinterpret Octa cache keys |
+| Cache immutable bytes | `octacity-server-cache::CacheBlobStore` | Configured S3 adapter | Scope and validated descriptor cross the port; bucket, physical key, ETag, and credentials remain private |
 
 Language-neutral wire documents and golden fixtures are indexed in
 [the protocol catalogue](protocols/README.md). The server-side adapter protocol
@@ -311,7 +313,8 @@ Pipeline node is decoded through the strict repository-controlled
 effective-policy snapshots but omits its JobSpec toolchain policy; a Job
 projection omits the signed JobSpec, Lease fence, and internal node snapshot;
 and Trigger history omits opaque provider metadata. Configuration policy
-exposes only validated logical cache and workload-identity references. Output
+exposes only validated logical cache, secret-profile, and workload-identity
+references. Output
 references contain logical Artifact identity, name, content digest, size, and
 publication time, never a bucket, object key, credential, or transfer URL.
 
@@ -363,8 +366,33 @@ rejecting local paths, traversal, embedded credentials, and query fragments.
 Each Build Configuration version captures its enabled state, an exact
 Repository version, an exact immutable Pipeline version owned by the same
 Project, parameter schema and defaults, accepted Trigger kinds, Agent
-requirements, allowed Pools, runtime and network policy, cache authority,
-artifact and report ceilings, and retry policy.
+requirements, allowed Pools, runtime and network policy, cache authority, an
+optional logical Octa secret profile, artifact and report ceilings, and retry
+policy. The profile is checked against the immutable effective Project-policy
+snapshot before source resolution or persistence side effects.
+
+### Logical secrets and delegated grants
+
+`octacity-server-secrets` owns bounded provider identities, logical secret
+references, secret and workload-identity profile names, validated public
+provider configuration, and the asynchronous short-lived grant port. A grant
+request binds one allowed profile and one provider's bounded reference set to
+the Project, Build, Job, current application-authenticated Lease, issue time,
+and expiry. The application caller must verify the fence before constructing
+this request; the raw fence never crosses the provider seam. The grant lifetime
+cannot exceed the provider ceiling, and a returned grant cannot change provider
+or extend that authority.
+
+Provider credentials and provider-specific mappings remain inside concrete
+adapters. Delegated grant bytes are transient zeroizing values: they implement
+neither serialization nor display, and debug output is always redacted.
+Provider errors cross the core seam only as stable classifications without raw
+messages. Consequently durable Build state, signed JobSpec data, management
+REST resources, audit facts, logs, and metric labels can contain logical
+profile/reference metadata but not raw secret values, provider credentials, or
+delegated grant bytes. Repository-controlled Pipeline templates still cannot
+supply a secret profile; the server inserts the policy-authorized logical
+profile while deriving the signed JobSpec.
 
 Mutable VCS references, exact network hosts, runtime classes, and artifact
 ceilings are server-domain value objects shared by Trigger, policy, and
@@ -481,6 +509,19 @@ combines it with the greatest contiguous position reported by
 gap. Build deletion records a durable tombstone; delayed indexing and rebuild
 work has a projection-specific `Superseded` outcome and cannot restore
 searchable documents.
+
+Agent stdout and stderr take a stricter acknowledgement path. The application
+decodes runner output frames, masks configured in-memory credentials and URL
+query credentials, rewrites the durable event payload with the redacted bytes,
+and coalesces adjacent events of one stream into bounded chunks. It writes each
+deterministically identified chunk through `LogChunkStore` and verifies length
+and SHA-256 before calling the authoritative append. That single append
+transaction locks the Project counter and commits Job events, the contiguous
+cursor, immutable manifests, and one indexing-work position per chunk. A lost
+acknowledgement repeats the same object and transaction identities. An object
+store outage cannot advance the cursor; a database rollback can leave only an
+invisible object, which orphan cleanup deletes after checking that no committed
+visible manifest owns the identity.
 
 ## State-machine interfaces
 

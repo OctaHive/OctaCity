@@ -252,6 +252,9 @@ pub enum ManualTriggerInputError {
   /// Configuration workload identity is outside effective Project policy.
   #[error("workload identity is not allowed by effective project policy")]
   WorkloadIdentityNotAllowed,
+  /// Configuration secret profile is outside effective Project policy.
+  #[error("secret profile is not allowed by effective project policy")]
+  SecretProfileNotAllowed,
   /// Configuration output ceilings exceed effective Project policy.
   #[error("artifact policy exceeds effective project policy")]
   ArtifactPolicyTooBroad,

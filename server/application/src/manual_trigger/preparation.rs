@@ -83,12 +83,14 @@ pub(super) fn validate_context_for(
     }
   }
   if let Some(identity) = &definition.runtime.workload_identity_profile
-    && !policy
-      .identity_profiles
-      .iter()
-      .any(|allowed| allowed.as_str() == identity)
+    && !policy.identity_profiles.contains(identity)
   {
     return Err(ManualTriggerInputError::WorkloadIdentityNotAllowed);
+  }
+  if let Some(profile) = &definition.secrets_profile
+    && !policy.secret_profiles.contains(profile)
+  {
+    return Err(ManualTriggerInputError::SecretProfileNotAllowed);
   }
   if !artifact_policy_within(definition.artifacts, policy.artifacts) {
     return Err(ManualTriggerInputError::ArtifactPolicyTooBroad);

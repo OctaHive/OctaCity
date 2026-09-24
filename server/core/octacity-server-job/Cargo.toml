@@ -14,6 +14,7 @@ ed25519-dalek.workspace = true
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-server-domain = { path = "../octacity-server-domain" }
 octacity-server-pipeline = { path = "../octacity-server-pipeline" }
+octacity-server-secrets = { path = "../octacity-server-secrets" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

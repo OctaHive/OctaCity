@@ -214,6 +214,7 @@ pub(super) fn insert_configuration_schemas(schemas: &mut Map<String, Value>) {
         ("agent_requirements", schema_ref("AgentRequirements")),
         ("allowed_pools", unique_array(non_empty_string())),
         ("runtime", schema_ref("RuntimePolicy")),
+        ("secrets_profile", nullable(non_empty_string())),
         ("cache", schema_ref("CachePolicy")),
         ("artifacts", schema_ref("ArtifactPolicy")),
         ("retry", schema_ref("RetryPolicy")),

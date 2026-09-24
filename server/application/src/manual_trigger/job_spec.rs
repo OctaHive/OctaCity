@@ -89,8 +89,13 @@ fn policy(context: &ManualTriggerContext) -> Result<JobSpecPolicySnapshot, Manua
       writable_disk_bytes: definition.runtime.writable_disk_bytes,
       timeout_seconds: definition.runtime.timeout_seconds,
       network,
-      workload_identity_profile: definition.runtime.workload_identity_profile.clone(),
+      workload_identity_profile: definition
+        .runtime
+        .workload_identity_profile
+        .as_ref()
+        .map(ToString::to_string),
     },
+    definition.secrets_profile.clone(),
     cache,
     OutputLimits {
       artifact_count: definition.artifacts.artifact_count,

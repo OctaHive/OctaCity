@@ -1,87 +1,13 @@
-use std::{collections::BTreeSet, fmt, str::FromStr};
+use std::collections::BTreeSet;
 
 pub use octacity_server_cache::CacheNamespace;
 pub use octacity_server_domain::{ArtifactPolicy, RuntimeClass};
 use octacity_server_domain::{PoolId, ProjectId, ProjectPolicyVersion, RepositoryId};
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+pub use octacity_server_secrets::{IdentityProfileName, SecretProfileName};
+use serde::{Deserialize, Serialize};
 
 /// Maximum UTF-8 bytes in a logical policy reference.
-pub const MAX_POLICY_REFERENCE_BYTES: usize = 128;
-
-fn validate_reference(value: &str) -> bool {
-  !value.is_empty()
-    && value.len() <= MAX_POLICY_REFERENCE_BYTES
-    && value.trim() == value
-    && !value.chars().any(char::is_control)
-}
-
-macro_rules! bounded_reference {
-  ($name:ident, $documentation:literal, $error:literal) => {
-    #[doc = $documentation]
-    #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-    pub struct $name(String);
-
-    impl $name {
-      /// Constructs a bounded, visible logical reference.
-      pub fn new(value: impl Into<String>) -> Result<Self, &'static str> {
-        let value = value.into();
-        if !validate_reference(&value) {
-          return Err($error);
-        }
-        Ok(Self(value))
-      }
-
-      /// Borrows the logical reference.
-      #[must_use]
-      pub fn as_str(&self) -> &str {
-        &self.0
-      }
-    }
-
-    impl fmt::Display for $name {
-      fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-      }
-    }
-
-    impl FromStr for $name {
-      type Err = &'static str;
-
-      fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::new(value)
-      }
-    }
-
-    impl Serialize for $name {
-      fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-      where
-        S: Serializer,
-      {
-        serializer.serialize_str(&self.0)
-      }
-    }
-
-    impl<'de> Deserialize<'de> for $name {
-      fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-      where
-        D: Deserializer<'de>,
-      {
-        String::deserialize(deserializer).and_then(|value| Self::new(value).map_err(D::Error::custom))
-      }
-    }
-  };
-}
-
-bounded_reference!(
-  SecretProfileName,
-  "Logical secret profile selectable by builds in a Project.",
-  "invalid secret profile name"
-);
-bounded_reference!(
-  IdentityProfileName,
-  "Logical workload-identity profile selectable by builds in a Project.",
-  "invalid workload identity profile name"
-);
+pub const MAX_POLICY_REFERENCE_BYTES: usize = octacity_server_secrets::MAX_LOGICAL_REFERENCE_BYTES;
 /// Cache authority and quota inherited by a Project.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

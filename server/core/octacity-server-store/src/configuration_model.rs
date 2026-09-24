@@ -7,6 +7,7 @@ use octacity_server_domain::{
   RuntimeClass, SourceReference, Timestamp,
 };
 use octacity_server_pipeline::ExecutionCapability;
+use octacity_server_secrets::{IdentityProfileName, SecretProfileName};
 use octacity_server_trigger::TriggerKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -380,7 +381,7 @@ pub struct ConfigurationRuntimePolicy {
   /// Network policy enforced by the execution backend.
   pub network: ConfigurationNetworkPolicy,
   /// Optional logical workload-identity profile; never a credential.
-  pub workload_identity_profile: Option<String>,
+  pub workload_identity_profile: Option<IdentityProfileName>,
 }
 
 impl ConfigurationRuntimePolicy {
@@ -397,10 +398,6 @@ impl ConfigurationRuntimePolicy {
       || self.memory_bytes == 0
       || self.writable_disk_bytes == 0
       || self.timeout_seconds == 0
-      || self
-        .workload_identity_profile
-        .as_ref()
-        .is_some_and(|profile| !valid_text(profile, MAX_CONFIGURATION_LABEL_BYTES))
     {
       return Err(StoreInputError::InvalidBuildConfiguration);
     }
@@ -493,6 +490,9 @@ pub struct BuildConfigurationDefinition {
   pub allowed_pools: BTreeSet<PoolId>,
   /// Runtime, resources, isolation, network, and workload identity.
   pub runtime: ConfigurationRuntimePolicy,
+  /// Optional logical Octa secret profile; never secret material.
+  #[serde(default)]
+  pub secrets_profile: Option<SecretProfileName>,
   /// Remote-cache namespace and permissions.
   pub cache: ConfigurationCachePolicy,
   /// Artifact and report ceilings.

@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 
 use octacity_protocol::{HostSnapshot, SignedEnvelope};
+use octacity_server_artifacts::{BuildLogStream, LogChunkManifest};
 use octacity_server_domain::{AgentId, AttemptNumber, JobId, LeaseId, PoolId, Timestamp, canonicalize_json};
 use octacity_server_job::{JobEvent, JobFailureClass, JobState};
 use octacity_server_orchestrator::{AttemptState, BuildState};
@@ -273,6 +274,8 @@ pub struct AppendJobEvents {
   pub lease: LeaseAccess,
   /// Contiguous batch, which may include an already durable replay prefix.
   pub events: Vec<DurableJobEvent>,
+  /// Verified immutable chunks covering only newly accepted stdout/stderr events.
+  pub log_chunks: Vec<LogChunkManifest>,
   /// Authoritative acceptance time used to reject expired Lease ownership.
   pub accepted_at: Timestamp,
 }
@@ -283,10 +286,18 @@ impl AppendJobEvents {
     let request = Self {
       lease,
       events,
+      log_chunks: Vec::new(),
       accepted_at,
     };
     request.validate()?;
     Ok(request)
+  }
+
+  /// Attaches verified chunk manifests prepared after reading the durable cursor.
+  pub fn with_log_chunks(mut self, log_chunks: Vec<LogChunkManifest>) -> Result<Self, StoreError> {
+    self.log_chunks = log_chunks;
+    self.validate()?;
+    Ok(self)
   }
 
   /// Revalidates the batch bound and sequence continuity at an adapter seam.
@@ -332,8 +343,73 @@ impl AppendJobEvents {
         StoreInputError::NonContiguousEventBatch,
       ));
     }
+    let first_sequence = events[0].sequence().get();
+    let last_sequence = events[events.len() - 1].sequence().get();
+    let mut ranges: Vec<_> = self
+      .log_chunks
+      .iter()
+      .map(|chunk| (chunk.first_sequence(), chunk.last_sequence()))
+      .collect();
+    ranges.sort_unstable();
+    if ranges
+      .iter()
+      .any(|(first, last)| *first < first_sequence || *last > last_sequence || *first == 0 || *last < *first)
+      || ranges.windows(2).any(|pair| pair[0].1 >= pair[1].0)
+    {
+      return Err(StoreError::invalid(
+        StoreOperation::AppendJobEvents,
+        StoreInputError::InvalidLogChunkManifest,
+      ));
+    }
     Ok(())
   }
+}
+
+/// Cursor observed before writing immutable log objects.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct JobEventAppendPreparation {
+  /// Greatest contiguous event sequence already durable, or zero.
+  pub durable_through: u64,
+}
+
+/// Validates that manifests cover every newly accepted log event exactly once.
+pub fn validate_new_log_chunks(
+  events: &[DurableJobEvent],
+  durable_through: u64,
+  chunks: &[LogChunkManifest],
+) -> Result<(), StoreError> {
+  let expected: Vec<_> = events
+    .iter()
+    .filter(|event| event.sequence().get() > durable_through)
+    .filter_map(|event| match event.kind().as_str() {
+      "stdout" => Some((event.sequence().get(), BuildLogStream::Stdout)),
+      "stderr" => Some((event.sequence().get(), BuildLogStream::Stderr)),
+      _ => None,
+    })
+    .collect();
+  let mut covered = Vec::new();
+  for chunk in chunks {
+    if chunk.first_sequence() <= durable_through {
+      return invalid_log_chunks();
+    }
+    for sequence in chunk.first_sequence()..=chunk.last_sequence() {
+      covered.push((sequence, chunk.stream()));
+    }
+  }
+  covered.sort_unstable();
+  let mut expected = expected;
+  expected.sort_unstable();
+  if covered != expected {
+    return invalid_log_chunks();
+  }
+  Ok(())
+}
+
+fn invalid_log_chunks<T>() -> Result<T, StoreError> {
+  Err(StoreError::invalid(
+    StoreOperation::AppendJobEvents,
+    StoreInputError::InvalidLogChunkManifest,
+  ))
 }
 
 /// Durable cursor returned after one event append.

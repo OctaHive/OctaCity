@@ -3993,6 +3993,9 @@ dependencies = [
  "base64 0.22.1",
  "http 1.5.0",
  "octacity-artifact-store",
+ "octacity-server-artifacts",
+ "octacity-server-cache",
+ "octacity-server-domain",
  "reqwest",
  "sha2 0.10.9",
  "thiserror 2.0.20",
@@ -4336,6 +4339,7 @@ dependencies = [
  "octacity-artifact-s3",
  "octacity-protocol",
  "octacity-server-api-agent",
+ "octacity-server-api-cache",
  "octacity-server-api-rest",
  "octacity-server-api-webhook",
  "octacity-server-application",
@@ -4361,6 +4365,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "zeroize",
 ]
@@ -4385,6 +4390,19 @@ dependencies = [
  "async-trait",
  "axum",
  "octacity-protocol",
+ "octacity-server-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "octacity-server-api-cache"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
  "octacity-server-application",
  "serde",
  "serde_json",
@@ -4427,6 +4445,7 @@ name = "octacity-server-application"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "octacity-artifact-store",
  "octacity-protocol",
  "octacity-server-cache",
@@ -4443,6 +4462,7 @@ dependencies = [
  "thiserror 2.0.20",
  "url",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]
@@ -4450,20 +4470,26 @@ name = "octacity-server-artifacts"
 version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
+ "sha2 0.10.9",
  "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
 name = "octacity-server-cache"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "blake3",
  "hmac 0.12.1",
  "octa-cache-protocol",
  "octacity-protocol",
  "octacity-server-domain",
  "serde",
  "sha2 0.10.9",
+ "thiserror 2.0.20",
  "zeroize",
+ "zstd 0.13.3",
 ]
 
 [[package]]
@@ -4485,6 +4511,7 @@ dependencies = [
  "octacity-protocol",
  "octacity-server-domain",
  "octacity-server-pipeline",
+ "octacity-server-secrets",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -4529,8 +4556,13 @@ dependencies = [
 name = "octacity-server-secrets"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hmac 0.12.1",
+ "octacity-server-domain",
+ "serde",
+ "serde_json",
  "sha2 0.10.9",
+ "thiserror 2.0.20",
  "zeroize",
 ]
 
@@ -4547,6 +4579,7 @@ dependencies = [
  "octacity-server-orchestrator",
  "octacity-server-pipeline",
  "octacity-server-scheduler",
+ "octacity-server-secrets",
  "octacity-server-trigger",
  "serde",
  "serde_json",

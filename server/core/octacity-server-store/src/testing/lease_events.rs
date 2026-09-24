@@ -220,6 +220,7 @@ pub(super) async fn append_events(
       expected = expected.checked_add(1).ok_or(StoreError::Unavailable)?;
     }
   }
+  validate_new_log_chunks(&request.events, durable_through, &request.log_chunks)?;
 
   let acknowledged = durable_through
     .checked_add(u64::try_from(new_events.len()).map_err(|_| StoreError::Unavailable)?)
@@ -246,6 +247,33 @@ pub(super) async fn append_events(
   let events = state.events.entry(grant.job_id).or_default();
   for event in &new_events {
     events.insert(event.sequence(), event.digest());
+  }
+  let attempt_id = state.jobs.get(&grant.job_id).ok_or(StoreError::Unavailable)?.attempt_id;
+  let build_id = state.attempts.get(&attempt_id).ok_or(StoreError::Unavailable)?.build_id;
+  let project_id = state
+    .accepted
+    .values()
+    .find(|accepted| accepted.request.build.id == build_id)
+    .map(|accepted| accepted.request.build.project_id)
+    .ok_or(StoreError::Unavailable)?;
+  for chunk in &request.log_chunks {
+    match state.log_chunks.get(&chunk.chunk_id()) {
+      Some(existing) if existing != chunk => {
+        return Err(StoreError::Conflict {
+          entity: EntityKind::LogChunk,
+        });
+      }
+      Some(_) => {}
+      None => {
+        let next = state
+          .committed_log_index_positions
+          .get(&project_id)
+          .map_or(1, |position| position.get().saturating_add(1));
+        let next = LogIndexPosition::new(next).map_err(|_| StoreError::Unavailable)?;
+        state.committed_log_index_positions.insert(project_id, next);
+        state.log_chunks.insert(chunk.chunk_id(), chunk.clone());
+      }
+    }
   }
   state
     .event_appends
@@ -386,7 +414,22 @@ fn same_job_claim(left: &JobClaim, right: &JobClaim) -> bool {
 }
 
 fn same_event_append(left: &AppendJobEvents, right: &AppendJobEvents) -> bool {
-  left.lease == right.lease && left.events == right.events
+  left.lease == right.lease && left.events == right.events && left.log_chunks == right.log_chunks
+}
+
+pub(super) async fn prepare_append(
+  store: &InMemoryStore,
+  lease: LeaseAccess,
+  accepted_at: Timestamp,
+) -> Result<JobEventAppendPreparation, StoreError> {
+  let state = store.lock()?;
+  let grant = current_grant(&state, lease, accepted_at)?;
+  let durable_through = state
+    .events
+    .get(&grant.job_id)
+    .and_then(|events| events.last_key_value().map(|(sequence, _)| sequence.get()))
+    .unwrap_or(0);
+  Ok(JobEventAppendPreparation { durable_through })
 }
 
 fn same_completion(left: &JobCompletion, right: &JobCompletion) -> bool {

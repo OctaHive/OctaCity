@@ -97,7 +97,10 @@ The server becomes ready only after its PostgreSQL migrations, database,
 mandatory S3-compatible bucket, and JobSpec signing material are usable. When
 `agent_bind` is configured, the independently authenticated Agent listener
 serves registration at `/api/v1/agents/register` and lease long polling at
-`/api/v1/agents/{agent_id}/leases:acquire`. When `webhook_bind` is configured,
+`/api/v1/agents/{agent_id}/leases:acquire`. When `cache_bind` is configured, it
+independently serves authenticated Octa HTTP cache v1 traffic;
+the public HTTPS `cache.endpoint` may terminate TLS at a trusted reverse proxy.
+When `webhook_bind` is configured,
 the separate webhook listener durably admits bounded raw deliveries. A worker
 then authenticates them through an operator-installed, SHA-256-pinned provider
 adapter before dispatching normalized events to the Trigger Engine. The
@@ -117,6 +120,7 @@ production GitHub or Gerrit webhook adapter. A minimal `server.toml` is:
 ```toml
 management_bind = "127.0.0.1:8080"
 agent_bind = "127.0.0.1:8081"
+cache_bind = "127.0.0.1:8083"
 webhook_bind = "127.0.0.1:8082"
 webhook_public_base_url = "https://hooks.example.test"
 webhook_adapter_registry = "/etc/octacity/webhook-adapters"
@@ -191,6 +195,7 @@ enrollment_key_file = "/run/secrets/octacity-agent-enrollment-key"
 endpoint = "https://cache.example"
 credential_key_file = "/run/secrets/octacity-cache-credential-key"
 session_lifetime_milliseconds = 300000
+max_blob_bytes = 67108864
 
 [job_spec]
 policy_file = "/etc/octacity/job-spec-policy.json"

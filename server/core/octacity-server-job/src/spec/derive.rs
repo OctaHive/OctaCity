@@ -90,7 +90,7 @@ fn wire_job_spec(
       concurrency: execution.concurrency,
       parallel: execution.parallel,
       failfast: execution.failfast,
-      secrets_profile: None,
+      secrets_profile: template.policy().secrets_profile.as_ref().map(ToString::to_string),
     },
     runtime: template.policy().runtime.clone(),
     cache: template.policy().cache.clone(),

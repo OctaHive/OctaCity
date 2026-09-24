@@ -387,6 +387,7 @@ pub(super) fn configuration_resource(projection: BuildConfigurationProjection) -
       .map(|pool| pool.to_string())
       .collect(),
     runtime,
+    secrets_profile: projection.secrets_profile.map(|profile| profile.to_string()),
     cache: CachePolicy {
       namespace: projection.cache.namespace.map(|namespace| namespace.to_string()),
       read: projection.cache.read,

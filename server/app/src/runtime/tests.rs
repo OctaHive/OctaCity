@@ -1,8 +1,15 @@
+use std::{net::SocketAddr, sync::Arc};
+
 use async_trait::async_trait;
 use reqwest::StatusCode;
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::readiness::ReadinessCheck;
+use crate::{
+  ServerConfig,
+  readiness::{ReadinessCheck, ReadinessChecks, ReadinessState},
+};
 
 struct HealthyCheck;
 
@@ -137,6 +144,7 @@ async fn wait_reports_a_listener_that_stops_without_shutdown() {
   let mut runtime = ServerRuntime {
     management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
     agent_addr: None,
+    cache_addr: None,
     webhook_addr: None,
     shutdown_grace: std::time::Duration::from_secs(1),
     readiness: Arc::new(ReadinessState::default()),
@@ -168,6 +176,7 @@ async fn wait_reports_a_worker_failure_without_waiting_for_a_listener() {
   let mut runtime = ServerRuntime {
     management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
     agent_addr: None,
+    cache_addr: None,
     webhook_addr: None,
     shutdown_grace: std::time::Duration::from_secs(1),
     readiness: Arc::new(ReadinessState::default()),
@@ -212,6 +221,7 @@ async fn dropping_runtime_aborts_owned_listener_work() {
   let runtime = ServerRuntime {
     management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
     agent_addr: None,
+    cache_addr: None,
     webhook_addr: None,
     shutdown_grace: std::time::Duration::from_secs(1),
     readiness: Arc::new(ReadinessState::default()),

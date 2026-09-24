@@ -7,11 +7,6 @@ use async_trait::async_trait;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-mod dependencies;
-
-pub use dependencies::ReadinessSetupError;
-pub(crate) use dependencies::RuntimeDependencies;
-
 /// One bounded check required before the server may accept mutations.
 ///
 /// Implementations must not expose credentials in diagnostics. The runtime

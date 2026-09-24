@@ -315,6 +315,7 @@ fn configuration(
       network: ConfigurationNetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
+    secrets_profile: None,
     cache: ConfigurationCachePolicy {
       namespace: None,
       read: false,

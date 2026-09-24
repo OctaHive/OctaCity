@@ -1,0 +1,20 @@
+[package]
+name = "octacity-server-api-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Octa HTTP L2 cache v1 adapter for OctaCity"
+
+[dependencies]
+axum.workspace = true
+octacity-server-application = { path = "../../application" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio.workspace = true
+tower = { workspace = true, features = ["util"] }

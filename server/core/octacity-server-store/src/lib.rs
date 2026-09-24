@@ -127,9 +127,11 @@ pub use build_query::{AttemptRecord, BuildRecord, JobAssignmentRecord, JobQueueR
 pub use build_query_port::BuildQueryStore;
 pub use cache_model::{
   AuthorizeCacheSession, BeginCacheSession, BeginCacheSessionOutcome, CacheAuthorization, CacheAuthorizationOutcome,
-  CacheSessionRecord, ListBuildCacheSessions, MAX_CACHE_SESSION_PAGE_SIZE, RevokeCacheSession, cache_scope_id,
+  CacheBlobPreparationOutcome, CacheDataAccess, CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord,
+  ListBuildCacheSessions, MAX_CACHE_SESSION_PAGE_SIZE, PublishCacheAction, PublishCacheBlob, RevokeCacheSession,
+  cache_action_key, cache_blob_key, cache_scope_id,
 };
-pub use cache_port::CacheSessionStore;
+pub use cache_port::{CacheDataStore, CacheSessionStore};
 pub use configuration_model::{
   BuildConfigurationDefinition, BuildConfigurationMutationOutcome, ConfigurationAgentRequirements,
   ConfigurationCachePolicy, ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy,
@@ -175,8 +177,9 @@ pub use internal_trigger_model::{
 pub use internal_trigger_port::InternalTriggerEventStore;
 pub use job_model::{
   AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, DurableJobEvent, JobClaim, JobClaimOutcome,
-  JobCompletion, JobCompletionKind, JobEventPage, LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome, LeaseWindow,
-  ReadJobEvents, RenewLease, complete_job_state, start_job_execution,
+  JobCompletion, JobCompletionKind, JobEventAppendPreparation, JobEventPage, LeaseAccess, LeaseGrant,
+  LeaseHeartbeatOutcome, LeaseWindow, ReadJobEvents, RenewLease, complete_job_state, start_job_execution,
+  validate_new_log_chunks,
 };
 pub use lease_recovery::{
   ClaimExpiredLeases, ExpiredLeaseClaim, LeaseRecoveryAction, MAX_LEASE_EXPIRY_BATCH_SIZE, MAX_WORKER_OWNER_BYTES,
@@ -200,7 +203,8 @@ pub use model::{
 };
 pub use octacity_server_artifacts::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
-  ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType,
+  ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType, LogChunkDigest, LogChunkManifest,
+  LogChunkManifestError, MAX_LOG_CHUNK_BYTES,
 };
 pub use octacity_server_cache::{
   CacheCredentialDigest, CacheNamespace, CacheNamespacePolicy, CacheOperation, CachePermissions, CacheSessionState,
@@ -225,7 +229,7 @@ pub use pool_model::{
 pub use pool_port::AgentPoolStore;
 pub use port::{
   AuthoritativeStore, BuildControlStore, JobEventReadStore, JobExecutionStore, LeaseHeartbeatStore,
-  TriggerAcceptanceStore,
+  LogChunkManifestStore, TriggerAcceptanceStore,
 };
 pub use project_model::{
   CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MAX_PROJECT_PAGE_SIZE, MoveProject, Project,

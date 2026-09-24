@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use octacity_artifact_store::LogChunkStore;
 use octacity_protocol::{AgentCredentialToken, AppendEventsRequest, CompleteLeaseRequest, JobCompletionStatus};
 use octacity_server_domain::EntityKind;
 use octacity_server_job::JobFailureClass;
@@ -10,6 +11,7 @@ use octacity_server_store::{
 };
 use thiserror::Error;
 
+use crate::log_archive::{LogRedactor, durable_event_kind, map_log_store_error, prepare_log_archive};
 use crate::{AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, agent_lease};
 
 /// Complete transport-independent input for one event append.
@@ -52,12 +54,34 @@ pub trait AgentExecutionUseCases: Send + Sync {
 pub struct AgentExecutionService<S> {
   registrations: Arc<dyn AgentRegistrationUseCases>,
   store: Arc<S>,
+  log_objects: Option<Arc<dyn LogChunkStore>>,
+  log_redactor: LogRedactor,
 }
 
 impl<S> AgentExecutionService<S> {
   /// Creates a service from current-registration authority and the atomic Job store.
   pub fn new(registrations: Arc<dyn AgentRegistrationUseCases>, store: Arc<S>) -> Self {
-    Self { registrations, store }
+    Self {
+      registrations,
+      store,
+      log_objects: None,
+      log_redactor: LogRedactor::default(),
+    }
+  }
+
+  /// Creates a service that archives and verifies stdout/stderr before acknowledgement.
+  pub fn with_log_archive(
+    registrations: Arc<dyn AgentRegistrationUseCases>,
+    store: Arc<S>,
+    log_objects: Arc<dyn LogChunkStore>,
+    log_redactor: LogRedactor,
+  ) -> Self {
+    Self {
+      registrations,
+      store,
+      log_objects: Some(log_objects),
+      log_redactor,
+    }
   }
 }
 
@@ -84,18 +108,41 @@ where
     .map_err(AgentExecutionError::from)?;
     let accepted_at = context.observed_at;
     let lease = context.lease;
-    let events = input
-      .request
+    let has_log_output = input.request.events.iter().any(|envelope| {
+      matches!(
+        &envelope.kind,
+        octacity_protocol::AttemptEventKind::Runner { event }
+          if event.data.get("type").and_then(serde_json::Value::as_str) == Some("output")
+      )
+    });
+    let durable_through = if has_log_output {
+      self
+        .store
+        .prepare_job_event_append(lease.access, accepted_at)
+        .await?
+        .durable_through
+    } else {
+      0
+    };
+    let prepared = prepare_log_archive(input.request.events, durable_through, lease.job_id, &self.log_redactor)?;
+    if !prepared.chunks.is_empty() {
+      let objects = self.log_objects.as_ref().ok_or(AgentExecutionError::Unavailable)?;
+      for (manifest, bytes) in &prepared.chunks {
+        objects
+          .put_verified(manifest, bytes.clone())
+          .await
+          .map_err(map_log_store_error)?;
+      }
+    }
+    let log_chunks = prepared.chunks.iter().map(|(manifest, _)| manifest.clone()).collect();
+    let events = prepared
       .events
       .into_iter()
       .map(|event| {
         let sequence = EventSequence::new(event.stream_sequence).map_err(|_| AgentExecutionError::InvalidRequest)?;
         let occurred_at =
           agent_lease::timestamp(event.occurred_at_unix_ms).map_err(|()| AgentExecutionError::InvalidRequest)?;
-        let kind = match &event.kind {
-          octacity_protocol::AttemptEventKind::Runner { .. } => "runner",
-          octacity_protocol::AttemptEventKind::Agent { .. } => "agent",
-        };
+        let kind = durable_event_kind(&event);
         let kind = JobEventKind::new(kind).map_err(|_| AgentExecutionError::InvalidRequest)?;
         let payload = serde_json::to_value(event.kind).map_err(|_| AgentExecutionError::InvalidRequest)?;
         DurableJobEvent::new(sequence, kind, occurred_at, payload).map_err(|_| AgentExecutionError::InvalidRequest)
@@ -106,7 +153,7 @@ where
       .expect("the shared protocol validates a non-empty event batch")
       .sequence()
       .get();
-    let request = AppendJobEvents::new(lease.access, events, accepted_at)?;
+    let request = AppendJobEvents::new(lease.access, events, accepted_at)?.with_log_chunks(log_chunks)?;
     self
       .store
       .append_job_events(request)
@@ -251,19 +298,26 @@ impl From<StoreError> for AgentExecutionError {
 #[cfg(test)]
 mod tests {
   use std::{
+    collections::BTreeMap,
     future::Future,
-    sync::Mutex,
+    sync::{
+      Mutex,
+      atomic::{AtomicBool, Ordering},
+    },
     task::{Context, Poll, Waker},
   };
 
+  use base64::{Engine as _, engine::general_purpose::STANDARD};
+  use octacity_artifact_store::{LogChunkStoreError, LogChunkWrite};
   use octacity_protocol::{
     AgentLifecycleEvent, AttemptEventEnvelope, AttemptEventKind, COORDINATOR_PROTOCOL_VERSION, JobLifecycleState,
-    LeaseFence as ProtocolLeaseFence,
+    LeaseFence as ProtocolLeaseFence, RunnerEventPayload,
   };
-  use octacity_server_domain::{AgentId, JobId, LeaseId, PoolId};
+  use octacity_server_domain::{AgentId, JobId, LeaseId, LogChunkId, PoolId};
   use octacity_server_orchestrator::{AttemptState, BuildState};
   use octacity_server_store::{
-    AppendJobEventsOutcome, CompletionDisposition, JobClaim, JobClaimOutcome, MutationDisposition, RegistrationEpoch,
+    AppendJobEventsOutcome, CompletionDisposition, JobClaim, JobClaimOutcome, JobEventAppendPreparation, LeaseAccess,
+    LogChunkManifest, MutationDisposition, RegistrationEpoch,
   };
   use uuid::Uuid;
 
@@ -305,6 +359,7 @@ mod tests {
   struct RecordingStore {
     appends: Mutex<Vec<AppendJobEvents>>,
     completions: Mutex<Vec<JobCompletion>>,
+    fail_append: AtomicBool,
   }
 
   #[async_trait]
@@ -314,6 +369,9 @@ mod tests {
     }
 
     async fn append_job_events(&self, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError> {
+      if self.fail_append.load(Ordering::Acquire) {
+        return Err(StoreError::Unavailable);
+      }
       let mut appends = self.appends.lock().unwrap();
       let inserted = usize::from(appends.is_empty());
       let acknowledged_through = if appends.is_empty() {
@@ -326,6 +384,20 @@ mod tests {
         acknowledged_through,
         inserted,
       })
+    }
+
+    async fn prepare_job_event_append(
+      &self,
+      _lease: LeaseAccess,
+      _accepted_at: octacity_server_domain::Timestamp,
+    ) -> Result<JobEventAppendPreparation, StoreError> {
+      let durable_through = self
+        .appends
+        .lock()
+        .unwrap()
+        .last()
+        .map_or(0, |request| request.events.last().unwrap().sequence().get());
+      Ok(JobEventAppendPreparation { durable_through })
     }
 
     async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
@@ -341,6 +413,49 @@ mod tests {
         attempt_state: AttemptState::Succeeded,
         build_state: BuildState::Succeeded,
       })
+    }
+  }
+
+  #[derive(Default)]
+  struct MemoryLogObjects {
+    unavailable: AtomicBool,
+    objects: Mutex<BTreeMap<LogChunkId, (LogChunkManifest, Vec<u8>)>>,
+  }
+
+  #[async_trait]
+  impl LogChunkStore for MemoryLogObjects {
+    async fn put_verified(
+      &self,
+      manifest: &LogChunkManifest,
+      bytes: Vec<u8>,
+    ) -> Result<LogChunkWrite, LogChunkStoreError> {
+      if self.unavailable.load(Ordering::Acquire) {
+        return Err(LogChunkStoreError::Unavailable);
+      }
+      manifest.verify(&bytes).map_err(|_| LogChunkStoreError::Integrity)?;
+      let mut objects = self.objects.lock().unwrap();
+      match objects.get(&manifest.chunk_id()) {
+        Some((existing_manifest, existing_bytes)) if existing_manifest == manifest && existing_bytes == &bytes => {
+          Ok(LogChunkWrite::AlreadyPresent)
+        }
+        Some(_) => Err(LogChunkStoreError::Integrity),
+        None => {
+          objects.insert(manifest.chunk_id(), (manifest.clone(), bytes));
+          Ok(LogChunkWrite::Written)
+        }
+      }
+    }
+
+    async fn read_verified(&self, manifest: &LogChunkManifest) -> Result<Vec<u8>, LogChunkStoreError> {
+      let objects = self.objects.lock().unwrap();
+      let (_, bytes) = objects.get(&manifest.chunk_id()).ok_or(LogChunkStoreError::NotFound)?;
+      manifest.verify(bytes).map_err(|_| LogChunkStoreError::Integrity)?;
+      Ok(bytes.clone())
+    }
+
+    async fn delete_chunk(&self, manifest: &LogChunkManifest) -> Result<(), LogChunkStoreError> {
+      self.objects.lock().unwrap().remove(&manifest.chunk_id());
+      Ok(())
     }
   }
 
@@ -362,6 +477,62 @@ mod tests {
       *registrations.operations.lock().unwrap(),
       [AgentOperation::AppendEvents, AgentOperation::AppendEvents]
     );
+  }
+
+  #[test]
+  fn stdout_is_redacted_and_verified_before_the_atomic_acknowledgement() {
+    let registrations = Arc::new(RegistrationStub {
+      operations: Mutex::new(Vec::new()),
+    });
+    let store = Arc::new(RecordingStore::default());
+    let objects = Arc::new(MemoryLogObjects::default());
+    let service = AgentExecutionService::with_log_archive(
+      registrations,
+      store.clone(),
+      objects.clone(),
+      LogRedactor::new([b"private-token".to_vec()]).unwrap(),
+    );
+
+    assert_eq!(run_ready(service.append_events(output_input())), Ok(2));
+    let appends = store.appends.lock().unwrap();
+    assert_eq!(appends[0].log_chunks.len(), 1);
+    assert_eq!(appends[0].log_chunks[0].first_sequence(), 1);
+    assert_eq!(appends[0].log_chunks[0].last_sequence(), 2);
+    let payload = serde_json::to_string(appends[0].events[0].payload()).unwrap();
+    assert!(!payload.contains("private-token"));
+    let archived = objects.objects.lock().unwrap();
+    let (_, bytes) = archived.get(&appends[0].log_chunks[0].chunk_id()).unwrap();
+    assert!(!String::from_utf8_lossy(bytes).contains("private-token"));
+  }
+
+  #[test]
+  fn object_outage_and_database_rollback_never_acknowledge_output() {
+    let registrations = Arc::new(RegistrationStub {
+      operations: Mutex::new(Vec::new()),
+    });
+    let store = Arc::new(RecordingStore::default());
+    let objects = Arc::new(MemoryLogObjects::default());
+    let service =
+      AgentExecutionService::with_log_archive(registrations, store.clone(), objects.clone(), LogRedactor::default());
+
+    objects.unavailable.store(true, Ordering::Release);
+    assert_eq!(
+      run_ready(service.append_events(output_input())),
+      Err(AgentExecutionError::Unavailable)
+    );
+    assert!(store.appends.lock().unwrap().is_empty());
+    objects.unavailable.store(false, Ordering::Release);
+    store.fail_append.store(true, Ordering::Release);
+    assert_eq!(
+      run_ready(service.append_events(output_input())),
+      Err(AgentExecutionError::Unavailable)
+    );
+    assert_eq!(
+      objects.objects.lock().unwrap().len(),
+      1,
+      "rollback leaves one invisible orphan"
+    );
+    assert!(store.appends.lock().unwrap().is_empty());
   }
 
   #[test]
@@ -456,6 +627,47 @@ mod tests {
         status: JobCompletionStatus::TimedOut,
         final_usage: None,
         results: Vec::new(),
+      },
+      credential: credential(),
+      observed_at_unix_ms: 2_000,
+    }
+  }
+
+  fn output_input() -> AppendAgentEventsInput {
+    let lease = protocol_lease();
+    let output = |sequence, bytes: &[u8]| AttemptEventEnvelope {
+      job_id: lease.job_id.clone(),
+      attempt: lease.attempt,
+      lease_id: lease.lease_id.clone(),
+      fencing_token: lease.fencing_token.clone(),
+      stream_sequence: sequence,
+      occurred_at_unix_ms: 1_000 + sequence as i64,
+      kind: AttemptEventKind::Runner {
+        event: RunnerEventPayload {
+          schema_version: 4,
+          sequence,
+          timestamp: "2026-09-24T00:00:00Z".to_owned(),
+          category: "execution".to_owned(),
+          data: serde_json::json!({
+            "type": "output",
+            "stream": "stdout",
+            "payload": {"format": "bytes", "data": STANDARD.encode(bytes)}
+          })
+          .as_object()
+          .unwrap()
+          .clone(),
+        },
+      },
+    };
+    let events = vec![output(1, b"private-"), output(2, b"token\n")];
+    AppendAgentEventsInput {
+      route_lease_id: lease.lease_id.clone(),
+      request: AppendEventsRequest {
+        protocol_version: COORDINATOR_PROTOCOL_VERSION,
+        request_id: "append-output".to_owned(),
+        registration_id: "registration-7".to_owned(),
+        lease,
+        events,
       },
       credential: credential(),
       observed_at_unix_ms: 2_000,

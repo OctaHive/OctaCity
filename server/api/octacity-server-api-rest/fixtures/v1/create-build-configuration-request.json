@@ -35,6 +35,7 @@
       },
       "workload_identity_profile": null
     },
+    "secrets_profile": "ci/secrets.yml",
     "cache": {
       "namespace": null,
       "read": false,

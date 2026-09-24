@@ -287,7 +287,7 @@ impl MutationKind {
         "lease.expired-recovered"
       ),
       Self::AppendJobEvents => metadata!(
-        b"octacity.append-job-events.v1\0",
+        b"octacity.append-job-events.v2\0",
         "append-job-events",
         "job",
         "job.events-appended"

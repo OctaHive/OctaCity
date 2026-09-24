@@ -42,6 +42,8 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "build_configuration_versions",
     "builds",
     "cache_sessions",
+    "cache_actions",
+    "cache_blobs",
     "idempotency_records",
     "job_dependencies",
     "job_events",

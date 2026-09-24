@@ -10,7 +10,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use async_trait::async_trait;
-use octacity_server_artifacts::{ArtifactContentDigest, ArtifactMediaType};
+use octacity_server_artifacts::{ArtifactContentDigest, ArtifactMediaType, LogChunkManifest};
 pub use octacity_server_domain::{ArtifactId, ArtifactUploadId};
 use thiserror::Error;
 
@@ -235,6 +235,46 @@ pub trait ArtifactStore: Send + Sync {
 
   /// Removes pending and published bytes for an object, idempotently.
   async fn delete(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError>;
+}
+
+/// Result of an idempotent immutable log-chunk write.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LogChunkWrite {
+  /// This call stored and verified the object.
+  Written,
+  /// Identical verified bytes already existed at the logical identity.
+  AlreadyPresent,
+}
+
+/// Safe classification of a log byte-store failure.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+pub enum LogChunkStoreError {
+  /// Supplied bytes differ from their immutable manifest.
+  #[error("log chunk failed integrity verification")]
+  Integrity,
+  /// The immutable logical object does not exist.
+  #[error("log chunk was not found")]
+  NotFound,
+  /// The configured byte store cannot currently complete the operation.
+  #[error("log chunk storage is unavailable")]
+  Unavailable,
+}
+
+/// Backend-neutral byte storage for immutable redacted Build-log chunks.
+#[async_trait]
+pub trait LogChunkStore: Send + Sync {
+  /// Writes and verifies one immutable object idempotently.
+  async fn put_verified(
+    &self,
+    manifest: &LogChunkManifest,
+    bytes: Vec<u8>,
+  ) -> Result<LogChunkWrite, LogChunkStoreError>;
+
+  /// Reads exact verified bytes for indexing and rebuild.
+  async fn read_verified(&self, manifest: &LogChunkManifest) -> Result<Vec<u8>, LogChunkStoreError>;
+
+  /// Removes an invisible orphan or logically deleted chunk idempotently.
+  async fn delete_chunk(&self, manifest: &LogChunkManifest) -> Result<(), LogChunkStoreError>;
 }
 
 impl std::fmt::Debug for UploadAuthorization {

@@ -16,8 +16,23 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use super::DurableWorkers;
 use crate::{ServerConfig, readiness::WorkerHealth};
+
+pub(super) struct DurableWorkers {
+  pub(super) expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
+  pub(super) expiry_health: Arc<WorkerHealth>,
+  pub(super) schedules: ScheduleWorker<PostgresStore>,
+  pub(super) schedule_owner: WorkerOwner,
+  pub(super) schedule_health: Arc<WorkerHealth>,
+  pub(super) internal_triggers: InternalTriggerWorker<PostgresStore>,
+  pub(super) internal_trigger_owner: WorkerOwner,
+  pub(super) internal_trigger_health: Arc<WorkerHealth>,
+  pub(super) manual_trigger_retries: ManualTriggerRetryWorker,
+  pub(super) manual_trigger_retry_owner: WorkerOwner,
+  pub(super) manual_trigger_retry_health: Arc<WorkerHealth>,
+  pub(super) webhook_deliveries: Option<(WebhookDeliveryWorker, WorkerOwner, Arc<WorkerHealth>)>,
+  pub(super) managed_webhooks: Option<(ManagedWebhookRegistrationWorker, WorkerOwner, Arc<WorkerHealth>)>,
+}
 
 pub(super) const EXPIRY_WORKER_NAME: &str = "lease-expiry-worker";
 pub(super) const INTERNAL_TRIGGER_WORKER_NAME: &str = "internal-trigger-worker";

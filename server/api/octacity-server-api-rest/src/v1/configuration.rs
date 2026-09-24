@@ -278,6 +278,9 @@ pub struct BuildConfigurationDefinition {
   pub allowed_pools: BTreeSet<String>,
   /// Runtime, resources, isolation, network, and identity policy.
   pub runtime: RuntimePolicy,
+  /// Logical Octa secret profile; never secret material.
+  #[serde(default)]
+  pub secrets_profile: Option<String>,
   /// Remote-cache policy.
   pub cache: CachePolicy,
   /// Artifact and report ceilings.

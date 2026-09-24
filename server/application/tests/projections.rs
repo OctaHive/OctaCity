@@ -66,6 +66,10 @@ fn resource_projections_are_distinct_safe_application_models() {
     Some(IdentityProfileName::new("ci-workload").unwrap())
   );
   assert_eq!(
+    configuration.secrets_profile,
+    Some(SecretProfileName::new("build-secrets").unwrap())
+  );
+  assert_eq!(
     configuration.cache.namespace,
     Some(CacheNamespace::new("project-cache").unwrap())
   );
@@ -246,8 +250,9 @@ fn configuration(project_id: ProjectId) -> PublishedBuildConfiguration {
         writable_disk_bytes: 1,
         timeout_seconds: 60,
         network: ConfigurationNetworkPolicy::Disabled,
-        workload_identity_profile: Some("ci-workload".to_owned()),
+        workload_identity_profile: Some(IdentityProfileName::new("ci-workload").unwrap()),
       },
+      secrets_profile: Some(SecretProfileName::new("build-secrets").unwrap()),
       cache: ConfigurationCachePolicy {
         namespace: Some("project-cache".to_owned()),
         read: true,

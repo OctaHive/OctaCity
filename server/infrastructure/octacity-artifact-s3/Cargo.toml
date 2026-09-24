@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "S3-compatible artifact storage adapter for OctaCity"
+description = "S3-compatible immutable object storage adapter for OctaCity"
 
 [dependencies]
 async-trait.workspace = true
@@ -13,6 +13,8 @@ aws-sdk-s3.workspace = true
 base64.workspace = true
 http.workspace = true
 octacity-artifact-store = { path = "../../core/octacity-artifact-store" }
+octacity-server-cache = { path = "../../core/octacity-server-cache" }
+octacity-server-artifacts = { path = "../../core/octacity-server-artifacts" }
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -20,5 +22,6 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+octacity-server-domain = { path = "../../core/octacity-server-domain" }
 reqwest.workspace = true
 tokio-util.workspace = true

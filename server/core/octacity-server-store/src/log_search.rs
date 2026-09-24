@@ -1,5 +1,6 @@
 use std::num::NonZeroU64;
 
+pub use octacity_server_artifacts::BuildLogStream;
 use octacity_server_domain::{AttemptId, BuildId, JobId, LogChunkId, LogIndexingWorkId, ProjectId, Timestamp};
 use thiserror::Error;
 
@@ -29,15 +30,6 @@ impl LogIndexPosition {
   pub const fn get(self) -> u64 {
     self.0.get()
   }
-}
-
-/// Logical stream within a Job's Build log.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum BuildLogStream {
-  /// Process standard output.
-  Stdout,
-  /// Process standard error.
-  Stderr,
 }
 
 /// Provider-neutral interpretation of query text.
