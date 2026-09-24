@@ -237,6 +237,21 @@ class PackageReleaseTests(unittest.TestCase):
             if "rust-toolchain@" in workflow:
                 self.assertIn("toolchain: 1.98.1", workflow)
 
+    def test_coverage_runs_every_postgres_integration_contract(self):
+        workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertRegex(
+            workflow,
+            re.compile(
+                r"cargo llvm-cov --no-clean --all-features\s+"
+                r"-p octacity-server-store-postgres --tests --\s+--ignored"
+            ),
+        )
+        self.assertNotRegex(
+            workflow,
+            re.compile(r"-p octacity-server-store-postgres --test\s"),
+            "enumerating PostgreSQL test targets lets new contracts silently drop out of coverage",
+        )
+
     def test_workflow_service_images_retain_tags_and_pin_manifest_digests(self):
         image = re.compile(r"(?:hashicorp/vault|quay\.io/minio/minio):[^\s@]+@sha256:[0-9a-f]{64}")
         for name in ("ci.yml", "backend-contracts.yml"):
