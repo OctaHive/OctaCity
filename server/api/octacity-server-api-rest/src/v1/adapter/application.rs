@@ -6,14 +6,15 @@ use octacity_server_application::{
   CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
   CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
   DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
-  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery, GetInternalTriggerQuery,
-  GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
-  ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
-  ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand, ManualTriggerError,
-  MoveProjectCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
-  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
-  PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand, RenameProjectCommand,
-  RetryBuildCommand, SearchBuildLogsQuery,
+  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
+  GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
+  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand,
+  ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
+  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery,
+  ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
+  SearchBuildLogsQuery,
 };
 
 type ProjectCreate = dyn CommandHandler<CreateProjectCommand, Error = ApplicationError>;
@@ -65,6 +66,9 @@ type ArtifactDownload = dyn QueryHandler<AuthorizeArtifactDownloadQuery, Error =
 type CacheSessionGet = dyn QueryHandler<GetCacheSessionQuery, Error = ApplicationError>;
 type CacheSessionList = dyn QueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>;
 type BuildLogsSearch = dyn QueryHandler<SearchBuildLogsQuery, Error = BuildLogSearchError>;
+type BuildRetentionGet = dyn QueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>;
+type BuildRetentionPlace = dyn CommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>;
+type BuildRetentionRelease = dyn CommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>;
 
 /// Type-erased Project handlers consumed by REST.
 pub struct ProjectManagementApplication {
@@ -392,6 +396,30 @@ impl BuildLogSearchManagementApplication {
   }
 }
 
+/// Type-erased whole-Build-Result retention query and command handlers.
+pub struct BuildResultRetentionManagementApplication {
+  pub(super) get: Arc<BuildRetentionGet>,
+  pub(super) place: Arc<BuildRetentionPlace>,
+  pub(super) release: Arc<BuildRetentionRelease>,
+}
+
+impl BuildResultRetentionManagementApplication {
+  /// Erases one retention-hold service behind its complete management capabilities.
+  pub fn new<R>(service: Arc<R>) -> Self
+  where
+    R: QueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>
+      + CommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>
+      + CommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>
+      + 'static,
+  {
+    Self {
+      get: service.clone(),
+      place: service.clone(),
+      release: service,
+    }
+  }
+}
+
 impl CacheManagementApplication {
   /// Erases one cache-session service behind management query capabilities.
   pub fn new<C>(service: Arc<C>) -> Self
@@ -446,6 +474,7 @@ pub struct ExecutionManagementApplication {
   pub(super) artifacts: ArtifactManagementApplication,
   pub(super) cache: CacheManagementApplication,
   pub(super) log_search: BuildLogSearchManagementApplication,
+  pub(super) retention: BuildResultRetentionManagementApplication,
 }
 
 impl ExecutionManagementApplication {
@@ -457,6 +486,7 @@ impl ExecutionManagementApplication {
     artifacts: ArtifactManagementApplication,
     cache: CacheManagementApplication,
     log_search: BuildLogSearchManagementApplication,
+    retention: BuildResultRetentionManagementApplication,
   ) -> Self {
     Self {
       builds,
@@ -465,6 +495,7 @@ impl ExecutionManagementApplication {
       artifacts,
       cache,
       log_search,
+      retention,
     }
   }
 }

@@ -19,14 +19,15 @@ use octacity_server_application::{
   CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
   CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
   DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
-  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetCacheSessionQuery, GetInternalTriggerQuery,
-  GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand,
-  ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
-  ListInternalTriggersQuery, ListProjectsQuery, LogSearchError, ManageWebhookRegistrationCommand, ManualTriggerError,
-  MoveProjectCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
-  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
-  PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand,
-  RenameProjectCommand, RetryBuildCommand, SearchBuildLogsQuery,
+  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
+  GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
+  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError,
+  ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand,
+  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
+  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, QueryHandler,
+  ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
+  SearchBuildLogsQuery,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
@@ -35,13 +36,16 @@ use tower::ServiceExt as _;
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
 mod openapi_drift;
+#[path = "v1_handlers/retention.rs"]
+mod retention;
 mod support;
 
 use support::{
   JobEventApplication, agent_pool_create_body, agent_pool_publish_body, assert_component_exists,
   assert_json_matches_component, assert_required_header, concrete_path, configuration_version_body,
-  documented_http_requests, empty_request, json_request, recording_management_application, repository_body,
-  repository_version_body, request_examples, send_documented_request,
+  documented_http_requests, empty_request, json_request, recording_management_application,
+  recording_management_application_with_retention, repository_body, repository_version_body, request_examples,
+  send_documented_request,
 };
 
 const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/management-rest-v1.md");
@@ -138,6 +142,9 @@ unavailable_query!(ListBuildArtifactsQuery, "list_build_artifacts");
 unavailable_query!(AuthorizeArtifactDownloadQuery, "authorize_artifact_download");
 unavailable_query!(GetCacheSessionQuery, "get_cache_session");
 unavailable_query!(ListBuildCacheSessionsQuery, "list_build_cache_sessions");
+unavailable_query!(GetBuildResultRetentionQuery, "get_build_result_retention");
+unavailable_command!(PlaceBuildResultHoldCommand, "place_build_result_hold");
+unavailable_command!(ReleaseBuildResultHoldCommand, "release_build_result_hold");
 
 #[async_trait]
 impl QueryHandler<SearchBuildLogsQuery> for RecordingApplication {
@@ -556,6 +563,19 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       include_str!("../fixtures/v1/accept-manual-trigger-request.json"),
     ),
     empty_request("GET", &format!("/api/v1/builds/{build_id}"), None),
+    empty_request("GET", &format!("/api/v1/builds/{build_id}/retention"), None),
+    json_request(
+      "POST",
+      &format!("/api/v1/builds/{build_id}/retention/hold"),
+      "place-retention-hold",
+      None,
+      r#"{"reason":"incident investigation","expires_at_unix_ms":null}"#,
+    ),
+    empty_request(
+      "POST",
+      &format!("/api/v1/builds/{build_id}/retention/hold/release"),
+      Some(("release-retention-hold", "\"1\"")),
+    ),
     empty_request(
       "POST",
       &format!("/api/v1/builds/{build_id}/cancel"),
@@ -669,6 +689,9 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "get_schedule",
       "accept_manual_trigger",
       "get_build",
+      "get_build_result_retention",
+      "place_build_result_hold",
+      "release_build_result_hold",
       "cancel_build",
       "retry_build",
       "get_attempt",
@@ -705,6 +728,7 @@ async fn unsupported_managed_registration_capability_has_a_stable_rest_error() {
     recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
   let response = routes
+    .clone()
     .oneshot(json_request(
       "POST",
       "/api/v1/webhook-integrations/managed",
@@ -743,6 +767,7 @@ async fn transport_rejections_do_not_reach_an_application_handler() {
   assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
   let response = routes
+    .clone()
     .oneshot(json_request(
       "POST",
       "/api/v1/projects/11111111-1111-4111-8111-111111111111/rename",
@@ -753,6 +778,33 @@ async fn transport_rejections_do_not_reach_an_application_handler() {
     .await
     .unwrap();
   assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+
+  let oversized_reason = "x".repeat(513);
+  let response = routes
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/builds/99999999-9999-4999-8999-999999999999/retention/hold",
+      "oversized-retention-reason",
+      None,
+      &serde_json::json!({"reason": oversized_reason}).to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+  let oversized_utf8_reason = "я".repeat(257);
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/builds/99999999-9999-4999-8999-999999999999/retention/hold",
+      "oversized-utf8-retention-reason",
+      None,
+      &serde_json::json!({"reason": oversized_utf8_reason}).to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
   assert!(application.calls.lock().unwrap().is_empty());
 }
 

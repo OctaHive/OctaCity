@@ -49,6 +49,8 @@ pub enum EntityKind {
   LogIndexingWork,
   /// Durable Build Result retention operation.
   RetentionWork,
+  /// Versioned hold protecting one complete Build Result.
+  RetentionHold,
 }
 
 impl std::fmt::Display for EntityKind {
@@ -76,6 +78,7 @@ impl std::fmt::Display for EntityKind {
       Self::LogChunk => "log_chunk",
       Self::LogIndexingWork => "log_indexing_work",
       Self::RetentionWork => "retention_work",
+      Self::RetentionHold => "retention_hold",
     })
   }
 }

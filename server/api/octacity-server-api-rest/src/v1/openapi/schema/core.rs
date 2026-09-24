@@ -6,7 +6,7 @@ use super::super::{
   MAX_CURSOR_BYTES, array, boolean, integer, mutation_response, non_empty_string, non_negative_integer, nullable,
   object, positive_integer, schema_ref, string_enum, string_map, unique_array, versioned_resource,
 };
-use super::{agent, artifact, cache, execution, log_search, operational, trigger};
+use super::{agent, artifact, cache, execution, log_search, operational, retention, trigger};
 
 mod agent_schema;
 mod configuration_schema;
@@ -36,5 +36,6 @@ pub(crate) fn component_schemas() -> Value {
   cache::insert_cache_session_schemas(&mut schemas);
   operational::insert_job_event_schemas(&mut schemas);
   log_search::insert_log_search_schemas(&mut schemas);
+  retention::insert_retention_schemas(&mut schemas);
   Value::Object(schemas)
 }

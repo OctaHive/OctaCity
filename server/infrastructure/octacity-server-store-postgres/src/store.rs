@@ -12,35 +12,36 @@ use octacity_server_store::{
   ArtifactRecordStore, ArtifactUploadRecord, ArtifactVerificationResult, AuthenticateAgentRegistration,
   AuthenticatedAgentRegistration, AuthorizeCacheSession, BeginArtifactUpload, BeginArtifactUploadOutcome,
   BeginCacheSession, BeginCacheSessionOutcome, BuildConfigurationMutationOutcome, BuildControlStore, BuildQueryStore,
-  BuildRecord, BuildRetentionStore, CacheAuthorizationOutcome, CacheBlobPreparationOutcome, CacheDataAccess,
-  CacheDataStore, CachePublicationOutcome, CacheRetentionOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild,
-  CancellationDisposition, ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimOrphanLogChunks,
-  ClaimRetentionWork, ClaimTriggerEvaluations, CompleteInternalTriggerEvent, CompleteOrphanLogChunk,
-  CompleteRetentionObject, CompleteRetentionSearch, CompleteScheduleClaim, CompleteTriggerEvaluation,
-  CompletionDisposition, ConfigurationStore, CreateAgentPool, CreateBuildConfiguration,
-  CreateInternalTriggerDefinition, CreateManagedWebhook, CreateProject, CreateRepository, CreateSchedule,
-  CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool, DeleteAgentPoolOutcome,
-  DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim, ExpiredLeaseClaim,
-  FailOrphanLogChunk, FailRetentionWork, FailTriggerEvaluation, FinishRetentionPass, InternalTriggerDefinitionPage,
-  InternalTriggerDefinitionRecord, InternalTriggerDefinitionStore, InternalTriggerEventClaim,
-  InternalTriggerEventStore, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome,
-  JobCompletion, JobEventPage, JobEventReadStore, JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore,
-  LeaseRecoveryStore, ListAgentPools, ListAgents, ListBuildCacheSessions, ListInternalTriggerDefinitions, ListProjects,
-  ListPublishedArtifacts, LogChunkManifestStore, ManagedWebhookMutationOutcome, ManagedWebhookOperationStore,
-  ManagedWebhookRecord, ManagedWebhookRegistrationStore, MoveProject, MutationDisposition, OrphanLogChunkClaim,
-  OrphanLogChunkStore, PipelineMutationOutcome, PipelineStore, PrepareRetentionWork, ProjectDetails,
-  ProjectMutationOutcome, ProjectPage, ProjectPolicyDocument, ProjectPolicyMutationOutcome, ProjectPolicyStore,
-  ProjectStore, PublishAgentPoolVersion, PublishBuildConfigurationVersion, PublishCacheAction, PublishCacheBlob,
-  PublishInternalTriggerVersion, PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion,
-  PublishedAgentPool, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents,
-  ReassignAgentPool, ReassignAgentPoolOutcome, RecordManagedWebhookRegistration, RecordTriggerEvaluationRevision,
-  RecoverExpiredLease, RecoverExpiredLeaseOutcome, RegisterAgent, RenameProject, RenewLease, RepositoryMutationOutcome,
-  ReserveArtifact, ReserveTriggerEvaluation, RetentionPassOutcome, RetentionPreparation, RetentionWorkClaim,
-  RetryBuild, RetryDisposition, RevokeAgentCredential, RevokeCacheSession, ScheduleRecord, ScheduleStore,
-  StageOrphanLogChunk, StoreError, SuppressTrigger, SuppressTriggerOutcome, SuppressWebhookDelivery,
-  TransitionArtifact, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerDefinitionMutationOutcome,
-  TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationClaim, TriggerEvaluationOutcome,
-  TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerKind, TriggerTarget,
+  BuildRecord, BuildResultRetentionHoldStore, BuildResultRetentionState, BuildRetentionStore,
+  CacheAuthorizationOutcome, CacheBlobPreparationOutcome, CacheDataAccess, CacheDataStore, CachePublicationOutcome,
+  CacheRetentionOutcome, CacheSessionRecord, CacheSessionStore, CancelBuild, CancellationDisposition,
+  ClaimDueSchedules, ClaimExpiredLeases, ClaimInternalTriggerEvents, ClaimOrphanLogChunks, ClaimRetentionWork,
+  ClaimTriggerEvaluations, CompleteInternalTriggerEvent, CompleteOrphanLogChunk, CompleteRetentionObject,
+  CompleteRetentionSearch, CompleteScheduleClaim, CompleteTriggerEvaluation, CompletionDisposition, ConfigurationStore,
+  CreateAgentPool, CreateBuildConfiguration, CreateInternalTriggerDefinition, CreateManagedWebhook, CreateProject,
+  CreateRepository, CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, DefinitionStore, DeleteAgentPool,
+  DeleteAgentPoolOutcome, DeleteProject, DeleteProjectOutcome, DrainAgent, DrainAgentOutcome, DueScheduleClaim,
+  ExpiredLeaseClaim, FailOrphanLogChunk, FailRetentionWork, FailTriggerEvaluation, FinishRetentionPass,
+  GetBuildResultRetention, InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord,
+  InternalTriggerDefinitionStore, InternalTriggerEventClaim, InternalTriggerEventStore, IssueAgentEnrollment,
+  IssueAgentEnrollmentOutcome, JobClaim, JobClaimOutcome, JobCompletion, JobEventPage, JobEventReadStore,
+  JobExecutionStore, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LeaseRecoveryStore, ListAgentPools, ListAgents,
+  ListBuildCacheSessions, ListInternalTriggerDefinitions, ListProjects, ListPublishedArtifacts, LogChunkManifestStore,
+  ManagedWebhookMutationOutcome, ManagedWebhookOperationStore, ManagedWebhookRecord, ManagedWebhookRegistrationStore,
+  MoveProject, MutationDisposition, OrphanLogChunkClaim, OrphanLogChunkStore, PipelineMutationOutcome, PipelineStore,
+  PlaceBuildResultHold, PrepareRetentionWork, ProjectDetails, ProjectMutationOutcome, ProjectPage,
+  ProjectPolicyDocument, ProjectPolicyMutationOutcome, ProjectPolicyStore, ProjectStore, PublishAgentPoolVersion,
+  PublishBuildConfigurationVersion, PublishCacheAction, PublishCacheBlob, PublishInternalTriggerVersion,
+  PublishPipelineVersion, PublishProjectPolicy, PublishRepositoryVersion, PublishedAgentPool,
+  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, ReadJobEvents, ReassignAgentPool,
+  ReassignAgentPoolOutcome, RecordManagedWebhookRegistration, RecordTriggerEvaluationRevision, RecoverExpiredLease,
+  RecoverExpiredLeaseOutcome, RegisterAgent, ReleaseBuildResultHold, ReleaseBuildResultHoldError, RenameProject,
+  RenewLease, RepositoryMutationOutcome, ReserveArtifact, ReserveTriggerEvaluation, RetentionHoldMutationOutcome,
+  RetentionPassOutcome, RetentionPreparation, RetentionWorkClaim, RetryBuild, RetryDisposition, RevokeAgentCredential,
+  RevokeCacheSession, ScheduleRecord, ScheduleStore, StageOrphanLogChunk, StoreError, SuppressTrigger,
+  SuppressTriggerOutcome, SuppressWebhookDelivery, TransitionArtifact, TriggerAcceptanceProbe, TriggerAcceptanceStore,
+  TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerDefinitionStore, TriggerEvaluationClaim,
+  TriggerEvaluationOutcome, TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerKind, TriggerTarget,
   UnmanagedWebhookMutationOutcome, VerifyArtifactUpload, WebhookConfigurationStore, WebhookDeliveryAdmissionStore,
   WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader, WebhookIntegrationRecord,
 };
@@ -233,6 +234,30 @@ impl BuildRetentionStore for PostgresStore {
 
   async fn fail_retention_work(&self, request: FailRetentionWork) -> Result<(), StoreError> {
     crate::retention::fail(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl BuildResultRetentionHoldStore for PostgresStore {
+  async fn build_result_retention(
+    &self,
+    query: GetBuildResultRetention,
+  ) -> Result<BuildResultRetentionState, StoreError> {
+    crate::retention_hold::read(&self.pool, query).await
+  }
+
+  async fn place_build_result_hold(
+    &self,
+    request: PlaceBuildResultHold,
+  ) -> Result<RetentionHoldMutationOutcome, StoreError> {
+    crate::retention_hold::place(&self.pool, request).await
+  }
+
+  async fn release_build_result_hold(
+    &self,
+    request: ReleaseBuildResultHold,
+  ) -> Result<RetentionHoldMutationOutcome, ReleaseBuildResultHoldError> {
+    crate::retention_hold::release(&self.pool, request).await
   }
 }
 

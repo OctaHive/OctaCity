@@ -36,6 +36,7 @@ pub struct ManagementOperation {
   pub optimistic_precondition: bool,
   parameter_profile: ParameterProfile,
   capability_unavailable_response: bool,
+  precondition_failed_response: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -62,6 +63,11 @@ impl ManagementOperation {
     self.capability_unavailable_response = true;
     self
   }
+
+  const fn with_precondition_failed_response(mut self) -> Self {
+    self.precondition_failed_response = true;
+    self
+  }
 }
 
 macro_rules! operation {
@@ -79,6 +85,7 @@ macro_rules! operation {
       optimistic_precondition: $precondition,
       parameter_profile: ParameterProfile::None,
       capability_unavailable_response: false,
+      precondition_failed_response: false,
     }
   };
 }
@@ -464,6 +471,43 @@ pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    "GET",
+    "/api/v1/builds/{build_id}/retention",
+    "getBuildResultRetention",
+    "Build Results",
+    "Get automatic-retention deadlines and hold state",
+    None,
+    "BuildResultRetentionResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/builds/{build_id}/retention/hold",
+    "placeBuildResultRetentionHold",
+    "Build Results",
+    "Place a permanent or time-bounded Build Result hold",
+    Some("PlaceBuildResultHoldRequest"),
+    "BuildResultRetentionMutationResponse",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    "POST",
+    "/api/v1/builds/{build_id}/retention/hold/release",
+    "releaseBuildResultRetentionHold",
+    "Build Results",
+    "Release the active Build Result hold",
+    None,
+    "BuildResultRetentionMutationResponse",
+    "200",
+    true,
+    true
+  )
+  .with_precondition_failed_response(),
+  operation!(
     "POST",
     "/api/v1/builds/{build_id}/cancel",
     "cancelBuild",
@@ -832,6 +876,9 @@ fn responses(operation: &ManagementOperation) -> Value {
   }
   if operation.optimistic_precondition {
     responses.insert("428".to_owned(), error_response("Optimistic precondition required"));
+  }
+  if operation.precondition_failed_response {
+    responses.insert("412".to_owned(), error_response("Optimistic precondition failed"));
   }
   if operation.capability_unavailable_response {
     responses.insert(

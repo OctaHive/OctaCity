@@ -80,6 +80,11 @@ pub(crate) async fn claim(pool: &PgPool, request: ClaimRetentionWork) -> Result<
        SELECT id FROM retention_work WHERE build_id IS NOT NULL AND completed_at IS NULL \
          AND available_at <= to_timestamp($1::double precision / 1000.0) \
          AND (claim_owner IS NULL OR claim_expires_at <= to_timestamp($1::double precision / 1000.0)) \
+         AND NOT EXISTS (SELECT 1 FROM (SELECT released_at, expired_at, expires_at \
+           FROM build_result_retention_holds WHERE build_id = retention_work.build_id \
+           ORDER BY version DESC LIMIT 1) AS hold \
+           WHERE hold.released_at IS NULL AND hold.expired_at IS NULL AND (hold.expires_at IS NULL \
+             OR hold.expires_at > to_timestamp($1::double precision / 1000.0))) \
        ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT $2\
      ), claimed AS (\
        UPDATE retention_work AS work SET claim_owner = $3, \
@@ -108,7 +113,8 @@ pub(crate) async fn prepare(pool: &PgPool, request: PrepareRetentionWork) -> Res
   request.validate()?;
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let mut work = lock_work(&mut transaction, request.work_id, &request.owner, request.observed_at).await?;
-  if phase(&work.phase)? == RetentionPhase::Pending {
+  let held = lock_build_and_check_hold(&mut transaction, work.build_id, request.observed_at).await?;
+  if phase(&work.phase)? == RetentionPhase::Pending && !held {
     hide_component(&mut transaction, &mut work, request.observed_at).await?;
   }
   let current_phase = phase(&work.phase)?;
@@ -212,7 +218,14 @@ pub(crate) async fn finish_pass(
   let search_ready =
     work.component != BuildResultComponent::Logs || phase(&work.phase)? == RetentionPhase::SearchDeleted;
   let remaining = remaining_objects(&mut transaction, &work).await?;
-  let outcome = if search_ready && !remaining {
+  let outcome = if phase(&work.phase)? == RetentionPhase::Pending {
+    sqlx::query("UPDATE retention_work SET claim_owner = NULL, claim_expires_at = NULL WHERE id = $1")
+      .bind(request.work_id.as_uuid())
+      .execute(&mut *transaction)
+      .await
+      .map_err(unavailable)?;
+    RetentionPassOutcome::Pending
+  } else if search_ready && !remaining {
     sqlx::query(
       "UPDATE retention_work SET phase = 'bytes_deleted', completed_at = to_timestamp($1::double precision / 1000.0), \
        claim_owner = NULL, claim_expires_at = NULL WHERE id = $2",
@@ -237,6 +250,24 @@ pub(crate) async fn finish_pass(
   };
   transaction.commit().await.map_err(unavailable)?;
   Ok(outcome)
+}
+
+async fn lock_build_and_check_hold(
+  transaction: &mut Transaction<'_, Postgres>,
+  build_id: BuildId,
+  observed_at: Timestamp,
+) -> Result<bool, StoreError> {
+  let locked: Option<Uuid> = sqlx::query_scalar("SELECT id FROM builds WHERE id = $1 FOR UPDATE")
+    .bind(build_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  if locked.is_none() {
+    return Err(StoreError::NotFound {
+      entity: EntityKind::Build,
+    });
+  }
+  crate::retention_hold::active_for_retention(transaction, build_id, observed_at).await
 }
 
 pub(crate) async fn fail(pool: &PgPool, request: FailRetentionWork) -> Result<(), StoreError> {

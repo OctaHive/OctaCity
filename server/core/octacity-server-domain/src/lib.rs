@@ -42,5 +42,5 @@ pub use transition::TransitionError;
 pub use version::{
   AgentVersion, ArtifactVersion, AttemptNumber, AttemptVersion, BuildConfigurationVersion, BuildVersion,
   IntegrationVersion, JobVersion, LeaseVersion, PipelineVersion, PoolVersion, ProjectPolicyVersion, ProjectVersion,
-  RepositoryVersion, TriggerVersion,
+  RepositoryVersion, RetentionHoldVersion, TriggerVersion,
 };

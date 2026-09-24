@@ -200,6 +200,10 @@ pub enum StoreOperation {
   FinishRetentionPass,
   /// Schedule another durable retention attempt.
   FailRetentionWork,
+  /// Place a permanent or time-bounded Build Result hold.
+  PlaceBuildResultHold,
+  /// Release the active Build Result hold.
+  ReleaseBuildResultHold,
   /// Stage cleanup before writing one archived log object.
   StageOrphanLogChunk,
   /// Claim a bounded batch of due orphan-log cleanup candidates.
@@ -231,6 +235,9 @@ pub enum StoreInputError {
   /// A durable worker owner, deadline, or batch size is invalid.
   #[error("a durable worker claim is invalid")]
   InvalidWorkerClaim,
+  /// A retention hold reason, expiry, actor, or request identity is invalid.
+  #[error("a Build Result retention hold is invalid")]
+  InvalidRetentionHold,
   /// One internal event matches more Trigger definitions than one bounded delivery permits.
   #[error("an internal trigger event has too many matching definitions")]
   TooManyInternalTriggerMatches,

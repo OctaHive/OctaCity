@@ -35,6 +35,7 @@ mod configuration;
 mod enrollment;
 mod execution;
 mod project;
+mod retention;
 mod trigger;
 
 const AGENT_ENROLLMENT_NAMESPACE: Uuid = Uuid::from_u128(0x4ad5_41e3_c0f0_5ea2_87cb_1a2f_d458_9107);

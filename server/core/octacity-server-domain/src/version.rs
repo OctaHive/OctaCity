@@ -113,6 +113,11 @@ positive_version!(
   EntityKind::Trigger,
   "Immutable version number of a Trigger definition."
 );
+positive_version!(
+  RetentionHoldVersion,
+  EntityKind::RetentionHold,
+  "Optimistic version of a Build Result retention hold."
+);
 
 /// Positive monotonically increasing attempt number within one Build.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

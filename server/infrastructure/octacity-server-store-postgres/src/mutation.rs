@@ -15,6 +15,7 @@ pub(crate) struct MutationIdentity {
   pub(crate) request_digest: [u8; 32],
   pub(crate) occurred_at: Timestamp,
   pub(crate) conflict_entity: EntityKind,
+  pub(crate) request_identity: String,
 }
 
 impl MutationIdentity {
@@ -29,28 +30,45 @@ impl MutationIdentity {
     let mut digest = Sha256::new();
     digest.update(kind.digest_version());
     digest.update(encoded);
+    let request_identity = format!("{}:{}", kind.scope(), key);
     Ok(Self {
       kind,
       key,
       request_digest: digest.finalize().into(),
       occurred_at,
       conflict_entity,
+      request_identity,
     })
   }
 
-  pub(crate) const fn with_digest(
+  pub(crate) fn new_with_request_identity<T: Serialize>(
+    kind: MutationKind,
+    key: String,
+    request_identity: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request: &T,
+  ) -> Result<Self, StoreError> {
+    let mut identity = Self::new(kind, key, occurred_at, conflict_entity, request)?;
+    identity.request_identity = request_identity;
+    Ok(identity)
+  }
+
+  pub(crate) fn with_digest(
     kind: MutationKind,
     key: String,
     occurred_at: Timestamp,
     conflict_entity: EntityKind,
     request_digest: [u8; 32],
   ) -> Self {
+    let request_identity = format!("{}:{}", kind.scope(), key);
     Self {
       kind,
       key,
       request_digest,
       occurred_at,
       conflict_entity,
+      request_identity,
     }
   }
 }
@@ -103,6 +121,8 @@ pub(crate) enum MutationKind {
   RegisterAgent,
   RevokeAgentEnrollment,
   RevokeAgentRegistration,
+  PlaceBuildResultHold,
+  ReleaseBuildResultHold,
 }
 
 impl MutationKind {
@@ -331,6 +351,18 @@ impl MutationKind {
         "agent_registration",
         "agent.registration-revoked"
       ),
+      Self::PlaceBuildResultHold => metadata!(
+        b"octacity.place-build-result-hold.v1\0",
+        "place-build-result-hold",
+        "retention_hold",
+        "build-result.retention-hold-placed"
+      ),
+      Self::ReleaseBuildResultHold => metadata!(
+        b"octacity.release-build-result-hold.v1\0",
+        "release-build-result-hold",
+        "retention_hold",
+        "build-result.retention-hold-released"
+      ),
     }
   }
 
@@ -445,7 +477,7 @@ pub(crate) async fn commit(
   .bind(identity.kind.scope())
   .bind(identity.kind.target_kind())
   .bind(&facts.target_identity)
-  .bind(format!("{}:{}", identity.kind.scope(), identity.key))
+  .bind(&identity.request_identity)
   .bind(&identity.key)
   .bind(Json(facts.safe_metadata))
   .bind(identity.occurred_at.unix_millis())

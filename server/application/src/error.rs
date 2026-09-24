@@ -1,4 +1,4 @@
-use octacity_server_store::StoreError;
+use octacity_server_store::{ReleaseBuildResultHoldError, StoreError};
 use thiserror::Error;
 
 use crate::ProjectionError;
@@ -12,6 +12,8 @@ pub enum ApplicationFailure {
   NotFound,
   /// Current authoritative state conflicts with the request.
   Conflict,
+  /// The supplied optimistic resource version is no longer current.
+  PreconditionFailed,
   /// The selected installed adapter does not advertise the requested capability.
   CapabilityUnavailable,
   /// A required authoritative dependency is temporarily unavailable.
@@ -29,6 +31,9 @@ pub enum ApplicationError {
   /// A selected adapter does not implement an optional operation.
   #[error("application capability is unavailable")]
   CapabilityUnavailable,
+  /// The supplied optimistic resource version is no longer current.
+  #[error("application precondition is no longer current")]
+  PreconditionFailed,
   /// An authoritative backend-neutral port rejected or could not complete the operation.
   #[error("authoritative application port failed")]
   Store(#[from] StoreError),
@@ -62,6 +67,7 @@ impl ApplicationError {
     match self {
       Self::InvalidInput => ApplicationFailure::Invalid,
       Self::CapabilityUnavailable => ApplicationFailure::CapabilityUnavailable,
+      Self::PreconditionFailed => ApplicationFailure::PreconditionFailed,
       Self::Store(StoreError::InvalidInput { .. }) => ApplicationFailure::Invalid,
       Self::Store(StoreError::NotFound { .. }) => ApplicationFailure::NotFound,
       Self::Store(StoreError::Conflict { .. } | StoreError::Duplicate { .. }) => ApplicationFailure::Conflict,
@@ -74,6 +80,15 @@ impl ApplicationError {
         | StoreError::CredentialRejected,
       ) => ApplicationFailure::Conflict,
       Self::Projection(_) => ApplicationFailure::Internal,
+    }
+  }
+}
+
+impl From<ReleaseBuildResultHoldError> for ApplicationError {
+  fn from(error: ReleaseBuildResultHoldError) -> Self {
+    match error {
+      ReleaseBuildResultHoldError::PreconditionFailed => Self::PreconditionFailed,
+      ReleaseBuildResultHoldError::Store(error) => Self::Store(error),
     }
   }
 }

@@ -70,6 +70,7 @@ mod manual_trigger;
 mod pipeline;
 mod project;
 mod representations;
+mod retention;
 mod schedule;
 mod webhook;
 
@@ -80,11 +81,11 @@ use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agen
 use application::{AgentEndpoints, AgentPoolManagementApplication};
 pub use application::{
   AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-  BuildManagementApplication, CacheManagementApplication, CatalogManagementApplication,
-  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
-  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplicationHandlers,
-  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ScheduleManagementApplication,
+  BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
+  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
+  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+  ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
+  ProjectManagementApplication, ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use cache::{get_cache_session, list_build_cache_sessions};
@@ -106,6 +107,7 @@ use project::{
   create_project, delete_project, get_project, list_projects, move_project, publish_project_policy, rename_project,
 };
 use representations::*;
+use retention::{get_build_result_retention, place_build_result_hold, release_build_result_hold};
 use schedule::{create_scheduled_trigger_definition, get_schedule};
 use webhook::{
   create_managed_webhook, create_unmanaged_webhook, delete_managed_webhook, observe_managed_webhook,
@@ -137,6 +139,7 @@ pub struct ManagementApplication {
   artifacts: ArtifactManagementApplication,
   cache: CacheManagementApplication,
   log_search: BuildLogSearchManagementApplication,
+  retention: BuildResultRetentionManagementApplication,
 }
 
 impl ManagementApplication {
@@ -167,6 +170,7 @@ impl ManagementApplication {
       artifacts,
       cache,
       log_search,
+      retention,
     } = execution;
     let AgentManagementApplication {
       pools: agent_pools,
@@ -192,6 +196,7 @@ impl ManagementApplication {
       artifacts,
       cache,
       log_search,
+      retention,
     })
   }
 }
@@ -296,6 +301,18 @@ pub fn router(application: ManagementApplication) -> Router {
     )
     .route(&format!("{API_PREFIX}/triggers/manual"), post(accept_manual_trigger))
     .route(&format!("{API_PREFIX}/builds/{{build_id}}"), get(get_build))
+    .route(
+      &format!("{API_PREFIX}/builds/{{build_id}}/retention"),
+      get(get_build_result_retention),
+    )
+    .route(
+      &format!("{API_PREFIX}/builds/{{build_id}}/retention/hold"),
+      post(place_build_result_hold),
+    )
+    .route(
+      &format!("{API_PREFIX}/builds/{{build_id}}/retention/hold/release"),
+      post(release_build_result_hold),
+    )
     .route(
       &format!("{API_PREFIX}/builds/{{build_id}}/artifacts"),
       get(list_build_artifacts),
@@ -487,6 +504,12 @@ fn application_error(failure: ApplicationFailure, request_id: &RequestId) -> Api
       StatusCode::CONFLICT,
       ErrorCode::Conflict,
       "authoritative state conflicts with the request",
+      request_id,
+    ),
+    ApplicationFailure::PreconditionFailed => ApiError::new(
+      StatusCode::PRECONDITION_FAILED,
+      ErrorCode::PreconditionFailed,
+      "the supplied resource version is no longer current",
       request_id,
     ),
     ApplicationFailure::CapabilityUnavailable => ApiError::new(

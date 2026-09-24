@@ -4,19 +4,19 @@ use octacity_server_api_rest::{
   JobEventNotificationHub,
   v1::{
     AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-    BuildManagementApplication, CacheManagementApplication, CatalogManagementApplication,
-    ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
-    InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
-    ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
-    ProjectManagementApplication, ScheduleManagementApplication,
+    BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
+    CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
+    ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+    ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+    PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
   },
 };
 use octacity_server_application::{
   AgentEnrollmentHandler, AgentHandlers, AgentPoolHandlers, ArtifactHandlers, BuildConfigurationHandlers,
-  BuildHandlers, BuildLogSearch, CacheSessionHandlers, DefinitionHandlers, DurableManualTriggerService,
-  DurableRetryPolicy, InternalTriggerHandlers, JobEventLongPoll, JobSpecToolchainPolicy, ManualTriggerRetryWorker,
-  ManualTriggerService, PipelineHandlers, ProjectHandlers, RevisionResolver, ScheduleHandlers,
-  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, WebhookDeliveryVerifier,
+  BuildHandlers, BuildLogSearch, BuildResultRetentionHandlers, CacheSessionHandlers, DefinitionHandlers,
+  DurableManualTriggerService, DurableRetryPolicy, InternalTriggerHandlers, JobEventLongPoll, JobSpecToolchainPolicy,
+  ManualTriggerRetryWorker, ManualTriggerService, PipelineHandlers, ProjectHandlers, RevisionResolver,
+  ScheduleHandlers, StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, WebhookDeliveryVerifier,
   WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
@@ -139,6 +139,7 @@ pub(super) fn management_application(
     store.clone(),
     Arc::new(JobEventNotificationHub::default()),
   ));
+  let retention = Arc::new(BuildResultRetentionHandlers::new(store.clone()));
   let log_search = Arc::new(BuildLogSearch::new(store, log_search_index));
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
@@ -161,6 +162,7 @@ pub(super) fn management_application(
         ArtifactManagementApplication::new(artifacts),
         CacheManagementApplication::new(cache),
         BuildLogSearchManagementApplication::new(log_search),
+        BuildResultRetentionManagementApplication::new(retention),
       ),
     ),
   )

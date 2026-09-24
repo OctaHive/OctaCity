@@ -3,13 +3,18 @@ mod authoritative_fixture;
 mod support;
 
 use authoritative_fixture::seed_authoritative_prerequisites;
-use octacity_server_domain::{ArtifactId, ArtifactUploadId, LogIndexingWorkId, Timestamp};
+use octacity_server_domain::{
+  ArtifactId, ArtifactUploadId, EntityKind, LogIndexingWorkId, RetentionHoldVersion, Timestamp,
+};
 use octacity_server_store::{
-  BuildLogStream, BuildResultComponent, BuildRetentionStore as _, ClaimRetentionWork, CompleteRetentionObject,
-  CompleteRetentionSearch, FinishRetentionPass, JobClaim, JobClaimOutcome, JobEventReadStore as _,
-  JobExecutionStore as _, LeaseFence, LeaseGrant, LeaseWindow, LogChunkManifest, LogSearchDocument,
-  LogSearchIndex as _, LogSearchMutationDisposition, PrepareRetentionWork, ReadJobEvents, RetentionObject,
-  RetentionObjectIdentity, RetentionPassOutcome, TriggerAcceptanceStore as _, WorkerOwner, WriteLogSearchDocument,
+  BuildLogStream, BuildResultComponent, BuildResultRetentionHoldStore as _, BuildRetentionDeadlines,
+  BuildRetentionStore as _, ClaimRetentionWork, CompleteRetentionObject, CompleteRetentionSearch, FinishRetentionPass,
+  GetBuildResultRetention, IdempotencyKey, JobClaim, JobClaimOutcome, JobEventReadStore as _, JobExecutionStore as _,
+  LeaseFence, LeaseGrant, LeaseWindow, LogChunkManifest, LogSearchDocument, LogSearchIndex as _,
+  LogSearchMutationDisposition, MutationDisposition, PlaceBuildResultHold, PrepareRetentionWork, ReadJobEvents,
+  ReleaseBuildResultHold, ReleaseBuildResultHoldError, RetentionHoldReason, RetentionHoldState, RetentionObject,
+  RetentionObjectIdentity, RetentionPassOutcome, RetentionRequestIdentity, StoreError, TriggerAcceptanceStore as _,
+  WorkerOwner, WriteLogSearchDocument,
   testing::{authoritative_store_contract_fixture, compatible_snapshot},
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
@@ -203,6 +208,331 @@ async fn retention_deadlines_and_interrupted_cleanup_are_durable() {
   database.cleanup().await;
 }
 
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn permanent_hold_replays_and_overdue_release_preserves_deadlines_and_quota() {
+  let database = TestDatabase::migrated().await;
+  let mut fixture = authoritative_store_contract_fixture();
+  fixture.request.build.retention = deadlines(1_500);
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let execution = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  execution.accept_trigger(fixture.request.clone()).await.unwrap();
+  let grant = claim_root(&execution, &fixture).await;
+  insert_output_event(&database.pool, &grant).await;
+  insert_output(&database.pool, &fixture, &grant, false, 210).await;
+  insert_output(&database.pool, &fixture, &grant, true, 220).await;
+
+  let store = PostgresStore::new(database.pool.clone());
+  let placed = place_request(
+    fixture.request.build.id,
+    "incident investigation",
+    None,
+    "hold-permanent",
+    time(1_400),
+  );
+  let applied = store.place_build_result_hold(placed.clone()).await.unwrap();
+  assert_eq!(applied.disposition, MutationDisposition::Applied);
+  assert_eq!(
+    applied.retention.hold.as_ref().unwrap().version,
+    RetentionHoldVersion::INITIAL
+  );
+  assert_eq!(output_usage(&database.pool, fixture.request.build.id).await, (3, 5));
+  assert!(
+    store
+      .claim_retention_work(
+        ClaimRetentionWork::new(WorkerOwner::new("retention:held").unwrap(), time(1_500), time(2_500), 4,).unwrap()
+      )
+      .await
+      .unwrap()
+      .is_empty(),
+    "a permanent hold protects every due component"
+  );
+
+  let mut replay = placed;
+  replay.placed_at = time(1_900);
+  replay.request_identity = RetentionRequestIdentity::new("request:replay").unwrap();
+  let replayed = store.place_build_result_hold(replay).await.unwrap();
+  assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+  assert_eq!(replayed.retention, applied.retention);
+
+  assert!(matches!(
+    store
+      .release_build_result_hold(ReleaseBuildResultHold {
+        build_id: fixture.request.build.id,
+        expected_version: RetentionHoldVersion::INITIAL,
+        actor_identity: None,
+        request_identity: RetentionRequestIdentity::new("request:clock-regression").unwrap(),
+        idempotency_key: key("release-before-creation"),
+        released_at: time(1_399),
+      })
+      .await,
+    Err(ReleaseBuildResultHoldError::Store(StoreError::Conflict {
+      entity: EntityKind::RetentionHold
+    }))
+  ));
+
+  let release = ReleaseBuildResultHold {
+    build_id: fixture.request.build.id,
+    expected_version: RetentionHoldVersion::INITIAL,
+    actor_identity: None,
+    request_identity: RetentionRequestIdentity::new("request:release").unwrap(),
+    idempotency_key: key("release-permanent"),
+    released_at: time(2_000),
+  };
+  let released = store.release_build_result_hold(release.clone()).await.unwrap();
+  assert_eq!(released.disposition, MutationDisposition::Applied);
+  assert_eq!(released.retention.deadlines, deadlines(1_500));
+  assert_eq!(
+    released.retention.hold.as_ref().unwrap().state,
+    RetentionHoldState::Released
+  );
+  assert_eq!(released.retention.hold.as_ref().unwrap().version.get(), 2);
+  assert_eq!(
+    released
+      .retention
+      .hold
+      .as_ref()
+      .unwrap()
+      .release_audit
+      .as_ref()
+      .unwrap()
+      .request_identity,
+    "request:release"
+  );
+  let release_replay = store.release_build_result_hold(release).await.unwrap();
+  assert_eq!(release_replay.disposition, MutationDisposition::Replayed);
+  assert_eq!(release_replay.retention, released.retention);
+  assert!(matches!(
+    store
+      .release_build_result_hold(ReleaseBuildResultHold {
+        build_id: fixture.request.build.id,
+        expected_version: RetentionHoldVersion::INITIAL,
+        actor_identity: None,
+        request_identity: RetentionRequestIdentity::new("request:stale").unwrap(),
+        idempotency_key: key("release-stale"),
+        released_at: time(2_001),
+      })
+      .await,
+    Err(ReleaseBuildResultHoldError::PreconditionFailed)
+  ));
+  assert!(matches!(
+    store
+      .place_build_result_hold(place_request(
+        fixture.request.build.id,
+        "clock moved backwards",
+        None,
+        "place-before-release",
+        time(1_999),
+      ))
+      .await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::RetentionHold
+    })
+  ));
+  let claims = store
+    .claim_retention_work(
+      ClaimRetentionWork::new(
+        WorkerOwner::new("retention:released").unwrap(),
+        time(2_000),
+        time(3_000),
+        4,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(claims.len(), 4, "release does not grant a new retention period");
+  assert_eq!(output_usage(&database.pool, fixture.request.build.id).await, (3, 5));
+  let audit_count: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM audit_facts WHERE target_kind = 'retention_hold' AND target_identity = $1",
+  )
+  .bind(fixture.request.build.id.to_string())
+  .fetch_one(&database.pool)
+  .await
+  .unwrap();
+  assert_eq!(audit_count, 2, "exact replays do not duplicate audit facts");
+  let audit_identities: Vec<(String, String)> = sqlx::query_as(
+    "SELECT actor_kind, request_identity FROM audit_facts \
+     WHERE target_kind = 'retention_hold' AND target_identity = $1 ORDER BY occurred_at, operation",
+  )
+  .bind(fixture.request.build.id.to_string())
+  .fetch_all(&database.pool)
+  .await
+  .unwrap();
+  assert_eq!(
+    audit_identities,
+    vec![
+      (
+        "unauthenticated_management".to_owned(),
+        "request:hold-permanent".to_owned(),
+      ),
+      ("unauthenticated_management".to_owned(), "request:release".to_owned(),),
+    ]
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn time_bounded_hold_expires_at_the_boundary_and_cannot_revive_hidden_data() {
+  let database = TestDatabase::migrated().await;
+  let mut fixture = authoritative_store_contract_fixture();
+  fixture.request.build.retention = deadlines(1_500);
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let execution = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  execution.accept_trigger(fixture.request.clone()).await.unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let placement = place_request(
+    fixture.request.build.id,
+    "temporary investigation",
+    Some(time(1_600)),
+    "hold-temporary",
+    time(1_400),
+  );
+  let applied = store.place_build_result_hold(placement.clone()).await.unwrap();
+  let mut replay = placement;
+  replay.placed_at = time(1_700);
+  replay.request_identity = RetentionRequestIdentity::new("request:timed-replay").unwrap();
+  let replayed = store.place_build_result_hold(replay).await.unwrap();
+  assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+  assert_eq!(replayed.retention, applied.retention);
+  assert!(
+    store
+      .claim_retention_work(
+        ClaimRetentionWork::new(
+          WorkerOwner::new("retention:before-expiry").unwrap(),
+          time(1_599),
+          time(2_000),
+          4,
+        )
+        .unwrap()
+      )
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  let claims = store
+    .claim_retention_work(
+      ClaimRetentionWork::new(
+        WorkerOwner::new("retention:at-expiry").unwrap(),
+        time(1_600),
+        time(2_100),
+        4,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  let metadata = claims
+    .iter()
+    .find(|claim| claim.component == BuildResultComponent::Metadata)
+    .unwrap();
+  store
+    .prepare_retention_work(
+      PrepareRetentionWork::new(metadata.work_id, metadata.owner.clone(), time(1_601), 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  let logs = claims
+    .iter()
+    .find(|claim| claim.component == BuildResultComponent::Logs)
+    .unwrap();
+  store
+    .prepare_retention_work(PrepareRetentionWork::new(logs.work_id, logs.owner.clone(), time(1_599), 1).unwrap())
+    .await
+    .unwrap();
+  let state = store
+    .build_result_retention(GetBuildResultRetention {
+      build_id: fixture.request.build.id,
+      observed_at: time(1_599),
+    })
+    .await
+    .unwrap();
+  assert!(!state.visibility.metadata);
+  assert!(!state.visibility.logs);
+  assert_eq!(state.hold.as_ref().unwrap().state, RetentionHoldState::Expired);
+  assert_eq!(state.hold.as_ref().unwrap().version.get(), 2);
+  assert!(matches!(
+    store
+      .place_build_result_hold(place_request(
+        fixture.request.build.id,
+        "too late",
+        None,
+        "hold-after-delete",
+        time(1_602),
+      ))
+      .await,
+    Err(StoreError::Conflict {
+      entity: EntityKind::RetentionHold
+    })
+  ));
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn hold_and_first_visibility_transition_serialize_as_one_decision() {
+  let database = TestDatabase::migrated().await;
+  let mut fixture = authoritative_store_contract_fixture();
+  fixture.request.build.retention = deadlines(1_500);
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let execution = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  execution.accept_trigger(fixture.request.clone()).await.unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let claims = store
+    .claim_retention_work(
+      ClaimRetentionWork::new(WorkerOwner::new("retention:race").unwrap(), time(1_500), time(3_000), 4).unwrap(),
+    )
+    .await
+    .unwrap();
+  let metadata = claims
+    .into_iter()
+    .find(|claim| claim.component == BuildResultComponent::Metadata)
+    .unwrap();
+  let hold_store = store.clone();
+  let retention_store = store.clone();
+  let build_id = fixture.request.build.id;
+  let (hold, preparation) = tokio::join!(
+    hold_store.place_build_result_hold(place_request(
+      build_id,
+      "race protection",
+      None,
+      "hold-race",
+      time(1_501),
+    )),
+    retention_store
+      .prepare_retention_work(PrepareRetentionWork::new(metadata.work_id, metadata.owner, time(1_501), 1).unwrap(),)
+  );
+  preparation.unwrap();
+  let state = store
+    .build_result_retention(GetBuildResultRetention {
+      build_id,
+      observed_at: time(1_502),
+    })
+    .await
+    .unwrap();
+  match hold {
+    Ok(_) => {
+      assert!(state.visibility.complete());
+      assert_eq!(state.hold.unwrap().state, RetentionHoldState::Active);
+    }
+    Err(StoreError::Conflict {
+      entity: EntityKind::RetentionHold,
+    }) => {
+      assert!(!state.visibility.metadata);
+      assert!(state.hold.is_none());
+    }
+    other => panic!("unexpected hold race outcome: {other:?}"),
+  }
+  database.cleanup().await;
+}
+
 async fn insert_output_event(pool: &sqlx::PgPool, grant: &LeaseGrant) {
   sqlx::query(
     "INSERT INTO job_events \
@@ -215,6 +545,62 @@ async fn insert_output_event(pool: &sqlx::PgPool, grant: &LeaseGrant) {
   .execute(pool)
   .await
   .unwrap();
+}
+
+async fn claim_root(
+  execution: &PostgresAuthoritativeStore,
+  fixture: &octacity_server_store::testing::StoreContractFixture,
+) -> LeaseGrant {
+  match execution
+    .claim_ready_job(
+      JobClaim::new(
+        id(200),
+        LeaseFence::from_bytes([8; 32]),
+        fixture.agent_id,
+        fixture.registration_epoch,
+        fixture.allowed_pool,
+        compatible_snapshot(),
+        LeaseWindow::new(time(600), time(10_000)).unwrap(),
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap()
+  {
+    JobClaimOutcome::Claimed(grant) => *grant,
+    JobClaimOutcome::Empty => panic!("fixture root Job must be claimable"),
+  }
+}
+
+fn place_request(
+  build_id: octacity_server_domain::BuildId,
+  reason: &str,
+  expires_at: Option<Timestamp>,
+  idempotency_key: &str,
+  placed_at: Timestamp,
+) -> PlaceBuildResultHold {
+  PlaceBuildResultHold {
+    build_id,
+    reason: RetentionHoldReason::new(reason).unwrap(),
+    expires_at,
+    actor_identity: None,
+    request_identity: RetentionRequestIdentity::new(format!("request:{idempotency_key}")).unwrap(),
+    idempotency_key: key(idempotency_key),
+    placed_at,
+  }
+}
+
+fn deadlines(milliseconds: i64) -> BuildRetentionDeadlines {
+  BuildRetentionDeadlines {
+    metadata: time(milliseconds),
+    logs: time(milliseconds),
+    artifacts: time(milliseconds),
+    reports: time(milliseconds),
+  }
+}
+
+fn key(value: &str) -> IdempotencyKey {
+  IdempotencyKey::new(value).unwrap()
 }
 
 async fn output_usage(pool: &sqlx::PgPool, build_id: octacity_server_domain::BuildId) -> (i64, i64) {

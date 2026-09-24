@@ -3,14 +3,15 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use octacity_server_api_rest::v1::{
   AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-  BuildManagementApplication, CacheManagementApplication, CatalogManagementApplication,
-  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
-  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
-  ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ScheduleManagementApplication,
+  BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
+  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
+  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+  ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
 };
 use octacity_server_application::{
-  ApplicationError, JobEventPageProjection, JobEventProjection, QueryHandler, ReadJobEventsQuery,
+  ApplicationError, CommandHandler, GetBuildResultRetentionQuery, JobEventPageProjection, JobEventProjection,
+  PlaceBuildResultHoldCommand, QueryHandler, ReadJobEventsQuery, ReleaseBuildResultHoldCommand,
 };
 
 use crate::RecordingApplication;
@@ -44,6 +45,21 @@ pub fn recording_management_application<E>(
 where
   E: QueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
 {
+  recording_management_application_with_retention(application.clone(), job_events, application)
+}
+
+pub fn recording_management_application_with_retention<E, R>(
+  application: Arc<RecordingApplication>,
+  job_events: Arc<E>,
+  retention: Arc<R>,
+) -> ManagementApplication
+where
+  E: QueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
+  R: QueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>
+    + CommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>
+    + CommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>
+    + 'static,
+{
   ManagementApplication::new(
     ["native".to_owned()],
     Duration::from_secs(900),
@@ -68,7 +84,8 @@ where
         JobEventManagementApplication::new(job_events),
         ArtifactManagementApplication::new(Arc::clone(&application)),
         CacheManagementApplication::new(Arc::clone(&application)),
-        BuildLogSearchManagementApplication::new(application),
+        BuildLogSearchManagementApplication::new(Arc::clone(&application)),
+        BuildResultRetentionManagementApplication::new(retention),
       ),
     ),
   )

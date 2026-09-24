@@ -42,12 +42,14 @@ mod project_cqrs;
 mod project_policy;
 mod projections;
 mod retention;
+mod retention_hold;
 mod retry_policy;
 mod schedule_cqrs;
 mod snapshots;
 mod transaction;
 mod webhook_delivery;
 
+pub use octacity_server_domain::{RetentionHoldVersion, Timestamp};
 pub use octacity_server_store::{
   BuildLogStream, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode, LogSearchQuery,
   MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, StoreError,
@@ -178,6 +180,12 @@ pub use projections::{
   Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
 };
 pub use retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};
+pub use retention_hold::{
+  BuildResultHoldProjection, BuildResultHoldStateProjection, BuildResultRetentionCommandOutcome,
+  BuildResultRetentionDeadlinesProjection, BuildResultRetentionHandlers, BuildResultRetentionProjection,
+  BuildResultVisibilityProjection, GetBuildResultRetentionQuery, MAX_BUILD_RESULT_HOLD_REASON_BYTES,
+  PlaceBuildResultHoldCommand, ReleaseBuildResultHoldCommand, RetentionAuditIdentityProjection,
+};
 pub use retry_policy::{DurableRetryPolicy, DurableRetryPolicyError};
 pub use schedule_cqrs::{
   CreateScheduleCommand, GetScheduleQuery, ScheduleBatchOutcome, ScheduleCommandOutcome, ScheduleHandlers,

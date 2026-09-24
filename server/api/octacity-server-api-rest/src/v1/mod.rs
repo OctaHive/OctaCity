@@ -18,15 +18,17 @@ mod operations;
 mod pipeline;
 mod pool;
 mod project;
+mod retention;
 mod trigger;
 
 pub use adapter::{
   AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-  BuildManagementApplication, CacheManagementApplication, CatalogManagementApplication,
-  ConfigurationManagementApplication, DefinitionManagementApplication, ExecutionManagementApplication,
-  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
-  ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ScheduleManagementApplication, router as management_routes,
+  BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
+  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
+  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
+  ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;
@@ -41,6 +43,7 @@ pub use operations::*;
 pub use pipeline::*;
 pub use pool::*;
 pub use project::*;
+pub use retention::*;
 pub use trigger::*;
 
 /// URL prefix for the first management API contract.

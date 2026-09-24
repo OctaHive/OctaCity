@@ -229,6 +229,38 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
   for backend_field in ["bucket", "object_key", "tsvector", "postgres_rank"] {
     assert!(log_hit.get(backend_field).is_none());
   }
+  assert_eq!(
+    document["components"]["schemas"]["PlaceBuildResultHoldRequest"]["properties"]["reason"]["x-max-utf8-bytes"],
+    512
+  );
+  assert!(
+    document["components"]["schemas"]["PlaceBuildResultHoldRequest"]["properties"]["reason"]
+      .get("maxLength")
+      .is_none()
+  );
+  assert!(
+    document["paths"]["/api/v1/builds/{build_id}/retention/hold/release"]["post"]["responses"]
+      .get("412")
+      .is_some()
+  );
+  assert!(
+    document["paths"]["/api/v1/projects/{project_id}/rename"]["post"]["responses"]
+      .get("412")
+      .is_none(),
+    "routes that classify stale versions as conflict must not advertise 412"
+  );
+  let retention = document["components"]["schemas"]["BuildResultRetentionResource"]["properties"]
+    .as_object()
+    .unwrap();
+  for backend_field in [
+    "bucket",
+    "object_key",
+    "credential",
+    "storage_provider",
+    "retention_work_id",
+  ] {
+    assert!(retention.get(backend_field).is_none());
+  }
 
   for (schema, body) in request_examples() {
     assert_json_matches_component(&document, schema, &body);

@@ -5,7 +5,8 @@ use octacity_server_api_rest::v1::{
   CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest,
   CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse,
   IdempotencyKey, InternalTriggerDefinitionRequest, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
-  MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, ProjectResource, VersionPrecondition,
+  MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, PlaceBuildResultHoldRequest, ProjectResource,
+  VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -189,6 +190,14 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
   let mut enrollment: Value = serde_json::from_str(ISSUE_AGENT_ENROLLMENT).unwrap();
   enrollment["registration_credential"] = json!("must-never-be-accepted");
   assert!(serde_json::from_value::<IssueAgentEnrollmentRequest>(enrollment).is_err());
+
+  assert!(
+    serde_json::from_value::<PlaceBuildResultHoldRequest>(json!({
+      "reason": "incident investigation",
+      "storage_provider": "must-never-be-accepted"
+    }))
+    .is_err()
+  );
 }
 
 #[test]

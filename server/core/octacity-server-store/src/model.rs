@@ -256,7 +256,7 @@ pub struct ImmutableBuildInput {
 }
 
 /// Immutable automatic-retention deadlines for one Build Result.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BuildRetentionDeadlines {
   /// Deadline after which Build metadata and configuration snapshots may be hidden.
   pub metadata: Timestamp,
