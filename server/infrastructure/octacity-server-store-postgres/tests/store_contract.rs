@@ -63,6 +63,11 @@ async fn postgres_satisfies_the_authoritative_store_contract() {
 
   let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
   let result = tokio::spawn(verify_authoritative_store_contract(store, evidence)).await;
+  let orchestrator_audit_count: i64 =
+    sqlx::query_scalar("SELECT COUNT(*) FROM audit_facts WHERE operation = 'reconcile-job-completion'")
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
   let terminal_graph_counts: (i64, i64, i64) = sqlx::query_as(
     "SELECT \
        (SELECT COUNT(*) FROM builds WHERE state = 'failed'), \
@@ -74,6 +79,10 @@ async fn postgres_satisfies_the_authoritative_store_contract() {
   .unwrap();
   database.cleanup().await;
   result.expect("PostgreSQL authoritative-store contract failed");
+  assert_eq!(
+    orchestrator_audit_count, 3,
+    "each accepted Job completion must append one distinct Orchestrator reconciliation fact"
+  );
   assert_eq!(
     terminal_graph_counts,
     (0, 1, 1),

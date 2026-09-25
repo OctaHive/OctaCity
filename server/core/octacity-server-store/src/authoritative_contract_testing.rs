@@ -643,10 +643,10 @@ where
     evidence.mutation_evidence_counts().await,
     MutationEvidenceCounts {
       idempotency: 17,
-      audit: 17,
+      audit: 20,
       outbox: 17,
     },
-    "every accepted mutation must atomically persist one idempotency outcome, audit fact, and outbox entry"
+    "accepted mutations must atomically persist primary evidence and each Job completion must also audit Orchestrator reconciliation"
   );
 }
 

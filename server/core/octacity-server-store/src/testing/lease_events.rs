@@ -374,7 +374,11 @@ pub(super) async fn complete(
     build_state: decision.build_state(),
   };
   let evidence_identity = format!("complete-job:{}", request.completion_id);
+  let orchestrator_audit_identity = format!("reconcile-job-completion:{}", request.completion_id);
   ensure_evidence_available(&state, &evidence_identity)?;
+  if state.audit_facts.contains(&orchestrator_audit_identity) {
+    return Err(StoreError::Unavailable);
+  }
   ensure_enqueue_capacity(&state, ready_jobs.iter().copied())?;
   state.current_lease_by_job.remove(&grant.job_id);
   state.jobs.get_mut(&grant.job_id).ok_or(StoreError::Unavailable)?.state = completed_state;
@@ -401,6 +405,8 @@ pub(super) async fn complete(
     },
   );
   record_evidence(&mut state, evidence_identity);
+  let orchestrator_audit_inserted = state.audit_facts.insert(orchestrator_audit_identity);
+  debug_assert!(orchestrator_audit_inserted);
   state.commit();
   Ok(outcome)
 }
