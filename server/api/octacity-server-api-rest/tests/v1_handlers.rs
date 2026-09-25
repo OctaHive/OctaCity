@@ -13,7 +13,8 @@ use octacity_server_api_rest::{
   v1::{ErrorCode, MANAGEMENT_OPERATIONS},
 };
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, BuildLogSearchCursorProjection,
+  AcceptManualTriggerCommand, ApplicationError, AuditActorKind, AuditActorProjection, AuditFactPageProjection,
+  AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery, BuildLogSearchCursorProjection,
   BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection,
   BuildLogStream, CancelBuildCommand, Command, CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
   CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
@@ -21,7 +22,7 @@ use octacity_server_application::{
   DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
   GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
   GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
-  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery,
+  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
   ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError,
   ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand,
   PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
@@ -32,6 +33,8 @@ use octacity_server_application::{
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
 
+#[path = "v1_handlers/audit.rs"]
+mod audit;
 #[path = "v1_handlers/log_search.rs"]
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
@@ -185,6 +188,39 @@ impl QueryHandler<SearchBuildLogsQuery> for RecordingApplication {
         committed_through: Some(19),
         caught_up: false,
       },
+    })
+  }
+}
+
+#[async_trait]
+impl QueryHandler<ListAuditFactsQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn handle_query(
+    &self,
+    _query: ListAuditFactsQuery,
+  ) -> Result<<ListAuditFactsQuery as Query>::Outcome, Self::Error> {
+    self.record("list_audit_facts");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(AuditFactPageProjection {
+      items: vec![AuditFactProjection {
+        id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd".parse().unwrap(),
+        actor: AuditActorProjection {
+          kind: AuditActorKind::UnauthenticatedManagement,
+          identity: None,
+        },
+        operation: "cancel-build".to_owned(),
+        target_kind: "build".to_owned(),
+        target_identity: "99999999-9999-4999-8999-999999999999".to_owned(),
+        request_identity: Some("cancel-build:cancel-17".to_owned()),
+        idempotency_key: Some("cancel-17".to_owned()),
+        outcome: AuditOutcome::Accepted,
+        metadata: serde_json::json!({"cancelled_job_count": 2}),
+        occurred_at_unix_ms: 1_700_000_000_000,
+      }],
+      next_cursor: None,
     })
   }
 }

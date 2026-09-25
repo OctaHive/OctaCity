@@ -127,6 +127,16 @@ impl ServerConfig {
     Duration::from_millis(self.agent_lease_lifetime_milliseconds)
   }
 
+  /// Maximum duration of one best-effort Agent telemetry export.
+  pub const fn agent_telemetry_export_timeout(&self) -> Duration {
+    Duration::from_millis(self.agent_telemetry_export_timeout_milliseconds)
+  }
+
+  /// Maximum number of Agent telemetry exports retained concurrently.
+  pub const fn agent_telemetry_max_in_flight_exports(&self) -> usize {
+    self.agent_telemetry_max_in_flight_exports as usize
+  }
+
   pub(crate) const fn lease_expiry_worker(&self) -> WorkerPolicy {
     WorkerPolicy::new(
       self.lease_expiry_poll_interval_milliseconds,

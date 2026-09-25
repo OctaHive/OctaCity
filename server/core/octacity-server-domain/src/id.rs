@@ -159,3 +159,8 @@ opaque_id!(
   EntityKind::RetentionWork,
   "Opaque identity of one durable Build Result retention operation."
 );
+opaque_id!(
+  AuditFactId,
+  EntityKind::AuditFact,
+  "Opaque identity of an immutable audit fact."
+);

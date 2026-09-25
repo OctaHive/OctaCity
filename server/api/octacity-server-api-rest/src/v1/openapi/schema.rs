@@ -1,5 +1,6 @@
 mod agent;
 mod artifact;
+mod audit;
 mod cache;
 mod core;
 mod execution;

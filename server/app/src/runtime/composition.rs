@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
-use octacity_server_api_agent::{AgentApiConfig, AgentRouterDependencies, ReadyJobNotificationHub, agent_router};
+use octacity_server_api_agent::{
+  AgentApiConfig, AgentRouterDependencies, AgentTelemetryIngress, AgentTelemetryPolicy, ReadyJobNotificationHub,
+  agent_router,
+};
 use octacity_server_api_cache::{CacheDataPlaneApplication, cache_router};
 use octacity_server_api_webhook::{WebhookApplication, webhook_router};
 use octacity_server_application::{
-  AgentExecutionService, AgentHeartbeatService, AgentLeaseService, AgentRegistrationService, ArtifactHandlers,
-  BuildRetentionWorker, CacheDataPlaneService, CacheSessionHandlers, DurableRetryPolicy, InternalTriggerWorker,
-  LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker, RevisionResolver, ScheduleWorker,
-  WebhookDeliveryWorker,
+  AgentExecutionService, AgentHeartbeatService, AgentLeaseService, AgentRegistrationService, AgentTelemetryService,
+  ArtifactHandlers, BuildRetentionWorker, CacheDataPlaneService, CacheSessionHandlers, DurableRetryPolicy,
+  InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker, RevisionResolver,
+  ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_store::WorkerOwner;
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
@@ -20,6 +23,7 @@ use super::{
   application::{ApplicationAssembly, ApplicationComponents, management_application},
   assembly::RuntimeResources,
   listeners::RuntimeComponents,
+  telemetry::UnavailableAgentTelemetryExporter,
   vcs::HostedRevisionResolver,
   workers::{
     DurableWorkers, EXPIRY_WORKER_NAME, INTERNAL_TRIGGER_WORKER_NAME, LOG_INDEX_WORKER_NAME,
@@ -230,6 +234,15 @@ impl ServerRuntime {
       config.agent_lease_lifetime(),
     )
     .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?;
+    let telemetry_service = AgentTelemetryIngress::new(
+      Arc::new(AgentTelemetryService::new(registration_service.clone())),
+      Arc::new(UnavailableAgentTelemetryExporter),
+      AgentTelemetryPolicy::new(
+        config.agent_telemetry_max_in_flight_exports(),
+        config.agent_telemetry_export_timeout(),
+      )
+      .ok_or(ServerRuntimeError::InvalidAgentPolicy)?,
+    );
     let api_config =
       AgentApiConfig::new(config.agent_max_retry_delay_milliseconds()).ok_or(ServerRuntimeError::InvalidAgentPolicy)?;
     let webhook_deliveries = if config.webhook_bind().is_some() {
@@ -300,6 +313,7 @@ impl ServerRuntime {
             registration_service,
             Arc::new(lease_service),
             Arc::new(heartbeat_service),
+            telemetry_service,
             Arc::new(execution_service),
             artifact_service,
             cache_service,

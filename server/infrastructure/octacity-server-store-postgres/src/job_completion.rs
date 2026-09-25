@@ -15,7 +15,10 @@ use uuid::Uuid;
 use crate::{
   database::{classify, job_ids, number, unavailable},
   lease,
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    AdditionalAuditFact, MutationFacts, MutationIdentity, MutationKind, MutationStart, append_additional_audit_fact,
+    decode_outcome, encode_outcome,
+  },
   state::{attempt_state, build_state, job_state, parse_attempt_state, parse_build_state, parse_job_state},
 };
 
@@ -82,6 +85,7 @@ pub(crate) async fn execute(
         attempt_state: parse_attempt_state(&existing.attempt_state)?,
         build_state: parse_build_state(&existing.build_state)?,
       };
+      append_orchestrator_fact(&mut transaction, &identity, attempt_id, &outcome).await?;
       crate::mutation::commit(
         transaction,
         &identity,
@@ -134,6 +138,7 @@ pub(crate) async fn execute(
     attempt_state: applied.attempt_state,
     build_state: applied.build_state,
   };
+  append_orchestrator_fact(&mut transaction, &identity, attempt_id, &outcome).await?;
   crate::mutation::commit(
     transaction,
     &identity,
@@ -142,6 +147,33 @@ pub(crate) async fn execute(
   )
   .await?;
   Ok(outcome)
+}
+
+async fn append_orchestrator_fact(
+  transaction: &mut Transaction<'_, Postgres>,
+  identity: &MutationIdentity,
+  attempt_id: Uuid,
+  outcome: &CompletionDisposition,
+) -> Result<(), StoreError> {
+  append_additional_audit_fact(
+    transaction,
+    identity,
+    AdditionalAuditFact {
+      actor_kind: "orchestrator",
+      actor_identity: None,
+      operation: "reconcile-job-completion",
+      target_kind: "attempt",
+      target_identity: attempt_id.to_string(),
+      safe_metadata: json!({
+        "job_id": outcome.job_id,
+        "ready_job_count": outcome.ready_jobs.len(),
+        "skipped_job_count": outcome.skipped_jobs.len(),
+        "attempt_state": attempt_state(outcome.attempt_state),
+        "build_state": build_state(outcome.build_state),
+      }),
+    },
+  )
+  .await
 }
 
 async fn require_durable_cursor(

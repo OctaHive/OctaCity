@@ -13,6 +13,8 @@
 //! [canonical glossary]: https://github.com/OctaHive/OctaCity/blob/main/CONTEXT.md
 //! [server ownership guide]: https://github.com/OctaHive/OctaCity/blob/main/docs/server-architecture.md
 
+#![warn(missing_docs)]
+
 use std::{
   collections::{BTreeMap, BTreeSet},
   fs,

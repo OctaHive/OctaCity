@@ -5,15 +5,17 @@
 //! framing, deadlines, idempotency headers, and retry policy. Lease polling
 //! verifies the signed job before exposing it to the future job state machine.
 
+#![warn(missing_docs)]
+
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{
-  AcquireLeaseResponse, AgentInventory, AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest,
-  BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse, CompleteLeaseRequest,
-  CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecError, LeaseAssignment,
-  RevokeCacheSessionRequest,
+  AcquireLeaseResponse, AgentInventory, AgentTelemetrySample, AppendEventsResponse, AttemptEventEnvelope,
+  BeginCacheSessionRequest, BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse,
+  CompleteLeaseRequest, CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity, HostSnapshot,
+  IngestAgentTelemetryResponse, JobSpecError, LeaseAssignment, RevokeCacheSessionRequest,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -287,6 +289,18 @@ pub trait CacheSessionCoordinator: Send + Sync {
     request: &RevokeCacheSessionRequest,
     cancellation: CancellationToken,
   ) -> Result<(), CoordinatorError>;
+}
+
+/// Narrow best-effort boundary kept outside lease and event coordination.
+#[async_trait]
+pub trait AgentTelemetryCoordinator: Send + Sync {
+  /// Uploads a bounded diagnostic sample batch and returns explicit loss accounting.
+  async fn ingest_agent_telemetry(
+    &self,
+    registration: &Registration,
+    samples: &[AgentTelemetrySample],
+    cancellation: CancellationToken,
+  ) -> Result<IngestAgentTelemetryResponse, CoordinatorError>;
 }
 
 pub(crate) fn verify_assignment(

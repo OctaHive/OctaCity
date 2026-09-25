@@ -109,7 +109,7 @@ pub(crate) async fn create(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
+      actor_kind: "unauthenticated_management",
       actor_identity: None,
       target_identity: trigger.id.to_string(),
       safe_metadata: json!({"version": trigger.version.get(), "kind": "scheduled"}),

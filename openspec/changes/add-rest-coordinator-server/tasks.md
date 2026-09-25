@@ -88,9 +88,9 @@
 
 ## 8. Audit and Observability
 
-- [ ] 8.1 Implement append-only structured audit-fact operations for management, agent, Trigger, Orchestrator, adapter, and worker mutations plus bounded typed application queries and read-only management REST adapters; verify mutation attempts are absent from the Rust port, unauthenticated management actors are represented honestly, sensitive request bodies are never stored, and extend the OpenAPI drift test.
-- [ ] 8.2 Define stable server and Agent metric names, units, labels, trace fields, redaction rules, and cardinality budgets in the shared observability crate; verify high-cardinality identifiers and secret wrappers cannot become metric labels.
-- [ ] 8.3 Implement bounded agent telemetry ingestion independently of heartbeat and ordered build-event acceptance; verify exporter outage cannot fail coordination or grow memory without bound.
+- [x] 8.1 Implement append-only structured audit-fact operations for management, agent, Trigger, Orchestrator, adapter, and worker mutations plus bounded typed application queries and read-only management REST adapters; verify mutation attempts are absent from the Rust port, unauthenticated management actors are represented honestly, sensitive request bodies are never stored, and extend the OpenAPI drift test.
+- [x] 8.2 Define stable server and Agent metric names, units, labels, trace fields, redaction rules, and cardinality budgets in the shared observability crate; verify high-cardinality identifiers and secret wrappers cannot become metric labels.
+- [x] 8.3 Implement bounded agent telemetry ingestion independently of heartbeat and ordered build-event acceptance; verify exporter outage cannot fail coordination or grow memory without bound.
 - [ ] 8.4 Instrument REST, webhooks, VCS, triggers, orchestration, placement, leases, store operations, cache, artifacts, outbox, and workers; verify representative success, retry, rejection, and failure paths emit correlated safe telemetry.
 
 ## 9. Agent Ready Release Matrix

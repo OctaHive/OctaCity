@@ -6,6 +6,8 @@
 //! configuration, source acquisition, coordinator transport, or concrete
 //! execution backends.
 
+#![warn(missing_docs)]
+
 mod installation;
 mod protocol;
 mod supervisor;

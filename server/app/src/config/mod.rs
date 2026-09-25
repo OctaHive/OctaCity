@@ -74,6 +74,10 @@ pub struct ServerConfig {
   agent_max_retry_delay_milliseconds: u64,
   #[serde(default = "default_agent_lease_lifetime_milliseconds")]
   agent_lease_lifetime_milliseconds: u64,
+  #[serde(default = "default_agent_telemetry_export_timeout_milliseconds")]
+  agent_telemetry_export_timeout_milliseconds: u64,
+  #[serde(default = "default_agent_telemetry_max_in_flight_exports")]
+  agent_telemetry_max_in_flight_exports: u16,
   #[serde(default = "default_lease_expiry_poll_interval_milliseconds")]
   lease_expiry_poll_interval_milliseconds: u64,
   #[serde(default = "default_lease_expiry_claim_lifetime_milliseconds")]

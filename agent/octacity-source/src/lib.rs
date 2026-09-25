@@ -5,6 +5,8 @@
 //! may be started. Provider behavior remains outside this crate behind the
 //! versioned `octacity-source-plugin` process protocol.
 
+#![warn(missing_docs)]
+
 mod host;
 mod registry;
 

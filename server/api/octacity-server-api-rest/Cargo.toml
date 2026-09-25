@@ -11,6 +11,7 @@ description = "Management REST API adapter for the OctaCity server"
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
+octacity-observability = { path = "../../../shared/octacity-observability" }
 octacity-server-application = { path = "../../application" }
 serde.workspace = true
 serde_json.workspace = true

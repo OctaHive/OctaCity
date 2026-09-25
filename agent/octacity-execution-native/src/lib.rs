@@ -5,6 +5,8 @@
 //! cgroup v2 enforces CPU, memory, and process limits. Writable data is limited
 //! to the workspace filesystem, whose capacity is the signed disk boundary.
 
+#![warn(missing_docs)]
+
 use std::{collections::BTreeMap, path::PathBuf};
 
 #[cfg(target_os = "linux")]

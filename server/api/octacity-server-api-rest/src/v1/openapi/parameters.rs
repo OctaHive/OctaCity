@@ -114,6 +114,21 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         super::super::adapter::DEFAULT_LOG_SEARCH_LIMIT,
       ),
     ]),
+    ParameterProfile::AuditFacts => parameters.extend([
+      json!({"name": "actor_kind", "in": "query", "required": false, "schema": schema_ref("AuditActorKind")}),
+      bounded_utf8_parameter("actor_identity", octacity_server_application::MAX_AUDIT_ACTOR_IDENTITY_BYTES),
+      bounded_utf8_parameter("operation", octacity_server_application::MAX_AUDIT_OPERATION_BYTES),
+      bounded_utf8_parameter("target_kind", octacity_server_application::MAX_AUDIT_TARGET_KIND_BYTES),
+      bounded_utf8_parameter("target_identity", octacity_server_application::MAX_AUDIT_TARGET_IDENTITY_BYTES),
+      bounded_utf8_parameter("request_identity", octacity_server_application::MAX_AUDIT_REQUEST_IDENTITY_BYTES),
+      json!({"name": "occurred_from_unix_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}),
+      json!({"name": "occurred_through_unix_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}),
+      cursor_parameter(),
+      limit_parameter(
+        octacity_server_application::MAX_AUDIT_PAGE_SIZE,
+        super::super::adapter::DEFAULT_AUDIT_LIMIT,
+      ),
+    ]),
   }
   if operation.idempotent_mutation {
     parameters.push(json!({
@@ -155,5 +170,14 @@ fn limit_parameter(maximum: u16, default: u16) -> Value {
       "maximum": maximum,
       "default": default
     }
+  })
+}
+
+fn bounded_utf8_parameter(name: &str, maximum_bytes: usize) -> Value {
+  json!({
+    "name": name,
+    "in": "query",
+    "required": false,
+    "schema": {"type": "string", "minLength": 1, "x-max-utf8-bytes": maximum_bytes}
   })
 }

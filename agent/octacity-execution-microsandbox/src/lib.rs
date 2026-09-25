@@ -10,6 +10,8 @@
 //! images, logs, and VM state under the agent's configured state root instead
 //! of ambient user directories.
 
+#![warn(missing_docs)]
+
 use std::{
   fs,
   path::{Path, PathBuf},

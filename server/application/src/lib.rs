@@ -5,6 +5,7 @@
 //! types must remain outside this crate.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod agent_cqrs;
 mod agent_enrollment;
@@ -13,9 +14,13 @@ mod agent_heartbeat;
 mod agent_lease;
 mod agent_placement;
 mod agent_registration;
+mod agent_telemetry;
+#[cfg(test)]
+mod agent_telemetry_tests;
 mod artifact_transfer;
 #[cfg(test)]
 mod artifact_transfer_tests;
+mod audit_query;
 mod build_cqrs;
 mod cache_data_plane;
 mod cache_session;
@@ -51,7 +56,9 @@ mod webhook_delivery;
 
 pub use octacity_server_domain::{RetentionHoldVersion, Timestamp};
 pub use octacity_server_store::{
-  BuildLogStream, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode, LogSearchQuery,
+  AuditActorKind, AuditOutcome, BuildLogStream, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode,
+  LogSearchQuery, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_OPERATION_BYTES, MAX_AUDIT_PAGE_SIZE,
+  MAX_AUDIT_REQUEST_IDENTITY_BYTES, MAX_AUDIT_TARGET_IDENTITY_BYTES, MAX_AUDIT_TARGET_KIND_BYTES,
   MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, StoreError,
 };
 
@@ -71,10 +78,18 @@ pub use agent_registration::{
   AgentOperation, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationService,
   AgentRegistrationUseCases, AuthorizeAgentInput, AuthorizedAgent,
 };
+pub use agent_telemetry::{
+  AgentTelemetryBatch, AgentTelemetryError, AgentTelemetryExportError, AgentTelemetryExporter, AgentTelemetryInput,
+  AgentTelemetryService, AgentTelemetryUseCases,
+};
 pub use artifact_transfer::{
   AgentArtifactError, AgentArtifactTransferUseCases, ArtifactDownloadProjection, ArtifactHandlers, ArtifactProjection,
   ArtifactProjectionKind, AuthorizeArtifactDownloadQuery, BeginAgentArtifactUploadInput,
   CompleteAgentArtifactUploadInput, GetArtifactQuery, ListBuildArtifactsQuery,
+};
+pub use audit_query::{
+  AuditActorProjection, AuditCursorInput, AuditCursorProjection, AuditFactPageProjection, AuditFactProjection,
+  AuditFactQueryInput, AuditQueries, ListAuditFactsQuery,
 };
 pub use build_cqrs::{
   AttemptDetailsProjection, BuildDetailsProjection, BuildHandlers, CancelBuildCommand, CancelBuildCommandOutcome,

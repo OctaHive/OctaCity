@@ -8,7 +8,7 @@ use octacity_server_application::{
   DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
   GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
   GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
-  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListBuildArtifactsQuery,
+  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
   ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand,
   ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
@@ -69,6 +69,7 @@ type BuildLogsSearch = dyn QueryHandler<SearchBuildLogsQuery, Error = BuildLogSe
 type BuildRetentionGet = dyn QueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>;
 type BuildRetentionPlace = dyn CommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>;
 type BuildRetentionRelease = dyn CommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>;
+type AuditFactList = dyn QueryHandler<ListAuditFactsQuery, Error = ApplicationError>;
 
 /// Type-erased Project handlers consumed by REST.
 pub struct ProjectManagementApplication {
@@ -396,6 +397,19 @@ impl BuildLogSearchManagementApplication {
   }
 }
 
+/// Type-erased read-only audit query consumed by REST.
+pub struct AuditManagementApplication(pub(super) Arc<AuditFactList>);
+
+impl AuditManagementApplication {
+  /// Erases one audit service behind its read-only query capability.
+  pub fn new<A>(service: Arc<A>) -> Self
+  where
+    A: QueryHandler<ListAuditFactsQuery, Error = ApplicationError> + 'static,
+  {
+    Self(service)
+  }
+}
+
 /// Type-erased whole-Build-Result retention query and command handlers.
 pub struct BuildResultRetentionManagementApplication {
   pub(super) get: Arc<BuildRetentionGet>,
@@ -505,6 +519,7 @@ pub struct ManagementApplicationHandlers {
   pub(super) catalog: CatalogManagementApplication,
   pub(super) agents: AgentManagementApplication,
   pub(super) execution: ExecutionManagementApplication,
+  pub(super) audit: AuditManagementApplication,
 }
 
 impl ManagementApplicationHandlers {
@@ -513,11 +528,13 @@ impl ManagementApplicationHandlers {
     catalog: CatalogManagementApplication,
     agents: AgentManagementApplication,
     execution: ExecutionManagementApplication,
+    audit: AuditManagementApplication,
   ) -> Self {
     Self {
       catalog,
       agents,
       execution,
+      audit,
     }
   }
 }

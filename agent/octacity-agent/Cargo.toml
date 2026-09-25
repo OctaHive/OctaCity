@@ -21,6 +21,7 @@ octacity-identity = { path = "../octacity-identity" }
 octacity-job = { path = "../octacity-job" }
 octacity-lifecycle = { path = "../octacity-lifecycle" }
 octacity-output = { path = "../octacity-output" }
+octacity-observability = { path = "../../shared/octacity-observability" }
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }

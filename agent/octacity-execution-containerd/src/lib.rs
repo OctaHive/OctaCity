@@ -6,6 +6,8 @@
 //! snapshot, FIFO, and cgroup name is derived from an OctaCity-owned execution
 //! identifier so startup cleanup can remain narrow and deterministic.
 
+#![warn(missing_docs)]
+
 use std::{path::PathBuf, time::Duration};
 
 /// Stable scheduler and diagnostics identifier for this execution engine.

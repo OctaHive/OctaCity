@@ -32,6 +32,14 @@ pub(super) const fn default_agent_lease_lifetime_milliseconds() -> u64 {
   5 * 60 * 1000
 }
 
+pub(super) const fn default_agent_telemetry_export_timeout_milliseconds() -> u64 {
+  1_000
+}
+
+pub(super) const fn default_agent_telemetry_max_in_flight_exports() -> u16 {
+  4
+}
+
 pub(super) const fn default_lease_expiry_poll_interval_milliseconds() -> u64 {
   1_000
 }

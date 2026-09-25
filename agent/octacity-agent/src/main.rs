@@ -6,6 +6,7 @@
 use std::{future::Future, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
+use octacity_observability::TraceEvent;
 use tracing::{debug, error};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
 
@@ -76,7 +77,7 @@ fn main() -> ExitCode {
   match result {
     Ok(()) => ExitCode::SUCCESS,
     Err(error) => {
-      error!(error = %error, "agent command failed");
+      error!(event.name = TraceEvent::AgentCommandFailed.as_str(), error = %error, "agent command failed");
       ExitCode::FAILURE
     }
   }

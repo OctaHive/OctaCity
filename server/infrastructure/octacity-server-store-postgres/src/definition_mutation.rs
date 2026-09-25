@@ -105,7 +105,7 @@ pub(crate) async fn publish_policy(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
+      actor_kind: "unauthenticated_management",
       actor_identity: None,
       target_identity: request.project_id.to_string(),
       safe_metadata: json!({"version": version.get()}),
@@ -168,7 +168,7 @@ pub(crate) async fn create_trigger(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
+      actor_kind: "unauthenticated_management",
       actor_identity: None,
       target_identity: request.id.to_string(),
       safe_metadata: json!({

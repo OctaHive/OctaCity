@@ -2,12 +2,13 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use octacity_server_api_rest::v1::{
-  AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-  BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
-  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
-  ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
+  BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
+  CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
+  DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
+  JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
+  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ScheduleManagementApplication,
 };
 use octacity_server_application::{
   ApplicationError, CommandHandler, GetBuildResultRetentionQuery, JobEventPageProjection, JobEventProjection,
@@ -87,6 +88,7 @@ where
         BuildLogSearchManagementApplication::new(Arc::clone(&application)),
         BuildResultRetentionManagementApplication::new(retention),
       ),
+      AuditManagementApplication::new(application),
     ),
   )
   .unwrap()

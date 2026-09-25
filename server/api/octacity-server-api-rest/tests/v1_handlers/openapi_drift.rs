@@ -262,6 +262,33 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     assert!(retention.get(backend_field).is_none());
   }
 
+  let audit = &document["paths"]["/api/v1/audit-facts"]["get"];
+  assert_eq!(audit["operationId"], "listAuditFacts");
+  assert_eq!(
+    document["components"]["schemas"]["AuditActorKind"]["enum"],
+    serde_json::json!([
+      "unauthenticated_management",
+      "agent",
+      "trigger",
+      "orchestrator",
+      "adapter",
+      "worker"
+    ])
+  );
+  let audit_limit = audit["parameters"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|parameter| parameter["name"] == "limit")
+    .unwrap();
+  assert_eq!(audit_limit["schema"]["maximum"], 200);
+  let audit_fact = document["components"]["schemas"]["AuditFactResource"]["properties"]
+    .as_object()
+    .unwrap();
+  for forbidden in ["request_body", "credential", "secret", "raw_payload"] {
+    assert!(audit_fact.get(forbidden).is_none());
+  }
+
   for (schema, body) in request_examples() {
     assert_json_matches_component(&document, schema, &body);
   }

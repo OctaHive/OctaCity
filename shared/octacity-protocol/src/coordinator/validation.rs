@@ -298,6 +298,59 @@ impl ResourceUsageSnapshot {
   }
 }
 
+impl AgentTelemetrySample {
+  /// Validates the timestamp and the finite runtime/isolation vocabulary.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    if self.observed_at_unix_ms == 0 {
+      return invalid("telemetry sample timestamp must be greater than zero");
+    }
+    match (self.runtime, self.isolation) {
+      (AgentTelemetryRuntime::Native, AgentTelemetryIsolation::Native)
+      | (AgentTelemetryRuntime::Containerd, AgentTelemetryIsolation::OciProcess)
+      | (AgentTelemetryRuntime::Microsandbox, AgentTelemetryIsolation::OciHypervisor) => Ok(()),
+      _ => invalid("telemetry runtime and isolation are inconsistent"),
+    }
+  }
+}
+
+impl IngestAgentTelemetryRequest {
+  /// Validates correlation, authentication epoch, ordering, and both batch bounds.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    if self.samples.is_empty() || self.samples.len() > MAX_AGENT_TELEMETRY_SAMPLES {
+      return invalid("telemetry sample count is outside the protocol bounds");
+    }
+    let mut previous_timestamp = 0;
+    for sample in &self.samples {
+      sample.validate()?;
+      if sample.observed_at_unix_ms < previous_timestamp {
+        return invalid("telemetry samples must be ordered by observation time");
+      }
+      previous_timestamp = sample.observed_at_unix_ms;
+    }
+    let encoded_size = serde_json::to_vec(self)
+      .map_err(|error| CoordinatorProtocolError::new(format!("telemetry request cannot be encoded: {error}")))?
+      .len();
+    if encoded_size > MAX_AGENT_TELEMETRY_REQUEST_BYTES {
+      return invalid("telemetry request exceeds the encoded byte limit");
+    }
+    Ok(())
+  }
+}
+
+impl IngestAgentTelemetryResponse {
+  /// Correlates the response and accounts for every submitted sample.
+  pub fn validate(&self, expected_request_id: &str, submitted_samples: usize) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, expected_request_id)?;
+    let accounted = usize::from(self.accepted_samples) + usize::from(self.dropped_samples);
+    if accounted != submitted_samples || submitted_samples > MAX_AGENT_TELEMETRY_SAMPLES {
+      return invalid("telemetry response does not account for the submitted samples");
+    }
+    Ok(())
+  }
+}
+
 impl AttemptEventEnvelope {
   /// Validates fencing, stream ordering metadata, and event-local invariants.
   pub fn validate(&self, expected: &LeaseFence) -> Result<(), CoordinatorProtocolError> {

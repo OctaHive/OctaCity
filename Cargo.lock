@@ -3961,6 +3961,7 @@ dependencies = [
  "octacity-inventory",
  "octacity-job",
  "octacity-lifecycle",
+ "octacity-observability",
  "octacity-output",
  "octacity-protocol",
  "octacity-runner",
@@ -4229,6 +4230,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-observability"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "octacity-output"
 version = "0.1.0"
 dependencies = [
@@ -4393,6 +4401,7 @@ dependencies = [
  "octacity-server-application",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "tokio",
  "tower",
 ]
@@ -4416,6 +4425,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "octacity-observability",
  "octacity-server-application",
  "serde",
  "serde_json",
@@ -4473,6 +4483,16 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.20",
  "uuid",
+]
+
+[[package]]
+name = "octacity-server-audit"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -4573,6 +4593,7 @@ dependencies = [
  "async-trait",
  "octacity-protocol",
  "octacity-server-artifacts",
+ "octacity-server-audit",
  "octacity-server-cache",
  "octacity-server-domain",
  "octacity-server-job",

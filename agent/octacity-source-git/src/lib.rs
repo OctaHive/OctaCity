@@ -5,6 +5,8 @@
 //! commit object requested by the signed job, and checks workspace size both
 //! before and after checkout.
 
+#![warn(missing_docs)]
+
 use std::{
   collections::BTreeMap,
   fs,

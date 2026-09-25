@@ -14,6 +14,7 @@ axum.workspace = true
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-server-application = { path = "../../application" }
 serde.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

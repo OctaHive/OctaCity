@@ -1,5 +1,5 @@
 use octacity_server_domain::{EntityKind, Timestamp};
-use octacity_server_store::StoreError;
+use octacity_server_store::{AuditActorKind, AuditMetadata, StoreError};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -79,6 +79,15 @@ pub(crate) struct MutationFacts {
   pub(crate) target_identity: String,
   pub(crate) safe_metadata: Value,
   pub(crate) outbox_payload: Value,
+}
+
+pub(crate) struct AdditionalAuditFact {
+  pub(crate) actor_kind: &'static str,
+  pub(crate) actor_identity: Option<String>,
+  pub(crate) operation: &'static str,
+  pub(crate) target_kind: &'static str,
+  pub(crate) target_identity: String,
+  pub(crate) safe_metadata: Value,
 }
 
 #[derive(Clone, Copy)]
@@ -464,6 +473,11 @@ pub(crate) async fn commit(
   facts: MutationFacts,
   outcome: Value,
 ) -> Result<(), StoreError> {
+  let actor_kind = facts
+    .actor_kind
+    .parse::<AuditActorKind>()
+    .map_err(|_| StoreError::Unavailable)?;
+  let safe_metadata = AuditMetadata::try_new(facts.safe_metadata).map_err(|_| StoreError::Unavailable)?;
   sqlx::query(
     "INSERT INTO audit_facts \
        (id, actor_kind, actor_identity, operation, target_kind, target_identity, request_identity, \
@@ -472,14 +486,14 @@ pub(crate) async fn commit(
              to_timestamp($10::double precision / 1000.0))",
   )
   .bind(stable_record_id("audit", identity))
-  .bind(facts.actor_kind)
+  .bind(actor_kind.as_str())
   .bind(facts.actor_identity)
   .bind(identity.kind.scope())
   .bind(identity.kind.target_kind())
   .bind(&facts.target_identity)
   .bind(&identity.request_identity)
   .bind(&identity.key)
-  .bind(Json(facts.safe_metadata))
+  .bind(Json(safe_metadata.as_value()))
   .bind(identity.occurred_at.unix_millis())
   .execute(&mut *transaction)
   .await
@@ -512,6 +526,39 @@ pub(crate) async fn commit(
     return Err(StoreError::Unavailable);
   }
   transaction.commit().await.map_err(unavailable)
+}
+
+pub(crate) async fn append_additional_audit_fact(
+  transaction: &mut Transaction<'_, Postgres>,
+  identity: &MutationIdentity,
+  fact: AdditionalAuditFact,
+) -> Result<(), StoreError> {
+  let actor_kind = fact
+    .actor_kind
+    .parse::<AuditActorKind>()
+    .map_err(|_| StoreError::Unavailable)?;
+  let metadata = AuditMetadata::try_new(fact.safe_metadata).map_err(|_| StoreError::Unavailable)?;
+  sqlx::query(
+    "INSERT INTO audit_facts \
+       (id, actor_kind, actor_identity, operation, target_kind, target_identity, request_identity, \
+        idempotency_key, outcome, safe_metadata, occurred_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'accepted', $9, \
+       to_timestamp($10::double precision / 1000.0))",
+  )
+  .bind(stable_record_id(fact.operation, identity))
+  .bind(actor_kind.as_str())
+  .bind(fact.actor_identity)
+  .bind(fact.operation)
+  .bind(fact.target_kind)
+  .bind(fact.target_identity)
+  .bind(&identity.request_identity)
+  .bind(&identity.key)
+  .bind(Json(metadata.as_value()))
+  .bind(identity.occurred_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
 }
 
 fn stable_record_id(record_kind: &str, identity: &MutationIdentity) -> Uuid {

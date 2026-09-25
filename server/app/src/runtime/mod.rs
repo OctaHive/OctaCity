@@ -13,6 +13,7 @@ mod lifecycle;
 mod listeners;
 mod maintenance;
 mod notifications;
+mod telemetry;
 mod vcs;
 mod webhook;
 mod workers;

@@ -22,7 +22,7 @@ pub use error::{
 };
 pub use execution::{ArtifactPolicy, ArtifactPolicyError, RuntimeClass};
 pub use id::{
-  AgentId, ArtifactId, ArtifactUploadId, AttemptId, BuildConfigurationId, BuildId, CacheSessionId,
+  AgentId, ArtifactId, ArtifactUploadId, AttemptId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId,
   EnrollmentCredentialId, IntegrationId, JobId, LeaseId, LogChunkId, LogIndexingWorkId, PipelineId, PoolId, ProjectId,
   RegistrationCredentialId, RepositoryId, RetentionWorkId, TriggerId, TriggerOccurrenceId,
 };

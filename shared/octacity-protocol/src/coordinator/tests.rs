@@ -319,6 +319,20 @@ fn golden_coordinator_documents_match_the_wire_types() {
   .unwrap();
   heartbeat.validate("heartbeat-20260911-1", 1_789_056_100, 10).unwrap();
 
+  let telemetry: IngestAgentTelemetryRequest = serde_json::from_str(include_str!(
+    "../../../protocol-fixtures/coordinator/telemetry-request-v1.json"
+  ))
+  .unwrap();
+  telemetry.validate().unwrap();
+
+  let telemetry_response: IngestAgentTelemetryResponse = serde_json::from_str(include_str!(
+    "../../../protocol-fixtures/coordinator/telemetry-response-v1.json"
+  ))
+  .unwrap();
+  telemetry_response
+    .validate("telemetry-20260925-1", telemetry.samples.len())
+    .unwrap();
+
   let events: AppendEventsRequest = serde_json::from_str(include_str!(
     "../../../protocol-fixtures/coordinator/events-append-request-v1.json"
   ))

@@ -1,9 +1,9 @@
 # Server-agent transport protocol v1
 
 Status: implemented by `octacity-protocol`, `octacity-coordinator`, and
-`octacity-lifecycle` for registration, lease acquisition, heartbeat, durable
-events, cache-session authority, artifact/report upload authorization, and
-terminal completion.
+`octacity-lifecycle` for registration, lease acquisition, heartbeat, bounded
+diagnostic telemetry, durable events, cache-session authority, artifact/report
+upload authorization, and terminal completion.
 
 ## Boundary
 
@@ -31,6 +31,7 @@ The v1 client retries only idempotent operations:
 - agent registration;
 - lease acquisition;
 - fenced lease heartbeat;
+- bounded diagnostic telemetry ingestion;
 - fenced event append;
 - fenced cache-session begin and revocation;
 - fenced artifact/report upload begin and completion;
@@ -143,6 +144,25 @@ and never replace cgroup, quota, container, or VM enforcement.
 While a job is active, `active_job.resource_usage` carries the latest
 cumulative sample for live scheduling and diagnostics. The same sample is an
 ordered durable agent event; heartbeat is not its storage channel.
+
+## Diagnostic telemetry
+
+```text
+POST /api/v1/agents/telemetry:ingest
+```
+
+Telemetry is authenticated by the current registration but is not part of
+lease renewal, ordered event history, or terminal completion. A request carries
+at most 128 time-ordered interval samples and its encoded JSON is limited to 64
+KiB. Runtime and isolation are closed protocol enums; the payload contains no
+Agent, Job, path, repository, or user-controlled metric labels.
+
+The server returns `accepted_samples` and `dropped_samples` whose sum equals the
+submitted count. Export calls have operator-configured concurrency and timeout
+budgets. Saturation drops immediately without a waiting queue, and exporter
+failure or timeout reports the complete batch as dropped while heartbeat,
+event append, and completion continue through independent application paths.
+An exporter deduplicates `request_id` within the coordinator retry window.
 
 ## Durable attempt events
 

@@ -27,6 +27,7 @@ members = [
   "server/api/octacity-server-api-webhook",
   "server/application",
   "server/core/octacity-artifact-store",
+  "server/core/octacity-server-audit",
   "server/core/octacity-server-artifacts",
   "server/core/octacity-server-cache",
   "server/core/octacity-server-domain",
@@ -48,6 +49,7 @@ members = [
   "server/protocols/octacity-vcs-protocol",
   "server/protocols/octacity-webhook-provider-protocol",
   "server/tests/octacity-phase6-contract-tests",
+  "shared/octacity-observability",
   "shared/octacity-protocol",
 ]
 

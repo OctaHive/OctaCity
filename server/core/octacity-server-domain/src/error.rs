@@ -51,6 +51,8 @@ pub enum EntityKind {
   RetentionWork,
   /// Versioned hold protecting one complete Build Result.
   RetentionHold,
+  /// Immutable structured audit fact.
+  AuditFact,
 }
 
 impl std::fmt::Display for EntityKind {
@@ -79,6 +81,7 @@ impl std::fmt::Display for EntityKind {
       Self::LogIndexingWork => "log_indexing_work",
       Self::RetentionWork => "retention_work",
       Self::RetentionHold => "retention_hold",
+      Self::AuditFact => "audit_fact",
     })
   }
 }

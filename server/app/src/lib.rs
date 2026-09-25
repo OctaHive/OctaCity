@@ -10,6 +10,7 @@
 //! [server architecture guide]: https://github.com/OctaHive/OctaCity/blob/main/docs/server-architecture.md
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 mod config;
 mod readiness;

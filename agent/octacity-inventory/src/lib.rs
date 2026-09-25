@@ -4,6 +4,8 @@
 //! runner and source-plugin inventories. The coordinator transport receives
 //! versioned DTOs and never reaches into component-specific types.
 
+#![warn(missing_docs)]
+
 use std::{
   collections::BTreeMap,
   fs,

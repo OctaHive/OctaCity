@@ -636,7 +636,7 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     persisted_graph_state(pool, request.build.id.as_uuid(), request.attempt_id.as_uuid()).await?;
 
   assert_eq!(mutation_record_count(pool, "idempotency_records").await?, 4);
-  assert_eq!(mutation_record_count(pool, "audit_facts").await?, 4);
+  assert_eq!(mutation_record_count(pool, "audit_facts").await?, 5);
   assert_eq!(mutation_record_count(pool, "outbox_entries").await?, 4);
   let topics: Vec<String> = sqlx::query_scalar("SELECT topic FROM outbox_entries ORDER BY topic")
     .fetch_all(pool)
@@ -675,7 +675,7 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   assert_eq!(completed.job_id, grant.job_id);
   assert_eq!(accepted.ready_jobs, [grant.job_id]);
   assert_eq!(mutation_record_count(pool, "idempotency_records").await?, 4);
-  assert_eq!(mutation_record_count(pool, "audit_facts").await?, 4);
+  assert_eq!(mutation_record_count(pool, "audit_facts").await?, 5);
   assert_eq!(mutation_record_count(pool, "outbox_entries").await?, 4);
 
   let mismatched_claim = JobClaim {

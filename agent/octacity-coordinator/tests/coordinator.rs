@@ -11,19 +11,21 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use octacity_coordinator::{
-  CacheSessionCoordinator, CoordinatorClient, CoordinatorError, HttpCoordinatorClient, HttpCoordinatorConfig,
-  LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, OutputUploadCoordinator,
-  Registration, RetryPolicy,
+  AgentTelemetryCoordinator, CacheSessionCoordinator, CoordinatorClient, CoordinatorError, HttpCoordinatorClient,
+  HttpCoordinatorConfig, LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, LeasePollOutcome, LeasePoller,
+  OutputUploadCoordinator, Registration, RetryPolicy,
 };
 use octacity_protocol::{
-  AcquireLeaseResponse, ActiveJob, AgentInventory, AgentLifecycleEvent, AppendEventsResponse, AttemptEventEnvelope,
-  AttemptEventKind, BackendHealth, BackendHealthStatus, BeginCacheSessionRequest, BeginCacheSessionResponse,
-  COORDINATOR_PROTOCOL_VERSION, CachePolicy, CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest,
-  CompleteOutputUploadResponse, CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity,
-  HostSnapshot, JobCompletionStatus, JobLifecycleState, JobSpecV1, LeaseAssignment, NetworkPolicy, OciIsolation,
-  OctaInventory, OctaSpec, OutputKind, OutputLimits, OutputUploadMetadata, PlatformArchitecture, PlatformOs,
-  PlatformSpec, RegisterAgentResponse, RemoteCacheGrant, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
-  RuntimeCapability, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM, SignedEnvelope, SourceSpec,
+  AcquireLeaseResponse, ActiveJob, AgentInventory, AgentLifecycleEvent, AgentTelemetryIsolation, AgentTelemetryRuntime,
+  AgentTelemetrySample, AppendEventsResponse, AttemptEventEnvelope, AttemptEventKind, BackendHealth,
+  BackendHealthStatus, BeginCacheSessionRequest, BeginCacheSessionResponse, COORDINATOR_PROTOCOL_VERSION, CachePolicy,
+  CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse,
+  CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot,
+  IngestAgentTelemetryResponse, JobCompletionStatus, JobLifecycleState, JobSpecV1, LeaseAssignment, NetworkPolicy,
+  OciIsolation, OctaInventory, OctaSpec, OutputKind, OutputLimits, OutputUploadMetadata, PlatformArchitecture,
+  PlatformOs, PlatformSpec, RegisterAgentResponse, RemoteCacheGrant, RevokeCacheSessionRequest,
+  RevokeCacheSessionResponse, RuntimeCapability, RuntimeMode, RuntimeSpec, RuntimeTarget, SIGNATURE_ALGORITHM,
+  SignedEnvelope, SourceSpec,
 };
 use serde_json::json;
 use tokio::{
@@ -49,6 +51,7 @@ enum Action {
   CompleteOutput,
   BeginCache,
   RevokeCache,
+  Telemetry,
   Complete,
   Oversized(usize),
 }
@@ -263,6 +266,18 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
           protocol_version: COORDINATOR_PROTOCOL_VERSION,
           request_id: request.request_id.clone(),
           session_id: request.body["session_id"].as_str().unwrap().to_owned(),
+        })
+        .unwrap();
+        write_response(stream, 200, &body).await;
+        return;
+      }
+      Action::Telemetry => {
+        let sample_count = u16::try_from(request.body["samples"].as_array().unwrap().len()).unwrap();
+        let body = serde_json::to_vec(&IngestAgentTelemetryResponse {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id: request.request_id.clone(),
+          accepted_samples: sample_count,
+          dropped_samples: 0,
         })
         .unwrap();
         write_response(stream, 200, &body).await;
@@ -688,6 +703,35 @@ async fn appends_fenced_events_and_completes_with_stable_idempotency() {
   assert_eq!(records[1].path, "/api/v1/leases/lease-1/complete");
   assert_eq!(records[1].request_id, "complete-request-1");
   assert_eq!(records[1].idempotency_key, "complete-request-1");
+}
+
+#[tokio::test]
+async fn uploads_telemetry_on_its_independent_bounded_endpoint() {
+  let server = MockServer::start(vec![Action::Telemetry]).await;
+  let client = client(&server, 1, Duration::from_secs(1), 16 * 1024);
+  let samples = [AgentTelemetrySample {
+    observed_at_unix_ms: 1,
+    runtime: AgentTelemetryRuntime::Native,
+    isolation: AgentTelemetryIsolation::Native,
+    cpu_time_ms: 1,
+    memory_current_bytes: 2,
+    io_read_bytes: 3,
+    io_written_bytes: 4,
+    network_received_bytes: None,
+    network_transmitted_bytes: None,
+  }];
+
+  let response = client
+    .ingest_agent_telemetry(&registration(), &samples, CancellationToken::new())
+    .await
+    .unwrap();
+
+  assert_eq!(response.accepted_samples, 1);
+  assert_eq!(response.dropped_samples, 0);
+  let records = server.records.lock().unwrap();
+  assert_eq!(records[0].path, "/api/v1/agents/telemetry:ingest");
+  assert_eq!(records[0].body["registration_id"], "registration-1");
+  assert_eq!(records[0].body["samples"][0]["runtime"], "native");
 }
 
 #[tokio::test]

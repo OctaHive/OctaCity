@@ -132,7 +132,7 @@ pub(crate) async fn publish(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
+      actor_kind: "unauthenticated_management",
       actor_identity: None,
       target_identity: request.id.to_string(),
       safe_metadata: json!({"version": next_version.get(), "kind": "internal", "enabled": request.enabled}),

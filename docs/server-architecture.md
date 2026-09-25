@@ -74,9 +74,11 @@ provider crate name.
 | `octacity-server-adapter-host` | Shared registry filesystem checks, executable digest verification, bounded framing, cancellation, timeout, and process cleanup | Provider manifests, wire-message semantics, capability policy, and adapter selection |
 | `octacity-server-webhook` | Operator-installed webhook-adapter discovery, capability gating, and webhook protocol policy over the shared host | Public webhook HTTP routing, provider SDKs, Trigger evaluation, and durable delivery retry |
 | `octacity-server-vcs` | Operator-installed VCS-adapter discovery, capability gating, credential-handle isolation, and VCS protocol policy over the shared host | Git implementation, repository execution, build workspaces, and provider SDKs |
+| `octacity-server-audit` | Stable actor vocabulary, secret-safe bounded metadata, immutable fact projections, and deterministic read-query bounds | Independently callable audit writes, transport DTOs, and SQL rows |
 | `octacity-vcs-git` | Read-only Git refs, immutable commit selection, tree browsing, and bounded content reads through an ephemeral bare object database | Build workspaces, checkout, repository hooks, Octafile evaluation, and source execution |
 | `octacity-artifact-store` | Backend-neutral immutable-byte interface | Logical Artifact lifecycle and storage-provider details |
 | `octacity-artifact-s3` | S3-compatible implementation of Artifact and cache immutable-byte ports with separate private layouts | Logical policy and public S3 details |
+| `octacity-observability` | Shared stable metric names, units, closed low-cardinality labels, series budgets, trace fields, and redaction rules | Exporters, subscribers, transport queues, raw diagnostics, or correctness state |
 | `octacity-protocol` | Shared signed JobSpec, server-Agent, and Artifact-transfer wire contracts | Server domain entities and HTTP routes |
 
 Planned ownership names are not compiled as empty packages. Tasks 6.3 and 6.4
@@ -84,8 +86,10 @@ have introduced `octacity-server-webhook` over the shared verified process host 
 `octacity-server-api-webhook` with its exact-body authenticated ingress.
 Tasks 6.6 and 6.7 have introduced `octacity-server-vcs` with its verified
 process host and `octacity-vcs-git` as the first read-only implementation.
-Tasks 8.1 and 8.2 introduce `octacity-server-audit` and
-`octacity-observability` only when their implementations and consumers exist.
+Task 8.1 has introduced `octacity-server-audit` with transactional mutation
+consumers and read-only management queries. Task 8.2 has introduced
+`octacity-observability` with closed metric labels, explicit per-instrument
+series budgets, stable trace fields, and both server and Agent consumers.
 
 The Artifact Store port lives in the core layer. Its S3-compatible adapter is
 an infrastructure crate selected only by a composition root; neither the core
@@ -148,9 +152,15 @@ earned a permanent seam: they remain dependency-free until implemented, and
 each must pass the deletion test described in the design (own real invariants
 or an enforceable boundary) or be merged into its caller.
 
-The shared observability package is one such explicit scaffold. Current
-inbound HTTP tracing is REST-adapter-local; task 8.2 must introduce the stable
-cross-product vocabulary and real server and Agent consumers together.
+The shared observability package contains vocabulary and safety invariants, not
+an exporter implementation. High-cardinality request, Build, Attempt, Job,
+Agent, Lease, Trigger-occurrence, and integration identities are trace-only
+correlation fields. Metric labels are sealed enums with finite value sets, so
+raw paths, identifiers, user input, and protected wrappers cannot create new
+time series. Export failure is diagnostic loss and never correctness state.
+The application layer owns the transport-independent Agent telemetry exporter
+port, the Agent HTTP adapter owns its bounded concurrency and timeout gate, and
+the composition root selects the concrete exporter adapter.
 
 ## Public protocol seams
 

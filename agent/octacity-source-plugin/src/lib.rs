@@ -1,4 +1,5 @@
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 use std::{collections::BTreeMap, io, path::Path};
 

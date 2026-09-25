@@ -59,6 +59,7 @@ mod agent;
 mod agent_pool;
 mod application;
 mod artifact;
+mod audit;
 mod cache;
 mod configuration;
 mod error;
@@ -75,19 +76,21 @@ mod schedule;
 mod webhook;
 
 pub(crate) use artifact::DEFAULT_ARTIFACT_LIMIT;
+pub(crate) use audit::DEFAULT_AUDIT_LIMIT;
 
 use agent::{drain_agent, get_agent, issue_agent_enrollment, list_agents, reassign_agent_pool};
 use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agent_pools, publish_agent_pool};
 use application::{AgentEndpoints, AgentPoolManagementApplication};
 pub use application::{
-  AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-  BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
-  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
-  ManagementApplicationHandlers, ManualTriggerManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ScheduleManagementApplication,
+  AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
+  BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
+  CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
+  DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
+  JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
+use audit::list_audit_facts;
 use cache::{get_cache_session, list_build_cache_sessions};
 use configuration::{
   create_build_configuration, create_repository, get_build_configuration, get_repository, publish_build_configuration,
@@ -140,6 +143,7 @@ pub struct ManagementApplication {
   cache: CacheManagementApplication,
   log_search: BuildLogSearchManagementApplication,
   retention: BuildResultRetentionManagementApplication,
+  audit: AuditManagementApplication,
 }
 
 impl ManagementApplication {
@@ -154,6 +158,7 @@ impl ManagementApplication {
       catalog,
       agents: agent_management,
       execution,
+      audit,
     } = handlers;
     let CatalogManagementApplication {
       projects,
@@ -197,6 +202,7 @@ impl ManagementApplication {
       cache,
       log_search,
       retention,
+      audit,
     })
   }
 }
@@ -363,6 +369,7 @@ pub fn router(application: ManagementApplication) -> Router {
       &format!("{API_PREFIX}/projects/{{project_id}}/build-logs/search"),
       get(search_build_logs),
     )
+    .route(&format!("{API_PREFIX}/audit-facts"), get(list_audit_facts))
     .fallback(api_not_found)
     .layer(DefaultBodyLimit::max(MAX_MANAGEMENT_BODY_BYTES))
     .with_state(Arc::new(application))

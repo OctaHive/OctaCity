@@ -98,6 +98,17 @@ enrollment_key_file = "agent-enrollment-key"
   );
   assert!(ServerConfig::parse_toml(&disabled_listener_reconnect).is_err());
 
+  for setting in [
+    "agent_telemetry_export_timeout_milliseconds = 0",
+    "agent_telemetry_max_in_flight_exports = 65",
+  ] {
+    let unbounded_telemetry = valid_configuration().replace(
+      "supported_pipeline_capabilities = [\"native\"]",
+      &format!("supported_pipeline_capabilities = [\"native\"]\n{setting}"),
+    );
+    assert!(ServerConfig::parse_toml(&unbounded_telemetry).is_err());
+  }
+
   let oversized = "x".repeat(1024 * 1024 + 1);
   assert!(matches!(
     ServerConfig::parse_toml(&oversized),

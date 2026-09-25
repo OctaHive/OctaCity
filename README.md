@@ -116,7 +116,8 @@ batches. It does not change archived bytes, Job outcomes, or event cursors.
 
 When `agent_bind` is configured, the independently authenticated Agent listener
 serves registration at `/api/v1/agents/register` and lease long polling at
-`/api/v1/agents/{agent_id}/leases:acquire`. When `cache_bind` is configured, it
+`/api/v1/agents/{agent_id}/leases:acquire`, plus bounded best-effort telemetry at
+`/api/v1/agents/telemetry:ingest`. When `cache_bind` is configured, it
 independently serves authenticated Octa HTTP cache v1 traffic;
 the public HTTPS `cache.endpoint` may terminate TLS at a trusted reverse proxy.
 When `webhook_bind` is configured,
@@ -161,6 +162,8 @@ agent_registration_lifetime_milliseconds = 86400000
 agent_enrollment_lifetime_milliseconds = 900000
 agent_max_retry_delay_milliseconds = 30000
 agent_lease_lifetime_milliseconds = 300000
+agent_telemetry_export_timeout_milliseconds = 1000
+agent_telemetry_max_in_flight_exports = 4
 lease_expiry_poll_interval_milliseconds = 1000
 lease_expiry_claim_lifetime_milliseconds = 30000
 lease_expiry_batch_size = 32

@@ -10,6 +10,8 @@
 //! client and bounded object mechanics while keeping their domain contracts in
 //! dedicated internal modules.
 
+#![warn(missing_docs)]
+
 use std::{sync::Arc, time::Duration};
 
 use aws_sdk_s3::{

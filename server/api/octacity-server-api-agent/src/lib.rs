@@ -16,8 +16,8 @@ use axum::{
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AppendEventsRequest, AppendEventsResponse,
   COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse, CoordinatorErrorResponse,
-  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, LeaseAssignment, RegisterAgentRequest,
-  RegisterAgentResponse,
+  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, LeaseAssignment, MAX_AGENT_TELEMETRY_REQUEST_BYTES,
+  RegisterAgentRequest, RegisterAgentResponse,
 };
 use octacity_server_application::{
   AcquireAgentLeaseInput, AgentArtifactTransferUseCases, AgentCacheSessionUseCases, AgentExecutionError,
@@ -29,8 +29,10 @@ use octacity_server_application::{
 mod artifact;
 mod cache;
 mod ready_job;
+mod telemetry;
 
 pub use ready_job::ReadyJobNotificationHub;
+pub use telemetry::{AgentTelemetryIngress, AgentTelemetryPolicy};
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
 const MAX_AGENT_BODY_BYTES: usize = 512 * 1024;
@@ -62,6 +64,7 @@ pub struct AgentRouterDependencies {
   registrations: Arc<dyn AgentRegistrationUseCases>,
   leases: Arc<dyn AgentLeaseUseCases>,
   heartbeats: Arc<dyn AgentHeartbeatUseCases>,
+  telemetry: AgentTelemetryIngress,
   execution: Arc<dyn AgentExecutionUseCases>,
   artifacts: Arc<dyn AgentArtifactTransferUseCases>,
   cache: Arc<dyn AgentCacheSessionUseCases>,
@@ -73,6 +76,7 @@ impl AgentRouterDependencies {
     registrations: Arc<dyn AgentRegistrationUseCases>,
     leases: Arc<dyn AgentLeaseUseCases>,
     heartbeats: Arc<dyn AgentHeartbeatUseCases>,
+    telemetry: AgentTelemetryIngress,
     execution: Arc<dyn AgentExecutionUseCases>,
     artifacts: Arc<dyn AgentArtifactTransferUseCases>,
     cache: Arc<dyn AgentCacheSessionUseCases>,
@@ -81,6 +85,7 @@ impl AgentRouterDependencies {
       registrations,
       leases,
       heartbeats,
+      telemetry,
       execution,
       artifacts,
       cache,
@@ -94,6 +99,7 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
     registrations,
     leases,
     heartbeats,
+    telemetry,
     execution,
     artifacts,
     cache,
@@ -102,6 +108,7 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
     registrations,
     leases,
     heartbeats,
+    telemetry,
     execution,
     artifacts,
     cache,
@@ -111,6 +118,10 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
     .route("/api/v1/agents/register", post(register_agent))
     .route("/api/v1/agents/{agent_id}/leases:acquire", post(acquire_lease))
     .route("/api/v1/leases/{lease_id}/heartbeat", post(heartbeat))
+    .route(
+      "/api/v1/agents/telemetry:ingest",
+      post(telemetry::ingest).layer(DefaultBodyLimit::max(MAX_AGENT_TELEMETRY_REQUEST_BYTES)),
+    )
     .route("/api/v1/leases/{lease_id}/events:append", post(append_events))
     .route("/api/v1/leases/{lease_id}/complete", post(complete_lease))
     .route(
@@ -132,6 +143,7 @@ struct AgentState {
   registrations: Arc<dyn AgentRegistrationUseCases>,
   leases: Arc<dyn AgentLeaseUseCases>,
   heartbeats: Arc<dyn AgentHeartbeatUseCases>,
+  telemetry: AgentTelemetryIngress,
   execution: Arc<dyn AgentExecutionUseCases>,
   artifacts: Arc<dyn AgentArtifactTransferUseCases>,
   cache: Arc<dyn AgentCacheSessionUseCases>,

@@ -8,6 +8,8 @@ const MAX_AGENT_REGISTRATION_LIFETIME_MILLISECONDS: u64 = 30 * 24 * 60 * 60 * 10
 const MAX_AGENT_ENROLLMENT_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
 const MAX_AGENT_RETRY_DELAY_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_AGENT_LEASE_LIFETIME_MILLISECONDS: u64 = 24 * 60 * 60 * 1000;
+const MAX_AGENT_TELEMETRY_EXPORT_TIMEOUT_MILLISECONDS: u64 = 5 * 60 * 1000;
+const MAX_AGENT_TELEMETRY_IN_FLIGHT_EXPORTS: u16 = 64;
 const MAX_LEASE_EXPIRY_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_SCHEDULE_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
 const MAX_INTERNAL_TRIGGER_WORKER_MILLISECONDS: u64 = 5 * 60 * 1000;
@@ -147,6 +149,18 @@ impl ServerConfig {
     {
       return Err(ServerConfigError::Invalid(format!(
         "agent_lease_lifetime_milliseconds must be between 1 and {MAX_AGENT_LEASE_LIFETIME_MILLISECONDS}"
+      )));
+    }
+    if self.agent_telemetry_export_timeout().is_zero() || self.agent_telemetry_max_in_flight_exports() == 0 {
+      return Err(ServerConfigError::Invalid(format!(
+        "Agent telemetry export must be bounded by {MAX_AGENT_TELEMETRY_EXPORT_TIMEOUT_MILLISECONDS} ms / {MAX_AGENT_TELEMETRY_IN_FLIGHT_EXPORTS} in-flight batches"
+      )));
+    }
+    if self.agent_telemetry_export_timeout() > Duration::from_millis(MAX_AGENT_TELEMETRY_EXPORT_TIMEOUT_MILLISECONDS)
+      || self.agent_telemetry_max_in_flight_exports() > usize::from(MAX_AGENT_TELEMETRY_IN_FLIGHT_EXPORTS)
+    {
+      return Err(ServerConfigError::Invalid(format!(
+        "Agent telemetry export must be bounded by {MAX_AGENT_TELEMETRY_EXPORT_TIMEOUT_MILLISECONDS} ms / {MAX_AGENT_TELEMETRY_IN_FLIGHT_EXPORTS} in-flight batches"
       )));
     }
     if !self.lease_expiry_worker().is_bounded(

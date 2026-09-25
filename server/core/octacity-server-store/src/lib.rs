@@ -10,6 +10,7 @@ mod agent_model;
 mod agent_port;
 mod artifact_model;
 mod artifact_port;
+mod audit_port;
 mod build_control;
 mod build_query;
 mod build_query_port;
@@ -124,6 +125,7 @@ pub use artifact_model::{
   VerifyArtifactUpload, artifact_authority_is_valid,
 };
 pub use artifact_port::ArtifactRecordStore;
+pub use audit_port::AuditFactStore;
 pub use build_control::{
   CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
 };
@@ -214,6 +216,12 @@ pub use octacity_server_artifacts::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,
   ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType, LogChunkDigest, LogChunkManifest,
   LogChunkManifestError, MAX_LOG_CHUNK_BYTES, StoredLogChunkManifest,
+};
+pub use octacity_server_audit::{
+  AuditActor, AuditActorKind, AuditCursor, AuditFact, AuditFactPage, AuditFactQuery, AuditInputError, AuditMetadata,
+  AuditOutcome, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_METADATA_BYTES, MAX_AUDIT_METADATA_ENTRIES,
+  MAX_AUDIT_OPERATION_BYTES, MAX_AUDIT_PAGE_SIZE, MAX_AUDIT_REQUEST_IDENTITY_BYTES, MAX_AUDIT_TARGET_IDENTITY_BYTES,
+  MAX_AUDIT_TARGET_KIND_BYTES,
 };
 pub use octacity_server_cache::{
   CacheCredentialDigest, CacheNamespace, CacheNamespacePolicy, CacheOperation, CachePermissions, CacheSessionState,

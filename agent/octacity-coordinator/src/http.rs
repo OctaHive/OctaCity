@@ -4,12 +4,13 @@ use std::{fs, io::Read as _, path::PathBuf, sync::RwLock, time::Duration};
 
 use async_trait::async_trait;
 use octacity_protocol::{
-  AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AppendEventsRequest,
-  AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse,
+  AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AgentTelemetrySample,
+  AppendEventsRequest, AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse,
   BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
   CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse,
-  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, LeaseAssignment,
-  RegisterAgentRequest, RegisterAgentResponse, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
+  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, IngestAgentTelemetryRequest,
+  IngestAgentTelemetryResponse, LeaseAssignment, RegisterAgentRequest, RegisterAgentResponse,
+  RevokeCacheSessionRequest, RevokeCacheSessionResponse,
 };
 use reqwest::{StatusCode, Url, header};
 use serde::{Serialize, de::DeserializeOwned};
@@ -19,8 +20,8 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use crate::{
-  CacheSessionCoordinator, CoordinatorClient, CoordinatorError, OutputUploadCoordinator, Registration, RetryPolicy,
-  invalid, unix_now,
+  AgentTelemetryCoordinator, CacheSessionCoordinator, CoordinatorClient, CoordinatorError, OutputUploadCoordinator,
+  Registration, RetryPolicy, invalid, unix_now,
 };
 
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
@@ -586,6 +587,41 @@ impl CacheSessionCoordinator for HttpCoordinatorClient {
       .await?;
     response.validate(&request.request_id, &request.session_id)?;
     Ok(())
+  }
+}
+
+#[async_trait]
+impl AgentTelemetryCoordinator for HttpCoordinatorClient {
+  async fn ingest_agent_telemetry(
+    &self,
+    registration: &Registration,
+    samples: &[AgentTelemetrySample],
+    cancellation: CancellationToken,
+  ) -> Result<IngestAgentTelemetryResponse, CoordinatorError> {
+    registration.validate()?;
+    let request_id = request_id();
+    let request = IngestAgentTelemetryRequest {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: request_id.clone(),
+      registration_id: registration.registration_id.clone(),
+      samples: samples.to_vec(),
+    };
+    request.validate()?;
+    let response: IngestAgentTelemetryResponse = self
+      .post(
+        PostCall {
+          operation: "ingest agent telemetry",
+          path: &["api", "v1", "agents", "telemetry:ingest"],
+          request_id: &request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        &request,
+      )
+      .await?;
+    response.validate(&request_id, request.samples.len())?;
+    Ok(response)
   }
 }
 

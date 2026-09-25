@@ -10,6 +10,8 @@
 //!
 //! [canonical glossary]: https://github.com/OctaHive/OctaCity/blob/main/CONTEXT.md
 
+#![warn(missing_docs)]
+
 use std::{
   path::{Component, Path, PathBuf},
   pin::Pin,

@@ -18,9 +18,14 @@ pub use octa_cache_protocol::{
 use crate::{CachePolicy, OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope};
 
 mod credential;
+mod telemetry;
 mod validation;
 
 pub use credential::{AGENT_CREDENTIAL_SECRET_BYTES, AgentCredentialKind, AgentCredentialToken};
+pub use telemetry::{
+  AgentTelemetryIsolation, AgentTelemetryRuntime, AgentTelemetrySample, IngestAgentTelemetryRequest,
+  IngestAgentTelemetryResponse, MAX_AGENT_TELEMETRY_REQUEST_BYTES, MAX_AGENT_TELEMETRY_SAMPLES,
+};
 
 /// Server-agent transport version implemented by these DTOs.
 pub const COORDINATOR_PROTOCOL_VERSION: u16 = 1;

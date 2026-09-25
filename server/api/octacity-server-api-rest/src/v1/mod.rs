@@ -7,6 +7,7 @@
 mod adapter;
 mod agent;
 mod artifact;
+mod audit;
 mod cache;
 mod common;
 mod configuration;
@@ -22,16 +23,17 @@ mod retention;
 mod trigger;
 
 pub use adapter::{
-  AgentManagementApplication, ArtifactManagementApplication, BuildLogSearchManagementApplication,
-  BuildManagementApplication, BuildResultRetentionManagementApplication, CacheManagementApplication,
-  CatalogManagementApplication, ConfigurationManagementApplication, DefinitionManagementApplication,
-  ExecutionManagementApplication, InternalTriggerManagementApplication, JobEventManagementApplication,
-  ManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
-  router as management_routes,
+  AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
+  BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
+  CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
+  DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
+  JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
+  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ScheduleManagementApplication, router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;
+pub use audit::*;
 pub use cache::*;
 pub use common::*;
 pub use configuration::*;

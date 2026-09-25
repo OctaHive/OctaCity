@@ -1,0 +1,15 @@
+[package]
+name = "octacity-observability"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Stable bounded observability vocabulary shared by the OctaCity server and agent"
+
+[package.metadata.octacity.shared]
+contract = "server-agent-observability-vocabulary"
+consumers = ["agent", "server"]
+
+[dependencies]
+thiserror.workspace = true

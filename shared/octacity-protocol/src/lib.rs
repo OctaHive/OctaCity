@@ -9,6 +9,8 @@
 //!
 //! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/signed-job-spec-v1.md
 
+#![warn(missing_docs)]
+
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};

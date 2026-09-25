@@ -5,6 +5,8 @@
 //! configuration-owned invariants; construction of source, runner, and
 //! execution components belongs to the agent composition root.
 
+#![warn(missing_docs)]
+
 use std::{
   collections::{BTreeMap, BTreeSet},
   fs,

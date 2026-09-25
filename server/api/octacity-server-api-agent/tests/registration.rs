@@ -4,6 +4,7 @@ use std::{
     Arc,
     atomic::{AtomicBool, Ordering},
   },
+  time::Duration,
 };
 
 use async_trait::async_trait;
@@ -12,22 +13,27 @@ use axum::{
   http::{Request, StatusCode, header},
 };
 use octacity_protocol::{
-  AcquireLeaseRequest, AcquireLeaseResponse, AppendEventsRequest, AppendEventsResponse, BeginCacheSessionRequest,
-  BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION,
-  CachePolicy, CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse,
-  CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostSnapshot, LeaseFence,
-  OutputKind, OutputUploadMetadata, RegisterAgentRequest, RegisterAgentResponse, RemoteCacheGrant,
-  RevokeCacheSessionRequest, RevokeCacheSessionResponse,
+  AcquireLeaseRequest, AcquireLeaseResponse, AgentTelemetryIsolation, AgentTelemetryRuntime, AgentTelemetrySample,
+  AppendEventsRequest, AppendEventsResponse, BeginCacheSessionRequest, BeginCacheSessionResponse,
+  BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CachePolicy, CompleteLeaseRequest,
+  CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse,
+  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostSnapshot, IngestAgentTelemetryRequest,
+  IngestAgentTelemetryResponse, LeaseFence, MAX_AGENT_TELEMETRY_REQUEST_BYTES, OutputKind, OutputUploadMetadata,
+  RegisterAgentRequest, RegisterAgentResponse, RemoteCacheGrant, RevokeCacheSessionRequest, RevokeCacheSessionResponse,
 };
-use octacity_server_api_agent::{AgentApiConfig, AgentRouterDependencies, agent_router as build_agent_router};
+use octacity_server_api_agent::{
+  AgentApiConfig, AgentRouterDependencies, AgentTelemetryIngress, AgentTelemetryPolicy,
+  agent_router as build_agent_router,
+};
 use octacity_server_application::{
   AcquireAgentLeaseInput, AgentArtifactError, AgentArtifactTransferUseCases, AgentCacheSessionError,
   AgentCacheSessionUseCases, AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput,
   AgentHeartbeatUseCases, AgentLeaseError, AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError,
-  AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationUseCases, AppendAgentEventsInput,
-  AuthorizeAgentInput, AuthorizedAgent, BeginAgentArtifactUploadInput, BeginAgentCacheSessionInput,
-  CompleteAgentArtifactUploadInput, CompleteAgentLeaseInput, LeaseHeartbeatOutcome, RegistrationEpoch,
-  RevokeAgentCacheSessionInput,
+  AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationUseCases, AgentTelemetryBatch,
+  AgentTelemetryError, AgentTelemetryExportError, AgentTelemetryExporter, AgentTelemetryInput, AgentTelemetryUseCases,
+  AppendAgentEventsInput, AuthorizeAgentInput, AuthorizedAgent, BeginAgentArtifactUploadInput,
+  BeginAgentCacheSessionInput, CompleteAgentArtifactUploadInput, CompleteAgentLeaseInput, LeaseHeartbeatOutcome,
+  RegistrationEpoch, RevokeAgentCacheSessionInput,
 };
 use tower::ServiceExt as _;
 
@@ -38,17 +44,67 @@ fn agent_router(
   execution: Arc<dyn AgentExecutionUseCases>,
   config: AgentApiConfig,
 ) -> axum::Router {
+  agent_router_with_telemetry(
+    registrations,
+    leases,
+    heartbeats,
+    execution,
+    AgentTelemetryIngress::new(
+      Arc::new(TelemetryApplication),
+      Arc::new(AcceptingTelemetryExporter),
+      AgentTelemetryPolicy::new(4, Duration::from_secs(1)).unwrap(),
+    ),
+    config,
+  )
+}
+
+fn agent_router_with_telemetry(
+  registrations: Arc<dyn AgentRegistrationUseCases>,
+  leases: Arc<dyn AgentLeaseUseCases>,
+  heartbeats: Arc<dyn AgentHeartbeatUseCases>,
+  execution: Arc<dyn AgentExecutionUseCases>,
+  telemetry: AgentTelemetryIngress,
+  config: AgentApiConfig,
+) -> axum::Router {
   build_agent_router(
     AgentRouterDependencies::new(
       registrations,
       leases,
       heartbeats,
+      telemetry,
       execution,
       Arc::new(ArtifactApplication),
       Arc::new(CacheApplication),
     ),
     config,
   )
+}
+
+struct TelemetryApplication;
+
+struct AcceptingTelemetryExporter;
+
+struct FailingTelemetryExporter;
+
+#[async_trait]
+impl AgentTelemetryExporter for AcceptingTelemetryExporter {
+  async fn export(&self, _batch: AgentTelemetryBatch) -> Result<(), AgentTelemetryExportError> {
+    Ok(())
+  }
+}
+
+#[async_trait]
+impl AgentTelemetryExporter for FailingTelemetryExporter {
+  async fn export(&self, _batch: AgentTelemetryBatch) -> Result<(), AgentTelemetryExportError> {
+    Err(AgentTelemetryExportError)
+  }
+}
+
+#[async_trait]
+impl AgentTelemetryUseCases for TelemetryApplication {
+  async fn authorize_ingest(&self, input: AgentTelemetryInput) -> Result<AgentTelemetryBatch, AgentTelemetryError> {
+    AgentTelemetryBatch::try_from_request(input.request)
+  }
 }
 
 struct RecordingApplication {
@@ -411,6 +467,161 @@ async fn shared_heartbeat_request_reaches_its_independent_application_boundary()
   let response: HeartbeatResponse = serde_json::from_slice(&body).unwrap();
   assert_eq!(response.request_id, request.request_id);
   assert_eq!(response.directive, HeartbeatDirective::Fenced);
+}
+
+#[tokio::test]
+async fn telemetry_uses_a_separate_route_and_reports_sample_accounting() {
+  let application = Arc::new(RecordingApplication {
+    called: AtomicBool::new(false),
+    lease_called: AtomicBool::new(false),
+    heartbeat_called: AtomicBool::new(false),
+  });
+  let request = IngestAgentTelemetryRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "telemetry-1".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    samples: vec![telemetry_sample()],
+  };
+  let response = agent_router(
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    application,
+    AgentApiConfig::new(5_000).unwrap(),
+  )
+  .oneshot(agent_request(
+    "/api/v1/agents/telemetry:ingest",
+    &request.request_id,
+    &request,
+  ))
+  .await
+  .unwrap();
+
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let response: IngestAgentTelemetryResponse = serde_json::from_slice(&body).unwrap();
+  response.validate(&request.request_id, request.samples.len()).unwrap();
+  assert_eq!(response.accepted_samples, 1);
+  assert_eq!(response.dropped_samples, 0);
+}
+
+#[tokio::test]
+async fn telemetry_route_enforces_its_smaller_body_limit_before_deserialization() {
+  let application = Arc::new(RecordingApplication {
+    called: AtomicBool::new(false),
+    lease_called: AtomicBool::new(false),
+    heartbeat_called: AtomicBool::new(false),
+  });
+  let response = agent_router(
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    application,
+    AgentApiConfig::new(5_000).unwrap(),
+  )
+  .oneshot(
+    Request::post("/api/v1/agents/telemetry:ingest")
+      .header(header::CONTENT_TYPE, "application/json")
+      .header(
+        header::AUTHORIZATION,
+        "Bearer registration.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+      )
+      .header("idempotency-key", "oversized-telemetry")
+      .body(Body::from(vec![b' '; MAX_AGENT_TELEMETRY_REQUEST_BYTES + 1]))
+      .unwrap(),
+  )
+  .await
+  .unwrap();
+
+  assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn telemetry_exporter_outage_reports_loss_without_failing_heartbeat() {
+  let application = Arc::new(RecordingApplication {
+    called: AtomicBool::new(false),
+    lease_called: AtomicBool::new(false),
+    heartbeat_called: AtomicBool::new(false),
+  });
+  let router = agent_router_with_telemetry(
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    application.clone(),
+    AgentTelemetryIngress::new(
+      Arc::new(TelemetryApplication),
+      Arc::new(FailingTelemetryExporter),
+      AgentTelemetryPolicy::new(1, Duration::from_secs(1)).unwrap(),
+    ),
+    AgentApiConfig::new(5_000).unwrap(),
+  );
+  let telemetry = IngestAgentTelemetryRequest {
+    protocol_version: COORDINATOR_PROTOCOL_VERSION,
+    request_id: "telemetry-outage".to_owned(),
+    registration_id: "registration-1".to_owned(),
+    samples: vec![telemetry_sample()],
+  };
+  let response = router
+    .clone()
+    .oneshot(agent_request(
+      "/api/v1/agents/telemetry:ingest",
+      &telemetry.request_id,
+      &telemetry,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let response: IngestAgentTelemetryResponse = serde_json::from_slice(&body).unwrap();
+  assert_eq!(response.accepted_samples, 0);
+  assert_eq!(response.dropped_samples, 1);
+
+  let heartbeat: HeartbeatRequest = serde_json::from_str(include_str!(
+    "../../../../shared/protocol-fixtures/coordinator/heartbeat-request-v1.json"
+  ))
+  .unwrap();
+  let response = router
+    .clone()
+    .oneshot(agent_request(
+      "/api/v1/leases/lease-42/heartbeat",
+      &heartbeat.request_id,
+      &heartbeat,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert!(application.heartbeat_called.load(Ordering::SeqCst));
+
+  let events: AppendEventsRequest = serde_json::from_str(include_str!(
+    "../../../../shared/protocol-fixtures/coordinator/events-append-request-v1.json"
+  ))
+  .unwrap();
+  let response = router
+    .oneshot(agent_request(
+      "/api/v1/leases/lease-42/events:append",
+      &events.request_id,
+      &events,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+  let response: AppendEventsResponse = serde_json::from_slice(&body).unwrap();
+  response.validate(&events.request_id, 1, 2).unwrap();
+}
+
+fn telemetry_sample() -> AgentTelemetrySample {
+  AgentTelemetrySample {
+    observed_at_unix_ms: 1,
+    runtime: AgentTelemetryRuntime::Native,
+    isolation: AgentTelemetryIsolation::Native,
+    cpu_time_ms: 1,
+    memory_current_bytes: 2,
+    io_read_bytes: 3,
+    io_written_bytes: 4,
+    network_received_bytes: None,
+    network_transmitted_bytes: None,
+  }
 }
 
 #[tokio::test]

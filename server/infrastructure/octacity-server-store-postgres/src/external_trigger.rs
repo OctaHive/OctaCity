@@ -127,7 +127,7 @@ pub(crate) async fn create(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
+      actor_kind: "unauthenticated_management",
       actor_identity: None,
       target_identity: request.integration_id.to_string(),
       safe_metadata: json!({
@@ -277,7 +277,7 @@ pub(crate) async fn create_managed(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
+      actor_kind: "unauthenticated_management",
       actor_identity: None,
       target_identity: request.integration_id.to_string(),
       safe_metadata: json!({
@@ -461,8 +461,8 @@ pub(crate) async fn record_managed(
     transaction,
     &identity,
     MutationFacts {
-      actor_kind: "management_api",
-      actor_identity: None,
+      actor_kind: "adapter",
+      actor_identity: Some(request.owner.as_str().to_owned()),
       target_identity: request.integration_id.to_string(),
       safe_metadata: json!({
         "operation": request.operation,

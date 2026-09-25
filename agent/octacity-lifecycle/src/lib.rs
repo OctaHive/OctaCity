@@ -5,6 +5,8 @@
 //! calls. This keeps lease policy out of execution backends and keeps HTTP and
 //! filesystem formats out of the job orchestrator.
 
+#![warn(missing_docs)]
+
 mod delivery;
 mod journal;
 mod lifecycle;

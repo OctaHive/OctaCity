@@ -1,0 +1,18 @@
+{
+  "protocol_version": 1,
+  "request_id": "telemetry-20260925-1",
+  "registration_id": "registration-20260925-1",
+  "samples": [
+    {
+      "observed_at_unix_ms": 1789992000000,
+      "runtime": "containerd",
+      "isolation": "oci_process",
+      "cpu_time_ms": 42,
+      "memory_current_bytes": 1048576,
+      "io_read_bytes": 4096,
+      "io_written_bytes": 8192,
+      "network_received_bytes": 1024,
+      "network_transmitted_bytes": 2048
+    }
+  ]
+}

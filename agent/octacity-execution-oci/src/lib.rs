@@ -4,6 +4,8 @@
 //! containerd and Microsandbox remain replaceable details and cannot weaken a
 //! signed `hypervisor` request to process isolation.
 
+#![warn(missing_docs)]
+
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;

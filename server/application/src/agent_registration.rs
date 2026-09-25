@@ -44,6 +44,8 @@ pub enum AgentOperation {
   Heartbeat,
   /// Append durable attempt events.
   AppendEvents,
+  /// Submit bounded diagnostic telemetry.
+  Telemetry,
   /// Begin or finish an output upload.
   Upload,
   /// Begin or revoke remote-cache authority.

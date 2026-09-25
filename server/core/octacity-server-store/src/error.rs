@@ -212,6 +212,8 @@ pub enum StoreOperation {
   CompleteOrphanLogChunk,
   /// Retry or dead-letter one orphan-log cleanup candidate.
   FailOrphanLogChunk,
+  /// List one bounded page of immutable audit facts.
+  ListAuditFacts,
 }
 
 /// Invalid caller input rejected before any authoritative state changes.
@@ -389,6 +391,9 @@ pub enum StoreInputError {
   /// Cache action or blob metadata violates the published protocol contract.
   #[error("cache data-plane metadata is invalid")]
   InvalidCacheData,
+  /// An audit query filter, time range, cursor, or page size is invalid.
+  #[error("an audit query is invalid")]
+  InvalidAuditQuery,
 }
 
 /// Backend-neutral failure from an authoritative atomic operation.

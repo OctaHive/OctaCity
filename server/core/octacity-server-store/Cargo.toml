@@ -15,6 +15,7 @@ test-support = []
 async-trait.workspace = true
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-server-artifacts = { path = "../octacity-server-artifacts" }
+octacity-server-audit = { path = "../octacity-server-audit" }
 octacity-server-cache = { path = "../octacity-server-cache" }
 octacity-server-domain = { path = "../octacity-server-domain" }
 octacity-server-job = { path = "../octacity-server-job" }
