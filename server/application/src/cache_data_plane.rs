@@ -1,8 +1,9 @@
 //! Transport-independent coordination for Octa's HTTP L2 cache protocol.
 
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
+use octacity_observability::{ErrorClass, Operation, ServerOperationMetric};
 use octacity_server_cache::{
   ActionResultV1, BlobDescriptor, CacheBlobStore, CacheBlobStoreError, CacheBlobWrite, CacheCredential, CacheNamespace,
   Digest, FindMissingBlobsRequestV1, FindMissingBlobsResponseV1, REMOTE_CACHE_PROTOCOL_V1, WriteActionRequestV1,
@@ -144,14 +145,17 @@ where
     authority: CacheRequestAuthority,
     request: FindMissingBlobsRequestV1,
   ) -> Result<FindMissingBlobsResponseV1, CacheDataPlaneError> {
-    request.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
-    let access = self.access(&authority).await?;
-    self.prune(access.clone()).await?;
-    let missing = self.metadata.find_missing_cache_blobs(access, request.blobs).await?;
-    Ok(FindMissingBlobsResponseV1 {
-      protocol_version: REMOTE_CACHE_PROTOCOL_V1,
-      missing,
+    observe_cache(Operation::Search, async {
+      request.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
+      let access = self.access(&authority).await?;
+      self.prune(access.clone()).await?;
+      let missing = self.metadata.find_missing_cache_blobs(access, request.blobs).await?;
+      Ok(FindMissingBlobsResponseV1 {
+        protocol_version: REMOTE_CACHE_PROTOCOL_V1,
+        missing,
+      })
     })
+    .await
   }
 
   async fn read_blob(
@@ -159,17 +163,20 @@ where
     authority: CacheRequestAuthority,
     blob: BlobDescriptor,
   ) -> Result<Option<Vec<u8>>, CacheDataPlaneError> {
-    blob.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
-    let access = self.access(&authority).await?;
-    self.prune(access.clone()).await?;
-    let Some(object) = self.metadata.cache_blob(access, blob).await? else {
-      return Ok(None);
-    };
-    match self.blobs.read(&object).await {
-      Ok(bytes) => Ok(Some(bytes)),
-      Err(CacheBlobStoreError::NotFound | CacheBlobStoreError::Integrity(_)) => Err(CacheDataPlaneError::Integrity),
-      Err(CacheBlobStoreError::Unavailable) => Err(CacheDataPlaneError::Unavailable),
-    }
+    observe_cache(Operation::Download, async {
+      blob.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
+      let access = self.access(&authority).await?;
+      self.prune(access.clone()).await?;
+      let Some(object) = self.metadata.cache_blob(access, blob).await? else {
+        return Ok(None);
+      };
+      match self.blobs.read(&object).await {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(CacheBlobStoreError::NotFound | CacheBlobStoreError::Integrity(_)) => Err(CacheDataPlaneError::Integrity),
+        Err(CacheBlobStoreError::Unavailable) => Err(CacheDataPlaneError::Unavailable),
+      }
+    })
+    .await
   }
 
   async fn write_blob(
@@ -178,23 +185,26 @@ where
     blob: BlobDescriptor,
     bytes: Vec<u8>,
   ) -> Result<CacheWriteResult, CacheDataPlaneError> {
-    blob.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
-    if blob.encoded_size_bytes > self.max_blob_bytes || bytes.len() as u64 > self.max_blob_bytes {
-      return Err(CacheDataPlaneError::PayloadTooLarge);
-    }
-    let access = self.access(&authority).await?;
-    self.prune(access.clone()).await?;
-    let object = match self.metadata.prepare_cache_blob(access.clone(), blob.clone()).await? {
-      CacheBlobPreparationOutcome::Upload(object) => object,
-      CacheBlobPreparationOutcome::AlreadyPresent => return Ok(CacheWriteResult::AlreadyPresent),
-      CacheBlobPreparationOutcome::QuotaExceeded => return Err(CacheDataPlaneError::QuotaExceeded),
-    };
-    let byte_outcome = self.blobs.put_if_absent(&object, bytes).await?;
-    let metadata_outcome = self
-      .metadata
-      .publish_cache_blob(PublishCacheBlob { access, blob })
-      .await?;
-    map_publication(metadata_outcome, byte_outcome)
+    observe_cache(Operation::Upload, async {
+      blob.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
+      if blob.encoded_size_bytes > self.max_blob_bytes || bytes.len() as u64 > self.max_blob_bytes {
+        return Err(CacheDataPlaneError::PayloadTooLarge);
+      }
+      let access = self.access(&authority).await?;
+      self.prune(access.clone()).await?;
+      let object = match self.metadata.prepare_cache_blob(access.clone(), blob.clone()).await? {
+        CacheBlobPreparationOutcome::Upload(object) => object,
+        CacheBlobPreparationOutcome::AlreadyPresent => return Ok(CacheWriteResult::AlreadyPresent),
+        CacheBlobPreparationOutcome::QuotaExceeded => return Err(CacheDataPlaneError::QuotaExceeded),
+      };
+      let byte_outcome = self.blobs.put_if_absent(&object, bytes).await?;
+      let metadata_outcome = self
+        .metadata
+        .publish_cache_blob(PublishCacheBlob { access, blob })
+        .await?;
+      map_publication(metadata_outcome, byte_outcome)
+    })
+    .await
   }
 
   async fn read_action(
@@ -202,9 +212,12 @@ where
     authority: CacheRequestAuthority,
     action: Digest,
   ) -> Result<Option<ActionResultV1>, CacheDataPlaneError> {
-    let access = self.access(&authority).await?;
-    self.prune(access.clone()).await?;
-    self.metadata.cache_action(access, action).await.map_err(Into::into)
+    observe_cache(Operation::Download, async {
+      let access = self.access(&authority).await?;
+      self.prune(access.clone()).await?;
+      self.metadata.cache_action(access, action).await.map_err(Into::into)
+    })
+    .await
   }
 
   async fn write_action(
@@ -213,26 +226,46 @@ where
     action: Digest,
     request: WriteActionRequestV1,
   ) -> Result<CacheWriteResult, CacheDataPlaneError> {
-    request.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
-    if authority.namespace.as_deref() != Some(request.namespace.as_str()) || request.result.action != action {
-      return Err(CacheDataPlaneError::InvalidRequest);
-    }
-    let wire_size_bytes = serde_json::to_vec(&request.result)
-      .map_err(|_| CacheDataPlaneError::InvalidRequest)?
-      .len() as u64;
-    let access = self.access(&authority).await?;
-    self.prune(access.clone()).await?;
-    let outcome = self
-      .metadata
-      .publish_cache_action(PublishCacheAction {
-        access,
-        action,
-        result: request.result,
-        wire_size_bytes,
-      })
-      .await?;
-    map_publication(outcome, CacheBlobWrite::Written)
+    observe_cache(Operation::Upload, async {
+      request.validate().map_err(|_| CacheDataPlaneError::InvalidRequest)?;
+      if authority.namespace.as_deref() != Some(request.namespace.as_str()) || request.result.action != action {
+        return Err(CacheDataPlaneError::InvalidRequest);
+      }
+      let wire_size_bytes = serde_json::to_vec(&request.result)
+        .map_err(|_| CacheDataPlaneError::InvalidRequest)?
+        .len() as u64;
+      let access = self.access(&authority).await?;
+      self.prune(access.clone()).await?;
+      let outcome = self
+        .metadata
+        .publish_cache_action(PublishCacheAction {
+          access,
+          action,
+          result: request.result,
+          wire_size_bytes,
+        })
+        .await?;
+      map_publication(outcome, CacheBlobWrite::Written)
+    })
+    .await
   }
+}
+
+async fn observe_cache<T>(
+  operation: Operation,
+  future: impl Future<Output = Result<T, CacheDataPlaneError>>,
+) -> Result<T, CacheDataPlaneError> {
+  crate::telemetry::observe(ServerOperationMetric::Cache, operation, future, |error| match error {
+    CacheDataPlaneError::InvalidRequest
+    | CacheDataPlaneError::AuthorizationRejected
+    | CacheDataPlaneError::PayloadTooLarge => crate::telemetry::rejected(ErrorClass::Invalid),
+    CacheDataPlaneError::Conflict | CacheDataPlaneError::QuotaExceeded => {
+      crate::telemetry::rejected(ErrorClass::Conflict)
+    }
+    CacheDataPlaneError::Integrity => crate::telemetry::failed(ErrorClass::Protocol),
+    CacheDataPlaneError::Unavailable => crate::telemetry::failed(ErrorClass::Unavailable),
+  })
+  .await
 }
 
 fn map_publication(

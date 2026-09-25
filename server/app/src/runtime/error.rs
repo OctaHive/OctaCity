@@ -86,6 +86,9 @@ pub enum ServerRuntimeError {
   /// The process-local PostgreSQL notification listener panicked or was cancelled unexpectedly.
   #[error("ready-Job notification task failed: {0}")]
   NotificationTask(tokio::task::JoinError),
+  /// The Prometheus recorder upkeep task panicked or was cancelled unexpectedly.
+  #[error("metrics upkeep task failed: {0}")]
+  MetricsTask(tokio::task::JoinError),
   /// A supervised process task returned without a shutdown request.
   #[error("supervised task {task} exited unexpectedly")]
   SupervisedTaskUnexpectedExit {

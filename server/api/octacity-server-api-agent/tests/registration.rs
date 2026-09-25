@@ -287,6 +287,8 @@ async fn shared_registration_dto_reaches_only_the_application_boundary() {
   .await
   .unwrap();
   assert_eq!(response.status(), StatusCode::OK);
+  let response_request_id = response.headers()["x-request-id"].to_str().unwrap();
+  assert!(uuid::Uuid::parse_str(response_request_id).is_ok());
   assert!(application.called.load(Ordering::SeqCst));
   assert!(!application.lease_called.load(Ordering::SeqCst));
   let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();

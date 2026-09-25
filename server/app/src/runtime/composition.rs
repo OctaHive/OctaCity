@@ -23,7 +23,7 @@ use super::{
   application::{ApplicationAssembly, ApplicationComponents, management_application},
   assembly::RuntimeResources,
   listeners::RuntimeComponents,
-  telemetry::UnavailableAgentTelemetryExporter,
+  telemetry::{UnavailableAgentTelemetryExporter, install_server_metrics},
   vcs::HostedRevisionResolver,
   workers::{
     DurableWorkers, EXPIRY_WORKER_NAME, INTERNAL_TRIGGER_WORKER_NAME, LOG_INDEX_WORKER_NAME,
@@ -36,6 +36,7 @@ use crate::{ServerConfig, readiness::WorkerHealth};
 impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
+    let metrics = install_server_metrics();
     let cancellation = CancellationToken::new();
     let lease_expiry_policy = config.lease_expiry_worker();
     let schedule_policy = config.schedule_worker();
@@ -361,6 +362,7 @@ impl ServerRuntime {
           managed_webhooks,
         }),
         ready_job_notifications: Some((notification_pool, ready_jobs)),
+        metrics,
         cancellation,
       },
     )

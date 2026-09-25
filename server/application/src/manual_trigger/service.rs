@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
 
 use async_trait::async_trait;
+use octacity_observability::{ErrorClass, Outcome, TriggerKind as TelemetryTriggerKind, record_trigger_decision};
 use octacity_server_domain::{AttemptNumber, BuildId, Timestamp};
 use octacity_server_store::{
   AcceptTrigger, ImmutableBuildInput, SuppressTrigger, TriggerAcceptanceProbe, TriggerAcceptanceStore,
@@ -49,9 +50,11 @@ impl ManualTriggerService {
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
-    self
-      .accept_root(command, accepted_at, octacity_server_store::TriggerKind::Manual)
-      .await
+    observe_trigger(
+      TelemetryTriggerKind::Manual,
+      self.accept_root(command, accepted_at, octacity_server_store::TriggerKind::Manual),
+    )
+    .await
   }
 
   pub(super) async fn resolve_manual_revision(
@@ -89,14 +92,16 @@ impl ManualTriggerService {
     accepted_at: Timestamp,
     resolved_revision: Option<octacity_server_domain::ImmutableRevision>,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
-    self
-      .accept_root_with_revision(
+    observe_trigger(
+      TelemetryTriggerKind::Manual,
+      self.accept_root_with_revision(
         command,
         accepted_at,
         octacity_server_store::TriggerKind::Manual,
         RevisionMode::Resolved(resolved_revision),
-      )
-      .await
+      ),
+    )
+    .await
   }
 
   /// Evaluates one durable scheduled occurrence through the same Build transaction.
@@ -105,9 +110,11 @@ impl ManualTriggerService {
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
-    self
-      .accept_root(command, accepted_at, octacity_server_store::TriggerKind::Scheduled)
-      .await
+    observe_trigger(
+      TelemetryTriggerKind::Schedule,
+      self.accept_root(command, accepted_at, octacity_server_store::TriggerKind::Scheduled),
+    )
+    .await
   }
 
   /// Evaluates one durable server-generated event through the shared Build transaction.
@@ -119,31 +126,34 @@ impl ManualTriggerService {
     event_kind: TriggerEventKind,
     causality: TriggerCausality,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
-    let occurrence_id = ManualBuildIdentities::occurrence_id_for("internal", &command);
-    let trigger = octacity_server_store::NormalizedTriggerOccurrence::derived(
-      occurrence_id,
-      command.trigger,
-      command.target,
-      command.deduplication_identity.clone(),
-      TriggerCause::Internal {
-        source_build_id,
-        event_kind,
-      },
-      causality,
-      command.observed_at,
-    )
-    .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::ContextMismatch))?;
-    let intent_digest = derived_trigger_intent_digest(&command, &trigger)?;
-    self
-      .evaluate_occurrence(
-        command,
-        accepted_at,
-        octacity_server_store::TriggerKind::Internal,
-        trigger,
-        intent_digest,
-        RevisionMode::Resolve,
+    observe_trigger(TelemetryTriggerKind::Internal, async {
+      let occurrence_id = ManualBuildIdentities::occurrence_id_for("internal", &command);
+      let trigger = octacity_server_store::NormalizedTriggerOccurrence::derived(
+        occurrence_id,
+        command.trigger,
+        command.target,
+        command.deduplication_identity.clone(),
+        TriggerCause::Internal {
+          source_build_id,
+          event_kind,
+        },
+        causality,
+        command.observed_at,
       )
-      .await
+      .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::ContextMismatch))?;
+      let intent_digest = derived_trigger_intent_digest(&command, &trigger)?;
+      self
+        .evaluate_occurrence(
+          command,
+          accepted_at,
+          octacity_server_store::TriggerKind::Internal,
+          trigger,
+          intent_digest,
+          RevisionMode::Resolve,
+        )
+        .await
+    })
+    .await
   }
 
   /// Evaluates one already-authenticated external delivery through the shared Build transaction.
@@ -154,33 +164,36 @@ impl ManualTriggerService {
     cause: TriggerCause,
     provider_metadata: TriggerMetadata,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
-    if !matches!(cause, TriggerCause::External { .. }) {
-      return Err(ManualTriggerError::Invalid(
-        super::model::ManualTriggerInputError::ContextMismatch,
-      ));
-    }
-    let occurrence_id = ManualBuildIdentities::occurrence_id_for("external", &command);
-    let trigger = octacity_server_store::NormalizedTriggerOccurrence::root(
-      occurrence_id,
-      command.trigger,
-      command.target,
-      command.deduplication_identity.clone(),
-      cause,
-      provider_metadata,
-      command.observed_at,
-    )
-    .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::ContextMismatch))?;
-    let intent_digest = derived_trigger_intent_digest(&command, &trigger)?;
-    self
-      .evaluate_occurrence(
-        command,
-        accepted_at,
-        octacity_server_store::TriggerKind::External,
-        trigger,
-        intent_digest,
-        RevisionMode::Resolve,
+    observe_trigger(TelemetryTriggerKind::External, async {
+      if !matches!(cause, TriggerCause::External { .. }) {
+        return Err(ManualTriggerError::Invalid(
+          super::model::ManualTriggerInputError::ContextMismatch,
+        ));
+      }
+      let occurrence_id = ManualBuildIdentities::occurrence_id_for("external", &command);
+      let trigger = octacity_server_store::NormalizedTriggerOccurrence::root(
+        occurrence_id,
+        command.trigger,
+        command.target,
+        command.deduplication_identity.clone(),
+        cause,
+        provider_metadata,
+        command.observed_at,
       )
-      .await
+      .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::ContextMismatch))?;
+      let intent_digest = derived_trigger_intent_digest(&command, &trigger)?;
+      self
+        .evaluate_occurrence(
+          command,
+          accepted_at,
+          octacity_server_store::TriggerKind::External,
+          trigger,
+          intent_digest,
+          RevisionMode::Resolve,
+        )
+        .await
+    })
+    .await
   }
 
   async fn accept_root(
@@ -324,6 +337,28 @@ impl ManualTriggerService {
       .map(Into::into)
       .map_err(ManualTriggerError::Store)
   }
+}
+
+async fn observe_trigger(
+  kind: TelemetryTriggerKind,
+  future: impl Future<Output = Result<ManualTriggerOutcome, ManualTriggerError>>,
+) -> Result<ManualTriggerOutcome, ManualTriggerError> {
+  let result = future.await;
+  let (outcome, error_class) = match &result {
+    Ok(_) => (Outcome::Success, None),
+    Err(error) => match error.classification() {
+      crate::ApplicationFailure::Conflict | crate::ApplicationFailure::PreconditionFailed => {
+        (Outcome::Rejected, Some(ErrorClass::Conflict))
+      }
+      crate::ApplicationFailure::Invalid
+      | crate::ApplicationFailure::NotFound
+      | crate::ApplicationFailure::CapabilityUnavailable => (Outcome::Rejected, Some(ErrorClass::Invalid)),
+      crate::ApplicationFailure::Unavailable => (Outcome::Failure, Some(ErrorClass::Unavailable)),
+      crate::ApplicationFailure::Internal => (Outcome::Failure, Some(ErrorClass::Internal)),
+    },
+  };
+  record_trigger_decision(kind, outcome, error_class);
+  result
 }
 
 enum RevisionMode {

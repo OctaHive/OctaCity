@@ -1,7 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use octacity_artifact_store::{ArtifactObject, ArtifactStore, ArtifactStoreError};
+use octacity_observability::{ErrorClass, Operation, ServerOperationMetric};
 use octacity_protocol::{
   AgentCredentialToken, BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION,
   CompleteOutputUploadRequest, CompleteOutputUploadResponse, OutputKind,
@@ -198,138 +199,166 @@ where
     &self,
     input: BeginAgentArtifactUploadInput,
   ) -> Result<BeginOutputUploadResponse, AgentArtifactError> {
-    input
-      .request
-      .validate()
-      .map_err(|_| AgentArtifactError::InvalidRequest)?;
-    let context = agent_lease::authorize_operation(
-      self.registrations.as_ref(),
-      AgentOperation::Upload,
-      &input.route_lease_id,
-      &input.request.lease,
-      &input.request.registration_id,
-      input.credential,
-      input.observed_at_unix_ms,
-    )
-    .await
-    .map_err(AgentArtifactError::from)?;
-    let observed_at = context.observed_at;
-    let lease = context.lease;
-    let output = &input.request.output;
-    let artifact_type = match output.kind {
-      OutputKind::Artifact => ArtifactType::Artifact,
-      OutputKind::Report => ArtifactType::Report(
-        ArtifactReportFormat::new(output.report_format.clone().ok_or(AgentArtifactError::InvalidRequest)?)
+    observe_artifact(Operation::Upload, async {
+      input
+        .request
+        .validate()
+        .map_err(|_| AgentArtifactError::InvalidRequest)?;
+      let context = agent_lease::authorize_operation(
+        self.registrations.as_ref(),
+        AgentOperation::Upload,
+        &input.route_lease_id,
+        &input.request.lease,
+        &input.request.registration_id,
+        input.credential,
+        input.observed_at_unix_ms,
+      )
+      .await
+      .map_err(AgentArtifactError::from)?;
+      let observed_at = context.observed_at;
+      let lease = context.lease;
+      let output = &input.request.output;
+      let artifact_type = match output.kind {
+        OutputKind::Artifact => ArtifactType::Artifact,
+        OutputKind::Report => ArtifactType::Report(
+          ArtifactReportFormat::new(output.report_format.clone().ok_or(AgentArtifactError::InvalidRequest)?)
+            .map_err(|_| AgentArtifactError::InvalidRequest)?,
+        ),
+      };
+      let capability_expires_at = deadline(observed_at, self.upload_capability_lifetime)?;
+      let outcome = self
+        .store
+        .begin_artifact_upload(BeginArtifactUpload {
+          artifact_id: ArtifactId::generate(),
+          upload_id: ArtifactUploadId::generate(),
+          idempotency_key: IdempotencyKey::new(input.request.upload_key.clone())
+            .map_err(|_| AgentArtifactError::InvalidRequest)?,
+          lease: lease.access,
+          job_id: lease.job_id,
+          attempt: lease.attempt,
+          logical_name: ArtifactName::new(output.name.clone()).map_err(|_| AgentArtifactError::InvalidRequest)?,
+          producer_run_id: output.run_id,
+          producer_task_id: output.task_id,
+          artifact_type,
+          media_type: ArtifactMediaType::new(
+            output
+              .content_type
+              .clone()
+              .unwrap_or_else(|| output.transport_content_type.clone()),
+          )
           .map_err(|_| AgentArtifactError::InvalidRequest)?,
-      ),
-    };
-    let capability_expires_at = deadline(observed_at, self.upload_capability_lifetime)?;
-    let outcome = self
-      .store
-      .begin_artifact_upload(BeginArtifactUpload {
-        artifact_id: ArtifactId::generate(),
-        upload_id: ArtifactUploadId::generate(),
-        idempotency_key: IdempotencyKey::new(input.request.upload_key.clone())
+          transport_media_type: ArtifactMediaType::new(output.transport_content_type.clone())
+            .map_err(|_| AgentArtifactError::InvalidRequest)?,
+          size_bytes: output.size_bytes,
+          digest: ArtifactContentDigest::from_lower_hex(&output.sha256)
+            .map_err(|_| AgentArtifactError::InvalidRequest)?,
+          reserved_at: observed_at,
+          capability_expires_at,
+        })
+        .await?;
+      let object = artifact_object(&outcome.upload)?;
+      let authorization = self
+        .bytes
+        .authorize_upload(&object, self.upload_capability_lifetime)
+        .await?;
+      let expires_at = deadline(observed_at, authorization.expires_in)?;
+      Ok(BeginOutputUploadResponse {
+        protocol_version: COORDINATOR_PROTOCOL_VERSION,
+        request_id: input.request.request_id,
+        upload_id: outcome.upload.upload_id.to_string(),
+        put_url: authorization.url,
+        required_headers: authorization.required_headers,
+        expires_at: u64::try_from(expires_at.unix_millis().div_euclid(1_000))
           .map_err(|_| AgentArtifactError::InvalidRequest)?,
-        lease: lease.access,
-        job_id: lease.job_id,
-        attempt: lease.attempt,
-        logical_name: ArtifactName::new(output.name.clone()).map_err(|_| AgentArtifactError::InvalidRequest)?,
-        producer_run_id: output.run_id,
-        producer_task_id: output.task_id,
-        artifact_type,
-        media_type: ArtifactMediaType::new(
-          output
-            .content_type
-            .clone()
-            .unwrap_or_else(|| output.transport_content_type.clone()),
-        )
-        .map_err(|_| AgentArtifactError::InvalidRequest)?,
-        transport_media_type: ArtifactMediaType::new(output.transport_content_type.clone())
-          .map_err(|_| AgentArtifactError::InvalidRequest)?,
-        size_bytes: output.size_bytes,
-        digest: ArtifactContentDigest::from_lower_hex(&output.sha256)
-          .map_err(|_| AgentArtifactError::InvalidRequest)?,
-        reserved_at: observed_at,
-        capability_expires_at,
       })
-      .await?;
-    let object = artifact_object(&outcome.upload)?;
-    let authorization = self
-      .bytes
-      .authorize_upload(&object, self.upload_capability_lifetime)
-      .await?;
-    let expires_at = deadline(observed_at, authorization.expires_in)?;
-    Ok(BeginOutputUploadResponse {
-      protocol_version: COORDINATOR_PROTOCOL_VERSION,
-      request_id: input.request.request_id,
-      upload_id: outcome.upload.upload_id.to_string(),
-      put_url: authorization.url,
-      required_headers: authorization.required_headers,
-      expires_at: u64::try_from(expires_at.unix_millis().div_euclid(1_000))
-        .map_err(|_| AgentArtifactError::InvalidRequest)?,
     })
+    .await
   }
 
   async fn complete_upload(
     &self,
     input: CompleteAgentArtifactUploadInput,
   ) -> Result<CompleteOutputUploadResponse, AgentArtifactError> {
-    input
-      .request
-      .validate()
-      .map_err(|_| AgentArtifactError::InvalidRequest)?;
-    let context = agent_lease::authorize_operation(
-      self.registrations.as_ref(),
-      AgentOperation::Upload,
-      &input.route_lease_id,
-      &input.request.lease,
-      &input.request.registration_id,
-      input.credential,
-      input.observed_at_unix_ms,
-    )
-    .await
-    .map_err(AgentArtifactError::from)?;
-    let observed_at = context.observed_at;
-    let lease = context.lease;
-    let upload_id = input
-      .request
-      .upload_id
-      .parse()
-      .map_err(|_| AgentArtifactError::InvalidRequest)?;
-    let verification = VerifyArtifactUpload {
-      upload_id,
-      lease: lease.access,
-      job_id: lease.job_id,
-      attempt: lease.attempt,
-      observed_at,
-    };
-    let upload = self.store.begin_artifact_verification(verification).await?;
-    if upload.artifact.state() != ArtifactState::Published {
-      let object = artifact_object(&upload)?;
-      if let Err(error) = self.bytes.complete_upload(&object).await {
-        if matches!(
-          error,
-          ArtifactStoreError::Integrity { .. } | ArtifactStoreError::NotFound
-        ) {
-          self
-            .store
-            .finish_artifact_verification(verification, ArtifactVerificationResult::Rejected)
-            .await?;
+    observe_artifact(Operation::Verify, async {
+      input
+        .request
+        .validate()
+        .map_err(|_| AgentArtifactError::InvalidRequest)?;
+      let context = agent_lease::authorize_operation(
+        self.registrations.as_ref(),
+        AgentOperation::Upload,
+        &input.route_lease_id,
+        &input.request.lease,
+        &input.request.registration_id,
+        input.credential,
+        input.observed_at_unix_ms,
+      )
+      .await
+      .map_err(AgentArtifactError::from)?;
+      let observed_at = context.observed_at;
+      let lease = context.lease;
+      let upload_id = input
+        .request
+        .upload_id
+        .parse()
+        .map_err(|_| AgentArtifactError::InvalidRequest)?;
+      let verification = VerifyArtifactUpload {
+        upload_id,
+        lease: lease.access,
+        job_id: lease.job_id,
+        attempt: lease.attempt,
+        observed_at,
+      };
+      let upload = self.store.begin_artifact_verification(verification).await?;
+      if upload.artifact.state() != ArtifactState::Published {
+        let object = artifact_object(&upload)?;
+        if let Err(error) = self.bytes.complete_upload(&object).await {
+          if matches!(
+            error,
+            ArtifactStoreError::Integrity { .. } | ArtifactStoreError::NotFound
+          ) {
+            self
+              .store
+              .finish_artifact_verification(verification, ArtifactVerificationResult::Rejected)
+              .await?;
+          }
+          return Err(error.into());
         }
-        return Err(error.into());
+        self
+          .store
+          .finish_artifact_verification(verification, ArtifactVerificationResult::Verified)
+          .await?;
       }
-      self
-        .store
-        .finish_artifact_verification(verification, ArtifactVerificationResult::Verified)
-        .await?;
-    }
-    Ok(CompleteOutputUploadResponse {
-      protocol_version: COORDINATOR_PROTOCOL_VERSION,
-      request_id: input.request.request_id,
-      upload_id: input.request.upload_id,
+      Ok(CompleteOutputUploadResponse {
+        protocol_version: COORDINATOR_PROTOCOL_VERSION,
+        request_id: input.request.request_id,
+        upload_id: input.request.upload_id,
+      })
     })
+    .await
   }
+}
+
+async fn observe_artifact<T>(
+  operation: Operation,
+  future: impl Future<Output = Result<T, AgentArtifactError>>,
+) -> Result<T, AgentArtifactError> {
+  crate::telemetry::observe(
+    ServerOperationMetric::Artifact,
+    operation,
+    future,
+    |error| match error {
+      AgentArtifactError::InvalidRequest | AgentArtifactError::CredentialRejected | AgentArtifactError::NotFound => {
+        crate::telemetry::rejected(ErrorClass::Invalid)
+      }
+      AgentArtifactError::Fenced => crate::telemetry::rejected(ErrorClass::Fenced),
+      AgentArtifactError::Expired => crate::telemetry::rejected(ErrorClass::Expired),
+      AgentArtifactError::Integrity => crate::telemetry::rejected(ErrorClass::Protocol),
+      AgentArtifactError::Conflict => crate::telemetry::rejected(ErrorClass::Conflict),
+      AgentArtifactError::Unavailable => crate::telemetry::failed(ErrorClass::Unavailable),
+    },
+  )
+  .await
 }
 
 #[async_trait]

@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use octacity_artifact_store::LogChunkStore;
+use octacity_observability::{ErrorClass, Operation, ServerOperationMetric};
 use octacity_protocol::{AgentCredentialToken, AppendEventsRequest, CompleteLeaseRequest, JobCompletionStatus};
 use octacity_server_domain::EntityKind;
 use octacity_server_job::JobFailureClass;
@@ -180,46 +181,63 @@ where
   }
 
   async fn complete_lease(&self, input: CompleteAgentLeaseInput) -> Result<(), AgentExecutionError> {
-    input
-      .request
-      .validate()
-      .map_err(|_| AgentExecutionError::InvalidRequest)?;
-    let context = agent_lease::authorize_operation(
-      self.registrations.as_ref(),
-      AgentOperation::Complete,
-      &input.route_lease_id,
-      &input.request.lease,
-      &input.request.registration_id,
-      input.credential,
-      input.observed_at_unix_ms,
+    crate::telemetry::observe(
+      ServerOperationMetric::Orchestration,
+      Operation::Complete,
+      async {
+        input
+          .request
+          .validate()
+          .map_err(|_| AgentExecutionError::InvalidRequest)?;
+        let context = agent_lease::authorize_operation(
+          self.registrations.as_ref(),
+          AgentOperation::Complete,
+          &input.route_lease_id,
+          &input.request.lease,
+          &input.request.registration_id,
+          input.credential,
+          input.observed_at_unix_ms,
+        )
+        .await
+        .map_err(AgentExecutionError::from)?;
+        let completed_at = context.observed_at;
+        let lease = context.lease;
+        let final_sequence =
+          EventSequence::new(input.request.last_event_sequence).map_err(|_| AgentExecutionError::InvalidRequest)?;
+        let completion_id =
+          IdempotencyKey::new(input.request.completion_id).map_err(|_| AgentExecutionError::InvalidRequest)?;
+        let kind = match input.request.status {
+          JobCompletionStatus::Succeeded => JobCompletionKind::Succeeded,
+          JobCompletionStatus::Failed | JobCompletionStatus::TimedOut => {
+            JobCompletionKind::Failed(JobFailureClass::Execution)
+          }
+          JobCompletionStatus::InfrastructureFailed => JobCompletionKind::Failed(JobFailureClass::Infrastructure),
+          JobCompletionStatus::Cancelled => JobCompletionKind::Cancelled,
+        };
+        self
+          .store
+          .complete_job(JobCompletion {
+            completion_id,
+            lease: lease.access,
+            final_sequence: Some(final_sequence),
+            kind,
+            completed_at,
+          })
+          .await?;
+        Ok(())
+      },
+      |error| match error {
+        AgentExecutionError::InvalidRequest
+        | AgentExecutionError::CredentialRejected
+        | AgentExecutionError::EventGap { .. }
+        | AgentExecutionError::EventsMissing { .. } => crate::telemetry::rejected(ErrorClass::Invalid),
+        AgentExecutionError::Fenced => crate::telemetry::rejected(ErrorClass::Fenced),
+        AgentExecutionError::Expired => crate::telemetry::rejected(ErrorClass::Expired),
+        AgentExecutionError::Conflict => crate::telemetry::rejected(ErrorClass::Conflict),
+        AgentExecutionError::Unavailable => crate::telemetry::failed(ErrorClass::Unavailable),
+      },
     )
     .await
-    .map_err(AgentExecutionError::from)?;
-    let completed_at = context.observed_at;
-    let lease = context.lease;
-    let final_sequence =
-      EventSequence::new(input.request.last_event_sequence).map_err(|_| AgentExecutionError::InvalidRequest)?;
-    let completion_id =
-      IdempotencyKey::new(input.request.completion_id).map_err(|_| AgentExecutionError::InvalidRequest)?;
-    let kind = match input.request.status {
-      JobCompletionStatus::Succeeded => JobCompletionKind::Succeeded,
-      JobCompletionStatus::Failed | JobCompletionStatus::TimedOut => {
-        JobCompletionKind::Failed(JobFailureClass::Execution)
-      }
-      JobCompletionStatus::InfrastructureFailed => JobCompletionKind::Failed(JobFailureClass::Infrastructure),
-      JobCompletionStatus::Cancelled => JobCompletionKind::Cancelled,
-    };
-    self
-      .store
-      .complete_job(JobCompletion {
-        completion_id,
-        lease: lease.access,
-        final_sequence: Some(final_sequence),
-        kind,
-        completed_at,
-      })
-      .await?;
-    Ok(())
   }
 }
 

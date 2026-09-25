@@ -4,6 +4,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use octacity_observability::{ErrorClass, Operation, ServerOperationMetric};
 use octacity_protocol::{AcquireLeaseRequest, AgentCredentialToken, COORDINATOR_PROTOCOL_VERSION};
 use octacity_server_domain::{LeaseId, Timestamp};
 use octacity_server_store::{
@@ -96,42 +97,56 @@ where
   W: ReadyJobWaiter + 'static,
 {
   async fn acquire(&self, input: AcquireAgentLeaseInput) -> Result<AgentLeaseOutcome, AgentLeaseError> {
-    input.request.validate().map_err(|_| AgentLeaseError::InvalidRequest)?;
-    if input.request.protocol_version != COORDINATOR_PROTOCOL_VERSION {
-      return Err(AgentLeaseError::InvalidRequest);
-    }
-    let started = Instant::now();
-    let authorized = self.authorize(&input, input.observed_at_unix_ms).await?;
-    if stable_agent_id(&input.route_agent_id).map_err(AgentLeaseError::from)? != authorized.agent_id() {
-      return Err(AgentLeaseError::Fenced);
-    }
-    if !input.request.accept_jobs {
-      return Ok(AgentLeaseOutcome::NoWork);
-    }
-    input
-      .request
-      .snapshot
-      .validate(authorized.host_capacity())
-      .map_err(|_| AgentLeaseError::InvalidRequest)?;
-    let checkpoint = self.waiter.checkpoint(&authorized.pool_id().to_string());
-    if let Some(grant) = self.claim(&input, &authorized, input.observed_at_unix_ms).await? {
-      return Ok(AgentLeaseOutcome::Lease(Box::new(grant)));
-    }
+    crate::telemetry::observe(
+      ServerOperationMetric::Lease,
+      Operation::Claim,
+      async {
+        input.request.validate().map_err(|_| AgentLeaseError::InvalidRequest)?;
+        if input.request.protocol_version != COORDINATOR_PROTOCOL_VERSION {
+          return Err(AgentLeaseError::InvalidRequest);
+        }
+        let started = Instant::now();
+        let authorized = self.authorize(&input, input.observed_at_unix_ms).await?;
+        if stable_agent_id(&input.route_agent_id).map_err(AgentLeaseError::from)? != authorized.agent_id() {
+          return Err(AgentLeaseError::Fenced);
+        }
+        if !input.request.accept_jobs {
+          return Ok(AgentLeaseOutcome::NoWork);
+        }
+        input
+          .request
+          .snapshot
+          .validate(authorized.host_capacity())
+          .map_err(|_| AgentLeaseError::InvalidRequest)?;
+        let checkpoint = self.waiter.checkpoint(&authorized.pool_id().to_string());
+        if let Some(grant) = self.claim(&input, &authorized, input.observed_at_unix_ms).await? {
+          return Ok(AgentLeaseOutcome::Lease(Box::new(grant)));
+        }
 
-    let wait = Duration::from_secs(input.request.wait_seconds);
-    self.waiter.wait_for_ready_job(checkpoint, wait).await;
+        let wait = Duration::from_secs(input.request.wait_seconds);
+        self.waiter.wait_for_ready_job(checkpoint, wait).await;
 
-    let elapsed = i64::try_from(started.elapsed().as_millis()).map_err(|_| AgentLeaseError::Unavailable)?;
-    let observed_at = input
-      .observed_at_unix_ms
-      .checked_add(elapsed)
-      .ok_or(AgentLeaseError::Unavailable)?;
-    let authorized = self.authorize(&input, observed_at).await?;
-    self.claim(&input, &authorized, observed_at).await.map(|grant| {
-      grant.map_or(AgentLeaseOutcome::NoWork, |grant| {
-        AgentLeaseOutcome::Lease(Box::new(grant))
-      })
-    })
+        let elapsed = i64::try_from(started.elapsed().as_millis()).map_err(|_| AgentLeaseError::Unavailable)?;
+        let observed_at = input
+          .observed_at_unix_ms
+          .checked_add(elapsed)
+          .ok_or(AgentLeaseError::Unavailable)?;
+        let authorized = self.authorize(&input, observed_at).await?;
+        self.claim(&input, &authorized, observed_at).await.map(|grant| {
+          grant.map_or(AgentLeaseOutcome::NoWork, |grant| {
+            AgentLeaseOutcome::Lease(Box::new(grant))
+          })
+        })
+      },
+      |error| match error {
+        AgentLeaseError::InvalidRequest | AgentLeaseError::CredentialRejected => {
+          crate::telemetry::rejected(ErrorClass::Invalid)
+        }
+        AgentLeaseError::Fenced => crate::telemetry::rejected(ErrorClass::Fenced),
+        AgentLeaseError::Unavailable => crate::telemetry::failed(ErrorClass::Unavailable),
+      },
+    )
+    .await
   }
 }
 

@@ -82,6 +82,8 @@ pub enum MetricName {
   ServerWorkerRuns,
   /// Durable worker pass latency.
   ServerWorkerRunDuration,
+  /// Durable work items retained for retry.
+  ServerWorkerRetries,
   /// Provider-neutral adapter operations.
   ServerAdapterOperations,
   /// Cache authority and data-plane operations.
@@ -148,6 +150,7 @@ const WORKER: &[MetricLabelKey] = &[
   MetricLabelKey::Outcome,
   MetricLabelKey::ErrorClass,
 ];
+const WORKER_KIND: &[MetricLabelKey] = &[MetricLabelKey::Worker];
 const ADAPTER: &[MetricLabelKey] = &[
   MetricLabelKey::Adapter,
   MetricLabelKey::Operation,
@@ -178,6 +181,7 @@ const ALL_METRICS: &[MetricName] = &[
   MetricName::ServerLeaseOperations,
   MetricName::ServerWorkerRuns,
   MetricName::ServerWorkerRunDuration,
+  MetricName::ServerWorkerRetries,
   MetricName::ServerAdapterOperations,
   MetricName::ServerCacheOperations,
   MetricName::ServerArtifactOperations,
@@ -261,6 +265,7 @@ impl MetricName {
         WORKER,
         1_024,
       ),
+      Self::ServerWorkerRetries => ("octacity.server.worker.retries", Server, Counter, One, WORKER_KIND, 16),
       Self::ServerAdapterOperations => (
         "octacity.server.adapter.operations",
         Server,

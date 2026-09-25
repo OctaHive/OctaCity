@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use octacity_observability::Operation;
 use octacity_server_store::*;
 
 use super::PostgresStore;
@@ -28,7 +29,7 @@ impl ArtifactRecordStore for PostgresStore {
     &self,
     request: BeginArtifactUpload,
   ) -> Result<BeginArtifactUploadOutcome, StoreError> {
-    crate::artifact::begin_upload(&self.pool, request).await
+    crate::telemetry::observe(Operation::Upload, crate::artifact::begin_upload(&self.pool, request)).await
   }
 
   async fn artifact_upload(
@@ -42,7 +43,11 @@ impl ArtifactRecordStore for PostgresStore {
     &self,
     request: VerifyArtifactUpload,
   ) -> Result<ArtifactUploadRecord, StoreError> {
-    crate::artifact::begin_verification(&self.pool, request).await
+    crate::telemetry::observe(
+      Operation::Verify,
+      crate::artifact::begin_verification(&self.pool, request),
+    )
+    .await
   }
 
   async fn finish_artifact_verification(
@@ -50,7 +55,11 @@ impl ArtifactRecordStore for PostgresStore {
     request: VerifyArtifactUpload,
     result: ArtifactVerificationResult,
   ) -> Result<ArtifactUploadRecord, StoreError> {
-    crate::artifact::finish_verification(&self.pool, request, result).await
+    crate::telemetry::observe(
+      Operation::Complete,
+      crate::artifact::finish_verification(&self.pool, request, result),
+    )
+    .await
   }
 
   async fn published_artifact(
@@ -71,18 +80,18 @@ impl ArtifactRecordStore for PostgresStore {
 #[async_trait]
 impl CacheSessionStore for PostgresStore {
   async fn begin_cache_session(&self, request: BeginCacheSession) -> Result<BeginCacheSessionOutcome, StoreError> {
-    crate::cache::begin(&self.pool, request).await
+    crate::telemetry::observe(Operation::Accept, crate::cache::begin(&self.pool, request)).await
   }
 
   async fn revoke_cache_session(&self, request: RevokeCacheSession) -> Result<MutationDisposition, StoreError> {
-    crate::cache::revoke(&self.pool, request).await
+    crate::telemetry::observe(Operation::Cancel, crate::cache::revoke(&self.pool, request)).await
   }
 
   async fn authorize_cache_session(
     &self,
     request: AuthorizeCacheSession,
   ) -> Result<CacheAuthorizationOutcome, StoreError> {
-    crate::cache::authorize(&self.pool, request).await
+    crate::telemetry::observe(Operation::Authenticate, crate::cache::authorize(&self.pool, request)).await
   }
 
   async fn cache_session(
@@ -127,7 +136,7 @@ impl CacheDataStore for PostgresStore {
   }
 
   async fn publish_cache_blob(&self, request: PublishCacheBlob) -> Result<CachePublicationOutcome, StoreError> {
-    crate::cache::publish_blob(&self.pool, request).await
+    crate::telemetry::observe(Operation::Upload, crate::cache::publish_blob(&self.pool, request)).await
   }
 
   async fn prepare_cache_blob(
@@ -147,7 +156,7 @@ impl CacheDataStore for PostgresStore {
   }
 
   async fn publish_cache_action(&self, request: PublishCacheAction) -> Result<CachePublicationOutcome, StoreError> {
-    crate::cache::publish_action(&self.pool, request).await
+    crate::telemetry::observe(Operation::Upload, crate::cache::publish_action(&self.pool, request)).await
   }
 
   async fn prune_cache(&self, access: CacheDataAccess) -> Result<CacheRetentionOutcome, StoreError> {

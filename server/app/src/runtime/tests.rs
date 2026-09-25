@@ -159,6 +159,7 @@ async fn wait_reports_a_listener_that_stops_without_shutdown() {
     })),
     worker_task: None,
     notification_task: None,
+    metrics_task: None,
   };
 
   assert!(matches!(
@@ -193,6 +194,7 @@ async fn wait_reports_a_worker_failure_without_waiting_for_a_listener() {
       panic!("worker failure");
     })),
     notification_task: None,
+    metrics_task: None,
   };
 
   let result = tokio::time::timeout(std::time::Duration::from_secs(1), runtime.wait())
@@ -234,6 +236,7 @@ async fn dropping_runtime_aborts_owned_listener_work() {
     readiness_task: Some(tokio::spawn(std::future::pending())),
     worker_task: None,
     notification_task: None,
+    metrics_task: None,
   };
 
   started_receiver.await.unwrap();

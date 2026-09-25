@@ -1,10 +1,10 @@
 use std::{
-  fmt::Display,
   future::Future,
   sync::Arc,
-  time::{Duration, SystemTime, UNIX_EPOCH},
+  time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use octacity_observability::{ErrorClass, Outcome, TraceSpan, WorkerKind, record_worker_retries, record_worker_run};
 use octacity_server_application::{
   BuildRetentionWorker, InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker,
   ManualTriggerRetryWorker, ScheduleWorker, WebhookDeliveryWorker,
@@ -14,6 +14,7 @@ use octacity_server_store::WorkerOwner;
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument as _;
 use tracing::{info, warn};
 
 use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
@@ -163,7 +164,7 @@ fn spawn_retention_worker(
   let object_batch_size = policy.object_batch_size();
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    RETENTION_WORKER_NAME,
+    WorkerIdentity::new(RETENTION_WORKER_NAME, WorkerKind::Retention),
     health,
     worker_policy.poll_interval(),
     worker_policy.claim_lifetime(),
@@ -178,6 +179,9 @@ fn spawn_retention_worker(
       }
     },
     |outcome| {
+      if outcome.retries_scheduled > 0 {
+        record_worker_retries(WorkerKind::Retention, outcome.retries_scheduled);
+      }
       if outcome.claimed > 0 {
         info!(
           claimed = outcome.claimed,
@@ -202,7 +206,7 @@ fn spawn_log_index_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    LOG_INDEX_WORKER_NAME,
+    WorkerIdentity::new(LOG_INDEX_WORKER_NAME, WorkerKind::LogIndex),
     health,
     poll_interval,
     claim_lifetime,
@@ -213,6 +217,9 @@ fn spawn_log_index_worker(
       async move { worker.run_once(owner, observed_at, claim_expires_at, batch_size).await }
     },
     |outcome| {
+      if outcome.retries_scheduled > 0 {
+        record_worker_retries(WorkerKind::LogIndex, outcome.retries_scheduled);
+      }
       if outcome.claimed > 0 {
         info!(
           claimed = outcome.claimed,
@@ -273,7 +280,7 @@ fn spawn_manual_trigger_retry_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    MANUAL_TRIGGER_RETRY_WORKER_NAME,
+    WorkerIdentity::new(MANUAL_TRIGGER_RETRY_WORKER_NAME, WorkerKind::TriggerEvaluation),
     health,
     poll_interval,
     claim_lifetime,
@@ -284,6 +291,9 @@ fn spawn_manual_trigger_retry_worker(
       async move { worker.run_once(owner, observed_at, claim_expires_at, batch_size).await }
     },
     |outcome| {
+      if outcome.retries_scheduled > 0 {
+        record_worker_retries(WorkerKind::TriggerEvaluation, outcome.retries_scheduled);
+      }
       if outcome.claimed > 0 {
         info!(
           claimed = outcome.claimed,
@@ -308,7 +318,7 @@ fn spawn_managed_webhook_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    MANAGED_WEBHOOK_WORKER_NAME,
+    WorkerIdentity::new(MANAGED_WEBHOOK_WORKER_NAME, WorkerKind::Webhook),
     health,
     poll_interval,
     claim_lifetime,
@@ -319,6 +329,9 @@ fn spawn_managed_webhook_worker(
       async move { worker.run_once(owner, observed_at, claim_expires_at, batch_size).await }
     },
     |outcome| {
+      if outcome.retries_scheduled > 0 {
+        record_worker_retries(WorkerKind::Webhook, outcome.retries_scheduled);
+      }
       if outcome.claimed > 0 {
         info!(
           claimed = outcome.claimed,
@@ -341,7 +354,7 @@ fn spawn_expiry_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    EXPIRY_WORKER_NAME,
+    WorkerIdentity::new(EXPIRY_WORKER_NAME, WorkerKind::LeaseExpiry),
     health,
     poll_interval,
     claim_lifetime,
@@ -375,7 +388,7 @@ fn spawn_schedule_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    SCHEDULE_WORKER_NAME,
+    WorkerIdentity::new(SCHEDULE_WORKER_NAME, WorkerKind::Schedule),
     health,
     poll_interval,
     claim_lifetime,
@@ -408,7 +421,7 @@ fn spawn_internal_trigger_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    INTERNAL_TRIGGER_WORKER_NAME,
+    WorkerIdentity::new(INTERNAL_TRIGGER_WORKER_NAME, WorkerKind::InternalTrigger),
     health,
     poll_interval,
     claim_lifetime,
@@ -442,7 +455,7 @@ fn spawn_webhook_delivery_worker(
 ) -> JoinHandle<()> {
   let worker = Arc::new(worker);
   spawn_worker_loop(
-    WEBHOOK_DELIVERY_WORKER_NAME,
+    WorkerIdentity::new(WEBHOOK_DELIVERY_WORKER_NAME, WorkerKind::Webhook),
     health,
     poll_interval,
     claim_lifetime,
@@ -453,6 +466,9 @@ fn spawn_webhook_delivery_worker(
       async move { worker.run_once(owner, observed_at, claim_expires_at, batch_size).await }
     },
     |outcome| {
+      if outcome.retries_scheduled > 0 {
+        record_worker_retries(WorkerKind::Webhook, outcome.retries_scheduled);
+      }
       if outcome.claimed > 0 {
         info!(
           claimed = outcome.claimed,
@@ -469,8 +485,20 @@ fn spawn_webhook_delivery_worker(
   )
 }
 
-fn spawn_worker_loop<Pass, PassFuture, Outcome, Error, Observe>(
-  worker_name: &'static str,
+#[derive(Clone, Copy)]
+struct WorkerIdentity {
+  name: &'static str,
+  kind: WorkerKind,
+}
+
+impl WorkerIdentity {
+  const fn new(name: &'static str, kind: WorkerKind) -> Self {
+    Self { name, kind }
+  }
+}
+
+fn spawn_worker_loop<Pass, PassFuture, WorkerOutcome, Error, Observe>(
+  worker: WorkerIdentity,
   health: Arc<WorkerHealth>,
   poll_interval: Duration,
   claim_lifetime: Duration,
@@ -480,11 +508,15 @@ fn spawn_worker_loop<Pass, PassFuture, Outcome, Error, Observe>(
 ) -> JoinHandle<()>
 where
   Pass: Fn(Timestamp, Timestamp) -> PassFuture + Send + Sync + 'static,
-  PassFuture: Future<Output = Result<Outcome, Error>> + Send + 'static,
-  Outcome: Send + 'static,
-  Error: Display + Send + 'static,
-  Observe: Fn(&Outcome) + Send + Sync + 'static,
+  PassFuture: Future<Output = Result<WorkerOutcome, Error>> + Send + 'static,
+  WorkerOutcome: Send + 'static,
+  Error: Send + 'static,
+  Observe: Fn(&WorkerOutcome) + Send + Sync + 'static,
 {
+  let WorkerIdentity {
+    name: worker_name,
+    kind: worker_kind,
+  } = worker;
   tokio::spawn(async move {
     let _unhealthy_on_drop = UnhealthyOnDrop(health.clone());
     loop {
@@ -495,20 +527,38 @@ where
       }
       let Some((observed_at, claim_expires_at)) = claim_window(claim_lifetime) else {
         health.mark_failure();
+        record_worker_run(
+          worker_kind,
+          Outcome::Failure,
+          Some(ErrorClass::Internal),
+          Duration::ZERO,
+        );
         warn!(
           worker = worker_name,
+          error.class = ErrorClass::Internal.as_str(),
           "durable worker could not represent the system clock"
         );
         continue;
       };
-      match pass(observed_at, claim_expires_at).await {
+      let span = tracing::info_span!(TraceSpan::ServerWorkerRun.as_str(), worker.kind = worker_kind.as_str(),);
+      let started = Instant::now();
+      let result = pass(observed_at, claim_expires_at).instrument(span.clone()).await;
+      let elapsed = started.elapsed();
+      let _entered = span.enter();
+      match result {
         Ok(outcome) => {
           health.mark_success();
+          record_worker_run(worker_kind, Outcome::Success, None, elapsed);
           observe(&outcome);
         }
-        Err(error) => {
+        Err(_) => {
           health.mark_failure();
-          warn!(worker = worker_name, %error, "durable worker pass failed");
+          record_worker_run(worker_kind, Outcome::Failure, Some(ErrorClass::Unavailable), elapsed);
+          warn!(
+            worker = worker_name,
+            error.class = ErrorClass::Unavailable.as_str(),
+            "durable worker pass failed"
+          );
         }
       }
     }

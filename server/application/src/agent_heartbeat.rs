@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
+use octacity_observability::{ErrorClass, Operation, Outcome, ServerOperationMetric};
 use octacity_protocol::{AgentCredentialToken, COORDINATOR_PROTOCOL_VERSION, HeartbeatRequest};
 use octacity_server_domain::Timestamp;
 use octacity_server_store::{IdempotencyKey, LeaseHeartbeatOutcome, LeaseHeartbeatStore, RenewLease, StoreError};
@@ -59,57 +60,71 @@ where
   S: LeaseHeartbeatStore + 'static,
 {
   async fn heartbeat(&self, input: AgentHeartbeatInput) -> Result<LeaseHeartbeatOutcome, AgentHeartbeatError> {
-    if input.request.protocol_version != COORDINATOR_PROTOCOL_VERSION
-      || input.request.lease.lease_id != input.route_lease_id
-    {
-      return Err(AgentHeartbeatError::InvalidRequest);
-    }
-    let observed_at = timestamp(input.observed_at_unix_ms)?;
-    let idempotency_key =
-      IdempotencyKey::new(input.request.request_id.clone()).map_err(|_| AgentHeartbeatError::InvalidRequest)?;
+    crate::telemetry::observe_classified(
+      ServerOperationMetric::Lease,
+      Operation::Renew,
+      async {
+        if input.request.protocol_version != COORDINATOR_PROTOCOL_VERSION
+          || input.request.lease.lease_id != input.route_lease_id
+        {
+          return Err(AgentHeartbeatError::InvalidRequest);
+        }
+        let observed_at = timestamp(input.observed_at_unix_ms)?;
+        let idempotency_key =
+          IdempotencyKey::new(input.request.request_id.clone()).map_err(|_| AgentHeartbeatError::InvalidRequest)?;
 
-    let authorized = match self
-      .registrations
-      .authorize(AuthorizeAgentInput {
-        operation: AgentOperation::Heartbeat,
-        registration_id: input.request.registration_id.clone(),
-        credential: input.credential,
-        observed_at_unix_ms: input.observed_at_unix_ms,
-      })
-      .await
-    {
-      Ok(authorized) => authorized,
-      Err(AgentRegistrationError::Unavailable) => return Err(AgentHeartbeatError::Unavailable),
-      Err(AgentRegistrationError::InvalidRequest) => return Err(AgentHeartbeatError::InvalidRequest),
-      Err(AgentRegistrationError::CredentialRejected | AgentRegistrationError::Fenced) => {
-        return Ok(LeaseHeartbeatOutcome::Fenced);
-      }
-    };
-    input
-      .request
-      .validate(authorized.host_capacity())
-      .map_err(|_| AgentHeartbeatError::InvalidRequest)?;
-    let parsed =
-      agent_lease::parse_lease(&input.request.lease, &authorized).map_err(|()| AgentHeartbeatError::InvalidRequest)?;
-    let lifetime = i64::try_from(self.lease_lifetime.as_millis()).map_err(|_| AgentHeartbeatError::InvalidRequest)?;
-    let expires_at = timestamp(
-      input
-        .observed_at_unix_ms
-        .checked_add(lifetime)
-        .ok_or(AgentHeartbeatError::InvalidRequest)?,
-    )?;
-    self
-      .store
-      .renew_lease(RenewLease {
-        idempotency_key,
-        lease: parsed.access,
-        job_id: parsed.job_id,
-        attempt: parsed.attempt,
-        observed_at,
-        expires_at,
-      })
-      .await
-      .map_err(AgentHeartbeatError::from)
+        let authorized = match self
+          .registrations
+          .authorize(AuthorizeAgentInput {
+            operation: AgentOperation::Heartbeat,
+            registration_id: input.request.registration_id.clone(),
+            credential: input.credential,
+            observed_at_unix_ms: input.observed_at_unix_ms,
+          })
+          .await
+        {
+          Ok(authorized) => authorized,
+          Err(AgentRegistrationError::Unavailable) => return Err(AgentHeartbeatError::Unavailable),
+          Err(AgentRegistrationError::InvalidRequest) => return Err(AgentHeartbeatError::InvalidRequest),
+          Err(AgentRegistrationError::CredentialRejected | AgentRegistrationError::Fenced) => {
+            return Ok(LeaseHeartbeatOutcome::Fenced);
+          }
+        };
+        input
+          .request
+          .validate(authorized.host_capacity())
+          .map_err(|_| AgentHeartbeatError::InvalidRequest)?;
+        let parsed = agent_lease::parse_lease(&input.request.lease, &authorized)
+          .map_err(|()| AgentHeartbeatError::InvalidRequest)?;
+        let lifetime =
+          i64::try_from(self.lease_lifetime.as_millis()).map_err(|_| AgentHeartbeatError::InvalidRequest)?;
+        let expires_at = timestamp(
+          input
+            .observed_at_unix_ms
+            .checked_add(lifetime)
+            .ok_or(AgentHeartbeatError::InvalidRequest)?,
+        )?;
+        self
+          .store
+          .renew_lease(RenewLease {
+            idempotency_key,
+            lease: parsed.access,
+            job_id: parsed.job_id,
+            attempt: parsed.attempt,
+            observed_at,
+            expires_at,
+          })
+          .await
+          .map_err(AgentHeartbeatError::from)
+      },
+      |result| match result {
+        Ok(LeaseHeartbeatOutcome::Fenced) => (Outcome::Rejected, Some(ErrorClass::Fenced)),
+        Ok(_) => (Outcome::Success, None),
+        Err(AgentHeartbeatError::InvalidRequest) => (Outcome::Rejected, Some(ErrorClass::Invalid)),
+        Err(AgentHeartbeatError::Unavailable) => (Outcome::Failure, Some(ErrorClass::Unavailable)),
+      },
+    )
+    .await
   }
 }
 

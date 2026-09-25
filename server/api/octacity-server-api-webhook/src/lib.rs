@@ -9,25 +9,30 @@
 use std::{
   collections::BTreeMap,
   sync::Arc,
-  time::{SystemTime, UNIX_EPOCH},
+  time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
   Json, Router,
   body::Bytes,
-  extract::{DefaultBodyLimit, Path, State},
-  http::{HeaderMap, StatusCode},
+  extract::{DefaultBodyLimit, Path, Request, State},
+  http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
+  middleware::{self, Next},
   response::{IntoResponse, Response},
   routing::post,
 };
+use octacity_observability::{HttpMethod, HttpRoute, TraceSpan, classify_http_response, record_http_request};
 use octacity_server_application::{
   AcceptWebhookDeliveryCommand, CommandHandler, WebhookDeliveryError, WebhookDeliveryFailure,
 };
 use serde::Serialize;
+use tracing::Instrument as _;
+use uuid::Uuid;
 
 /// Maximum exact raw body accepted by public webhook ingress.
 pub const MAX_WEBHOOK_DELIVERY_BYTES: usize = octacity_server_application::MAX_WEBHOOK_DELIVERY_BYTES;
 const MAX_TRANSPORT_HEADERS: usize = 128;
+static REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
 type DeliveryAccept = dyn CommandHandler<AcceptWebhookDeliveryCommand, Error = WebhookDeliveryError>;
 
@@ -50,6 +55,37 @@ pub fn webhook_router(application: WebhookApplication) -> Router {
     .route("/webhooks/v1/integrations/{integration_id}", post(accept_delivery))
     .layer(DefaultBodyLimit::max(MAX_WEBHOOK_DELIVERY_BYTES))
     .with_state(Arc::new(application))
+    .layer(middleware::from_fn(request_context))
+}
+
+async fn request_context(request: Request, next: Next) -> Response {
+  let request_id = Uuid::new_v4().to_string();
+  let request_id_header = HeaderValue::from_str(&request_id).expect("UUID is always a valid header value");
+  let method = request.method().as_str().to_owned();
+  let span = tracing::info_span!(
+    TraceSpan::ServerHttpRequest.as_str(),
+    request.id = request_id,
+    http.request.method = method,
+    http.route = "/webhooks/v1/integrations/{integration_id}",
+  );
+  async move {
+    let started = Instant::now();
+    let mut response = next.run(request).await;
+    response
+      .headers_mut()
+      .insert(REQUEST_ID_HEADER.clone(), request_id_header);
+    let status = response.status().as_u16();
+    record_http_request(
+      HttpMethod::from_token(&method),
+      HttpRoute::Webhook,
+      classify_http_response(status),
+      status,
+      started.elapsed(),
+    );
+    response
+  }
+  .instrument(span)
+  .await
 }
 
 #[derive(Serialize)]

@@ -11,7 +11,7 @@ use std::{sync::Arc, time::Instant};
 use axum::{
   Json, Router,
   extract::{MatchedPath, Request, State},
-  http::{HeaderName, HeaderValue, StatusCode},
+  http::{HeaderName, HeaderValue, StatusCode, header},
   middleware::{self, Next},
   response::Response,
   routing::get,
@@ -70,9 +70,42 @@ pub fn management_router_with_application_and_metadata(
   application: v1::ManagementApplication,
   metadata: v1::OperationalMetadata,
 ) -> Router {
-  health_routes(readiness, metadata)
-    .merge(v1::management_routes(application))
+  application_routes(readiness, application, metadata).layer(middleware::from_fn(request_context))
+}
+
+/// Builds the complete management router with a Prometheus operational endpoint.
+pub fn management_router_with_application_metadata_and_metrics(
+  readiness: impl Fn() -> bool + Send + Sync + 'static,
+  application: v1::ManagementApplication,
+  metadata: v1::OperationalMetadata,
+  metrics: impl Fn() -> String + Clone + Send + Sync + 'static,
+) -> Router {
+  application_routes(readiness, application, metadata)
+    .merge(metrics_route(metrics))
     .layer(middleware::from_fn(request_context))
+}
+
+fn application_routes(
+  readiness: impl Fn() -> bool + Send + Sync + 'static,
+  application: v1::ManagementApplication,
+  metadata: v1::OperationalMetadata,
+) -> Router {
+  health_routes(readiness, metadata).merge(v1::management_routes(application))
+}
+
+fn metrics_route(metrics: impl Fn() -> String + Clone + Send + Sync + 'static) -> Router {
+  Router::new().route(
+    "/metrics",
+    get(move || {
+      let metrics = metrics.clone();
+      async move {
+        (
+          [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+          metrics(),
+        )
+      }
+    }),
+  )
 }
 
 #[derive(Clone)]
@@ -119,9 +152,10 @@ async fn operational_metadata(State(state): State<ManagementState>) -> Json<v1::
 async fn request_context(mut request: Request, next: Next) -> Response {
   let request_id = Uuid::new_v4().to_string();
   let request_id_header = HeaderValue::from_str(&request_id).expect("UUID is always a valid header value");
-  let method = request.method().as_str().to_owned();
+  let method = request.method().clone();
   let matched_route = request.extensions().get::<MatchedPath>().map(MatchedPath::as_str);
-  let span = telemetry::request_span(&request_id, &method, matched_route);
+  let route_group = telemetry::route_group(matched_route);
+  let span = telemetry::request_span(&request_id, method.as_str(), matched_route);
   request.extensions_mut().insert(RequestId(request_id.clone()));
   async move {
     let started = Instant::now();
@@ -129,7 +163,12 @@ async fn request_context(mut request: Request, next: Next) -> Response {
     response
       .headers_mut()
       .insert(REQUEST_ID_HEADER.clone(), request_id_header);
-    telemetry::record_response(response.status().as_u16(), started.elapsed());
+    telemetry::record_response(
+      method.as_str(),
+      route_group,
+      response.status().as_u16(),
+      started.elapsed(),
+    );
     response
   }
   .instrument(span)
@@ -163,5 +202,21 @@ mod tests {
       .await
       .unwrap();
     assert_eq!(liveness.status(), StatusCode::OK);
+  }
+
+  #[tokio::test]
+  async fn metrics_route_returns_prometheus_text_without_application_state() {
+    let response = metrics_route(|| "octacity_fixture_total 1\n".to_owned())
+      .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+      response.headers()[header::CONTENT_TYPE],
+      "text/plain; version=0.0.4; charset=utf-8"
+    );
+    let body = axum::body::to_bytes(response.into_body(), 1_024).await.unwrap();
+    assert_eq!(body.as_ref(), b"octacity_fixture_total 1\n");
   }
 }

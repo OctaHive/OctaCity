@@ -1,8 +1,8 @@
 //! Stable, bounded observability vocabulary shared by the server and Agent.
 //!
 //! This crate deliberately contains no exporter, recorder, subscriber, queue,
-//! or transport implementation. It owns the compatibility contract that those
-//! implementations consume:
+//! or transport implementation. It owns the compatibility contract and a thin
+//! facade that those implementations consume:
 //!
 //! - metric names, kinds, units, permitted labels, and series budgets;
 //! - a closed low-cardinality label vocabulary;
@@ -17,6 +17,7 @@
 
 mod label;
 mod metric;
+mod recording;
 mod redaction;
 mod trace;
 
@@ -28,6 +29,11 @@ pub use label::{
 pub use metric::{
   MAX_SERIES_PER_METRIC, MetricCardinalityBudget, MetricContractError, MetricDescriptor, MetricKind, MetricName,
   MetricScope, MetricUnit,
+};
+pub use recording::{
+  ServerOperationMetric, classify_http_response, describe_metrics, record_adapter_operation, record_http_request,
+  record_ready_jobs, record_server_operation, record_store_operation, record_trigger_decision, record_worker_retries,
+  record_worker_run,
 };
 pub use redaction::{MAX_DIAGNOSTIC_BYTES, REDACTED, RedactionAction, Sensitive, field_redaction, sanitize_diagnostic};
 pub use trace::{

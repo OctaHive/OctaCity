@@ -2,13 +2,17 @@
 
 use std::time::Duration;
 
+use octacity_observability::{
+  AdapterKind, CorrelationValue, Operation, Outcome as TelemetryOutcome, TraceSpan, record_adapter_operation,
+};
 pub use octacity_server_adapter_host::{HostError as WebhookHostError, HostFailureClass};
-use octacity_server_adapter_host::{ProcessRequest, cancel_request_id, execute_process};
+use octacity_server_adapter_host::{ProcessRequest, cancel_request_id, classify_host_telemetry, execute_process};
 use octacity_webhook_provider_protocol::{
   CancelOperation, Command as WebhookCommand, FailureClass, MAX_WEBHOOK_MESSAGE_BYTES, Outcome, Request, Response,
   WEBHOOK_PROTOCOL_VERSION, decode_response,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument as _;
 
 use crate::registry::InstalledWebhookAdapter;
 
@@ -18,6 +22,32 @@ impl InstalledWebhookAdapter {
   /// The shared host verifies the executable both before and immediately after
   /// spawn and writes no protected handle or body until both checks pass.
   pub async fn execute(
+    &self,
+    request: Request,
+    operation_timeout: Duration,
+    cancellation_grace: Duration,
+    cancellation: CancellationToken,
+  ) -> Result<Outcome, WebhookHostError> {
+    let operation = telemetry_operation(&request.command);
+    let request_id = safe_correlation(&request.request_id);
+    let integration_id = integration_id(&request.command).and_then(safe_correlation);
+    let span = tracing::info_span!(
+      TraceSpan::ServerAdapterOperation.as_str(),
+      request.id = request_id.as_ref().map_or("<invalid>", CorrelationValue::as_str),
+      integration.id = integration_id.as_ref().map_or("", CorrelationValue::as_str),
+      adapter.kind = AdapterKind::Webhook.as_str(),
+      operation = operation.as_str(),
+    );
+    let result = self
+      .execute_inner(request, operation_timeout, cancellation_grace, cancellation)
+      .instrument(span.clone())
+      .await;
+    let _entered = span.enter();
+    record_adapter_result(AdapterKind::Webhook, operation, &result);
+    result
+  }
+
+  async fn execute_inner(
     &self,
     request: Request,
     operation_timeout: Duration,
@@ -52,6 +82,40 @@ impl InstalledWebhookAdapter {
     })
     .await
   }
+}
+
+fn safe_correlation(value: &str) -> Option<CorrelationValue> {
+  CorrelationValue::try_new(value).ok()
+}
+
+fn integration_id(command: &WebhookCommand) -> Option<&str> {
+  match command {
+    WebhookCommand::VerifyDelivery(value) => Some(value.integration_id.as_str()),
+    WebhookCommand::CreateRegistration(value)
+    | WebhookCommand::ObserveRegistration(value)
+    | WebhookCommand::RotateRegistration(value)
+    | WebhookCommand::DeleteRegistration(value) => Some(value.integration_id.as_str()),
+    WebhookCommand::Cancel(_) => None,
+  }
+}
+
+fn telemetry_operation(command: &WebhookCommand) -> Operation {
+  match command {
+    WebhookCommand::VerifyDelivery(_) => Operation::Verify,
+    WebhookCommand::CreateRegistration(_) => Operation::Accept,
+    WebhookCommand::ObserveRegistration(_) => Operation::Verify,
+    WebhookCommand::RotateRegistration(_) => Operation::Renew,
+    WebhookCommand::DeleteRegistration(_) => Operation::Delete,
+    WebhookCommand::Cancel(_) => Operation::Cancel,
+  }
+}
+
+fn record_adapter_result<T>(adapter: AdapterKind, operation: Operation, result: &Result<T, WebhookHostError>) {
+  let (outcome, error) = match result {
+    Ok(_) => (TelemetryOutcome::Success, None),
+    Err(error) => classify_host_telemetry(error),
+  };
+  record_adapter_operation(adapter, operation, outcome, error);
 }
 
 fn require_capability(adapter: &InstalledWebhookAdapter, command: &WebhookCommand) -> Result<(), WebhookHostError> {

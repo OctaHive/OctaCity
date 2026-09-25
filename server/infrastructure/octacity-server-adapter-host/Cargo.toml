@@ -9,6 +9,7 @@ publish = false
 description = "Shared verified registry and bounded process execution for OctaCity server adapters"
 
 [dependencies]
+octacity-observability = { path = "../../../shared/octacity-observability" }
 processkit.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

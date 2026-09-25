@@ -10,6 +10,7 @@ use axum::{
   body::Body,
   extract::{DefaultBodyLimit, FromRequest, Path, Request, State, rejection::JsonRejection},
   http::{HeaderMap, StatusCode, header},
+  middleware,
   response::{IntoResponse, Response},
   routing::post,
 };
@@ -29,6 +30,7 @@ use octacity_server_application::{
 mod artifact;
 mod cache;
 mod ready_job;
+mod request_observability;
 mod telemetry;
 
 pub use ready_job::ReadyJobNotificationHub;
@@ -136,6 +138,7 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
     .route("/api/v1/leases/{lease_id}/cache:revoke", post(cache::revoke_session))
     .layer(DefaultBodyLimit::max(MAX_AGENT_BODY_BYTES))
     .with_state(state)
+    .layer(middleware::from_fn(request_observability::request_context))
 }
 
 #[derive(Clone)]

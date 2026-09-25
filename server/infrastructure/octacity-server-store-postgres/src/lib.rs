@@ -56,12 +56,14 @@ mod retry_build;
 mod schedule;
 mod state;
 mod store;
+mod telemetry;
 mod trigger_evaluation;
 mod trigger_query;
 
 use sqlx::{PgPool, migrate::MigrateError};
 
 pub use log_search::{LogSearchRebuildSummary, PostgresLogSearchIndex};
+pub use ready_queue_notification::ready_job_count;
 pub use store::{PostgresAuthoritativeStore, PostgresStore};
 
 /// PostgreSQL notification channel emitted after a ready-queue transaction commits.

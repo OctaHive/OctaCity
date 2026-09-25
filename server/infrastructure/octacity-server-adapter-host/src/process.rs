@@ -1,5 +1,6 @@
 use std::{future::Future, process::Stdio, time::Duration};
 
+use octacity_observability::{ErrorClass, Outcome};
 use processkit::ProcessGroup;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -112,6 +113,21 @@ impl HostError {
       }
       Self::Cancelled { .. } => HostFailureClass::Cancelled,
       Self::ProtocolFault { .. } => HostFailureClass::ProtocolFault,
+    }
+  }
+}
+
+/// Maps host mechanics onto the shared secret-free telemetry vocabulary.
+#[must_use]
+pub const fn classify_host_telemetry(error: &HostError) -> (Outcome, Option<ErrorClass>) {
+  match error {
+    HostError::InvalidRequest { .. } | HostError::Unsupported { .. } => (Outcome::Rejected, Some(ErrorClass::Invalid)),
+    HostError::ExecutableChanged { .. } => (Outcome::Failure, Some(ErrorClass::Internal)),
+    HostError::TimedOut { .. } => (Outcome::Failure, Some(ErrorClass::Timeout)),
+    HostError::Cancelled { .. } => (Outcome::Cancelled, Some(ErrorClass::Cancelled)),
+    HostError::ProtocolFault { .. } => (Outcome::Failure, Some(ErrorClass::Protocol)),
+    HostError::Spawn { .. } | HostError::Io { .. } | HostError::Crashed { .. } => {
+      (Outcome::Failure, Some(ErrorClass::Unavailable))
     }
   }
 }

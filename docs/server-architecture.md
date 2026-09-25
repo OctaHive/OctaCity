@@ -78,7 +78,7 @@ provider crate name.
 | `octacity-vcs-git` | Read-only Git refs, immutable commit selection, tree browsing, and bounded content reads through an ephemeral bare object database | Build workspaces, checkout, repository hooks, Octafile evaluation, and source execution |
 | `octacity-artifact-store` | Backend-neutral immutable-byte interface | Logical Artifact lifecycle and storage-provider details |
 | `octacity-artifact-s3` | S3-compatible implementation of Artifact and cache immutable-byte ports with separate private layouts | Logical policy and public S3 details |
-| `octacity-observability` | Shared stable metric names, units, closed low-cardinality labels, series budgets, trace fields, and redaction rules | Exporters, subscribers, transport queues, raw diagnostics, or correctness state |
+| `octacity-observability` | Shared stable metric names, units, closed low-cardinality labels, series budgets, safe facade emission, trace fields, and redaction rules | Exporters, subscribers, transport queues, raw diagnostics, or correctness state |
 | `octacity-protocol` | Shared signed JobSpec, server-Agent, and Artifact-transfer wire contracts | Server domain entities and HTTP routes |
 
 Planned ownership names are not compiled as empty packages. Tasks 6.3 and 6.4
@@ -153,7 +153,9 @@ each must pass the deletion test described in the design (own real invariants
 or an enforceable boundary) or be merged into its caller.
 
 The shared observability package contains vocabulary and safety invariants, not
-an exporter implementation. High-cardinality request, Build, Attempt, Job,
+an exporter implementation. Its thin metrics facade validates the declared
+instrument and closed labels before handing a point to the process recorder;
+without a recorder it is a bounded no-op. High-cardinality request, Build, Attempt, Job,
 Agent, Lease, Trigger-occurrence, and integration identities are trace-only
 correlation fields. Metric labels are sealed enums with finite value sets, so
 raw paths, identifiers, user input, and protected wrappers cannot create new
@@ -161,6 +163,18 @@ time series. Export failure is diagnostic loss and never correctness state.
 The application layer owns the transport-independent Agent telemetry exporter
 port, the Agent HTTP adapter owns its bounded concurrency and timeout gate, and
 the composition root selects the concrete exporter adapter.
+
+Task 8.4 instruments management and webhook HTTP boundaries, provider hosts,
+Trigger and orchestration decisions, placement and Lease operations, the
+PostgreSQL port boundary, cache and Artifact services, transactional-outbox
+delivery, authoritative ready-Job queue snapshots, and supervised worker passes. Request,
+adapter, store, and worker spans carry trace-only correlation while metric
+series retain only the closed classifications above.
+
+The server composition root installs a process-local Prometheus recorder,
+supervises its maintenance task, and exposes snapshots on the management
+listener at `GET /metrics`. Recorder initialization and scrape failures degrade
+observability only: they cannot reject domain work or stop protocol listeners.
 
 ## Public protocol seams
 

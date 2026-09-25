@@ -38,6 +38,8 @@ impl TraceSpan {
 /// Stable structured event names.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TraceEvent {
+  /// A classified operation completed.
+  OperationCompleted,
   /// HTTP request completed.
   ServerRequestCompleted,
   /// Operation was rejected at a boundary.
@@ -55,6 +57,7 @@ impl TraceEvent {
   #[must_use]
   pub const fn as_str(self) -> &'static str {
     match self {
+      Self::OperationCompleted => "octacity.operation.completed",
       Self::ServerRequestCompleted => "octacity.server.http.request.completed",
       Self::OperationRejected => "octacity.operation.rejected",
       Self::RetryScheduled => "octacity.retry.scheduled",
@@ -217,13 +220,18 @@ impl TraceField {
 pub struct CorrelationValue(String);
 
 impl CorrelationValue {
-  /// Validates a bounded opaque identity.
+  /// Validates a bounded opaque identity made only from identifier-safe ASCII.
+  ///
+  /// Restricting correlation values to identifier characters prevents URLs,
+  /// query credentials, header values, and arbitrary provider text from being
+  /// smuggled into structured diagnostics before their owning protocol runs.
   pub fn try_new(value: impl Into<String>) -> Result<Self, TraceContractError> {
     let value = value.into();
     if value.is_empty()
       || value.len() > MAX_CORRELATION_VALUE_BYTES
-      || value.trim() != value
-      || value.chars().any(|character| character.is_control())
+      || !value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
     {
       return Err(TraceContractError::InvalidCorrelationValue);
     }
@@ -271,6 +279,10 @@ mod tests {
     assert!(CorrelationValue::try_new("0195f0c2-opaque").is_ok());
     assert_eq!(
       CorrelationValue::try_new("x".repeat(MAX_CORRELATION_VALUE_BYTES + 1)),
+      Err(TraceContractError::InvalidCorrelationValue)
+    );
+    assert_eq!(
+      CorrelationValue::try_new("request?X-Amz-Credential=query-secret"),
       Err(TraceContractError::InvalidCorrelationValue)
     );
   }

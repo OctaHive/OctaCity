@@ -13,8 +13,10 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 clap.workspace = true
+metrics-exporter-prometheus.workspace = true
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-artifact-s3 = { path = "../infrastructure/octacity-artifact-s3" }
+octacity-observability = { path = "../../shared/octacity-observability" }
 octacity-server-api-agent = { path = "../api/octacity-server-api-agent" }
 octacity-server-api-cache = { path = "../api/octacity-server-api-cache" }
 octacity-server-api-rest = { path = "../api/octacity-server-api-rest" }
@@ -51,4 +53,5 @@ reqwest.workspace = true
 serde_yaml_ng.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
+tower = { workspace = true, features = ["util"] }
 uuid.workspace = true

@@ -51,6 +51,7 @@ mod retention_hold;
 mod retry_policy;
 mod schedule_cqrs;
 mod snapshots;
+mod telemetry;
 mod transaction;
 mod webhook_delivery;
 

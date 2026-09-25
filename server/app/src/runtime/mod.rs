@@ -38,6 +38,7 @@ pub struct ServerRuntime {
   readiness_task: Option<JoinHandle<()>>,
   worker_task: Option<JoinHandle<Result<(), DurableWorkerError>>>,
   notification_task: Option<JoinHandle<()>>,
+  metrics_task: Option<JoinHandle<()>>,
 }
 
 impl ServerRuntime {

@@ -10,10 +10,12 @@ description = "Authenticated public webhook HTTP adapter for OctaCity"
 
 [dependencies]
 axum.workspace = true
+octacity-observability = { path = "../../../shared/octacity-observability" }
 octacity-server-application = { path = "../../application" }
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

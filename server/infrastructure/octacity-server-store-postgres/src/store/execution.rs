@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use octacity_observability::Operation;
 use octacity_server_store::*;
 
 use super::{PostgresAuthoritativeStore, PostgresStore};
@@ -9,15 +10,27 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
     &self,
     request: TriggerAcceptanceProbe,
   ) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
-    crate::accept_trigger::replay_evaluation(&self.store.pool, request).await
+    crate::telemetry::observe(
+      Operation::Verify,
+      crate::accept_trigger::replay_evaluation(&self.store.pool, request),
+    )
+    .await
   }
 
   async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
-    crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request).await
+    crate::telemetry::observe(
+      Operation::Accept,
+      crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request),
+    )
+    .await
   }
 
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
-    crate::accept_trigger::suppress(&self.store.pool, request).await
+    crate::telemetry::observe(
+      Operation::Complete,
+      crate::accept_trigger::suppress(&self.store.pool, request),
+    )
+    .await
   }
 }
 
@@ -56,11 +69,11 @@ impl TriggerEvaluationWorkStore for PostgresStore {
 #[async_trait]
 impl JobExecutionStore for PostgresAuthoritativeStore {
   async fn claim_ready_job(&self, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
-    crate::job_claim::execute(&self.store.pool, request).await
+    crate::telemetry::observe(Operation::Claim, crate::job_claim::execute(&self.store.pool, request)).await
   }
 
   async fn append_job_events(&self, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError> {
-    crate::job_events::execute(&self.store.pool, request).await
+    crate::telemetry::observe(Operation::Append, crate::job_events::execute(&self.store.pool, request)).await
   }
 
   async fn prepare_job_event_append(
@@ -72,7 +85,11 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
   }
 
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
-    crate::job_completion::execute(&self.store.pool, &self.job_spec_signer, request).await
+    crate::telemetry::observe(
+      Operation::Complete,
+      crate::job_completion::execute(&self.store.pool, &self.job_spec_signer, request),
+    )
+    .await
   }
 }
 
@@ -115,7 +132,7 @@ impl OrphanLogChunkStore for PostgresAuthoritativeStore {
 #[async_trait]
 impl LeaseHeartbeatStore for PostgresStore {
   async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
-    crate::lease_heartbeat::execute(&self.pool, request).await
+    crate::telemetry::observe(Operation::Renew, crate::lease_heartbeat::execute(&self.pool, request)).await
   }
 }
 
@@ -125,14 +142,18 @@ impl InternalTriggerEventStore for PostgresStore {
     &self,
     request: ClaimInternalTriggerEvents,
   ) -> Result<Vec<InternalTriggerEventClaim>, StoreError> {
-    crate::internal_trigger::claim(&self.pool, request).await
+    crate::telemetry::observe(Operation::Claim, crate::internal_trigger::claim(&self.pool, request)).await
   }
 
   async fn complete_internal_trigger_event(
     &self,
     request: CompleteInternalTriggerEvent,
   ) -> Result<MutationDisposition, StoreError> {
-    crate::internal_trigger::complete(&self.pool, request).await
+    crate::telemetry::observe(
+      Operation::Complete,
+      crate::internal_trigger::complete(&self.pool, request),
+    )
+    .await
   }
 }
 
@@ -171,21 +192,33 @@ impl InternalTriggerDefinitionStore for PostgresStore {
 #[async_trait]
 impl LeaseHeartbeatStore for PostgresAuthoritativeStore {
   async fn renew_lease(&self, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
-    crate::lease_heartbeat::execute(&self.store.pool, request).await
+    crate::telemetry::observe(
+      Operation::Renew,
+      crate::lease_heartbeat::execute(&self.store.pool, request),
+    )
+    .await
   }
 }
 
 #[async_trait]
 impl LeaseRecoveryStore for PostgresAuthoritativeStore {
   async fn claim_expired_leases(&self, request: ClaimExpiredLeases) -> Result<Vec<ExpiredLeaseClaim>, StoreError> {
-    crate::lease_recovery::claim(&self.store.pool, request).await
+    crate::telemetry::observe(
+      Operation::Claim,
+      crate::lease_recovery::claim(&self.store.pool, request),
+    )
+    .await
   }
 
   async fn recover_expired_lease(
     &self,
     request: RecoverExpiredLease,
   ) -> Result<RecoverExpiredLeaseOutcome, StoreError> {
-    crate::lease_recovery::recover(&self.store.pool, &self.job_spec_signer, request).await
+    crate::telemetry::observe(
+      Operation::Retry,
+      crate::lease_recovery::recover(&self.store.pool, &self.job_spec_signer, request),
+    )
+    .await
   }
 }
 

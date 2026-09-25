@@ -9,6 +9,7 @@ publish = false
 description = "Verified webhook-provider adapter registry and bounded process host for OctaCity"
 
 [dependencies]
+octacity-observability = { path = "../../../shared/octacity-observability" }
 octacity-server-adapter-host = { path = "../octacity-server-adapter-host" }
 octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }
 serde.workspace = true

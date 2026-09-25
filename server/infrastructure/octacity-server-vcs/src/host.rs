@@ -2,13 +2,17 @@
 
 use std::time::Duration;
 
+use octacity_observability::{
+  AdapterKind, CorrelationValue, Operation, Outcome as TelemetryOutcome, TraceSpan, record_adapter_operation,
+};
 pub use octacity_server_adapter_host::{HostError as VcsHostError, HostFailureClass};
-use octacity_server_adapter_host::{ProcessRequest, cancel_request_id, execute_process};
+use octacity_server_adapter_host::{ProcessRequest, cancel_request_id, classify_host_telemetry, execute_process};
 use octacity_vcs_protocol::{
   CancelOperation, Command as VcsCommand, MAX_VCS_MESSAGE_BYTES, Outcome, Request, VCS_PROTOCOL_VERSION,
   decode_response,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument as _;
 
 use crate::registry::InstalledVcsAdapter;
 
@@ -18,6 +22,34 @@ impl InstalledVcsAdapter {
   /// The shared host verifies the executable both before and immediately after
   /// spawn and writes no protected handle or repository data until both checks pass.
   pub async fn execute(
+    &self,
+    request: Request,
+    operation_timeout: Duration,
+    cancellation_grace: Duration,
+    cancellation: CancellationToken,
+  ) -> Result<Outcome, VcsHostError> {
+    let operation = telemetry_operation(&request.command);
+    let request_id = CorrelationValue::try_new(request.request_id.clone()).ok();
+    let span = tracing::info_span!(
+      TraceSpan::ServerAdapterOperation.as_str(),
+      request.id = request_id.as_ref().map_or("<invalid>", CorrelationValue::as_str),
+      adapter.kind = AdapterKind::Vcs.as_str(),
+      operation = operation.as_str(),
+    );
+    let result = self
+      .execute_inner(request, operation_timeout, cancellation_grace, cancellation)
+      .instrument(span.clone())
+      .await;
+    let _entered = span.enter();
+    let (outcome, error_class) = match &result {
+      Ok(_) => (TelemetryOutcome::Success, None),
+      Err(error) => classify_host_telemetry(error),
+    };
+    record_adapter_operation(AdapterKind::Vcs, operation, outcome, error_class);
+    result
+  }
+
+  async fn execute_inner(
     &self,
     request: Request,
     operation_timeout: Duration,
@@ -51,6 +83,17 @@ impl InstalledVcsAdapter {
         .map_err(|error| error.to_string())
     })
     .await
+  }
+}
+
+fn telemetry_operation(command: &VcsCommand) -> Operation {
+  match command {
+    VcsCommand::ListReferences(_)
+    | VcsCommand::ReadCommit(_)
+    | VcsCommand::ListTree(_)
+    | VcsCommand::ReadFile(_)
+    | VcsCommand::ResolveRevision(_) => Operation::Resolve,
+    VcsCommand::Cancel(_) => Operation::Cancel,
   }
 }
 

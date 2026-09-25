@@ -1,5 +1,5 @@
 use octacity_server_store::StoreError;
-use sqlx::{Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::{READY_JOB_NOTIFICATION_CHANNEL, database::unavailable};
 
@@ -11,4 +11,12 @@ pub(crate) async fn notify_after_commit(transaction: &mut Transaction<'_, Postgr
     .await
     .map_err(unavailable)?;
   Ok(())
+}
+
+/// Returns an authoritative snapshot of Jobs currently eligible for placement.
+pub async fn ready_job_count(pool: &PgPool) -> Result<u64, sqlx::Error> {
+  let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM ready_queue_entries")
+    .fetch_one(pool)
+    .await?;
+  u64::try_from(count).map_err(|error| sqlx::Error::Decode(Box::new(error)))
 }

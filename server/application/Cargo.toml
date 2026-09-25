@@ -12,6 +12,7 @@ description = "Transport-independent CQRS application layer for OctaCity"
 async-trait.workspace = true
 base64.workspace = true
 octacity-artifact-store = { path = "../core/octacity-artifact-store" }
+octacity-observability = { path = "../../shared/octacity-observability" }
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-server-cache = { path = "../core/octacity-server-cache" }
 octacity-server-domain = { path = "../core/octacity-server-domain" }

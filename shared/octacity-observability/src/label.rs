@@ -217,6 +217,28 @@ label_enum! {
     Patch => "PATCH",
     /// DELETE.
     Delete => "DELETE",
+    /// Any method outside the supported management vocabulary.
+    Other => "OTHER",
+  }
+}
+
+impl HttpMethod {
+  /// Maps an HTTP method token onto the bounded metric vocabulary.
+  #[must_use]
+  pub fn from_token(value: &str) -> Self {
+    if value.eq_ignore_ascii_case("GET") {
+      Self::Get
+    } else if value.eq_ignore_ascii_case("POST") {
+      Self::Post
+    } else if value.eq_ignore_ascii_case("PUT") {
+      Self::Put
+    } else if value.eq_ignore_ascii_case("PATCH") {
+      Self::Patch
+    } else if value.eq_ignore_ascii_case("DELETE") {
+      Self::Delete
+    } else {
+      Self::Other
+    }
   }
 }
 
@@ -279,6 +301,8 @@ label_enum! {
     Retry => "retry",
     /// Search a projection.
     Search => "search",
+    /// Read authoritative or diagnostic state.
+    Read => "read",
     /// Upload immutable bytes.
     Upload => "upload",
     /// Download immutable bytes.
@@ -411,7 +435,10 @@ impl MetricLabelSet {
   /// labels.insert(build_id).unwrap();
   /// ```
   pub fn insert<T: MetricLabelValue>(&mut self, value: T) -> Result<(), MetricLabelSetError> {
-    let label = value.into_metric_label();
+    self.insert_label(value.into_metric_label())
+  }
+
+  pub(crate) fn insert_label(&mut self, label: MetricLabel) -> Result<(), MetricLabelSetError> {
     if self.labels.iter().any(|existing| existing.key == label.key) {
       return Err(MetricLabelSetError::DuplicateKey(label.key));
     }

@@ -9,6 +9,7 @@ use tracing::info;
 use super::{
   ListenerTaskResult, ServerRuntime, ServerRuntimeError,
   notifications::spawn_ready_job_listener,
+  telemetry::spawn_metrics_upkeep,
   workers::{self, DurableWorkers},
 };
 use crate::{
@@ -23,6 +24,7 @@ pub(super) struct RuntimeComponents {
   pub(super) webhook_router: Option<axum::Router>,
   pub(super) workers: Option<DurableWorkers>,
   pub(super) ready_job_notifications: Option<(sqlx::PgPool, Arc<ReadyJobNotificationHub>)>,
+  pub(super) metrics: Option<metrics_exporter_prometheus::PrometheusHandle>,
   pub(super) cancellation: CancellationToken,
 }
 
@@ -43,6 +45,7 @@ impl ServerRuntime {
         webhook_router: None,
         workers: None,
         ready_job_notifications: None,
+        metrics: None,
         cancellation: CancellationToken::new(),
       },
     )
@@ -61,6 +64,7 @@ impl ServerRuntime {
       webhook_router,
       workers,
       ready_job_notifications,
+      metrics,
       cancellation,
     } = components;
     if config.webhook_bind().is_some() != webhook_router.is_some() {
@@ -102,9 +106,13 @@ impl ServerRuntime {
         pool,
         hub,
         config.ready_job_listener_reconnect_delay(),
+        config.readiness_check_interval(),
         cancellation.child_token(),
       )
     });
+    let metrics_task = metrics
+      .as_ref()
+      .map(|handle| spawn_metrics_upkeep(handle.clone(), cancellation.child_token()));
     let router_readiness = readiness.clone();
     let metadata = octacity_server_api_rest::v1::OperationalMetadata::trusted_network(
       config.management_externally_reachable(),
@@ -112,13 +120,23 @@ impl ServerRuntime {
       agent_addr.is_some(),
       webhook_addr.is_some(),
     );
-    let management_router = match management_application {
-      Some(application) => octacity_server_api_rest::management_router_with_application_and_metadata(
+    let management_router = match (management_application, metrics) {
+      (Some(application), Some(metrics)) => {
+        octacity_server_api_rest::management_router_with_application_metadata_and_metrics(
+          move || router_readiness.is_ready(),
+          application,
+          metadata,
+          move || metrics.render(),
+        )
+      }
+      (Some(application), None) => octacity_server_api_rest::management_router_with_application_and_metadata(
         move || router_readiness.is_ready(),
         application,
         metadata,
       ),
-      None => octacity_server_api_rest::management_router_with_metadata(move || router_readiness.is_ready(), metadata),
+      (None, _) => {
+        octacity_server_api_rest::management_router_with_metadata(move || router_readiness.is_ready(), metadata)
+      }
     };
     let mut listener_tasks = JoinSet::new();
     spawn_listener(
@@ -168,6 +186,7 @@ impl ServerRuntime {
       readiness_task: Some(readiness_task),
       worker_task,
       notification_task,
+      metrics_task,
     })
   }
 }

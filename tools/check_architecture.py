@@ -88,6 +88,10 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 # package-specific so another core crate cannot acquire private-key handling by
 # depending on the same libraries.
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
+    # The shared observability contract emits through provider-neutral facades;
+    # it owns no recorder, exporter, queue, or subscriber. tracing-subscriber
+    # is test-only and verifies structured correlation at the facade boundary.
+    "octacity-observability": frozenset({"metrics", "tracing", "tracing-subscriber"}),
     # URL syntax is validated before an endpoint enters an Agent capability.
     # The same boundary decodes shared runner output frames and keeps configured
     # redaction material in zeroing memory before any durable write.

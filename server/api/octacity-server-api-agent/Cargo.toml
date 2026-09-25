@@ -11,11 +11,14 @@ description = "Agent protocol API adapter for the OctaCity server"
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
+octacity-observability = { path = "../../../shared/octacity-observability" }
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-server-application = { path = "../../application" }
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
