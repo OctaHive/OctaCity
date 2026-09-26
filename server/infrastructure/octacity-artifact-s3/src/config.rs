@@ -73,8 +73,7 @@ pub fn validate_s3_settings(
     .parse::<http::Uri>()
     .map_err(|_| S3ArtifactStoreConfigError::InvalidEndpoint)?;
   let secure = endpoint.scheme_str() == Some("https");
-  let loopback =
-    endpoint.scheme_str() == Some("http") && matches!(endpoint.host(), Some("127.0.0.1" | "::1" | "localhost"));
+  let loopback = is_loopback_http_uri(&endpoint);
   if (!secure && !loopback)
     || endpoint.authority().is_none()
     || endpoint
@@ -121,6 +120,16 @@ pub fn validate_s3_settings(
     return Err(S3ArtifactStoreConfigError::InvalidCapabilityRecheckInterval);
   }
   Ok(())
+}
+
+pub(crate) fn is_loopback_http_endpoint(endpoint: &str) -> bool {
+  endpoint
+    .parse::<http::Uri>()
+    .is_ok_and(|endpoint| is_loopback_http_uri(&endpoint))
+}
+
+fn is_loopback_http_uri(endpoint: &http::Uri) -> bool {
+  endpoint.scheme_str() == Some("http") && matches!(endpoint.host(), Some("127.0.0.1" | "::1" | "localhost"))
 }
 
 pub(crate) fn validate_config(config: &S3ArtifactStoreConfig) -> Result<(), S3ArtifactStoreConfigError> {

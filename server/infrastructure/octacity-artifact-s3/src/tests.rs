@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{env, process::Command, time::Duration};
 
 use octacity_artifact_store::{
   ArtifactId, ArtifactObject, ArtifactStore, ArtifactStoreError, ArtifactStoreOperation, ArtifactUploadId,
@@ -14,6 +14,8 @@ use crate::{
   artifact::{BodyVerifier, backend},
   config::MAX_OPERATION_TIMEOUT,
 };
+
+const LOOPBACK_PROXY_CHILD: &str = "OCTACITY_S3_LOOPBACK_PROXY_CHILD";
 
 fn artifact_id() -> ArtifactId {
   ArtifactId::from_uuid(Uuid::from_u128(1)).unwrap()
@@ -47,6 +49,40 @@ async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
     );
   }
   String::from_utf8(request).unwrap()
+}
+
+async fn serve_successful_capability_probe(listener: &tokio::net::TcpListener) {
+  for (index, method) in ["PUT", "GET", "PUT", "GET", "DELETE"].into_iter().enumerate() {
+    let (mut socket, _) = listener.accept().await.unwrap();
+    let request = read_request(&mut socket).await;
+    assert!(request.starts_with(method));
+    assert!(request.contains("/octacity-artifacts/ci/v1/health/readiness-"));
+    if index == 2 {
+      assert!(request.to_ascii_lowercase().contains("x-amz-copy-source:"));
+      let body = b"<CopyObjectResult><ETag>&quot;probe&quot;</ETag><LastModified>2026-09-18T00:00:00Z</LastModified></CopyObjectResult>";
+      socket
+        .write_all(
+          format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/xml\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+          )
+          .as_bytes(),
+        )
+        .await
+        .unwrap();
+      socket.write_all(body).await.unwrap();
+    } else if method == "DELETE" {
+      socket
+        .write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    } else {
+      socket
+        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    }
+  }
 }
 
 fn configuration(endpoint: &str) -> S3ArtifactStoreConfig {
@@ -247,43 +283,50 @@ async fn health_check_requires_mutation_permissions_not_only_bucket_inspection()
   server.await.unwrap();
 }
 
+#[test]
+fn loopback_endpoint_bypasses_environment_proxy() {
+  let output = Command::new(env::current_exe().unwrap())
+    .arg("--exact")
+    .arg("tests::loopback_proxy_child")
+    .arg("--nocapture")
+    .env(LOOPBACK_PROXY_CHILD, "1")
+    .env("HTTP_PROXY", "http://127.0.0.1:9")
+    .env("HTTPS_PROXY", "http://127.0.0.1:9")
+    .env("http_proxy", "http://127.0.0.1:9")
+    .env("https_proxy", "http://127.0.0.1:9")
+    .env("NO_PROXY", "")
+    .env("no_proxy", "")
+    .output()
+    .unwrap();
+  assert!(
+    output.status.success(),
+    "loopback S3 request used the environment proxy:\n{}{}",
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr)
+  );
+}
+
+#[tokio::test]
+async fn loopback_proxy_child() {
+  if env::var_os(LOOPBACK_PROXY_CHILD).is_none() {
+    return;
+  }
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let endpoint = format!("http://{}", listener.local_addr().unwrap());
+  let store = S3ArtifactStore::new(configuration(&endpoint)).unwrap();
+  let server = tokio::spawn(async move { serve_successful_capability_probe(&listener).await });
+
+  store.health_check().await.unwrap();
+  server.await.unwrap();
+}
+
 #[tokio::test]
 async fn health_check_uses_marker_polling_and_requalifies_after_availability_loss() {
   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
   let endpoint = format!("http://{}", listener.local_addr().unwrap());
   let store = S3ArtifactStore::new(configuration(&endpoint)).unwrap();
   let server = tokio::spawn(async move {
-    for (index, method) in ["PUT", "GET", "PUT", "GET", "DELETE"].into_iter().enumerate() {
-      let (mut socket, _) = listener.accept().await.unwrap();
-      let request = read_request(&mut socket).await;
-      assert!(request.starts_with(method));
-      assert!(request.contains("/octacity-artifacts/ci/v1/health/readiness-"));
-      if index == 2 {
-        assert!(request.to_ascii_lowercase().contains("x-amz-copy-source:"));
-        let body = b"<CopyObjectResult><ETag>&quot;probe&quot;</ETag><LastModified>2026-09-18T00:00:00Z</LastModified></CopyObjectResult>";
-        socket
-          .write_all(
-            format!(
-              "HTTP/1.1 200 OK\r\ncontent-type: application/xml\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-              body.len()
-            )
-            .as_bytes(),
-          )
-          .await
-          .unwrap();
-        socket.write_all(body).await.unwrap();
-      } else if method == "DELETE" {
-        socket
-          .write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n")
-          .await
-          .unwrap();
-      } else {
-        socket
-          .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-          .await
-          .unwrap();
-      }
-    }
+    serve_successful_capability_probe(&listener).await;
     let (mut socket, _) = listener.accept().await.unwrap();
     let request = read_request(&mut socket).await;
     assert!(request.starts_with("HEAD "));
