@@ -33,6 +33,7 @@ enum Scenario {
   HelloThenSilent,
   AcceptedThenSilent,
   EofAfterAccepted,
+  ExitBeforeHello,
   RunnerError,
   AccountingFails,
   AccountingHangs,
@@ -65,14 +66,23 @@ impl ExecutionBackend for FakeBackend {
   ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
     let (agent_stdin, runner_input) = tokio::io::duplex(4096);
     let (runner_output, agent_stdout) = tokio::io::duplex(4096);
-    let (agent_stderr, runner_stderr) = tokio::io::duplex(64);
-    drop(agent_stderr);
+    let (mut runner_stderr, agent_stderr) = tokio::io::duplex(256);
+    if matches!(self.scenario, Scenario::ExitBeforeHello) {
+      tokio::spawn(async move {
+        runner_stderr
+          .write_all(b"bwrap startup denied: identity-token\n")
+          .await
+          .unwrap();
+      });
+    } else {
+      drop(runner_stderr);
+    }
     tokio::spawn(fake_runner(runner_input, runner_output, self.scenario));
     Ok(Box::new(FakeExecution {
       io: Some(ExecutionIo {
         stdin: Box::pin(agent_stdin) as ExecutionWriter,
         stdout: Box::pin(agent_stdout) as ExecutionReader,
-        stderr: Box::pin(runner_stderr) as ExecutionReader,
+        stderr: Box::pin(agent_stderr) as ExecutionReader,
       }),
       paths: ExecutionPaths {
         workspace: request.workspace,
@@ -91,6 +101,7 @@ impl ExecutionBackend for FakeBackend {
         | Scenario::HelloThenSilent
         | Scenario::AcceptedThenSilent
         | Scenario::EofAfterAccepted
+        | Scenario::ExitBeforeHello
         | Scenario::RunnerError
         | Scenario::AccountingFails
         | Scenario::AccountingHangs => 0,
@@ -158,6 +169,9 @@ impl RunningExecution for FakeExecution {
 }
 
 async fn fake_runner(input: tokio::io::DuplexStream, mut output: tokio::io::DuplexStream, scenario: Scenario) {
+  if matches!(scenario, Scenario::ExitBeforeHello) {
+    return;
+  }
   if matches!(scenario, Scenario::Silent) {
     pending::<()>().await;
     return;
@@ -403,6 +417,37 @@ async fn cancellation_during_the_runner_handshake_kills_and_destroys() {
   ));
   assert!(killed.load(Ordering::SeqCst));
   assert!(destroyed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn pre_handshake_failures_retain_bounded_redacted_stderr() {
+  let workspace = tempfile::tempdir().unwrap();
+  std::fs::create_dir(workspace.path().join("data")).unwrap();
+  let backend = FakeBackend {
+    destroyed: Arc::new(AtomicBool::new(false)),
+    killed: Arc::new(AtomicBool::new(false)),
+    scenario: Scenario::ExitBeforeHello,
+    cleanup_fails: false,
+  };
+  let (sender, _receiver) = mpsc::channel(8);
+  let mut request = job(&workspace.path().canonicalize().unwrap());
+  request.redactions = RunnerRedactions::new([b"identity-token".as_slice()]);
+
+  let error = supervise(
+    &installation(),
+    &backend,
+    request,
+    CancellationToken::new(),
+    &sender,
+    &RunnerSupervisionPolicy::default(),
+  )
+  .await
+  .unwrap_err();
+  let message = error.to_string();
+
+  assert!(message.contains("stdout closed before hello"));
+  assert!(message.contains("bwrap startup denied: [redacted]"));
+  assert!(!message.contains("identity-token"));
 }
 
 #[tokio::test]

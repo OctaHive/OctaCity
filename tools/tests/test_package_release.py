@@ -303,6 +303,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("github-hosted-native.sh cleanup", linux_native)
         self.assertIn("github-hosted-native.sh run", linux_native)
         self.assertIn("execution-wrapper:", linux_native)
+        self.assertIn("apparmor-profiles", linux_native)
         self.assertIn("OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}", linux_native)
         self.assertIn("if: always()", linux_native)
 
@@ -315,6 +316,9 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT", provisioner)
         self.assertIn("OCTACITY_RELEASE_NATIVE_CACHE_ROOT", provisioner)
         self.assertIn("octacity-hosted-native/runner/cgroup.procs", provisioner)
+        self.assertIn("bwrap-userns-restrict", provisioner)
+        self.assertIn("apparmor_parser", provisioner)
+        self.assertIn("probe_bubblewrap", provisioner)
         self.assertIn("Native work and cache roots must use separate filesystems", provisioner)
 
     def test_workflows_pin_actions_runners_and_toolchains(self):

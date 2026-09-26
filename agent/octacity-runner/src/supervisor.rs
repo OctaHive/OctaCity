@@ -208,6 +208,14 @@ pub enum RunnerSupervisionError {
     /// Subsequent backend cleanup failure.
     cleanup: ExecutionError,
   },
+  #[error("{operation}; bounded redacted runner stderr: {stderr}")]
+  /// A runner operation failed after the process emitted diagnostic stderr.
+  OperationWithStderr {
+    /// Original supervision failure.
+    operation: Box<RunnerSupervisionError>,
+    /// Whitespace-normalized, secret-redacted diagnostic output.
+    stderr: String,
+  },
 }
 
 /// Starts, drives, and unconditionally destroys one runner execution.
@@ -283,7 +291,8 @@ pub async fn supervise(
       Ok(completion)
     }
     (Ok(_), Err(error)) => Err(error),
-    (Err(operation), _) => Err(operation),
+    (Err(operation), Ok(stderr)) => Err(with_stderr(operation, stderr, &job.redactions)),
+    (Err(operation), Err(_)) => Err(operation),
   };
   match (result, cleanup) {
     (result, Ok(())) => result,
@@ -292,6 +301,28 @@ pub async fn supervise(
       operation: Box::new(operation),
       cleanup,
     }),
+  }
+}
+
+fn with_stderr(
+  operation: RunnerSupervisionError,
+  stderr: BoundedStderr,
+  redactions: &RunnerRedactions,
+) -> RunnerSupervisionError {
+  if stderr.bytes.is_empty() {
+    return operation;
+  }
+  let mut diagnostic = redactions
+    .message(String::from_utf8_lossy(&stderr.bytes).into_owned())
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ");
+  if stderr.truncated {
+    diagnostic.push_str(" [truncated]");
+  }
+  RunnerSupervisionError::OperationWithStderr {
+    operation: Box::new(operation),
+    stderr: diagnostic,
   }
 }
 

@@ -61,6 +61,17 @@ enable_controllers() {
   printf '+cpu +memory +io +pids\n' | sudo tee "$cgroup/cgroup.subtree_control" >/dev/null
 }
 
+install_bubblewrap_profile() {
+  local source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+  local destination=/etc/apparmor.d/bwrap-userns-restrict
+  [[ -r /sys/module/apparmor/parameters/enabled ]] || return 0
+  grep -q '^Y' /sys/module/apparmor/parameters/enabled || return 0
+  [[ -f $source ]] || fail "Ubuntu Bubblewrap AppArmor profile is missing: $source"
+  require_command apparmor_parser
+  sudo install -o root -g root -m 0644 "$source" "$destination"
+  sudo apparmor_parser --replace "$destination"
+}
+
 platform_metadata() {
   case "$(uname -m)" in
     x86_64) printf 'amd64 linux-x86_64\n' ;;
@@ -180,6 +191,18 @@ run_in_cgroup() {
     env HOME="$runner_home" USER="$runner_user" LOGNAME="$runner_user" "$@"
 }
 
+probe_bubblewrap() {
+  "$0" run /usr/bin/bwrap \
+    --die-with-parent \
+    --new-session \
+    --unshare-all \
+    --share-net \
+    --disable-userns \
+    --ro-bind / / \
+    -- /bin/true \
+    || fail "Bubblewrap cannot create the namespaces required by Native execution"
+}
+
 setup() {
   local version=${1:-} revision=${2:-} root workspace_bytes cgroup_parent cgroup_root runner_cgroup
   local asset_arch runtime_platform
@@ -191,6 +214,7 @@ setup() {
     require_command "$command"
   done
   [[ -x /usr/bin/bwrap ]] || fail "Bubblewrap is not installed at /usr/bin/bwrap"
+  install_bubblewrap_profile
 
   repo_root=$(git rev-parse --show-toplevel 2>/dev/null) \
     || fail "run from the OctaCity checkout"
@@ -227,6 +251,7 @@ setup() {
     "$cgroup_root" "$cgroup_root/cgroup.procs" "$cgroup_root/cgroup.subtree_control"
   [[ -w $cgroup_root/cgroup.procs && -w $cgroup_root/cgroup.subtree_control ]] \
     || fail "Native cgroup root is not delegated to the runner user"
+  probe_bubblewrap
 
   write_environment "$root" "$workspace_bytes" "$cgroup_root"
   echo "GitHub-hosted Linux Native environment is ready"

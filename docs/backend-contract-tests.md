@@ -17,6 +17,11 @@ Apple Silicon Microsandbox remain explicit self-hosted suites because their
 runtime requirements are not available on standard hosted runners. The
 portable CI matrix remains independent of privileged host configuration.
 
+Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor. The
+hosted setup loads Ubuntu's packaged `bwrap-userns-restrict` profile rather
+than disabling that system-wide protection, then executes a namespace probe
+from the delegated runner cgroup before starting a long Rust build or test.
+
 Each Native test command enters a dedicated sibling `runner` cgroup before it
 starts the Agent. The Agent can therefore move only its runner descendants into
 the clean `jobs` subtree without receiving authority over the VM's root cgroup.
