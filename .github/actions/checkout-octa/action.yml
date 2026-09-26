@@ -11,6 +11,9 @@ outputs:
   revision:
     description: Validated 40-character Octa Git revision
     value: ${{ steps.source.outputs.revision }}
+  version:
+    description: Version declared by the pinned Octa runner package
+    value: ${{ steps.metadata.outputs.version }}
 
 runs:
   using: composite
@@ -28,3 +31,22 @@ runs:
         repository: OctaHive/octa
         ref: ${{ steps.source.outputs.revision }}
         path: ${{ inputs.path }}
+    - name: Read pinned Octa version
+      id: metadata
+      shell: bash
+      env:
+        OCTA_CHECKOUT_PATH: ${{ inputs.path }}
+      run: |
+        python3 - "${OCTA_CHECKOUT_PATH}/crates/octa-runner/Cargo.toml" "${GITHUB_OUTPUT}" <<'PY'
+        import pathlib
+        import re
+        import sys
+        import tomllib
+
+        manifest = pathlib.Path(sys.argv[1])
+        version = tomllib.loads(manifest.read_text(encoding="utf-8"))["package"]["version"]
+        if not isinstance(version, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version) is None:
+            raise SystemExit(f"invalid Octa runner version in {manifest}: {version!r}")
+        with pathlib.Path(sys.argv[2]).open("a", encoding="utf-8") as output:
+            output.write(f"version={version}\n")
+        PY

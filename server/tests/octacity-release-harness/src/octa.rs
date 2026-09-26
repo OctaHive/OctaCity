@@ -30,6 +30,8 @@ struct OctaReleaseContract {
 #[serde(deny_unknown_fields)]
 /// Strict capabilities advertised by a released Octa runner.
 pub struct RunnerCapabilities {
+  #[serde(rename = "type")]
+  message_type: String,
   pub(crate) octa_version: String,
   runner_protocols: Vec<u16>,
   event_schemas: Vec<u16>,
@@ -115,6 +117,9 @@ impl RunnerCapabilities {
   }
 
   fn validate(&self) -> Result<(), HarnessError> {
+    if self.message_type != "capabilities" {
+      return Err(invalid("Octa runner capabilities have an invalid message type"));
+    }
     if self.octa_version.trim().is_empty() || self.platform.trim().is_empty() {
       return Err(invalid("Octa runner capabilities omit version or platform"));
     }

@@ -140,6 +140,21 @@ fn rejects_octa_without_exact_source_revision() {
   assert!(error.to_string().contains("do not identify their source revision"));
 }
 
+#[test]
+fn rejects_a_non_capabilities_octa_message() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let capabilities_path = bundles.octa.join("octa-runner-capabilities.json");
+  let mut capabilities: Value = serde_json::from_slice(&fs::read(&capabilities_path).unwrap()).unwrap();
+  capabilities["type"] = json!("hello");
+  write_json(&capabilities_path, &capabilities);
+  write_checksums(&bundles.octa);
+
+  let error = install(&bundles, &temporary.path().join("rejected-octa-message")).unwrap_err();
+
+  assert!(error.to_string().contains("invalid message type"));
+}
+
 fn fixture(root: &Path) -> ReleaseBundles {
   let contract: Value = serde_json::from_str(include_str!("../../../../packaging/release-contract.json")).unwrap();
   let server = root.join("server-bundle");
@@ -230,6 +245,7 @@ fn fixture(root: &Path) -> ReleaseBundles {
   write_json(
     &octa.join("octa-runner-capabilities.json"),
     &json!({
+      "type": "capabilities",
       "octa_version": "0.4.0",
       "runner_protocols": [3],
       "event_schemas": [4],

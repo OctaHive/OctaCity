@@ -11,6 +11,10 @@ inputs:
   backend:
     description: Provisioned execution backend (native or microsandbox)
     required: true
+  execution-wrapper:
+    description: Optional host cgroup entrypoint used to execute the scenario command
+    required: false
+    default: ""
 
 outputs:
   evidence:
@@ -94,6 +98,7 @@ runs:
       working-directory: octacity
       env:
         OCTACITY_RELEASE_BACKEND: ${{ inputs.backend }}
+        OCTACITY_RELEASE_EXECUTION_WRAPPER: ${{ inputs.execution-wrapper }}
         OCTACITY_RELEASE_SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
       run: |
         set -euo pipefail
@@ -106,8 +111,13 @@ runs:
           microsandbox) test_name=released_agent_completes_a_sequential_pipeline_through_rest_and_postgres ;;
           *) printf 'unsupported release backend: %s\n' "${OCTACITY_RELEASE_BACKEND}" >&2; exit 1 ;;
         esac
-        cargo test --locked -p octacity-release-harness --test release_vertical_slice "${test_name}" \
-          -- --ignored --exact --nocapture
+        command=(cargo test --locked -p octacity-release-harness --test release_vertical_slice "${test_name}"
+          -- --ignored --exact --nocapture)
+        if [[ -n "${OCTACITY_RELEASE_EXECUTION_WRAPPER}" ]]; then
+          "${OCTACITY_RELEASE_EXECUTION_WRAPPER}" run "${command[@]}"
+        else
+          "${command[@]}"
+        fi
 
     - name: Stop disposable services
       if: always()

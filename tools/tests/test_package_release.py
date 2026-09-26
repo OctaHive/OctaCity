@@ -294,6 +294,29 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("tools/package_server_release.py", release)
         self.assertIn("octacity-server-${{ matrix.platform }}", release)
 
+    def test_linux_native_release_gate_uses_a_disposable_github_runner(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        linux_native = workflow.split("  linux-native:\n", 1)[1].split("  linux-containerd:\n", 1)[0]
+        self.assertIn("runs-on: ubuntu-24.04", linux_native)
+        self.assertNotIn("self-hosted", linux_native)
+        self.assertIn("github-hosted-native.sh setup", linux_native)
+        self.assertIn("github-hosted-native.sh cleanup", linux_native)
+        self.assertIn("github-hosted-native.sh run", linux_native)
+        self.assertIn("execution-wrapper:", linux_native)
+        self.assertIn("OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}", linux_native)
+        self.assertIn("if: always()", linux_native)
+
+        checkout = (REPOSITORY / ".github/actions/checkout-octa/action.yml").read_text(encoding="utf-8")
+        self.assertIn("value: ${{ steps.metadata.outputs.version }}", checkout)
+
+        provisioner = (REPOSITORY / "tools/runner/github-hosted-native.sh").read_text(encoding="utf-8")
+        self.assertIn("sha256sum --check --strict", provisioner)
+        self.assertIn("octa-runner-capabilities.json", provisioner)
+        self.assertIn("OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT", provisioner)
+        self.assertIn("OCTACITY_RELEASE_NATIVE_CACHE_ROOT", provisioner)
+        self.assertIn("octacity-hosted-native/runner/cgroup.procs", provisioner)
+        self.assertIn("Native work and cache roots must use separate filesystems", provisioner)
+
     def test_workflows_pin_actions_runners_and_toolchains(self):
         action = re.compile(r"^\s*-?\s*uses:\s+[^\s@]+@([0-9a-f]{40})(?:\s+#.*)?$")
         for path in sorted((REPOSITORY / ".github/workflows").glob("*.yml")):

@@ -9,22 +9,35 @@ honestly on an arbitrary developer machine. They never skip after an operator
 explicitly selects one: absent or invalid provisioning fails the test.
 
 The manual `backend contracts` GitHub Actions workflow assigns each exact test
-to a labeled, provisioned self-hosted runner. It is the release gate for real
-kernel and hypervisor behavior; the portable CI matrix remains independent of
-privileged host configuration.
+to a runner with the required kernel or hypervisor. Linux Native runs on a
+fresh GitHub-hosted `ubuntu-24.04` VM; the job downloads and verifies the
+pinned Octa release, delegates an isolated cgroup-v2 subtree, and mounts
+separate bounded loopback filesystems for workspaces and cache. Containerd and
+Apple Silicon Microsandbox remain explicit self-hosted suites because their
+runtime requirements are not available on standard hosted runners. The
+portable CI matrix remains independent of privileged host configuration.
 
-For the released-Agent gate, prepare one Apple Silicon macOS host and one
-ARM64 Linux host, then run `tools/runner/register-backend-runner.sh` in a
-separate terminal on each. The wizard executes the real backend preflight,
-opens the repository registration page, registers an ephemeral one-job runner,
-and opens the workflow page. Select the `released-agent` suite; it schedules
-only Linux Native and macOS Microsandbox, so an unrelated containerd runner is
-not required. The one-hour GitHub registration token is read without echo and
-is never written to disk. Because self-hosted runners execute repository code,
-use this procedure only for a trusted revision and do not enable it for
-unreviewed public pull requests.
+Each Native test command enters a dedicated sibling `runner` cgroup before it
+starts the Agent. The Agent can therefore move only its runner descendants into
+the clean `jobs` subtree without receiving authority over the VM's root cgroup.
 
-The Linux host needs one initial cgroup installation:
+Select the default `linux-native` suite to run the full released-product Native
+matrix without owning a runner. The workflow creates all privileged Linux
+state on the disposable VM and removes it in an `always()` cleanup step; the
+VM is discarded after the job as an additional boundary.
+
+The combined `released-agent` suite also schedules macOS Microsandbox. To run
+that additional slice, prepare one Apple Silicon macOS host and execute
+`tools/runner/register-backend-runner.sh` in a separate terminal. The wizard
+executes the real backend preflight, opens the repository registration page,
+registers an ephemeral one-job runner, and opens the workflow page. The
+one-hour GitHub registration token is read without echo and is never written
+to disk. Because self-hosted runners execute repository code, use this
+procedure only for a trusted revision and do not enable it for unreviewed
+public pull requests.
+
+An optional self-hosted ARM64 Linux runner still needs one initial cgroup
+installation:
 
 ```shell
 sudo tools/runner/install-linux-native-cgroup.sh "$USER"
@@ -142,14 +155,15 @@ cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
 
-The released-product vertical slice additionally requires Docker on both
-self-hosted runners so its composite action can start disposable pinned
-PostgreSQL and MinIO containers. The runner service environment supplies the
-backend variables above and the checksummed
-`OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`; the workflow packages the matching
-server and Agent, installs all three roots through the harness, and supplies
-only the isolated paths, real dependency endpoints, selected backend, and
-evidence directory to the scenario.
+The released-product vertical slice additionally requires Docker so its
+composite action can start disposable pinned PostgreSQL and MinIO containers.
+For GitHub-hosted Native, the workflow itself supplies the backend variables
+and the downloaded, checksummed `OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`. A
+self-hosted runner supplies the corresponding values through its service
+environment. The workflow packages the matching server and Agent, installs all
+three roots through the harness, and supplies only the isolated paths, real
+dependency endpoints, selected backend, and evidence directory to the
+scenario.
 
 ## Containerd process isolation
 

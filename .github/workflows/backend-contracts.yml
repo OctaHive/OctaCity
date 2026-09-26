@@ -1,12 +1,15 @@
 name: backend contracts
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       suite:
         description: Real backend suite to execute
         required: true
-        default: released-agent
+        default: linux-native
         type: choice
         options:
           - released-agent
@@ -78,8 +81,8 @@ jobs:
         run: docker rm --force octacity-phase6-vault octacity-phase6-minio || true
 
   linux-native:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-native' }}
-    runs-on: [self-hosted, linux, octacity-native]
+    if: ${{ github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-native' }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -96,7 +99,16 @@ jobs:
         with:
           tool: protoc
           fallback: none
+      - name: Install Linux Native dependencies
+        run: sudo apt-get update && sudo apt-get install --yes bubblewrap e2fsprogs libcap-ng-dev
+      - name: Prepare GitHub-hosted Linux Native environment
+        working-directory: octacity
+        env:
+          OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}
+          OCTA_SOURCE_REVISION: ${{ steps.octa-source.outputs.revision }}
+        run: tools/runner/github-hosted-native.sh setup "$OCTA_RELEASE_VERSION" "$OCTA_SOURCE_REVISION"
       - run: >-
+          tools/runner/github-hosted-native.sh run
           cargo test -p octacity-job --test backend_contract
           native_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
@@ -112,6 +124,7 @@ jobs:
           server-root: ${{ steps.release-candidate.outputs.server-root }}
           agent-root: ${{ steps.release-candidate.outputs.agent-root }}
           backend: native
+          execution-wrapper: ${{ github.workspace }}/octacity/tools/runner/github-hosted-native.sh
       - name: Retain Linux Native release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -119,6 +132,10 @@ jobs:
           name: release-slice-linux-native
           path: ${{ steps.release-slice.outputs.evidence }}
           if-no-files-found: error
+      - name: Clean up GitHub-hosted Linux Native environment
+        if: always()
+        working-directory: octacity
+        run: tools/runner/github-hosted-native.sh cleanup
 
   linux-containerd:
     if: ${{ inputs.suite == 'all' || inputs.suite == 'linux-containerd' }}
