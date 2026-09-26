@@ -286,6 +286,8 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("--octa-root", action)
         self.assertIn("released_linux_native_matrix_satisfies_the_end_to_end_contract", action)
         self.assertIn("MINIO_DEFAULT_BUCKETS=octacity-artifacts", action)
+        self.assertIn('export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"', action)
+        self.assertIn('export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"', action)
         self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
         fixture = REPOSITORY / "fixtures/release/linux-native/Octafile.yml"
         self.assertTrue(fixture.is_file())
