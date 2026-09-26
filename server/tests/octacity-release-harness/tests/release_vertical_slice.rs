@@ -40,6 +40,8 @@ use support::{get_json, post_management, publish_policy_and_trigger_definition, 
 const SIGNING_SEED: [u8; 32] = [7; 32];
 const SOURCE_REPOSITORY: &str = "https://github.com/OctaHive/octa.git";
 const SOURCE_REVISION: &str = include_str!("../../../../.github/octa-source-revision");
+const RELEASE_OBJECT_OPERATION_TIMEOUT_MILLISECONDS: u64 = 5_000;
+const RELEASE_READINESS_TIMEOUT_MILLISECONDS: u64 = 15_000;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated released products and a provisioned Linux Native runner"]
@@ -77,7 +79,7 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
   let mut server = spawn_server(&release.server_binary, &server_config, &server_stdout, &server_stderr);
   let management_origin = format!("http://{management_addr}");
   let agent_origin = format!("http://{agent_addr}");
-  wait_for_server_ready(&client, &management_origin, &mut server, &server_stderr).await;
+  wait_for_server_ready(&client, &management_origin, &mut server, &server_stdout).await;
   let run = Uuid::new_v4().simple().to_string();
 
   let resources = create_pipeline_resources(&client, &management_origin, &run, &backend).await;
@@ -153,7 +155,7 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
     .unwrap(),
   )
   .unwrap();
-  shutdown_server(&mut server, &server_stderr).await;
+  shutdown_server(&mut server, &server_stdout).await;
 }
 
 #[derive(Clone)]
@@ -782,7 +784,7 @@ agent_bind = "{}"
 {}
 shutdown_grace_milliseconds = 5000
 readiness_check_interval_milliseconds = 100
-readiness_check_timeout_milliseconds = 2000
+readiness_check_timeout_milliseconds = {RELEASE_READINESS_TIMEOUT_MILLISECONDS}
 agent_registration_lifetime_milliseconds = 900000
 agent_enrollment_lifetime_milliseconds = 900000
 agent_lease_lifetime_milliseconds = 60000
@@ -795,6 +797,8 @@ url_file = {}
 endpoint = {}
 region = "us-east-1"
 bucket = "octacity-artifacts"
+force_path_style = true
+operation_timeout_milliseconds = {RELEASE_OBJECT_OPERATION_TIMEOUT_MILLISECONDS}
 access_key_file = {}
 secret_key_file = {}
 
@@ -988,4 +992,42 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
   assert_eq!(document["oci_engines"].as_array().unwrap().len(), 1);
   assert_eq!(document["oci_engines"][0]["engine"].as_str(), Some("microsandbox"));
+}
+
+#[test]
+fn generated_server_configuration_uses_path_style_for_minio() {
+  let directory = tempfile::tempdir().unwrap();
+  let toolchain = Toolchain {
+    source_version: "0.1.0".to_owned(),
+    source_digest: "1".repeat(64),
+    octa_version: "0.3.0".to_owned(),
+    runner_digest: "2".repeat(64),
+    runner_protocol: 1,
+    event_schema: 1,
+    plugin_protocol: 1,
+    plugin_digests: std::collections::BTreeMap::from([("shell".to_owned(), "3".repeat(64))]),
+  };
+  let config = write_server_config(
+    directory.path(),
+    &ServerConfigInput {
+      postgres_url: "postgres://octacity@127.0.0.1/postgres",
+      object_endpoint: "http://127.0.0.1:9000",
+      cache_endpoint: "https://127.0.0.1:8443",
+      toolchain: &toolchain,
+      management_addr: "127.0.0.1:18080".parse().unwrap(),
+      agent_addr: "127.0.0.1:18081".parse().unwrap(),
+      cache_addr: None,
+    },
+  );
+
+  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+  assert_eq!(document["object_storage"]["force_path_style"].as_bool(), Some(true));
+  assert_eq!(
+    document["object_storage"]["operation_timeout_milliseconds"].as_integer(),
+    Some(RELEASE_OBJECT_OPERATION_TIMEOUT_MILLISECONDS as i64)
+  );
+  assert_eq!(
+    document["readiness_check_timeout_milliseconds"].as_integer(),
+    Some(RELEASE_READINESS_TIMEOUT_MILLISECONDS as i64)
+  );
 }

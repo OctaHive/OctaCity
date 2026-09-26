@@ -166,7 +166,7 @@ pub(super) async fn run() {
   let client = Client::new();
   let management_origin = format!("http://{management_addr}");
   let agent_origin = format!("http://{agent_addr}");
-  wait_for_server_ready(&client, &management_origin, &mut server, &server_stderr).await;
+  wait_for_server_ready(&client, &management_origin, &mut server, &server_stdout).await;
   let run_id = Uuid::new_v4().simple().to_string();
   let resources = create_resources(&client, &management_origin, &run_id, &source_repository, &backend).await;
 
@@ -363,7 +363,7 @@ pub(super) async fn run() {
   )
   .unwrap();
   cache_proxy.shutdown().await;
-  shutdown_server(&mut server, &server_stderr).await;
+  shutdown_server(&mut server, &server_stdout).await;
 }
 
 async fn create_resources(
