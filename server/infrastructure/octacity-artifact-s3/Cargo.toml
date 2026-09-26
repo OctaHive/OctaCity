@@ -10,7 +10,6 @@ description = "S3-compatible immutable object storage adapter for OctaCity"
 [dependencies]
 async-trait.workspace = true
 aws-sdk-s3.workspace = true
-aws-smithy-http-client.workspace = true
 base64.workspace = true
 http.workspace = true
 octacity-artifact-store = { path = "../../core/octacity-artifact-store" }

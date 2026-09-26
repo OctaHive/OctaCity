@@ -29,8 +29,8 @@ mod health;
 mod immutable;
 mod log;
 
+use config::validate_config;
 pub use config::{S3ArtifactStoreConfig, S3ArtifactStoreConfigError, validate_s3_settings};
-use config::{is_loopback_http_endpoint, validate_config};
 pub use health::S3ArtifactStoreHealthError;
 
 const SHA256_METADATA: &str = "octacity-sha256";
@@ -55,7 +55,6 @@ impl S3ArtifactStore {
   /// Validates configuration and creates an isolated S3 client.
   pub fn new(config: S3ArtifactStoreConfig) -> Result<Self, S3ArtifactStoreConfigError> {
     validate_config(&config)?;
-    let bypass_environment_proxy = is_loopback_http_endpoint(&config.endpoint);
     let credentials = Credentials::new(
       config.access_key.to_string(),
       config.secret_key.to_string(),
@@ -63,19 +62,13 @@ impl S3ArtifactStore {
       None,
       "octacity-server",
     );
-    let mut sdk_config = aws_sdk_s3::Config::builder()
+    let sdk_config = aws_sdk_s3::Config::builder()
       .behavior_version(BehaviorVersion::latest())
       .endpoint_url(config.endpoint)
       .region(Region::new(config.region))
       .credentials_provider(credentials)
-      .force_path_style(config.force_path_style);
-    if bypass_environment_proxy {
-      // Plain HTTP is accepted only for loopback development and contract
-      // services. Never let an inherited outbound proxy intercept credentials
-      // or make local dependency readiness depend on proxy configuration.
-      sdk_config = sdk_config.http_client(aws_smithy_http_client::Builder::new().build_http());
-    }
-    let sdk_config = sdk_config.build();
+      .force_path_style(config.force_path_style)
+      .build();
     let health_probe_prefix = physical_key(
       &config.prefix,
       &format!("health/readiness-{}", uuid::Uuid::new_v4().simple()),
