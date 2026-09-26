@@ -129,6 +129,12 @@ pub(super) async fn run() {
 
   let (work_root, cgroup_root) = native_roots(&backend);
   let cache_root = native_cache_root(&backend);
+  let available_workspace_bytes = available_disk_bytes(work_root);
+  assert!(
+    available_workspace_bytes >= backend.job_disk_bytes(),
+    "Native work filesystem has {available_workspace_bytes} available bytes but the release Job requires {}",
+    backend.job_disk_bytes()
+  );
   let work_baseline = directory_entries(work_root);
   let cgroup_baseline = directory_entries(cgroup_root);
   let cache_baseline = directory_entries(cache_root);
@@ -207,7 +213,7 @@ pub(super) async fn run() {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
-  assert_dag_and_events(&manual_run, Some(backend.workspace_bytes()));
+  assert_dag_and_events(&manual_run, Some(backend.job_disk_bytes()));
   let downstream_build_id = wait_for_trigger_build(&pool, &resources.internal_trigger_id).await;
   let downstream_run = wait_for_successful_run(
     &client,
@@ -288,7 +294,7 @@ pub(super) async fn run() {
       stderr: &evidence.join("agent-b.stderr.log"),
       cgroup_root,
       cgroup_baseline: &cgroup_baseline,
-      maximum_disk_bytes: backend.workspace_bytes(),
+      maximum_disk_bytes: backend.job_disk_bytes(),
     },
     agent_b.child_mut(),
   )
@@ -580,7 +586,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "labels": {},
           "minimum_cpu_millis": 1000,
           "minimum_memory_bytes": MEMORY_BYTES,
-          "minimum_disk_bytes": input.backend.workspace_bytes()
+          "minimum_disk_bytes": input.backend.job_disk_bytes()
         },
         "allowed_pools": [input.pool_id],
         "runtime": {
@@ -590,7 +596,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "immutable_image": null,
           "cpu_millis": 1000,
           "memory_bytes": MEMORY_BYTES,
-          "writable_disk_bytes": input.backend.workspace_bytes(),
+          "writable_disk_bytes": input.backend.job_disk_bytes(),
           "timeout_seconds": 300,
           "network": {"mode": if input.cache { "unrestricted" } else { "disabled" }},
           "workload_identity_profile": null
@@ -911,6 +917,11 @@ fn native_cache_root(backend: &ReleaseBackend) -> &Path {
     ReleaseBackend::Native { cache_root, .. } => cache_root,
     ReleaseBackend::Microsandbox { .. } => unreachable!(),
   }
+}
+
+fn available_disk_bytes(path: &Path) -> u64 {
+  let statistics = rustix::fs::statvfs(path).unwrap();
+  statistics.f_bavail.saturating_mul(statistics.f_frsize)
 }
 
 fn directory_entries(path: &Path) -> BTreeSet<OsString> {

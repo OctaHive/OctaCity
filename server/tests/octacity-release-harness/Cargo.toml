@@ -41,4 +41,4 @@ url.workspace = true
 uuid.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
-rustix.workspace = true
+rustix = { workspace = true, features = ["fs"] }
