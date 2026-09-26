@@ -128,10 +128,10 @@ cargo test -p octacity-job --test backend_contract \
 
 `OCTACITY_RELEASE_NATIVE_CACHE_ROOT` must be a separate dedicated filesystem
 mount whose capacity does not exceed `OCTACITY_CONTRACT_WORKSPACE_BYTES`.
-The release gate creates an isolated L1 directory for each Agent under that
-mount. Agent A publishes the fixture result to the server-backed L2; Agent B
-starts with an empty L1 and must observe a cache hit. The per-Agent directories
-also prevent a local hit from masquerading as remote-cache reuse.
+The release gate removes Agent A's owned L1 entries after it exits while
+preserving the mounted filesystem and its original entries. Agent A publishes
+the fixture result to the server-backed L2; Agent B starts with an empty L1 and
+must observe a cache hit, so a local hit cannot masquerade as remote reuse.
 
 ## Microsandbox
 

@@ -13,6 +13,15 @@ use octacity_inventory::{FilesystemIdentity, FilesystemSample, HostMonitor, Stor
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+/// Whether admission must retain room to allocate a job workspace.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum WorkspaceCapacityReservation {
+  /// A process backend executes directly on its preallocated bounded filesystem.
+  Preallocated,
+  /// A hypervisor backend must allocate a guest volume on the host filesystem.
+  Required,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct DiskPressure {
   roots: Vec<&'static str>,
@@ -38,6 +47,7 @@ pub(crate) async fn disk_capacity_available(
   config: &AgentConfig,
   host: &mut HostMonitor,
   cache: &CacheSessionManager,
+  workspace_capacity: WorkspaceCapacityReservation,
   shutdown: CancellationToken,
 ) -> Result<bool, Box<dyn std::error::Error>> {
   if shutdown.is_cancelled() {
@@ -48,7 +58,7 @@ pub(crate) async fn disk_capacity_available(
     state: &config.state_root,
     cache: &config.cache.root,
   })?;
-  let reservations = config.disk_reservations()?;
+  let reservations = admission_reservations(config, workspace_capacity)?;
   let (requirements, cache_filesystem) = disk_requirements(samples, reservations);
   let cache_target = required_on_filesystem(&requirements, cache_filesystem);
   let report = match cache.reclaim_inactive(cache_target, shutdown.clone()).await {
@@ -71,6 +81,17 @@ pub(crate) async fn disk_capacity_available(
     warn!(?pressure, "disk pressure paused job admission");
   }
   Ok(pressure.is_empty())
+}
+
+fn admission_reservations(
+  config: &AgentConfig,
+  workspace_capacity: WorkspaceCapacityReservation,
+) -> Result<DiskReservations, octacity_config::ConfigError> {
+  let mut reservations = config.disk_reservations()?;
+  if workspace_capacity == WorkspaceCapacityReservation::Preallocated {
+    reservations.work_bytes = config.maintenance.work_reserve_bytes;
+  }
+  Ok(reservations)
 }
 
 fn disk_requirements(
@@ -176,6 +197,33 @@ mod tests {
     assert_eq!(pressure[1].roots, vec!["cache"]);
   }
 
+  #[test]
+  fn preallocated_workspace_capacity_is_not_reserved_twice() {
+    let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
+    let mut config = AgentConfig::load(&fixture.config).unwrap();
+    config.max_workspace_bytes = 1_073_741_824;
+    config.maintenance.work_reserve_bytes = 0;
+    let available = 950_214_656;
+
+    let preallocated = admission_reservations(&config, WorkspaceCapacityReservation::Preallocated).unwrap();
+    let dynamic = admission_reservations(&config, WorkspaceCapacityReservation::Required).unwrap();
+
+    assert!(
+      disk_pressure(vec![requirement(
+        "work",
+        1,
+        "/work",
+        available,
+        preallocated.work_bytes
+      )])
+      .is_empty()
+    );
+    assert_eq!(
+      disk_pressure(vec![requirement("work", 1, "/work", available, dynamic.work_bytes)])[0].required_bytes,
+      config.max_workspace_bytes
+    );
+  }
+
   #[cfg(any(
     all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
     all(target_os = "macos", target_arch = "aarch64")
@@ -232,6 +280,7 @@ mod tests {
         &components.validated.config,
         &mut components.host,
         components.cache.as_ref(),
+        components.workspace_capacity_reservation,
         shutdown,
       )
       .await

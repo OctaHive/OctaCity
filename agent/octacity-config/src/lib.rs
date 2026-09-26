@@ -169,7 +169,10 @@ pub struct CacheConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaintenanceConfig {
-  /// Free bytes retained after reserving the largest allowed workspace.
+  /// Additional free bytes retained on the work filesystem.
+  ///
+  /// Hypervisor backends also reserve the largest allowed guest workspace;
+  /// process backends execute on an already bounded dedicated filesystem.
   pub work_reserve_bytes: u64,
   /// Free bytes retained after reserving the complete event spool.
   pub state_reserve_bytes: u64,
@@ -185,7 +188,7 @@ pub struct MaintenanceConfig {
 /// and overflow checks cannot drift into different policies.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DiskReservations {
-  /// Maximum workspace growth plus the operator's retained free-space margin.
+  /// Dynamic workspace allocation plus the operator's free-space margin.
   pub work_bytes: u64,
   /// Event spool and output staging plus the retained state margin.
   pub state_bytes: u64,
@@ -358,8 +361,11 @@ impl CacheConfig {
 }
 
 impl AgentConfig {
-  /// Calculates the peak disk reservations used by startup validation and
-  /// idle admission. Overflow is rejected rather than silently saturated.
+  /// Calculates peak reservations for dynamically allocated workspaces.
+  ///
+  /// Process backends replace `work_bytes` with the explicit work reserve
+  /// because their dedicated filesystem is the preallocated workspace bound.
+  /// Overflow is rejected rather than silently saturated.
   pub fn disk_reservations(&self) -> Result<DiskReservations, ConfigError> {
     let work_bytes = self
       .max_workspace_bytes

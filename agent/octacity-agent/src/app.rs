@@ -92,6 +92,7 @@ pub(crate) async fn run_loaded(
       &components.validated.config,
       &mut components.host,
       components.cache.as_ref(),
+      components.workspace_capacity_reservation,
       shutdown.clone(),
     )
     .await?;

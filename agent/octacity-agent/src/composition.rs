@@ -30,6 +30,8 @@ use octacity_protocol::{
 use octacity_runner::{RunnerInstallation, RunnerSupervisionPolicy};
 use octacity_source::{SourceMaterializer, SourcePluginRegistry};
 
+use crate::maintenance::WorkspaceCapacityReservation;
+
 pub(crate) struct Components {
   pub(crate) validated: ValidatedConfig,
   pub(crate) runner: RunnerInstallation,
@@ -41,6 +43,7 @@ pub(crate) struct Components {
   pub(crate) inventory: AgentInventory,
   pub(crate) host: HostMonitor,
   pub(crate) backend_health: Vec<BackendHealth>,
+  pub(crate) workspace_capacity_reservation: WorkspaceCapacityReservation,
   pub(crate) source_plugin_count: usize,
 }
 
@@ -52,9 +55,8 @@ impl Components {
     let source_plugin_count = source_plugins.len();
     let (executor, runtimes, backend_health, cache) =
       build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
-    let virtualization_available = runtimes
-      .iter()
-      .any(|capability| capability.isolation == Some(octacity_protocol::OciIsolation::Hypervisor));
+    let workspace_capacity_reservation = workspace_capacity_reservation(&runtimes);
+    let virtualization_available = workspace_capacity_reservation == WorkspaceCapacityReservation::Required;
     let host = HostMonitor::new(
       validated.config.work_root.clone(),
       validated.config.state_root.clone(),
@@ -107,6 +109,7 @@ impl Components {
       inventory,
       host,
       backend_health,
+      workspace_capacity_reservation,
       source_plugin_count,
     })
   }
@@ -309,6 +312,17 @@ fn ready_backend(backend: &str) -> BackendHealth {
   }
 }
 
+fn workspace_capacity_reservation(runtimes: &[RuntimeCapability]) -> WorkspaceCapacityReservation {
+  if runtimes
+    .iter()
+    .any(|capability| capability.isolation == Some(octacity_protocol::OciIsolation::Hypervisor))
+  {
+    WorkspaceCapacityReservation::Required
+  } else {
+    WorkspaceCapacityReservation::Preallocated
+  }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
   use super::*;
@@ -481,6 +495,10 @@ metrics_sample_interval_seconds = 1
     assert_eq!(process.platform.os, PlatformOs::Windows);
     assert_eq!(process.platform.architecture, PlatformArchitecture::Amd64);
     assert_eq!(process.isolation, Some(octacity_protocol::OciIsolation::Process));
+    assert_eq!(
+      workspace_capacity_reservation(std::slice::from_ref(&process)),
+      WorkspaceCapacityReservation::Preallocated
+    );
 
     let hypervisor = advertised_oci_capability(
       "microsandbox",
@@ -495,6 +513,10 @@ metrics_sample_interval_seconds = 1
     assert_eq!(hypervisor.platform.os, PlatformOs::Linux);
     assert_eq!(hypervisor.platform.architecture, PlatformArchitecture::Arm64);
     assert_eq!(hypervisor.isolation, Some(octacity_protocol::OciIsolation::Hypervisor));
+    assert_eq!(
+      workspace_capacity_reservation(&[process, hypervisor]),
+      WorkspaceCapacityReservation::Required
+    );
   }
 
   #[test]
@@ -520,6 +542,10 @@ metrics_sample_interval_seconds = 1
     let components = Components::load(&fixture.config).await.unwrap();
 
     assert_eq!(components.source_plugin_count, 0);
+    assert_eq!(
+      components.workspace_capacity_reservation,
+      WorkspaceCapacityReservation::Required
+    );
     assert_eq!(components.inventory.runtimes.len(), 1);
     assert_eq!(components.inventory.runtimes[0].backend, MICROSANDBOX_ENGINE_NAME);
     assert_eq!(
