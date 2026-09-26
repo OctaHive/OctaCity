@@ -475,7 +475,6 @@ impl<'a> From<&'a InstalledRelease> for AgentReleasePaths<'a> {
 
 #[derive(Default)]
 struct AgentConfigOverrides<'a> {
-  cache_root: Option<&'a Path>,
   cache_read: bool,
   cache_write: bool,
   remote_cache_origin: Option<&'a str>,
@@ -567,7 +566,6 @@ oci_engines = [{{ engine = "microsandbox", executable = {}, libkrunfw = {}, metr
       1,
     ),
   };
-  let cache = overrides.cache_root.unwrap_or(cache);
   let remote_cache_origins = overrides
     .remote_cache_origin
     .map_or_else(|| "[]".to_owned(), |origin| format!("[{}]", toml_text(origin)));
@@ -961,8 +959,7 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
     image: format!("example.invalid/octa@sha256:{}", "a".repeat(64)),
     workspace_bytes: 1024 * 1024,
   };
-  let cache = directory.path().join("matrix-cache");
-  fs::create_dir(&cache).unwrap();
+  let cache = directory.path().join("agent-local/cache");
   let certificate = directory.path().join("cache-ca.pem");
   fs::write(&certificate, "test certificate").unwrap();
   let upload_origins = ["http://127.0.0.1:9000"];
@@ -974,7 +971,6 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
     release,
     &backend,
     &AgentConfigOverrides {
-      cache_root: Some(&cache),
       cache_read: true,
       cache_write: true,
       remote_cache_origin: Some("https://127.0.0.1:8443"),
@@ -992,6 +988,42 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
   assert_eq!(document["oci_engines"].as_array().unwrap().len(), 1);
   assert_eq!(document["oci_engines"][0]["engine"].as_str(), Some("microsandbox"));
+}
+
+#[test]
+fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
+  let directory = tempfile::tempdir().unwrap();
+  let cache_root = directory.path().join("cache-mount");
+  for root in ["work", "octa", "sources", "cgroups"] {
+    fs::create_dir(directory.path().join(root)).unwrap();
+  }
+  fs::create_dir(&cache_root).unwrap();
+  let source_plugins = directory.path().join("sources");
+  let octa_root = directory.path().join("octa");
+  let release = AgentReleasePaths {
+    source_plugins: &source_plugins,
+    octa_root: &octa_root,
+  };
+  let backend = ReleaseBackend::Native {
+    cgroup_root: directory.path().join("cgroups"),
+    work_root: directory.path().join("work"),
+    cache_root: cache_root.clone(),
+    bubblewrap: PathBuf::from("/usr/bin/bwrap"),
+    path: "/usr/bin:/bin".to_owned(),
+    workspace_bytes: 1024 * 1024,
+  };
+  let config = write_agent_config(
+    directory.path(),
+    "http://127.0.0.1:12345",
+    "native-config-shape",
+    "credential",
+    release,
+    &backend,
+    &AgentConfigOverrides::default(),
+  );
+
+  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+  assert_eq!(document["cache"]["root"].as_str(), cache_root.to_str());
 }
 
 #[test]

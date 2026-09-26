@@ -15,7 +15,6 @@ use reqwest::Client;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
-use tempfile::TempDir;
 use tokio::{
   process::Child,
   time::{Instant, sleep, timeout},
@@ -24,9 +23,8 @@ use uuid::Uuid;
 
 use super::{
   AgentConfigOverrides, AgentReleasePaths, ReleaseBackend, ServerConfigInput, drain_agent, get_json, issue_enrollment,
-  post_management, private_file, release, required_path, required_string, resource_id, set_mode, shutdown_server,
-  spawn_agent, spawn_server, string, wait_for_server_ready, wait_for_terminal_build, write_agent_config,
-  write_server_config,
+  post_management, private_file, release, required_path, required_string, resource_id, shutdown_server, spawn_agent,
+  spawn_server, string, wait_for_server_ready, wait_for_terminal_build, write_agent_config, write_server_config,
 };
 
 #[path = "cache_proxy.rs"]
@@ -61,7 +59,6 @@ struct BuildRun {
 
 struct MatrixAgent {
   child: Child,
-  cache_directory: Option<TempDir>,
 }
 
 struct AgentStartInput<'a> {
@@ -110,15 +107,6 @@ struct ConfigurationInput<'a> {
 impl MatrixAgent {
   fn child_mut(&mut self) -> &mut Child {
     &mut self.child
-  }
-
-  fn cleanup_cache(&mut self) {
-    self
-      .cache_directory
-      .take()
-      .expect("matrix Agent must own its cache directory")
-      .close()
-      .expect("matrix Agent cache directory must be removable");
   }
 }
 
@@ -244,6 +232,7 @@ pub(super) async fn run() {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
+  remove_agent_cache_entries(cache_root, &cache_baseline);
 
   let agent_b_name = format!("release-native-b-{run_id}");
   let mut agent_b = start_matrix_agent(AgentStartInput {
@@ -314,8 +303,7 @@ pub(super) async fn run() {
   )
   .await;
 
-  agent_a.cleanup_cache();
-  agent_b.cleanup_cache();
+  remove_agent_cache_entries(cache_root, &cache_baseline);
   sleep(Duration::from_secs(1)).await;
   assert_eq!(directory_entries(work_root), work_baseline, "Native workspaces leaked");
   assert_eq!(directory_entries(cgroup_root), cgroup_baseline, "Native cgroups leaked");
@@ -744,11 +732,6 @@ async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgent {
   .await;
   let directory = input.temporary.join(input.evidence_name);
   fs::create_dir(&directory).unwrap();
-  let cache_directory = tempfile::Builder::new()
-    .prefix(&format!("{}-{}-", input.run, input.evidence_name))
-    .tempdir_in(native_cache_root(input.backend))
-    .unwrap();
-  set_mode(cache_directory.path(), 0o700);
   let upload_origins = [input.object_endpoint];
   let config = write_agent_config(
     &directory,
@@ -758,7 +741,6 @@ async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgent {
     AgentReleasePaths::from(input.release),
     input.backend,
     &AgentConfigOverrides {
-      cache_root: Some(cache_directory.path()),
       cache_read: true,
       cache_write: true,
       remote_cache_origin: Some(&input.cache_proxy.origin),
@@ -774,10 +756,7 @@ async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgent {
     &input.evidence.join(format!("{}.stdout.log", input.evidence_name)),
     &input.evidence.join(format!("{}.stderr.log", input.evidence_name)),
   );
-  MatrixAgent {
-    child,
-    cache_directory: Some(cache_directory),
-  }
+  MatrixAgent { child }
 }
 
 async fn stop_agent(client: &Client, origin: &str, name: &str, run: &str, agent: &mut MatrixAgent, stderr: &Path) {
@@ -941,6 +920,44 @@ fn directory_entries(path: &Path) -> BTreeSet<OsString> {
     .collect()
 }
 
+fn remove_agent_cache_entries(cache_root: &Path, baseline: &BTreeSet<OsString>) {
+  for entry in fs::read_dir(cache_root).unwrap() {
+    let entry = entry.unwrap();
+    if baseline.contains(&entry.file_name()) {
+      continue;
+    }
+    let path = entry.path();
+    let file_type = entry.file_type().unwrap();
+    if file_type.is_dir() {
+      fs::remove_dir_all(path).unwrap();
+    } else {
+      fs::remove_file(path).unwrap();
+    }
+  }
+  assert_eq!(
+    directory_entries(cache_root),
+    *baseline,
+    "Native L1 cache cleanup failed"
+  );
+}
+
 fn unused_loopback_address() -> SocketAddr {
   TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap()
+}
+
+#[test]
+fn native_cache_cleanup_preserves_the_mounted_filesystem_baseline() {
+  let directory = tempfile::tempdir().unwrap();
+  let baseline_entry = directory.path().join("lost+found");
+  fs::create_dir(&baseline_entry).unwrap();
+  let baseline = directory_entries(directory.path());
+  fs::write(directory.path().join(".octacity.lock"), []).unwrap();
+  let scope = directory.path().join("v1/scope");
+  fs::create_dir_all(&scope).unwrap();
+  fs::write(scope.join("entry"), b"cached").unwrap();
+
+  remove_agent_cache_entries(directory.path(), &baseline);
+
+  assert!(baseline_entry.is_dir());
+  assert_eq!(directory_entries(directory.path()), baseline);
 }
