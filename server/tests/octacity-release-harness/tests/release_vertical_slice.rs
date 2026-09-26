@@ -32,13 +32,14 @@ use uuid::Uuid;
 mod linux_native;
 #[path = "release_vertical_slice/release.rs"]
 mod release;
+#[path = "release_vertical_slice/support.rs"]
 mod support;
 
 use support::{get_json, post_management, publish_policy_and_trigger_definition, resource_id, string};
 
 const SIGNING_SEED: [u8; 32] = [7; 32];
 const SOURCE_REPOSITORY: &str = "https://github.com/OctaHive/octa.git";
-const SOURCE_REVISION: &str = include_str!("../../../.github/octa-source-revision");
+const SOURCE_REVISION: &str = include_str!("../../../../.github/octa-source-revision");
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated released products and a provisioned Linux Native runner"]

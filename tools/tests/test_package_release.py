@@ -286,7 +286,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("--octa-root", action)
         self.assertIn("released_linux_native_matrix_satisfies_the_end_to_end_contract", action)
         self.assertIn("MINIO_DEFAULT_BUCKETS=octacity-artifacts", action)
-        self.assertIn("cargo test --locked -p octacity-server --test release_vertical_slice", action)
+        self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
         fixture = REPOSITORY / "fixtures/release/linux-native/Octafile.yml"
         self.assertTrue(fixture.is_file())
         self.assertIn("cache: {}", fixture.read_text(encoding="utf-8"))

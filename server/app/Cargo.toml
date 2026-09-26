@@ -47,16 +47,8 @@ zeroize.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
-chrono.workspace = true
-ed25519-dalek.workspace = true
-octa-plugin-lock.workspace = true
-octacity-release-harness = { path = "../tests/octacity-release-harness" }
-rcgen.workspace = true
 reqwest.workspace = true
-rustls.workspace = true
-serde_yaml_ng.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tokio-rustls.workspace = true
 tower = { workspace = true, features = ["util"] }
 uuid.workspace = true

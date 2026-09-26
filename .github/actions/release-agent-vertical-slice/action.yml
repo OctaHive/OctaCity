@@ -106,7 +106,7 @@ runs:
           microsandbox) test_name=released_agent_completes_a_sequential_pipeline_through_rest_and_postgres ;;
           *) printf 'unsupported release backend: %s\n' "${OCTACITY_RELEASE_BACKEND}" >&2; exit 1 ;;
         esac
-        cargo test --locked -p octacity-server --test release_vertical_slice "${test_name}" \
+        cargo test --locked -p octacity-release-harness --test release_vertical_slice "${test_name}" \
           -- --ignored --exact --nocapture
 
     - name: Stop disposable services
