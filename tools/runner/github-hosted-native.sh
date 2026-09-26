@@ -196,6 +196,7 @@ probe_bubblewrap() {
     --die-with-parent \
     --new-session \
     --unshare-all \
+    --unshare-user \
     --share-net \
     --disable-userns \
     --ro-bind / / \

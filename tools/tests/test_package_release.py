@@ -319,6 +319,12 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("bwrap-userns-restrict", provisioner)
         self.assertIn("apparmor_parser", provisioner)
         self.assertIn("probe_bubblewrap", provisioner)
+        bubblewrap_probe = provisioner.split("probe_bubblewrap() {", 1)[1].split("\n}", 1)[0]
+        self.assertLess(
+            bubblewrap_probe.index("--unshare-user"),
+            bubblewrap_probe.index("--disable-userns"),
+            "Bubblewrap requires an explicit user namespace before it can disable nested user namespaces",
+        )
         self.assertIn("Native work and cache roots must use separate filesystems", provisioner)
 
     def test_workflows_pin_actions_runners_and_toolchains(self):
