@@ -167,6 +167,7 @@ enum ReleaseBackend {
     cache_root: PathBuf,
     bubblewrap: PathBuf,
     path: String,
+    environment_identity: String,
     workspace_bytes: u64,
   },
   Microsandbox {
@@ -190,6 +191,7 @@ impl ReleaseBackend {
           cache_root: required_path("OCTACITY_RELEASE_NATIVE_CACHE_ROOT", true),
           bubblewrap: required_path("OCTACITY_CONTRACT_NATIVE_BWRAP", true),
           path: required_string("OCTACITY_CONTRACT_NATIVE_PATH"),
+          environment_identity: required_string("OCTACITY_CONTRACT_NATIVE_ENVIRONMENT_IDENTITY"),
           workspace_bytes: required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES"),
         }
       }
@@ -517,6 +519,16 @@ fn write_agent_config(
   for path in [&local_work, &local_state, &local_cache] {
     fs::create_dir(path).unwrap();
   }
+  let native_cache_identities = match backend {
+    ReleaseBackend::Native {
+      environment_identity, ..
+    } => format!(
+      "{{ {} = {} }}",
+      toml_text(&format!("linux-{}", host_architecture())),
+      toml_text(environment_identity)
+    ),
+    ReleaseBackend::Microsandbox { .. } => "{}".to_owned(),
+  };
   let (work, state, cache, runtime, cache_max_bytes, cache_scopes) = match backend {
     ReleaseBackend::Native {
       cgroup_root,
@@ -525,6 +537,7 @@ fn write_agent_config(
       bubblewrap,
       path,
       workspace_bytes,
+      ..
     } => {
       let cache_scope = workspace_bytes.checked_div(2).filter(|value| *value > 0).unwrap();
       (
@@ -615,7 +628,7 @@ cache.allow_read = {}
 cache.allow_write = {}
 cache.allowed_remote_origins = {}
 {}
-cache.native_environment_identities = {{}}
+cache.native_environment_identities = {}
 cache.request_timeout_seconds = 5
 cache.max_parallel_transfers = 1
 maintenance.work_reserve_bytes = 0
@@ -672,6 +685,7 @@ release_gate = {}
     overrides.cache_write,
     remote_cache_origins,
     cache_ca_certificate,
+    native_cache_identities,
     runtime,
     overrides.unrestricted_network,
     upload_origins,
@@ -1020,6 +1034,7 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
     cache_root: cache_root.clone(),
     bubblewrap: PathBuf::from("/usr/bin/bwrap"),
     path: "/usr/bin:/bin".to_owned(),
+    environment_identity: "test-native-environment-v1".to_owned(),
     workspace_bytes: 1024 * 1024,
   };
   let config = write_agent_config(
@@ -1034,6 +1049,19 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
 
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
   assert_eq!(document["cache"]["root"].as_str(), cache_root.to_str());
+  assert_eq!(
+    document["cache"]["native_environment_identities"]
+      .as_table()
+      .unwrap()
+      .len(),
+    1,
+    "cache-enabled Native release jobs require one host environment identity"
+  );
+  let platform = format!("linux-{}", host_architecture());
+  assert_eq!(
+    document["cache"]["native_environment_identities"][&platform].as_str(),
+    Some("test-native-environment-v1")
+  );
 }
 
 #[test]
@@ -1044,6 +1072,7 @@ fn release_jobs_leave_headroom_on_the_bounded_native_filesystem() {
     cache_root: PathBuf::from("/cache"),
     bubblewrap: PathBuf::from("/usr/bin/bwrap"),
     path: "/usr/bin:/bin".to_owned(),
+    environment_identity: "test-native-environment-v1".to_owned(),
     workspace_bytes: 1024 * 1024 * 1024,
   };
 

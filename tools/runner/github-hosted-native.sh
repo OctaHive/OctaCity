@@ -151,7 +151,7 @@ validate_filesystems() {
 }
 
 write_environment() {
-  local root=$1 workspace_bytes=$2 cgroup_root=$3
+  local root=$1 workspace_bytes=$2 cgroup_root=$3 environment_identity=$4
   : "${GITHUB_ENV:?GITHUB_ENV is required}"
   cat >>"$GITHUB_ENV" <<EOF
 OCTACITY_HOSTED_NATIVE_ROOT=$root
@@ -162,6 +162,7 @@ OCTACITY_CONTRACT_NATIVE_WORK_ROOT=$root/work
 OCTACITY_RELEASE_NATIVE_CACHE_ROOT=$root/cache
 OCTACITY_CONTRACT_NATIVE_BWRAP=/usr/bin/bwrap
 OCTACITY_CONTRACT_NATIVE_PATH=/usr/local/bin:/usr/bin:/bin
+OCTACITY_CONTRACT_NATIVE_ENVIRONMENT_IDENTITY=$environment_identity
 EOF
 }
 
@@ -206,11 +207,15 @@ probe_bubblewrap() {
 
 setup() {
   local version=${1:-} revision=${2:-} root workspace_bytes cgroup_parent cgroup_root runner_cgroup
-  local asset_arch runtime_platform
+  local asset_arch runtime_platform environment_identity
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] \
     || fail "a valid Octa release version is required"
   [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail "a valid Octa revision is required"
   [[ $(uname -s) == Linux ]] || fail "Native setup requires Linux"
+  : "${ImageOS:?GitHub-hosted runner ImageOS is required}"
+  : "${ImageVersion:?GitHub-hosted runner ImageVersion is required}"
+  [[ $ImageOS =~ ^[0-9A-Za-z._-]+$ && $ImageVersion =~ ^[0-9A-Za-z._-]+$ ]] \
+    || fail "GitHub-hosted runner image identity contains unsupported characters"
   for command in curl find getent mkfs.ext4 mountpoint python3 setpriv sha256sum sudo tar truncate; do
     require_command "$command"
   done
@@ -230,6 +235,7 @@ setup() {
   root=$(hosted_root)
   [[ ! -e $root ]] || fail "staging root already exists: $root"
   read -r asset_arch runtime_platform < <(platform_metadata)
+  environment_identity="github-actions-${ImageOS}-${ImageVersion}-${runtime_platform}"
   mkdir -p "$root"
   stage_octa_release "$root" "$version" "$revision" "$asset_arch" "$runtime_platform"
   provision_filesystem "$root/work.ext4" "$root/work" "$workspace_bytes" octacity-work
@@ -254,7 +260,7 @@ setup() {
     || fail "Native cgroup root is not delegated to the runner user"
   probe_bubblewrap
 
-  write_environment "$root" "$workspace_bytes" "$cgroup_root"
+  write_environment "$root" "$workspace_bytes" "$cgroup_root" "$environment_identity"
   echo "GitHub-hosted Linux Native environment is ready"
 }
 
