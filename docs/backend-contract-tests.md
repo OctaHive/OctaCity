@@ -38,14 +38,32 @@ mounted before the wizard runs. `tools/runner/preflight-backend-runner.sh`
 fails closed if any runtime, release checksum, Docker daemon, cgroup
 controller, or real backend contract is unavailable.
 
-The Linux Native and Apple Silicon macOS Microsandbox jobs also build a
-deterministic Agent release-candidate archive, verify its external and internal
-checksums, extract it outside the Cargo target tree, and run
-`release_vertical_slice`. That black-box test starts the real REST server over
-PostgreSQL, creates a two-node Pipeline, launches the packaged Agent, waits for
-both dependent Jobs to execute, drains the Agent through management REST, and
-retains the release manifests, Build/Attempt/Job documents, events, and Agent
-logs as workflow artifacts. The macOS job executes a Linux guest through
+The Linux Native and Apple Silicon macOS Microsandbox jobs build deterministic
+server and Agent release-candidate archives and use
+`octacity-release-harness` before every release scenario. The harness accepts
+only self-verifying extracted bundles, validates their exact versioned release
+contracts, checksum inventories, component digests and protocol ranges, and
+copies the server, Agent and pre-provisioned Octa bundle into a fresh isolated
+installation. It then verifies the copied manifests and bytes again. The
+scenario receives only those installed paths; it starts the packaged server
+and Agent rather than product binaries below Cargo's `target` directory.
+
+`release_vertical_slice` starts the released REST server over PostgreSQL and
+MinIO and never substitutes a workspace product binary. The Linux Native gate
+exercises a manual two-node DAG and an automatically derived downstream Build,
+then drains the first Agent. A second Agent with an empty local cache executes
+a scheduled occurrence through remote-cache reuse and a separately cancelled
+Build. The gate reads Build Results, performs full-text and literal log
+searches, downloads and hashes an artifact, and checks ordered lifecycle and
+resource events, causal linkage, duplicate suppression, metrics, the active
+cgroup's CPU, memory, swap, and process limits, cgroup cleanup, and workspace
+cleanup. A private loopback TLS proxy fronts the
+server's cache ingress so the released runner uses the production HTTPS and CA
+contract. The workflow retains its installation receipt, release manifests,
+server and Agent logs, REST evidence, and Prometheus snapshot.
+
+The macOS job keeps the smaller released-product vertical slice until its full
+Microsandbox matrix is added in task 9.4. It executes a Linux guest through
 Microsandbox; host-native execution is deliberately Linux-only.
 
 All tests require:
@@ -92,9 +110,10 @@ cargo test -p octacity-job --test backend_contract \
 
 `OCTACITY_RELEASE_NATIVE_CACHE_ROOT` must be a separate dedicated filesystem
 mount whose capacity does not exceed `OCTACITY_CONTRACT_WORKSPACE_BYTES`.
-The release gate configures two bounded cache scopes and uses no remote cache;
-the mount is still required because Native jobs must never be able to grow a
-host cache outside a physical boundary.
+The release gate creates an isolated L1 directory for each Agent under that
+mount. Agent A publishes the fixture result to the server-backed L2; Agent B
+starts with an empty L1 and must observe a cache hit. The per-Agent directories
+also prevent a local hit from masquerading as remote-cache reuse.
 
 ## Microsandbox
 
@@ -123,12 +142,14 @@ cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
 
-The released-Agent vertical slice additionally requires Docker on both
+The released-product vertical slice additionally requires Docker on both
 self-hosted runners so its composite action can start disposable pinned
 PostgreSQL and MinIO containers. The runner service environment supplies the
 backend variables above and the checksummed
-`OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`; the workflow supplies the packaged Agent
-root, real dependency endpoints, selected backend, and evidence directory.
+`OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`; the workflow packages the matching
+server and Agent, installs all three roots through the harness, and supplies
+only the isolated paths, real dependency endpoints, selected backend, and
+evidence directory to the scenario.
 
 ## Containerd process isolation
 

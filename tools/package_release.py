@@ -10,18 +10,21 @@ which also allows an archive to be assembled for a non-native target.
 from __future__ import annotations
 
 import argparse
-import gzip
-import hashlib
 import json
-import os
-import re
-import shutil
-import stat
-import tarfile
-import tempfile
-import zipfile
 from pathlib import Path
 from typing import NamedTuple
+
+from release_packaging import (
+    archive_release,
+    checksum_lines,
+    copy_file,
+    load_release_contract,
+    require_file,
+    sha256,
+    validate_revision,
+    validate_version,
+    write_text,
+)
 
 
 class PlatformLayout(NamedTuple):
@@ -69,39 +72,7 @@ PLATFORMS = {
         "/usr/bin/git",
     ),
 }
-FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
-VERSION_PATTERN = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]*\Z")
-REVISION_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 LINUX_RUNTIME_ASSETS = ("native-runtime.conf", "containerd-runtime.conf", "microsandbox-runtime.conf")
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def require_file(name: str, path: Path) -> Path:
-    if not path.is_file() or path.is_symlink():
-        raise ValueError(f"{name} must be a regular file: {path}")
-    return path.resolve()
-
-
-def validate_version(version: str) -> str:
-    # The value is embedded in TOML and JSON metadata. A deliberately narrow
-    # release-token alphabet avoids format-specific escaping and path-like
-    # values while still accepting SemVer and CI pre-release identifiers.
-    if not VERSION_PATTERN.fullmatch(version):
-        raise ValueError("version must contain only release-token characters")
-    return version
-
-
-def validate_revision(name: str, revision: str) -> str:
-    if not REVISION_PATTERN.fullmatch(revision):
-        raise ValueError(f"{name} must be a lowercase 40-character Git revision")
-    return revision
 
 
 def load_source_metadata(path: Path, expected_version: str, expected_platform: str) -> dict[str, object]:
@@ -124,25 +95,6 @@ def load_source_metadata(path: Path, expected_version: str, expected_platform: s
         raise ValueError("Git source-plugin protocol range is invalid")
     return metadata
 
-
-def write_text(path: Path, value: str, executable: bool = False) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value, encoding="utf-8", newline="\n")
-    path.chmod(0o755 if executable else 0o644)
-
-
-def copy_file(source: Path, destination: Path, executable: bool = False) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, destination)
-    destination.chmod(0o755 if executable else 0o644)
-
-
-def checksum_lines(root: Path, excluded: set[str] | None = None) -> str:
-    excluded = excluded or set()
-    files = sorted(path for path in root.rglob("*") if path.is_file() and path.relative_to(root).as_posix() not in excluded)
-    return "".join(f"{sha256(path)}  {path.relative_to(root).as_posix()}\n" for path in files)
-
-
 def stage_release(
     root: Path,
     repository: Path,
@@ -155,6 +107,10 @@ def stage_release(
     octa_revision: str,
 ) -> None:
     layout = PLATFORMS[platform]
+    contract_path, product_contract = load_release_contract(repository, "octacity-agent")
+    source_protocol = product_contract["protocols"]["source_plugin"]
+    if source_metadata["protocol_max"] < source_protocol["min"] or source_metadata["protocol_min"] > source_protocol["max"]:
+        raise ValueError("Git source-plugin protocol range is incompatible with the Agent release contract")
     source_platform = layout.source_platform
     agent_name = layout.agent_name
     plugin_name = layout.plugin_name
@@ -197,6 +153,7 @@ def stage_release(
     copy_file(config_source, root / "share/agent.example.toml")
     copy_file(require_file("operations guide", repository / "docs/operations.md"), root / "share/operations.md")
     copy_file(require_file("license", repository / "LICENSE"), root / "LICENSE")
+    copy_file(contract_path, root / "release-contract.json")
     manifest = {
         "format_version": 1,
         "product": "octacity-agent",
@@ -206,6 +163,7 @@ def stage_release(
             "octacity_revision": octacity_revision,
             "octa_revision": octa_revision,
         },
+        "protocols": product_contract["protocols"],
         "components": {
             "agent": {"path": f"bin/{agent_name}", "sha256": sha256(root / "bin" / agent_name)},
             "source_git": {"path": f"source-plugins/git/{plugin_name}", "sha256": plugin_digest},
@@ -213,35 +171,6 @@ def stage_release(
     }
     write_text(root / "release-manifest.json", json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     write_text(root / "SHA256SUMS", checksum_lines(root, {"SHA256SUMS"}))
-
-
-def archive_tar(root: Path, destination: Path) -> None:
-    with destination.open("wb") as raw:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
-            with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
-                for path in sorted(root.rglob("*")):
-                    relative = path.relative_to(root).as_posix()
-                    info = archive.gettarinfo(str(path), arcname=relative)
-                    info.uid = info.gid = 0
-                    info.uname = info.gname = "root"
-                    info.mtime = 0
-                    if path.is_file():
-                        info.mode = stat.S_IMODE(path.stat().st_mode)
-                        with path.open("rb") as source:
-                            archive.addfile(info, source)
-                    else:
-                        info.mode = 0o755
-                        archive.addfile(info)
-
-
-def archive_zip(root: Path, destination: Path) -> None:
-    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
-            relative = path.relative_to(root).as_posix()
-            info = zipfile.ZipInfo(relative, FIXED_ZIP_TIME)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (stat.S_IMODE(path.stat().st_mode) & 0xFFFF) << 16
-            archive.writestr(info, path.read_bytes(), compresslevel=9)
 
 
 def package(args: argparse.Namespace) -> Path:
@@ -255,14 +184,7 @@ def package(args: argparse.Namespace) -> Path:
     octa_revision = validate_revision("Octa revision", args.octa_revision)
     source_platform = PLATFORMS[args.platform].source_platform
     source_metadata = load_source_metadata(args.source_metadata, version, source_platform)
-    output = args.output.resolve()
-    expected_suffix = ".zip" if args.platform.startswith("windows-") else ".tar.gz"
-    if not str(output).endswith(expected_suffix):
-        raise ValueError(f"{args.platform} output must end with {expected_suffix}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="octacity-release-") as temporary:
-        root = Path(temporary) / "octacity"
-        root.mkdir()
+    def stage(root: Path) -> None:
         stage_release(
             root,
             repository,
@@ -274,13 +196,8 @@ def package(args: argparse.Namespace) -> Path:
             octacity_revision,
             octa_revision,
         )
-        if expected_suffix == ".zip":
-            archive_zip(root, output)
-        else:
-            archive_tar(root, output)
-    checksum = output.with_name(output.name + ".sha256")
-    write_text(checksum, f"{sha256(output)}  {output.name}\n")
-    return output
+
+    return archive_release(args.platform, args.output, "octacity-release-", "octacity", stage)
 
 
 def parse_args() -> argparse.Namespace:

@@ -95,7 +95,7 @@
 
 ## 9. Agent Ready Release Matrix
 
-- [ ] 9.1 Build an isolated harness that installs released server, Agent, Octa, runner, and plugin bundles rather than workspace binaries; verify bundle manifests, protocol ranges, executable digests, and release contracts before each scenario.
+- [x] 9.1 Build an isolated harness that installs released server, Agent, Octa, runner, and plugin bundles rather than workspace binaries; verify bundle manifests, protocol ranges, executable digests, and release contracts before each scenario.
 - [ ] 9.2 Exercise Linux Native execution from manual and scheduled Pipeline triggers through DAG completion, a source-scoped successful-Build dependency that starts one downstream Build, Build Result retrieval, full-text and literal log search, artifact download, and remote-cache reuse; verify cleanup, metrics, event order, causal linkage, duplicate suppression, cancellation, and resource enforcement.
 - [ ] 9.3 Exercise Linux OCI process execution through containerd and OCI hypervisor execution through Microsandbox using supported immutable images; verify network, filesystem, resource, cancellation, and cleanup contracts.
 - [ ] 9.4 Exercise the supported Apple Silicon macOS Agent with a Linux Microsandbox guest using released bundles; verify host and guest platform identity, lifecycle, cache identity, and artifact integrity. Native execution remains Linux-only.

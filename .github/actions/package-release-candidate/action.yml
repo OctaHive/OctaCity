@@ -1,0 +1,84 @@
+name: Package OctaCity release candidate
+description: Build, checksum, package, verify, and extract host-native server and Agent candidates
+
+inputs:
+  octa-revision:
+    description: Exact pinned Octa source revision represented by the candidate
+    required: true
+
+outputs:
+  agent-archive:
+    description: Absolute path to the checksummed Agent release-candidate archive
+    value: ${{ steps.package.outputs.agent-archive }}
+  agent-root:
+    description: Absolute path to the extracted checksummed Agent release root
+    value: ${{ steps.package.outputs.agent-root }}
+  server-archive:
+    description: Absolute path to the checksummed server release-candidate archive
+    value: ${{ steps.package.outputs.server-archive }}
+  server-root:
+    description: Absolute path to the extracted checksummed server release root
+    value: ${{ steps.package.outputs.server-root }}
+
+runs:
+  using: composite
+  steps:
+    - id: package
+      name: Build and verify candidate archives
+      shell: bash
+      working-directory: octacity
+      env:
+        OCTA_SOURCE_REVISION: ${{ inputs.octa-revision }}
+        OCTACITY_BUILD_COMMIT: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64) platform=linux-amd64 ;;
+          Linux-aarch64|Linux-arm64) platform=linux-arm64 ;;
+          Darwin-arm64) platform=macos-arm64 ;;
+          *) echo "unsupported release-gate host $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+        esac
+
+        stage=$(mktemp -d "${RUNNER_TEMP}/octacity-release-candidate.XXXXXX")
+        metadata="${stage}/source-plugin-package.json"
+        agent_archive="${stage}/octacity-agent-${platform}.tar.gz"
+        server_archive="${stage}/octacity-server-${platform}.tar.gz"
+        agent_root="${stage}/agent-root"
+        server_root="${stage}/server-root"
+        mkdir -p "${agent_root}" "${server_root}"
+
+        cargo build --locked --release -p octacity-agent -p octacity-server -p octacity-source-git
+        target/release/octacity-source-git package-metadata > "${metadata}"
+        version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "${metadata}")
+        test "$(target/release/octacity-agent --version)" = "octacity-agent ${version}"
+        test "$(target/release/octacity-server --version)" = "octacity-server ${version}"
+        python3 tools/package_release.py \
+          --platform "${platform}" \
+          --version "${version}" \
+          --agent target/release/octacity-agent \
+          --source-git target/release/octacity-source-git \
+          --source-metadata "${metadata}" \
+          --octacity-revision "$(git rev-parse HEAD)" \
+          --octa-revision "${OCTA_SOURCE_REVISION}" \
+          --output "${agent_archive}"
+        python3 tools/package_server_release.py \
+          --platform "${platform}" \
+          --version "${version}" \
+          --server target/release/octacity-server \
+          --octacity-revision "$(git rev-parse HEAD)" \
+          --output "${server_archive}"
+        python3 - "${agent_archive}" "${server_archive}" <<'PY'
+        import hashlib
+        import pathlib
+        import sys
+
+        for value in sys.argv[1:]:
+            archive = pathlib.Path(value)
+            expected, name = archive.with_name(archive.name + ".sha256").read_text(encoding="utf-8").split()
+            if name != archive.name or hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
+                raise SystemExit(f"release-candidate archive checksum mismatch: {archive.name}")
+        PY
+        tar -xzf "${agent_archive}" -C "${agent_root}"
+        tar -xzf "${server_archive}" -C "${server_root}"
+        printf 'agent-archive=%s\nagent-root=%s\nserver-archive=%s\nserver-root=%s\n' \
+          "${agent_archive}" "${agent_root}" "${server_archive}" "${server_root}" >> "${GITHUB_OUTPUT}"

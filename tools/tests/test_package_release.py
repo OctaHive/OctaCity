@@ -16,11 +16,19 @@ from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "tools"))
 SPEC = importlib.util.spec_from_file_location("package_release", REPOSITORY / "tools/package_release.py")
 assert SPEC and SPEC.loader
 PACKAGE_RELEASE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = PACKAGE_RELEASE
 SPEC.loader.exec_module(PACKAGE_RELEASE)
+SERVER_SPEC = importlib.util.spec_from_file_location(
+    "package_server_release", REPOSITORY / "tools/package_server_release.py"
+)
+assert SERVER_SPEC and SERVER_SPEC.loader
+PACKAGE_SERVER_RELEASE = importlib.util.module_from_spec(SERVER_SPEC)
+sys.modules[SERVER_SPEC.name] = PACKAGE_SERVER_RELEASE
+SERVER_SPEC.loader.exec_module(PACKAGE_SERVER_RELEASE)
 
 
 class PackageReleaseTests(unittest.TestCase):
@@ -77,6 +85,9 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertEqual(manifest["platform"], "linux-amd64")
                 self.assertEqual(manifest["build_inputs"]["octacity_revision"], "a" * 40)
                 self.assertEqual(manifest["build_inputs"]["octa_revision"], "b" * 40)
+                self.assertEqual(manifest["protocols"]["coordinator"], {"min": 1, "max": 1})
+                contract = json.load(archive.extractfile("release-contract.json"))
+                self.assertEqual(contract["manifest"], "release-manifest.json")
                 config = archive.extractfile("share/agent.example.toml").read().decode()
                 self.assertIn('agent_id = "linux-builder-01"', config)
                 self.assertIn('source_plugins_dir = "/opt/octacity/current/source-plugins"', config)
@@ -166,6 +177,45 @@ class PackageReleaseTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Git revision"):
                 PACKAGE_RELEASE.package(arguments)
 
+    def test_server_archive_is_reproducible_and_self_verifying(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            server = root / "octacity-server"
+            server.write_bytes(b"server-release")
+
+            def arguments(output: str):
+                return type(
+                    "Arguments",
+                    (),
+                    {
+                        "repository": REPOSITORY,
+                        "platform": "linux-amd64",
+                        "version": "1.2.3",
+                        "server": server,
+                        "octacity_revision": "a" * 40,
+                        "output": root / output,
+                    },
+                )()
+
+            first = PACKAGE_SERVER_RELEASE.package(arguments("server-first.tar.gz"))
+            second = PACKAGE_SERVER_RELEASE.package(arguments("server-second.tar.gz"))
+            self.assertEqual(PACKAGE_RELEASE.sha256(first), PACKAGE_RELEASE.sha256(second))
+            with tarfile.open(first, "r:gz") as archive:
+                files = {member.name for member in archive.getmembers() if member.isfile()}
+                self.assertIn("bin/octacity-server", files)
+                self.assertIn("release-contract.json", files)
+                manifest = json.load(archive.extractfile("release-manifest.json"))
+                self.assertEqual(manifest["product"], "octacity-server")
+                self.assertEqual(manifest["components"]["server"]["sha256"], PACKAGE_RELEASE.sha256(server))
+                self.assertEqual(manifest["protocols"]["vcs_provider"], {"min": 1, "max": 1})
+                checksums = archive.extractfile("SHA256SUMS").read().decode().splitlines()
+                checked = set()
+                for line in checksums:
+                    expected, name = line.split("  ", 1)
+                    self.assertEqual(hashlib.sha256(archive.extractfile(name).read()).hexdigest(), expected)
+                    checked.add(name)
+                self.assertEqual(checked, files - {"SHA256SUMS"})
+
     def test_service_definitions_use_dedicated_unprivileged_accounts(self):
         systemd = (REPOSITORY / "packaging/systemd/octacity-agent.service").read_text(encoding="utf-8")
         self.assertIn("User=octacity", systemd)
@@ -223,6 +273,26 @@ class PackageReleaseTests(unittest.TestCase):
         release = (REPOSITORY / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("validate_octa_release_contract.py", release)
         self.assertNotIn("grep -F", release)
+
+    def test_release_scenarios_install_every_product_through_the_harness(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        self.assertIn("uses: ./octacity/.github/actions/package-release-candidate", workflow)
+        self.assertIn("server-root: ${{ steps.release-candidate.outputs.server-root }}", workflow)
+        self.assertIn("agent-root: ${{ steps.release-candidate.outputs.agent-root }}", workflow)
+        action = (REPOSITORY / ".github/actions/release-agent-vertical-slice/action.yml").read_text(encoding="utf-8")
+        self.assertIn("cargo run --quiet --locked -p octacity-release-harness -- prepare", action)
+        self.assertIn("--server-root", action)
+        self.assertIn("--agent-root", action)
+        self.assertIn("--octa-root", action)
+        self.assertIn("released_linux_native_matrix_satisfies_the_end_to_end_contract", action)
+        self.assertIn("MINIO_DEFAULT_BUCKETS=octacity-artifacts", action)
+        self.assertIn("cargo test --locked -p octacity-server --test release_vertical_slice", action)
+        fixture = REPOSITORY / "fixtures/release/linux-native/Octafile.yml"
+        self.assertTrue(fixture.is_file())
+        self.assertIn("cache: {}", fixture.read_text(encoding="utf-8"))
+        release = (REPOSITORY / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("tools/package_server_release.py", release)
+        self.assertIn("octacity-server-${{ matrix.platform }}", release)
 
     def test_workflows_pin_actions_runners_and_toolchains(self):
         action = re.compile(r"^\s*-?\s*uses:\s+[^\s@]+@([0-9a-f]{40})(?:\s+#.*)?$")

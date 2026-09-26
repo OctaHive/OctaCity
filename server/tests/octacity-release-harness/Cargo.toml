@@ -1,0 +1,28 @@
+[package]
+name = "octacity-release-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Isolated released-bundle installer for the Agent Ready matrix"
+
+[dependencies]
+clap.workspace = true
+octa-cache-protocol.workspace = true
+octa-plugin-lock.workspace = true
+octacity-protocol = { path = "../../../shared/octacity-protocol" }
+octacity-runner = { path = "../../../agent/octacity-runner" }
+octacity-source-plugin = { path = "../../../agent/octacity-source-plugin" }
+octacity-vcs-protocol = { path = "../../protocols/octacity-vcs-protocol" }
+octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

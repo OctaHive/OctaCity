@@ -4,12 +4,14 @@
 //!
 //! The test is ignored in portable suites because its two supported modes need
 //! provisioned release machines. Linux runs the Native backend; Apple Silicon
-//! macOS runs a Linux guest through Microsandbox. In both cases the Agent and
-//! source plugin come from a checksummed release archive, never `target/`.
+//! macOS runs a Linux guest through Microsandbox. In both cases the server,
+//! Agent, source plugin, Octa runner, and task plugins come from isolated,
+//! checksummed release installations rather than `target/`.
 
 use std::{
   env,
   fs::{self, File},
+  net::{SocketAddr, TcpListener},
   path::{Path, PathBuf},
   process::Stdio,
   time::Duration,
@@ -17,21 +19,21 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::SigningKey;
-use octacity_server::{ServerConfig, ServerRuntime};
+use octacity_release_harness::{InstalledRelease, InstalledToolchain as Toolchain};
 use reqwest::Client;
 use serde_json::{Value, json};
-use sqlx::postgres::PgPoolOptions;
 use tokio::{
   process::{Child, Command},
   time::{Instant, sleep, timeout},
 };
 use uuid::Uuid;
 
+#[path = "release_vertical_slice/linux_native.rs"]
+mod linux_native;
 #[path = "release_vertical_slice/release.rs"]
 mod release;
 mod support;
 
-use release::{ReleaseInstallation, Toolchain};
 use support::{get_json, post_management, publish_policy_and_trigger_definition, resource_id, string};
 
 const SIGNING_SEED: [u8; 32] = [7; 32];
@@ -39,7 +41,13 @@ const SOURCE_REPOSITORY: &str = "https://github.com/OctaHive/octa.git";
 const SOURCE_REVISION: &str = include_str!("../../../.github/octa-source-revision");
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires released Agent and Octa roots plus a provisioned Native or Microsandbox release machine"]
+#[ignore = "requires isolated released products and a provisioned Linux Native runner"]
+async fn released_linux_native_matrix_satisfies_the_end_to_end_contract() {
+  linux_native::run().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated server, Agent, and Octa release roots plus a provisioned Native or Microsandbox machine"]
 async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgres() {
   let backend = ReleaseBackend::from_environment();
   let postgres_url = required_string("OCTACITY_POSTGRES_URL");
@@ -47,27 +55,28 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
   let evidence = required_path("OCTACITY_RELEASE_EVIDENCE_DIR", false);
   fs::create_dir_all(&evidence).unwrap();
 
-  let release = ReleaseInstallation::load(
-    &required_path("OCTACITY_RELEASE_AGENT_ROOT", true),
-    &required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT", true),
-    &backend,
-  );
+  let release = release::load(&backend);
   let temporary = tempfile::tempdir().unwrap();
-  let pool = PgPoolOptions::new()
-    .max_connections(4)
-    .connect(&postgres_url)
-    .await
-    .unwrap();
-  octacity_server_store_postgres::migrate(&pool).await.unwrap();
-
-  let server_config = server_config(temporary.path(), &postgres_url, &object_endpoint, &release.toolchain);
-  let runtime = ServerRuntime::start(server_config).await.unwrap();
-  let management_origin = format!("http://{}", runtime.management_addr());
-  let agent_origin = format!(
-    "http://{}",
-    runtime.agent_addr().expect("Agent ingress must be enabled")
-  );
   let client = Client::new();
+  let (management_addr, agent_addr) = unused_loopback_addresses();
+  let server_config = write_server_config(
+    temporary.path(),
+    &ServerConfigInput {
+      postgres_url: &postgres_url,
+      object_endpoint: &object_endpoint,
+      cache_endpoint: "https://cache.example",
+      toolchain: &release.toolchain,
+      management_addr,
+      agent_addr,
+      cache_addr: None,
+    },
+  );
+  let server_stdout = evidence.join("server.stdout.log");
+  let server_stderr = evidence.join("server.stderr.log");
+  let mut server = spawn_server(&release.server_binary, &server_config, &server_stdout, &server_stderr);
+  let management_origin = format!("http://{management_addr}");
+  let agent_origin = format!("http://{agent_addr}");
+  wait_for_server_ready(&client, &management_origin, &mut server, &server_stderr).await;
   let run = Uuid::new_v4().simple().to_string();
 
   let resources = create_pipeline_resources(&client, &management_origin, &run, &backend).await;
@@ -78,8 +87,9 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
     &agent_origin,
     &agent_id,
     &enrollment,
-    &release,
+    AgentReleasePaths::from(&release),
     &backend,
+    &AgentConfigOverrides::default(),
   );
   let stdout_path = evidence.join("agent.stdout.log");
   let stderr_path = evidence.join("agent.stderr.log");
@@ -132,8 +142,9 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
     evidence.join("vertical-slice.json"),
     serde_json::to_vec_pretty(&json!({
       "backend": backend.name(),
+      "server_release": release.server_manifest,
       "agent_release": release.agent_manifest,
-      "octa_capabilities": release.toolchain.capabilities,
+      "octa_capabilities": release.octa_capabilities,
       "build": build,
       "attempt": attempt,
       "jobs": job_evidence
@@ -141,7 +152,7 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
     .unwrap(),
   )
   .unwrap();
-  runtime.shutdown().await.unwrap();
+  shutdown_server(&mut server, &server_stderr).await;
 }
 
 #[derive(Clone)]
@@ -444,13 +455,41 @@ async fn issue_enrollment(client: &Client, origin: &str, run: &str, pool: &str, 
   string(&response, "credential")
 }
 
+#[derive(Clone, Copy)]
+struct AgentReleasePaths<'a> {
+  octa_root: &'a Path,
+  source_plugins: &'a Path,
+}
+
+impl<'a> From<&'a InstalledRelease> for AgentReleasePaths<'a> {
+  fn from(release: &'a InstalledRelease) -> Self {
+    Self {
+      octa_root: &release.octa_root,
+      source_plugins: &release.source_plugins,
+    }
+  }
+}
+
+#[derive(Default)]
+struct AgentConfigOverrides<'a> {
+  cache_root: Option<&'a Path>,
+  cache_read: bool,
+  cache_write: bool,
+  remote_cache_origin: Option<&'a str>,
+  cache_ca_certificate: Option<&'a Path>,
+  unrestricted_network: bool,
+  upload_origins: &'a [&'a str],
+  output_limit_bytes: Option<u64>,
+}
+
 fn write_agent_config(
   directory: &Path,
   server: &str,
   agent_id: &str,
   enrollment: &str,
-  release: &ReleaseInstallation,
+  release: AgentReleasePaths<'_>,
   backend: &ReleaseBackend,
+  overrides: &AgentConfigOverrides<'_>,
 ) -> PathBuf {
   let credentials = directory.join("credentials");
   fs::create_dir(&credentials).unwrap();
@@ -525,6 +564,26 @@ oci_engines = [{{ engine = "microsandbox", executable = {}, libkrunfw = {}, metr
       1,
     ),
   };
+  let cache = overrides.cache_root.unwrap_or(cache);
+  let remote_cache_origins = overrides
+    .remote_cache_origin
+    .map_or_else(|| "[]".to_owned(), |origin| format!("[{}]", toml_text(origin)));
+  let cache_ca_certificate = overrides.cache_ca_certificate.map_or_else(String::new, |path| {
+    format!("cache.ca_certificate_file = {}\n", toml_string(path))
+  });
+  let upload_origins = format!(
+    "[{}]",
+    overrides
+      .upload_origins
+      .iter()
+      .map(|origin| toml_text(origin))
+      .collect::<Vec<_>>()
+      .join(", ")
+  );
+  let output_limits = overrides.output_limit_bytes.map_or_else(
+    || "{ artifact_count = 0, artifact_bytes = 0, report_count = 0, report_bytes = 0, single_output_bytes = 0 }".to_owned(),
+    |bytes| format!("{{ artifact_count = 1, artifact_bytes = {bytes}, report_count = 1, report_bytes = {bytes}, single_output_bytes = {bytes} }}"),
+  );
   let verifying_key = SigningKey::from_bytes(&SIGNING_SEED).verifying_key();
   let config = format!(
     r#"
@@ -541,9 +600,10 @@ cache.capacity.max_bytes = {}
 cache.capacity.high_watermark_bytes = {}
 cache.capacity.low_watermark_bytes = {}
 cache.max_scopes = {}
-cache.allow_read = false
-cache.allow_write = false
-cache.allowed_remote_origins = []
+cache.allow_read = {}
+cache.allow_write = {}
+cache.allowed_remote_origins = {}
+{}
 cache.native_environment_identities = {{}}
 cache.request_timeout_seconds = 5
 cache.max_parallel_transfers = 1
@@ -552,12 +612,12 @@ maintenance.state_reserve_bytes = 0
 maintenance.cache_reserve_bytes = 0
 maintenance.disk_check_interval_seconds = 1
 {}
-allow_unrestricted_network = false
+allow_unrestricted_network = {}
 allowed_network_hosts = []
-allowed_upload_origins = []
+allowed_upload_origins = {}
 max_archive_entries = 1000
 upload_timeout_seconds = 30
-max_output_limits = {{ artifact_count = 0, artifact_bytes = 0, report_count = 0, report_bytes = 0, single_output_bytes = 0 }}
+max_output_limits = {}
 max_workspace_bytes = {}
 max_spool_bytes = 16777216
 max_spool_records = 10000
@@ -590,14 +650,21 @@ release_gate = {}
     toml_string(&credential),
     toml_string(work),
     toml_string(state),
-    toml_string(&release.octa_root),
-    toml_string(&release.source_plugins),
+    toml_string(release.octa_root),
+    toml_string(release.source_plugins),
     toml_string(cache),
     cache_max_bytes,
     cache_max_bytes * 9 / 10,
     cache_max_bytes * 8 / 10,
     cache_scopes,
+    overrides.cache_read,
+    overrides.cache_write,
+    remote_cache_origins,
+    cache_ca_certificate,
     runtime,
+    overrides.unrestricted_network,
+    upload_origins,
+    output_limits,
     backend.workspace_bytes(),
     toml_text(&STANDARD.encode(verifying_key.as_bytes())),
     toml_text(backend.name()),
@@ -674,8 +741,18 @@ async fn drain_agent(client: &Client, origin: &str, agent_name: &str, run: &str)
   );
 }
 
-fn server_config(directory: &Path, postgres_url: &str, object_endpoint: &str, toolchain: &Toolchain) -> ServerConfig {
-  let postgres = private_file(directory, "postgres-url", postgres_url);
+struct ServerConfigInput<'a> {
+  postgres_url: &'a str,
+  object_endpoint: &'a str,
+  cache_endpoint: &'a str,
+  toolchain: &'a Toolchain,
+  management_addr: SocketAddr,
+  agent_addr: SocketAddr,
+  cache_addr: Option<SocketAddr>,
+}
+
+fn write_server_config(directory: &Path, input: &ServerConfigInput<'_>) -> PathBuf {
+  let postgres = private_file(directory, "postgres-url", input.postgres_url);
   let access_key = private_file(directory, "object-access-key", "octacity");
   let secret_key = private_file(directory, "object-secret-key", "octacity-secret");
   let signing_key = private_file(directory, "signing-key", &STANDARD.encode(SIGNING_SEED));
@@ -683,21 +760,25 @@ fn server_config(directory: &Path, postgres_url: &str, object_endpoint: &str, to
   let cache_key = private_file(directory, "cache-credential-key", &STANDARD.encode([9_u8; 32]));
   let policy = directory.join("job-spec-policy.json");
   fs::write(&policy, serde_json::to_vec(&json!({
-    "source": {"provider": "git", "plugin_version": toolchain.source_version, "plugin_sha256": toolchain.source_digest, "repository_parameter": "url"},
+    "source": {"provider": "git", "plugin_version": input.toolchain.source_version, "plugin_sha256": input.toolchain.source_digest, "repository_parameter": "url"},
     "octa": {
-      "version": toolchain.octa_version,
-      "runner_sha256": toolchain.runner_digest,
-      "runner_protocol": toolchain.runner_protocol,
-      "event_schema": toolchain.event_schema,
-      "plugin_protocol": toolchain.plugin_protocol,
-      "plugin_digests": toolchain.plugin_digests
+      "version": input.toolchain.octa_version,
+      "runner_sha256": input.toolchain.runner_digest,
+      "runner_protocol": input.toolchain.runner_protocol,
+      "event_schema": input.toolchain.event_schema,
+      "plugin_protocol": input.toolchain.plugin_protocol,
+      "plugin_digests": input.toolchain.plugin_digests
     },
     "validity": 900
   })).unwrap()).unwrap();
-  ServerConfig::parse_toml(&format!(
+  let cache_bind = input
+    .cache_addr
+    .map_or_else(String::new, |address| format!("cache_bind = \"{address}\"\n"));
+  let contents = format!(
     r#"
-management_bind = "127.0.0.1:0"
-agent_bind = "127.0.0.1:0"
+management_bind = "{}"
+agent_bind = "{}"
+{}
 shutdown_grace_milliseconds = 5000
 readiness_check_interval_milliseconds = 100
 readiness_check_timeout_milliseconds = 2000
@@ -724,23 +805,91 @@ key_file = {}
 enrollment_key_file = {}
 
 [cache]
-endpoint = "https://cache.example"
+endpoint = {}
 credential_key_file = {}
 session_lifetime_milliseconds = 300000
 
 [job_spec]
 policy_file = {}
 "#,
+    input.management_addr,
+    input.agent_addr,
+    cache_bind,
     toml_string(&postgres),
-    toml_text(object_endpoint),
+    toml_text(input.object_endpoint),
     toml_string(&access_key),
     toml_string(&secret_key),
     toml_string(&signing_key),
     toml_string(&enrollment_key),
+    toml_text(input.cache_endpoint),
     toml_string(&cache_key),
     toml_string(&policy)
-  ))
-  .unwrap()
+  );
+  let path = directory.join("server.toml");
+  fs::write(&path, contents).unwrap();
+  path
+}
+
+fn unused_loopback_addresses() -> (SocketAddr, SocketAddr) {
+  let management = TcpListener::bind("127.0.0.1:0").unwrap();
+  let agent = TcpListener::bind("127.0.0.1:0").unwrap();
+  (management.local_addr().unwrap(), agent.local_addr().unwrap())
+}
+
+fn spawn_server(binary: &Path, config: &Path, stdout: &Path, stderr: &Path) -> Child {
+  Command::new(binary)
+    .arg("--log-format")
+    .arg("json")
+    .arg("--log-filter")
+    .arg("info")
+    .arg("run")
+    .arg(config)
+    .stdout(Stdio::from(File::create(stdout).unwrap()))
+    .stderr(Stdio::from(File::create(stderr).unwrap()))
+    .kill_on_drop(true)
+    .spawn()
+    .unwrap()
+}
+
+async fn wait_for_server_ready(client: &Client, origin: &str, server: &mut Child, log: &Path) {
+  let deadline = Instant::now() + Duration::from_secs(60);
+  loop {
+    if let Some(status) = server.try_wait().unwrap() {
+      panic!(
+        "released server exited before readiness with {status}: {}",
+        fs::read_to_string(log).unwrap_or_default()
+      );
+    }
+    if client
+      .get(format!("{origin}/health/ready"))
+      .send()
+      .await
+      .is_ok_and(|response| response.status().is_success())
+    {
+      return;
+    }
+    assert!(
+      Instant::now() < deadline,
+      "timed out waiting for released server readiness: {}",
+      fs::read_to_string(log).unwrap_or_default()
+    );
+    sleep(Duration::from_millis(100)).await;
+  }
+}
+
+async fn shutdown_server(server: &mut Child, log: &Path) {
+  let process_id = server.id().expect("released server must still be running");
+  let process_id = rustix::process::Pid::from_raw(process_id as i32).unwrap();
+  rustix::process::kill_process(process_id, rustix::process::Signal::TERM).unwrap();
+  let status = timeout(Duration::from_secs(30), server.wait())
+    .await
+    .expect("released server did not stop before its graceful-shutdown deadline")
+    .unwrap();
+  assert!(
+    status.success(),
+    "released server exited unsuccessfully: {}",
+    fs::read_to_string(log).unwrap_or_default()
+  );
 }
 
 fn host_architecture() -> &'static str {
@@ -793,22 +942,11 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   for root in roots {
     fs::create_dir(directory.path().join(root)).unwrap();
   }
-  let release = ReleaseInstallation {
-    agent_binary: directory.path().join("unused-agent"),
-    source_plugins: directory.path().join("sources"),
-    octa_root: directory.path().join("octa"),
-    agent_manifest: json!({}),
-    toolchain: Toolchain {
-      source_version: String::new(),
-      source_digest: String::new(),
-      octa_version: String::new(),
-      runner_digest: String::new(),
-      runner_protocol: 1,
-      event_schema: 1,
-      plugin_protocol: 1,
-      plugin_digests: std::collections::BTreeMap::new(),
-      capabilities: json!({}),
-    },
+  let source_plugins = directory.path().join("sources");
+  let octa_root = directory.path().join("octa");
+  let release = AgentReleasePaths {
+    source_plugins: &source_plugins,
+    octa_root: &octa_root,
   };
   let backend = ReleaseBackend::Microsandbox {
     work_root: directory.path().join("work"),
@@ -818,16 +956,35 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
     image: format!("example.invalid/octa@sha256:{}", "a".repeat(64)),
     workspace_bytes: 1024 * 1024,
   };
+  let cache = directory.path().join("matrix-cache");
+  fs::create_dir(&cache).unwrap();
+  let certificate = directory.path().join("cache-ca.pem");
+  fs::write(&certificate, "test certificate").unwrap();
+  let upload_origins = ["http://127.0.0.1:9000"];
   let config = write_agent_config(
     directory.path(),
     "http://127.0.0.1:12345",
     "config-shape",
     "credential",
-    &release,
+    release,
     &backend,
+    &AgentConfigOverrides {
+      cache_root: Some(&cache),
+      cache_read: true,
+      cache_write: true,
+      remote_cache_origin: Some("https://127.0.0.1:8443"),
+      cache_ca_certificate: Some(&certificate),
+      unrestricted_network: true,
+      upload_origins: &upload_origins,
+      output_limit_bytes: Some(4096),
+    },
   );
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
   assert!(document["allowed_upload_origins"].is_array());
+  assert_eq!(document["cache"]["root"].as_str(), cache.to_str());
+  assert_eq!(document["cache"]["ca_certificate_file"].as_str(), certificate.to_str());
+  assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
+  assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
   assert_eq!(document["oci_engines"].as_array().unwrap().len(), 1);
   assert_eq!(document["oci_engines"][0]["engine"].as_str(), Some("microsandbox"));
 }

@@ -1,7 +1,10 @@
-name: Run released Agent vertical slice
-description: Execute a packaged Agent against real REST, PostgreSQL, MinIO, and its provisioned backend
+name: Run released-product vertical slice
+description: Execute isolated server, Agent, Octa, runner, and plugin bundles against real dependencies
 
 inputs:
+  server-root:
+    description: Extracted checksummed server release root
+    required: true
   agent-root:
     description: Extracted checksummed Agent release root
     required: true
@@ -17,6 +20,36 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Prepare isolated released products
+      shell: bash
+      working-directory: octacity
+      env:
+        OCTACITY_CANDIDATE_SERVER_ROOT: ${{ inputs.server-root }}
+        OCTACITY_CANDIDATE_AGENT_ROOT: ${{ inputs.agent-root }}
+      run: |
+        set -euo pipefail
+        : "${OCTACITY_CONTRACT_OCTA_RELEASE_ROOT:?runner must configure a checksummed Octa release root}"
+        stage=$(mktemp -d "${RUNNER_TEMP}/octacity-release-installation.XXXXXX")
+        receipt="${stage}/installation.json"
+        cargo run --quiet --locked -p octacity-release-harness -- prepare \
+          --server-root "${OCTACITY_CANDIDATE_SERVER_ROOT}" \
+          --agent-root "${OCTACITY_CANDIDATE_AGENT_ROOT}" \
+          --octa-root "${OCTACITY_CONTRACT_OCTA_RELEASE_ROOT}" \
+          --install-root "${stage}/root" > "${receipt}"
+        python3 - "${receipt}" "${GITHUB_ENV}" <<'PY'
+        import json
+        import pathlib
+        import sys
+
+        receipt = pathlib.Path(sys.argv[1])
+        installation = json.loads(receipt.read_text(encoding="utf-8"))
+        with pathlib.Path(sys.argv[2]).open("a", encoding="utf-8") as environment:
+            environment.write(f"OCTACITY_RELEASE_SERVER_ROOT={installation['server_root']}\n")
+            environment.write(f"OCTACITY_RELEASE_AGENT_ROOT={installation['agent_root']}\n")
+            environment.write(f"OCTACITY_CONTRACT_OCTA_RELEASE_ROOT={installation['octa_root']}\n")
+            environment.write(f"OCTACITY_RELEASE_INSTALLATION_RECEIPT={receipt}\n")
+        PY
+
     - name: Start disposable PostgreSQL and MinIO
       shell: bash
       run: |
@@ -35,6 +68,7 @@ runs:
           -p 127.0.0.1::9000 \
           -e MINIO_ROOT_USER=octacity \
           -e MINIO_ROOT_PASSWORD=octacity-secret \
+          -e MINIO_DEFAULT_BUCKETS=octacity-artifacts \
           docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
           server /bitnami/minio/data
 
@@ -59,16 +93,20 @@ runs:
       shell: bash
       working-directory: octacity
       env:
-        OCTACITY_RELEASE_AGENT_ROOT: ${{ inputs.agent-root }}
         OCTACITY_RELEASE_BACKEND: ${{ inputs.backend }}
+        OCTACITY_RELEASE_SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
       run: |
         set -euo pipefail
-        : "${OCTACITY_CONTRACT_OCTA_RELEASE_ROOT:?runner must configure a checksummed Octa release root}"
         evidence=$(mktemp -d "${RUNNER_TEMP}/octacity-release-evidence.XXXXXX")
         printf 'evidence=%s\n' "${evidence}" >> "${GITHUB_OUTPUT}"
         export OCTACITY_RELEASE_EVIDENCE_DIR="${evidence}"
-        cargo test -p octacity-server --test release_vertical_slice \
-          released_agent_completes_a_sequential_pipeline_through_rest_and_postgres \
+        cp "${OCTACITY_RELEASE_INSTALLATION_RECEIPT}" "${evidence}/installation.json"
+        case "${OCTACITY_RELEASE_BACKEND}" in
+          native) test_name=released_linux_native_matrix_satisfies_the_end_to_end_contract ;;
+          microsandbox) test_name=released_agent_completes_a_sequential_pipeline_through_rest_and_postgres ;;
+          *) printf 'unsupported release backend: %s\n' "${OCTACITY_RELEASE_BACKEND}" >&2; exit 1 ;;
+        esac
+        cargo test --locked -p octacity-server --test release_vertical_slice "${test_name}" \
           -- --ignored --exact --nocapture
 
     - name: Stop disposable services

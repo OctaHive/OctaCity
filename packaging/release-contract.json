@@ -1,0 +1,70 @@
+{
+  "checksums": "SHA256SUMS",
+  "format_version": 1,
+  "manifest": "release-manifest.json",
+  "products": {
+    "octacity-agent": {
+      "protocols": {
+        "agent": {
+          "max": 1,
+          "min": 1
+        },
+        "artifact": {
+          "max": 1,
+          "min": 1
+        },
+        "coordinator": {
+          "max": 1,
+          "min": 1
+        },
+        "octa_event_schema": {
+          "max": 4,
+          "min": 4
+        },
+        "octa_runner": {
+          "max": 3,
+          "min": 3
+        },
+        "source_plugin": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      "required_components": [
+        "agent",
+        "source_git"
+      ]
+    },
+    "octacity-server": {
+      "protocols": {
+        "agent": {
+          "max": 1,
+          "min": 1
+        },
+        "artifact": {
+          "max": 1,
+          "min": 1
+        },
+        "coordinator": {
+          "max": 1,
+          "min": 1
+        },
+        "remote_cache": {
+          "max": 1,
+          "min": 1
+        },
+        "vcs_provider": {
+          "max": 1,
+          "min": 1
+        },
+        "webhook_provider": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      "required_components": [
+        "server"
+      ]
+    }
+  }
+}

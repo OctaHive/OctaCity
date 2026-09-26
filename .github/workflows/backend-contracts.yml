@@ -100,16 +100,17 @@ jobs:
           cargo test -p octacity-job --test backend_contract
           native_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
-      - name: Package the Agent release candidate
-        id: agent-candidate
-        uses: ./octacity/.github/actions/package-agent-candidate
+      - name: Package the server and Agent release candidates
+        id: release-candidate
+        uses: ./octacity/.github/actions/package-release-candidate
         with:
           octa-revision: ${{ steps.octa-source.outputs.revision }}
       - name: Run released Linux Native vertical slice
         id: release-slice
         uses: ./octacity/.github/actions/release-agent-vertical-slice
         with:
-          agent-root: ${{ steps.agent-candidate.outputs.root }}
+          server-root: ${{ steps.release-candidate.outputs.server-root }}
+          agent-root: ${{ steps.release-candidate.outputs.agent-root }}
           backend: native
       - name: Retain Linux Native release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
@@ -162,16 +163,17 @@ jobs:
           cargo test -p octacity-job --test backend_contract
           microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
-      - name: Package the Agent release candidate
-        id: agent-candidate
-        uses: ./octacity/.github/actions/package-agent-candidate
+      - name: Package the server and Agent release candidates
+        id: release-candidate
+        uses: ./octacity/.github/actions/package-release-candidate
         with:
           octa-revision: ${{ steps.octa-source.outputs.revision }}
       - name: Run released macOS Microsandbox vertical slice
         id: release-slice
         uses: ./octacity/.github/actions/release-agent-vertical-slice
         with:
-          agent-root: ${{ steps.agent-candidate.outputs.root }}
+          server-root: ${{ steps.release-candidate.outputs.server-root }}
+          agent-root: ${{ steps.release-candidate.outputs.agent-root }}
           backend: microsandbox
       - name: Retain macOS Microsandbox release evidence
         if: always() && steps.release-slice.outputs.evidence != ''

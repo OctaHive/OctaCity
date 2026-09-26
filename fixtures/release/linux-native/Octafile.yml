@@ -1,0 +1,29 @@
+version: 1
+
+tasks:
+  cacheable:
+    files:
+      inputs:
+        - input/message.txt
+      outputs:
+        - dist
+        - reports
+    cache: {}
+    artifacts:
+      - name: release-result
+        path: dist/message.txt
+        content_type: text/plain
+    reports:
+      - name: release-junit
+        path: reports/junit.xml
+        format: junit
+    shell: >-
+      sleep 2 && mkdir -p dist reports && cp input/message.txt dist/message.txt &&
+      printf '<testsuite name="release" tests="1" failures="0"/>\n' > reports/junit.xml &&
+      echo 'release cache source ready at dist/message.txt'
+
+  downstream:
+    shell: echo 'release downstream build completed'
+
+  slow:
+    shell: echo 'release cancellation started' && sleep 120

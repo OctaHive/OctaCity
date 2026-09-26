@@ -13,7 +13,7 @@ mod protocol;
 mod supervisor;
 
 pub use installation::{RunnerCapabilities, RunnerInstallation, RunnerInstallationError, RunnerPlugin};
-pub use octa_runner_protocol::RunStatus;
+pub use octa_runner_protocol::{RUNNER_EVENT_SCHEMA_VERSION, RUNNER_PROTOCOL_VERSION, RunStatus};
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]
 pub use protocol::{MAX_RUNNER_OUTPUT_FRAME_BYTES, decode_message_frame};

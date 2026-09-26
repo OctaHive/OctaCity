@@ -4412,6 +4412,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-release-harness"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "octa-cache-protocol",
+ "octa-plugin-lock",
+ "octacity-protocol",
+ "octacity-runner",
+ "octacity-source-plugin",
+ "octacity-vcs-protocol",
+ "octacity-webhook-provider-protocol",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml",
+]
+
+[[package]]
 name = "octacity-runner"
 version = "0.1.0"
 dependencies = [
@@ -4442,6 +4463,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "chrono",
  "clap",
  "ed25519-dalek",
  "metrics-exporter-prometheus",
@@ -4449,6 +4471,7 @@ dependencies = [
  "octacity-artifact-s3",
  "octacity-observability",
  "octacity-protocol",
+ "octacity-release-harness",
  "octacity-server-api-agent",
  "octacity-server-api-cache",
  "octacity-server-api-rest",
@@ -4462,8 +4485,10 @@ dependencies = [
  "octacity-server-webhook",
  "octacity-vcs-protocol",
  "octacity-webhook-provider-protocol",
+ "rcgen",
  "reqwest",
  "rustix",
+ "rustls",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -4472,6 +4497,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "toml",
  "tower",
