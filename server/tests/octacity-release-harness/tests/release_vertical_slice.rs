@@ -41,8 +41,20 @@ const SIGNING_SEED: [u8; 32] = [7; 32];
 const SOURCE_REPOSITORY: &str = "https://github.com/OctaHive/octa.git";
 const SOURCE_REVISION: &str = include_str!("../../../../.github/octa-source-revision");
 const RELEASE_JOB_DISK_BYTES: u64 = 512 * 1024 * 1024;
+const RELEASE_JOB_TIMEOUT_SECONDS: u64 = 300;
+const RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS: u64 = 5;
+const RELEASE_JOB_AUTHORITY_MARGIN_SECONDS: u64 = 30;
+const RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS: u64 =
+  (RELEASE_JOB_TIMEOUT_SECONDS + RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS + RELEASE_JOB_AUTHORITY_MARGIN_SECONDS) * 1_000;
 const RELEASE_OBJECT_OPERATION_TIMEOUT_MILLISECONDS: u64 = 5_000;
 const RELEASE_READINESS_TIMEOUT_MILLISECONDS: u64 = 15_000;
+
+#[test]
+fn released_cache_credentials_outlive_jobs_and_the_final_cache_request() {
+  let required_lifetime_milliseconds = (RELEASE_JOB_TIMEOUT_SECONDS + RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS) * 1_000;
+
+  assert!(RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS > required_lifetime_milliseconds);
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated released products and a provisioned Linux Native runner"]
@@ -442,7 +454,7 @@ fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &s
         "cpu_millis": 1000,
         "memory_bytes": 536870912_u64,
         "writable_disk_bytes": backend.job_disk_bytes(),
-        "timeout_seconds": 300,
+        "timeout_seconds": RELEASE_JOB_TIMEOUT_SECONDS,
         "network": {"mode": "disabled"},
         "workload_identity_profile": null
       },
@@ -629,7 +641,7 @@ cache.allow_write = {}
 cache.allowed_remote_origins = {}
 {}
 cache.native_environment_identities = {}
-cache.request_timeout_seconds = 5
+cache.request_timeout_seconds = {RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS}
 cache.max_parallel_transfers = 1
 maintenance.work_reserve_bytes = 0
 maintenance.state_reserve_bytes = 0
@@ -809,7 +821,7 @@ readiness_check_interval_milliseconds = 100
 readiness_check_timeout_milliseconds = {RELEASE_READINESS_TIMEOUT_MILLISECONDS}
 agent_registration_lifetime_milliseconds = 900000
 agent_enrollment_lifetime_milliseconds = 900000
-agent_lease_lifetime_milliseconds = 60000
+agent_lease_lifetime_milliseconds = {RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS}
 supported_pipeline_capabilities = ["native", "oci.hypervisor", "shell"]
 
 [postgres]
@@ -834,7 +846,7 @@ enrollment_key_file = {}
 [cache]
 endpoint = {}
 credential_key_file = {}
-session_lifetime_milliseconds = 300000
+session_lifetime_milliseconds = {RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS}
 
 [job_spec]
 policy_file = {}
@@ -1050,6 +1062,10 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
   assert_eq!(document["cache"]["root"].as_str(), cache_root.to_str());
   assert_eq!(
+    document["cache"]["request_timeout_seconds"].as_integer(),
+    Some(RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS as i64)
+  );
+  assert_eq!(
     document["cache"]["native_environment_identities"]
       .as_table()
       .unwrap()
@@ -1086,11 +1102,15 @@ fn release_jobs_leave_headroom_on_the_bounded_native_filesystem() {
     definition["runtime"]["writable_disk_bytes"].as_u64(),
     Some(RELEASE_JOB_DISK_BYTES)
   );
+  assert_eq!(
+    definition["runtime"]["timeout_seconds"].as_u64(),
+    Some(RELEASE_JOB_TIMEOUT_SECONDS)
+  );
   assert!(backend.job_disk_bytes() < backend.workspace_bytes());
 }
 
 #[test]
-fn generated_server_configuration_uses_path_style_for_minio() {
+fn generated_server_configuration_preserves_release_infrastructure_contract() {
   let directory = tempfile::tempdir().unwrap();
   let toolchain = Toolchain {
     source_version: "0.1.0".to_owned(),
@@ -1124,5 +1144,13 @@ fn generated_server_configuration_uses_path_style_for_minio() {
   assert_eq!(
     document["readiness_check_timeout_milliseconds"].as_integer(),
     Some(RELEASE_READINESS_TIMEOUT_MILLISECONDS as i64)
+  );
+  assert_eq!(
+    document["agent_lease_lifetime_milliseconds"].as_integer(),
+    Some(RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS as i64)
+  );
+  assert_eq!(
+    document["cache"]["session_lifetime_milliseconds"].as_integer(),
+    Some(RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS as i64)
   );
 }

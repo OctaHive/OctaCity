@@ -22,9 +22,10 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-  AgentConfigOverrides, AgentReleasePaths, ReleaseBackend, ServerConfigInput, drain_agent, get_json, issue_enrollment,
-  post_management, private_file, release, required_path, required_string, resource_id, shutdown_server, spawn_agent,
-  spawn_server, string, wait_for_server_ready, wait_for_terminal_build, write_agent_config, write_server_config,
+  AgentConfigOverrides, AgentReleasePaths, RELEASE_JOB_TIMEOUT_SECONDS, ReleaseBackend, ServerConfigInput, drain_agent,
+  get_json, issue_enrollment, post_management, private_file, release, required_path, required_string, resource_id,
+  shutdown_server, spawn_agent, spawn_server, string, wait_for_server_ready, wait_for_terminal_build,
+  write_agent_config, write_server_config,
 };
 
 #[path = "cache_proxy.rs"]
@@ -597,7 +598,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "cpu_millis": 1000,
           "memory_bytes": MEMORY_BYTES,
           "writable_disk_bytes": input.backend.job_disk_bytes(),
-          "timeout_seconds": 300,
+          "timeout_seconds": RELEASE_JOB_TIMEOUT_SECONDS,
           "network": {"mode": if input.cache { "unrestricted" } else { "disabled" }},
           "workload_identity_profile": null
         },
