@@ -14,7 +14,8 @@ use std::{
 };
 
 use async_trait::async_trait;
-use octacity_execution::ExecutionBackend;
+use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
+use octacity_execution::{ExecutionBackend, LocalCacheCapacity};
 use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
@@ -22,8 +23,9 @@ use octacity_execution_oci::{OciBackend, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_job::{ExecuteJobRequest, JobExecutor, JobExecutorConfig};
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, ExecutionSpec, JobSpecV1, NetworkPolicy, OciIsolation, OctaSpec, OutputLimits,
-  PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeMode, RuntimeSpec, RuntimeTarget, SourceSpec,
+  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, ExecutionSpec, JobSpecV1, NetworkPolicy,
+  OciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RemoteCacheGrant, RuntimeMode,
+  RuntimeSpec, RuntimeTarget, SourceSpec,
 };
 use octacity_runner::{RunStatus, RunnerInstallation, RunnerStreamItem, RunnerSupervisionPolicy};
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
@@ -115,6 +117,7 @@ async fn native_backend_satisfies_the_real_runner_contract() {
     workspace_bytes,
     backend,
     false,
+    true,
   )
   .await;
 }
@@ -150,6 +153,7 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
     workspace_bytes,
     backend,
     true,
+    false,
   )
   .await;
 }
@@ -190,6 +194,7 @@ async fn containerd_process_engine_satisfies_the_real_runner_contract() {
     workspace_bytes,
     backend,
     false,
+    false,
   )
   .await;
 }
@@ -200,6 +205,7 @@ async fn run_contract(
   workspace_bytes: u64,
   backend: Arc<dyn ExecutionBackend>,
   secure_oci_contract: bool,
+  native_cache_contract: bool,
 ) {
   let mode = match &target {
     RuntimeTarget::Native { .. } => RuntimeMode::Native,
@@ -234,7 +240,7 @@ async fn run_contract(
     JobExecutorConfig {
       work_root,
       max_workspace_bytes: workspace_bytes,
-      allow_unrestricted_network: false,
+      allow_unrestricted_network: native_cache_contract,
       allowed_network_hosts: network_probe
         .as_ref()
         .map(|probe| probe.allowed_host.clone())
@@ -252,6 +258,26 @@ async fn run_contract(
     },
   )
   .expect("job executor configuration must be valid");
+  let executor = if native_cache_contract {
+    let cache_root = required_path("OCTACITY_RELEASE_NATIVE_CACHE_ROOT");
+    let scope_bytes = workspace_bytes / 2;
+    let cache = CacheSessionManager::new(CacheSessionManagerConfig {
+      root: cache_root,
+      capacity: LocalCacheCapacity::new(scope_bytes, scope_bytes * 9 / 10, scope_bytes * 8 / 10).unwrap(),
+      max_scopes: 2,
+      allow_read: true,
+      allow_write: true,
+      allowed_origins: vec!["https://cache.example".to_owned()],
+      ca_certificate_file: None,
+      native_identities: BTreeMap::from([(linux_platform().to_string(), "backend-contract-v1".to_owned())]),
+      request_timeout_seconds: 5,
+      max_parallel_transfers: 1,
+    })
+    .expect("Native cache configuration must be usable");
+    executor.with_cache(Arc::new(cache))
+  } else {
+    executor
+  };
   executor
     .cleanup_orphans()
     .await
@@ -262,6 +288,14 @@ async fn run_contract(
     .expect("system clock must be after the Unix epoch")
     .as_secs();
   let mut spec = specification(target.clone(), workspace_bytes, now, &runner);
+  if native_cache_contract {
+    spec.runtime.network = NetworkPolicy::Unrestricted;
+    spec.cache = Some(CachePolicy {
+      namespace: "backend-contract".to_owned(),
+      read: true,
+      write: true,
+    });
+  }
   if let Some(probe) = &network_probe {
     spec.runtime.network = NetworkPolicy::Restricted {
       allowed_hosts: vec![probe.allowed_host.clone()],
@@ -275,7 +309,17 @@ async fn run_contract(
       ExecuteJobRequest {
         spec,
         source_credentials: BTreeMap::new(),
-        cache_grant: None,
+        cache_grant: native_cache_contract.then(|| BeginCacheSessionResponse {
+          protocol_version: 1,
+          request_id: "backend-contract-cache".to_owned(),
+          session_id: "backend-contract-session".to_owned(),
+          scope_id: "backend-contract-scope".to_owned(),
+          remote: Some(RemoteCacheGrant {
+            endpoint: "https://cache.example".to_owned(),
+            bearer_token: "backend-contract-token".to_owned(),
+            expires_at: now + 300,
+          }),
+        }),
       },
       CancellationToken::new(),
       &sender,

@@ -38,8 +38,8 @@ use cgroup::{
 };
 use filesystem::{filesystem_usage, validate_workspace_filesystem, validate_workspace_root};
 use security::{
-  add_native_filesystem, create_seccomp_filter, environment_arguments, host_execution_platform, network_arguments,
-  validate_native_path,
+  NATIVE_OCTA_ROOT_PATH, NATIVE_WORKSPACE_PATH, add_native_filesystem, create_seccomp_filter, environment_arguments,
+  host_execution_platform, network_arguments, validate_native_path,
 };
 
 const CPU_PERIOD_MICROS: u64 = 100_000;
@@ -180,6 +180,27 @@ impl ExecutionBackend for NativeBackend {
       ));
     }
     validate_workspace_filesystem(&self.work_root, &request.workspace, request.writable_disk_bytes)?;
+    let workspace = request.workspace.canonicalize().map_err(ExecutionError::Io)?;
+    let data_dir = request.data_dir.canonicalize().map_err(ExecutionError::Io)?;
+    let guest_data_dir = project_guest_path(&workspace, &data_dir, Path::new(NATIVE_WORKSPACE_PATH), "data_dir")?;
+    let guest_runner = project_guest_path(
+      &runner.release_root,
+      &runner.executable,
+      Path::new(NATIVE_OCTA_ROOT_PATH),
+      "runner executable",
+    )?;
+    let guest_plugins = project_guest_path(
+      &runner.release_root,
+      &runner.plugins_dir,
+      Path::new(NATIVE_OCTA_ROOT_PATH),
+      "runner plugins",
+    )?;
+    let guest_plugin_lock = project_guest_path(
+      &runner.release_root,
+      &runner.plugin_lock,
+      Path::new(NATIVE_OCTA_ROOT_PATH),
+      "runner plugin lock",
+    )?;
     let temporary_directory = request.data_dir.join("tmp");
     let home_directory = request.data_dir.join("home");
     fs::create_dir(&temporary_directory).map_err(ExecutionError::Io)?;
@@ -212,7 +233,7 @@ impl ExecutionBackend for NativeBackend {
     )?;
     command
       .arg("--chdir")
-      .arg(&request.workspace)
+      .arg(NATIVE_WORKSPACE_PATH)
       .arg("--clearenv")
       .args(environment_arguments(&self.environment))
       .arg("--cap-drop")
@@ -221,7 +242,7 @@ impl ExecutionBackend for NativeBackend {
       .arg("--seccomp")
       .arg(seccomp.as_raw_fd().to_string())
       .arg("--")
-      .arg(&runner.executable);
+      .arg(guest_runner);
 
     // Create the kernel-owned execution state only after every fallible
     // userspace preparation step has succeeded. From this point onward each
@@ -279,10 +300,10 @@ impl ExecutionBackend for NativeBackend {
       child,
       io: Some(io),
       paths: ExecutionPaths {
-        workspace: request.workspace.clone(),
-        data_dir: request.data_dir,
-        plugins_dir: runner.plugins_dir.clone(),
-        plugin_lock: runner.plugin_lock.clone(),
+        workspace: PathBuf::from(NATIVE_WORKSPACE_PATH),
+        data_dir: guest_data_dir,
+        plugins_dir: guest_plugins,
+        plugin_lock: guest_plugin_lock,
         cache: request
           .cache
           .as_ref()
@@ -327,6 +348,18 @@ impl ExecutionBackend for NativeBackend {
     }
     Ok(())
   }
+}
+
+fn project_guest_path(
+  host_root: &Path,
+  host_path: &Path,
+  guest_root: &Path,
+  name: &str,
+) -> Result<PathBuf, ExecutionError> {
+  let relative = host_path
+    .strip_prefix(host_root)
+    .map_err(|_| ExecutionError::Invalid(format!("{name} must resolve inside its Native filesystem root")))?;
+  Ok(guest_root.join(relative))
 }
 
 async fn rollback_start_failure(

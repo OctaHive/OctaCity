@@ -3,6 +3,9 @@
 use super::*;
 use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, WORKLOAD_IDENTITY_PATH};
 
+pub(super) const NATIVE_WORKSPACE_PATH: &str = "/workspace";
+pub(super) const NATIVE_OCTA_ROOT_PATH: &str = "/opt/octa";
+
 /// Converts the signed network policy into Bubblewrap namespace arguments.
 pub(super) fn network_arguments(network: &NetworkAccess) -> &'static [&'static str] {
   match network {
@@ -93,12 +96,13 @@ pub(super) fn add_native_filesystem(
   for path in readonly_paths {
     expose_host_path(command, path)?;
   }
-  ro_bind(command, &runner.release_root, &runner.release_root);
+  command.arg("--dir").arg("/opt").arg("--dir").arg(NATIVE_OCTA_ROOT_PATH);
+  ro_bind(command, &runner.release_root, Path::new(NATIVE_OCTA_ROOT_PATH));
   // The backend-wide work root may contain identity material, abandoned state,
   // and eventually concurrent jobs. Expose only this job's writable workspace;
   // quota accounting can still inspect `workspace_root` from the host.
-  command.arg("--dir").arg(&request.workspace);
-  bind(command, &request.workspace, &request.workspace);
+  command.arg("--dir").arg(NATIVE_WORKSPACE_PATH);
+  bind(command, &request.workspace, Path::new(NATIVE_WORKSPACE_PATH));
   if request.workload_identity.is_some()
     || request
       .cache
@@ -111,7 +115,13 @@ pub(super) fn add_native_filesystem(
     ro_bind(command, identity, Path::new(WORKLOAD_IDENTITY_PATH));
   }
   if let Some(cache) = &request.cache {
-    command.arg("--dir").arg("/var").arg("--dir").arg("/var/cache");
+    command
+      .arg("--dir")
+      .arg("/var")
+      .arg("--dir")
+      .arg("/var/cache")
+      .arg("--dir")
+      .arg(CACHE_DIRECTORY_PATH);
     bind(command, &cache.local_directory, Path::new(CACHE_DIRECTORY_PATH));
     if cache.token_file.is_some() || cache.ca_certificate_file.is_some() {
       command.arg("--dir").arg("/run/octa-cache");
@@ -123,7 +133,9 @@ pub(super) fn add_native_filesystem(
       ro_bind(command, certificate, Path::new(CACHE_CA_CERTIFICATE_PATH));
     }
   }
+  command.arg("--dir").arg("/tmp");
   bind(command, temporary_directory, Path::new("/tmp"));
+  command.arg("--dir").arg("/home").arg("--dir").arg("/home/octacity");
   bind(command, home_directory, Path::new("/home/octacity"));
   command
     .arg("--dev")

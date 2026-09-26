@@ -342,12 +342,18 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
   assert!(arguments.iter().any(|argument| argument == CACHE_DIRECTORY_PATH));
   assert!(arguments.iter().any(|argument| argument == CACHE_TOKEN_PATH));
   assert!(arguments.iter().any(|argument| argument == CACHE_CA_CERTIFICATE_PATH));
+  let release_root = runner.release_root.to_string_lossy();
+  assert!(
+    arguments
+      .windows(3)
+      .any(|values| values == ["--ro-bind", release_root.as_ref(), NATIVE_OCTA_ROOT_PATH])
+  );
   let work_root = root.path().to_string_lossy();
   let workspace = request.workspace.to_string_lossy();
   assert!(
     arguments
-      .windows(2)
-      .any(|values| values == ["--bind", workspace.as_ref()])
+      .windows(3)
+      .any(|values| values == ["--bind", workspace.as_ref(), NATIVE_WORKSPACE_PATH])
   );
   assert!(
     !arguments
