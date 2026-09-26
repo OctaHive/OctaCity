@@ -73,8 +73,7 @@ runs:
           -e MINIO_ROOT_USER=octacity \
           -e MINIO_ROOT_PASSWORD=octacity-secret \
           -e MINIO_DEFAULT_BUCKETS=octacity-artifacts \
-          docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
-          server /bitnami/minio/data
+          docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
 
         postgres_port=$(docker port "${postgres_name}" 5432/tcp | awk -F: 'NR == 1 {print $NF}')
         minio_port=$(docker port "${minio_name}" 9000/tcp | awk -F: 'NR == 1 {print $NF}')
@@ -122,7 +121,13 @@ runs:
     - name: Stop disposable services
       if: always()
       shell: bash
+      env:
+        OCTACITY_RELEASE_EVIDENCE_DIR: ${{ steps.test.outputs.evidence }}
       run: |
+        if [[ -n "${OCTACITY_RELEASE_EVIDENCE_DIR}" ]]; then
+          docker logs "${OCTACITY_RELEASE_MINIO_CONTAINER}" \
+            > "${OCTACITY_RELEASE_EVIDENCE_DIR}/minio.log" 2>&1 || true
+        fi
         docker rm --force \
           "${OCTACITY_RELEASE_MINIO_CONTAINER:-octacity-release-minio-not-started}" \
           "${OCTACITY_RELEASE_POSTGRES_CONTAINER:-octacity-release-postgres-not-started}" || true

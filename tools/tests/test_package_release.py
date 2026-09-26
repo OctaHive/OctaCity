@@ -286,6 +286,9 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("--octa-root", action)
         self.assertIn("released_linux_native_matrix_satisfies_the_end_to_end_contract", action)
         self.assertIn("MINIO_DEFAULT_BUCKETS=octacity-artifacts", action)
+        self.assertNotIn("server /bitnami/minio/data", action)
+        self.assertIn('${{ steps.test.outputs.evidence }}', action)
+        self.assertIn('> "${OCTACITY_RELEASE_EVIDENCE_DIR}/minio.log"', action)
         self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
         fixture = REPOSITORY / "fixtures/release/linux-native/Octafile.yml"
         self.assertTrue(fixture.is_file())
