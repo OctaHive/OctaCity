@@ -197,6 +197,10 @@ mod tests {
     assert_eq!(pressure[1].roots, vec!["cache"]);
   }
 
+  #[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(target_os = "macos", target_arch = "aarch64")
+  ))]
   #[test]
   fn preallocated_workspace_capacity_is_not_reserved_twice() {
     let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
