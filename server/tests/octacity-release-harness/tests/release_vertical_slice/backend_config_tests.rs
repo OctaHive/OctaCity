@@ -214,7 +214,10 @@ fn containerd_release_jobs_request_provider_neutral_isolation() {
   let configuration = build_configuration("project", "repository", "pipeline", "pool", &backend);
   let runtime = &configuration["definition"]["runtime"];
   assert_eq!(runtime["class"], "isolation");
-  assert_eq!(runtime["host_platform"]["operating_system"], "linux");
+  assert_eq!(
+    runtime["host_platform"],
+    json!({"os": "linux", "architecture": host_architecture()})
+  );
   assert_eq!(runtime["required_guarantees"].as_array().unwrap().len(), 4);
   let capabilities = configuration["definition"]["agent_requirements"]["capabilities"]
     .as_array()
@@ -237,7 +240,10 @@ fn apple_vf_release_jobs_keep_virtualization_as_an_isolation_implementation_deta
   let configuration = build_configuration("project", "repository", "pipeline", "pool", &backend);
   let runtime = &configuration["definition"]["runtime"];
   assert_eq!(runtime["class"], "isolation");
-  assert_eq!(runtime["host_platform"]["operating_system"], "macos");
+  assert_eq!(
+    runtime["host_platform"],
+    json!({"os": "macos", "architecture": "arm64"})
+  );
   assert_eq!(runtime["operating_system"], "linux");
   assert_eq!(runtime["required_guarantees"].as_array().unwrap().len(), 4);
   let capabilities = configuration["definition"]["agent_requirements"]["capabilities"]

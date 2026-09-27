@@ -155,11 +155,11 @@ impl ReleaseBackend {
   pub(super) fn host_platform(&self) -> Value {
     match self {
       Self::Containerd { .. } => json!({
-        "operating_system": "linux",
+        "os": "linux",
         "architecture": host_architecture()
       }),
       Self::AppleVf { .. } => json!({
-        "operating_system": "macos",
+        "os": "macos",
         "architecture": "arm64"
       }),
       Self::Native { .. } | Self::Microsandbox { .. } => Value::Null,
