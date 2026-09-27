@@ -435,6 +435,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("backend-contracts.yml@refs/heads/main", registration)
         self.assertNotIn("Start the wizard on the other backend host", registration)
 
+    @unittest.skipIf(sys.platform == "win32", "Apple VF provisioner executes only on POSIX hosts")
     def test_apple_vf_volume_planning_is_safe_under_nounset(self):
         provisioner = (REPOSITORY / "tools/runner/self-hosted-apple-vf.sh").read_text(encoding="utf-8")
         function = provisioner.split("attach_volume() {\n", 1)[1].split("\n}\n", 1)[0]
