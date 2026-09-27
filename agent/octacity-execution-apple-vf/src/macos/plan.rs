@@ -72,18 +72,18 @@ impl AppleVfPlan {
       "--workdir".to_owned(),
       GUEST_WORKSPACE.to_owned(),
     ];
-    push_bind(&mut arguments, &request.workspace, GUEST_WORKSPACE, false)?;
-    push_bind(&mut arguments, &runner.release_root, GUEST_RELEASE, true)?;
+    push_directory_bind(&mut arguments, &request.workspace, GUEST_WORKSPACE, false)?;
+    push_directory_bind(&mut arguments, &runner.release_root, GUEST_RELEASE, true)?;
     if let Some(identity) = &request.workload_identity {
-      push_bind(&mut arguments, identity, WORKLOAD_IDENTITY_PATH, true)?;
+      push_readonly_file_bind(&mut arguments, identity, WORKLOAD_IDENTITY_PATH)?;
     }
     if let Some(cache) = &request.cache {
-      push_bind(&mut arguments, &cache.local_directory, CACHE_DIRECTORY_PATH, false)?;
+      push_directory_bind(&mut arguments, &cache.local_directory, CACHE_DIRECTORY_PATH, false)?;
       if let Some(token) = &cache.token_file {
-        push_bind(&mut arguments, token, CACHE_TOKEN_PATH, true)?;
+        push_readonly_file_bind(&mut arguments, token, CACHE_TOKEN_PATH)?;
       }
       if let Some(certificate) = &cache.ca_certificate_file {
-        push_bind(&mut arguments, certificate, CACHE_CA_CERTIFICATE_PATH, true)?;
+        push_readonly_file_bind(&mut arguments, certificate, CACHE_CA_CERTIFICATE_PATH)?;
       }
     }
     arguments.push(reference.clone());
@@ -240,7 +240,12 @@ fn map_path(host_root: &Path, host_path: &Path, guest_root: &Path) -> Result<Str
     .ok_or_else(|| invalid("mapped guest path is not UTF-8"))
 }
 
-fn push_bind(arguments: &mut Vec<String>, source: &Path, target: &str, readonly: bool) -> Result<(), ExecutionError> {
+fn push_directory_bind(
+  arguments: &mut Vec<String>,
+  source: &Path,
+  target: &str,
+  readonly: bool,
+) -> Result<(), ExecutionError> {
   let source = source
     .to_str()
     .ok_or_else(|| invalid("Apple VF bind source is not UTF-8"))?;
@@ -250,6 +255,18 @@ fn push_bind(arguments: &mut Vec<String>, source: &Path, target: &str, readonly:
   let readonly = if readonly { ",readonly" } else { "" };
   arguments.push("--mount".to_owned());
   arguments.push(format!("type=bind,source={source},target={target}{readonly}"));
+  Ok(())
+}
+
+fn push_readonly_file_bind(arguments: &mut Vec<String>, source: &Path, target: &str) -> Result<(), ExecutionError> {
+  let source = source
+    .to_str()
+    .ok_or_else(|| invalid("Apple VF bind source is not UTF-8"))?;
+  if source.contains(':') {
+    return Err(invalid("Apple VF file bind sources must not contain colons"));
+  }
+  arguments.push("--volume".to_owned());
+  arguments.push(format!("{source}:{target}:ro"));
   Ok(())
 }
 
@@ -267,7 +284,10 @@ fn exact_mib(name: &str, bytes: u64) -> Result<u64, ExecutionError> {
 mod tests {
   use std::time::Duration;
 
-  use octacity_execution::{ExecutionArchitecture, ExecutionOs, ExecutionPlatform, NetworkAccess, OciIsolation};
+  use octacity_execution::{
+    ExecutionArchitecture, ExecutionCacheMounts, ExecutionOs, ExecutionPlatform, LocalCacheCapacity, NetworkAccess,
+    OciIsolation,
+  };
 
   use super::*;
 
@@ -276,9 +296,17 @@ mod tests {
     let temporary = tempfile::tempdir().unwrap();
     let release = temporary.path().join("release");
     let workspace = temporary.path().join("workspace");
+    let identity = temporary.path().join("identity");
+    let cache = temporary.path().join("cache");
+    let cache_token = temporary.path().join("cache-token");
+    let cache_ca = temporary.path().join("cache-ca.pem");
     fs::create_dir_all(release.join("plugins")).unwrap();
     fs::create_dir_all(workspace.join("data")).unwrap();
+    fs::create_dir(&cache).unwrap();
     for file in [release.join("octa-runner"), release.join("Octa.lock")] {
+      fs::write(file, "fixture").unwrap();
+    }
+    for file in [&identity, &cache_token, &cache_ca] {
       fs::write(file, "fixture").unwrap();
     }
     let runner = RunnerProgram {
@@ -292,8 +320,15 @@ mod tests {
       workspace_root: temporary.path().to_owned(),
       workspace: workspace.clone(),
       data_dir: workspace.join("data"),
-      workload_identity: None,
-      cache: None,
+      workload_identity: Some(identity.clone()),
+      cache: Some(ExecutionCacheMounts {
+        capacity_root: cache.clone(),
+        local_directory: cache,
+        local_capacity: LocalCacheCapacity::new(4 * 1024 * 1024, 3 * 1024 * 1024, 2 * 1024 * 1024).unwrap(),
+        aggregate_max_bytes: 8 * 1024 * 1024,
+        token_file: Some(cache_token.clone()),
+        ca_certificate_file: Some(cache_ca.clone()),
+      }),
       cpu_millis: 2000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -314,11 +349,41 @@ mod tests {
     assert!(plan.create_arguments.iter().any(|argument| argument == "none"));
     assert!(plan.create_arguments.iter().any(|argument| argument == "--read-only"));
     assert!(plan.create_arguments.iter().any(|argument| argument == "--cap-drop"));
+    for expected in [
+      format!("{}:{WORKLOAD_IDENTITY_PATH}:ro", identity.display()),
+      format!("{}:{CACHE_TOKEN_PATH}:ro", cache_token.display()),
+      format!("{}:{CACHE_CA_CERTIFICATE_PATH}:ro", cache_ca.display()),
+    ] {
+      assert!(
+        plan
+          .create_arguments
+          .windows(2)
+          .any(|arguments| arguments == ["--volume", expected.as_str()])
+      );
+    }
     assert!(
       !plan
         .create_arguments
         .iter()
         .any(|argument| argument == "--virtualization")
+    );
+  }
+
+  #[test]
+  fn regular_files_use_apple_volume_syntax() {
+    let temporary = tempfile::tempdir().unwrap();
+    let identity = temporary.path().join("identity");
+    fs::write(&identity, "fixture").unwrap();
+    let mut arguments = Vec::new();
+
+    push_readonly_file_bind(&mut arguments, &identity, WORKLOAD_IDENTITY_PATH).unwrap();
+
+    assert_eq!(
+      arguments,
+      [
+        "--volume".to_owned(),
+        format!("{}:{WORKLOAD_IDENTITY_PATH}:ro", identity.display())
+      ]
     );
   }
 
