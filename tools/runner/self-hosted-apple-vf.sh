@@ -90,7 +90,9 @@ PY
 }
 
 attach_volume() {
-  local root=$1 name=$2 bytes=$3 image=$root/$name.sparseimage mount=$root/$name mebibytes
+  local root=$1 name=$2 bytes=$3 image mount mebibytes
+  image=$root/$name.sparseimage
+  mount=$root/$name
   mebibytes=$((bytes / 1048576))
   mkdir -p "$mount"
   hdiutil create -quiet -size "${mebibytes}m" -fs APFS -volname "octacity-$name" -type SPARSE "$image"

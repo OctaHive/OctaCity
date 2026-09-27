@@ -6,6 +6,7 @@ import importlib.util
 import hashlib
 import json
 import re
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -433,6 +434,25 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("octacity-release", registration)
         self.assertIn("backend-contracts.yml@refs/heads/main", registration)
         self.assertNotIn("Start the wizard on the other backend host", registration)
+
+    def test_apple_vf_volume_planning_is_safe_under_nounset(self):
+        provisioner = (REPOSITORY / "tools/runner/self-hosted-apple-vf.sh").read_text(encoding="utf-8")
+        function = provisioner.split("attach_volume() {\n", 1)[1].split("\n}\n", 1)[0]
+        script = "\n".join(
+            (
+                "set -u",
+                "root=/outer-scope-that-must-not-be-used",
+                "attach_volume() {",
+                function,
+                "}",
+                "mkdir() { :; }",
+                "hdiutil() { :; }",
+                "chmod() { :; }",
+                "attach_volume /bounded-root work 1073741824",
+            )
+        )
+        result = subprocess.run(["bash", "-c", script], check=False, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_workflows_pin_actions_runners_and_toolchains(self):
         action = re.compile(r"^\s*-?\s*uses:\s+[^\s@]+@([0-9a-f]{40})(?:\s+#.*)?$")
