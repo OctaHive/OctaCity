@@ -141,8 +141,20 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
     )
   };
   assert_host_inventory(&inventory);
-  assert_eq!(success.status, JobCompletionStatus::Succeeded);
+  assert_eq!(
+    success.status,
+    JobCompletionStatus::Succeeded,
+    "successful Host scenario completion: {}",
+    serde_json::to_string_pretty(&success).unwrap()
+  );
   assert_resource_accounting(&success);
+  assert!(
+    success
+      .final_usage
+      .as_ref()
+      .is_some_and(|usage| usage.io_written_bytes > 0),
+    "successful Host workload must account for filesystem writes"
+  );
   assert_eq!(cancelled.status, JobCompletionStatus::Cancelled);
   assert_resource_accounting(&cancelled);
   assert!(
@@ -382,7 +394,7 @@ fn host_spec(inventory: &AgentInventory, job_id: &str, cancellation: bool, now: 
         if cancellation {
           "OctaCity; sleep 60".to_owned()
         } else {
-          "OctaCity; i=0; while [ $i -lt 12000 ]; do printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\n' >> host-resource-probe; i=$((i+1)); done; i=0; while [ $i -lt 2000 ]; do echo host-output-$i; i=$((i+1)); done; sleep 2".to_owned()
+          "OctaCity; i=0; while [ $i -lt 12000 ]; do printf '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\\n' >> host-resource-probe; i=$((i+1)); done; head -c 20000 host-resource-probe; sleep 2".to_owned()
         },
       )]),
       arguments: Vec::new(),
@@ -456,7 +468,6 @@ fn assert_resource_accounting(completion: &CompleteLeaseRequest) {
   assert!(usage.memory_peak_bytes >= usage.memory_current_bytes);
   assert!(usage.disk_peak_bytes >= usage.disk_current_bytes);
   assert!(usage.disk_peak_bytes >= 512 * 1024);
-  assert!(usage.io_written_bytes > 0);
 }
 
 fn write_agent_config(root: &Path, address: SocketAddr, release: &InstalledAgentRuntime) -> PathBuf {
