@@ -88,7 +88,9 @@ pub(super) fn write_agent_config(
       toml_text(&format!("linux-{}", host_architecture())),
       toml_text(environment_identity)
     ),
-    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } => "{}".to_owned(),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => {
+      "{}".to_owned()
+    }
   };
   let (work, state, cache, runtime, cache_max_bytes, cache_scopes) = match backend {
     ReleaseBackend::Native {
@@ -151,12 +153,14 @@ oci_engines = [{{ engine = "microsandbox", executable = {}, libkrunfw = {}, metr
     ),
     ReleaseBackend::Containerd {
       work_root,
+      cache_root,
       state_root,
       endpoint,
       namespace,
       snapshotter,
       runtime: container_runtime,
       registry_config_dir,
+      environment_identity,
       ..
     } => {
       let registry_config = registry_config_dir.as_ref().map_or_else(String::new, |path| {
@@ -165,16 +169,18 @@ oci_engines = [{{ engine = "microsandbox", executable = {}, libkrunfw = {}, metr
       (
         work_root,
         state_root,
-        &local_cache,
+        cache_root,
         format!(
           r#"
-enabled_runtime_modes = ["oci"]
+enabled_runtime_modes = []
 allow_native_execution = false
 native_linux_readonly_paths = []
 native_linux_pids_limit = 0
 native_environment = {{}}
-oci_engines = [{{ engine = "containerd", endpoint = {}, namespace = {}, snapshotter = {}, runtime = {}, pids_limit = 4096, open_files_limit = 65536{} }}]
+oci_engines = []
+isolation_providers = [{{ provider = "containerd", environment_identity = {}, endpoint = {}, namespace = {}, snapshotter = {}, runtime = {}, pids_limit = 4096, open_files_limit = 65536{} }}]
 "#,
+          toml_text(environment_identity),
           toml_string(endpoint),
           toml_text(namespace),
           toml_text(snapshotter),
@@ -185,6 +191,33 @@ oci_engines = [{{ engine = "containerd", endpoint = {}, namespace = {}, snapshot
         1,
       )
     }
+    ReleaseBackend::AppleVf {
+      work_root,
+      cache_root,
+      state_root,
+      executable,
+      environment_identity,
+      ..
+    } => (
+      work_root,
+      state_root,
+      cache_root,
+      format!(
+        r#"
+enabled_runtime_modes = []
+allow_native_execution = false
+native_linux_readonly_paths = []
+native_linux_pids_limit = 0
+native_environment = {{}}
+oci_engines = []
+isolation_providers = [{{ provider = "apple_vf", environment_identity = {}, executable = {}, open_files_limit = 65536 }}]
+"#,
+        toml_text(environment_identity),
+        toml_string(executable)
+      ),
+      64 * 1024 * 1024,
+      1,
+    ),
   };
   let remote_cache_origins = overrides
     .remote_cache_origin
@@ -257,7 +290,7 @@ graceful_cancel_timeout_seconds = 5
 cleanup_timeout_seconds = 15
 runner_hello_timeout_seconds = 5
 resource_sample_interval_seconds = 1
-resource_sample_timeout_seconds = 1
+resource_sample_timeout_seconds = {}
 max_accounting_failures = 3
 
 [server_signing_keys]
@@ -288,6 +321,7 @@ release_gate = {}
     upload_origins,
     output_limits,
     backend.workspace_bytes(),
+    backend.resource_sample_timeout_seconds(),
     toml_text(&STANDARD.encode(verifying_key.as_bytes())),
     toml_text(backend.name()),
   );

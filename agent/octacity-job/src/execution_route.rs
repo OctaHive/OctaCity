@@ -172,10 +172,31 @@ impl ExecutableRuntime {
   pub(super) fn execution_target(&self) -> Result<ExecutionTarget, JobError> {
     match self {
       Self::Legacy(runtime) => Ok(legacy_execution_target(runtime)),
-      Self::Current(runtime) if runtime.target.mode == ExecutionMode::Host => Ok(ExecutionTarget::Host {
-        platform: execution_platform(runtime.target.target_platform),
-      }),
-      Self::Current(runtime) => Err(JobError::ExecutionModeUnavailable(runtime.target.mode)),
+      Self::Current(runtime) => current_execution_target(runtime),
+    }
+  }
+}
+
+fn current_execution_target(runtime: &RuntimeSpecV2) -> Result<ExecutionTarget, JobError> {
+  let platform = execution_platform(runtime.target.target_platform);
+  match runtime.target.mode {
+    ExecutionMode::Host => Ok(ExecutionTarget::Host { platform }),
+    ExecutionMode::Isolation | ExecutionMode::Virtualization => {
+      let reference = runtime.target.immutable_image.clone().ok_or_else(|| {
+        JobError::Invalid(format!(
+          "execution mode '{:?}' requires an immutable image for the selected provider",
+          runtime.target.mode
+        ))
+      })?;
+      Ok(ExecutionTarget::Oci {
+        reference,
+        platform,
+        isolation: match runtime.target.mode {
+          ExecutionMode::Isolation => ExecutionOciIsolation::Process,
+          ExecutionMode::Virtualization => ExecutionOciIsolation::Hypervisor,
+          ExecutionMode::Host => unreachable!(),
+        },
+      })
     }
   }
 }

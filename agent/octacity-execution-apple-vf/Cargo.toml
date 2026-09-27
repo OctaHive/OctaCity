@@ -1,0 +1,23 @@
+[package]
+name = "octacity-execution-apple-vf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Apple Virtualization.framework-backed isolation engine for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+libc.workspace = true
+octacity-execution = { path = "../octacity-execution" }
+octacity-execution-oci = { path = "../octacity-execution-oci" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

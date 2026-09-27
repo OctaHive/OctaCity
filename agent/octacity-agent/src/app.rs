@@ -424,6 +424,7 @@ mod tests {
       host_environment: std::collections::BTreeMap::new(),
       host_accounting_max_entries: 1_000_000,
       oci_engines: Vec::new(),
+      isolation_providers: Vec::new(),
       allow_unrestricted_network: false,
       allowed_network_hosts: Vec::new(),
       allowed_upload_origins: Vec::new(),

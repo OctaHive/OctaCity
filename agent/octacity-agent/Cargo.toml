@@ -12,6 +12,7 @@ clap.workspace = true
 octacity-config = { path = "../octacity-config" }
 octacity-coordinator = { path = "../octacity-coordinator" }
 octacity-execution = { path = "../octacity-execution" }
+octacity-execution-apple-vf = { path = "../octacity-execution-apple-vf" }
 octacity-execution-containerd = { path = "../octacity-execution-containerd" }
 octacity-execution-host = { path = "../octacity-execution-host" }
 octacity-execution-microsandbox = { path = "../octacity-execution-microsandbox" }

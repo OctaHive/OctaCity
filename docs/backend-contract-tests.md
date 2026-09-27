@@ -3,7 +3,8 @@
 The portable workspace suite tests orchestration with an in-memory backend.
 The retained backend contract suite additionally runs a real signed job, real
 `octa-runner`, and the same Octafile through direct Host execution, legacy
-Native, containerd isolation, and Microsandbox virtualization. These tests are
+Native, containerd isolation, Apple VF isolation, and Microsandbox
+virtualization. These tests are
 `ignored` because they require an installed release and, except for Host,
 privileged runtime provisioning. They never skip after an operator explicitly
 selects one: absent or invalid provisioning fails the test.
@@ -26,9 +27,12 @@ the former downloads a checksum-pinned containerd 2.3.6 LTS bundle and starts
 its daemon privately as root with the `overlayfs` snapshotter, while the latter
 requires the hosted VM to expose KVM. GitHub does not guarantee nested
 virtualization, so the Microsandbox job is an explicit fail-closed release
-gate rather than a portable CI prerequisite. Apple Silicon Microsandbox
-remains an explicit self-hosted suite. The portable CI matrix remains
-independent of privileged host configuration.
+gate rather than a portable CI prerequisite. Apple VF isolation and Apple
+Silicon Microsandbox remain explicit self-hosted suites. Standard
+GitHub-hosted ARM64 macOS runners cannot provide the required nested
+Virtualization.framework boundary, so neither suite is treated as portable CI
+evidence. The portable CI matrix remains independent of privileged host
+configuration.
 
 Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor. The
 hosted setup loads Ubuntu's packaged `bwrap-userns-restrict` profile rather
@@ -45,11 +49,14 @@ all privileged Linux state on the disposable VM and removes it in an
 `always()` cleanup step; the VM is discarded after the job as an additional
 boundary.
 
-The combined `released-agent` suite also schedules macOS Microsandbox. To run
-that additional slice, prepare one Apple Silicon macOS host and execute
+The Apple VF and macOS Microsandbox slices are selected independently. To run
+one of them on a single Apple Silicon macOS host, select the backend through
+`OCTACITY_RUNNER_MACOS_BACKEND` and execute
 `tools/runner/register-backend-runner.sh` in a separate terminal. The wizard
-executes the real backend preflight, opens the repository registration page,
-registers an ephemeral one-job runner, and opens the workflow page. The
+checks the selected backend prerequisites, opens the repository registration
+page, registers an ephemeral one-job runner, and opens the exact workflow
+suite for that backend. Apple VF's disposable filesystems and strict contract
+are provisioned and exercised inside the job. The
 one-hour GitHub registration token is read without echo and is never written
 to disk. Because self-hosted runners execute repository code, use this
 procedure only for a trusted revision and do not enable it for unreviewed
@@ -70,7 +77,7 @@ mounted before the wizard runs. `tools/runner/preflight-backend-runner.sh`
 fails closed if any runtime, release checksum, Docker daemon, cgroup
 controller, or real backend contract is unavailable.
 
-Every released Linux backend and the Apple Silicon macOS Microsandbox job
+Every released Linux backend and both Apple Silicon macOS provider jobs
 build deterministic server and Agent release-candidate archives and use
 `octacity-release-harness` before every release scenario. The harness accepts
 only self-verifying extracted bundles, validates their exact versioned release
@@ -96,14 +103,15 @@ server's cache ingress so the released runner uses the production HTTPS and CA
 contract. The workflow retains its installation receipt, release manifests,
 server and Agent logs, REST evidence, and Prometheus snapshot.
 
-The containerd and Linux Microsandbox jobs first run the strict backend
+The containerd, Apple VF, and Linux Microsandbox jobs first run the strict backend
 contract, which verifies their digest-pinned image, filesystem boundary,
 resource accounting, cancellation, and orphan cleanup, and then run the
 packaged Agent against the real released server vertical slice. Their final
-cleanup assertion rejects remaining job workspaces and, for containerd,
-remaining tasks or containers. The macOS job keeps the smaller
-released-product vertical slice until its full Microsandbox matrix is added in
-task 9.6. It executes a Linux guest through Microsandbox. Direct Host execution
+cleanup assertion rejects remaining job workspaces and provider-owned runtime
+state. Apple VF still advertises `isolation`: its per-workload VM is an
+implementation detail, while the signed job requests the same four guarantees
+as containerd. The macOS virtualization job keeps the smaller released-product
+vertical slice until its full Microsandbox matrix is added in task 9.6. Direct Host execution
 is independently qualified on released Linux, macOS, and Windows Agents and is
 never reported as Native, isolation, or virtualization.
 
@@ -117,8 +125,8 @@ declared execution target.
 Repository input may select only the signed runtime class and the
 digest-pinned image recorded in the immutable Build snapshot. It cannot select
 the containerd socket, namespace, snapshotter, runtime, registry configuration,
-Microsandbox executable, firmware, or host paths; those remain operator-owned
-Agent configuration. The disposable gate verifies the downloaded
+Apple `container` executable, Microsandbox executable, firmware, or host paths;
+those remain operator-owned Agent configuration. The disposable gate verifies the downloaded
 Microsandbox and containerd bundles by hard-coded SHA-256 values before
 execution. It also requires containerd's Transfer plugin to be healthy before
 running any contract. Containerd then verifies the resolved image descriptor
@@ -133,7 +141,10 @@ non-symbolic direct child of `RUNNER_TEMP`; the root-owned containerd PID file
 must still identify the staged containerd executable before it is signalled.
 These checks address image substitution, host-path escape, credential leakage,
 resource-policy bypass, orphaned execution, and deletion of an unrelated host
-path.
+path. Apple VF uses `--network none`, a read-only image root, no Linux
+capabilities, fixed bind targets, quota-backed APFS work/cache images, and
+Agent-private ownership markers. Startup and teardown never enumerate or
+delete an unmarked container belonging to another user or Agent.
 
 All tests require:
 
@@ -276,13 +287,41 @@ export OCTACITY_CONTRACT_CONTAINERD_ENDPOINT=/run/containerd/containerd.sock
 export OCTACITY_CONTRACT_CONTAINERD_NAMESPACE=octacity
 export OCTACITY_CONTRACT_CONTAINERD_SNAPSHOTTER=overlayfs
 export OCTACITY_CONTRACT_CONTAINERD_RUNTIME=io.containerd.runc.v2
+export OCTACITY_CONTRACT_CONTAINERD_ENVIRONMENT_IDENTITY=containerd-release-v1
 export OCTACITY_CONTRACT_CONTAINERD_WORK_ROOT=/var/lib/octacity-contract/containerd-work
+export OCTACITY_CONTRACT_CONTAINERD_CACHE_ROOT=/var/lib/octacity-contract/containerd-cache
 export OCTACITY_CONTRACT_CONTAINERD_STATE_ROOT=/var/lib/octacity-contract/containerd-state
 export OCTACITY_CONTRACT_CONTAINERD_IMAGE='registry.example/build@sha256:<64-lowercase-hex>'
 # Optional: export OCTACITY_CONTRACT_CONTAINERD_REGISTRY_CONFIG_DIR=/etc/containerd/certs.d
 cargo test -p octacity-job --test backend_contract \
-  containerd_process_engine_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+  containerd_isolation_provider_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
+
+## Apple Virtualization.framework-backed isolation
+
+Use Apple Silicon macOS 26 or newer with Apple `container` 0.6 or newer and
+its API service running. The provider executes the digest-pinned Linux ARM64
+image in the runtime's per-container Virtualization.framework VM but registers
+mode `isolation`, not `virtualization`. Both `work_root` and `cache.root` must
+be separate bounded filesystems; the supplied self-hosted setup creates
+disposable APFS sparse images for those boundaries.
+
+```shell
+export OCTACITY_CONTRACT_APPLE_VF_EXECUTABLE=/usr/local/bin/container
+export OCTACITY_CONTRACT_APPLE_VF_ENVIRONMENT_IDENTITY=apple-vf-release-v1
+export OCTACITY_CONTRACT_APPLE_VF_WORK_ROOT=/var/lib/octacity-contract/apple-vf-work
+export OCTACITY_CONTRACT_APPLE_VF_CACHE_ROOT=/var/lib/octacity-contract/apple-vf-cache
+export OCTACITY_CONTRACT_APPLE_VF_STATE_ROOT=/var/lib/octacity-contract/apple-vf-state
+export OCTACITY_CONTRACT_APPLE_VF_IMAGE='registry.example/build@sha256:<64-lowercase-hex>'
+cargo test -p octacity-job --test backend_contract \
+  apple_vf_isolation_provider_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+```
+
+For the release gate, select `macos-apple-vf`. The workflow runs
+`tools/runner/self-hosted-apple-vf.sh`, the strict backend contract, and the
+released server/Agent vertical slice, then retains evidence and checks that no
+workspace or owned container marker remains. A green portable macOS job is not
+a substitute for this real-machine gate.
 
 Each test verifies signed runtime and isolation selection, real bidirectional
 runner JSONL, structured events, terminal resource accounting, graceful
@@ -305,12 +344,12 @@ strict backend contract into one report instead of excluding backend code:
 cargo llvm-cov clean --workspace
 cargo llvm-cov --workspace --all-features --no-report
 cargo llvm-cov --no-clean --all-features -p octacity-job --test backend_contract \
-  -- containerd_process_engine_satisfies_the_real_runner_contract \
+  -- containerd_isolation_provider_satisfies_the_real_runner_contract \
   --ignored --exact --nocapture
 cargo llvm-cov report --summary-only \
   --ignore-filename-regex '[/\\]\.cargo[/\\]registry[/\\]|octa-runner-protocol[/\\]src[/\\]lib\.rs$'
 ```
 
-Use the corresponding exact Native or Microsandbox test name on workers for
+Use the corresponding exact Native, Apple VF, or Microsandbox test name on workers for
 those backends. This keeps production adapters in the coverage denominator and
 measures them with their actual kernel/runtime boundary rather than mocks.

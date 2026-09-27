@@ -19,6 +19,7 @@ on:
           - linux-native
           - linux-containerd
           - linux-microsandbox
+          - macos-apple-vf
           - macos-microsandbox
 
 permissions:
@@ -247,7 +248,7 @@ jobs:
       - name: Run real containerd backend contract
         run: >-
           cargo test -p octacity-job --test backend_contract
-          containerd_process_engine_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+          containerd_isolation_provider_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
       - name: Package the server and Agent release candidates
         id: release-candidate
@@ -377,3 +378,58 @@ jobs:
           name: release-slice-macos-microsandbox
           path: ${{ steps.release-slice.outputs.evidence }}
           if-no-files-found: error
+
+  macos-apple-vf:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'macos-apple-vf' }}
+    runs-on: [self-hosted, macOS, ARM64, octacity-apple-vf]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Prepare quota-backed Apple VF environment
+        working-directory: octacity
+        env:
+          OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}
+          OCTA_SOURCE_REVISION: ${{ steps.octa-source.outputs.revision }}
+        run: tools/runner/self-hosted-apple-vf.sh setup "$OCTA_RELEASE_VERSION" "$OCTA_SOURCE_REVISION"
+      - name: Run real Apple VF isolation contract
+        working-directory: octacity
+        run: >-
+          cargo test -p octacity-job --test backend_contract
+          apple_vf_isolation_provider_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+      - name: Package the server and Agent release candidates
+        id: release-candidate
+        uses: ./octacity/.github/actions/package-release-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+      - name: Run released macOS Apple VF vertical slice
+        id: release-slice
+        uses: ./octacity/.github/actions/release-agent-vertical-slice
+        with:
+          server-root: ${{ steps.release-candidate.outputs.server-root }}
+          agent-root: ${{ steps.release-candidate.outputs.agent-root }}
+          backend: apple-vf-isolation
+      - name: Verify Apple VF cleanup
+        working-directory: octacity
+        run: tools/runner/self-hosted-apple-vf.sh verify-clean
+      - name: Retain Apple VF release evidence
+        if: always() && steps.release-slice.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-slice-macos-apple-vf
+          path: ${{ steps.release-slice.outputs.evidence }}
+          if-no-files-found: error
+      - name: Clean up Apple VF environment
+        if: always()
+        working-directory: octacity
+        run: tools/runner/self-hosted-apple-vf.sh cleanup

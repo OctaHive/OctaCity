@@ -859,14 +859,18 @@ fn native_roots(backend: &ReleaseBackend) -> (&Path, &Path) {
     ReleaseBackend::Native {
       work_root, cgroup_root, ..
     } => (work_root, cgroup_root),
-    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } => unreachable!(),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => {
+      unreachable!()
+    }
   }
 }
 
 fn native_cache_root(backend: &ReleaseBackend) -> &Path {
   match backend {
     ReleaseBackend::Native { cache_root, .. } => cache_root,
-    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } => unreachable!(),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => {
+      unreachable!()
+    }
   }
 }
 

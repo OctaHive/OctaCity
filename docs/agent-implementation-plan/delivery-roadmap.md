@@ -92,28 +92,25 @@ or job filesystem state behind. CPU, memory, disk, and I/O accounting includes
 child plugin processes and terminal totals agree with the backend's
 authoritative counters.
 
-Implementation status: complete for the initial strict matrix. The signed
-request and execution dispatch use the final top-level `native | oci` model.
-OCI routes by an exact guest platform and `process | hypervisor` capability;
-Microsandbox is an OCI hypervisor engine rather than a third top-level mode.
-The backend-neutral job owner, Linux Native backend, Linux containerd process
-engine, and Microsandbox hypervisor engine all implement the same retained
-runner lifecycle.
+Implementation status now spans two protocol generations. Revision 1 retains
+the explicit `native | oci` model for compatibility. Revision 2 signs only the
+provider-neutral `host | isolation | virtualization` intent and exact observable
+guarantees. Direct Host is qualified on released Linux, macOS, and Windows
+Agents. Linux containerd and Apple Virtualization.framework-backed containers
+are separate implementations of `isolation`; Microsandbox implements
+`virtualization`. Provider names remain operator configuration and execution
+evidence, never job authority.
 
-The real contract has passed for Linux Native, Linux containerd with overlayfs
-and runc v2, and a Linux Microsandbox guest on Apple Silicon macOS. Every run
-used a signed job, digest-pinned image where applicable, the complete Octa
-release, bidirectional runner JSONL, terminal resource accounting, graceful
-cancellation, backend destruction, workspace removal, and a second orphan
-cleanup pass. Exploratory warm success-and-cancel measurements were about 3.7
-seconds for Native, 5.1 seconds for containerd, and 0.9 seconds for
-Microsandbox with its RAM-backed root overlay; dedicated release workers must retain their
-own comparable measurements. Exact provisioning and combined coverage commands
-are documented in [`backend-contract-tests.md`](../backend-contract-tests.md).
+The real contract has passed for the retained Linux Native path and earlier OCI
+engines. Revision-2 containerd and Apple VF now share the same strict contract,
+release harness, cancellation, accounting, image-integrity, and cleanup checks.
+Containerd can run on disposable GitHub-hosted Linux; Apple VF still requires a
+green self-hosted Apple Silicon run before task 9.5 may be marked complete.
+Exact provisioning and combined coverage commands are documented in
+[`backend-contract-tests.md`](../backend-contract-tests.md).
 
-Windows Native/containerd/Hyper-V and host-native macOS execution are future
-matrix extensions. They are not Phase 3 claims and must pass this same contract
-on dedicated workers before being advertised.
+Additional Windows isolation providers remain future matrix extensions. They
+must pass the same contract on a real supported worker before being advertised.
 
 ### Phase 4: coordinator transport and lease loop
 

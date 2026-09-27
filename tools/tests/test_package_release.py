@@ -400,6 +400,40 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("tasks list --quiet", provisioner)
         self.assertIn("containers list --quiet", provisioner)
 
+    def test_apple_vf_release_gate_is_explicit_and_self_hosted(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        macos_microsandbox = workflow.split("  macos-microsandbox:\n", 1)[1].split("  macos-apple-vf:\n", 1)[0]
+        apple_vf = workflow.split("  macos-apple-vf:\n", 1)[1]
+        self.assertIn("backend: microsandbox", macos_microsandbox)
+        self.assertIn("name: release-slice-macos-microsandbox", macos_microsandbox)
+        self.assertIn("runs-on: [self-hosted, macOS, ARM64, octacity-apple-vf]", apple_vf)
+        self.assertIn("self-hosted-apple-vf.sh setup", apple_vf)
+        self.assertIn("apple_vf_isolation_provider_satisfies_the_real_runner_contract", apple_vf)
+        self.assertIn("backend: apple-vf-isolation", apple_vf)
+        self.assertNotIn("backend: microsandbox", apple_vf)
+        self.assertEqual(apple_vf.count("id: release-candidate"), 1)
+        self.assertEqual(apple_vf.count("id: release-slice"), 1)
+        self.assertIn("self-hosted-apple-vf.sh verify-clean", apple_vf)
+        self.assertIn("self-hosted-apple-vf.sh cleanup", apple_vf)
+        self.assertIn("if: always()", apple_vf)
+
+        provisioner = (REPOSITORY / "tools/runner/self-hosted-apple-vf.sh").read_text(encoding="utf-8")
+        self.assertIn("APPLE_CONTAINER_MINIMUM=0.6.0", provisioner)
+        self.assertIn("hdiutil create", provisioner)
+        self.assertIn("octa-Linux-arm64.tar.gz", provisioner)
+        self.assertIn("linux-aarch64", provisioner)
+        self.assertIn("@sha256:", provisioner)
+        self.assertIn("OCTACITY_CONTRACT_APPLE_VF_CACHE_ROOT", provisioner)
+
+        registration = (REPOSITORY / "tools/runner/register-backend-runner.sh").read_text(encoding="utf-8")
+        self.assertIn("workflow_suite=macos-apple-vf", registration)
+        self.assertIn("preflight_arguments=(--host-only)", registration)
+        self.assertIn("default_registration_url=https://github.com/$organization", registration)
+        self.assertIn("--runnergroup", registration)
+        self.assertIn("octacity-release", registration)
+        self.assertIn("backend-contracts.yml@refs/heads/main", registration)
+        self.assertNotIn("Start the wizard on the other backend host", registration)
+
     def test_workflows_pin_actions_runners_and_toolchains(self):
         action = re.compile(r"^\s*-?\s*uses:\s+[^\s@]+@([0-9a-f]{40})(?:\s+#.*)?$")
         for path in sorted((REPOSITORY / ".github/workflows").glob("*.yml")):

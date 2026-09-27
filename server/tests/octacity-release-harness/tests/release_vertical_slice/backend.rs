@@ -21,12 +21,23 @@ pub(super) enum ReleaseBackend {
   },
   Containerd {
     work_root: PathBuf,
+    cache_root: PathBuf,
     state_root: PathBuf,
     endpoint: PathBuf,
     namespace: String,
     snapshotter: String,
     runtime: String,
     registry_config_dir: Option<PathBuf>,
+    environment_identity: String,
+    image: String,
+    workspace_bytes: u64,
+  },
+  AppleVf {
+    work_root: PathBuf,
+    cache_root: PathBuf,
+    state_root: PathBuf,
+    executable: PathBuf,
+    environment_identity: String,
     image: String,
     workspace_bytes: u64,
   },
@@ -74,13 +85,28 @@ impl ReleaseBackend {
         assert_eq!(env::consts::OS, "linux", "containerd release gate requires Linux");
         Self::Containerd {
           work_root: required_path("OCTACITY_CONTRACT_CONTAINERD_WORK_ROOT", true),
+          cache_root: required_path("OCTACITY_CONTRACT_CONTAINERD_CACHE_ROOT", true),
           state_root: required_path("OCTACITY_CONTRACT_CONTAINERD_STATE_ROOT", true),
           endpoint: required_path("OCTACITY_CONTRACT_CONTAINERD_ENDPOINT", true),
           namespace: required_string("OCTACITY_CONTRACT_CONTAINERD_NAMESPACE"),
           snapshotter: required_string("OCTACITY_CONTRACT_CONTAINERD_SNAPSHOTTER"),
           runtime: required_string("OCTACITY_CONTRACT_CONTAINERD_RUNTIME"),
           registry_config_dir: env::var_os("OCTACITY_CONTRACT_CONTAINERD_REGISTRY_CONFIG_DIR").map(PathBuf::from),
+          environment_identity: required_string("OCTACITY_CONTRACT_CONTAINERD_ENVIRONMENT_IDENTITY"),
           image: required_string("OCTACITY_CONTRACT_CONTAINERD_IMAGE"),
+          workspace_bytes: required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES"),
+        }
+      }
+      "apple-vf-isolation" => {
+        assert_eq!(env::consts::OS, "macos", "Apple VF release gate requires macOS");
+        assert_eq!(env::consts::ARCH, "aarch64", "Apple VF release gate requires ARM64");
+        Self::AppleVf {
+          work_root: required_path("OCTACITY_CONTRACT_APPLE_VF_WORK_ROOT", true),
+          cache_root: required_path("OCTACITY_CONTRACT_APPLE_VF_CACHE_ROOT", true),
+          state_root: required_path("OCTACITY_CONTRACT_APPLE_VF_STATE_ROOT", true),
+          executable: required_path("OCTACITY_CONTRACT_APPLE_VF_EXECUTABLE", true),
+          environment_identity: required_string("OCTACITY_CONTRACT_APPLE_VF_ENVIRONMENT_IDENTITY"),
+          image: required_string("OCTACITY_CONTRACT_APPLE_VF_IMAGE"),
           workspace_bytes: required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES"),
         }
       }
@@ -93,6 +119,7 @@ impl ReleaseBackend {
       Self::Native { .. } => "native",
       Self::Microsandbox { .. } => "microsandbox",
       Self::Containerd { .. } => "containerd",
+      Self::AppleVf { .. } => "apple-vf-isolation",
     }
   }
 
@@ -101,29 +128,62 @@ impl ReleaseBackend {
   }
 
   pub(super) fn guest_architecture(&self) -> &'static str {
-    host_architecture()
+    match self {
+      Self::AppleVf { .. } => "arm64",
+      Self::Native { .. } | Self::Microsandbox { .. } | Self::Containerd { .. } => host_architecture(),
+    }
   }
 
   pub(super) fn runtime_class(&self) -> &'static str {
     match self {
       Self::Native { .. } => "native",
       Self::Microsandbox { .. } => "oci_hypervisor",
-      Self::Containerd { .. } => "oci_process",
+      Self::Containerd { .. } => "isolation",
+      Self::AppleVf { .. } => "isolation",
     }
   }
 
-  pub(super) fn capability(&self) -> &'static str {
+  pub(super) fn legacy_capability(&self) -> Option<&'static str> {
     match self {
-      Self::Native { .. } => "native",
-      Self::Microsandbox { .. } => "oci.hypervisor",
-      Self::Containerd { .. } => "oci.process",
+      Self::Native { .. } => Some("native"),
+      Self::Microsandbox { .. } => Some("oci.hypervisor"),
+      Self::Containerd { .. } => None,
+      Self::AppleVf { .. } => None,
+    }
+  }
+
+  pub(super) fn host_platform(&self) -> Value {
+    match self {
+      Self::Containerd { .. } => json!({
+        "operating_system": "linux",
+        "architecture": host_architecture()
+      }),
+      Self::AppleVf { .. } => json!({
+        "operating_system": "macos",
+        "architecture": "arm64"
+      }),
+      Self::Native { .. } | Self::Microsandbox { .. } => Value::Null,
+    }
+  }
+
+  pub(super) fn required_guarantees(&self) -> Value {
+    match self {
+      Self::Containerd { .. } | Self::AppleVf { .. } => json!([
+        "filesystem_isolation",
+        "process_isolation",
+        "network_isolation",
+        "resource_isolation"
+      ]),
+      Self::Native { .. } | Self::Microsandbox { .. } => json!([]),
     }
   }
 
   pub(super) fn immutable_image(&self) -> Value {
     match self {
       Self::Native { .. } => Value::Null,
-      Self::Microsandbox { image, .. } | Self::Containerd { image, .. } => Value::String(image.clone()),
+      Self::Microsandbox { image, .. } | Self::Containerd { image, .. } | Self::AppleVf { image, .. } => {
+        Value::String(image.clone())
+      }
     }
   }
 
@@ -131,7 +191,16 @@ impl ReleaseBackend {
     match self {
       Self::Native { workspace_bytes, .. }
       | Self::Microsandbox { workspace_bytes, .. }
-      | Self::Containerd { workspace_bytes, .. } => *workspace_bytes,
+      | Self::Containerd { workspace_bytes, .. }
+      | Self::AppleVf { workspace_bytes, .. } => *workspace_bytes,
+    }
+  }
+
+  pub(super) fn resource_sample_timeout_seconds(&self) -> u64 {
+    match self {
+      // Apple's CLI collects two samples for a non-streaming stats request.
+      Self::AppleVf { .. } => 5,
+      Self::Native { .. } | Self::Microsandbox { .. } | Self::Containerd { .. } => 1,
     }
   }
 }

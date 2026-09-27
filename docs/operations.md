@@ -152,6 +152,15 @@ cgroup mapping.
 
 ### macOS launchd
 
+Direct Host execution needs no virtualization service. Apple VF isolation is
+different: install Apple `container` 0.6 or newer, start its API service for
+the same service identity that launches the Agent, install a `linux-aarch64`
+Octa runner bundle, and put `work_root` plus `cache.root` on separate bounded
+APFS volumes before enabling the commented `apple_vf` provider in
+`agent.macos.example.toml`. The Agent fails startup rather than advertising the
+route when the executable, service, guest release, or filesystem boundary is
+unavailable.
+
 Choose an unused system UID and GID below 500, then create the non-login account
 and private roots. The checks deliberately fail instead of reusing an existing
 identifier:

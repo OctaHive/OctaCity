@@ -10,7 +10,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::VerifyingKey;
 use http::Uri;
 
-use super::{ConfigError, OciEngineConfig};
+use super::{ConfigError, IsolationProviderConfig, OciEngineConfig};
 
 /// Validates that configured OCI engines exactly implement the enabled mode.
 ///
@@ -64,6 +64,65 @@ pub(super) fn validate_oci_engines(engines: &mut [OciEngineConfig], oci_enabled:
     };
     if !kinds.insert(kind) {
       return invalid(format!("oci_engines must not contain duplicate '{kind}' engines"));
+    }
+  }
+  Ok(())
+}
+
+/// Validates provider-neutral isolation configuration independently of legacy OCI.
+pub(super) fn validate_isolation_providers(
+  providers: &mut [IsolationProviderConfig],
+  legacy_engines: &[OciEngineConfig],
+) -> Result<(), ConfigError> {
+  let legacy_containerd = legacy_engines
+    .iter()
+    .any(|engine| matches!(engine, OciEngineConfig::Containerd { .. }));
+  let mut kinds = BTreeSet::new();
+  for provider in providers {
+    let kind = match provider {
+      IsolationProviderConfig::Containerd {
+        endpoint,
+        namespace,
+        snapshotter,
+        runtime,
+        registry_config_dir,
+        pids_limit,
+        open_files_limit,
+        ..
+      } => {
+        if legacy_containerd {
+          return invalid("containerd cannot own legacy OCI and v2 isolation routes in one Agent process");
+        }
+        if !endpoint.is_absolute() {
+          return invalid("containerd isolation endpoint must be an absolute path");
+        }
+        non_empty("containerd isolation namespace", namespace)?;
+        non_empty("containerd isolation snapshotter", snapshotter)?;
+        non_empty("containerd isolation runtime", runtime)?;
+        if *pids_limit == 0 || *open_files_limit == 0 {
+          return invalid("containerd isolation pids_limit and open_files_limit must be greater than zero");
+        }
+        if let Some(path) = registry_config_dir {
+          *path = canonical_directory("containerd isolation registry_config_dir", path)?;
+        }
+        "containerd"
+      }
+      IsolationProviderConfig::AppleVf {
+        executable,
+        open_files_limit,
+        ..
+      } => {
+        *executable = canonical_regular_file("Apple container executable", executable)?;
+        if *open_files_limit == 0 {
+          return invalid("Apple VF isolation open_files_limit must be greater than zero");
+        }
+        "apple_vf"
+      }
+    };
+    if !kinds.insert(kind) {
+      return invalid(format!(
+        "isolation_providers must not contain duplicate '{kind}' providers"
+      ));
     }
   }
   Ok(())

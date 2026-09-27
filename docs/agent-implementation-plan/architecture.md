@@ -175,21 +175,20 @@ unrestricted host process. Windows and macOS builds currently require a
 prepared or disposable machine whose advertised backend really supports the
 requested workload.
 
-`OciBackend` executes an immutable OCI image and treats isolation as an
-independent required property:
+Revision-2 dispatch selects an exact provider-neutral execution target:
 
-| Agent host | `process` | `hypervisor` |
-|---|---|---|
-| Linux | containerd with runc/crun | a configured microVM-capable OCI engine, initially Microsandbox and later optionally containerd with a VM runtime |
-| Windows | planned containerd with process-isolated runhcs | planned containerd with Hyper-V-isolated runhcs |
-| macOS | unsupported as a native container boundary | a Linux guest through a supported virtualization backend, initially Microsandbox on Apple Silicon |
+| Agent host | `host` | `isolation` | `virtualization` |
+|---|---|---|---|
+| Linux | direct platform runner | containerd with runc/crun | Microsandbox on KVM |
+| Windows | direct platform runner | future qualified provider | Microsandbox on WHP after its preview contract passes |
+| macOS | direct platform runner | Apple `container`, backed internally by Virtualization.framework | Microsandbox on Apple Silicon |
 
-Podman may be added as another OCI engine where it can satisfy the same
-contract. Podman Machine on Windows or macOS is a Linux VM and must advertise
-Linux guest capability; it cannot advertise a Windows or macOS guest. A macOS
-agent can run a Linux guest through Microsandbox, but a macOS build needs a
-future strict Native backend or a disposable macOS machine because there is no
-macOS OCI guest mode.
+The signed target contains only mode, host/target platform, guarantees, and an
+optional immutable image. Provider names such as `containerd`,
+`apple-vf-isolation`, or `microsandbox` appear only in inventory, health, cache
+identity, and execution evidence. Podman or another engine may be added only
+where it can satisfy one complete mode contract; internal use of a VM does not
+by itself change `isolation` intent into `virtualization`.
 
 The scheduler uses the execution-contract revision persisted at registration.
 For v1 it matches the signed guest platform, architecture, runtime mode, OCI

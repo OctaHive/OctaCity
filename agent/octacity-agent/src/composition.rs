@@ -10,12 +10,13 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
-use octacity_config::{AgentConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
+use octacity_config::{AgentConfig, IsolationProviderConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
 use octacity_coordinator::{
   CacheSessionCoordinator, CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, OutputUploadCoordinator,
   RetryPolicy,
 };
 use octacity_execution::{ExecutionArchitecture, ExecutionBackend, ExecutionOs, ExecutionPlatform, OciIsolation};
+use octacity_execution_apple_vf::{APPLE_VF_PROVIDER_NAME, AppleVfEngine, AppleVfEngineConfig};
 use octacity_execution_containerd::{CONTAINERD_ENGINE_NAME, ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_host::{HOST_BACKEND_NAME, HostBackend, HostBackendConfig};
 use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngine, MicrosandboxEngineConfig};
@@ -144,6 +145,7 @@ async fn build_executor(
     ValidatedRuntimeConfig::Oci { engines } => engines
       .iter()
       .any(|engine| matches!(engine, OciEngineConfig::Containerd { .. })),
+    ValidatedRuntimeConfig::Isolation { providers } => !providers.is_empty(),
   }) {
     let aggregate_max_bytes = validated
       .config
@@ -246,20 +248,18 @@ async fn build_executor(
               pids_limit,
               open_files_limit,
             } => {
-              let engine = ContainerdEngine::new(ContainerdEngineConfig {
-                agent_id: validated.config.agent_id.clone(),
-                endpoint: endpoint.clone(),
-                namespace: namespace.clone(),
-                snapshotter: snapshotter.clone(),
-                runtime: runtime.clone(),
-                registry_config_dir: registry_config_dir.clone(),
-                state_root: validated.config.state_root.clone(),
-                work_root: validated.config.work_root.clone(),
-                max_workspace_bytes: validated.config.max_workspace_bytes,
-                cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
-                pids_limit: *pids_limit,
-                open_files_limit: *open_files_limit,
-              })?;
+              let engine = containerd_engine(
+                validated,
+                ContainerdAssemblyConfig {
+                  endpoint,
+                  namespace,
+                  snapshotter,
+                  runtime,
+                  registry_config_dir,
+                  pids_limit: *pids_limit,
+                  open_files_limit: *open_files_limit,
+                },
+              )?;
               engine.validate_connection().await?;
               (CONTAINERD_ENGINE_NAME, Arc::new(engine))
             }
@@ -274,6 +274,95 @@ async fn build_executor(
           engines.push(engine);
         }
         backends.insert(RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?));
+      }
+      ValidatedRuntimeConfig::Isolation { providers } => {
+        for provider in providers {
+          match provider {
+            IsolationProviderConfig::Containerd {
+              environment_identity,
+              endpoint,
+              namespace,
+              snapshotter,
+              runtime,
+              registry_config_dir,
+              pids_limit,
+              open_files_limit,
+            } => {
+              let engine = Arc::new(containerd_engine(
+                validated,
+                ContainerdAssemblyConfig {
+                  endpoint,
+                  namespace,
+                  snapshotter,
+                  runtime,
+                  registry_config_dir,
+                  pids_limit: *pids_limit,
+                  open_files_limit: *open_files_limit,
+                },
+              )?);
+              engine.validate_connection().await?;
+              let engine_capability = exactly_one_capability(CONTAINERD_ENGINE_NAME, engine.capabilities())?;
+              if engine_capability.isolation != octacity_execution::OciIsolation::Process {
+                return Err("containerd isolation provider must enforce process isolation".into());
+              }
+              let capability = ExecutionCapabilityV2 {
+                provider: ExecutionProviderId::new(CONTAINERD_ENGINE_NAME)
+                  .map_err(octacity_execution::ExecutionError::Invalid)?,
+                mode: ExecutionMode::Isolation,
+                host_platform: host_platform()?,
+                target_platform: protocol_platform(engine_capability.platform),
+                guarantees: guarantees_for(ExecutionMode::Isolation),
+                immutable_images: true,
+              };
+              let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
+              execution_routes.push(ExecutionBackendRoute::new(
+                capability.clone(),
+                environment_identity.clone(),
+                backend,
+              )?);
+              backend_health.push(ready_execution(&capability));
+              execution_capabilities.push(capability);
+            }
+            IsolationProviderConfig::AppleVf {
+              environment_identity,
+              executable,
+              open_files_limit,
+            } => {
+              let engine = Arc::new(AppleVfEngine::new(AppleVfEngineConfig {
+                agent_id: validated.config.agent_id.clone(),
+                executable: executable.clone(),
+                state_root: validated.config.state_root.clone(),
+                work_root: validated.config.work_root.clone(),
+                runner_platform: runner.capabilities.platform.clone(),
+                max_workspace_bytes: validated.config.max_workspace_bytes,
+                cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+                open_files_limit: *open_files_limit,
+              })?);
+              engine.validate_connection().await?;
+              let engine_capability = exactly_one_capability(APPLE_VF_PROVIDER_NAME, engine.capabilities())?;
+              if engine_capability.isolation != octacity_execution::OciIsolation::Process {
+                return Err("Apple VF isolation provider must implement the isolation contract".into());
+              }
+              let capability = ExecutionCapabilityV2 {
+                provider: ExecutionProviderId::new(APPLE_VF_PROVIDER_NAME)
+                  .map_err(octacity_execution::ExecutionError::Invalid)?,
+                mode: ExecutionMode::Isolation,
+                host_platform: host_platform()?,
+                target_platform: protocol_platform(engine_capability.platform),
+                guarantees: guarantees_for(ExecutionMode::Isolation),
+                immutable_images: true,
+              };
+              let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
+              execution_routes.push(ExecutionBackendRoute::new(
+                capability.clone(),
+                environment_identity.clone(),
+                backend,
+              )?);
+              backend_health.push(ready_execution(&capability));
+              execution_capabilities.push(capability);
+            }
+          }
+        }
       }
     }
   }
@@ -322,6 +411,49 @@ async fn build_executor(
     backend_health,
     cache,
   })
+}
+
+struct ContainerdAssemblyConfig<'a> {
+  endpoint: &'a Path,
+  namespace: &'a str,
+  snapshotter: &'a str,
+  runtime: &'a str,
+  registry_config_dir: &'a Option<std::path::PathBuf>,
+  pids_limit: u32,
+  open_files_limit: u64,
+}
+
+fn containerd_engine(
+  validated: &ValidatedConfig,
+  config: ContainerdAssemblyConfig<'_>,
+) -> Result<ContainerdEngine, octacity_execution::ExecutionError> {
+  ContainerdEngine::new(ContainerdEngineConfig {
+    agent_id: validated.config.agent_id.clone(),
+    endpoint: config.endpoint.to_owned(),
+    namespace: config.namespace.to_owned(),
+    snapshotter: config.snapshotter.to_owned(),
+    runtime: config.runtime.to_owned(),
+    registry_config_dir: config.registry_config_dir.clone(),
+    state_root: validated.config.state_root.clone(),
+    work_root: validated.config.work_root.clone(),
+    max_workspace_bytes: validated.config.max_workspace_bytes,
+    cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+    pids_limit: config.pids_limit,
+    open_files_limit: config.open_files_limit,
+  })
+}
+
+fn exactly_one_capability(
+  provider: &str,
+  capabilities: Vec<OciCapability>,
+) -> Result<OciCapability, octacity_execution::ExecutionError> {
+  let [capability]: [OciCapability; 1] = capabilities.try_into().map_err(|capabilities: Vec<_>| {
+    octacity_execution::ExecutionError::Invalid(format!(
+      "{provider} isolation provider must advertise exactly one capability, got {}",
+      capabilities.len()
+    ))
+  })?;
+  Ok(capability)
 }
 
 fn advertised_oci_capability(backend: &str, capability: OciCapability) -> RuntimeCapability {

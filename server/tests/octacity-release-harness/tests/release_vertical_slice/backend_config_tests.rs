@@ -115,7 +115,7 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
 #[test]
 fn generated_containerd_agent_configuration_keeps_runtime_authority_operator_owned() {
   let directory = tempfile::tempdir().unwrap();
-  for root in ["work", "state", "octa", "sources"] {
+  for root in ["work", "cache", "state", "octa", "sources"] {
     fs::create_dir(directory.path().join(root)).unwrap();
   }
   let endpoint = directory.path().join("containerd.sock");
@@ -126,12 +126,14 @@ fn generated_containerd_agent_configuration_keeps_runtime_authority_operator_own
   let octa_root = directory.path().join("octa");
   let backend = ReleaseBackend::Containerd {
     work_root: directory.path().join("work"),
+    cache_root: directory.path().join("cache"),
     state_root: directory.path().join("state"),
     endpoint: endpoint.clone(),
     namespace: "octacity-release".to_owned(),
     snapshotter: "overlayfs".to_owned(),
     runtime: "io.containerd.runc.v2".to_owned(),
     registry_config_dir: Some(registry.clone()),
+    environment_identity: "containerd-linux-arm64-v1".to_owned(),
     image: format!("example.invalid/octa@sha256:{}", "b".repeat(64)),
     workspace_bytes: 1024 * 1024,
   };
@@ -152,11 +154,16 @@ fn generated_containerd_agent_configuration_keeps_runtime_authority_operator_own
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
   assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
   assert_eq!(document["cache"]["allow_write"].as_bool(), Some(false));
-  let engine = &document["oci_engines"][0];
-  assert_eq!(engine["engine"].as_str(), Some("containerd"));
-  assert_eq!(engine["endpoint"].as_str(), endpoint.to_str());
-  assert_eq!(engine["namespace"].as_str(), Some("octacity-release"));
-  assert_eq!(engine["registry_config_dir"].as_str(), registry.to_str());
+  assert!(document["oci_engines"].as_array().unwrap().is_empty());
+  let provider = &document["isolation_providers"][0];
+  assert_eq!(provider["provider"].as_str(), Some("containerd"));
+  assert_eq!(
+    provider["environment_identity"].as_str(),
+    Some("containerd-linux-arm64-v1")
+  );
+  assert_eq!(provider["endpoint"].as_str(), endpoint.to_str());
+  assert_eq!(provider["namespace"].as_str(), Some("octacity-release"));
+  assert_eq!(provider["registry_config_dir"].as_str(), registry.to_str());
   assert!(document.get("containerd_credentials").is_none());
 }
 
@@ -186,4 +193,99 @@ fn release_jobs_use_the_bounded_workspace_limit() {
     definition["runtime"]["timeout_seconds"].as_u64(),
     Some(RELEASE_JOB_TIMEOUT_SECONDS)
   );
+}
+
+#[test]
+fn containerd_release_jobs_request_provider_neutral_isolation() {
+  let backend = ReleaseBackend::Containerd {
+    work_root: PathBuf::from("/work"),
+    cache_root: PathBuf::from("/cache"),
+    state_root: PathBuf::from("/state"),
+    endpoint: PathBuf::from("/run/containerd/containerd.sock"),
+    namespace: "octacity-release".to_owned(),
+    snapshotter: "overlayfs".to_owned(),
+    runtime: "io.containerd.runc.v2".to_owned(),
+    registry_config_dir: None,
+    environment_identity: "containerd-linux-amd64-v1".to_owned(),
+    image: format!("example.invalid/octa@sha256:{}", "b".repeat(64)),
+    workspace_bytes: 1024 * 1024 * 1024,
+  };
+
+  let configuration = build_configuration("project", "repository", "pipeline", "pool", &backend);
+  let runtime = &configuration["definition"]["runtime"];
+  assert_eq!(runtime["class"], "isolation");
+  assert_eq!(runtime["host_platform"]["operating_system"], "linux");
+  assert_eq!(runtime["required_guarantees"].as_array().unwrap().len(), 4);
+  let capabilities = configuration["definition"]["agent_requirements"]["capabilities"]
+    .as_array()
+    .unwrap();
+  assert_eq!(capabilities, &[json!("shell")]);
+}
+
+#[test]
+fn apple_vf_release_jobs_keep_virtualization_as_an_isolation_implementation_detail() {
+  let backend = ReleaseBackend::AppleVf {
+    work_root: PathBuf::from("/work"),
+    cache_root: PathBuf::from("/cache"),
+    state_root: PathBuf::from("/state"),
+    executable: PathBuf::from("/usr/local/bin/container"),
+    environment_identity: "apple-vf-macos-arm64-v1".to_owned(),
+    image: format!("example.invalid/octa@sha256:{}", "c".repeat(64)),
+    workspace_bytes: 1024 * 1024 * 1024,
+  };
+
+  let configuration = build_configuration("project", "repository", "pipeline", "pool", &backend);
+  let runtime = &configuration["definition"]["runtime"];
+  assert_eq!(runtime["class"], "isolation");
+  assert_eq!(runtime["host_platform"]["operating_system"], "macos");
+  assert_eq!(runtime["operating_system"], "linux");
+  assert_eq!(runtime["required_guarantees"].as_array().unwrap().len(), 4);
+  let capabilities = configuration["definition"]["agent_requirements"]["capabilities"]
+    .as_array()
+    .unwrap();
+  assert_eq!(capabilities, &[json!("shell")]);
+}
+
+#[test]
+fn generated_apple_vf_agent_configuration_keeps_provider_authority_operator_owned() {
+  let directory = tempfile::tempdir().unwrap();
+  for root in ["work", "cache", "state", "octa", "sources"] {
+    fs::create_dir(directory.path().join(root)).unwrap();
+  }
+  let executable = directory.path().join("container");
+  fs::write(&executable, "fixture").unwrap();
+  let source_plugins = directory.path().join("sources");
+  let octa_root = directory.path().join("octa");
+  let backend = ReleaseBackend::AppleVf {
+    work_root: directory.path().join("work"),
+    cache_root: directory.path().join("cache"),
+    state_root: directory.path().join("state"),
+    executable: executable.clone(),
+    environment_identity: "apple-vf-macos-arm64-v1".to_owned(),
+    image: format!("example.invalid/octa@sha256:{}", "c".repeat(64)),
+    workspace_bytes: 1024 * 1024,
+  };
+  let upload_origins = ["https://objects.example"];
+  let config = write_agent_config(
+    directory.path(),
+    "http://127.0.0.1:12345",
+    "apple-vf-config-shape",
+    "credential",
+    AgentReleasePaths {
+      source_plugins: &source_plugins,
+      octa_root: &octa_root,
+    },
+    &backend,
+    &AgentConfigOverrides::restricted_without_outputs(&upload_origins),
+  );
+
+  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+  assert!(document["oci_engines"].as_array().unwrap().is_empty());
+  let provider = &document["isolation_providers"][0];
+  assert_eq!(provider["provider"].as_str(), Some("apple_vf"));
+  assert_eq!(
+    provider["environment_identity"].as_str(),
+    Some("apple-vf-macos-arm64-v1")
+  );
+  assert_eq!(provider["executable"].as_str(), executable.to_str());
 }

@@ -16,6 +16,7 @@ use std::{
 use async_trait::async_trait;
 use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
 use octacity_execution::{ExecutionBackend, LocalCacheCapacity};
+use octacity_execution_apple_vf::{APPLE_VF_PROVIDER_NAME, AppleVfEngine, AppleVfEngineConfig};
 use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_host::{HOST_BACKEND_NAME, HostBackend, HostBackendConfig};
 use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
@@ -174,7 +175,14 @@ async fn host_backend_satisfies_the_real_runner_contract() {
   executor.cleanup_orphans().await.expect("pre-test cleanup must succeed");
   let now = unix_now();
   let spec = host_specification(platform, workspace_bytes, now, &runner);
-  exercise_contract(&executor, spec.into(), None, Some(HOST_BACKEND_NAME), "Host").await;
+  exercise_contract(
+    &executor,
+    spec.into(),
+    None,
+    Some((HOST_BACKEND_NAME, ExecutionMode::Host)),
+    "Host",
+  )
+  .await;
   executor
     .cleanup_orphans()
     .await
@@ -222,7 +230,7 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires Linux containerd, runc/crun, cgroup v2, and a quota-mounted work root; see docs/backend-contract-tests.md"]
-async fn containerd_process_engine_satisfies_the_real_runner_contract() {
+async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
   let work_root = required_path("OCTACITY_CONTRACT_CONTAINERD_WORK_ROOT");
   let state_root = required_path("OCTACITY_CONTRACT_CONTAINERD_STATE_ROOT");
   let workspace_bytes = required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES");
@@ -245,20 +253,135 @@ async fn containerd_process_engine_satisfies_the_real_runner_contract() {
     })
     .expect("containerd engine configuration must be usable"),
   );
-  let backend = Arc::new(OciBackend::new(vec![engine]).expect("OCI routing must be valid"));
-  run_contract(
-    RuntimeTarget::Oci {
-      platform: linux_platform(),
-      isolation: OciIsolation::Process,
-      image,
-    },
+  let platform = linux_platform();
+  run_isolation_contract(IsolationContract {
+    engine,
+    provider: "containerd",
+    environment_identity_variable: "OCTACITY_CONTRACT_CONTAINERD_ENVIRONMENT_IDENTITY",
     work_root,
     workspace_bytes,
+    image,
+    host_platform: platform,
+    target_platform: platform,
+  })
+  .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires Apple Silicon macOS 26+, Apple container 0.6+, and a quota-backed APFS work root"]
+async fn apple_vf_isolation_provider_satisfies_the_real_runner_contract() {
+  assert_eq!(std::env::consts::OS, "macos", "Apple VF contract requires macOS");
+  assert_eq!(std::env::consts::ARCH, "aarch64", "Apple VF contract requires ARM64");
+  let work_root = required_path("OCTACITY_CONTRACT_APPLE_VF_WORK_ROOT");
+  let state_root = required_path("OCTACITY_CONTRACT_APPLE_VF_STATE_ROOT");
+  let workspace_bytes = required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES");
+  let image = required_string("OCTACITY_CONTRACT_APPLE_VF_IMAGE");
+  let engine = Arc::new(
+    AppleVfEngine::new(AppleVfEngineConfig {
+      agent_id: "backend-contract".to_owned(),
+      executable: required_absolute_path("OCTACITY_CONTRACT_APPLE_VF_EXECUTABLE"),
+      state_root,
+      work_root: work_root.clone(),
+      runner_platform: "linux-aarch64".to_owned(),
+      max_workspace_bytes: workspace_bytes,
+      cleanup_timeout: Duration::from_secs(10),
+      open_files_limit: 65536,
+    })
+    .expect("Apple VF engine configuration must be usable"),
+  );
+  engine
+    .validate_connection()
+    .await
+    .expect("Apple container service must be running");
+  run_isolation_contract(IsolationContract {
+    engine,
+    provider: APPLE_VF_PROVIDER_NAME,
+    environment_identity_variable: "OCTACITY_CONTRACT_APPLE_VF_ENVIRONMENT_IDENTITY",
+    work_root,
+    workspace_bytes,
+    image,
+    host_platform: host_platform(),
+    target_platform: linux_platform(),
+  })
+  .await;
+}
+
+struct IsolationContract {
+  engine: Arc<dyn OciEngine>,
+  provider: &'static str,
+  environment_identity_variable: &'static str,
+  work_root: PathBuf,
+  workspace_bytes: u64,
+  image: String,
+  host_platform: PlatformSpec,
+  target_platform: PlatformSpec,
+}
+
+async fn run_isolation_contract(contract: IsolationContract) {
+  let IsolationContract {
+    engine,
+    provider,
+    environment_identity_variable,
+    work_root,
+    workspace_bytes,
+    image,
+    host_platform,
+    target_platform,
+  } = contract;
+  let backend = Arc::new(OciBackend::new(vec![engine]).expect("OCI routing must be valid"));
+  let capability = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new(provider).unwrap(),
+    mode: ExecutionMode::Isolation,
+    host_platform,
+    target_platform,
+    guarantees: guarantees_for(ExecutionMode::Isolation),
+    immutable_images: true,
+  };
+  let release_root = required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT");
+  let runner = RunnerInstallation::load(&release_root).expect("the configured Octa release must be valid");
+  let identity_source = tempfile::NamedTempFile::new().expect("identity fixture must be creatable");
+  std::fs::write(identity_source.path(), "backend-contract-identity").expect("identity fixture must be writable");
+  let identity = FileWorkloadIdentityProvider::new(BTreeMap::from([(
+    "backend-contract".to_owned(),
+    identity_source.path().to_owned(),
+  )]));
+  let mut configuration = executor_config(work_root, workspace_bytes, false, Vec::new());
+  if provider == APPLE_VF_PROVIDER_NAME {
+    configuration.runner_supervision.resource_sample_timeout = Duration::from_secs(5);
+  }
+  let executor = JobExecutor::new(
+    runner.clone(),
+    Arc::new(FixtureSource {
+      oci_probe: Some(OciProbe::DisabledNetwork),
+    }),
+    Arc::new(identity),
+    BTreeMap::new(),
+    configuration,
+  )
+  .expect("job executor configuration must be valid")
+  .with_execution_backends([ExecutionBackendRoute::new(
+    capability,
+    ExecutionEnvironmentId::new(required_string(environment_identity_variable)).unwrap(),
     backend,
-    Some(OciProbe::DisabledNetwork),
-    false,
+  )
+  .unwrap()])
+  .expect("isolation route must be valid");
+  executor.cleanup_orphans().await.expect("pre-test cleanup must succeed");
+  let now = unix_now();
+  let mut spec = isolation_specification(host_platform, target_platform, image, workspace_bytes, now, &runner);
+  spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
+  exercise_contract(
+    &executor,
+    spec.into(),
+    None,
+    Some((provider, ExecutionMode::Isolation)),
+    &format!("{provider} Isolation"),
   )
   .await;
+  executor
+    .cleanup_orphans()
+    .await
+    .expect("post-test cleanup must succeed");
 }
 
 async fn run_contract(
@@ -371,7 +494,7 @@ async fn exercise_contract(
   executor: &JobExecutor,
   spec: VerifiedJobSpec,
   cache_grant: Option<BeginCacheSessionResponse>,
-  expected_provider: Option<&str>,
+  expected_execution: Option<(&str, ExecutionMode)>,
   label: &str,
 ) {
   let cancellation_spec = cancellation_spec(spec.clone());
@@ -396,15 +519,19 @@ async fn exercise_contract(
   }
 
   assert_eq!(completion.runner().status, RunStatus::Succeeded);
-  match expected_provider {
-    Some(provider) => {
+  match expected_execution {
+    Some((provider, mode)) => {
       let evidence = completion
         .execution()
         .expect("v2 execution must retain provider evidence");
       assert_eq!(evidence.provider.as_str(), provider);
-      assert_eq!(evidence.target.mode, ExecutionMode::Host);
-      assert!(evidence.target.required_guarantees.is_empty());
-      assert_eq!(evidence.target.host_platform, evidence.target.target_platform);
+      assert_eq!(evidence.target.mode, mode);
+      assert_eq!(evidence.target.required_guarantees, guarantees_for(mode));
+      if mode == ExecutionMode::Host {
+        assert_eq!(evidence.target.host_platform, evidence.target.target_platform);
+      } else {
+        assert!(evidence.target.immutable_image.is_some());
+      }
     }
     None => assert!(completion.execution().is_none()),
   }
@@ -572,6 +699,53 @@ fn host_specification(
       writable_disk_bytes: legacy.runtime.writable_disk_bytes,
       timeout_seconds: legacy.runtime.timeout_seconds,
       network: NetworkPolicy::Unrestricted,
+      workload_identity_profile: None,
+    },
+    cache: None,
+    outputs: legacy.outputs,
+  }
+}
+
+fn isolation_specification(
+  host_platform: PlatformSpec,
+  target_platform: PlatformSpec,
+  image: String,
+  workspace_bytes: u64,
+  now: u64,
+  runner: &RunnerInstallation,
+) -> JobSpecV2 {
+  let legacy = specification(
+    RuntimeTarget::Oci {
+      platform: target_platform,
+      isolation: OciIsolation::Process,
+      image: image.clone(),
+    },
+    workspace_bytes,
+    now,
+    runner,
+  );
+  JobSpecV2 {
+    protocol_version: EXECUTION_CONTRACT_V2,
+    job_id: "backend-contract-isolation".to_owned(),
+    attempt: legacy.attempt,
+    issued_at: legacy.issued_at,
+    expires_at: legacy.expires_at,
+    source: legacy.source,
+    octa: legacy.octa,
+    execution: legacy.execution,
+    runtime: RuntimeSpecV2 {
+      target: ExecutionTargetV2 {
+        mode: ExecutionMode::Isolation,
+        host_platform,
+        target_platform,
+        required_guarantees: guarantees_for(ExecutionMode::Isolation),
+        immutable_image: Some(image),
+      },
+      cpu_millis: legacy.runtime.cpu_millis,
+      memory_bytes: legacy.runtime.memory_bytes,
+      writable_disk_bytes: legacy.runtime.writable_disk_bytes,
+      timeout_seconds: legacy.runtime.timeout_seconds,
+      network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
     },
     cache: None,

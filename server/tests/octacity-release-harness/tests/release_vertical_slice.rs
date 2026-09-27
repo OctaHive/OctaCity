@@ -2,11 +2,12 @@
 
 //! Black-box release-candidate Agent gate against the real server and store.
 //!
-//! The test is ignored in portable suites because its two supported modes need
-//! provisioned release machines. Linux runs the Native backend; Apple Silicon
-//! macOS runs a Linux guest through Microsandbox. In both cases the server,
-//! Agent, source plugin, Octa runner, and task plugins come from isolated,
-//! checksummed release installations rather than `target/`.
+//! The test is ignored in portable suites because real execution providers need
+//! provisioned release machines. Linux exercises Native, containerd, and
+//! Microsandbox; Apple Silicon macOS exercises provider-neutral isolation or
+//! virtualization with a Linux guest. In every case the server, Agent, source
+//! plugin, Octa runner, and task plugins come from isolated, checksummed release
+//! installations rather than `target/`.
 
 use std::{
   env,
@@ -84,6 +85,12 @@ async fn released_linux_containerd_matrix_satisfies_the_end_to_end_contract() {
 #[ignore = "requires isolated released products and a provisioned Linux/KVM Microsandbox runner"]
 async fn released_linux_microsandbox_matrix_satisfies_the_end_to_end_contract() {
   run_released_oci_vertical_slice(Some("linux-microsandbox")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated released products and a provisioned Apple VF isolation runner"]
+async fn released_macos_apple_vf_matrix_satisfies_the_end_to_end_contract() {
+  run_released_oci_vertical_slice(Some("apple-vf-isolation")).await;
 }
 
 async fn run_released_oci_vertical_slice(expected_backend: Option<&str>) {
@@ -327,11 +334,15 @@ async fn create_pipeline_resources(
 }
 
 fn pipeline_node(id: &str, name: &str, backend: &ReleaseBackend) -> Value {
+  let mut required_capabilities = vec!["shell"];
+  if let Some(capability) = backend.legacy_capability() {
+    required_capabilities.insert(0, capability);
+  }
   json!({
     "id": id,
     "name": name,
     "dependency_policy": "all_succeeded",
-    "required_capabilities": [backend.capability(), "shell"],
+    "required_capabilities": required_capabilities,
     "execution": {
       "octafile": "example/simple/Octafile.yml",
       "commands": ["echo"],
@@ -342,6 +353,10 @@ fn pipeline_node(id: &str, name: &str, backend: &ReleaseBackend) -> Value {
 }
 
 fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &str, backend: &ReleaseBackend) -> Value {
+  let mut required_capabilities = vec!["shell"];
+  if let Some(capability) = backend.legacy_capability() {
+    required_capabilities.insert(0, capability);
+  }
   json!({
     "project_id": project,
     "name": "release",
@@ -355,7 +370,7 @@ fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &s
       "parameters": {"parameters": {}, "deny_unknown": true},
       "triggers": ["manual"],
       "agent_requirements": {
-        "capabilities": [backend.capability(), "shell"],
+        "capabilities": required_capabilities,
         "labels": {},
         "minimum_cpu_millis": 1000,
         "minimum_memory_bytes": 536870912_u64,
@@ -366,6 +381,8 @@ fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &s
         "class": backend.runtime_class(),
         "operating_system": "linux",
         "architecture": backend.guest_architecture(),
+        "host_platform": backend.host_platform(),
+        "required_guarantees": backend.required_guarantees(),
         "immutable_image": backend.immutable_image(),
         "cpu_millis": 1000,
         "memory_bytes": 536870912_u64,
@@ -615,7 +632,8 @@ fn backend_workspace_entries(backend: &ReleaseBackend) -> Vec<std::ffi::OsString
   let work_root = match backend {
     ReleaseBackend::Native { work_root, .. }
     | ReleaseBackend::Microsandbox { work_root, .. }
-    | ReleaseBackend::Containerd { work_root, .. } => work_root,
+    | ReleaseBackend::Containerd { work_root, .. }
+    | ReleaseBackend::AppleVf { work_root, .. } => work_root,
   };
   let mut entries = fs::read_dir(work_root)
     .unwrap_or_else(|error| panic!("failed to inspect backend work root {work_root:?}: {error}"))

@@ -94,6 +94,9 @@ pub struct AgentConfig {
   /// Explicit OCI lifecycle engines and their policies.
   #[serde(default)]
   pub oci_engines: Vec<OciEngineConfig>,
+  /// Provider-neutral workload-isolation implementations.
+  #[serde(default)]
+  pub isolation_providers: Vec<IsolationProviderConfig>,
   /// Allows a signed job to request unrestricted network access.
   #[serde(default)]
   pub allow_unrestricted_network: bool,
@@ -244,6 +247,41 @@ pub enum OciEngineConfig {
   },
 }
 
+/// One operator-selected provider for execution-contract v2 isolation.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum IsolationProviderConfig {
+  /// Linux OCI process isolation supplied by containerd.
+  Containerd {
+    /// Stable environment identity used to partition cache results.
+    environment_identity: ExecutionEnvironmentId,
+    /// Absolute containerd Unix socket.
+    endpoint: PathBuf,
+    /// Dedicated containerd namespace.
+    namespace: String,
+    /// Snapshotter for job root filesystems.
+    snapshotter: String,
+    /// OCI runtime-v2 implementation.
+    runtime: String,
+    /// Optional registry-host configuration root.
+    #[serde(default)]
+    registry_config_dir: Option<PathBuf>,
+    /// Maximum descendant processes in a container.
+    pids_limit: u32,
+    /// Per-process `RLIMIT_NOFILE` inside the container.
+    open_files_limit: u64,
+  },
+  /// Apple Silicon isolation backed by one Virtualization.framework VM per workload.
+  AppleVf {
+    /// Stable environment identity used to partition cache results.
+    environment_identity: ExecutionEnvironmentId,
+    /// Exact operator-installed Apple `container` executable.
+    executable: PathBuf,
+    /// Per-process `RLIMIT_NOFILE` inside the workload.
+    open_files_limit: u64,
+  },
+}
+
 /// Startup configuration after cryptographic and filesystem validation.
 #[derive(Debug)]
 pub struct ValidatedConfig {
@@ -283,6 +321,11 @@ pub enum ValidatedRuntimeConfig {
   Oci {
     /// Engines in deterministic operator order.
     engines: Vec<OciEngineConfig>,
+  },
+  /// Provider-neutral workload-isolation routes.
+  Isolation {
+    /// Providers in deterministic operator order.
+    providers: Vec<IsolationProviderConfig>,
   },
 }
 
@@ -584,6 +627,7 @@ impl AgentConfig {
       None
     };
     validate_oci_engines(&mut self.oci_engines, modes.contains(&RuntimeMode::Oci))?;
+    validate_isolation_providers(&mut self.isolation_providers, &self.oci_engines)?;
 
     let mut network_hosts = BTreeSet::new();
     for host in &self.allowed_network_hosts {
@@ -670,7 +714,11 @@ impl AgentConfig {
       runtime_modes = self.enabled_runtime_modes.len(),
       "validated agent configuration"
     );
-    let mut runtimes = Vec::with_capacity(self.enabled_runtime_modes.len() + usize::from(host_runtime.is_some()));
+    let mut runtimes = Vec::with_capacity(
+      self.enabled_runtime_modes.len()
+        + usize::from(host_runtime.is_some())
+        + usize::from(!self.isolation_providers.is_empty()),
+    );
     if let Some(host_runtime) = host_runtime {
       runtimes.push(host_runtime);
     }
@@ -680,6 +728,11 @@ impl AgentConfig {
     if modes.contains(&RuntimeMode::Oci) {
       runtimes.push(ValidatedRuntimeConfig::Oci {
         engines: self.oci_engines.clone(),
+      });
+    }
+    if !self.isolation_providers.is_empty() {
+      runtimes.push(ValidatedRuntimeConfig::Isolation {
+        providers: self.isolation_providers.clone(),
       });
     }
     Ok(ValidatedConfig {

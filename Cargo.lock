@@ -4051,6 +4051,7 @@ dependencies = [
  "octacity-config",
  "octacity-coordinator",
  "octacity-execution",
+ "octacity-execution-apple-vf",
  "octacity-execution-containerd",
  "octacity-execution-host",
  "octacity-execution-microsandbox",
@@ -4186,6 +4187,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-execution-apple-vf"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "libc",
+ "octacity-execution",
+ "octacity-execution-oci",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "octacity-execution-containerd"
 version = "0.1.0"
 dependencies = [
@@ -4296,6 +4314,7 @@ dependencies = [
  "async-trait",
  "octacity-cache-session",
  "octacity-execution",
+ "octacity-execution-apple-vf",
  "octacity-execution-containerd",
  "octacity-execution-host",
  "octacity-execution-microsandbox",

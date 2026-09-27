@@ -50,11 +50,19 @@ write_environment() {
 }
 
 provision_workspace() {
-  local root=$1 mount=$root/work
-  mkdir -p "$mount"
-  sudo mount --types tmpfs --options "size=$WORKSPACE_BYTES,nosuid,nodev" octacity-oci-work "$mount"
-  sudo chown "$(id -u):$(id -g)" "$mount"
-  chmod 0700 "$mount"
+  local root=$1 path size label
+  for path in work cache; do
+    if [[ $path == work ]]; then
+      size=$WORKSPACE_BYTES
+    else
+      size=16777216
+    fi
+    label="octacity-oci-$path"
+    mkdir -p "$root/$path"
+    sudo mount --types tmpfs --options "size=$size,nosuid,nodev" "$label" "$root/$path"
+    sudo chown "$(id -u):$(id -g)" "$root/$path"
+    chmod 0700 "$root/$path"
+  done
 }
 
 stage_release() {
@@ -131,7 +139,9 @@ setup_containerd() {
     "OCTACITY_CONTRACT_CONTAINERD_NAMESPACE=$namespace" \
     "OCTACITY_CONTRACT_CONTAINERD_SNAPSHOTTER=overlayfs" \
     "OCTACITY_CONTRACT_CONTAINERD_RUNTIME=io.containerd.runc.v2" \
+    "OCTACITY_CONTRACT_CONTAINERD_ENVIRONMENT_IDENTITY=containerd-release-v1" \
     "OCTACITY_CONTRACT_CONTAINERD_WORK_ROOT=$root/work" \
+    "OCTACITY_CONTRACT_CONTAINERD_CACHE_ROOT=$root/cache" \
     "OCTACITY_CONTRACT_CONTAINERD_STATE_ROOT=$root/agent-state" \
     "OCTACITY_CONTRACT_CONTAINERD_IMAGE=$image"
 }
@@ -223,6 +233,9 @@ cleanup() {
   fi
   if mountpoint --quiet "$root/work"; then
     sudo umount "$root/work"
+  fi
+  if mountpoint --quiet "$root/cache"; then
+    sudo umount "$root/cache"
   fi
   [[ ! -e $root ]] || sudo rm -rf -- "$root"
 }

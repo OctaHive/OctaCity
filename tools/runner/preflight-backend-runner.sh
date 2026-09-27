@@ -2,8 +2,8 @@
 set -euo pipefail
 
 mode=${1:-check}
-[[ $mode == check || $mode == --write-only ]] || {
-  echo "usage: $0 [--write-only]" >&2
+[[ $mode == check || $mode == --write-only || $mode == --host-only ]] || {
+  echo "usage: $0 [--write-only|--host-only]" >&2
   exit 2
 }
 
@@ -61,38 +61,82 @@ case "$kernel/$architecture" in
   Darwin/arm64)
     runner_root=${OCTACITY_RUNNER_ROOT:-$HOME/.octacity-runner}
     release_root=${OCTACITY_OCTA_RELEASE_ROOT:-$runner_root/$OCTACITY_RUNNER_OCTA_RELEASE_NAME}
-    msb=${OCTACITY_MICROSANDBOX_EXECUTABLE:-$HOME/.microsandbox/bin/msb}
-    libkrunfw=${OCTACITY_MICROSANDBOX_LIBKRUNFW:-$HOME/.microsandbox/lib/libkrunfw.5.dylib}
-    work_root=${OCTACITY_MICROSANDBOX_WORK_ROOT:-$runner_root/w}
-    state_root=${OCTACITY_MICROSANDBOX_STATE_ROOT:-$runner_root/s}
-    test_name=microsandbox_backend_satisfies_the_real_runner_contract
-
     require_command cargo
     require_command docker
     require_command python3
     require_file "$runner_root/actions-runner/config.sh"
-    require_file "$msb"
-    require_file "$libkrunfw"
-    require_directory "$work_root"
-    require_directory "$state_root"
     docker info >/dev/null
-    [[ $($msb --version) == "msb $OCTACITY_RUNNER_MICROSANDBOX_VERSION" ]] \
-      || fail "Microsandbox $OCTACITY_RUNNER_MICROSANDBOX_VERSION is required"
-    "$msb" doctor
     verify_release "$release_root"
+    case "$OCTACITY_RUNNER_MACOS_BACKEND" in
+      apple-vf)
+        require_file "$OCTACITY_RUNNER_APPLE_CONTAINER"
+        [[ -x $OCTACITY_RUNNER_APPLE_CONTAINER ]] \
+          || fail "Apple container executable is not executable: $OCTACITY_RUNNER_APPLE_CONTAINER"
+        version=$("$OCTACITY_RUNNER_APPLE_CONTAINER" --version)
+        [[ $version =~ [0-9]+\.[0-9]+\.[0-9]+ ]] || fail "could not parse Apple container version"
+        installed_version=${BASH_REMATCH[0]}
+        python3 - "$installed_version" <<'PY'
+import sys
 
-    runner_environment=(
-      "OCTACITY_CONTRACT_OCTA_RELEASE_ROOT=$release_root"
-      "OCTACITY_CONTRACT_WORKSPACE_BYTES=$OCTACITY_RUNNER_WORKSPACE_BYTES"
-      "OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=$work_root"
-      "OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root"
-      "OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=$msb"
-      "OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=$libkrunfw"
-      "OCTACITY_CONTRACT_MICROSANDBOX_IMAGE=$OCTACITY_RUNNER_MICROSANDBOX_IMAGE"
-      "OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST=$OCTACITY_RUNNER_MICROSANDBOX_ALLOWED_HOST"
-      "OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=$OCTACITY_RUNNER_MICROSANDBOX_DENIED_HOST"
-    )
-    runner_path="$HOME/.cargo/bin:$HOME/.microsandbox/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if tuple(map(int, sys.argv[1].split("."))) < (0, 6, 0):
+    raise SystemExit(f"Apple container {sys.argv[1]} is older than required 0.6.0")
+PY
+        "$OCTACITY_RUNNER_APPLE_CONTAINER" system version --format json >/dev/null \
+          || fail "Apple container API service is unavailable"
+        if [[ $mode != --host-only ]]; then
+          require_directory "$OCTACITY_RUNNER_APPLE_VF_WORK_ROOT"
+          require_directory "$OCTACITY_RUNNER_APPLE_VF_CACHE_ROOT"
+          require_directory "$OCTACITY_RUNNER_APPLE_VF_STATE_ROOT"
+          work_device=$(stat -f %d "$OCTACITY_RUNNER_APPLE_VF_WORK_ROOT")
+          cache_device=$(stat -f %d "$OCTACITY_RUNNER_APPLE_VF_CACHE_ROOT")
+          root_device=$(stat -f %d /)
+          [[ $work_device != "$root_device" && $cache_device != "$root_device" && $work_device != "$cache_device" ]] \
+            || fail "Apple VF work and cache roots must use separate bounded filesystems"
+          work_bytes=$(( $(df -k "$OCTACITY_RUNNER_APPLE_VF_WORK_ROOT" | tail -n1 | awk '{print $2}') * 1024 ))
+          (( work_bytes <= OCTACITY_RUNNER_WORKSPACE_BYTES )) \
+            || fail "Apple VF work filesystem exceeds the signed workspace limit"
+          test_name=apple_vf_isolation_provider_satisfies_the_real_runner_contract
+          runner_environment=(
+            "OCTACITY_CONTRACT_OCTA_RELEASE_ROOT=$release_root"
+            "OCTACITY_CONTRACT_WORKSPACE_BYTES=$OCTACITY_RUNNER_WORKSPACE_BYTES"
+            "OCTACITY_CONTRACT_APPLE_VF_EXECUTABLE=$OCTACITY_RUNNER_APPLE_CONTAINER"
+            "OCTACITY_CONTRACT_APPLE_VF_ENVIRONMENT_IDENTITY=apple-vf-release-v1"
+            "OCTACITY_CONTRACT_APPLE_VF_WORK_ROOT=$OCTACITY_RUNNER_APPLE_VF_WORK_ROOT"
+            "OCTACITY_CONTRACT_APPLE_VF_CACHE_ROOT=$OCTACITY_RUNNER_APPLE_VF_CACHE_ROOT"
+            "OCTACITY_CONTRACT_APPLE_VF_STATE_ROOT=$OCTACITY_RUNNER_APPLE_VF_STATE_ROOT"
+            "OCTACITY_CONTRACT_APPLE_VF_IMAGE=$OCTACITY_RUNNER_APPLE_VF_IMAGE"
+          )
+        fi
+        runner_path="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        ;;
+      microsandbox)
+        msb=${OCTACITY_MICROSANDBOX_EXECUTABLE:-$HOME/.microsandbox/bin/msb}
+        libkrunfw=${OCTACITY_MICROSANDBOX_LIBKRUNFW:-$HOME/.microsandbox/lib/libkrunfw.5.dylib}
+        work_root=${OCTACITY_MICROSANDBOX_WORK_ROOT:-$runner_root/w}
+        state_root=${OCTACITY_MICROSANDBOX_STATE_ROOT:-$runner_root/s}
+        require_file "$msb"
+        require_file "$libkrunfw"
+        require_directory "$work_root"
+        require_directory "$state_root"
+        [[ $($msb --version) == "msb $OCTACITY_RUNNER_MICROSANDBOX_VERSION" ]] \
+          || fail "Microsandbox $OCTACITY_RUNNER_MICROSANDBOX_VERSION is required"
+        "$msb" doctor
+        test_name=microsandbox_backend_satisfies_the_real_runner_contract
+        runner_environment=(
+          "OCTACITY_CONTRACT_OCTA_RELEASE_ROOT=$release_root"
+          "OCTACITY_CONTRACT_WORKSPACE_BYTES=$OCTACITY_RUNNER_WORKSPACE_BYTES"
+          "OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=$work_root"
+          "OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root"
+          "OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=$msb"
+          "OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=$libkrunfw"
+          "OCTACITY_CONTRACT_MICROSANDBOX_IMAGE=$OCTACITY_RUNNER_MICROSANDBOX_IMAGE"
+          "OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST=$OCTACITY_RUNNER_MICROSANDBOX_ALLOWED_HOST"
+          "OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=$OCTACITY_RUNNER_MICROSANDBOX_DENIED_HOST"
+        )
+        runner_path="$HOME/.cargo/bin:$HOME/.microsandbox/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        ;;
+      *) fail "unsupported OCTACITY_RUNNER_MACOS_BACKEND: $OCTACITY_RUNNER_MACOS_BACKEND" ;;
+    esac
     export "${runner_environment[@]}"
     export CARGO_TARGET_DIR="$runner_root/preflight-target"
     ;;
@@ -154,8 +198,12 @@ case "$kernel/$architecture" in
 esac
 
 runner_dir=$runner_root/actions-runner
-write_runner_files
-if [[ $mode == check ]]; then
+if [[ $mode == --host-only ]]; then
+  echo "host preflight passed for $kernel/$architecture"
+elif [[ $mode == --write-only ]]; then
+  write_runner_files
+else
+  write_runner_files
   cargo test -p octacity-job --test backend_contract "$test_name" \
     --manifest-path "$repo_root/Cargo.toml" -- --ignored --exact --nocapture
   echo "preflight passed for $kernel/$architecture"

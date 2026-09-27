@@ -78,6 +78,17 @@ impl ExecutionBackend for FakeBackend {
     _cancellation: CancellationToken,
   ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
     self.starts.fetch_add(1, Ordering::SeqCst);
+    let isolated = matches!(
+      request.root,
+      ExecutionTarget::Oci {
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
+        isolation: ExecutionOciIsolation::Process,
+        ..
+      }
+    );
     assert!(matches!(
       request.root,
       ExecutionTarget::Native {
@@ -90,9 +101,23 @@ impl ExecutionBackend for FakeBackend {
           os: ExecutionOs::Linux,
           architecture: ExecutionArchitecture::Amd64,
         },
+      } | ExecutionTarget::Oci {
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
+        isolation: ExecutionOciIsolation::Process,
+        ..
       }
     ));
-    assert_eq!(request.network, NetworkAccess::Unrestricted);
+    assert_eq!(
+      request.network,
+      if isolated {
+        NetworkAccess::Disabled
+      } else {
+        NetworkAccess::Unrestricted
+      }
+    );
     let exposed_identity = request
       .workload_identity
       .as_ref()

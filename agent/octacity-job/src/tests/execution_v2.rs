@@ -76,6 +76,67 @@ async fn records_provider_evidence_for_a_qualified_host_route() {
 }
 
 #[tokio::test]
+async fn projects_provider_neutral_isolation_to_an_immutable_process_image() {
+  let work_root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let backend = Arc::new(FakeBackend {
+    starts: starts.clone(),
+    destroyed: Arc::new(AtomicBool::new(false)),
+  });
+  let spec = isolation_spec();
+  let platform = spec.runtime.target.host_platform;
+  let capability = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new("containerd").unwrap(),
+    mode: ExecutionMode::Isolation,
+    host_platform: platform,
+    target_platform: platform,
+    guarantees: guarantees_for(ExecutionMode::Isolation),
+    immutable_images: true,
+  };
+  let executor = executor(
+    work_root.path(),
+    Arc::new(FakeSource {
+      calls: source_calls.clone(),
+      fail: false,
+    }),
+    None,
+  )
+  .with_execution_backends([ExecutionBackendRoute::new(
+    capability,
+    ExecutionEnvironmentId::new("containerd-fixture-v1").unwrap(),
+    backend,
+  )
+  .unwrap()])
+  .unwrap();
+  let (events, _receiver) = mpsc::channel(8);
+
+  let completion = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap();
+
+  let evidence = completion.execution().unwrap();
+  assert_eq!(evidence.provider.as_str(), "containerd");
+  assert_eq!(evidence.target.mode, ExecutionMode::Isolation);
+  assert_eq!(
+    evidence.target.required_guarantees,
+    guarantees_for(ExecutionMode::Isolation)
+  );
+  assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(starts.load(Ordering::SeqCst), 1);
+  completion.cleanup().await.unwrap();
+}
+
+#[tokio::test]
 async fn rejects_host_workload_identity_before_source_activity() {
   let work_root = tempfile::tempdir().unwrap();
   let source_calls = Arc::new(AtomicUsize::new(0));
@@ -173,4 +234,14 @@ fn host_spec() -> JobSpecV2 {
     cache: legacy.cache,
     outputs: legacy.outputs,
   }
+}
+
+fn isolation_spec() -> JobSpecV2 {
+  let mut spec = host_spec();
+  spec.job_id = "provider-neutral-isolation".to_owned();
+  spec.runtime.target.mode = ExecutionMode::Isolation;
+  spec.runtime.target.required_guarantees = guarantees_for(ExecutionMode::Isolation);
+  spec.runtime.target.immutable_image = Some(format!("registry.example.com/build@sha256:{DIGEST}"));
+  spec.runtime.network = NetworkPolicy::Disabled;
+  spec
 }

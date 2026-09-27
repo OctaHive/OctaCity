@@ -62,6 +62,15 @@ resource_sample_timeout_seconds = 1
 max_accounting_failures = 3
 oci_engines = []
 
+# Apple Silicon macOS 26+ can provide revision-2 isolation through Apple's
+# official `container` CLI. `work_root` and `cache.root` must be quota-backed
+# APFS volumes, and the installed Octa release must target linux-aarch64.
+# [[isolation_providers]]
+# provider = "apple_vf"
+# environment_identity = "apple-vf-macos-arm64-v1"
+# executable = "/usr/local/bin/container"
+# open_files_limit = 65536
+
 [server_signing_keys]
 primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
 

@@ -82,6 +82,7 @@ impl Fixture {
       host_environment: BTreeMap::new(),
       host_accounting_max_entries: 1_000_000,
       oci_engines: Vec::new(),
+      isolation_providers: Vec::new(),
       allow_unrestricted_network: false,
       allowed_network_hosts: vec!["vault.example.com".to_owned()],
       allowed_upload_origins: vec!["https://objects.example".to_owned()],
@@ -553,6 +554,77 @@ fn requires_explicit_non_duplicate_oci_engines() {
       metrics_sample_interval_seconds: 1,
     },
   ];
+  assert!(fixture.config.validate().unwrap_err().to_string().contains("duplicate"));
+}
+
+#[test]
+fn validates_provider_neutral_containerd_isolation_independently_of_legacy_oci() {
+  let mut fixture = Fixture::new();
+  fixture.config.isolation_providers = vec![IsolationProviderConfig::Containerd {
+    environment_identity: ExecutionEnvironmentId::new("containerd-linux-arm64-v1").unwrap(),
+    endpoint: fixture._temp.path().join("containerd.sock"),
+    namespace: "octacity-isolation".to_owned(),
+    snapshotter: "overlayfs".to_owned(),
+    runtime: "io.containerd.runc.v2".to_owned(),
+    registry_config_dir: None,
+    pids_limit: 4096,
+    open_files_limit: 65536,
+  }];
+
+  let validated = fixture.config.clone().validate().unwrap();
+  assert!(
+    validated
+      .runtimes
+      .iter()
+      .any(|runtime| matches!(runtime, ValidatedRuntimeConfig::Isolation { .. }))
+  );
+
+  fixture.config.enabled_runtime_modes.push(RuntimeMode::Oci);
+  fixture.config.oci_engines = vec![OciEngineConfig::Containerd {
+    endpoint: fixture._temp.path().join("legacy-containerd.sock"),
+    namespace: "octacity-legacy".to_owned(),
+    snapshotter: "overlayfs".to_owned(),
+    runtime: "io.containerd.runc.v2".to_owned(),
+    registry_config_dir: None,
+    pids_limit: 4096,
+    open_files_limit: 65536,
+  }];
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("cannot own legacy OCI and v2 isolation")
+  );
+}
+
+#[test]
+fn validates_apple_vf_as_a_distinct_provider_neutral_isolation_route() {
+  let mut fixture = Fixture::new();
+  let executable = fixture._temp.path().join("container");
+  File::create(&executable).unwrap();
+  fixture.config.isolation_providers = vec![IsolationProviderConfig::AppleVf {
+    environment_identity: ExecutionEnvironmentId::new("apple-vf-macos-arm64-v1").unwrap(),
+    executable: executable.clone(),
+    open_files_limit: 65536,
+  }];
+
+  let validated = fixture.config.clone().validate().unwrap();
+  assert!(matches!(
+    &validated.runtimes.last().unwrap(),
+    ValidatedRuntimeConfig::Isolation { providers }
+      if matches!(providers.as_slice(), [IsolationProviderConfig::AppleVf { executable: configured, .. }] if configured == &executable.canonicalize().unwrap())
+  ));
+
+  fixture
+    .config
+    .isolation_providers
+    .push(IsolationProviderConfig::AppleVf {
+      environment_identity: ExecutionEnvironmentId::new("apple-vf-duplicate-v1").unwrap(),
+      executable,
+      open_files_limit: 65536,
+    });
   assert!(fixture.config.validate().unwrap_err().to_string().contains("duplicate"));
 }
 

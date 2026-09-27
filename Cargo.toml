@@ -6,6 +6,7 @@ members = [
   "agent/octacity-config",
   "agent/octacity-coordinator",
   "agent/octacity-execution",
+  "agent/octacity-execution-apple-vf",
   "agent/octacity-execution-containerd",
   "agent/octacity-execution-host",
   "agent/octacity-execution-microsandbox",

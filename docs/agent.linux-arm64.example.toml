@@ -77,10 +77,24 @@ resource_sample_interval_seconds = 5
 resource_sample_timeout_seconds = 1
 max_accounting_failures = 3
 
-# OCI engines are enabled explicitly. To use them, include "oci" in
-# enabled_runtime_modes and add one or both engine tables below. Containerd
-# currently provides Linux process isolation with networking disabled;
-# Microsandbox provides Linux hypervisor isolation on supported hosts.
+# Current provider-neutral isolation is configured independently from the
+# legacy runtime-mode list. The environment identity is operator-owned and
+# partitions physical cache entries without leaking a provider name into jobs.
+#
+# [[isolation_providers]]
+# provider = "containerd"
+# environment_identity = "containerd-linux-arm64-v1"
+# endpoint = "/run/containerd/containerd.sock"
+# namespace = "octacity"
+# snapshotter = "overlayfs"
+# runtime = "io.containerd.runc.v2"
+# registry_config_dir = "/etc/containerd/certs.d"
+# pids_limit = 4096
+# open_files_limit = 65536
+#
+# Legacy OCI engines remain available for revision-1 JobSpecs. To use them,
+# include "oci" in enabled_runtime_modes and add one or both tables below.
+# New revision-2 deployments should use isolation_providers for containerd.
 #
 # [[oci_engines]]
 # engine = "containerd"

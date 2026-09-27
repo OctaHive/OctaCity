@@ -184,19 +184,45 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=4
+TOTAL_STAGES=5
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(git -C "$script_dir" rev-parse --show-toplevel)
+# shellcheck source=backend-runner.defaults
+source "$script_dir/backend-runner.defaults"
 remote=$(git -C "$repo_root" remote get-url origin 2>/dev/null || true)
+published_repository_url=${remote%.git}
+published_repository_url=${published_repository_url/git@github.com:/https://github.com/}
+[[ $published_repository_url == https://github.com/*/* ]] || {
+  printf 'expected a GitHub repository remote, got: %s\n' "$remote" >&2
+  exit 1
+}
+repository_path=${published_repository_url#https://github.com/}
+organization=${repository_path%%/*}
+repository_name=${repository_path#*/}
+default_registration_url=https://github.com/$organization
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64)
     runner_root=${OCTACITY_RUNNER_ROOT:-$HOME/.octacity-runner}
-    backend_label=octacity-microsandbox
+    case "$OCTACITY_RUNNER_MACOS_BACKEND" in
+      apple-vf)
+        backend_label=octacity-apple-vf
+        workflow_suite=macos-apple-vf
+        preflight_arguments=(--host-only)
+        ;;
+      microsandbox)
+        backend_label=octacity-microsandbox
+        workflow_suite=macos-microsandbox
+        preflight_arguments=()
+        ;;
+      *) printf 'unsupported macOS backend: %s\n' "$OCTACITY_RUNNER_MACOS_BACKEND" >&2; exit 1 ;;
+    esac
     ;;
   Linux/aarch64|Linux/arm64)
     runner_root=${OCTACITY_RUNNER_ROOT:-/opt/octacity-runner}
     backend_label=octacity-native
+    workflow_suite=linux-native
+    preflight_arguments=()
     ;;
   *)
     printf 'unsupported runner host: %s/%s\n' "$(uname -s)" "$(uname -m)" >&2
@@ -209,25 +235,47 @@ ENV_FILE=$runner_root/registration.env
 banner "OctaCity released-Agent runner"
 
 stage "Verify the backend host"
-say "The real backend contract must pass before this machine can accept a release job."
-"$script_dir/preflight-backend-runner.sh"
-pause "Preflight passed. Press Enter to register the runner."
+say "The selected backend prerequisites must pass before this machine can accept a release job."
+"$script_dir/preflight-backend-runner.sh" "${preflight_arguments[@]}"
+pause "Preflight passed. Press Enter to choose the registration scope."
 
-stage "Open the GitHub runner registration page"
-default_repository=${remote%.git}
-default_repository=${default_repository/git@github.com:/https://github.com/}
-note "Press Enter to use: $default_repository"
-ask REPOSITORY_URL "Published repository URL:"
-REPOSITORY_URL=${REPOSITORY_URL:-$default_repository}
-[[ $REPOSITORY_URL == https://github.com/*/* ]] || {
-  warn "expected an https://github.com/OWNER/REPOSITORY URL"
+stage "Restrict the GitHub runner scope"
+note "Press Enter to register for the organization: $default_registration_url"
+ask REGISTRATION_URL "Runner registration scope URL:"
+REGISTRATION_URL=${REGISTRATION_URL:-$default_registration_url}
+[[ $REGISTRATION_URL =~ ^https://github\.com/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?$ ]] || {
+  warn "expected an https://github.com/OWNER or https://github.com/OWNER/REPOSITORY URL"
   exit 1
 }
-write_env REPOSITORY_URL "$REPOSITORY_URL"
-repository_path=${REPOSITORY_URL#https://github.com/}
-open_url "https://github.com/$repository_path/settings/actions/runners/new"
-step "Choose the current operating system and ARM64 architecture."
-step "Copy only the one-hour registration token shown in GitHub's configure command."
+registration_path=${REGISTRATION_URL#https://github.com/}
+case "$registration_path" in
+  */*)
+    registration_page="https://github.com/$registration_path/settings/actions/runners/new"
+    RUNNER_GROUP=
+    ;;
+  *)
+    registration_page="https://github.com/organizations/$registration_path/settings/actions/runners/new"
+    note "Press Enter to use the dedicated group: octacity-release"
+    ask RUNNER_GROUP "Organization runner group:"
+    RUNNER_GROUP=${RUNNER_GROUP:-octacity-release}
+    [[ $RUNNER_GROUP =~ ^[A-Za-z0-9_.-]+$ ]] || {
+      warn "runner group must contain only letters, digits, dot, underscore, or hyphen"
+      exit 1
+    }
+    write_env RUNNER_GROUP "$RUNNER_GROUP"
+    open_url "https://github.com/organizations/$registration_path/settings/actions/runner-groups"
+    step "Create or open group '$RUNNER_GROUP'."
+    step "Allow public repositories, choose Selected repositories, and select '$repository_name' only."
+    step "If workflow restrictions are available, allow only '$repository_path/.github/workflows/backend-contracts.yml@refs/heads/main'."
+    pause "The restricted runner group is ready?"
+    ;;
+esac
+write_env REGISTRATION_URL "$REGISTRATION_URL"
+
+stage "Open the GitHub runner registration page"
+open_url "$registration_page"
+step "Choose macOS and ARM64. The runner package is already installed; do not repeat the download commands."
+step "Refresh this page if a token was exposed, then copy only the new one-hour token from the configure command."
 pause "The registration page is ready?"
 
 stage "Register an ephemeral runner"
@@ -241,41 +289,55 @@ ask_secret REGISTRATION_TOKEN "Paste the one-time registration token:"
   exit 1
 }
 runner_name="octacity-${backend_label#octacity-}-$(hostname)-$(date +%s)"
+config_arguments=(
+  --unattended
+  --ephemeral
+  --url "$REGISTRATION_URL"
+  --token "$REGISTRATION_TOKEN"
+  --name "$runner_name"
+  --labels "$backend_label"
+  --work _work
+)
+if [[ -n $RUNNER_GROUP ]]; then
+  config_arguments+=(--runnergroup "$RUNNER_GROUP")
+fi
 (
   cd "$runner_dir"
-  ./config.sh --unattended --ephemeral \
-    --url "$REPOSITORY_URL" \
-    --token "$REGISTRATION_TOKEN" \
-    --name "$runner_name" \
-    --labels "$backend_label" \
-    --work _work
+  ./config.sh "${config_arguments[@]}"
 )
-unset REGISTRATION_TOKEN
-# config.sh snapshots the invoking shell's PATH, so restore the audited backend
-# environment after registration rather than trusting that incidental value.
-"$script_dir/preflight-backend-runner.sh" --write-only
+unset REGISTRATION_TOKEN config_arguments
+# Static backends need their audited contract environment in the runner
+# process. Apple VF is provisioned inside its one workflow job instead.
+if [[ $OCTACITY_RUNNER_MACOS_BACKEND != apple-vf || $(uname -s) != Darwin ]]; then
+  "$script_dir/preflight-backend-runner.sh" --write-only
+fi
 say "Registered $runner_name with label $backend_label."
 
 stage "Run one release-gate job"
 open_url "https://github.com/$repository_path/actions/workflows/backend-contracts.yml"
-step "Start the wizard on the other backend host before dispatching the workflow."
-step "In Run workflow choose the published branch and suite 'released-agent', then click Run workflow."
+step "In Run workflow choose the published branch and suite '$workflow_suite', then click Run workflow."
 warn "Keep this terminal open until the runner exits after its single job."
-pause "Press Enter when the other runner is ready and the workflow can be dispatched."
-while IFS='=' read -r name value; do
-  [[ $name =~ ^OCTACITY_[A-Z0-9_]+$ ]] || {
-    warn "invalid runner environment key: $name"
-    exit 1
-  }
-  printf -v "$name" '%s' "$value"
-  export "${name?}"
-done < "$runner_dir/.env"
-PATH=$(<"$runner_dir/.path")
-export PATH
+pause "Press Enter after dispatching the workflow."
+if [[ $(uname -s) == Darwin && $OCTACITY_RUNNER_MACOS_BACKEND == apple-vf ]]; then
+  # Apple VF provisioning is job-local. `run.sh` loads the environment that
+  # GitHub's configuration script captured in `.env` and `.path` itself.
+  "$runner_dir/run.sh"
+else
+  while IFS='=' read -r name value; do
+    [[ $name =~ ^OCTACITY_[A-Z0-9_]+$ ]] || {
+      warn "invalid runner environment key: $name"
+      exit 1
+    }
+    printf -v "$name" '%s' "$value"
+    export "${name?}"
+  done < "$runner_dir/.env"
+  PATH=$(<"$runner_dir/.path")
+  export PATH
+fi
 if [[ $(uname -s) == Linux ]]; then
   sudo --preserve-env=OCTACITY_CONTRACT_OCTA_RELEASE_ROOT,OCTACITY_CONTRACT_WORKSPACE_BYTES,OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT,OCTACITY_CONTRACT_NATIVE_WORK_ROOT,OCTACITY_RELEASE_NATIVE_CACHE_ROOT,OCTACITY_CONTRACT_NATIVE_BWRAP,OCTACITY_CONTRACT_NATIVE_PATH \
     /usr/local/sbin/octacity-in-cgroup "$USER" "$runner_dir/run.sh"
-else
+elif [[ $OCTACITY_RUNNER_MACOS_BACKEND != apple-vf ]]; then
   "$runner_dir/run.sh"
 fi
 
