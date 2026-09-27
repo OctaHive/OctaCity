@@ -130,6 +130,16 @@ These terms are canonical:
 
 This separation prevents cron calculation, webhook parsing, DAG traversal, and lease selection from becoming one shallow scheduler interface.
 
+Execution modes are also canonical and provider-neutral:
+
+- **Host** executes the runner directly on the Agent operating system. It promises no container or guest-machine boundary and is permitted only by explicit Project and Pool policy; dedicated identities, bounded workspaces, cancellation, output limits, and honest resource accounting still apply.
+- **Isolation** executes the runner in a bounded workload environment with an isolated filesystem, network, process, and resource contract, but it does not promise a separately managed guest machine. Containerd is the first Linux provider. The first macOS provider uses Apple Virtualization.framework while exposing this workload contract rather than a guest-machine contract.
+- **Virtualization** executes the runner behind a hardware-virtualized guest boundary with a distinct guest platform and lifecycle. Microsandbox is the first provider and is qualified independently on each supported Linux, Apple Silicon macOS, and Windows/WHP host.
+
+Host platform, target or guest platform, execution mode, and provider are separate facts. JobSpec and Project policy name the target platform, mode, and required guarantees. Agent inventory advertises only passing combinations. The concrete provider remains operator-owned configuration and bounded diagnostics, so replacing containerd or Microsandbox does not change Build intent. A second provider is added only when it supplies a new supported platform pair, guarantee, or operational capability; brand-level duplication alone is not a reason to add one.
+
+The existing `Native` and OCI protocol values are not silently redefined. A negotiated protocol revision introduces the three modes, preserves old envelopes for their declared compatibility window, and records the concrete backend only as execution evidence. The current Linux `Native` backend, which uses Bubblewrap and cgroup v2, remains a legacy isolation implementation until callers migrate; it is not evidence for direct `host` execution.
+
 Scheduled triggers store schedule expression, timezone, next occurrence, missed-run policy, and deduplication identity durably. External events arrive only after webhook authentication and normalization. Internal triggers consume documented domain events through the same durable trigger path and enforce cycle/depth policy.
 
 A clock-based Schedule and an inter-Build dependency are different Trigger kinds. The latter is a versioned internal Trigger edge from one exact upstream Build Configuration version and terminal outcome to one exact downstream Build Configuration version. Matching always includes the upstream configuration identity; outcome-only matching is too broad because an unrelated successful Build could otherwise start the downstream configuration. The upstream Build identity and source occurrence become the downstream occurrence's durable cause, while the transactional outbox event and Trigger version form its stable deduplication scope.
@@ -275,7 +285,7 @@ Observability is diagnostic data. `octacity-observability` defines stable metric
 
 ### 14. Agent provisioning stops at a protocol in v1
 
-`octacity-agent-provisioning-protocol` defines version negotiation, provision, observe, terminate, cancellation, idempotency, normalized lifecycle state, and classified failures. It prevents virtualization-provider types from leaking into JobSpec, Agent, Pool, or placement interfaces.
+`octacity-agent-provisioning-protocol` defines version negotiation, provision, observe, terminate, cancellation, idempotency, normalized lifecycle state, and classified failures. It prevents dynamic infrastructure-provider types from leaking into JobSpec, Agent, Pool, or placement interfaces.
 
 The first release ships no vSphere, Proxmox, or other production provisioning adapter and no reconciliation loop that changes real infrastructure. Static-agent readiness does not depend on an agent provisioner. A deterministic protocol conformance fixture validates the contract without advertising dynamic agent provisioning as available.
 
@@ -292,13 +302,13 @@ Implementation proceeds through executable vertical slices:
 1. **Workspace and contracts**: establish `cli/server/agent/shared`, crate ownership, dependency checks, protocol crates, domain vocabulary, configuration, and a minimal composition root.
 2. **Store foundation**: atomic store, authoritative log-index watermark, and `LogSearchIndex` contracts; PostgreSQL adapter, migrations, agent credentials, idempotency, audit, outbox, readiness, and restart tests.
 3. **Projects, pipelines, and manual builds**: hierarchy, policy, repositories, pipeline DAGs, build configurations, manual triggers, Attempt materialization, JobSpec signing, and queries.
-4. **Static-agent vertical slice**: pools, placement scheduler, leases, heartbeat, events, completion, orchestrator transitions, drain, expiry, and checksummed released Agents running a multi-node pipeline sequentially through Linux Native and an Apple Silicon macOS-hosted Linux Microsandbox guest.
+4. **Static-agent vertical slice**: pools, placement scheduler, leases, heartbeat, events, completion, orchestrator transitions, drain, expiry, and checksummed released Agents running a multi-node pipeline sequentially through the legacy Linux execution path and an Apple Silicon macOS-hosted Linux Microsandbox guest.
 5. **REST completion**: all initial management commands and queries, OpenAPI, CLI examples, long-poll event reads, bounded build-log search, and trusted-network deployment guardrails.
 6. **Artifacts, logs, cache, and secrets**: backend-neutral contracts, S3 adapter, immutable redacted log chunks, PostgreSQL search projection and rebuild, Octa L2, logical secret references, and provider-isolation tests.
 7. **Triggers, webhooks, and VCS**: durable schedules/internal events, webhook protocol and manual mode, managed-provider protocol, VCS protocol/host, Git adapter, deduplication, and retry.
-8. **Observability and Agent Ready matrix**: server/agent metrics, tracing, release installation, runtimes, failure, reboot, upgrade, drain, cleanup, and performance gates.
+8. **Observability and Agent Ready matrix**: server/agent metrics, tracing, release installation, provider-neutral host/isolation/virtualization modes, failure, reboot, upgrade, drain, cleanup, and performance gates.
 9. **Production hardening**: backup/restore, migration compatibility, replica contention, retention load, rate limiting, TLS/proxy and trusted-network runbooks.
-10. **Future extension contracts**: agent-provisioning conformance only; operator auth, GraphQL, brokers, managed-service adapters, and virtualization adapters remain later changes.
+10. **Future extension contracts**: agent-provisioning conformance only; operator auth, GraphQL, brokers, managed-service adapters, additional execution providers, and dynamic infrastructure-provisioning adapters remain later changes.
 
 Phases 1-4 form the minimum useful server. Later phases remain independently gated so the broad module inventory does not become one indivisible delivery.
 
@@ -317,6 +327,9 @@ Phases 1-4 form the minimum useful server. Later phases remain independently gat
 - **[Searchable logs can retain secrets or become an unbounded query surface]** -> Redact before both archive and indexing, bound chunk and query sizes, provide full-text and literal modes rather than unrestricted regular expressions, scope every query, and test deletion and rebuild.
 - **[A derived search index can lag or be lost]** -> Publish indexing work through the transactional outbox, expose freshness, keep live event reads independent, and rebuild idempotently from committed log chunks.
 - **[One process can become a hidden singleton]** -> Test every transactional claim and worker with concurrent server identities.
+- **[Direct host execution gives repository code the Agent host's security boundary]** -> Require explicit policy and Pool admission, dedicated service identities, least-privilege work roots, honest capability labels, and security documentation that recommends isolation or virtualization for untrusted workloads.
+- **[A provider's implementation mechanism can blur execution semantics]** -> Conformance-test observable mode guarantees and keep provider identity out of Build policy and JobSpec; an isolation backend that internally boots a lightweight VM remains `isolation` unless it exposes the virtualization contract.
+- **[Microsandbox support can differ by host maturity]** -> Qualify immutable Microsandbox releases independently on Linux, macOS, and Windows and never infer release support from compilation or upstream preview status.
 
 ## Migration Plan
 
@@ -324,11 +337,12 @@ Phases 1-4 form the minimum useful server. Later phases remain independently gat
 2. Add server core, application, protocol, API, infrastructure, and composition crates without enabling mutation routes.
 3. Split the existing artifact interface from its S3 adapter without changing the agent artifact wire contract.
 4. Deploy PostgreSQL, S3-compatible storage, signing material, agent credential material, and one server replica in a test trusted network.
-5. Create projects, pipeline, build configuration, manual Build, Agent Pool, and enrollment token through REST; pass the multi-node released-Agent vertical slices on Linux Native and Apple Silicon macOS with a Linux Microsandbox guest.
+5. Create projects, pipeline, build configuration, manual Build, Agent Pool, and enrollment token through REST; pass the multi-node released-Agent compatibility slices on the legacy Linux backend and Apple Silicon macOS with a Linux Microsandbox guest.
 6. Enable artifacts, immutable log archival, PostgreSQL log search, cache, secrets, schedules, webhooks, and VCS independently behind validated configuration.
-7. Run the complete Agent Ready matrix before declaring the first production server version.
-8. Rehearse forward schema migration and previous-binary rollback within a declared compatibility window; restore database and object storage as one consistency unit when backward compatibility is impossible.
-9. Add replicas only after transactional contention tests pass. Add operator auth, external brokers, managed provider adapters, and dynamic agent provisioning through later changes.
+7. Introduce the negotiated host/isolation/virtualization protocol revision without reinterpreting old Native or OCI envelopes, then migrate Project policy, Agent inventory, cache identity, telemetry, and diagnostics together.
+8. Run the complete Agent Ready matrix before declaring the first production server version.
+9. Rehearse forward schema migration and previous-binary rollback within a declared compatibility window; restore database and object storage as one consistency unit when backward compatibility is impossible.
+10. Add replicas only after transactional contention tests pass. Add operator auth, external brokers, managed provider adapters, and dynamic agent provisioning through later changes.
 
 ## Open Questions
 

@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines a provider-neutral, versioned agent-provisioning protocol that can be implemented after the static-agent server is complete without coupling virtualization-provider details to scheduling, agent execution, or JobSpec semantics.
+Defines a provider-neutral, versioned agent-provisioning protocol that can be implemented after the static-agent server is complete without coupling dynamic infrastructure-provider details to scheduling, agent execution, or JobSpec semantics.
 
 ## ADDED Requirements
 
@@ -33,7 +33,7 @@ Provider credentials and sensitive infrastructure configuration SHALL remain own
 - **THEN** the response contains normalized identity and lifecycle data but no credential, bootstrap secret, template, network, cluster, or datastore value
 
 ### Requirement: No production provisioner in the first release
-The first server release SHALL NOT advertise dynamic agent provisioning as available and SHALL NOT include production vSphere, Proxmox, or other virtualization adapters. Static-agent scheduling SHALL operate without loading or configuring an agent-provisioning adapter.
+The first server release SHALL NOT advertise dynamic agent provisioning as available and SHALL NOT include production vSphere, Proxmox, or other dynamic machine-provisioning adapters. Static-agent scheduling SHALL operate without loading or configuring an agent-provisioning adapter.
 
 #### Scenario: First-release server starts
 - **WHEN** no agent-provisioning adapter is installed

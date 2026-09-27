@@ -292,7 +292,10 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
         fixture = REPOSITORY / "fixtures/release/linux-native/Octafile.yml"
         self.assertTrue(fixture.is_file())
-        self.assertIn("cache: {}", fixture.read_text(encoding="utf-8"))
+        fixture_text = fixture.read_text(encoding="utf-8")
+        self.assertIn("cache: {}", fixture_text)
+        self.assertIn("failing:", fixture_text)
+        self.assertIn("exit 23", fixture_text)
         release = (REPOSITORY / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("tools/package_server_release.py", release)
         self.assertIn("octacity-server-${{ matrix.platform }}", release)

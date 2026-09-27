@@ -12,7 +12,15 @@ The Agent Ready matrix SHALL install self-verifying released OctaCity and Octa b
 - **THEN** every tested agent verifies and installs the exact packaged checksums and capability manifests for that candidate
 
 ### Requirement: Initial runtime matrix
-The initial gate SHALL cover Linux Native, Linux OCI process isolation, and Linux OCI hypervisor execution on supported Linux hosts, plus the supported Linux hypervisor guest path on Apple Silicon macOS.
+The release gate SHALL distinguish three provider-neutral execution modes. `host` SHALL execute directly on the Agent operating system, `isolation` SHALL provide a bounded workload environment without promising a guest-machine contract, and `virtualization` SHALL provide a hardware-virtualized guest boundary. The initial matrix SHALL cover `host`, `isolation`, and `virtualization` on supported Linux and Apple Silicon macOS hosts, plus `host` and `virtualization` on supported Windows hosts. A backend MAY use virtualization internally to implement `isolation`, but it SHALL expose the lifecycle, filesystem, network, resource, and platform semantics of the requested mode rather than its implementation mechanism.
+
+#### Scenario: Provider does not leak into execution intent
+- **WHEN** a Job requests one supported execution mode and target platform
+- **THEN** its signed intent and placement requirements identify the mode and required guarantees without naming containerd, a macOS framework, Microsandbox, or another operator-selected backend
+
+#### Scenario: One provider covers several hosts
+- **WHEN** Microsandbox passes the virtualization contract on more than one host operating system
+- **THEN** those host/platform pairs reuse the same provider contract instead of adding a redundant virtualization backend
 
 #### Scenario: Unsupported pair cross-compiles
 - **WHEN** a platform/isolation pair compiles but has no passing released-machine contract

@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[test]
 fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   let directory = tempfile::tempdir().unwrap();
@@ -47,6 +50,7 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   assert_eq!(document["cache"]["root"].as_str(), cache.to_str());
   assert_eq!(document["cache"]["ca_certificate_file"].as_str(), certificate.to_str());
   assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
+  assert_eq!(fs::metadata(&cache).unwrap().permissions().mode() & 0o777, 0o700);
   assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
   assert_eq!(document["oci_engines"].as_array().unwrap().len(), 1);
   assert_eq!(document["oci_engines"][0]["engine"].as_str(), Some("microsandbox"));
@@ -71,6 +75,7 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
     environment_identity: "test-native-environment-v1".to_owned(),
     workspace_bytes: 1024 * 1024,
   };
+  let upload_origins = ["https://objects.example"];
   let config = write_agent_config(
     directory.path(),
     "http://127.0.0.1:12345",
@@ -81,11 +86,13 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
       octa_root: &octa_root,
     },
     &backend,
-    &AgentConfigOverrides::default(),
+    &AgentConfigOverrides::restricted_without_outputs(&upload_origins),
   );
 
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
   assert_eq!(document["cache"]["root"].as_str(), cache_root.to_str());
+  assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
+  assert_eq!(document["cache"]["allow_write"].as_bool(), Some(false));
   assert_eq!(
     document["cache"]["request_timeout_seconds"].as_integer(),
     Some(RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS as i64)
@@ -128,6 +135,7 @@ fn generated_containerd_agent_configuration_keeps_runtime_authority_operator_own
     image: format!("example.invalid/octa@sha256:{}", "b".repeat(64)),
     workspace_bytes: 1024 * 1024,
   };
+  let upload_origins = ["https://objects.example"];
   let config = write_agent_config(
     directory.path(),
     "http://127.0.0.1:12345",
@@ -138,10 +146,12 @@ fn generated_containerd_agent_configuration_keeps_runtime_authority_operator_own
       octa_root: &octa_root,
     },
     &backend,
-    &AgentConfigOverrides::default(),
+    &AgentConfigOverrides::restricted_without_outputs(&upload_origins),
   );
 
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+  assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
+  assert_eq!(document["cache"]["allow_write"].as_bool(), Some(false));
   let engine = &document["oci_engines"][0];
   assert_eq!(engine["engine"].as_str(), Some("containerd"));
   assert_eq!(engine["endpoint"].as_str(), endpoint.to_str());

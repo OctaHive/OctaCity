@@ -76,8 +76,10 @@ and Agent rather than product binaries below Cargo's `target` directory.
 MinIO and never substitutes a workspace product binary. The Linux Native gate
 exercises a manual two-node DAG and an automatically derived downstream Build,
 then drains the first Agent. A second Agent with an empty local cache executes
-a scheduled occurrence through remote-cache reuse and a separately cancelled
-Build. The gate reads Build Results, performs full-text and literal log
+a scheduled occurrence through remote-cache reuse, a deterministically failed
+Build followed by an idempotently replayed REST retry, and a separately
+cancelled Build. The retry evidence retains both typed Attempts and their
+lineage. The gate reads Build Results, performs full-text and literal log
 searches, downloads and hashes an artifact, and checks ordered lifecycle and
 resource events, causal linkage, duplicate suppression, metrics, the active
 cgroup's CPU, memory, swap, and process limits, cgroup cleanup, and workspace
@@ -93,8 +95,9 @@ packaged Agent against the real released server vertical slice. Their final
 cleanup assertion rejects remaining job workspaces and, for containerd,
 remaining tasks or containers. The macOS job keeps the smaller
 released-product vertical slice until its full Microsandbox matrix is added in
-task 9.4. It executes a Linux guest through Microsandbox; host-native execution
-is deliberately Linux-only.
+task 9.6. It executes a Linux guest through Microsandbox. The current direct
+host compatibility slice is Linux-only; task 9.4 adds direct host execution on
+released Linux, macOS, and Windows Agents.
 
 The hosted OCI fixture selects an architecture-specific immutable manifest
 digest for `linux/amd64` or `linux/arm64`. The adapter still reads the embedded

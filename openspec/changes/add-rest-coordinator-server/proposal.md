@@ -17,9 +17,10 @@ OctaCity has a production-oriented agent and a complete outbound agent protocol,
 - Add bounded full-text and literal search over redacted build logs, with project, Build, Attempt, Job, stream, and time filters, deterministic cursor pagination, context snippets, index freshness, and rebuild support.
 - Keep PostgreSQL as the first authoritative state-store adapter and S3-compatible storage as the first artifact-byte adapter without exposing either technology through core interfaces.
 - Keep management REST unauthenticated in the first trusted-network release. Agent enrollment and registration credentials, webhook signature verification, JobSpec signing, and secret-store authentication remain mandatory.
-- Define a provider-neutral agent-provisioning protocol but do not implement vSphere, Proxmox, or another virtualization adapter in the first release.
-- Add black-box release tests that install released agent and Octa bundles and exercise Native, OCI process, and OCI hypervisor paths against the real server vertical slice.
-- Explicitly exclude a Web UI, visual pipeline editor, operator authentication, LDAP/TOTP providers, RBAC, production virtualization adapters, Kubernetes execution, and concurrent multi-job execution by one agent from the first release.
+- Define a provider-neutral agent-provisioning protocol but do not implement vSphere, Proxmox, or another dynamic machine-provisioning adapter in the first release.
+- Define three provider-neutral execution modes: direct `host`, bounded `isolation`, and hypervisor-backed `virtualization`. Qualify released Linux and macOS Agents for all three modes, and qualify released Windows Agents for `host` and `virtualization`; advertise only platform/mode pairs that pass their released-machine contracts.
+- Add black-box release tests that install released Agent and Octa bundles and exercise the real server vertical slice through direct host execution, container or platform isolation, and Microsandbox-backed virtualization without exposing provider names in JobSpec or scheduling policy.
+- Explicitly exclude a Web UI, visual pipeline editor, operator authentication, LDAP/TOTP providers, RBAC, dynamic infrastructure-provisioning adapters, Kubernetes execution, and concurrent multi-job execution by one agent from the first release.
 
 ## Capabilities
 
@@ -32,19 +33,19 @@ OctaCity has a production-oriented agent and a complete outbound agent protocol,
 - `server/output-storage`: Backend-neutral artifact/report publication and immutable build-log chunk storage with an S3-compatible adapter, integrity verification, retention, and download capabilities.
 - `server/remote-cache`: Namespace-isolated cache authorization and the HTTP L2 data plane consumed by Octa's existing cache protocol.
 - `server/operations`: Configuration, PostgreSQL migrations, rebuildable build-log search projection, secret-provider integration, agent/server observability, audit, recovery, backup, and graceful shutdown for a trusted-network management deployment.
-- `server/dynamic-agent-provisioning`: A versioned provider-neutral agent-provisioning protocol reserved for later machine provisioning without production virtualization adapters in the first release.
+- `server/dynamic-agent-provisioning`: A versioned provider-neutral agent-provisioning protocol reserved for later machine provisioning without production dynamic-infrastructure adapters in the first release.
 - `server/agent-ready-matrix`: Released-machine black-box verification across the supported server, agent, runtime, failure, and lifecycle matrix.
 
 ### Modified Capabilities
 
-None. This is the first OpenSpec capability set for the server; existing implemented agent contracts remain unchanged.
+None. This is the first OpenSpec capability set for the server. The implemented agent execution contract will evolve through version negotiation rather than silently reinterpreting the existing `Native` and OCI values.
 
 ## Impact
 
 - Moves the workspace toward `cli`, `server`, `agent`, and `shared` product directories and adds server crates grouped by API, application/core, protocols, infrastructure, and composition.
-- Reuses the existing agent protocol and agent execution modules while introducing separate server-side Job, pipeline, trigger, orchestration, scheduling, webhook, and VCS responsibilities.
+- Evolves the existing agent protocol and execution modules so `host`, `isolation`, and `virtualization` are stable semantics while containerd, the macOS isolation backend, and Microsandbox remain operator-selected implementations; also introduces separate server-side Job, pipeline, trigger, orchestration, scheduling, webhook, and VCS responsibilities.
 - Splits backend-neutral artifact contracts from the S3-compatible adapter and prevents REST DTOs, database rows, provider payloads, and domain state from becoming shared models.
 - Keeps immutable Build configuration snapshots, event ordering, cursors, logical object metadata, and a rebuildable full-text search projection in PostgreSQL while storing produced files, reports, and large immutable redacted log chunks in the configured object store.
-- Introduces PostgreSQL and an S3-compatible object store as initial production adapters; a future external search adapter, Kafka, NATS, Redis, operator identity providers, and virtualization providers are not required for the first deployment.
+- Introduces PostgreSQL and an S3-compatible object store as initial production adapters; a future external search adapter, Kafka, NATS, Redis, operator identity providers, and dynamic infrastructure-provisioning providers are not required for the first deployment.
 - Requires trusted-network isolation for the unauthenticated v1 management interface while retaining authentication on every agent, webhook, signing, and secret-store boundary.
-- Adds release-machine CI infrastructure and privileged workers for real Native, containerd, and Microsandbox verification.
+- Adds release-machine CI infrastructure for direct host execution on Linux, macOS, and Windows, privileged platform-isolation workers on Linux and macOS, and Microsandbox virtualization workers on Linux, Apple Silicon macOS, and supported Windows/WHP hosts.

@@ -25,5 +25,8 @@ tasks:
   downstream:
     shell: echo 'release downstream build completed'
 
+  failing:
+    shell: echo 'release retry failure' >&2 && exit 23
+
   slow:
     shell: echo 'release cancellation started' && sleep 120

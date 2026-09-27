@@ -34,11 +34,15 @@ All pipeline jobs that become ready SHALL enter one durable logical queue. Each 
 - **THEN** the placement scheduler cannot observe or lease that job
 
 ### Requirement: Transactional capability placement
-The placement scheduler SHALL select only ready jobs whose allowed pools include the polling agent's pool and whose labels, platform, runtime mode, isolation, runner protocols, plugins, source capabilities, resource requirements, and cache requirements are satisfied by that accepting agent. One job SHALL have at most one current lease.
+The placement scheduler SHALL select only ready jobs whose allowed pools include the polling agent's pool and whose labels, host and target platforms, execution mode, isolation guarantees, runner protocols, plugins, source capabilities, resource requirements, and cache requirements are satisfied by that accepting agent. Execution mode SHALL be one of provider-neutral `host`, `isolation`, or `virtualization`; concrete backend names SHALL remain Agent configuration and diagnostics rather than placement requirements. One job SHALL have at most one current lease.
 
 #### Scenario: Concurrent agents poll
 - **WHEN** two matching agents concurrently request work
 - **THEN** a ready job is leased to at most one registration epoch
+
+#### Scenario: Backend satisfies semantic mode
+- **WHEN** two Agents implement the same requested execution mode through different qualified backends
+- **THEN** either Agent may accept the Job if its advertised target platform and required guarantees also match
 
 ### Requirement: Deterministic fairness and concurrency
 Queue selection SHALL apply explicit priority, project and build-configuration concurrency limits, configurable pool fairness policy, enqueue time, and stable job identity in a documented deterministic order. A blocked or incompatible job SHALL NOT cause head-of-line blocking for unrelated compatible jobs.

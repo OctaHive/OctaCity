@@ -31,9 +31,12 @@ use super::{
 #[path = "cache_proxy.rs"]
 mod cache_proxy;
 mod checks;
+#[path = "linux_native/scenarios.rs"]
+mod scenarios;
 
 use cache_proxy::TlsCacheProxy;
 use checks::*;
+use scenarios::{CancellationInput, ManualBuildInput, RetryInput, run_and_cancel, run_and_retry};
 
 const FIXTURE_OCTAFILE: &str = "fixtures/release/linux-native/Octafile.yml";
 const CACHE_NAMESPACE: &str = "release-linux-native";
@@ -47,8 +50,10 @@ struct MatrixResources {
   manual_configuration_id: String,
   scheduled_configuration_id: String,
   cancellation_configuration_id: String,
+  retry_configuration_id: String,
   manual_trigger_id: String,
   cancellation_trigger_id: String,
+  retry_trigger_id: String,
   internal_trigger_id: String,
 }
 
@@ -78,19 +83,6 @@ struct AgentStartInput<'a> {
   object_endpoint: &'a str,
 }
 
-struct CancellationInput<'a> {
-  client: &'a Client,
-  origin: &'a str,
-  run: &'a str,
-  trigger_id: &'a str,
-  configuration: &'a str,
-  revision: &'a str,
-  stderr: &'a Path,
-  cgroup_root: &'a Path,
-  cgroup_baseline: &'a BTreeSet<OsString>,
-  maximum_disk_bytes: u64,
-}
-
 struct ConfigurationInput<'a> {
   client: &'a Client,
   origin: &'a str,
@@ -102,6 +94,7 @@ struct ConfigurationInput<'a> {
   pool_id: &'a str,
   triggers: &'a [&'a str],
   cache: bool,
+  retry_max_attempts: u32,
   backend: &'a ReleaseBackend,
 }
 
@@ -284,15 +277,33 @@ pub(super) async fn run() {
     "the second Agent had an empty L1, so the scheduled Build must restore from remote L2"
   );
 
+  let retried_run = run_and_retry(
+    RetryInput {
+      build: ManualBuildInput {
+        client: &client,
+        origin: &management_origin,
+        run: &run_id,
+        trigger_id: &resources.retry_trigger_id,
+        configuration: &resources.retry_configuration_id,
+        revision: &revision,
+        stderr: &evidence.join("agent-b.stderr.log"),
+      },
+    },
+    agent_b.child_mut(),
+  )
+  .await;
+
   let cancelled_run = run_and_cancel(
     CancellationInput {
-      client: &client,
-      origin: &management_origin,
-      run: &run_id,
-      trigger_id: &resources.cancellation_trigger_id,
-      configuration: &resources.cancellation_configuration_id,
-      revision: &revision,
-      stderr: &evidence.join("agent-b.stderr.log"),
+      build: ManualBuildInput {
+        client: &client,
+        origin: &management_origin,
+        run: &run_id,
+        trigger_id: &resources.cancellation_trigger_id,
+        configuration: &resources.cancellation_configuration_id,
+        revision: &revision,
+        stderr: &evidence.join("agent-b.stderr.log"),
+      },
       cgroup_root,
       cgroup_baseline: &cgroup_baseline,
       maximum_disk_bytes: backend.workspace_bytes(),
@@ -350,6 +361,7 @@ pub(super) async fn run() {
       "manual_replay": replay,
       "downstream": downstream_run.build,
       "scheduled": scheduled_run.build,
+      "retried": retried_run,
       "cancelled": cancelled_run,
       "artifacts": artifacts,
       "log_search": searches,
@@ -432,6 +444,7 @@ async fn create_resources(
   let downstream_pipeline =
     create_pipeline(client, origin, run, &project_id, "downstream", &["downstream"], false).await;
   let cancellation_pipeline = create_pipeline(client, origin, run, &project_id, "cancel", &["slow"], false).await;
+  let retry_pipeline = create_pipeline(client, origin, run, &project_id, "retry", &["failing"], false).await;
   let manual_configuration_id = create_configuration(ConfigurationInput {
     client,
     origin,
@@ -443,6 +456,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: true,
+    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -457,6 +471,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["scheduled"],
     cache: true,
+    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -471,6 +486,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["internal"],
     cache: false,
+    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -485,6 +501,22 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: false,
+    retry_max_attempts: 1,
+    backend,
+  })
+  .await;
+  let retry_configuration_id = create_configuration(ConfigurationInput {
+    client,
+    origin,
+    run,
+    name: "retry",
+    project_id: &project_id,
+    repository_id: &repository_id,
+    pipeline_id: &retry_pipeline,
+    pool_id: &pool_id,
+    triggers: &["manual"],
+    cache: false,
+    retry_max_attempts: 2,
     backend,
   })
   .await;
@@ -492,6 +524,7 @@ async fn create_resources(
   let manual_trigger_id = create_manual_definition(client, origin, run, "main", &manual_configuration_id).await;
   let cancellation_trigger_id =
     create_manual_definition(client, origin, run, "cancel", &cancellation_configuration_id).await;
+  let retry_trigger_id = create_manual_definition(client, origin, run, "retry", &retry_configuration_id).await;
   let internal = post_management(
     client,
     origin,
@@ -516,8 +549,10 @@ async fn create_resources(
     manual_configuration_id,
     scheduled_configuration_id,
     cancellation_configuration_id,
+    retry_configuration_id,
     manual_trigger_id,
     cancellation_trigger_id,
+    retry_trigger_id,
     internal_trigger_id: resource_id(&internal),
   }
 }
@@ -614,7 +649,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "report_bytes": OUTPUT_BYTES,
           "single_output_bytes": OUTPUT_BYTES
         },
-        "retry": {"max_attempts": 1, "retry_on": []}
+        "retry": {"max_attempts": input.retry_max_attempts, "retry_on": []}
       }
     }),
   )
@@ -776,84 +811,6 @@ async fn stop_agent(client: &Client, origin: &str, name: &str, run: &str, agent:
     "released Agent exited unsuccessfully: {}",
     fs::read_to_string(stderr).unwrap_or_default()
   );
-}
-
-async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Child) -> Value {
-  let identity = format!("{}-cancel", input.run);
-  let accepted = accept_manual_build(
-    input.client,
-    input.origin,
-    &identity,
-    input.trigger_id,
-    input.configuration,
-    input.revision,
-  )
-  .await;
-  let build_id = string(&accepted, "build_id");
-  let attempt_id = string(&accepted, "attempt_id");
-  let deadline = Instant::now() + Duration::from_secs(60);
-  loop {
-    if let Some(status) = agent.try_wait().unwrap() {
-      panic!(
-        "released Agent exited before cancellation with {status}: {}",
-        fs::read_to_string(input.stderr).unwrap_or_default()
-      );
-    }
-    let attempt = get_json(input.client, format!("{}/api/v1/attempts/{attempt_id}", input.origin)).await;
-    let job = &attempt["jobs"][0];
-    let events = get_json(
-      input.client,
-      format!(
-        "{}/api/v1/jobs/{}/events?after=0&limit=100&wait_ms=0",
-        input.origin,
-        string(job, "id")
-      ),
-    )
-    .await;
-    let started = events["items"].as_array().unwrap().iter().any(|event| {
-      event["payload"]["source"] == "agent"
-        && event["payload"]["event"]["type"] == "state_changed"
-        && event["payload"]["event"]["state"] == "running"
-    });
-    let sampled = events["items"]
-      .as_array()
-      .unwrap()
-      .iter()
-      .any(|event| event["payload"]["source"] == "agent" && event["payload"]["event"]["type"] == "resource_usage");
-    if started && sampled {
-      assert_native_resource_controls(input.cgroup_root, input.cgroup_baseline);
-      break;
-    }
-    assert!(
-      Instant::now() < deadline,
-      "cancelled Build never started with resource accounting"
-    );
-    sleep(Duration::from_millis(250)).await;
-  }
-  let cancellation = post_management(
-    input.client,
-    input.origin,
-    &format!("/api/v1/builds/{build_id}/cancel"),
-    &format!("{}-cancel-request", input.run),
-    json!({}),
-  )
-  .await;
-  let build = wait_for_terminal_build(input.client, input.origin, &build_id, agent, input.stderr).await;
-  assert_eq!(build["state"], "cancelled");
-  let attempt = get_json(input.client, format!("{}/api/v1/attempts/{attempt_id}", input.origin)).await;
-  let job = &attempt["jobs"][0];
-  let events = get_json(
-    input.client,
-    format!(
-      "{}/api/v1/jobs/{}/events?after=0&limit=256&wait_ms=0",
-      input.origin,
-      string(job, "id")
-    ),
-  )
-  .await;
-  assert_lifecycle_order(events["items"].as_array().unwrap());
-  assert_resource_samples(events["items"].as_array().unwrap(), input.maximum_disk_bytes);
-  json!({"accepted": accepted, "cancellation": cancellation, "build": build, "attempt": attempt, "events": events})
 }
 
 async fn wait_for_trigger_build(pool: &PgPool, trigger_id: &str) -> String {

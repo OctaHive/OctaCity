@@ -23,10 +23,10 @@ pub fn is_compatible(
     os: requirements.operating_system,
     architecture: requirements.architecture,
   };
-  let plugin_platform = plugin_platform(inventory.host_platform);
+  let source_plugin_platform = plugin_platform(inventory.host_platform);
+  let task_plugin_platform = plugin_platform(platform);
   labels_match(inventory, requirements)
     && resources_match(snapshot, requirements)
-    && runtime_matches(inventory, requirements.runtime_class, platform)
     && backend_is_available(inventory, snapshot, requirements.runtime_class, platform)
     && capabilities_match(inventory, requirements)
     && inventory.octa.version == policy.octa.version
@@ -34,12 +34,15 @@ pub fn is_compatible(
     && inventory.octa.runner_protocols.contains(&policy.octa.runner_protocol)
     && inventory.octa.event_schemas.contains(&policy.octa.event_schema)
     && inventory.octa.plugin_protocols.contains(&policy.octa.plugin_protocol)
-    && plugins_match(&inventory.octa.plugins, policy.octa, &plugin_platform)
+    && plugins_match(&inventory.octa.plugins, policy.octa, &task_plugin_platform)
     && inventory.source_plugins.iter().any(|source| {
       source.name == policy.source_provider
         && source.version == policy.source_plugin_version
         && source.sha256 == policy.source_plugin_sha256
-        && source.platforms.iter().any(|candidate| candidate == &plugin_platform)
+        && source
+          .platforms
+          .iter()
+          .any(|candidate| candidate == &source_plugin_platform)
     })
     && (!policy.requires_cache
       || inventory.cache.as_ref().is_some_and(|cache| {
@@ -97,21 +100,6 @@ fn backend_is_available(
         .backends
         .iter()
         .any(|health| health.backend == runtime.backend && !matches!(health.status, BackendHealthStatus::Unavailable))
-  })
-}
-
-fn runtime_matches(inventory: &AgentInventory, class: RuntimeClass, platform: PlatformSpec) -> bool {
-  inventory.runtimes.iter().any(|runtime| {
-    runtime.platform == platform
-      && match class {
-        RuntimeClass::Native => runtime.mode == RuntimeMode::Native && runtime.isolation.is_none(),
-        RuntimeClass::OciProcess => {
-          runtime.mode == RuntimeMode::Oci && runtime.isolation == Some(OciIsolation::Process)
-        }
-        RuntimeClass::OciHypervisor => {
-          runtime.mode == RuntimeMode::Oci && runtime.isolation == Some(OciIsolation::Hypervisor)
-        }
-      }
   })
 }
 
@@ -246,6 +234,39 @@ mod tests {
     ));
   }
 
+  #[test]
+  fn host_plugins_and_guest_task_plugins_match_their_own_platforms() {
+    let mut requirements = requirements();
+    requirements.capabilities = BTreeSet::from([
+      ExecutionCapability::new("oci.hypervisor").unwrap(),
+      ExecutionCapability::new("shell").unwrap(),
+    ]);
+    requirements.runtime_class = RuntimeClass::OciHypervisor;
+
+    let mut inventory = inventory();
+    inventory.host_platform = PlatformSpec {
+      os: PlatformOs::Macos,
+      architecture: PlatformArchitecture::Arm64,
+    };
+    inventory.source_plugins[0].platforms = vec![plugin_platform(inventory.host_platform)];
+    inventory.runtimes[0] = RuntimeCapability {
+      backend: "microsandbox".to_owned(),
+      mode: RuntimeMode::Oci,
+      platform: platform(),
+      isolation: Some(OciIsolation::Hypervisor),
+    };
+
+    let mut snapshot = snapshot();
+    snapshot.backends[0].backend = "microsandbox".to_owned();
+    let template = template_for(RuntimeTarget::Oci {
+      image: format!("example.invalid/octa@sha256:{DIGEST}"),
+      platform: platform(),
+      isolation: OciIsolation::Hypervisor,
+    });
+
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+  }
+
   fn requirements() -> JobRequirements {
     JobRequirements {
       capabilities: BTreeSet::from([
@@ -328,6 +349,10 @@ mod tests {
   }
 
   fn template() -> JobSpecTemplate {
+    template_for(RuntimeTarget::Native { platform: platform() })
+  }
+
+  fn template_for(runtime_target: RuntimeTarget) -> JobSpecTemplate {
     let build = JobSpecBuildSnapshot::new(
       BuildId::from_uuid(Uuid::from_u128(1)).unwrap(),
       ImmutableRevision::new("revision").unwrap(),
@@ -347,7 +372,7 @@ mod tests {
         plugin_digests: BTreeMap::from([("shell".to_owned(), DIGEST.to_owned())]),
       },
       RuntimeSpec {
-        target: RuntimeTarget::Native { platform: platform() },
+        target: runtime_target,
         cpu_millis: 1_500,
         memory_bytes: 2_048,
         writable_disk_bytes: 4_096,

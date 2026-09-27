@@ -16,7 +16,7 @@ The server SHALL store projects as versioned resources with an optional parent p
 - **THEN** the server rejects the mutation and preserves the existing hierarchy
 
 ### Requirement: Explicit inherited project policy
-The server SHALL resolve documented inheritable policy from root to leaf, store an immutable effective-policy snapshot with each build, and require explicit child overrides. Inheritable policy SHALL include allowed agent pools, repository access, secret and workload-identity profiles, runtime policy, cache namespace policy, output limits, concurrency, and retention where configured.
+The server SHALL resolve documented inheritable policy from root to leaf, store an immutable effective-policy snapshot with each build, and require explicit child overrides. Inheritable policy SHALL include allowed agent pools, repository access, secret and workload-identity profiles, provider-neutral execution-mode and target-platform policy, cache namespace policy, output limits, concurrency, and retention where configured.
 
 #### Scenario: Child narrows inherited pools
 - **WHEN** a child project restricts its inherited allowed-pool set
@@ -38,7 +38,7 @@ A pipeline SHALL be an immutable versioned directed acyclic graph of job templat
 - **THEN** subsequent builds may use the new version while existing builds and retries retain their recorded pipeline snapshot
 
 ### Requirement: Versioned build configurations
-A build configuration SHALL belong to exactly one project and store a sibling-unique name, enabled state, repository selection, pipeline version, parameter schema and defaults, trigger policy, agent requirements, allowed pool restriction, runtime policy, cache policy, output policy, and retry policy. Each accepted mutation SHALL create a new configuration version without rewriting builds created from an older version.
+A build configuration SHALL belong to exactly one project and store a sibling-unique name, enabled state, repository selection, pipeline version, parameter schema and defaults, trigger policy, agent requirements, allowed pool restriction, provider-neutral execution-mode and target-platform policy, cache policy, output policy, and retry policy. Each accepted mutation SHALL create a new configuration version without rewriting builds created from an older version.
 
 #### Scenario: Build configuration is updated
 - **WHEN** an operator changes a configuration's pipeline or execution policy using its current version precondition
