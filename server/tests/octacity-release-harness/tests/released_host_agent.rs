@@ -144,8 +144,9 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
   assert_eq!(
     success.status,
     JobCompletionStatus::Succeeded,
-    "successful Host scenario completion: {}",
-    serde_json::to_string_pretty(&success).unwrap()
+    "successful Host scenario completion: {}; Agent stderr: {}",
+    serde_json::to_string_pretty(&success).unwrap(),
+    read_log(&stderr_path)
   );
   assert_resource_accounting(&success);
   assert!(

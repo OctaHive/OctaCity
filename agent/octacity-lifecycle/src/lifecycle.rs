@@ -423,6 +423,13 @@ impl JobLifecycle {
       }
       Some(Err(failure)) => {
         let status = job_error_status(failure.error());
+        warn!(
+          job_id = %lease.job_id,
+          attempt = lease.attempt,
+          error = %failure,
+          ?status,
+          "job execution failed"
+        );
         let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
         let cleanup = if cleaning_recorded {
           failure.cleanup().await.map_err(|error| error.to_string())
