@@ -16,6 +16,7 @@ pub(super) enum ReleaseBackend {
     state_root: PathBuf,
     executable: PathBuf,
     libkrunfw: PathBuf,
+    environment_identity: String,
     image: String,
     workspace_bytes: u64,
   },
@@ -77,6 +78,7 @@ impl ReleaseBackend {
           state_root: required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT", true),
           executable: required_path("OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE", true),
           libkrunfw: required_path("OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW", true),
+          environment_identity: required_string("OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY"),
           image: required_string("OCTACITY_CONTRACT_MICROSANDBOX_IMAGE"),
           workspace_bytes: required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES"),
         }
@@ -141,7 +143,7 @@ impl ReleaseBackend {
   pub(super) fn runtime_class(&self) -> &'static str {
     match self {
       Self::Native { .. } => "native",
-      Self::Microsandbox { .. } => "oci_hypervisor",
+      Self::Microsandbox { .. } => "virtualization",
       Self::Containerd { .. } => "isolation",
       Self::AppleVf { .. } => "isolation",
     }
@@ -150,7 +152,7 @@ impl ReleaseBackend {
   pub(super) fn legacy_capability(&self) -> Option<&'static str> {
     match self {
       Self::Native { .. } => Some("native"),
-      Self::Microsandbox { .. } => Some("oci.hypervisor"),
+      Self::Microsandbox { .. } => None,
       Self::Containerd { .. } => None,
       Self::AppleVf { .. } => None,
     }
@@ -158,6 +160,10 @@ impl ReleaseBackend {
 
   pub(super) fn host_platform(&self) -> Value {
     match self {
+      Self::Microsandbox { .. } => json!({
+        "os": env::consts::OS,
+        "architecture": host_architecture()
+      }),
       Self::Containerd { .. } => json!({
         "os": "linux",
         "architecture": host_architecture()
@@ -166,25 +172,32 @@ impl ReleaseBackend {
         "os": "macos",
         "architecture": "arm64"
       }),
-      Self::Native { .. } | Self::Microsandbox { .. } => Value::Null,
+      Self::Native { .. } => Value::Null,
     }
   }
 
   pub(super) fn required_guarantees(&self) -> Value {
     match self {
+      Self::Microsandbox { .. } => json!([
+        "filesystem_isolation",
+        "process_isolation",
+        "network_isolation",
+        "resource_isolation",
+        "hardware_virtualization"
+      ]),
       Self::Containerd { .. } | Self::AppleVf { .. } => json!([
         "filesystem_isolation",
         "process_isolation",
         "network_isolation",
         "resource_isolation"
       ]),
-      Self::Native { .. } | Self::Microsandbox { .. } => json!([]),
+      Self::Native { .. } => json!([]),
     }
   }
 
   pub(super) fn execution_target(&self) -> Option<Value> {
     match self {
-      Self::Containerd { .. } | Self::AppleVf { .. } => Some(json!({
+      Self::Microsandbox { .. } | Self::Containerd { .. } | Self::AppleVf { .. } => Some(json!({
         "mode": self.runtime_class(),
         "host_platform": self.host_platform(),
         "target_platform": {
@@ -193,7 +206,7 @@ impl ReleaseBackend {
         },
         "required_guarantees": self.required_guarantees()
       })),
-      Self::Native { .. } | Self::Microsandbox { .. } => None,
+      Self::Native { .. } => None,
     }
   }
 

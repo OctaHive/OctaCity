@@ -293,16 +293,18 @@ the agent rejects Native execution when either boundary cannot be enforced.
 Native processes inherit no service environment: operators provide the small
 static environment, including `PATH`, through `native_environment`.
 
-OCI hypervisor execution currently uses Microsandbox on Linux (`x86_64` and
-`aarch64`) and Apple Silicon macOS. A macOS agent runs a `linux/arm64` OCI guest;
+Provider-neutral `virtualization` currently uses Microsandbox on Linux
+(`x86_64` and `aarch64`) and Apple Silicon macOS. A macOS agent runs a
+`linux/arm64` guest;
 source plugins remain native macOS executables because source acquisition runs
 on the host. Its OCI root overlay is RAM-backed and charged to the VM memory
 limit, leaving the quota-limited workspace as the only disk-backed writable
-mount. Intel macOS is rejected. Linux OCI process execution uses a
+mount. Intel macOS is rejected. Windows/WHP support remains preview-only: its
+explicit self-hosted gate records prerequisite backend evidence but does not
+promote Windows into the release-qualified matrix. Linux
+OCI process execution uses a
 configured containerd socket, namespace, snapshotter, and runc/crun runtime
-through gRPC; it currently accepts only `network = "disabled"`. Windows and
-host-native macOS execution are not advertised until strict implementations
-pass the same real backend contract. Every installed Octa
+through gRPC; it currently accepts only `network = "disabled"`. Every installed Octa
 release includes `octa-runner-capabilities.json`, generated alongside the
 runner with `octa-runner capabilities`. Inventory reads this bounded manifest
 instead of trying to execute a guest Linux binary on the host; the runner still

@@ -49,17 +49,24 @@ use plan::{SandboxPlan, canonical_runtime_file, directory_size_async};
 const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 const MEBIBYTE: u64 = 1024 * 1024;
 const OWNER_LABEL: &str = "octacity.agent";
-const GUEST_PLATFORM: Option<&str> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+const GUEST_PLATFORM: Option<&str> = if cfg!(all(
+  any(target_os = "linux", target_os = "windows"),
+  target_arch = "x86_64"
+)) {
   Some("linux-x86_64")
 } else if cfg!(any(
   all(target_os = "linux", target_arch = "aarch64"),
-  all(target_os = "macos", target_arch = "aarch64")
+  all(target_os = "macos", target_arch = "aarch64"),
+  all(target_os = "windows", target_arch = "aarch64")
 )) {
   Some("linux-aarch64")
 } else {
   None
 };
-const GUEST_CAPABILITY: Option<OciCapability> = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+const GUEST_CAPABILITY: Option<OciCapability> = if cfg!(all(
+  any(target_os = "linux", target_os = "windows"),
+  target_arch = "x86_64"
+)) {
   Some(OciCapability {
     platform: ExecutionPlatform {
       os: ExecutionOs::Linux,
@@ -69,7 +76,8 @@ const GUEST_CAPABILITY: Option<OciCapability> = if cfg!(all(target_os = "linux",
   })
 } else if cfg!(any(
   all(target_os = "linux", target_arch = "aarch64"),
-  all(target_os = "macos", target_arch = "aarch64")
+  all(target_os = "macos", target_arch = "aarch64"),
+  all(target_os = "windows", target_arch = "aarch64")
 )) {
   Some(OciCapability {
     platform: ExecutionPlatform {
@@ -129,7 +137,7 @@ impl MicrosandboxEngine {
     } = config;
     let guest_platform = GUEST_PLATFORM.ok_or_else(|| {
       unavailable(format!(
-        "Microsandbox execution is unsupported on {}-{}; supported hosts are Linux x86_64/aarch64 and macOS aarch64",
+        "Microsandbox execution is unsupported on {}-{}; supported hosts are Linux x86_64/aarch64, macOS aarch64, and Windows x86_64/aarch64 with WHP",
         std::env::consts::OS,
         std::env::consts::ARCH
       ))

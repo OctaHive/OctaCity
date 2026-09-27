@@ -21,6 +21,7 @@ on:
           - linux-microsandbox
           - macos-apple-vf
           - macos-microsandbox
+          - windows-microsandbox-preview
 
 permissions:
   contents: read
@@ -378,6 +379,53 @@ jobs:
           name: release-slice-macos-microsandbox
           path: ${{ steps.release-slice.outputs.evidence }}
           if-no-files-found: error
+
+  windows-microsandbox-preview:
+    name: Windows WHP Microsandbox preview (not release-qualified)
+    if: ${{ inputs.suite == 'windows-microsandbox-preview' }}
+    runs-on: [self-hosted, Windows, X64, octacity-microsandbox-whp]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Set up Microsandbox guest agent
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Prepare pinned Windows WHP Microsandbox environment
+        shell: pwsh
+        working-directory: octacity
+        env:
+          OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}
+          OCTA_SOURCE_REVISION: ${{ steps.octa-source.outputs.revision }}
+        run: tools/runner/self-hosted-microsandbox-whp.ps1 setup $env:OCTA_RELEASE_VERSION $env:OCTA_SOURCE_REVISION
+      - name: Run real Windows WHP Microsandbox backend contract
+        working-directory: octacity
+        run: >-
+          cargo test -p octacity-job --test backend_contract
+          microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+      - name: Package and verify the Windows Agent release candidate
+        uses: ./octacity/.github/actions/package-release-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+          include-server: "false"
+      - name: Verify Microsandbox cleanup
+        shell: pwsh
+        working-directory: octacity
+        run: tools/runner/self-hosted-microsandbox-whp.ps1 verify-clean
+      - name: Clean up Windows WHP Microsandbox environment
+        if: always()
+        shell: pwsh
+        working-directory: octacity
+        run: tools/runner/self-hosted-microsandbox-whp.ps1 cleanup
 
   macos-apple-vf:
     if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'macos-apple-vf' }}

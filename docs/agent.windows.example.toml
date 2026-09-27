@@ -62,6 +62,16 @@ resource_sample_timeout_seconds = 1
 max_accounting_failures = 3
 oci_engines = []
 
+# Windows/WHP virtualization remains preview-only until the self-hosted
+# released-machine contract passes. Do not enable or advertise this route in a
+# release pool before that evidence exists.
+# [[virtualization_providers]]
+# provider = "microsandbox"
+# environment_identity = "microsandbox-0.6.18-linux-amd64-preview"
+# executable = 'C:\Program Files\Microsandbox\msb.exe'
+# libkrunfw = 'C:\Program Files\Microsandbox\libkrunfw.dll'
+# metrics_sample_interval_seconds = 1
+
 [server_signing_keys]
 primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
 

@@ -10,7 +10,10 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
-use octacity_config::{AgentConfig, IsolationProviderConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig};
+use octacity_config::{
+  AgentConfig, IsolationProviderConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig,
+  VirtualizationProviderConfig,
+};
 use octacity_coordinator::{
   CacheSessionCoordinator, CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, OutputUploadCoordinator,
   RetryPolicy,
@@ -63,7 +66,7 @@ impl Components {
       backend_health,
       cache,
     } = build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
-    let workspace_capacity_reservation = workspace_capacity_reservation(&runtimes);
+    let workspace_capacity_reservation = workspace_capacity_reservation(&runtimes, &executions);
     let virtualization_available = workspace_capacity_reservation == WorkspaceCapacityReservation::Required;
     let host = HostMonitor::new(
       validated.config.work_root.clone(),
@@ -146,6 +149,7 @@ async fn build_executor(
       .iter()
       .any(|engine| matches!(engine, OciEngineConfig::Containerd { .. })),
     ValidatedRuntimeConfig::Isolation { providers } => !providers.is_empty(),
+    ValidatedRuntimeConfig::Virtualization { .. } => false,
   }) {
     let aggregate_max_bytes = validated
       .config
@@ -228,16 +232,13 @@ async fn build_executor(
               metrics_sample_interval_seconds,
             } => (
               MICROSANDBOX_ENGINE_NAME,
-              Arc::new(MicrosandboxEngine::new(MicrosandboxEngineConfig {
-                agent_id: validated.config.agent_id.clone(),
-                state_root: validated.config.state_root.clone(),
-                work_root: validated.config.work_root.clone(),
-                runner_platform: runner.capabilities.platform.clone(),
-                executable: executable.clone(),
-                libkrunfw: libkrunfw.clone(),
-                cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
-                metrics_sample_interval: Duration::from_secs(*metrics_sample_interval_seconds),
-              })?),
+              Arc::new(microsandbox_engine(
+                validated,
+                &runner,
+                executable,
+                libkrunfw,
+                *metrics_sample_interval_seconds,
+              )?),
             ),
             OciEngineConfig::Containerd {
               endpoint,
@@ -364,6 +365,47 @@ async fn build_executor(
           }
         }
       }
+      ValidatedRuntimeConfig::Virtualization { providers } => {
+        for provider in providers {
+          match provider {
+            VirtualizationProviderConfig::Microsandbox {
+              environment_identity,
+              executable,
+              libkrunfw,
+              metrics_sample_interval_seconds,
+            } => {
+              let engine = Arc::new(microsandbox_engine(
+                validated,
+                &runner,
+                executable,
+                libkrunfw,
+                *metrics_sample_interval_seconds,
+              )?);
+              let engine_capability = exactly_one_capability(MICROSANDBOX_ENGINE_NAME, engine.capabilities())?;
+              if engine_capability.isolation != OciIsolation::Hypervisor {
+                return Err("Microsandbox virtualization provider must enforce hypervisor isolation".into());
+              }
+              let capability = ExecutionCapabilityV2 {
+                provider: ExecutionProviderId::new(MICROSANDBOX_ENGINE_NAME)
+                  .map_err(octacity_execution::ExecutionError::Invalid)?,
+                mode: ExecutionMode::Virtualization,
+                host_platform: host_platform()?,
+                target_platform: protocol_platform(engine_capability.platform),
+                guarantees: guarantees_for(ExecutionMode::Virtualization),
+                immutable_images: true,
+              };
+              let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
+              execution_routes.push(ExecutionBackendRoute::new(
+                capability.clone(),
+                environment_identity.clone(),
+                backend,
+              )?);
+              backend_health.push(ready_execution(&capability));
+              execution_capabilities.push(capability);
+            }
+          }
+        }
+      }
     }
   }
   let source: Arc<dyn SourceMaterializer> = source_plugins;
@@ -423,6 +465,25 @@ struct ContainerdAssemblyConfig<'a> {
   open_files_limit: u64,
 }
 
+fn microsandbox_engine(
+  validated: &ValidatedConfig,
+  runner: &RunnerInstallation,
+  executable: &Path,
+  libkrunfw: &Path,
+  metrics_sample_interval_seconds: u64,
+) -> Result<MicrosandboxEngine, octacity_execution::ExecutionError> {
+  MicrosandboxEngine::new(MicrosandboxEngineConfig {
+    agent_id: validated.config.agent_id.clone(),
+    state_root: validated.config.state_root.clone(),
+    work_root: validated.config.work_root.clone(),
+    runner_platform: runner.capabilities.platform.clone(),
+    executable: executable.to_owned(),
+    libkrunfw: libkrunfw.to_owned(),
+    cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+    metrics_sample_interval: Duration::from_secs(metrics_sample_interval_seconds),
+  })
+}
+
 fn containerd_engine(
   validated: &ValidatedConfig,
   config: ContainerdAssemblyConfig<'_>,
@@ -449,7 +510,7 @@ fn exactly_one_capability(
 ) -> Result<OciCapability, octacity_execution::ExecutionError> {
   let [capability]: [OciCapability; 1] = capabilities.try_into().map_err(|capabilities: Vec<_>| {
     octacity_execution::ExecutionError::Invalid(format!(
-      "{provider} isolation provider must advertise exactly one capability, got {}",
+      "{provider} execution provider must advertise exactly one capability, got {}",
       capabilities.len()
     ))
   })?;
@@ -500,10 +561,16 @@ fn ready_execution(capability: &ExecutionCapabilityV2) -> BackendHealth {
   }
 }
 
-fn workspace_capacity_reservation(runtimes: &[RuntimeCapability]) -> WorkspaceCapacityReservation {
+fn workspace_capacity_reservation(
+  runtimes: &[RuntimeCapability],
+  executions: &[ExecutionCapabilityV2],
+) -> WorkspaceCapacityReservation {
   if runtimes
     .iter()
     .any(|capability| capability.isolation == Some(octacity_protocol::OciIsolation::Hypervisor))
+    || executions
+      .iter()
+      .any(|capability| capability.mode == ExecutionMode::Virtualization)
   {
     WorkspaceCapacityReservation::Required
   } else {
@@ -596,7 +663,7 @@ source_plugins_dir = "{}"
 workload_identity_profiles = {{}}
 cache = {{ root = "{}", capacity = {{ max_bytes = 1048576, high_watermark_bytes = 943718, low_watermark_bytes = 838860 }}, max_scopes = 4, allow_read = true, allow_write = true, allowed_remote_origins = ["https://cache.example"], native_environment_identities = {{}}, request_timeout_seconds = 10, max_parallel_transfers = 2 }}
 maintenance = {{ work_reserve_bytes = 1, state_reserve_bytes = 1, cache_reserve_bytes = 1, disk_check_interval_seconds = 1 }}
-enabled_runtime_modes = ["oci"]
+enabled_runtime_modes = []
 allow_native_execution = false
 native_linux_pids_limit = 0
 allow_unrestricted_network = false
@@ -629,8 +696,9 @@ max_accounting_failures = 1
 [server_signing_keys]
 primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
 
-[[oci_engines]]
-engine = "microsandbox"
+[[virtualization_providers]]
+provider = "microsandbox"
+environment_identity = "microsandbox-linux-guest-v1"
 executable = "{}"
 libkrunfw = "{}"
 metrics_sample_interval_seconds = 1
@@ -684,7 +752,7 @@ metrics_sample_interval_seconds = 1
     assert_eq!(process.platform.architecture, PlatformArchitecture::Amd64);
     assert_eq!(process.isolation, Some(octacity_protocol::OciIsolation::Process));
     assert_eq!(
-      workspace_capacity_reservation(std::slice::from_ref(&process)),
+      workspace_capacity_reservation(std::slice::from_ref(&process), &[]),
       WorkspaceCapacityReservation::Preallocated
     );
 
@@ -702,7 +770,7 @@ metrics_sample_interval_seconds = 1
     assert_eq!(hypervisor.platform.architecture, PlatformArchitecture::Arm64);
     assert_eq!(hypervisor.isolation, Some(octacity_protocol::OciIsolation::Hypervisor));
     assert_eq!(
-      workspace_capacity_reservation(&[process, hypervisor]),
+      workspace_capacity_reservation(&[process, hypervisor], &[]),
       WorkspaceCapacityReservation::Required
     );
   }
@@ -735,13 +803,15 @@ metrics_sample_interval_seconds = 1
       components.workspace_capacity_reservation,
       WorkspaceCapacityReservation::Required
     );
-    assert_eq!(components.inventory.runtimes.len(), 1);
-    assert_eq!(components.inventory.runtimes[0].backend, MICROSANDBOX_ENGINE_NAME);
-    assert_eq!(
-      components.inventory.runtimes[0].isolation,
-      Some(octacity_protocol::OciIsolation::Hypervisor)
-    );
+    assert!(components.inventory.runtimes.is_empty());
+    assert_eq!(components.inventory.executions.len(), 1);
+    let capability = &components.inventory.executions[0];
+    assert_eq!(capability.provider.as_str(), MICROSANDBOX_ENGINE_NAME);
+    assert_eq!(capability.mode, ExecutionMode::Virtualization);
+    assert_eq!(capability.guarantees, guarantees_for(ExecutionMode::Virtualization));
+    assert_eq!(capability.host_platform, host_platform().unwrap());
+    assert_eq!(capability.target_platform.os, PlatformOs::Linux);
     assert!(components.host.capacity().virtualization_available);
-    assert_eq!(components.backend_health, vec![ready_backend(MICROSANDBOX_ENGINE_NAME)]);
+    assert_eq!(components.backend_health, vec![ready_execution(capability)]);
   }
 }

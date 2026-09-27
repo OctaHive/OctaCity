@@ -92,6 +92,17 @@ max_accounting_failures = 3
 # pids_limit = 4096
 # open_files_limit = 65536
 #
+# Hardware virtualization is provider-neutral in revision 2. Microsandbox
+# supplies a Linux guest; the stable identity partitions cache entries by the
+# exact qualified runtime, guest image family, and toolchain.
+#
+# [[virtualization_providers]]
+# provider = "microsandbox"
+# environment_identity = "microsandbox-0.6.18-linux-amd64-v1"
+# executable = "/opt/microsandbox/bin/msb"
+# libkrunfw = "/opt/microsandbox/lib/libkrunfw.so"
+# metrics_sample_interval_seconds = 1
+#
 # Legacy OCI engines remain available for revision-1 JobSpecs. To use them,
 # include "oci" in enabled_runtime_modes and add one or both tables below.
 # New revision-2 deployments should use isolation_providers for containerd.

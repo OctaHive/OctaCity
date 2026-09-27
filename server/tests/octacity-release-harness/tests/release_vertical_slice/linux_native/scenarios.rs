@@ -26,9 +26,13 @@ pub(super) struct ManualBuildInput<'a> {
 
 pub(super) struct CancellationInput<'a> {
   pub(super) build: ManualBuildInput<'a>,
-  pub(super) cgroup_root: &'a Path,
-  pub(super) cgroup_baseline: &'a BTreeSet<OsString>,
+  pub(super) native_cgroup: Option<NativeCgroupAssertion<'a>>,
   pub(super) maximum_disk_bytes: u64,
+}
+
+pub(super) struct NativeCgroupAssertion<'a> {
+  pub(super) root: &'a Path,
+  pub(super) baseline: &'a BTreeSet<OsString>,
 }
 
 pub(super) struct RetryInput<'a> {
@@ -83,7 +87,9 @@ pub(super) async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Chi
       .iter()
       .any(|event| event["payload"]["source"] == "agent" && event["payload"]["event"]["type"] == "resource_usage");
     if started && sampled {
-      assert_native_resource_controls(input.cgroup_root, input.cgroup_baseline);
+      if let Some(cgroup) = &input.native_cgroup {
+        assert_native_resource_controls(cgroup.root, cgroup.baseline);
+      }
       break;
     }
     assert!(

@@ -10,7 +10,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::VerifyingKey;
 use http::Uri;
 
-use super::{ConfigError, IsolationProviderConfig, OciEngineConfig};
+use super::{ConfigError, IsolationProviderConfig, OciEngineConfig, VirtualizationProviderConfig};
 
 /// Validates that configured OCI engines exactly implement the enabled mode.
 ///
@@ -122,6 +122,43 @@ pub(super) fn validate_isolation_providers(
     if !kinds.insert(kind) {
       return invalid(format!(
         "isolation_providers must not contain duplicate '{kind}' providers"
+      ));
+    }
+  }
+  Ok(())
+}
+
+/// Validates provider-neutral virtualization independently of legacy OCI.
+pub(super) fn validate_virtualization_providers(
+  providers: &mut [VirtualizationProviderConfig],
+  legacy_engines: &[OciEngineConfig],
+) -> Result<(), ConfigError> {
+  let legacy_microsandbox = legacy_engines
+    .iter()
+    .any(|engine| matches!(engine, OciEngineConfig::Microsandbox { .. }));
+  let mut kinds = BTreeSet::new();
+  for provider in providers {
+    let kind = match provider {
+      VirtualizationProviderConfig::Microsandbox {
+        executable,
+        libkrunfw,
+        metrics_sample_interval_seconds,
+        ..
+      } => {
+        if legacy_microsandbox {
+          return invalid("Microsandbox cannot own legacy OCI and v2 virtualization routes in one Agent process");
+        }
+        *executable = canonical_regular_file("Microsandbox executable", executable)?;
+        *libkrunfw = canonical_regular_file("Microsandbox libkrunfw", libkrunfw)?;
+        if *metrics_sample_interval_seconds == 0 {
+          return invalid("Microsandbox metrics_sample_interval_seconds must be greater than zero");
+        }
+        "microsandbox"
+      }
+    };
+    if !kinds.insert(kind) {
+      return invalid(format!(
+        "virtualization_providers must not contain duplicate '{kind}' providers"
       ));
     }
   }

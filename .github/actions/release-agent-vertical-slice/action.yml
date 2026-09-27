@@ -110,7 +110,7 @@ runs:
           containerd) test_name=released_linux_containerd_matrix_satisfies_the_end_to_end_contract ;;
           apple-vf-isolation) test_name=released_macos_apple_vf_matrix_satisfies_the_end_to_end_contract ;;
           linux-microsandbox) test_name=released_linux_microsandbox_matrix_satisfies_the_end_to_end_contract ;;
-          microsandbox) test_name=released_agent_completes_a_sequential_pipeline_through_rest_and_postgres ;;
+          microsandbox) test_name=released_macos_microsandbox_matrix_satisfies_the_end_to_end_contract ;;
           *) printf 'unsupported release backend: %s\n' "${OCTACITY_RELEASE_BACKEND}" >&2; exit 1 ;;
         esac
         command=(cargo test --locked -p octacity-release-harness --test release_vertical_slice "${test_name}"

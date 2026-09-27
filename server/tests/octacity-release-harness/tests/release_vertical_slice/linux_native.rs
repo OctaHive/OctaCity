@@ -36,7 +36,9 @@ mod scenarios;
 
 use cache_proxy::TlsCacheProxy;
 use checks::*;
-use scenarios::{CancellationInput, ManualBuildInput, RetryInput, run_and_cancel, run_and_retry};
+use scenarios::{
+  CancellationInput, ManualBuildInput, NativeCgroupAssertion, RetryInput, run_and_cancel, run_and_retry,
+};
 
 const FIXTURE_OCTAFILE: &str = "fixtures/release/linux-native/Octafile.yml";
 const CACHE_NAMESPACE: &str = "release-linux-native";
@@ -104,8 +106,23 @@ impl MatrixAgent {
 }
 
 pub(super) async fn run() {
+  run_matrix("native").await;
+}
+
+pub(super) async fn run_microsandbox() {
+  run_matrix("microsandbox").await;
+}
+
+async fn run_matrix(expected_backend: &str) {
   let backend = ReleaseBackend::from_environment();
-  assert!(matches!(backend, ReleaseBackend::Native { .. }));
+  assert_eq!(backend.name(), expected_backend);
+  assert!(
+    matches!(
+      backend,
+      ReleaseBackend::Native { .. } | ReleaseBackend::Microsandbox { .. }
+    ),
+    "the extended release matrix supports Native and Microsandbox"
+  );
   let postgres_url = required_string("OCTACITY_POSTGRES_URL");
   let object_endpoint = required_string("OCTACITY_MINIO_ENDPOINT");
   let source_repository = required_string("OCTACITY_RELEASE_SOURCE_REPOSITORY");
@@ -120,17 +137,19 @@ pub(super) async fn run() {
     .await
     .unwrap();
 
-  let (work_root, cgroup_root) = native_roots(&backend);
+  let work_root = backend_work_root(&backend);
+  let native_roots = native_roots(&backend);
   let cache_root = native_cache_root(&backend);
   let available_workspace_bytes = available_disk_bytes(work_root);
   assert!(
     available_workspace_bytes >= backend.workspace_bytes(),
-    "Native work filesystem has {available_workspace_bytes} available bytes but the release Job requires {}",
+    "{} work filesystem has {available_workspace_bytes} available bytes but the release Job requires {}",
+    backend.name(),
     backend.workspace_bytes()
   );
   let work_baseline = directory_entries(work_root);
-  let cgroup_baseline = directory_entries(cgroup_root);
-  let cache_baseline = directory_entries(cache_root);
+  let cgroup_baseline = native_roots.map(|(_, cgroup_root)| directory_entries(cgroup_root));
+  let cache_baseline = cache_root.map(directory_entries);
   let management_addr = unused_loopback_address();
   let agent_addr = unused_loopback_address();
   let cache_addr = unused_loopback_address();
@@ -157,7 +176,7 @@ pub(super) async fn run() {
   let run_id = Uuid::new_v4().simple().to_string();
   let resources = create_resources(&client, &management_origin, &run_id, &source_repository, &backend).await;
 
-  let agent_a_name = format!("release-native-a-{run_id}");
+  let agent_a_name = format!("release-{}-a-{run_id}", backend.name());
   let mut agent_a = start_matrix_agent(AgentStartInput {
     client: &client,
     management_origin: &management_origin,
@@ -231,9 +250,11 @@ pub(super) async fn run() {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
-  remove_agent_cache_entries(cache_root, &cache_baseline);
+  if let (Some(cache_root), Some(cache_baseline)) = (cache_root, cache_baseline.as_ref()) {
+    remove_agent_cache_entries(cache_root, cache_baseline);
+  }
 
-  let agent_b_name = format!("release-native-b-{run_id}");
+  let agent_b_name = format!("release-{}-b-{run_id}", backend.name());
   let mut agent_b = start_matrix_agent(AgentStartInput {
     client: &client,
     management_origin: &management_origin,
@@ -303,8 +324,12 @@ pub(super) async fn run() {
         revision: &revision,
         stderr: &evidence.join("agent-b.stderr.log"),
       },
-      cgroup_root,
-      cgroup_baseline: &cgroup_baseline,
+      native_cgroup: native_roots
+        .zip(cgroup_baseline.as_ref())
+        .map(|((_, cgroup_root), baseline)| NativeCgroupAssertion {
+          root: cgroup_root,
+          baseline,
+        }),
       maximum_disk_bytes: backend.workspace_bytes(),
     },
     agent_b.child_mut(),
@@ -320,15 +345,30 @@ pub(super) async fn run() {
   )
   .await;
 
-  remove_agent_cache_entries(cache_root, &cache_baseline);
+  if let (Some(cache_root), Some(cache_baseline)) = (cache_root, cache_baseline.as_ref()) {
+    remove_agent_cache_entries(cache_root, cache_baseline);
+  }
   sleep(Duration::from_secs(1)).await;
-  assert_eq!(directory_entries(work_root), work_baseline, "Native workspaces leaked");
-  assert_eq!(directory_entries(cgroup_root), cgroup_baseline, "Native cgroups leaked");
   assert_eq!(
-    directory_entries(cache_root),
-    cache_baseline,
-    "Native L1 cache scopes leaked"
+    directory_entries(work_root),
+    work_baseline,
+    "{} workspaces leaked",
+    backend.name()
   );
+  if let (Some((_, cgroup_root)), Some(cgroup_baseline)) = (native_roots, cgroup_baseline.as_ref()) {
+    assert_eq!(
+      directory_entries(cgroup_root),
+      *cgroup_baseline,
+      "Native cgroups leaked"
+    );
+  }
+  if let (Some(cache_root), Some(cache_baseline)) = (cache_root, cache_baseline.as_ref()) {
+    assert_eq!(
+      directory_entries(cache_root),
+      *cache_baseline,
+      "Native L1 cache scopes leaked"
+    );
+  }
   let metrics = client
     .get(format!("{management_origin}/metrics"))
     .send()
@@ -352,7 +392,7 @@ pub(super) async fn run() {
   );
   fs::write(evidence.join("metrics.prom"), &metrics).unwrap();
   fs::write(
-    evidence.join("linux-native-matrix.json"),
+    evidence.join(format!("{}-matrix.json", backend.name())),
     serde_json::to_vec_pretty(&json!({
       "server_release": release.server_manifest,
       "agent_release": release.agent_manifest,
@@ -854,23 +894,28 @@ fn assert_native_resource_controls(cgroup_root: &Path, baseline: &BTreeSet<OsStr
   assert_eq!(values[0], values[1], "1000 CPU millis must enforce one complete CPU");
 }
 
-fn native_roots(backend: &ReleaseBackend) -> (&Path, &Path) {
+fn backend_work_root(backend: &ReleaseBackend) -> &Path {
   match backend {
-    ReleaseBackend::Native {
-      work_root, cgroup_root, ..
-    } => (work_root, cgroup_root),
-    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => {
-      unreachable!()
-    }
+    ReleaseBackend::Native { work_root, .. }
+    | ReleaseBackend::Microsandbox { work_root, .. }
+    | ReleaseBackend::Containerd { work_root, .. }
+    | ReleaseBackend::AppleVf { work_root, .. } => work_root,
   }
 }
 
-fn native_cache_root(backend: &ReleaseBackend) -> &Path {
+fn native_roots(backend: &ReleaseBackend) -> Option<(&Path, &Path)> {
   match backend {
-    ReleaseBackend::Native { cache_root, .. } => cache_root,
-    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => {
-      unreachable!()
-    }
+    ReleaseBackend::Native {
+      work_root, cgroup_root, ..
+    } => Some((work_root, cgroup_root)),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => None,
+  }
+}
+
+fn native_cache_root(backend: &ReleaseBackend) -> Option<&Path> {
+  match backend {
+    ReleaseBackend::Native { cache_root, .. } => Some(cache_root),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => None,
   }
 }
 

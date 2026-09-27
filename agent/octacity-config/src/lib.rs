@@ -97,6 +97,9 @@ pub struct AgentConfig {
   /// Provider-neutral workload-isolation implementations.
   #[serde(default)]
   pub isolation_providers: Vec<IsolationProviderConfig>,
+  /// Provider-neutral hardware-virtualization implementations.
+  #[serde(default)]
+  pub virtualization_providers: Vec<VirtualizationProviderConfig>,
   /// Allows a signed job to request unrestricted network access.
   #[serde(default)]
   pub allow_unrestricted_network: bool,
@@ -282,6 +285,23 @@ pub enum IsolationProviderConfig {
   },
 }
 
+/// One operator-selected provider for execution-contract v2 virtualization.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "provider", rename_all = "snake_case", deny_unknown_fields)]
+pub enum VirtualizationProviderConfig {
+  /// Hardware-virtualized Linux guest supplied by Microsandbox.
+  Microsandbox {
+    /// Stable environment identity used to partition cache results.
+    environment_identity: ExecutionEnvironmentId,
+    /// Exact `msb` executable.
+    executable: PathBuf,
+    /// Exact libkrun firmware library.
+    libkrunfw: PathBuf,
+    /// Interval at which the microVM backend collects accounting samples.
+    metrics_sample_interval_seconds: u64,
+  },
+}
+
 /// Startup configuration after cryptographic and filesystem validation.
 #[derive(Debug)]
 pub struct ValidatedConfig {
@@ -326,6 +346,11 @@ pub enum ValidatedRuntimeConfig {
   Isolation {
     /// Providers in deterministic operator order.
     providers: Vec<IsolationProviderConfig>,
+  },
+  /// Provider-neutral hardware-virtualization routes.
+  Virtualization {
+    /// Providers in deterministic operator order.
+    providers: Vec<VirtualizationProviderConfig>,
   },
 }
 
@@ -628,6 +653,7 @@ impl AgentConfig {
     };
     validate_oci_engines(&mut self.oci_engines, modes.contains(&RuntimeMode::Oci))?;
     validate_isolation_providers(&mut self.isolation_providers, &self.oci_engines)?;
+    validate_virtualization_providers(&mut self.virtualization_providers, &self.oci_engines)?;
 
     let mut network_hosts = BTreeSet::new();
     for host in &self.allowed_network_hosts {
@@ -717,7 +743,8 @@ impl AgentConfig {
     let mut runtimes = Vec::with_capacity(
       self.enabled_runtime_modes.len()
         + usize::from(host_runtime.is_some())
-        + usize::from(!self.isolation_providers.is_empty()),
+        + usize::from(!self.isolation_providers.is_empty())
+        + usize::from(!self.virtualization_providers.is_empty()),
     );
     if let Some(host_runtime) = host_runtime {
       runtimes.push(host_runtime);
@@ -733,6 +760,11 @@ impl AgentConfig {
     if !self.isolation_providers.is_empty() {
       runtimes.push(ValidatedRuntimeConfig::Isolation {
         providers: self.isolation_providers.clone(),
+      });
+    }
+    if !self.virtualization_providers.is_empty() {
+      runtimes.push(ValidatedRuntimeConfig::Virtualization {
+        providers: self.virtualization_providers.clone(),
       });
     }
     Ok(ValidatedConfig {

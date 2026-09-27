@@ -5,6 +5,8 @@ use std::{fs::File, io::Write as _, path::Path};
 use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
+mod virtualization;
+
 #[cfg(windows)]
 const WINDOWS_FIXTURE_CREATE_ATTEMPTS: usize = 16;
 
@@ -83,6 +85,7 @@ impl Fixture {
       host_accounting_max_entries: 1_000_000,
       oci_engines: Vec::new(),
       isolation_providers: Vec::new(),
+      virtualization_providers: Vec::new(),
       allow_unrestricted_network: false,
       allowed_network_hosts: vec!["vault.example.com".to_owned()],
       allowed_upload_origins: vec!["https://objects.example".to_owned()],

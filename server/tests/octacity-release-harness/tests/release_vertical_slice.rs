@@ -84,7 +84,13 @@ async fn released_linux_containerd_matrix_satisfies_the_end_to_end_contract() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated released products and a provisioned Linux/KVM Microsandbox runner"]
 async fn released_linux_microsandbox_matrix_satisfies_the_end_to_end_contract() {
-  run_released_oci_vertical_slice(Some("linux-microsandbox")).await;
+  linux_native::run_microsandbox().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated released products and a provisioned Apple Silicon Microsandbox runner"]
+async fn released_macos_microsandbox_matrix_satisfies_the_end_to_end_contract() {
+  linux_native::run_microsandbox().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

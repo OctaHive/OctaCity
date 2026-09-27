@@ -131,6 +131,7 @@ oci_engines = []
       state_root,
       executable,
       libkrunfw,
+      environment_identity,
       ..
     } => (
       work_root,
@@ -138,13 +139,15 @@ oci_engines = []
       &local_cache,
       format!(
         r#"
-enabled_runtime_modes = ["oci"]
+enabled_runtime_modes = []
 allow_native_execution = false
 native_linux_readonly_paths = []
 native_linux_pids_limit = 0
 native_environment = {{}}
-oci_engines = [{{ engine = "microsandbox", executable = {}, libkrunfw = {}, metrics_sample_interval_seconds = 1 }}]
+oci_engines = []
+virtualization_providers = [{{ provider = "microsandbox", environment_identity = {}, executable = {}, libkrunfw = {}, metrics_sample_interval_seconds = 1 }}]
 "#,
+        toml_text(environment_identity),
         toml_string(executable),
         toml_string(libkrunfw)
       ),

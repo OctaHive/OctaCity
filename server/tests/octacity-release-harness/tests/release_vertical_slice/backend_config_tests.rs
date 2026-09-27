@@ -21,6 +21,7 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
     state_root: directory.path().join("state"),
     executable: directory.path().join("msb"),
     libkrunfw: directory.path().join("libkrunfw"),
+    environment_identity: "microsandbox-linux-guest-v1".to_owned(),
     image: format!("example.invalid/octa@sha256:{}", "a".repeat(64)),
     workspace_bytes: 1024 * 1024,
   };
@@ -52,8 +53,62 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
   assert_eq!(fs::metadata(&cache).unwrap().permissions().mode() & 0o777, 0o700);
   assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
-  assert_eq!(document["oci_engines"].as_array().unwrap().len(), 1);
-  assert_eq!(document["oci_engines"][0]["engine"].as_str(), Some("microsandbox"));
+  assert!(document["oci_engines"].as_array().unwrap().is_empty());
+  let provider = &document["virtualization_providers"][0];
+  assert_eq!(provider["provider"].as_str(), Some("microsandbox"));
+  assert_eq!(
+    provider["environment_identity"].as_str(),
+    Some("microsandbox-linux-guest-v1")
+  );
+}
+
+#[test]
+fn microsandbox_release_jobs_request_provider_neutral_virtualization() {
+  let backend = ReleaseBackend::Microsandbox {
+    work_root: PathBuf::from("/work"),
+    state_root: PathBuf::from("/state"),
+    executable: PathBuf::from("/opt/microsandbox/bin/msb"),
+    libkrunfw: PathBuf::from("/opt/microsandbox/lib/libkrunfw.so"),
+    environment_identity: "microsandbox-linux-guest-v1".to_owned(),
+    image: format!("example.invalid/octa@sha256:{}", "a".repeat(64)),
+    workspace_bytes: 1024 * 1024 * 1024,
+  };
+
+  let configuration = build_configuration("project", "repository", "pipeline", "pool", &backend);
+  let runtime = &configuration["definition"]["runtime"];
+  assert_eq!(runtime["class"], "virtualization");
+  assert_eq!(
+    runtime["host_platform"],
+    json!({"os": std::env::consts::OS, "architecture": host_architecture()})
+  );
+  assert_eq!(
+    runtime["required_guarantees"],
+    json!([
+      "filesystem_isolation",
+      "process_isolation",
+      "network_isolation",
+      "resource_isolation",
+      "hardware_virtualization"
+    ])
+  );
+  assert_eq!(runtime["operating_system"], "linux");
+  assert_eq!(runtime["architecture"], host_architecture());
+  assert_eq!(
+    backend.execution_target(),
+    Some(json!({
+      "mode": "virtualization",
+      "host_platform": {"os": std::env::consts::OS, "architecture": host_architecture()},
+      "target_platform": {"os": "linux", "architecture": host_architecture()},
+      "required_guarantees": [
+        "filesystem_isolation",
+        "process_isolation",
+        "network_isolation",
+        "resource_isolation",
+        "hardware_virtualization"
+      ]
+    }))
+  );
+  assert!(runtime.get("backend").is_none());
 }
 
 #[test]

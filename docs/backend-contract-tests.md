@@ -103,15 +103,15 @@ server's cache ingress so the released runner uses the production HTTPS and CA
 contract. The workflow retains its installation receipt, release manifests,
 server and Agent logs, REST evidence, and Prometheus snapshot.
 
-The containerd, Apple VF, and Linux Microsandbox jobs first run the strict backend
+The containerd, Apple VF, and Linux/macOS Microsandbox jobs first run the strict backend
 contract, which verifies their digest-pinned image, filesystem boundary,
 resource accounting, cancellation, and orphan cleanup, and then run the
 packaged Agent against the real released server vertical slice. Their final
 cleanup assertion rejects remaining job workspaces and provider-owned runtime
 state. Apple VF still advertises `isolation`: its per-workload VM is an
 implementation detail, while the signed job requests the same four guarantees
-as containerd. The macOS virtualization job keeps the smaller released-product
-vertical slice until its full Microsandbox matrix is added in task 9.6. Direct Host execution
+as containerd. Both qualified Microsandbox hosts run the full released-product
+matrix, including remote cache reuse and artifact-integrity checks. Direct Host execution
 is independently qualified on released Linux, macOS, and Windows Agents and is
 never reported as Native, isolation, or virtualization.
 
@@ -238,7 +238,11 @@ must observe a cache hit, so a local hit cannot masquerade as remote reuse.
 ## Microsandbox
 
 Use a Linux (`x86_64` or `aarch64`) or Apple Silicon macOS host supported by the
-pinned Microsandbox SDK. Intel macOS is unsupported. The image must be an
+pinned Microsandbox SDK. The Windows `x86_64`/WHP route is a preview. Its
+`windows-microsandbox-preview` self-hosted gate records prerequisite backend
+evidence, but passing that gate does not promote Windows into the
+release-qualified matrix; promotion also requires a released-product matrix
+with equivalent cache and artifact evidence. Intel macOS is unsupported. The image must be an
 immutable OCI digest containing the runtime libraries needed by the installed
 Linux Octa release. The work and state roots must be separate, operator-owned
 directories. This contract also provisions a per-job identity, requires it at
@@ -255,12 +259,19 @@ export OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=/absolute/path/to/micro-work
 export OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=/absolute/path/to/micro-state
 export OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=/opt/microsandbox/bin/msb
 export OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=/opt/microsandbox/lib/libkrunfw.so
+export OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY=microsandbox-0.6.18-linux-amd64
 export OCTACITY_CONTRACT_MICROSANDBOX_IMAGE='registry.example/build@sha256:<64-lowercase-hex>'
 export OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST=allowed.contract.example
 export OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=denied.contract.example
 cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
+
+The Windows preview workflow downloads the pinned `0.6.18` x86_64 ZIP, verifies
+its hard-coded SHA-256, requires `msb doctor` to accept WHP, and runs only on a
+self-hosted runner labelled `Windows`, `X64`, and
+`octacity-microsandbox-whp`. Merely compiling the adapter or seeing upstream
+preview support never promotes Windows into the release-qualified matrix.
 
 The released-product vertical slice additionally requires Docker so its
 composite action can start disposable pinned PostgreSQL and MinIO containers.

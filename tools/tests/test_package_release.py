@@ -403,7 +403,9 @@ class PackageReleaseTests(unittest.TestCase):
 
     def test_apple_vf_release_gate_is_explicit_and_self_hosted(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
-        macos_microsandbox = workflow.split("  macos-microsandbox:\n", 1)[1].split("  macos-apple-vf:\n", 1)[0]
+        macos_microsandbox = workflow.split("  macos-microsandbox:\n", 1)[1].split(
+            "  windows-microsandbox-preview:\n", 1
+        )[0]
         apple_vf = workflow.split("  macos-apple-vf:\n", 1)[1]
         self.assertIn("backend: microsandbox", macos_microsandbox)
         self.assertIn("name: release-slice-macos-microsandbox", macos_microsandbox)
@@ -434,6 +436,25 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("octacity-release", registration)
         self.assertIn("backend-contracts.yml@refs/heads/main", registration)
         self.assertNotIn("Start the wizard on the other backend host", registration)
+
+    def test_windows_microsandbox_remains_an_explicit_preview_gate(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        preview = workflow.split("  windows-microsandbox-preview:\n", 1)[1].split("  macos-apple-vf:\n", 1)[0]
+        self.assertIn("inputs.suite == 'windows-microsandbox-preview'", preview)
+        self.assertNotIn("inputs.suite == 'all'", preview)
+        self.assertIn("runs-on: [self-hosted, Windows, X64, octacity-microsandbox-whp]", preview)
+        self.assertIn("self-hosted-microsandbox-whp.ps1 setup", preview)
+        self.assertIn("microsandbox_backend_satisfies_the_real_runner_contract", preview)
+        self.assertIn("include-server: \"false\"", preview)
+        self.assertIn("self-hosted-microsandbox-whp.ps1 verify-clean", preview)
+        self.assertIn("if: always()", preview)
+
+        provisioner = (REPOSITORY / "tools/runner/self-hosted-microsandbox-whp.ps1").read_text(encoding="utf-8")
+        self.assertIn('$MicrosandboxVersion = "0.6.18"', provisioner)
+        self.assertIn("7e89516b78911dac58df546b24af4956f3772ea44ba13e13306712ffdde374e2", provisioner)
+        self.assertIn("msb.FullName doctor", provisioner)
+        self.assertIn("--platform linux-amd64", provisioner)
+        self.assertIn("OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY", provisioner)
 
     @unittest.skipIf(sys.platform == "win32", "Apple VF provisioner executes only on POSIX hosts")
     def test_apple_vf_volume_planning_is_safe_under_nounset(self):

@@ -71,6 +71,13 @@ oci_engines = []
 # executable = "/usr/local/bin/container"
 # open_files_limit = 65536
 
+# [[virtualization_providers]]
+# provider = "microsandbox"
+# environment_identity = "microsandbox-0.6.18-linux-arm64-v1"
+# executable = "/Users/octacity/.microsandbox/bin/msb"
+# libkrunfw = "/Users/octacity/.microsandbox/lib/libkrunfw.5.dylib"
+# metrics_sample_interval_seconds = 1
+
 [server_signing_keys]
 primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
 

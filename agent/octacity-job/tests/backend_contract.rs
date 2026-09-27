@@ -19,7 +19,7 @@ use octacity_execution::{ExecutionBackend, LocalCacheCapacity};
 use octacity_execution_apple_vf::{APPLE_VF_PROVIDER_NAME, AppleVfEngine, AppleVfEngineConfig};
 use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
 use octacity_execution_host::{HOST_BACKEND_NAME, HostBackend, HostBackendConfig};
-use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
+use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
@@ -190,7 +190,7 @@ async fn host_backend_satisfies_the_real_runner_contract() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires Linux/KVM or Apple Silicon macOS and a provisioned Microsandbox image; see docs/backend-contract-tests.md"]
+#[ignore = "requires Linux/KVM, Apple Silicon macOS, or Windows/WHP and a provisioned Microsandbox image; see docs/backend-contract-tests.md"]
 async fn microsandbox_backend_satisfies_the_real_runner_contract() {
   let work_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT");
   let state_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT");
@@ -209,22 +209,21 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
     })
     .expect("Microsandbox backend configuration must be usable"),
   );
-  let backend = Arc::new(OciBackend::new(vec![engine]).expect("OCI routing must be valid"));
-  run_contract(
-    RuntimeTarget::Oci {
-      platform: linux_platform(),
-      isolation: OciIsolation::Hypervisor,
-      image,
-    },
+  run_oci_v2_contract(OciV2Contract {
+    engine,
+    provider: MICROSANDBOX_ENGINE_NAME,
+    mode: ExecutionMode::Virtualization,
+    environment_identity_variable: "OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY",
     work_root,
     workspace_bytes,
-    backend,
-    Some(OciProbe::RestrictedNetwork {
+    image,
+    host_platform: host_platform(),
+    target_platform: linux_platform(),
+    probe: OciProbe::RestrictedNetwork {
       allowed_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST"),
       denied_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST"),
-    }),
-    false,
-  )
+    },
+  })
   .await;
 }
 
@@ -254,15 +253,17 @@ async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
     .expect("containerd engine configuration must be usable"),
   );
   let platform = linux_platform();
-  run_isolation_contract(IsolationContract {
+  run_oci_v2_contract(OciV2Contract {
     engine,
     provider: "containerd",
+    mode: ExecutionMode::Isolation,
     environment_identity_variable: "OCTACITY_CONTRACT_CONTAINERD_ENVIRONMENT_IDENTITY",
     work_root,
     workspace_bytes,
     image,
     host_platform: platform,
     target_platform: platform,
+    probe: OciProbe::DisabledNetwork,
   })
   .await;
 }
@@ -293,48 +294,58 @@ async fn apple_vf_isolation_provider_satisfies_the_real_runner_contract() {
     .validate_connection()
     .await
     .expect("Apple container service must be running");
-  run_isolation_contract(IsolationContract {
+  run_oci_v2_contract(OciV2Contract {
     engine,
     provider: APPLE_VF_PROVIDER_NAME,
+    mode: ExecutionMode::Isolation,
     environment_identity_variable: "OCTACITY_CONTRACT_APPLE_VF_ENVIRONMENT_IDENTITY",
     work_root,
     workspace_bytes,
     image,
     host_platform: host_platform(),
     target_platform: linux_platform(),
+    probe: OciProbe::DisabledNetwork,
   })
   .await;
 }
 
-struct IsolationContract {
+struct OciV2Contract {
   engine: Arc<dyn OciEngine>,
   provider: &'static str,
+  mode: ExecutionMode,
   environment_identity_variable: &'static str,
   work_root: PathBuf,
   workspace_bytes: u64,
   image: String,
   host_platform: PlatformSpec,
   target_platform: PlatformSpec,
+  probe: OciProbe,
 }
 
-async fn run_isolation_contract(contract: IsolationContract) {
-  let IsolationContract {
+async fn run_oci_v2_contract(contract: OciV2Contract) {
+  let OciV2Contract {
     engine,
     provider,
+    mode,
     environment_identity_variable,
     work_root,
     workspace_bytes,
     image,
     host_platform,
     target_platform,
+    probe,
   } = contract;
+  assert!(
+    matches!(mode, ExecutionMode::Isolation | ExecutionMode::Virtualization),
+    "OCI-backed v2 contracts must provide isolation or virtualization"
+  );
   let backend = Arc::new(OciBackend::new(vec![engine]).expect("OCI routing must be valid"));
   let capability = ExecutionCapabilityV2 {
     provider: ExecutionProviderId::new(provider).unwrap(),
-    mode: ExecutionMode::Isolation,
+    mode,
     host_platform,
     target_platform,
-    guarantees: guarantees_for(ExecutionMode::Isolation),
+    guarantees: guarantees_for(mode),
     immutable_images: true,
   };
   let release_root = required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT");
@@ -352,11 +363,17 @@ async fn run_isolation_contract(contract: IsolationContract) {
   let executor = JobExecutor::new(
     runner.clone(),
     Arc::new(FixtureSource {
-      oci_probe: Some(OciProbe::DisabledNetwork),
+      oci_probe: Some(probe.clone()),
     }),
     Arc::new(identity),
     BTreeMap::new(),
-    configuration,
+    JobExecutorConfig {
+      allowed_network_hosts: match &probe {
+        OciProbe::RestrictedNetwork { allowed_host, .. } => vec![allowed_host.clone()],
+        OciProbe::DisabledNetwork => Vec::new(),
+      },
+      ..configuration
+    },
   )
   .expect("job executor configuration must be valid")
   .with_execution_backends([ExecutionBackendRoute::new(
@@ -365,17 +382,30 @@ async fn run_isolation_contract(contract: IsolationContract) {
     backend,
   )
   .unwrap()])
-  .expect("isolation route must be valid");
+  .expect("v2 OCI execution route must be valid");
   executor.cleanup_orphans().await.expect("pre-test cleanup must succeed");
   let now = unix_now();
-  let mut spec = isolation_specification(host_platform, target_platform, image, workspace_bytes, now, &runner);
+  let mut spec = oci_v2_specification(
+    mode,
+    host_platform,
+    target_platform,
+    image,
+    workspace_bytes,
+    now,
+    &runner,
+  );
+  if let OciProbe::RestrictedNetwork { allowed_host, .. } = probe {
+    spec.runtime.network = NetworkPolicy::Restricted {
+      allowed_hosts: vec![allowed_host],
+    };
+  }
   spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
   exercise_contract(
     &executor,
     spec.into(),
     None,
-    Some((provider, ExecutionMode::Isolation)),
-    &format!("{provider} Isolation"),
+    Some((provider, mode)),
+    &format!("{provider} {mode:?}"),
   )
   .await;
   executor
@@ -706,7 +736,8 @@ fn host_specification(
   }
 }
 
-fn isolation_specification(
+fn oci_v2_specification(
+  mode: ExecutionMode,
   host_platform: PlatformSpec,
   target_platform: PlatformSpec,
   image: String,
@@ -717,7 +748,11 @@ fn isolation_specification(
   let legacy = specification(
     RuntimeTarget::Oci {
       platform: target_platform,
-      isolation: OciIsolation::Process,
+      isolation: if mode == ExecutionMode::Virtualization {
+        OciIsolation::Hypervisor
+      } else {
+        OciIsolation::Process
+      },
       image: image.clone(),
     },
     workspace_bytes,
@@ -726,7 +761,14 @@ fn isolation_specification(
   );
   JobSpecV2 {
     protocol_version: EXECUTION_CONTRACT_V2,
-    job_id: "backend-contract-isolation".to_owned(),
+    job_id: format!(
+      "backend-contract-{}",
+      match mode {
+        ExecutionMode::Host => "host",
+        ExecutionMode::Isolation => "isolation",
+        ExecutionMode::Virtualization => "virtualization",
+      }
+    ),
     attempt: legacy.attempt,
     issued_at: legacy.issued_at,
     expires_at: legacy.expires_at,
@@ -735,10 +777,10 @@ fn isolation_specification(
     execution: legacy.execution,
     runtime: RuntimeSpecV2 {
       target: ExecutionTargetV2 {
-        mode: ExecutionMode::Isolation,
+        mode,
         host_platform,
         target_platform,
-        required_guarantees: guarantees_for(ExecutionMode::Isolation),
+        required_guarantees: guarantees_for(mode),
         immutable_image: Some(image),
       },
       cpu_millis: legacy.runtime.cpu_millis,
