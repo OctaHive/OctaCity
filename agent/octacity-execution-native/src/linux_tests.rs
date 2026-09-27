@@ -329,14 +329,16 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
     &mut command,
     &runner,
     &request,
-    job_root,
-    &[
-      PathBuf::from("/work/identity/token"),
-      PathBuf::from("/work/cache-session/token"),
-    ],
-    &temporary,
-    &home,
-    &[readonly_file.clone(), readonly_link.clone(), missing],
+    NativeFilesystem {
+      job_root,
+      masked_job_files: &[
+        PathBuf::from("/work/identity/token"),
+        PathBuf::from("/work/cache-session/token"),
+      ],
+      temporary_directory: &temporary,
+      home_directory: &home,
+      readonly_paths: &[readonly_file.clone(), readonly_link.clone(), missing],
+    },
   )
   .unwrap();
   let arguments: Vec<_> = command

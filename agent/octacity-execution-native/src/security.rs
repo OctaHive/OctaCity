@@ -7,6 +7,15 @@ pub(super) const NATIVE_JOB_ROOT_PATH: &str = "/work";
 pub(super) const NATIVE_WORKSPACE_PATH: &str = "/work/workspace";
 pub(super) const NATIVE_OCTA_ROOT_PATH: &str = "/opt/octa";
 
+/// Host paths projected into one Native execution sandbox.
+pub(super) struct NativeFilesystem<'a> {
+  pub(super) job_root: &'a Path,
+  pub(super) masked_job_files: &'a [PathBuf],
+  pub(super) temporary_directory: &'a Path,
+  pub(super) home_directory: &'a Path,
+  pub(super) readonly_paths: &'a [PathBuf],
+}
+
 /// Converts the signed network policy into Bubblewrap namespace arguments.
 pub(super) fn network_arguments(network: &NetworkAccess) -> &'static [&'static str] {
   match network {
@@ -69,11 +78,7 @@ pub(super) fn add_native_filesystem(
   command: &mut Command,
   runner: &RunnerProgram,
   request: &StartExecution,
-  job_root: &Path,
-  masked_job_files: &[PathBuf],
-  temporary_directory: &Path,
-  home_directory: &Path,
-  readonly_paths: &[PathBuf],
+  filesystem: NativeFilesystem<'_>,
 ) -> Result<(), ExecutionError> {
   for path in ["/usr", "/bin", "/sbin", "/lib", "/lib64"] {
     expose_host_path(command, Path::new(path))?;
@@ -96,7 +101,7 @@ pub(super) fn add_native_filesystem(
   ] {
     expose_host_path(command, Path::new(path))?;
   }
-  for path in readonly_paths {
+  for path in filesystem.readonly_paths {
     expose_host_path(command, path)?;
   }
   command.arg("--dir").arg("/opt").arg("--dir").arg(NATIVE_OCTA_ROOT_PATH);
@@ -105,8 +110,8 @@ pub(super) fn add_native_filesystem(
   // stays on one filesystem. Expose only this job's parent, never the
   // backend-wide work root, and mask credentials that are projected below.
   command.arg("--dir").arg(NATIVE_JOB_ROOT_PATH);
-  bind(command, job_root, Path::new(NATIVE_JOB_ROOT_PATH));
-  for path in masked_job_files {
+  bind(command, filesystem.job_root, Path::new(NATIVE_JOB_ROOT_PATH));
+  for path in filesystem.masked_job_files {
     ro_bind(command, Path::new("/dev/null"), path);
   }
   if request.workload_identity.is_some()
@@ -140,9 +145,9 @@ pub(super) fn add_native_filesystem(
     }
   }
   command.arg("--dir").arg("/tmp");
-  bind(command, temporary_directory, Path::new("/tmp"));
+  bind(command, filesystem.temporary_directory, Path::new("/tmp"));
   command.arg("--dir").arg("/home").arg("--dir").arg("/home/octacity");
-  bind(command, home_directory, Path::new("/home/octacity"));
+  bind(command, filesystem.home_directory, Path::new("/home/octacity"));
   command
     .arg("--dev")
     .arg("/dev")

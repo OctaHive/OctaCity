@@ -38,8 +38,8 @@ use cgroup::{
 };
 use filesystem::{filesystem_usage, validate_workspace_filesystem, validate_workspace_root};
 use security::{
-  NATIVE_JOB_ROOT_PATH, NATIVE_OCTA_ROOT_PATH, NATIVE_WORKSPACE_PATH, add_native_filesystem, create_seccomp_filter,
-  environment_arguments, host_execution_platform, network_arguments, validate_native_path,
+  NATIVE_JOB_ROOT_PATH, NATIVE_OCTA_ROOT_PATH, NATIVE_WORKSPACE_PATH, NativeFilesystem, add_native_filesystem,
+  create_seccomp_filter, environment_arguments, host_execution_platform, network_arguments, validate_native_path,
 };
 
 const CPU_PERIOD_MICROS: u64 = 100_000;
@@ -246,11 +246,13 @@ impl ExecutionBackend for NativeBackend {
       &mut command,
       runner,
       &request,
-      job_root,
-      &masked_job_files,
-      &temporary_directory,
-      &home_directory,
-      &self.readonly_paths,
+      NativeFilesystem {
+        job_root,
+        masked_job_files: &masked_job_files,
+        temporary_directory: &temporary_directory,
+        home_directory: &home_directory,
+        readonly_paths: &self.readonly_paths,
+      },
     )?;
     command
       .arg("--chdir")
