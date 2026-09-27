@@ -17,8 +17,7 @@ pub(super) struct AppleVfExecution {
   filesystem_root: PathBuf,
   cleanup_timeout: Duration,
   started: Instant,
-  memory_peak_bytes: u64,
-  disk_peak_bytes: u64,
+  usage: ResourceUsage,
   removed: bool,
 }
 
@@ -34,10 +33,10 @@ impl AppleVfExecution {
       let stdin = child.stdin.take().ok_or(ExecutionError::IoTaken)?;
       let stdout = child.stdout.take().ok_or(ExecutionError::IoTaken)?;
       let stderr = child.stderr.take().ok_or(ExecutionError::IoTaken)?;
-      let disk_peak_bytes = filesystem_usage(&filesystem_root)?;
-      Ok::<_, ExecutionError>((stdin, stdout, stderr, disk_peak_bytes))
+      let disk_current_bytes = filesystem_usage(&filesystem_root)?;
+      Ok::<_, ExecutionError>((stdin, stdout, stderr, disk_current_bytes))
     })();
-    let (stdin, stdout, stderr, disk_peak_bytes) = match result {
+    let (stdin, stdout, stderr, disk_current_bytes) = match result {
       Ok(streams) => streams,
       Err(error) => return Err(Box::new((plan, error))),
     };
@@ -53,8 +52,13 @@ impl AppleVfExecution {
       filesystem_root,
       cleanup_timeout,
       started: Instant::now(),
-      memory_peak_bytes: 0,
-      disk_peak_bytes,
+      usage: ResourceUsage {
+        disk_current_bytes,
+        disk_peak_bytes: disk_current_bytes,
+        network_received_bytes: Some(0),
+        network_transmitted_bytes: Some(0),
+        ..ResourceUsage::default()
+      },
       removed: false,
     })
   }
@@ -79,29 +83,13 @@ impl RunningExecution for AppleVfExecution {
       "sample Apple VF container usage",
     )
     .await?;
-    let mut statistics: Vec<AppleContainerStats> = serde_json::from_slice(&output.stdout)
-      .map_err(|error| backend(format!("parse Apple VF resource statistics: {error}")))?;
-    if statistics.len() != 1 || statistics[0].id != self.plan.container_name {
-      return Err(backend(
-        "Apple container returned statistics for an unexpected workload",
-      ));
-    }
-    let statistics = statistics.pop().expect("length checked above");
-    self.memory_peak_bytes = self.memory_peak_bytes.max(statistics.memory_usage_bytes);
+    let statistics = parse_statistics(&output.stdout, &self.plan.container_name)?;
+    apply_statistics(&mut self.usage, statistics.as_ref());
     let disk_current_bytes = filesystem_usage(&self.filesystem_root)?;
-    self.disk_peak_bytes = self.disk_peak_bytes.max(disk_current_bytes);
-    Ok(ResourceUsage {
-      elapsed_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
-      cpu_time_ms: statistics.cpu_usage_usec / 1000,
-      memory_current_bytes: statistics.memory_usage_bytes,
-      memory_peak_bytes: self.memory_peak_bytes,
-      disk_current_bytes,
-      disk_peak_bytes: self.disk_peak_bytes,
-      io_read_bytes: statistics.block_read_bytes,
-      io_written_bytes: statistics.block_write_bytes,
-      network_received_bytes: Some(statistics.network_rx_bytes),
-      network_transmitted_bytes: Some(statistics.network_tx_bytes),
-    })
+    self.usage.elapsed_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    self.usage.disk_current_bytes = disk_current_bytes;
+    self.usage.disk_peak_bytes = self.usage.disk_peak_bytes.max(disk_current_bytes);
+    Ok(self.usage.clone())
   }
 
   async fn wait(&mut self) -> Result<ExecutionExit, ExecutionError> {
@@ -150,4 +138,78 @@ struct AppleContainerStats {
   block_read_bytes: u64,
   #[serde(default)]
   block_write_bytes: u64,
+}
+
+fn parse_statistics(output: &[u8], expected_container: &str) -> Result<Option<AppleContainerStats>, ExecutionError> {
+  let mut statistics: Vec<AppleContainerStats> =
+    serde_json::from_slice(output).map_err(|error| backend(format!("parse Apple VF resource statistics: {error}")))?;
+  if statistics.is_empty() {
+    return Ok(None);
+  }
+  if statistics.len() != 1 || statistics[0].id != expected_container {
+    return Err(backend(
+      "Apple container returned statistics for an unexpected workload",
+    ));
+  }
+  Ok(statistics.pop())
+}
+
+fn apply_statistics(usage: &mut ResourceUsage, statistics: Option<&AppleContainerStats>) {
+  usage.memory_current_bytes = 0;
+  let Some(statistics) = statistics else {
+    return;
+  };
+  usage.cpu_time_ms = usage.cpu_time_ms.max(statistics.cpu_usage_usec / 1000);
+  usage.memory_current_bytes = statistics.memory_usage_bytes;
+  usage.memory_peak_bytes = usage.memory_peak_bytes.max(statistics.memory_usage_bytes);
+  usage.io_read_bytes = usage.io_read_bytes.max(statistics.block_read_bytes);
+  usage.io_written_bytes = usage.io_written_bytes.max(statistics.block_write_bytes);
+  usage.network_received_bytes = Some(
+    usage
+      .network_received_bytes
+      .unwrap_or_default()
+      .max(statistics.network_rx_bytes),
+  );
+  usage.network_transmitted_bytes = Some(
+    usage
+      .network_transmitted_bytes
+      .unwrap_or_default()
+      .max(statistics.network_tx_bytes),
+  );
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn accepts_missing_statistics_after_the_container_exits() {
+    assert!(matches!(parse_statistics(b"[]", "octacity-job"), Ok(None)));
+  }
+
+  #[test]
+  fn rejects_statistics_for_an_unexpected_container() {
+    let output = br#"[{"id":"other","memoryUsageBytes":1}]"#;
+
+    assert!(parse_statistics(output, "octacity-job").is_err());
+  }
+
+  #[test]
+  fn missing_final_statistics_preserve_cumulative_counters() {
+    let output = br#"[{"id":"octacity-job","memoryUsageBytes":4096,"cpuUsageUsec":3000,"networkRxBytes":5,"networkTxBytes":6,"blockReadBytes":7,"blockWriteBytes":8}]"#;
+    let statistics = parse_statistics(output, "octacity-job").unwrap();
+    let mut usage = ResourceUsage::default();
+
+    apply_statistics(&mut usage, statistics.as_ref());
+    apply_statistics(&mut usage, None);
+
+    assert_eq!(usage.memory_current_bytes, 0);
+    assert_eq!(usage.memory_peak_bytes, 4096);
+    assert_eq!(usage.cpu_time_ms, 3);
+    assert_eq!((usage.io_read_bytes, usage.io_written_bytes), (7, 8));
+    assert_eq!(
+      (usage.network_received_bytes, usage.network_transmitted_bytes),
+      (Some(5), Some(6))
+    );
+  }
 }
