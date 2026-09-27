@@ -267,6 +267,7 @@ mod tests {
       RegistrationEpoch::new(1).unwrap(),
       PoolId::from_uuid(Uuid::from_u128(2)).unwrap(),
       capacity(),
+      false,
       AgentOperation::Heartbeat,
     )))
   }

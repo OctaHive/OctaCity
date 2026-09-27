@@ -325,6 +325,8 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("bwrap-userns-restrict", provisioner)
         self.assertIn("apparmor_parser", provisioner)
         self.assertIn("probe_bubblewrap", provisioner)
+        self.assertIn('provision_workspace "$root/work" "$workspace_bytes"', provisioner)
+        self.assertNotIn('provision_filesystem "$root/work.ext4"', provisioner)
         bubblewrap_probe = provisioner.split("probe_bubblewrap() {", 1)[1].split("\n}", 1)[0]
         self.assertLess(
             bubblewrap_probe.index("--unshare-user"),

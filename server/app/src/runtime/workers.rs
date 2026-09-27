@@ -510,7 +510,7 @@ where
   Pass: Fn(Timestamp, Timestamp) -> PassFuture + Send + Sync + 'static,
   PassFuture: Future<Output = Result<WorkerOutcome, Error>> + Send + 'static,
   WorkerOutcome: Send + 'static,
-  Error: Send + 'static,
+  Error: std::fmt::Display + Send + 'static,
   Observe: Fn(&WorkerOutcome) + Send + Sync + 'static,
 {
   let WorkerIdentity {
@@ -551,12 +551,13 @@ where
           record_worker_run(worker_kind, Outcome::Success, None, elapsed);
           observe(&outcome);
         }
-        Err(_) => {
+        Err(error) => {
           health.mark_failure();
           record_worker_run(worker_kind, Outcome::Failure, Some(ErrorClass::Unavailable), elapsed);
           warn!(
             worker = worker_name,
             error.class = ErrorClass::Unavailable.as_str(),
+            %error,
             "durable worker pass failed"
           );
         }

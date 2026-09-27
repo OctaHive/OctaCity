@@ -45,6 +45,7 @@ impl AgentRegistrationUseCases for RegistrationStub {
         state_disk_total_bytes: 1,
         virtualization_available: false,
       },
+      false,
       input.operation,
     ))
   }

@@ -38,8 +38,8 @@ use cgroup::{
 };
 use filesystem::{filesystem_usage, validate_workspace_filesystem, validate_workspace_root};
 use security::{
-  NATIVE_OCTA_ROOT_PATH, NATIVE_WORKSPACE_PATH, add_native_filesystem, create_seccomp_filter, environment_arguments,
-  host_execution_platform, network_arguments, validate_native_path,
+  NATIVE_JOB_ROOT_PATH, NATIVE_OCTA_ROOT_PATH, NATIVE_WORKSPACE_PATH, add_native_filesystem, create_seccomp_filter,
+  environment_arguments, host_execution_platform, network_arguments, validate_native_path,
 };
 
 const CPU_PERIOD_MICROS: u64 = 100_000;
@@ -181,6 +181,17 @@ impl ExecutionBackend for NativeBackend {
     }
     validate_workspace_filesystem(&self.work_root, &request.workspace, request.writable_disk_bytes)?;
     let workspace = request.workspace.canonicalize().map_err(ExecutionError::Io)?;
+    let job_root = workspace
+      .parent()
+      .filter(|parent| parent.parent() == Some(request_root.as_path()))
+      .ok_or_else(|| {
+        ExecutionError::Invalid("Native workspace must be inside one job-private root below work_root".to_owned())
+      })?;
+    if workspace.file_name() != Some(std::ffi::OsStr::new("workspace")) {
+      return Err(ExecutionError::Invalid(
+        "Native job-private workspace must be named 'workspace'".to_owned(),
+      ));
+    }
     let data_dir = request.data_dir.canonicalize().map_err(ExecutionError::Io)?;
     let guest_data_dir = project_guest_path(&workspace, &data_dir, Path::new(NATIVE_WORKSPACE_PATH), "data_dir")?;
     let guest_runner = project_guest_path(
@@ -201,6 +212,14 @@ impl ExecutionBackend for NativeBackend {
       Path::new(NATIVE_OCTA_ROOT_PATH),
       "runner plugin lock",
     )?;
+    let mut masked_job_files = request
+      .workload_identity
+      .iter()
+      .chain(request.cache.iter().filter_map(|cache| cache.token_file.as_ref()))
+      .map(|path| project_guest_path(job_root, path, Path::new(NATIVE_JOB_ROOT_PATH), "private job file"))
+      .collect::<Result<Vec<_>, _>>()?;
+    masked_job_files.sort();
+    masked_job_files.dedup();
     let temporary_directory = request.data_dir.join("tmp");
     let home_directory = request.data_dir.join("home");
     fs::create_dir(&temporary_directory).map_err(ExecutionError::Io)?;
@@ -227,6 +246,8 @@ impl ExecutionBackend for NativeBackend {
       &mut command,
       runner,
       &request,
+      job_root,
+      &masked_job_files,
       &temporary_directory,
       &home_directory,
       &self.readonly_paths,

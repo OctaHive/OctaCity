@@ -3,7 +3,8 @@
 use super::*;
 use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, WORKLOAD_IDENTITY_PATH};
 
-pub(super) const NATIVE_WORKSPACE_PATH: &str = "/workspace";
+pub(super) const NATIVE_JOB_ROOT_PATH: &str = "/work";
+pub(super) const NATIVE_WORKSPACE_PATH: &str = "/work/workspace";
 pub(super) const NATIVE_OCTA_ROOT_PATH: &str = "/opt/octa";
 
 /// Converts the signed network policy into Bubblewrap namespace arguments.
@@ -68,6 +69,8 @@ pub(super) fn add_native_filesystem(
   command: &mut Command,
   runner: &RunnerProgram,
   request: &StartExecution,
+  job_root: &Path,
+  masked_job_files: &[PathBuf],
   temporary_directory: &Path,
   home_directory: &Path,
   readonly_paths: &[PathBuf],
@@ -98,11 +101,14 @@ pub(super) fn add_native_filesystem(
   }
   command.arg("--dir").arg("/opt").arg("--dir").arg(NATIVE_OCTA_ROOT_PATH);
   ro_bind(command, &runner.release_root, Path::new(NATIVE_OCTA_ROOT_PATH));
-  // The backend-wide work root may contain identity material, abandoned state,
-  // and eventually concurrent jobs. Expose only this job's writable workspace;
-  // quota accounting can still inspect `workspace_root` from the host.
-  command.arg("--dir").arg(NATIVE_WORKSPACE_PATH);
-  bind(command, &request.workspace, Path::new(NATIVE_WORKSPACE_PATH));
+  // Octa stages atomic cache restores beside the workspace so every rename
+  // stays on one filesystem. Expose only this job's parent, never the
+  // backend-wide work root, and mask credentials that are projected below.
+  command.arg("--dir").arg(NATIVE_JOB_ROOT_PATH);
+  bind(command, job_root, Path::new(NATIVE_JOB_ROOT_PATH));
+  for path in masked_job_files {
+    ro_bind(command, Path::new("/dev/null"), path);
+  }
   if request.workload_identity.is_some()
     || request
       .cache

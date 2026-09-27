@@ -38,6 +38,8 @@ pub struct AcquireAgentLeaseInput {
 pub enum AgentLeaseOutcome {
   /// One compatible ready Job committed its Lease.
   Lease(Box<LeaseGrant>),
+  /// Management requested that this idle Agent drain and stop.
+  Drain,
   /// No compatible ready Job was visible before the wait ended.
   NoWork,
 }
@@ -110,6 +112,9 @@ where
         if stable_agent_id(&input.route_agent_id).map_err(AgentLeaseError::from)? != authorized.agent_id() {
           return Err(AgentLeaseError::Fenced);
         }
+        if authorized.draining() {
+          return Ok(AgentLeaseOutcome::Drain);
+        }
         if !input.request.accept_jobs {
           return Ok(AgentLeaseOutcome::NoWork);
         }
@@ -132,6 +137,9 @@ where
           .checked_add(elapsed)
           .ok_or(AgentLeaseError::Unavailable)?;
         let authorized = self.authorize(&input, observed_at).await?;
+        if authorized.draining() {
+          return Ok(AgentLeaseOutcome::Drain);
+        }
         self.claim(&input, &authorized, observed_at).await.map(|grant| {
           grant.map_or(AgentLeaseOutcome::NoWork, |grant| {
             AgentLeaseOutcome::Lease(Box::new(grant))
@@ -287,6 +295,7 @@ mod tests {
   struct RegistrationStub {
     authority: crate::AuthorizedAgent,
     calls: AtomicUsize,
+    drain_after_first_authorization: bool,
   }
 
   #[async_trait]
@@ -299,8 +308,12 @@ mod tests {
     }
 
     async fn authorize(&self, _input: AuthorizeAgentInput) -> Result<crate::AuthorizedAgent, AgentRegistrationError> {
-      self.calls.fetch_add(1, Ordering::SeqCst);
-      Ok(self.authority.clone())
+      let call = self.calls.fetch_add(1, Ordering::SeqCst);
+      let mut authority = self.authority.clone();
+      if self.drain_after_first_authorization && call > 0 {
+        authority.set_draining_for_test();
+      }
+      Ok(authority)
     }
   }
 
@@ -344,6 +357,7 @@ mod tests {
     let registration = Arc::new(RegistrationStub {
       authority: authority(),
       calls: AtomicUsize::new(0),
+      drain_after_first_authorization: false,
     });
     let store = Arc::new(EmptyStore::default());
     let waiter = Arc::new(ImmediateWaiter::default());
@@ -369,6 +383,7 @@ mod tests {
     let registration = Arc::new(RegistrationStub {
       authority: authority(),
       calls: AtomicUsize::new(0),
+      drain_after_first_authorization: false,
     });
     let store = Arc::new(EmptyStore::default());
     let waiter = Arc::new(ImmediateWaiter::default());
@@ -380,6 +395,32 @@ mod tests {
     );
     assert!(store.claims.lock().unwrap().is_empty());
     assert_eq!(waiter.0.load(Ordering::SeqCst), 0);
+  }
+
+  #[test]
+  fn drain_observed_after_long_poll_stops_the_idle_agent_without_a_second_claim() {
+    let registration = Arc::new(RegistrationStub {
+      authority: authority(),
+      calls: AtomicUsize::new(0),
+      drain_after_first_authorization: true,
+    });
+    let store = Arc::new(EmptyStore::default());
+    let waiter = Arc::new(ImmediateWaiter::default());
+    let service = AgentLeaseService::new(
+      registration.clone(),
+      store.clone(),
+      waiter.clone(),
+      Duration::from_secs(60),
+    )
+    .unwrap();
+
+    assert_eq!(
+      run_ready(service.acquire(input(true))).unwrap(),
+      AgentLeaseOutcome::Drain
+    );
+    assert_eq!(registration.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(store.claims.lock().unwrap().len(), 1);
+    assert_eq!(waiter.0.load(Ordering::SeqCst), 1);
   }
 
   fn authority() -> crate::AuthorizedAgent {
@@ -394,6 +435,7 @@ mod tests {
         state_disk_total_bytes: 1,
         virtualization_available: false,
       },
+      false,
       AgentOperation::Poll,
     )
   }

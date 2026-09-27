@@ -346,6 +346,7 @@ impl AgentCredentialStore for InMemoryStore {
         .and_then(|registration| registration.inventory.as_ref())
         .map(|inventory| inventory.host_capacity.clone())
         .ok_or(StoreError::Unavailable)?,
+      draining: false,
       expires_at: registration.outcome.expires_at,
     })
   }

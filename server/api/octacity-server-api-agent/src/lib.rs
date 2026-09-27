@@ -342,6 +342,11 @@ async fn acquire_lease(
         true,
       ),
     },
+    Ok(AgentLeaseOutcome::Drain) => Json(AcquireLeaseResponse::Drain {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id,
+    })
+    .into_response(),
     Ok(AgentLeaseOutcome::NoWork) => Json(AcquireLeaseResponse::NoWork {
       protocol_version: COORDINATOR_PROTOCOL_VERSION,
       request_id,

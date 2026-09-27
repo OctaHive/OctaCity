@@ -15,7 +15,7 @@ pub(crate) async fn execute(
     "SELECT registration.agent_id, registration.epoch, registration.credential_hash, \
        registration.revoked_at IS NOT NULL AS revoked, \
        (extract(epoch FROM registration.expires_at) * 1000)::bigint AS expires_at, \
-       agent.pool_id, agent.pool_version, registration.inventory \
+       agent.pool_id, agent.pool_version, agent.state = 'draining' AS draining, registration.inventory \
      FROM agent_registrations AS registration \
      JOIN agents AS agent ON agent.id = registration.agent_id \
      WHERE registration.id = $1",
@@ -46,6 +46,7 @@ pub(crate) async fn execute(
     pool_version: PoolVersion::new(u64::try_from(row.pool_version).map_err(|_| StoreError::Unavailable)?)
       .map_err(|_| StoreError::Unavailable)?,
     host_capacity: row.inventory.0.host_capacity,
+    draining: row.draining,
     expires_at: octacity_server_domain::Timestamp::from_unix_millis(row.expires_at)
       .map_err(|_| StoreError::Unavailable)?,
   })
@@ -60,5 +61,6 @@ struct RegistrationRow {
   expires_at: i64,
   pool_id: Uuid,
   pool_version: i64,
+  draining: bool,
   inventory: Json<octacity_protocol::AgentInventory>,
 }

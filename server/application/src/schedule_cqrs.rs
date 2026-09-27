@@ -122,6 +122,10 @@ where
       .schedule
       .next_after(command.created_at)
       .map_err(|_| ApplicationError::invalid())?;
+    command
+      .schedule
+      .next_after(next_occurrence_at)
+      .map_err(|_| ApplicationError::invalid())?;
     let definition = serde_json::to_value(&command.build).map_err(|_| ApplicationError::invalid())?;
     let outcome = self
       .store
@@ -266,4 +270,52 @@ pub enum ScheduleWorkerError {
   /// One occurrence could not be evaluated into a Build.
   #[error("scheduled trigger evaluation failed")]
   Trigger(#[from] ManualTriggerError),
+}
+
+#[cfg(test)]
+mod tests {
+  use std::{
+    future::Future,
+    task::{Context, Poll, Waker},
+  };
+
+  use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision};
+  use octacity_server_store::{MissedRunPolicy, testing::InMemoryStore};
+  use uuid::Uuid;
+
+  use super::*;
+
+  #[test]
+  fn rejects_a_schedule_without_a_durable_successor() {
+    let handlers = ScheduleHandlers::new(Arc::new(InMemoryStore::new()));
+    let result = run_ready(handlers.handle_command(CreateScheduleCommand {
+      id: TriggerId::from_uuid(Uuid::from_u128(1)).unwrap(),
+      version: TriggerVersion::INITIAL,
+      configuration_id: BuildConfigurationId::from_uuid(Uuid::from_u128(2)).unwrap(),
+      configuration_version: BuildConfigurationVersion::INITIAL,
+      enabled: true,
+      schedule: ScheduleDefinition {
+        expression: "0 0 0 2 1 * 2026".to_owned(),
+        timezone: "UTC".to_owned(),
+        missed_run_policy: MissedRunPolicy::RunOnce,
+      },
+      build: ScheduledBuildDefinition {
+        source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("0123456789abcdef").unwrap()),
+        parameters: BTreeMap::new(),
+        priority: 50,
+      },
+      idempotency_key: IdempotencyKey::new("finite-schedule").unwrap(),
+      created_at: Timestamp::from_unix_millis(1_767_225_600_000).unwrap(),
+    }));
+
+    assert!(matches!(result, Err(ApplicationError::InvalidInput)));
+  }
+
+  fn run_ready<T>(future: impl Future<Output = T>) -> T {
+    let mut future = std::pin::pin!(future);
+    match future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+      Poll::Ready(value) => value,
+      Poll::Pending => panic!("invalid schedule unexpectedly reached the store"),
+    }
+  }
 }

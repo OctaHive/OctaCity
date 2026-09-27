@@ -78,6 +78,8 @@ pub struct AuthorizedAgent {
   pool_id: PoolId,
   /// Static capacity used to bound advisory heartbeat snapshots.
   host_capacity: octacity_protocol::HostCapacity,
+  /// Sticky management instruction to stop this Agent process.
+  draining: bool,
   /// Protected operation for which this authority was minted.
   operation: AgentOperation,
 }
@@ -89,6 +91,7 @@ impl AuthorizedAgent {
     registration_epoch: RegistrationEpoch,
     pool_id: PoolId,
     host_capacity: octacity_protocol::HostCapacity,
+    draining: bool,
     operation: AgentOperation,
   ) -> Self {
     Self {
@@ -96,8 +99,14 @@ impl AuthorizedAgent {
       registration_epoch,
       pool_id,
       host_capacity,
+      draining,
       operation,
     }
+  }
+
+  #[cfg(test)]
+  pub(crate) fn set_draining_for_test(&mut self) {
+    self.draining = true;
   }
 
   /// Returns the stable server identity of the authorized Agent.
@@ -128,6 +137,12 @@ impl AuthorizedAgent {
   #[must_use]
   pub const fn host_capacity(&self) -> &octacity_protocol::HostCapacity {
     &self.host_capacity
+  }
+
+  /// Returns whether management has asked this Agent process to drain.
+  #[must_use]
+  pub const fn draining(&self) -> bool {
+    self.draining
   }
 }
 
@@ -288,6 +303,7 @@ where
       registration_epoch: authenticated.registration_epoch,
       pool_id: authenticated.pool_id,
       host_capacity: authenticated.host_capacity,
+      draining: authenticated.draining,
       operation: input.operation,
     })
   }

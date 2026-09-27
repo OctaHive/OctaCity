@@ -4,10 +4,10 @@ tasks:
   cacheable:
     files:
       inputs:
-        - input/message.txt
+        - fixtures/release/linux-native/input/message.txt
       outputs:
-        - dist
-        - reports
+        - fixtures/release/linux-native/dist
+        - fixtures/release/linux-native/reports
     cache: {}
     artifacts:
       - name: release-result

@@ -132,9 +132,9 @@ pub(super) async fn run() {
   let cache_root = native_cache_root(&backend);
   let available_workspace_bytes = available_disk_bytes(work_root);
   assert!(
-    available_workspace_bytes >= backend.job_disk_bytes(),
+    available_workspace_bytes >= backend.workspace_bytes(),
     "Native work filesystem has {available_workspace_bytes} available bytes but the release Job requires {}",
-    backend.job_disk_bytes()
+    backend.workspace_bytes()
   );
   let work_baseline = directory_entries(work_root);
   let cgroup_baseline = directory_entries(cgroup_root);
@@ -214,7 +214,7 @@ pub(super) async fn run() {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
-  assert_dag_and_events(&manual_run, Some(backend.job_disk_bytes()));
+  assert_dag_and_events(&manual_run, Some(backend.workspace_bytes()));
   let downstream_build_id = wait_for_trigger_build(&pool, &resources.internal_trigger_id).await;
   let downstream_run = wait_for_successful_run(
     &client,
@@ -295,7 +295,7 @@ pub(super) async fn run() {
       stderr: &evidence.join("agent-b.stderr.log"),
       cgroup_root,
       cgroup_baseline: &cgroup_baseline,
-      maximum_disk_bytes: backend.job_disk_bytes(),
+      maximum_disk_bytes: backend.workspace_bytes(),
     },
     agent_b.child_mut(),
   )
@@ -587,7 +587,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "labels": {},
           "minimum_cpu_millis": 1000,
           "minimum_memory_bytes": MEMORY_BYTES,
-          "minimum_disk_bytes": input.backend.job_disk_bytes()
+          "minimum_disk_bytes": input.backend.workspace_bytes()
         },
         "allowed_pools": [input.pool_id],
         "runtime": {
@@ -597,7 +597,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "immutable_image": null,
           "cpu_millis": 1000,
           "memory_bytes": MEMORY_BYTES,
-          "writable_disk_bytes": input.backend.job_disk_bytes(),
+          "writable_disk_bytes": input.backend.workspace_bytes(),
           "timeout_seconds": RELEASE_JOB_TIMEOUT_SECONDS,
           "network": {"mode": if input.cache { "unrestricted" } else { "disabled" }},
           "workload_identity_profile": null
@@ -700,13 +700,12 @@ async fn accept_manual_build(
 async fn create_schedule(client: &Client, origin: &str, run: &str, configuration: &str, revision: &str) -> Value {
   let occurrence = Utc::now() + chrono::Duration::seconds(15);
   let expression = format!(
-    "{} {} {} {} {} * {}",
+    "{} {} {} {} {} * *",
     occurrence.second(),
     occurrence.minute(),
     occurrence.hour(),
     occurrence.day(),
-    occurrence.month(),
-    occurrence.year()
+    occurrence.month()
   );
   post_management(
     client,

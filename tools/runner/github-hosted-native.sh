@@ -135,6 +135,14 @@ provision_filesystem() {
   chmod 0700 "$mount"
 }
 
+provision_workspace() {
+  local mount=$1 bytes=$2
+  mkdir -p "$mount"
+  sudo mount --types tmpfs --options "size=$bytes,nosuid,nodev" octacity-work "$mount"
+  sudo chown "$(id -u):$(id -g)" "$mount"
+  chmod 0700 "$mount"
+}
+
 validate_filesystems() {
   local root=$1 limit=$2 work_device cache_device root_device work_bytes cache_bytes
   work_device=$(stat -c %d "$root/work")
@@ -238,7 +246,7 @@ setup() {
   environment_identity="github-actions-${ImageOS}-${ImageVersion}-${runtime_platform}"
   mkdir -p "$root"
   stage_octa_release "$root" "$version" "$revision" "$asset_arch" "$runtime_platform"
-  provision_filesystem "$root/work.ext4" "$root/work" "$workspace_bytes" octacity-work
+  provision_workspace "$root/work" "$workspace_bytes"
   provision_filesystem "$root/cache.ext4" "$root/cache" "$workspace_bytes" octacity-cache
   validate_filesystems "$root" "$workspace_bytes"
 

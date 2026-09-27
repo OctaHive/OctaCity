@@ -363,6 +363,8 @@ pub struct AuthenticatedAgentRegistration {
   pub pool_version: PoolVersion,
   /// Static host capacity retained from the validated registration inventory.
   pub host_capacity: octacity_protocol::HostCapacity,
+  /// Whether management has asked this Agent process to drain and stop.
+  pub draining: bool,
   /// Exclusive registration expiry.
   pub expires_at: Timestamp,
 }

@@ -11,7 +11,7 @@ use octacity_execution::{
 };
 
 fn execution_request(root: &Path) -> StartExecution {
-  let workspace = root.join("workspace");
+  let workspace = root.join("job").join("workspace");
   let data_dir = workspace.join("data");
   fs::create_dir_all(&data_dir).unwrap();
   StartExecution {
@@ -291,11 +291,16 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
 
   let root = tempfile::tempdir().unwrap();
   let mut request = execution_request(root.path());
-  let identity = root.path().join("identity-token");
+  let job_root = request.workspace.parent().unwrap();
+  let identity_directory = job_root.join("identity");
+  fs::create_dir(&identity_directory).unwrap();
+  let identity = identity_directory.join("token");
   fs::write(&identity, "signed-jwt").unwrap();
   request.workload_identity = Some(identity);
   let cache = root.path().join("cache");
-  let cache_token = root.path().join("cache-token");
+  let cache_session = job_root.join("cache-session");
+  fs::create_dir(&cache_session).unwrap();
+  let cache_token = cache_session.join("token");
   let cache_ca = root.path().join("cache-ca.pem");
   fs::create_dir(&cache).unwrap();
   fs::write(&cache_token, "cache-secret").unwrap();
@@ -324,6 +329,11 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
     &mut command,
     &runner,
     &request,
+    job_root,
+    &[
+      PathBuf::from("/work/identity/token"),
+      PathBuf::from("/work/cache-session/token"),
+    ],
     &temporary,
     &home,
     &[readonly_file.clone(), readonly_link.clone(), missing],
@@ -349,11 +359,21 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
       .any(|values| values == ["--ro-bind", release_root.as_ref(), NATIVE_OCTA_ROOT_PATH])
   );
   let work_root = root.path().to_string_lossy();
-  let workspace = request.workspace.to_string_lossy();
+  let job_root = request.workspace.parent().unwrap().to_string_lossy();
   assert!(
     arguments
       .windows(3)
-      .any(|values| values == ["--bind", workspace.as_ref(), NATIVE_WORKSPACE_PATH])
+      .any(|values| values == ["--bind", job_root.as_ref(), "/work"])
+  );
+  assert!(
+    arguments
+      .windows(3)
+      .any(|values| { values == ["--ro-bind", "/dev/null", "/work/identity/token"] })
+  );
+  assert!(
+    arguments
+      .windows(3)
+      .any(|values| { values == ["--ro-bind", "/dev/null", "/work/cache-session/token"] })
   );
   assert!(
     !arguments

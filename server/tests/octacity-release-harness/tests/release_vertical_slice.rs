@@ -40,7 +40,6 @@ use support::{get_json, post_management, publish_policy_and_trigger_definition, 
 const SIGNING_SEED: [u8; 32] = [7; 32];
 const SOURCE_REPOSITORY: &str = "https://github.com/OctaHive/octa.git";
 const SOURCE_REVISION: &str = include_str!("../../../../.github/octa-source-revision");
-const RELEASE_JOB_DISK_BYTES: u64 = 512 * 1024 * 1024;
 const RELEASE_JOB_TIMEOUT_SECONDS: u64 = 300;
 const RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS: u64 = 5;
 const RELEASE_JOB_AUTHORITY_MARGIN_SECONDS: u64 = 30;
@@ -275,15 +274,6 @@ impl ReleaseBackend {
       Self::Native { workspace_bytes, .. } | Self::Microsandbox { workspace_bytes, .. } => *workspace_bytes,
     }
   }
-
-  fn job_disk_bytes(&self) -> u64 {
-    let workspace_bytes = self.workspace_bytes();
-    assert!(
-      workspace_bytes >= RELEASE_JOB_DISK_BYTES,
-      "release backend workspace limit {workspace_bytes} is smaller than the {RELEASE_JOB_DISK_BYTES}-byte test Job"
-    );
-    RELEASE_JOB_DISK_BYTES
-  }
 }
 
 struct PipelineResources {
@@ -443,7 +433,7 @@ fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &s
         "labels": {},
         "minimum_cpu_millis": 1000,
         "minimum_memory_bytes": 536870912_u64,
-        "minimum_disk_bytes": backend.job_disk_bytes()
+        "minimum_disk_bytes": backend.workspace_bytes()
       },
       "allowed_pools": [pool],
       "runtime": {
@@ -453,7 +443,7 @@ fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &s
         "immutable_image": backend.immutable_image(),
         "cpu_millis": 1000,
         "memory_bytes": 536870912_u64,
-        "writable_disk_bytes": backend.job_disk_bytes(),
+        "writable_disk_bytes": backend.workspace_bytes(),
         "timeout_seconds": RELEASE_JOB_TIMEOUT_SECONDS,
         "network": {"mode": "disabled"},
         "workload_identity_profile": null
@@ -1081,7 +1071,7 @@ fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
 }
 
 #[test]
-fn release_jobs_leave_headroom_on_the_bounded_native_filesystem() {
+fn release_jobs_use_the_bounded_workspace_limit() {
   let backend = ReleaseBackend::Native {
     cgroup_root: PathBuf::from("/cgroups"),
     work_root: PathBuf::from("/work"),
@@ -1096,17 +1086,16 @@ fn release_jobs_leave_headroom_on_the_bounded_native_filesystem() {
   let definition = &configuration["definition"];
   assert_eq!(
     definition["agent_requirements"]["minimum_disk_bytes"].as_u64(),
-    Some(RELEASE_JOB_DISK_BYTES)
+    Some(backend.workspace_bytes())
   );
   assert_eq!(
     definition["runtime"]["writable_disk_bytes"].as_u64(),
-    Some(RELEASE_JOB_DISK_BYTES)
+    Some(backend.workspace_bytes())
   );
   assert_eq!(
     definition["runtime"]["timeout_seconds"].as_u64(),
     Some(RELEASE_JOB_TIMEOUT_SECONDS)
   );
-  assert!(backend.job_disk_bytes() < backend.workspace_bytes());
 }
 
 #[test]
