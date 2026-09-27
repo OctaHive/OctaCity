@@ -219,6 +219,20 @@ fn containerd_release_jobs_request_provider_neutral_isolation() {
     json!({"os": "linux", "architecture": host_architecture()})
   );
   assert_eq!(runtime["required_guarantees"].as_array().unwrap().len(), 4);
+  assert_eq!(
+    backend.execution_target(),
+    Some(json!({
+      "mode": "isolation",
+      "host_platform": {"os": "linux", "architecture": host_architecture()},
+      "target_platform": {"os": "linux", "architecture": host_architecture()},
+      "required_guarantees": [
+        "filesystem_isolation",
+        "process_isolation",
+        "network_isolation",
+        "resource_isolation"
+      ]
+    }))
+  );
   let capabilities = configuration["definition"]["agent_requirements"]["capabilities"]
     .as_array()
     .unwrap();
@@ -246,6 +260,36 @@ fn apple_vf_release_jobs_keep_virtualization_as_an_isolation_implementation_deta
   );
   assert_eq!(runtime["operating_system"], "linux");
   assert_eq!(runtime["required_guarantees"].as_array().unwrap().len(), 4);
+  let execution_target = json!({
+    "mode": "isolation",
+    "host_platform": {"os": "macos", "architecture": "arm64"},
+    "target_platform": {"os": "linux", "architecture": "arm64"},
+    "required_guarantees": [
+      "filesystem_isolation",
+      "process_isolation",
+      "network_isolation",
+      "resource_isolation"
+    ]
+  });
+  assert_eq!(backend.execution_target(), Some(execution_target.clone()));
+  assert_eq!(
+    backend.pool_admission_policy(),
+    json!({
+      "mode": "execution_allowlist",
+      "platforms": [{"operating_system": "macos", "architecture": "arm64"}],
+      "execution_targets": [execution_target.clone()]
+    })
+  );
+  let policy = super::support::project_policy_body(
+    "pool",
+    "repository",
+    backend.runtime_class(),
+    Some(execution_target.clone()),
+  );
+  assert_eq!(
+    policy["policy"]["execution_targets"],
+    json!({"mode": "replace", "value": [execution_target]})
+  );
   let capabilities = configuration["definition"]["agent_requirements"]["capabilities"]
     .as_array()
     .unwrap();

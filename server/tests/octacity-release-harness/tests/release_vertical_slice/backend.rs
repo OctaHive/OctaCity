@@ -124,7 +124,11 @@ impl ReleaseBackend {
   }
 
   pub(super) fn agent_platform(&self) -> (&'static str, &'static str) {
-    (env::consts::OS, host_architecture())
+    match self {
+      Self::Native { .. } | Self::Containerd { .. } => ("linux", host_architecture()),
+      Self::Microsandbox { .. } => (env::consts::OS, host_architecture()),
+      Self::AppleVf { .. } => ("macos", "arm64"),
+    }
   }
 
   pub(super) fn guest_architecture(&self) -> &'static str {
@@ -175,6 +179,37 @@ impl ReleaseBackend {
         "resource_isolation"
       ]),
       Self::Native { .. } | Self::Microsandbox { .. } => json!([]),
+    }
+  }
+
+  pub(super) fn execution_target(&self) -> Option<Value> {
+    match self {
+      Self::Containerd { .. } | Self::AppleVf { .. } => Some(json!({
+        "mode": self.runtime_class(),
+        "host_platform": self.host_platform(),
+        "target_platform": {
+          "os": "linux",
+          "architecture": self.guest_architecture()
+        },
+        "required_guarantees": self.required_guarantees()
+      })),
+      Self::Native { .. } | Self::Microsandbox { .. } => None,
+    }
+  }
+
+  pub(super) fn pool_admission_policy(&self) -> Value {
+    let (operating_system, architecture) = self.agent_platform();
+    let platforms = json!([{
+      "operating_system": operating_system,
+      "architecture": architecture
+    }]);
+    match self.execution_target() {
+      Some(target) => json!({
+        "mode": "execution_allowlist",
+        "platforms": platforms,
+        "execution_targets": [target]
+      }),
+      None => json!({"mode": "allowlist", "platforms": platforms}),
     }
   }
 

@@ -221,7 +221,6 @@ async fn create_pipeline_resources(
   run: &str,
   backend: &ReleaseBackend,
 ) -> PipelineResources {
-  let (agent_os, agent_architecture) = backend.agent_platform();
   let pool = post_management(
     client,
     origin,
@@ -232,10 +231,7 @@ async fn create_pipeline_resources(
       "definition": {
         "enabled": true,
         "drain_state": "accepting",
-        "admission_policy": {"mode": "allowlist", "platforms": [{
-          "operating_system": agent_os,
-          "architecture": agent_architecture
-        }]},
+        "admission_policy": backend.pool_admission_policy(),
         "concurrency_limit": 1,
         "fairness_policy": "priority_fifo",
         "static_capacity_limit": 1
@@ -305,7 +301,7 @@ async fn create_pipeline_resources(
     &repository_id,
     &configuration_id,
     &pool_id,
-    backend.runtime_class(),
+    backend,
   )
   .await;
   let trigger = post_management(

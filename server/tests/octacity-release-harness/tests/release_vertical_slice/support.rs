@@ -3,6 +3,8 @@
 use reqwest::Client;
 use serde_json::{Value, json};
 
+use super::backend::ReleaseBackend;
+
 pub async fn publish_policy_and_trigger_definition(
   client: &Client,
   origin: &str,
@@ -10,35 +12,14 @@ pub async fn publish_policy_and_trigger_definition(
   repository: &str,
   configuration: &str,
   pool: &str,
-  runtime_class: &str,
+  backend: &ReleaseBackend,
 ) -> String {
   post_management(
     client,
     origin,
     &format!("/api/v1/projects/{project}/policy-versions"),
     &format!("policy-{project}"),
-    json!({"policy": {
-      "pools": {"mode": "replace", "value": [pool]},
-      "repositories": {"mode": "replace", "value": [repository]},
-      "secret_profiles": {"mode": "replace", "value": []},
-      "identity_profiles": {"mode": "replace", "value": []},
-      "runtimes": {"mode": "replace", "value": [runtime_class]},
-      "cache": {"mode": "replace", "value": {"namespaces": [], "read": false, "write": false, "max_bytes": 0}},
-      "artifacts": {"mode": "replace", "value": {
-        "artifact_count": 0,
-        "artifact_bytes": 0,
-        "report_count": 0,
-        "report_bytes": 0,
-        "single_output_bytes": 0
-      }},
-      "concurrency": {"mode": "replace", "value": {"active_builds": 1, "active_jobs": 1}},
-      "retention": {"mode": "replace", "value": {
-        "build_seconds": 86400,
-        "log_seconds": 86400,
-        "artifact_seconds": 86400,
-        "cache_seconds": 86400
-      }}
-    }}),
+    project_policy_body(pool, repository, backend.runtime_class(), backend.execution_target()),
   )
   .await;
   let trigger = post_management(
@@ -55,6 +36,37 @@ pub async fn publish_policy_and_trigger_definition(
   )
   .await;
   resource_id(&trigger)
+}
+
+pub fn project_policy_body(
+  pool: &str,
+  repository: &str,
+  runtime_class: &str,
+  execution_target: Option<Value>,
+) -> Value {
+  json!({"policy": {
+    "pools": {"mode": "replace", "value": [pool]},
+    "repositories": {"mode": "replace", "value": [repository]},
+    "secret_profiles": {"mode": "replace", "value": []},
+    "identity_profiles": {"mode": "replace", "value": []},
+    "runtimes": {"mode": "replace", "value": [runtime_class]},
+    "execution_targets": {"mode": "replace", "value": execution_target.into_iter().collect::<Vec<_>>()},
+    "cache": {"mode": "replace", "value": {"namespaces": [], "read": false, "write": false, "max_bytes": 0}},
+    "artifacts": {"mode": "replace", "value": {
+      "artifact_count": 0,
+      "artifact_bytes": 0,
+      "report_count": 0,
+      "report_bytes": 0,
+      "single_output_bytes": 0
+    }},
+    "concurrency": {"mode": "replace", "value": {"active_builds": 1, "active_jobs": 1}},
+    "retention": {"mode": "replace", "value": {
+      "build_seconds": 86400,
+      "log_seconds": 86400,
+      "artifact_seconds": 86400,
+      "cache_seconds": 86400
+    }}
+  }})
 }
 
 pub async fn post_management(client: &Client, origin: &str, path: &str, key: &str, body: Value) -> Value {
