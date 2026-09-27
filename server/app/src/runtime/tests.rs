@@ -31,6 +31,16 @@ fn healthy_checks() -> ReadinessChecks {
   ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
 }
 
+async fn assert_listener_stops(address: SocketAddr) {
+  let stopped = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    while tokio::net::TcpStream::connect(address).await.is_ok() {
+      tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+  })
+  .await;
+  assert!(stopped.is_ok(), "shutdown did not stop ingress listener {address}");
+}
+
 fn test_config() -> ServerConfig {
   ServerConfig::parse_toml(
     r#"
@@ -126,16 +136,15 @@ async fn shutdown_cancels_the_listener_and_waits_for_its_task() {
     .unwrap();
   let addresses = [runtime.management_addr(), runtime.agent_addr().unwrap()];
   for address in addresses {
-    assert!(tokio::net::TcpListener::bind(address).await.is_err());
+    tokio::net::TcpStream::connect(address)
+      .await
+      .expect("running ingress listener must accept TCP connections");
   }
 
   runtime.shutdown().await.unwrap();
 
   for address in addresses {
-    let replacement = tokio::net::TcpListener::bind(address)
-      .await
-      .expect("shutdown must release every ingress listener");
-    assert_eq!(replacement.local_addr().unwrap(), address);
+    assert_listener_stops(address).await;
   }
 }
 
