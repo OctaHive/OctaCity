@@ -149,11 +149,13 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
     read_log(&stderr_path)
   );
   assert_resource_accounting(&success);
+  let success_usage = success.final_usage.as_ref().expect("Host must report final usage");
   assert!(
-    success
-      .final_usage
-      .as_ref()
-      .is_some_and(|usage| usage.io_written_bytes > 0),
+    success_usage.cpu_time_ms > 0,
+    "successful Host workload must account for CPU time"
+  );
+  assert!(
+    success_usage.io_written_bytes > 0,
     "successful Host workload must account for filesystem writes"
   );
   assert_eq!(cancelled.status, JobCompletionStatus::Cancelled);
@@ -464,7 +466,6 @@ fn assert_resource_accounting(completion: &CompleteLeaseRequest) {
   assert_eq!(evidence.provider.as_str(), "host");
   assert_eq!(evidence.target.mode, ExecutionMode::Host);
   let usage = completion.final_usage.as_ref().expect("Host must report final usage");
-  assert!(usage.cpu_time_ms > 0);
   assert!(usage.memory_peak_bytes > 0);
   assert!(usage.memory_peak_bytes >= usage.memory_current_bytes);
   assert!(usage.disk_peak_bytes >= usage.disk_current_bytes);
