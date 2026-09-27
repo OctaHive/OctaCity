@@ -455,6 +455,38 @@ class PackageReleaseTests(unittest.TestCase):
         result = subprocess.run(["bash", "-c", script], check=False, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    @unittest.skipIf(sys.platform == "win32", "Apple VF provisioner executes only on POSIX hosts")
+    def test_apple_vf_cleanup_ignores_apfs_metadata_but_rejects_owned_workspaces(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runner_temp = Path(temporary)
+            root = runner_temp / "octacity-self-hosted-apple-vf"
+            work = root / "work"
+            (root / "state" / "apple-vf-isolation").mkdir(parents=True)
+            work.mkdir()
+            (root / ".octacity-apple-vf").write_text("apple-vf-isolation\n", encoding="utf-8")
+            (work / ".fseventsd").mkdir()
+            environment = {"RUNNER_TEMP": str(runner_temp)}
+
+            clean = subprocess.run(
+                ["bash", str(REPOSITORY / "tools/runner/self-hosted-apple-vf.sh"), "verify-clean"],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=environment,
+            )
+            self.assertEqual(clean.returncode, 0, clean.stderr)
+
+            (work / ("job-" + "a" * 64)).mkdir()
+            leaked = subprocess.run(
+                ["bash", str(REPOSITORY / "tools/runner/self-hosted-apple-vf.sh"), "verify-clean"],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=environment,
+            )
+            self.assertNotEqual(leaked.returncode, 0)
+            self.assertIn("Apple VF workspaces remain", leaked.stderr)
+
     def test_workflows_pin_actions_runners_and_toolchains(self):
         action = re.compile(r"^\s*-?\s*uses:\s+[^\s@]+@([0-9a-f]{40})(?:\s+#.*)?$")
         for path in sorted((REPOSITORY / ".github/workflows").glob("*.yml")):

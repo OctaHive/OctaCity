@@ -100,6 +100,21 @@ attach_volume() {
   chmod 0700 "$mount"
 }
 
+is_owned_workspace_name() {
+  local name=$1 digest
+  [[ ${#name} -eq 68 && $name == job-* ]] || return 1
+  digest=${name#job-}
+  [[ $digest != *[!0-9a-f]* ]]
+}
+
+owned_workspace_exists() {
+  local work_root=$1 entry
+  while IFS= read -r -d '' entry; do
+    is_owned_workspace_name "${entry##*/}" && return 0
+  done < <(find "$work_root" -mindepth 1 -maxdepth 1 -type d -print0)
+  return 1
+}
+
 setup() {
   local version=$1 revision=$2 root version_json installed_version
   [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]] || fail "Apple VF isolation requires Apple Silicon macOS"
@@ -149,8 +164,10 @@ verify_clean() {
   root=$(validated_root)
   [[ -z $(find "$root/state/apple-vf-isolation" -type f -name '*.owner' -print -quit 2>/dev/null) ]] \
     || fail "Apple VF cleanup markers remain after the contract"
-  [[ -z $(find "$root/work" -mindepth 1 -maxdepth 1 -print -quit) ]] \
-    || fail "Apple VF workspaces remain after the contract"
+  [[ -d $root/work && ! -L $root/work ]] || fail "Apple VF work root is absent or symbolic"
+  # APFS owns volume metadata such as .fseventsd. The Agent owns only its
+  # exact job-<sha256> directories, so do not mistake filesystem state for a leak.
+  ! owned_workspace_exists "$root/work" || fail "Apple VF workspaces remain after the contract"
 }
 
 cleanup() {
