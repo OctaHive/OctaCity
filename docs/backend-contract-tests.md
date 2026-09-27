@@ -186,9 +186,13 @@ cargo test -p octacity-job --test backend_contract \
 ```
 
 The portable released-Agent contract additionally requires
-`OCTACITY_RELEASE_AGENT_ROOT`. The `host` workflow stages both roots from
-self-verifying bundles and runs this test on all three supported operating
-systems:
+`OCTACITY_RELEASE_AGENT_ROOT` and `OCTACITY_CONTRACT_HOST_SOURCE_ROOT`. The
+source root is the already verified pinned Octa checkout; the Host gate uses a
+separately checksummed contract candidate whose Git plugin permits that exact
+local source, so execution qualification never depends on external DNS or
+network availability. Production release candidates retain `allow_file =
+false`. The `host` workflow stages both release roots and runs this test on all
+three supported operating systems:
 
 ```shell
 cargo test -p octacity-release-harness --test released_host_agent \

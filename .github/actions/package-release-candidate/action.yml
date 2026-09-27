@@ -9,6 +9,10 @@ inputs:
     description: Also build and package the server bundle used by full vertical slices
     required: false
     default: "true"
+  source-allow-file:
+    description: Allow local Git sources in this checksummed candidate's plugin policy
+    required: false
+    default: "false"
 
 outputs:
   agent-archive:
@@ -50,6 +54,12 @@ runs:
           executable_suffix=.exe
           archive_extension=zip
         fi
+        source_policy=()
+        case "${{ inputs.source-allow-file }}" in
+          true) source_policy+=(--source-allow-file) ;;
+          false) ;;
+          *) echo "source-allow-file must be true or false" >&2; exit 1 ;;
+        esac
 
         stage=$(mktemp -d "${RUNNER_TEMP}/octacity-release-candidate.XXXXXX")
         metadata="${stage}/source-plugin-package.json"
@@ -73,6 +83,7 @@ runs:
           --agent "target/release/octacity-agent${executable_suffix}" \
           --source-git "target/release/octacity-source-git${executable_suffix}" \
           --source-metadata "${metadata}" \
+          "${source_policy[@]}" \
           --octacity-revision "$(git rev-parse HEAD)" \
           --octa-revision "${OCTA_SOURCE_REVISION}" \
           --output "${agent_archive}"

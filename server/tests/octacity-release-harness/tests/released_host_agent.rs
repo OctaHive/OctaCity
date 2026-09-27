@@ -29,7 +29,6 @@ use serde_json::{Value, json};
 use tokio::{net::TcpListener, process::Command, sync::oneshot, time::timeout};
 
 const SIGNING_SEED: [u8; 32] = [7; 32];
-const SOURCE_REPOSITORY: &str = "https://github.com/OctaHive/octa.git";
 const SOURCE_REVISION: &str = include_str!("../../../../.github/octa-source-revision");
 const WORKSPACE_BYTES: u64 = 32 * 1024 * 1024;
 const EVENT_BATCH_BYTES: usize = 16 * 1024;
@@ -373,7 +372,7 @@ fn host_spec(inventory: &AgentInventory, job_id: &str, cancellation: bool, now: 
       plugin_sha256: source.sha256.clone(),
       revision: SOURCE_REVISION.trim().to_owned(),
       reference: None,
-      parameters: BTreeMap::from([("url".to_owned(), Value::String(SOURCE_REPOSITORY.to_owned()))]),
+      parameters: BTreeMap::from([("url".to_owned(), Value::String(host_source_repository()))]),
     },
     octa: OctaSpec {
       version: inventory.octa.version.clone(),
@@ -633,6 +632,13 @@ fn required_directory(name: &str) -> PathBuf {
     "{name} must be an absolute directory"
   );
   path
+}
+
+fn host_source_repository() -> String {
+  required_directory("OCTACITY_CONTRACT_HOST_SOURCE_ROOT")
+    .into_os_string()
+    .into_string()
+    .expect("Host source root must be valid UTF-8")
 }
 
 fn create_private_directory(path: &Path) {

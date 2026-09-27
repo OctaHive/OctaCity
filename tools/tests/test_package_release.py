@@ -61,6 +61,7 @@ class PackageReleaseTests(unittest.TestCase):
                 "agent": agent,
                 "source_git": plugin,
                 "source_metadata": source_metadata,
+                "source_allow_file": False,
                 "octacity_revision": "a" * 40,
                 "octa_revision": "b" * 40,
                 "output": root / output,
@@ -121,6 +122,18 @@ class PackageReleaseTests(unittest.TestCase):
                 plugin = archive.read("source-plugins/git/plugin.toml").decode()
                 self.assertIn('executable = "octacity-source-git.exe"', plugin)
                 self.assertIn('git_path = "C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe"', plugin)
+
+    def test_contract_candidate_can_explicitly_allow_a_local_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            arguments = self.fixture(root, "linux-amd64", "agent.tar.gz")
+            arguments.source_allow_file = True
+
+            output = PACKAGE_RELEASE.package(arguments)
+
+            with tarfile.open(output, "r:gz") as archive:
+                plugin = archive.extractfile("source-plugins/git/plugin.toml").read().decode()
+                self.assertIn("allow_file = true", plugin)
 
     def test_linux_arm64_archive_contains_arm_runtime_identity_and_labels(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -350,6 +363,14 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("host_backend_satisfies_the_real_runner_contract", host)
         self.assertIn("released_host_agent_satisfies_the_portable_execution_contract", host)
         self.assertIn("include-server: \"false\"", host)
+        self.assertIn("source-allow-file: \"true\"", host)
+        self.assertIn("OCTACITY_CONTRACT_HOST_SOURCE_ROOT: ${{ github.workspace }}/octa", host)
+
+        package_action = (REPOSITORY / ".github/actions/package-release-candidate/action.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("source-allow-file:", package_action)
+        self.assertIn("source_policy+=(--source-allow-file)", package_action)
 
     def test_linux_oci_release_gates_use_disposable_github_runners(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")

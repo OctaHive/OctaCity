@@ -69,6 +69,7 @@ jobs:
         with:
           octa-revision: ${{ steps.octa-source.outputs.revision }}
           include-server: "false"
+          source-allow-file: "true"
       - name: Prepare private Host contract roots
         shell: bash
         run: |
@@ -87,6 +88,7 @@ jobs:
       - name: Run the released Host Agent contract
         env:
           OCTACITY_RELEASE_AGENT_ROOT: ${{ steps.release-candidate.outputs.agent-root }}
+          OCTACITY_CONTRACT_HOST_SOURCE_ROOT: ${{ github.workspace }}/octa
         run: >-
           cargo test -p octacity-release-harness --test released_host_agent
           released_host_agent_satisfies_the_portable_execution_contract -- --ignored --exact --nocapture

@@ -103,6 +103,7 @@ def stage_release(
     agent: Path,
     source_git: Path,
     source_metadata: dict[str, object],
+    source_allow_file: bool,
     octacity_revision: str,
     octa_revision: str,
 ) -> None:
@@ -133,7 +134,7 @@ def stage_release(
                 "",
                 "[settings]",
                 f"git_path = {json.dumps(layout.git_executable)}",
-                "allow_file = false",
+                f"allow_file = {str(source_allow_file).lower()}",
                 "max_diagnostic_bytes = 65536",
                 "",
             ]
@@ -193,6 +194,7 @@ def package(args: argparse.Namespace) -> Path:
             agent,
             source_git,
             source_metadata,
+            args.source_allow_file,
             octacity_revision,
             octa_revision,
         )
@@ -208,6 +210,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--agent", type=Path, required=True)
     parser.add_argument("--source-git", type=Path, required=True)
     parser.add_argument("--source-metadata", type=Path, required=True)
+    parser.add_argument(
+        "--source-allow-file",
+        action="store_true",
+        help="Allow local Git sources in this candidate's immutable plugin policy",
+    )
     parser.add_argument("--octacity-revision", required=True)
     parser.add_argument("--octa-revision", required=True)
     parser.add_argument("--output", type=Path, required=True)
