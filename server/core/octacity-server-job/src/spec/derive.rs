@@ -1,13 +1,36 @@
 use std::collections::BTreeMap;
 
-use octacity_protocol::{AGENT_PROTOCOL_VERSION, ExecutionSpec, JobBinding, JobSpecV1, SourceSpec};
+use octacity_protocol::{
+  AGENT_PROTOCOL_VERSION, EXECUTION_CONTRACT_V2, ExecutionSpec, JobBinding, JobSpecV1, JobSpecV2, SourceSpec,
+};
 use octacity_server_domain::{AttemptNumber, JobId, PipelineNodeId, Timestamp};
 use serde_json::Value;
 
 use super::{
-  DerivedJobSpec, JobExecutionTemplate, JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot,
-  JobSpecSigner, JobSpecTemplate,
+  DerivedJobSpec, JobExecutionTemplate, JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecDerivationError,
+  JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate,
 };
+
+enum WireJobSpec {
+  Legacy(JobSpecV1),
+  Current(JobSpecV2),
+}
+
+impl WireJobSpec {
+  fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
+    match self {
+      Self::Legacy(spec) => spec.validate(binding),
+      Self::Current(spec) => spec.validate(binding),
+    }
+  }
+
+  fn sign(&self, signer: &JobSpecSigner) -> Result<octacity_protocol::SignedEnvelope, super::JobSpecSigningError> {
+    match self {
+      Self::Legacy(spec) => signer.sign_v1(spec),
+      Self::Current(spec) => signer.sign_v2(spec),
+    }
+  }
+}
 
 /// Derives stable server-owned intent from immutable Build, Pipeline, and policy snapshots.
 pub fn derive_job_spec_template(
@@ -34,7 +57,14 @@ pub fn sign_ready_job_spec(
   let issued_at =
     u64::try_from(issued_at.unix_millis().div_euclid(1_000)).map_err(|_| JobSpecDerivationError::InvalidIssueTime)?;
   let spec = wire_job_spec(template, attempt, job_id.to_string(), issued_at)?;
-  let envelope = signer.sign(&spec).map_err(JobSpecDerivationError::Signing)?;
+  spec
+    .validate(&JobBinding {
+      job_id: &job_id.to_string(),
+      attempt,
+      now: issued_at,
+    })
+    .map_err(|_| JobSpecDerivationError::InvalidPolicy)?;
+  let envelope = spec.sign(signer).map_err(JobSpecDerivationError::Signing)?;
   Ok(DerivedJobSpec { envelope })
 }
 
@@ -55,7 +85,7 @@ fn wire_job_spec(
   attempt: u32,
   job_id: String,
   issued_at: u64,
-) -> Result<JobSpecV1, JobSpecDerivationError> {
+) -> Result<WireJobSpec, JobSpecDerivationError> {
   let expires_at = issued_at
     .checked_add(template.policy().validity.get())
     .ok_or(JobSpecDerivationError::ValidityOverflow)?;
@@ -65,37 +95,61 @@ fn wire_job_spec(
     Value::String(template.repository_locator().to_owned()),
   );
   let execution = template.execution();
-  Ok(JobSpecV1 {
-    protocol_version: AGENT_PROTOCOL_VERSION,
-    job_id,
-    attempt,
-    issued_at,
-    expires_at,
-    source: SourceSpec {
-      provider: template.policy().source.provider.clone(),
-      plugin_version: template.policy().source.plugin_version.clone(),
-      plugin_sha256: template.policy().source.plugin_sha256.clone(),
-      revision: template.immutable_revision().as_str().to_owned(),
-      reference: template
-        .source_reference()
-        .map(|reference| reference.as_str().to_owned()),
-      parameters: source_parameters,
-    },
-    octa: template.policy().octa.clone(),
-    execution: ExecutionSpec {
-      octafile: execution.octafile.clone(),
-      commands: execution.commands.clone(),
-      variables: execution_variables(template.parameters())?,
-      arguments: execution.arguments.clone(),
-      concurrency: execution.concurrency,
-      parallel: execution.parallel,
-      failfast: execution.failfast,
-      secrets_profile: template.policy().secrets_profile.as_ref().map(ToString::to_string),
-    },
-    runtime: template.policy().runtime.clone(),
-    cache: template.policy().cache.clone(),
-    outputs: template.policy().outputs.clone(),
-  })
+  let source = SourceSpec {
+    provider: template.policy().source.provider.clone(),
+    plugin_version: template.policy().source.plugin_version.clone(),
+    plugin_sha256: template.policy().source.plugin_sha256.clone(),
+    revision: template.immutable_revision().as_str().to_owned(),
+    reference: template
+      .source_reference()
+      .map(|reference| reference.as_str().to_owned()),
+    parameters: source_parameters,
+  };
+  let execution = ExecutionSpec {
+    octafile: execution.octafile.clone(),
+    commands: execution.commands.clone(),
+    variables: execution_variables(template.parameters())?,
+    arguments: execution.arguments.clone(),
+    concurrency: execution.concurrency,
+    parallel: execution.parallel,
+    failfast: execution.failfast,
+    secrets_profile: template.policy().secrets_profile.as_ref().map(ToString::to_string),
+  };
+  let common = || (job_id, attempt, issued_at, expires_at, source, execution);
+  match &template.policy().runtime {
+    JobRuntimePolicy::Legacy(runtime) => {
+      let (job_id, attempt, issued_at, expires_at, source, execution) = common();
+      Ok(WireJobSpec::Legacy(JobSpecV1 {
+        protocol_version: AGENT_PROTOCOL_VERSION,
+        job_id,
+        attempt,
+        issued_at,
+        expires_at,
+        source,
+        octa: template.policy().octa.clone(),
+        execution,
+        runtime: runtime.clone(),
+        cache: template.policy().cache.clone(),
+        outputs: template.policy().outputs.clone(),
+      }))
+    }
+    JobRuntimePolicy::Current(runtime) => {
+      let (job_id, attempt, issued_at, expires_at, source, execution) = common();
+      Ok(WireJobSpec::Current(JobSpecV2 {
+        protocol_version: EXECUTION_CONTRACT_V2,
+        job_id,
+        attempt,
+        issued_at,
+        expires_at,
+        source,
+        octa: template.policy().octa.clone(),
+        execution,
+        runtime: runtime.clone(),
+        cache: template.policy().cache.clone(),
+        outputs: template.policy().outputs.clone(),
+      }))
+    }
+  }
 }
 
 pub(super) fn validate_execution_template(template: &JobExecutionTemplate) -> Result<(), JobSpecDerivationError> {

@@ -9,7 +9,7 @@ use std::{
 };
 
 use async_trait::async_trait;
-use octacity_protocol::{OctaSpec, PlatformArchitecture, PlatformOs};
+use octacity_protocol::{ExecutionMode, OctaSpec, PlatformArchitecture, PlatformOs, PlatformSpec, guarantees_for};
 use octacity_server_application::{
   AcceptManualTriggerCommand, AcceptWebhookDeliveryCommand, ApplicationFailure, ArtifactPolicy,
   AuthenticatedWebhookEvent, CachePolicy, CommandHandler, ConcurrencyPolicy, CreateManagedWebhookCommand,
@@ -20,10 +20,10 @@ use octacity_server_application::{
   ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
   ManualTriggerContextProvider, ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome,
   ManualTriggerRetryWorker, ManualTriggerService, MutationDisposition as ApplicationDisposition, PolicySource,
-  RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, RuntimeClass, ScheduleWorker,
-  ScheduledBuildDefinition, SecretProfileName, VerifyWebhookDelivery, WebhookCallbackOrigin, WebhookDeliveryVerifier,
-  WebhookDeliveryWorker, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
-  WebhookVerificationError,
+  ProjectExecutionTarget, RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
+  RuntimeClass, ScheduleWorker, ScheduledBuildDefinition, SecretProfileName, VerifyWebhookDelivery,
+  WebhookCallbackOrigin, WebhookDeliveryVerifier, WebhookDeliveryWorker, WebhookIngressService,
+  WebhookManagementProvider, WebhookManagementService, WebhookVerificationError,
 };
 use octacity_server_domain::{
   AgentId, AttemptId, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, BuildId, EntityKind,
@@ -251,6 +251,58 @@ fn secret_profile_outside_effective_policy_is_rejected_before_side_effects() {
     ));
     assert!(resolver.requests.lock().unwrap().is_empty());
     assert!(store.requests.lock().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn provider_neutral_runtime_requires_an_exact_project_execution_target() {
+  run(async {
+    let mut fixture = fixture();
+    let platform = PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    };
+    fixture.context.configuration.definition.runtime.class = RuntimeClass::Host;
+    fixture.context.configuration.definition.runtime.host_platform = Some(platform);
+    fixture.context.configuration.definition.runtime.required_guarantees = guarantees_for(ExecutionMode::Host);
+    fixture
+      .context
+      .effective_policy
+      .policy
+      .runtimes
+      .insert(RuntimeClass::Host);
+
+    let store = Arc::new(RecordingStore::default());
+    let resolver = Arc::new(RecordingResolver::succeed("unused"));
+    let rejected = ManualTriggerService::new(
+      store.clone(),
+      Arc::new(StaticContext(fixture.context.clone())),
+      resolver.clone(),
+    )
+    .accept(fixture.command.clone(), time(200))
+    .await;
+    assert!(matches!(
+      rejected,
+      Err(ManualTriggerError::Invalid(ManualTriggerInputError::RuntimeNotAllowed))
+    ));
+    assert!(store.requests.lock().unwrap().is_empty());
+
+    fixture
+      .context
+      .effective_policy
+      .policy
+      .execution_targets
+      .insert(ProjectExecutionTarget {
+        mode: ExecutionMode::Host,
+        host_platform: platform,
+        target_platform: platform,
+        required_guarantees: guarantees_for(ExecutionMode::Host),
+      });
+    let accepted = ManualTriggerService::new(store.clone(), Arc::new(StaticContext(fixture.context)), resolver)
+      .accept(fixture.command, time(200))
+      .await;
+    assert!(matches!(accepted, Ok(ManualTriggerOutcome::Accepted { .. })));
+    assert_eq!(store.requests.lock().unwrap().len(), 1);
   });
 }
 
@@ -537,6 +589,8 @@ fn fixture() -> Fixture {
         class: RuntimeClass::Native,
         operating_system: PlatformOs::Linux,
         architecture: PlatformArchitecture::Amd64,
+        host_platform: None,
+        required_guarantees: BTreeSet::new(),
         immutable_image: None,
         cpu_millis: 1_000,
         memory_bytes: 1_024,
@@ -595,6 +649,7 @@ fn fixture() -> Fixture {
       secret_profiles: BTreeSet::from([SecretProfileName::new("ci/secrets.yml").unwrap()]),
       identity_profiles: BTreeSet::<IdentityProfileName>::new(),
       runtimes: BTreeSet::from([RuntimeClass::Native]),
+      execution_targets: BTreeSet::new(),
       cache: CachePolicy {
         namespaces: BTreeSet::new(),
         read: false,

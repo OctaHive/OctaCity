@@ -244,6 +244,8 @@ fn configuration(project_id: ProjectId) -> PublishedBuildConfiguration {
         class: RuntimeClass::Native,
         operating_system: PlatformOs::Linux,
         architecture: PlatformArchitecture::Amd64,
+        host_platform: None,
+        required_guarantees: BTreeSet::new(),
         immutable_image: None,
         cpu_millis: 1,
         memory_bytes: 1,
@@ -349,6 +351,7 @@ fn effective_policy(project_id: ProjectId) -> EffectiveProjectPolicy {
       secret_profiles: BTreeSet::from([SecretProfileName::new("build-secrets").unwrap()]),
       identity_profiles: BTreeSet::from([IdentityProfileName::new("ci-workload").unwrap()]),
       runtimes: BTreeSet::from([RuntimeClass::Native]),
+      execution_targets: BTreeSet::new(),
       cache: CachePolicy {
         namespaces: BTreeSet::from([CacheNamespace::new("project-cache").unwrap()]),
         read: true,

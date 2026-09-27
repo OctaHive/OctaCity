@@ -312,7 +312,7 @@ async fn run_contract(
   let completion = executor
     .execute(
       ExecuteJobRequest {
-        spec,
+        spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: native_cache_contract.then(|| BeginCacheSessionResponse {
           protocol_version: 1,
@@ -378,7 +378,7 @@ async fn run_cancellation_contract(
   let (sender, mut receiver) = mpsc::channel(128);
   let execution = executor.execute(
     ExecuteJobRequest {
-      spec,
+      spec: spec.into(),
       source_credentials: BTreeMap::new(),
       cache_grant: None,
     },

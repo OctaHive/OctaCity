@@ -6,8 +6,9 @@ Status: in progress
 
 Build a small self-hosted agent that receives one leased job from OctaCity,
 materializes an exact source revision through a trusted source plugin, executes
-the released `octa-runner` through an explicitly selected Native or OCI
-backend, delivers an ordered and replayable event stream, uploads declared
+the released `octa-runner` through a negotiated provider-neutral execution
+route (while retaining the legacy Native/OCI compatibility contract), delivers
+an ordered and replayable event stream, uploads declared
 artifacts and reports, and completely removes the job after completion.
 
 The agent is a supervisor and transport client. It does not parse Octafiles,
@@ -15,11 +16,12 @@ build DAGs, execute Octa plugins itself, resolve secret values, or contain a
 second implementation of the Octa runtime.
 
 The agent binary is portable across Linux, Windows, and macOS, but execution
-support is capability-driven: an agent advertises only the guest platforms,
-runtime modes, and isolation tiers its configured backends can actually
-enforce. The initial strict matrix is Linux Native, Linux OCI process execution
-through containerd, and Linux OCI hypervisor execution through Microsandbox on
-supported Linux and Apple Silicon macOS hosts.
+support is capability-driven: an agent advertises only the host/target platform,
+execution mode, and guarantees its configured providers can actually enforce.
+The legacy strict matrix remains Linux Native, Linux OCI process execution
+through containerd, and Linux OCI hypervisor execution through Microsandbox.
+Execution contract v2 exposes `host`, `isolation`, and `virtualization` without
+putting provider names into signed Build intent.
 
 ## Fixed decisions
 
@@ -36,10 +38,11 @@ supported Linux and Apple Silicon macOS hosts.
   first agent protocol.
 - The first agent executes one job at a time.
 - Runner execution always goes through one narrow `ExecutionBackend` contract.
-  The two product modes are `Native` and `OCI`. An OCI request additionally
-  selects `process` or `hypervisor` isolation and an immutable image digest.
-  The requested mode and isolation tier are signed and explicit; there is no
-  automatic fallback between OCI isolation tiers or from OCI to Native.
+  Revision 1 retains the exact `Native` and OCI (`process` or `hypervisor`)
+  meanings. Negotiated revision 2 signs `host`, `isolation`, or
+  `virtualization` plus exact host/target platforms and guarantees. Concrete
+  providers are selected only from qualified Agent inventory. Neither revision
+  permits automatic fallback to a weaker mode or guarantee set.
 - Primary workspace acquisition uses a versioned OctaCity source-plugin
   protocol. The first trusted plugin is `octacity-source-git`; source plugins
   are distinct from Octa task plugins and are never loaded from a repository.
@@ -138,8 +141,12 @@ OctaCity Server
           `- ready VM or machine containing OctaCity Agent
                  |
                  `- ExecutionBackend
-                    |- NativeBackend
-                    `- OciBackend(process | hypervisor)
+                    |- legacy NativeBackend
+                    |- legacy OciBackend(process | hypervisor)
+                    `- v2 qualified provider route
+                       |- host
+                       |- isolation
+                       `- virtualization
 ```
 
 An `AgentProvider` starts a prepared machine image whose agent connects outbound
@@ -181,10 +188,12 @@ agent can run a Linux guest through Microsandbox, but a macOS build needs a
 future strict Native backend or a disposable macOS machine because there is no
 macOS OCI guest mode.
 
-The scheduler matches the signed guest platform, architecture, runtime mode,
-OCI isolation tier, and backend capabilities. A request for `hypervisor` can
-never run through runc/crun or process-isolated runhcs, and an unavailable OCI
-backend can never fall back to Native.
+The scheduler uses the execution-contract revision persisted at registration.
+For v1 it matches the signed guest platform, architecture, runtime mode, OCI
+isolation tier, and backend capabilities. For v2 it matches the exact signed
+host/target platforms, mode, guarantees, and Project execution-target policy,
+then selects a qualified provider as runtime evidence. A request can never fall
+back to a weaker isolation boundary or to legacy Native.
 
 ## Repository shape
 
@@ -375,7 +384,10 @@ attempt, and lease binding before deserializing or acting on the payload.
 Verification keys are provisioned in agent configuration and support an
 explicit overlap during rotation.
 
-`JobSpecV1` contains execution intent, not arbitrary agent commands:
+`JobSpecV1` contains legacy execution intent, not arbitrary agent commands.
+`JobSpecV2` retains every section below except that `runtime` uses the
+provider-neutral mode, host/target platforms, complete guarantee set, and
+optional immutable image defined in the v2 protocol:
 
 ```text
 source
@@ -519,7 +531,10 @@ more local staging space than the agent operator authorized.
 Cache capacity and transport limits are operator policy. The signed job selects
 only a namespace and a subset of locally allowed read/write access. Native
 environment identities are configured by the operator; OCI identities are
-derived from the already verified immutable guest image.
+derived from the already verified immutable guest image. A v2 physical cache
+identity additionally covers the concrete provider, semantic execution target,
+and bounded operator-owned environment identity, so providers cannot
+accidentally share cached results merely because their signed intent is equal.
 
 At startup the agent canonicalizes roots, rejects overlapping unsafe paths,
 checks permissions, verifies that credentials are not world-readable, checks
@@ -691,18 +706,19 @@ path construction.
 The concrete Rust signatures may use pinned boxed I/O types, but the lifecycle
 above is the complete behavioral boundary.
 
-The product includes:
+The compatibility implementation includes:
 
 - `NativeBackend`, which starts only the configured and digest-verified
   `octa-runner` and plugin bundle through the host platform's Native containment;
 - `OciBackend`, which starts the same release from an immutable OCI image using
   the exact signed `process` or `hypervisor` isolation tier.
 
-The signed JobSpec selects one backend. The agent rejects a disabled,
-unavailable, or incompatible backend. It never falls back between OCI
-isolation tiers or from OCI to Native. Server scheduling must reserve Native
-for trusted projects and agents; untrusted jobs require hypervisor-isolated OCI
-execution or a disposable machine regardless of labels supplied by the repository.
+For v1, the signed JobSpec selects one legacy backend. For v2, signed intent
+selects semantic mode/platform/guarantees and the Agent chooses only a qualified
+provider route that supplies matching evidence. The agent rejects a disabled,
+unavailable, incompatible, or unqualified route. It never falls back to a
+weaker mode. Server Project policy authorizes exact v2 execution targets rather
+than provider names or repository-controlled labels.
 
 Linux Native relies on the one-job-per-agent invariant and requires `work_root`
 itself to be quota-backed. It combines cgroup v2 limits and accounting with

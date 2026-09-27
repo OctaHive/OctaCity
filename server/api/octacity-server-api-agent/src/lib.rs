@@ -295,6 +295,8 @@ async fn register_agent(State(state): State<AgentState>, request: Request<Body>)
       protocol_version: COORDINATOR_PROTOCOL_VERSION,
       request_id,
       registration_id: outcome.registration_id,
+      execution_contract_version: (outcome.execution_contract_version > octacity_protocol::EXECUTION_CONTRACT_V1)
+        .then_some(outcome.execution_contract_version),
       max_retry_delay_ms: state.config.max_retry_delay_ms,
     })
     .into_response(),

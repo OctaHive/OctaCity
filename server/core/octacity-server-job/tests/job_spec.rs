@@ -1,15 +1,17 @@
 use std::{collections::BTreeMap, str::FromStr};
 
 use octacity_protocol::{
-  JobBinding, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeSpec,
-  RuntimeTarget, verify_job_spec,
+  ExecutionMode, ExecutionTargetV2, JobBinding, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture,
+  PlatformOs, PlatformSpec, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, VerifiedJobSpec, guarantees_for,
+  verify_compatible_job_spec, verify_job_spec,
 };
 use octacity_server_domain::{
   AttemptNumber, BuildId, ImmutableRevision, JobId, PipelineNodeId, RepositoryLocator, SourceReference, Timestamp,
 };
 use octacity_server_job::{
-  JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate, JobSpecValidity,
-  MAX_JOB_SPEC_VALIDITY_SECONDS, SourcePluginPolicy, derive_job_spec_template, sign_ready_job_spec,
+  JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner,
+  JobSpecTemplate, JobSpecValidity, MAX_JOB_SPEC_VALIDITY_SECONDS, SourcePluginPolicy, derive_job_spec_template,
+  sign_ready_job_spec,
 };
 use octacity_server_secrets::SecretProfileName;
 use serde_json::{Value, json};
@@ -54,6 +56,85 @@ fn derives_one_deterministic_protocol_valid_envelope() {
   assert_eq!(verified.execution.secrets_profile.as_deref(), Some("ci/secrets.yml"));
   assert_eq!(verified.issued_at, 100);
   assert_eq!(verified.expires_at, 700);
+}
+
+#[test]
+fn signs_v2_intent_without_reinterpreting_the_legacy_signing_path() {
+  let build = JobSpecBuildSnapshot::new(
+    build_id(),
+    ImmutableRevision::new("0123456789abcdef").unwrap(),
+    None,
+    RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+    BTreeMap::new(),
+  )
+  .unwrap();
+  let platform = PlatformSpec {
+    os: PlatformOs::Linux,
+    architecture: PlatformArchitecture::Amd64,
+  };
+  let policy = JobSpecPolicySnapshot::new(
+    SourcePluginPolicy::new("git", "1.0.0", DIGEST, "url").unwrap(),
+    OctaSpec {
+      version: "0.4.0".to_owned(),
+      runner_sha256: DIGEST.to_owned(),
+      runner_protocol: 3,
+      event_schema: 3,
+      plugin_protocol: 1,
+      plugin_digests: BTreeMap::new(),
+    },
+    JobRuntimePolicy::Current(RuntimeSpecV2 {
+      target: ExecutionTargetV2 {
+        mode: ExecutionMode::Isolation,
+        host_platform: platform,
+        target_platform: platform,
+        required_guarantees: guarantees_for(ExecutionMode::Isolation),
+        immutable_image: None,
+      },
+      cpu_millis: 1_000,
+      memory_bytes: 1_024,
+      writable_disk_bytes: 2_048,
+      timeout_seconds: 60,
+      network: NetworkPolicy::Disabled,
+      workload_identity_profile: None,
+    }),
+    None,
+    None,
+    OutputLimits {
+      artifact_count: 0,
+      artifact_bytes: 0,
+      report_count: 0,
+      report_bytes: 0,
+      single_output_bytes: 0,
+    },
+    JobSpecValidity::new(600).unwrap(),
+  )
+  .unwrap();
+  let template = derive_job_spec_template(&build, node_id(), json!({"commands": ["build"]}), &policy).unwrap();
+  let signer = JobSpecSigner::new("active-key", [7; 32]).unwrap();
+  let signed = sign_ready_job_spec(&template, AttemptNumber::FIRST, job_id(), issued_at(), &signer).unwrap();
+  let verified = verify_compatible_job_spec(
+    signed.envelope(),
+    &BTreeMap::from([(signer.key_id().to_owned(), signer.verifying_key())]),
+    JobBinding {
+      job_id: &job_id().to_string(),
+      attempt: 1,
+      now: 100,
+    },
+  )
+  .unwrap();
+  assert!(matches!(verified, VerifiedJobSpec::V2(spec) if spec.runtime.target.mode == ExecutionMode::Isolation));
+  assert!(
+    verify_job_spec(
+      signed.envelope(),
+      &BTreeMap::from([(signer.key_id().to_owned(), signer.verifying_key())]),
+      JobBinding {
+        job_id: &job_id().to_string(),
+        attempt: 1,
+        now: 100,
+      },
+    )
+    .is_err()
+  );
 }
 
 #[test]
@@ -156,7 +237,7 @@ fn policy() -> JobSpecPolicySnapshot {
       plugin_protocol: 1,
       plugin_digests: BTreeMap::from([("shell".to_owned(), DIGEST.to_owned())]),
     },
-    RuntimeSpec {
+    JobRuntimePolicy::Legacy(RuntimeSpec {
       target: RuntimeTarget::Native {
         platform: PlatformSpec {
           os: PlatformOs::Linux,
@@ -169,7 +250,7 @@ fn policy() -> JobSpecPolicySnapshot {
       timeout_seconds: 600,
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
-    },
+    }),
     Some(SecretProfileName::new("ci/secrets.yml").unwrap()),
     None,
     OutputLimits {

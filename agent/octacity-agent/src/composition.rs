@@ -307,6 +307,7 @@ fn protocol_platform(platform: ExecutionPlatform) -> octacity_protocol::Platform
 fn ready_backend(backend: &str) -> BackendHealth {
   BackendHealth {
     backend: backend.to_owned(),
+    execution: None,
     status: BackendHealthStatus::Ready,
     message: None,
   }
@@ -525,6 +526,7 @@ metrics_sample_interval_seconds = 1
       ready_backend("native"),
       BackendHealth {
         backend: "native".to_owned(),
+        execution: None,
         status: BackendHealthStatus::Ready,
         message: None,
       }

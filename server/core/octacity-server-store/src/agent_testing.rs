@@ -363,6 +363,7 @@ mod tests {
         agent_id: "builder-1".to_owned(),
         agent_version: "0.1.0".to_owned(),
         coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],
+        execution_contract: octacity_protocol::ExecutionContractRange { min: 1, max: 1 },
         labels: BTreeMap::new(),
         host_platform: PlatformSpec {
           os: PlatformOs::Linux,
@@ -376,6 +377,7 @@ mod tests {
           virtualization_available: false,
         },
         runtimes: Vec::new(),
+        executions: Vec::new(),
         octa: OctaInventory {
           version: "0.1.0".to_owned(),
           runner_sha256: "1".repeat(64),

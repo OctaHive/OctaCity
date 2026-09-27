@@ -402,8 +402,11 @@ async fn agent_credentials_are_hashed_at_rest_and_replay_survives_adapter_restar
       credential_id: fixture.enrollment.credential_id,
       credential: fixture.enrollment.credential,
     },
-    octacity_server_store::AgentPlatform::new("linux", "amd64").unwrap(),
-    registration_inventory(),
+    octacity_server_store::AgentRegistrationInventory {
+      platform: octacity_server_store::AgentPlatform::new("linux", "amd64").unwrap(),
+      execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
+      inventory: registration_inventory(),
+    },
     RegistrationValidity {
       registered_at: time(200),
       expires_at: time(900),
@@ -452,8 +455,11 @@ async fn concurrent_enrollment_consumption_creates_exactly_one_agent() {
         credential_id: fixture.enrollment.credential_id,
         credential: fixture.enrollment.credential.clone(),
       },
-      octacity_server_store::AgentPlatform::new("linux", "amd64").unwrap(),
-      registration_inventory(),
+      octacity_server_store::AgentRegistrationInventory {
+        platform: octacity_server_store::AgentPlatform::new("linux", "amd64").unwrap(),
+        execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
+        inventory: registration_inventory(),
+      },
       RegistrationValidity {
         registered_at: time(200),
         expires_at: time(900),

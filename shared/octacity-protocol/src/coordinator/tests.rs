@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::{PlatformArchitecture, PlatformOs};
+use crate::{ExecutionMode, ExecutionProviderId, ExecutionTargetV2, PlatformArchitecture, PlatformOs, guarantees_for};
 
 use super::*;
 
@@ -56,6 +56,7 @@ fn inventory() -> AgentInventory {
     agent_id: "agent-1".to_owned(),
     agent_version: "0.1.0".to_owned(),
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],
+    execution_contract: ExecutionContractRange { min: 1, max: 1 },
     labels: BTreeMap::from([("region".to_owned(), "test".to_owned())]),
     host_platform: PlatformSpec {
       os: PlatformOs::Linux,
@@ -71,6 +72,7 @@ fn inventory() -> AgentInventory {
       },
       isolation: Some(OciIsolation::Hypervisor),
     }],
+    executions: Vec::new(),
     octa: OctaInventory {
       version: "0.3.0".to_owned(),
       runner_sha256: "1".repeat(64),
@@ -132,6 +134,41 @@ fn validates_complete_registration_inventory() {
   let mut invalid = request;
   invalid.inventory.runtimes[0].isolation = None;
   assert!(invalid.validate().unwrap_err().to_string().contains("isolation"));
+}
+
+#[test]
+fn validates_provider_neutral_inventory_and_matching_health_evidence() {
+  let mut inventory = inventory();
+  inventory.execution_contract = ExecutionContractRange { min: 1, max: 2 };
+  let target = ExecutionTargetV2 {
+    mode: ExecutionMode::Isolation,
+    host_platform: inventory.host_platform,
+    target_platform: inventory.host_platform,
+    required_guarantees: guarantees_for(ExecutionMode::Isolation),
+    immutable_image: None,
+  };
+  let capability = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new("containerd").unwrap(),
+    mode: target.mode,
+    host_platform: target.host_platform,
+    target_platform: target.target_platform,
+    guarantees: target.required_guarantees.clone(),
+    immutable_images: true,
+  };
+  inventory.executions = vec![capability.clone()];
+  inventory.validate().unwrap();
+
+  let health = BackendHealth {
+    backend: capability.provider.to_string(),
+    execution: Some(capability),
+    status: BackendHealthStatus::Ready,
+    message: None,
+  };
+  health.validate().unwrap();
+
+  let mut mismatched = health;
+  mismatched.backend = "another-provider".to_owned();
+  assert!(mismatched.validate().is_err());
 }
 
 #[test]
@@ -204,6 +241,7 @@ fn bounds_host_snapshots_by_registered_capacity() {
     }),
     backends: vec![BackendHealth {
       backend: "microsandbox".to_owned(),
+      execution: None,
       status: BackendHealthStatus::Ready,
       message: None,
     }],
@@ -299,7 +337,9 @@ fn golden_coordinator_documents_match_the_wire_types() {
     "../../../protocol-fixtures/coordinator/register-response-v1.json"
   ))
   .unwrap();
-  response.validate("register-20260911-1").unwrap();
+  response
+    .validate("register-20260911-1", registration.inventory.execution_contract)
+    .unwrap();
 
   let lease: AcquireLeaseResponse = serde_json::from_str(include_str!(
     "../../../protocol-fixtures/coordinator/lease-response-v1.json"
@@ -563,13 +603,15 @@ fn rejects_invalid_inventory_and_registration_boundaries() {
     protocol_version: COORDINATOR_PROTOCOL_VERSION,
     request_id: "request-1".to_owned(),
     registration_id: "registration-1".to_owned(),
+    execution_contract_version: None,
     max_retry_delay_ms: 1,
   };
-  registration.validate("request-1").unwrap();
+  let offered = ExecutionContractRange { min: 1, max: 1 };
+  registration.validate("request-1", offered).unwrap();
   registration.max_retry_delay_ms = 0;
   assert!(
     registration
-      .validate("request-1")
+      .validate("request-1", offered)
       .unwrap_err()
       .to_string()
       .contains("greater")
@@ -578,10 +620,28 @@ fn rejects_invalid_inventory_and_registration_boundaries() {
   registration.protocol_version += 1;
   assert!(
     registration
-      .validate("request-1")
+      .validate("request-1", offered)
       .unwrap_err()
       .to_string()
       .contains("unsupported")
+  );
+  registration.protocol_version = COORDINATOR_PROTOCOL_VERSION;
+  registration.execution_contract_version = Some(crate::EXECUTION_CONTRACT_V2);
+  let current_offered = ExecutionContractRange {
+    min: crate::EXECUTION_CONTRACT_V1,
+    max: crate::EXECUTION_CONTRACT_V2,
+  };
+  registration.validate("request-1", current_offered).unwrap();
+  assert!(
+    registration
+      .validate(
+        "request-1",
+        ExecutionContractRange {
+          min: crate::EXECUTION_CONTRACT_V1,
+          max: crate::EXECUTION_CONTRACT_V1,
+        },
+      )
+      .is_err()
   );
 
   let mut acquire = AcquireLeaseRequest {
@@ -758,6 +818,7 @@ fn rejects_invalid_event_completion_health_and_error_responses() {
 
   let mut health = BackendHealth {
     backend: "native".to_owned(),
+    execution: None,
     status: BackendHealthStatus::Degraded,
     message: Some(String::new()),
   };

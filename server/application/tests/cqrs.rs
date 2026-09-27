@@ -412,6 +412,8 @@ fn configuration_definition(
       class: RuntimeClass::Native,
       operating_system: PlatformOs::Linux,
       architecture: PlatformArchitecture::Amd64,
+      host_platform: None,
+      required_guarantees: BTreeSet::new(),
       immutable_image: None,
       cpu_millis: 1,
       memory_bytes: 1,

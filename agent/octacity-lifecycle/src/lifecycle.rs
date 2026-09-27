@@ -198,7 +198,7 @@ impl JobLifecycle {
     let cancellation = monitor.job_cancellation();
     let draining = monitor.draining();
     let mut monitor_task = tokio::spawn(monitor.wait());
-    let cache_grant = match &verified.spec.cache {
+    let cache_grant = match verified.spec.cache() {
       Some(cache) => {
         let result = self
           .cache_coordinator

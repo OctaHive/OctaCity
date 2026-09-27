@@ -77,6 +77,7 @@ pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
     agent_id: agent_id.to_string(),
     agent_version: "0.1.0".to_owned(),
     coordinator_protocols: vec![octacity_protocol::COORDINATOR_PROTOCOL_VERSION],
+    execution_contract: octacity_protocol::ExecutionContractRange { min: 1, max: 1 },
     labels: BTreeMap::new(),
     host_platform: PlatformSpec {
       os: PlatformOs::Linux,
@@ -98,6 +99,7 @@ pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
       },
       isolation: None,
     }],
+    executions: Vec::new(),
     octa: OctaInventory {
       version: "0.4.0".to_owned(),
       runner_sha256: DIGEST.to_owned(),
@@ -138,6 +140,7 @@ pub fn compatible_snapshot() -> HostSnapshot {
     active_job: None,
     backends: vec![BackendHealth {
       backend: "native".to_owned(),
+      execution: None,
       status: BackendHealthStatus::Ready,
       message: None,
     }],
@@ -167,6 +170,8 @@ fn materialized_job(
         runtime_class: RuntimeClass::Native,
         operating_system: PlatformOs::Linux,
         architecture: PlatformArchitecture::Amd64,
+        host_platform: None,
+        required_guarantees: BTreeSet::new(),
       },
       job_spec_template(build_id, node),
     )
@@ -241,7 +246,7 @@ pub fn job_spec_template_with_cache(build_id: BuildId, node: &str, cache: Option
       plugin_protocol: 1,
       plugin_digests: BTreeMap::new(),
     },
-    RuntimeSpec {
+    octacity_server_job::JobRuntimePolicy::Legacy(RuntimeSpec {
       target: RuntimeTarget::Native {
         platform: PlatformSpec {
           os: PlatformOs::Linux,
@@ -254,7 +259,7 @@ pub fn job_spec_template_with_cache(build_id: BuildId, node: &str, cache: Option
       timeout_seconds: 60,
       network: NetworkPolicy::Disabled,
       workload_identity_profile: None,
-    },
+    }),
     None,
     cache,
     OutputLimits {

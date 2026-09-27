@@ -12,10 +12,10 @@ pub use build::{AttemptProjection, BuildProjection, ParameterValueProjection};
 pub(crate) use configuration::validate_configuration_projection;
 pub use configuration::{
   AgentRequirementsProjection, ArtifactPolicyProjection, BuildConfigurationProjection, ConfigurationCacheProjection,
-  ConfigurationRuntimeProjection, NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection,
-  ParameterTypeProjection, PlatformArchitectureProjection, PlatformOsProjection, RepositoryProjection,
-  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
-  TriggerKindProjection,
+  ConfigurationRuntimeProjection, ExecutionGuaranteeProjection, NetworkPolicyProjection, ParameterDefinitionProjection,
+  ParameterSchemaProjection, ParameterTypeProjection, PlatformArchitectureProjection, PlatformOsProjection,
+  PlatformProjection, RepositoryProjection, RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection,
+  RuntimeClassProjection, TriggerKindProjection,
 };
 pub use dag::{DagCausalityProjection, DagEdgeProjection, DagNodeProjection};
 pub use job::{

@@ -9,8 +9,9 @@ use octacity_execution::{
 };
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, ExecutionSpec, NetworkPolicy, OctaSpec, OutputLimits,
-  RuntimeSpec, SourceSpec,
+  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2, ExecutionMode, ExecutionSpec,
+  ExecutionTargetV2, JobSpecV2, NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpec, RuntimeSpecV2, SourceSpec,
+  guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerCapabilities};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -366,7 +367,7 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
   let completion = executor
     .execute(
       ExecuteJobRequest {
-        spec: spec.clone(),
+        spec: spec.clone().into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
       },
@@ -384,6 +385,72 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
   assert!(destroyed.load(Ordering::SeqCst));
   assert!(completion.workspace().join("Octafile.yml").is_file());
   completion.cleanup().await.unwrap();
+  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn reports_an_unqualified_v2_mode_without_falling_back_to_a_legacy_backend() {
+  let work_root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let executor = executor(
+    work_root.path(),
+    Arc::new(FakeSource {
+      calls: source_calls.clone(),
+      fail: false,
+    }),
+    Some(Arc::new(FakeBackend {
+      starts: Arc::new(AtomicUsize::new(0)),
+      destroyed: Arc::new(AtomicBool::new(false)),
+    })),
+  );
+  let legacy = specification(RuntimeMode::Native);
+  let platform = legacy.runtime.platform();
+  let spec = JobSpecV2 {
+    protocol_version: EXECUTION_CONTRACT_V2,
+    job_id: legacy.job_id,
+    attempt: legacy.attempt,
+    issued_at: legacy.issued_at,
+    expires_at: legacy.expires_at,
+    source: legacy.source,
+    octa: legacy.octa,
+    execution: legacy.execution,
+    runtime: RuntimeSpecV2 {
+      target: ExecutionTargetV2 {
+        mode: ExecutionMode::Host,
+        host_platform: platform,
+        target_platform: platform,
+        required_guarantees: guarantees_for(ExecutionMode::Host),
+        immutable_image: None,
+      },
+      cpu_millis: legacy.runtime.cpu_millis,
+      memory_bytes: legacy.runtime.memory_bytes,
+      writable_disk_bytes: legacy.runtime.writable_disk_bytes,
+      timeout_seconds: legacy.runtime.timeout_seconds,
+      network: legacy.runtime.network,
+      workload_identity_profile: legacy.runtime.workload_identity_profile,
+    },
+    cache: legacy.cache,
+    outputs: legacy.outputs,
+  };
+  let (events, _receiver) = mpsc::channel(1);
+  let error = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+
+  assert!(matches!(
+    error.error(),
+    JobError::ExecutionModeUnavailable(ExecutionMode::Host)
+  ));
+  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
@@ -408,7 +475,7 @@ async fn rejects_unknown_workload_identity_before_source_activity() {
   let error = executor
     .execute(
       ExecuteJobRequest {
-        spec,
+        spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
       },
@@ -454,7 +521,7 @@ async fn provisions_identity_for_execution_and_revokes_it_before_completion() {
   let completion = executor
     .execute(
       ExecuteJobRequest {
-        spec,
+        spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
       },
@@ -491,7 +558,7 @@ async fn rejects_an_unavailable_backend_without_materializing_source() {
   let error = executor
     .execute(
       ExecuteJobRequest {
-        spec,
+        spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
       },
@@ -527,7 +594,7 @@ async fn retains_a_failed_workspace_for_ordered_caller_cleanup() {
   let failure = executor
     .execute(
       ExecuteJobRequest {
-        spec,
+        spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
       },
@@ -664,7 +731,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
     executor
       .execute(
         ExecuteJobRequest {
-          spec: oversized,
+          spec: oversized.into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
         },
@@ -681,7 +748,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
     executor
       .execute(
         ExecuteJobRequest {
-          spec: specification(RuntimeMode::Native),
+          spec: specification(RuntimeMode::Native).into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
         },
@@ -719,7 +786,7 @@ async fn rejects_network_and_output_policy_before_source_activity() {
     executor
       .execute(
         ExecuteJobRequest {
-          spec: network,
+          spec: network.into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
         },
@@ -742,7 +809,7 @@ async fn rejects_network_and_output_policy_before_source_activity() {
     executor
       .execute(
         ExecuteJobRequest {
-          spec: outputs,
+          spec: outputs.into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
         },
@@ -779,7 +846,7 @@ async fn rejects_cache_authority_without_local_support_and_cleans_the_job() {
   let failure = executor
     .execute(
       ExecuteJobRequest {
-        spec,
+        spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: Some(BeginCacheSessionResponse {
           protocol_version: 1,

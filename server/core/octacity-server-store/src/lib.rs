@@ -151,7 +151,7 @@ pub use configuration_model::{
 pub use configuration_port::ConfigurationStore;
 pub use credential_port::AgentCredentialStore;
 pub use credentials::{
-  AgentCredentialTarget, AgentPlatform, AgentRegistrationOutcome, AgentRegistrationProof,
+  AgentCredentialTarget, AgentPlatform, AgentRegistrationInventory, AgentRegistrationOutcome, AgentRegistrationProof,
   AuthenticateAgentRegistration, AuthenticatedAgentRegistration, CredentialDigest, CredentialSecret,
   ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, IssueAgentEnrollmentOutcome,
   MAX_AGENT_INVENTORY_BYTES, MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RegistrationValidity,

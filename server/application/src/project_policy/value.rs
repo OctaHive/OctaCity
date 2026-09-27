@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use octacity_protocol::{ExecutionGuarantee, ExecutionMode, PlatformSpec, guarantees_for};
 pub use octacity_server_cache::CacheNamespace;
 pub use octacity_server_domain::{ArtifactPolicy, RuntimeClass};
 use octacity_server_domain::{PoolId, ProjectId, ProjectPolicyVersion, RepositoryId};
@@ -46,6 +47,36 @@ pub struct RetentionPolicy {
   pub cache_seconds: u64,
 }
 
+/// Exact provider-neutral execution boundary a Project permits.
+///
+/// Provider names and image identities are deliberately absent: policy grants
+/// an observable mode, host/target platform pair, and complete guarantee set.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectExecutionTarget {
+  /// Permitted provider-neutral execution mode.
+  pub mode: ExecutionMode,
+  /// Exact platform on which the Agent and execution provider run.
+  pub host_platform: PlatformSpec,
+  /// Exact platform exposed to the runner.
+  pub target_platform: PlatformSpec,
+  /// Complete guarantees required for this policy grant.
+  pub required_guarantees: BTreeSet<ExecutionGuarantee>,
+}
+
+impl ProjectExecutionTarget {
+  /// Validates the mode, platform, and guarantee relationship.
+  pub fn validate(&self) -> Result<(), String> {
+    if self.required_guarantees != guarantees_for(self.mode) {
+      return Err("execution guarantees do not match the project execution mode".to_owned());
+    }
+    if self.mode == ExecutionMode::Host && self.host_platform != self.target_platform {
+      return Err("host execution policy requires identical host and target platforms".to_owned());
+    }
+    Ok(())
+  }
+}
+
 /// Exact effective policy after resolving one Project lineage.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -60,6 +91,9 @@ pub struct ProjectPolicy {
   pub identity_profiles: BTreeSet<IdentityProfileName>,
   /// Runtime and isolation classes that may be requested.
   pub runtimes: BTreeSet<RuntimeClass>,
+  /// Provider-neutral execution targets that may be requested.
+  #[serde(default)]
+  pub execution_targets: BTreeSet<ProjectExecutionTarget>,
   /// Remote-cache namespace, permission, and quota policy.
   pub cache: CachePolicy,
   /// Artifact and report output ceilings.
@@ -87,6 +121,9 @@ pub struct ProjectPolicyDefinition {
   pub identity_profiles: PolicyDirective<BTreeSet<IdentityProfileName>>,
   /// Runtime inheritance instruction.
   pub runtimes: PolicyDirective<BTreeSet<RuntimeClass>>,
+  /// Provider-neutral execution-target inheritance instruction.
+  #[serde(default = "deny_provider_neutral_execution")]
+  pub execution_targets: PolicyDirective<BTreeSet<ProjectExecutionTarget>>,
   /// Cache inheritance instruction.
   pub cache: PolicyDirective<CachePolicy>,
   /// Artifact inheritance instruction.
@@ -107,6 +144,10 @@ pub enum PolicyDirective<T> {
   Replace(T),
   /// Intersect permissions and lower ceilings using the supplied restriction.
   Narrow(T),
+}
+
+fn deny_provider_neutral_execution() -> PolicyDirective<BTreeSet<ProjectExecutionTarget>> {
+  PolicyDirective::Replace(BTreeSet::new())
 }
 
 /// One immutable Project policy version in a root-to-leaf lineage.

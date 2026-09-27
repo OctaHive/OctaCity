@@ -356,6 +356,7 @@ async fn acquire(
         active_job: None,
         backends: vec![octacity_protocol::BackendHealth {
           backend: "native".to_owned(),
+          execution: None,
           status: octacity_protocol::BackendHealthStatus::Ready,
           message: None,
         }],

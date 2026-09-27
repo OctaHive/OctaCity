@@ -334,6 +334,7 @@ fn registration() -> Registration {
     agent_id: "agent-1".to_owned(),
     registration_id: "registration-1".to_owned(),
     max_retry_delay: Duration::from_secs(1),
+    execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
   }
 }
 

@@ -102,6 +102,8 @@ pub(super) fn materialize_jobs(
         runtime_class: definition.runtime.class,
         operating_system: definition.runtime.operating_system,
         architecture: definition.runtime.architecture,
+        host_platform: definition.runtime.host_platform,
+        required_guarantees: definition.runtime.required_guarantees.clone(),
       };
       MaterializedJob::new(
         job_id,

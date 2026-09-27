@@ -102,10 +102,37 @@ pub(super) fn insert_configuration_schemas(schemas: &mut Map<String, Value>) {
   );
   schemas.insert(
     "RuntimeClass".to_owned(),
-    string_enum(&["native", "oci_process", "oci_hypervisor"]),
+    string_enum(&[
+      "native",
+      "oci_process",
+      "oci_hypervisor",
+      "host",
+      "isolation",
+      "virtualization",
+    ]),
   );
   schemas.insert("PlatformOs".to_owned(), string_enum(&["linux", "windows", "macos"]));
   schemas.insert("PlatformArchitecture".to_owned(), string_enum(&["amd64", "arm64"]));
+  schemas.insert(
+    "Platform".to_owned(),
+    object(
+      [
+        ("os", schema_ref("PlatformOs")),
+        ("architecture", schema_ref("PlatformArchitecture")),
+      ],
+      &["os", "architecture"],
+    ),
+  );
+  schemas.insert(
+    "ExecutionGuarantee".to_owned(),
+    string_enum(&[
+      "filesystem_isolation",
+      "process_isolation",
+      "network_isolation",
+      "resource_isolation",
+      "hardware_virtualization",
+    ]),
+  );
   schemas.insert(
     "NetworkPolicy".to_owned(),
     json!({
@@ -130,6 +157,8 @@ pub(super) fn insert_configuration_schemas(schemas: &mut Map<String, Value>) {
         ("class", schema_ref("RuntimeClass")),
         ("operating_system", schema_ref("PlatformOs")),
         ("architecture", schema_ref("PlatformArchitecture")),
+        ("host_platform", schema_ref("Platform")),
+        ("required_guarantees", unique_array(schema_ref("ExecutionGuarantee"))),
         ("immutable_image", nullable(non_empty_string())),
         ("cpu_millis", non_negative_integer()),
         ("memory_bytes", non_negative_integer()),

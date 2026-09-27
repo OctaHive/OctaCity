@@ -72,7 +72,10 @@ async fn brackets_a_cache_enabled_execution_with_fenced_session_operations() {
     work_root.path(),
     false,
   );
-  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+  let octacity_protocol::VerifiedJobSpec::V1(spec) = &mut lease.spec else {
+    panic!("fixture must use the legacy JobSpec");
+  };
+  spec.cache = Some(octacity_protocol::CachePolicy {
     namespace: "project/main".to_owned(),
     read: true,
     write: true,
@@ -106,7 +109,10 @@ async fn cache_begin_failure_stops_before_execution_and_removes_attempt_state() 
     work_root.path(),
     false,
   );
-  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+  let octacity_protocol::VerifiedJobSpec::V1(spec) = &mut lease.spec else {
+    panic!("fixture must use the legacy JobSpec");
+  };
+  spec.cache = Some(octacity_protocol::CachePolicy {
     namespace: "project/main".to_owned(),
     read: true,
     write: true,
@@ -139,7 +145,10 @@ async fn cache_revoke_failure_cleans_the_job_but_refuses_terminal_completion() {
     work_root.path(),
     false,
   );
-  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+  let octacity_protocol::VerifiedJobSpec::V1(spec) = &mut lease.spec else {
+    panic!("fixture must use the legacy JobSpec");
+  };
+  spec.cache = Some(octacity_protocol::CachePolicy {
     namespace: "project/main".to_owned(),
     read: true,
     write: true,
@@ -168,7 +177,10 @@ async fn panicked_cache_job_cleans_orphans_then_revokes_the_server_session() {
     work_root.path(),
     false,
   );
-  lease.spec.cache = Some(octacity_protocol::CachePolicy {
+  let octacity_protocol::VerifiedJobSpec::V1(spec) = &mut lease.spec else {
+    panic!("fixture must use the legacy JobSpec");
+  };
+  spec.cache = Some(octacity_protocol::CachePolicy {
     namespace: "project/main".to_owned(),
     read: true,
     write: true,

@@ -54,11 +54,12 @@ pub(super) async fn claim(store: &InMemoryStore, request: JobClaim) -> Result<Jo
       job.state == JobState::Ready
         && job.materialized.allowed_pools.binary_search(&request.pool_id).is_ok()
         && registration.inventory.as_ref().is_some_and(|inventory| {
-          octacity_server_scheduler::is_compatible(
+          octacity_server_scheduler::is_compatible_with_contract(
             inventory,
             &request.snapshot,
             &job.materialized.requirements,
             &job.materialized.job_spec_template,
+            registration.execution_contract_version,
           )
         })
     })

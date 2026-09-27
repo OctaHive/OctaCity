@@ -721,6 +721,8 @@ fn materialized_job(
         runtime_class: RuntimeClass::Native,
         operating_system: PlatformOs::Linux,
         architecture: PlatformArchitecture::Amd64,
+        host_platform: None,
+        required_guarantees: BTreeSet::new(),
       },
       octacity_server_store::testing::job_spec_template(build_id, node),
     )

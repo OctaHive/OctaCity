@@ -246,8 +246,9 @@ mod tests {
       registration_id: "registration".to_owned(),
       samples: vec![octacity_protocol::AgentTelemetrySample {
         observed_at_unix_ms: 1,
-        runtime: octacity_protocol::AgentTelemetryRuntime::Native,
-        isolation: octacity_protocol::AgentTelemetryIsolation::Native,
+        runtime: Some(octacity_protocol::AgentTelemetryRuntime::Native),
+        isolation: Some(octacity_protocol::AgentTelemetryIsolation::Native),
+        execution: None,
         cpu_time_ms: 1,
         memory_current_bytes: 2,
         io_read_bytes: 3,

@@ -55,6 +55,18 @@ pub(super) fn insert_execution_detail_schemas(schemas: &mut Map<String, Value>) 
     ),
   );
   schemas.insert(
+    "EffectiveProjectExecutionTarget".to_owned(),
+    object(
+      [
+        ("mode", string_enum(&["host", "isolation", "virtualization"])),
+        ("host_platform", schema_ref("Platform")),
+        ("target_platform", schema_ref("Platform")),
+        ("required_guarantees", unique_array(schema_ref("ExecutionGuarantee"))),
+      ],
+      &["mode", "host_platform", "target_platform", "required_guarantees"],
+    ),
+  );
+  schemas.insert(
     "EffectiveProjectPolicyValue".to_owned(),
     object(
       [
@@ -62,9 +74,10 @@ pub(super) fn insert_execution_detail_schemas(schemas: &mut Map<String, Value>) 
         ("repositories", unique_array(non_empty_string())),
         ("secret_profiles", unique_array(non_empty_string())),
         ("identity_profiles", unique_array(non_empty_string())),
+        ("runtimes", unique_array(schema_ref("RuntimeClass"))),
         (
-          "runtimes",
-          unique_array(string_enum(&["native", "oci_process", "oci_hypervisor"])),
+          "execution_targets",
+          unique_array(schema_ref("EffectiveProjectExecutionTarget")),
         ),
         ("cache", schema_ref("EffectiveCachePolicy")),
         ("artifacts", schema_ref("ArtifactPolicy")),
@@ -77,6 +90,7 @@ pub(super) fn insert_execution_detail_schemas(schemas: &mut Map<String, Value>) 
         "secret_profiles",
         "identity_profiles",
         "runtimes",
+        "execution_targets",
         "cache",
         "artifacts",
         "concurrency",

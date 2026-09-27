@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
 use octacity_protocol::{
-  AgentInventory, BackendHealthStatus, HostSnapshot, OciIsolation, PlatformSpec, RuntimeMode, RuntimeTarget,
-  TaskPluginInventory,
+  AgentInventory, BackendHealthStatus, EXECUTION_CONTRACT_V2, ExecutionMode, HostSnapshot, OciIsolation, PlatformSpec,
+  RuntimeMode, RuntimeTarget, SUPPORTED_EXECUTION_CONTRACTS, TaskPluginInventory,
 };
 use octacity_server_domain::RuntimeClass;
-use octacity_server_job::{JobRequirements, JobSpecTemplate};
+use octacity_server_job::{JobRequirements, JobRuntimePolicy, JobSpecTemplate};
 
 /// Reports whether one accepting idle Agent exactly satisfies a ready Job.
 ///
@@ -18,6 +18,27 @@ pub fn is_compatible(
   requirements: &JobRequirements,
   template: &JobSpecTemplate,
 ) -> bool {
+  let Some(execution_contract_version) = SUPPORTED_EXECUTION_CONTRACTS.negotiate(inventory.execution_contract) else {
+    return false;
+  };
+  is_compatible_with_contract(inventory, snapshot, requirements, template, execution_contract_version)
+}
+
+/// Reports compatibility using the execution-contract revision selected for
+/// the Agent's current registration.
+#[must_use]
+pub fn is_compatible_with_contract(
+  inventory: &AgentInventory,
+  snapshot: &HostSnapshot,
+  requirements: &JobRequirements,
+  template: &JobSpecTemplate,
+  execution_contract_version: u16,
+) -> bool {
+  if !inventory.execution_contract.contains(execution_contract_version)
+    || !SUPPORTED_EXECUTION_CONTRACTS.contains(execution_contract_version)
+  {
+    return false;
+  }
   let policy = template.placement_policy();
   let platform = PlatformSpec {
     os: requirements.operating_system,
@@ -27,8 +48,8 @@ pub fn is_compatible(
   let task_plugin_platform = plugin_platform(platform);
   labels_match(inventory, requirements)
     && resources_match(snapshot, requirements)
-    && backend_is_available(inventory, snapshot, requirements.runtime_class, platform)
-    && capabilities_match(inventory, requirements)
+    && backend_is_available(inventory, snapshot, requirements, policy.runtime)
+    && capabilities_match(inventory, requirements, requirements.runtime_class.is_legacy())
     && inventory.octa.version == policy.octa.version
     && inventory.octa.runner_sha256 == policy.octa.runner_sha256
     && inventory.octa.runner_protocols.contains(&policy.octa.runner_protocol)
@@ -50,7 +71,12 @@ pub fn is_compatible(
           && cache.action_key_format == octacity_protocol::CACHE_ACTION_KEY_FORMAT_V1
           && cache.remote_http
       }))
-    && runtime_policy_matches(policy.runtime, requirements.runtime_class, platform)
+    && runtime_policy_matches(
+      policy.runtime,
+      requirements.runtime_class,
+      platform,
+      execution_contract_version,
+    )
 }
 
 fn plugin_platform(platform: PlatformSpec) -> String {
@@ -82,12 +108,35 @@ fn resources_match(snapshot: &HostSnapshot, requirements: &JobRequirements) -> b
 fn backend_is_available(
   inventory: &AgentInventory,
   snapshot: &HostSnapshot,
-  class: RuntimeClass,
-  platform: PlatformSpec,
+  requirements: &JobRequirements,
+  runtime_policy: &JobRuntimePolicy,
 ) -> bool {
+  let platform = PlatformSpec {
+    os: requirements.operating_system,
+    architecture: requirements.architecture,
+  };
+  if let JobRuntimePolicy::Current(runtime) = runtime_policy {
+    let Some(host_platform) = requirements.host_platform else {
+      return false;
+    };
+    if runtime.target.host_platform != host_platform
+      || runtime.target.target_platform != platform
+      || runtime.target.required_guarantees != requirements.required_guarantees
+    {
+      return false;
+    }
+    return inventory.executions.iter().any(|execution| {
+      execution.satisfies(&runtime.target)
+        && snapshot.backends.iter().any(|health| {
+          health.backend == execution.provider.as_str()
+            && health.execution.as_ref() == Some(execution)
+            && !matches!(health.status, BackendHealthStatus::Unavailable)
+        })
+    });
+  }
   inventory.runtimes.iter().any(|runtime| {
     runtime.platform == platform
-      && match class {
+      && match requirements.runtime_class {
         RuntimeClass::Native => runtime.mode == RuntimeMode::Native && runtime.isolation.is_none(),
         RuntimeClass::OciProcess => {
           runtime.mode == RuntimeMode::Oci && runtime.isolation == Some(OciIsolation::Process)
@@ -95,6 +144,7 @@ fn backend_is_available(
         RuntimeClass::OciHypervisor => {
           runtime.mode == RuntimeMode::Oci && runtime.isolation == Some(OciIsolation::Hypervisor)
         }
+        RuntimeClass::Host | RuntimeClass::Isolation | RuntimeClass::Virtualization => false,
       }
       && snapshot
         .backends
@@ -104,6 +154,23 @@ fn backend_is_available(
 }
 
 fn runtime_policy_matches(
+  runtime: &JobRuntimePolicy,
+  class: RuntimeClass,
+  platform: PlatformSpec,
+  execution_contract_version: u16,
+) -> bool {
+  match (runtime, class) {
+    (JobRuntimePolicy::Legacy(runtime), class) => legacy_runtime_policy_matches(runtime, class, platform),
+    (JobRuntimePolicy::Current(runtime), class) => {
+      execution_contract_version >= EXECUTION_CONTRACT_V2
+        && current_mode(class).is_some_and(|mode| {
+          runtime.target.mode == mode && runtime.target.target_platform == platform && runtime.target.validate().is_ok()
+        })
+    }
+  }
+}
+
+fn legacy_runtime_policy_matches(
   runtime: &octacity_protocol::RuntimeSpec,
   class: RuntimeClass,
   platform: PlatformSpec,
@@ -130,20 +197,35 @@ fn runtime_policy_matches(
   }
 }
 
-fn capabilities_match(inventory: &AgentInventory, requirements: &JobRequirements) -> bool {
+fn current_mode(class: RuntimeClass) -> Option<ExecutionMode> {
+  match class {
+    RuntimeClass::Host => Some(ExecutionMode::Host),
+    RuntimeClass::Isolation => Some(ExecutionMode::Isolation),
+    RuntimeClass::Virtualization => Some(ExecutionMode::Virtualization),
+    RuntimeClass::Native | RuntimeClass::OciProcess | RuntimeClass::OciHypervisor => None,
+  }
+}
+
+fn capabilities_match(
+  inventory: &AgentInventory,
+  requirements: &JobRequirements,
+  include_legacy_runtime: bool,
+) -> bool {
   let mut advertised = BTreeSet::<&str>::new();
   advertised.extend(inventory.octa.features.iter().map(String::as_str));
-  for runtime in &inventory.runtimes {
-    advertised.insert(runtime.backend.as_str());
-    advertised.insert(match runtime.mode {
-      RuntimeMode::Native => "native",
-      RuntimeMode::Oci => "oci",
-    });
-    if let Some(isolation) = runtime.isolation {
-      advertised.insert(match isolation {
-        OciIsolation::Process => "oci.process",
-        OciIsolation::Hypervisor => "oci.hypervisor",
+  if include_legacy_runtime {
+    for runtime in &inventory.runtimes {
+      advertised.insert(runtime.backend.as_str());
+      advertised.insert(match runtime.mode {
+        RuntimeMode::Native => "native",
+        RuntimeMode::Oci => "oci",
       });
+      if let Some(isolation) = runtime.isolation {
+        advertised.insert(match isolation {
+          OciIsolation::Process => "oci.process",
+          OciIsolation::Hypervisor => "oci.hypervisor",
+        });
+      }
     }
   }
   for plugin in &inventory.octa.plugins {
@@ -171,12 +253,15 @@ mod tests {
   use std::collections::{BTreeMap, BTreeSet};
 
   use octacity_protocol::{
-    BackendHealth, BackendHealthStatus, HostCapacity, HostSnapshot, NetworkPolicy, OctaInventory, OctaSpec,
-    OutputLimits, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeSpec, SourcePluginInventory,
+    BackendHealth, BackendHealthStatus, ExecutionCapabilityV2, ExecutionContractRange, ExecutionMode,
+    ExecutionTargetV2, HostCapacity, HostSnapshot, NetworkPolicy, OctaInventory, OctaSpec, OutputLimits,
+    PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeSpec, RuntimeSpecV2, SourcePluginInventory,
+    guarantees_for,
   };
   use octacity_server_domain::{BuildId, ImmutableRevision, PipelineNodeId, RepositoryLocator};
   use octacity_server_job::{
-    JobSpecBuildSnapshot, JobSpecPolicySnapshot, JobSpecValidity, SourcePluginPolicy, derive_job_spec_template,
+    JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecPolicySnapshot, JobSpecValidity, SourcePluginPolicy,
+    derive_job_spec_template,
   };
   use octacity_server_pipeline::ExecutionCapability;
   use serde_json::json;
@@ -267,6 +352,75 @@ mod tests {
     assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
   }
 
+  #[test]
+  fn provider_neutral_placement_accepts_equivalent_providers_without_leaking_their_names() {
+    let target = ExecutionTargetV2 {
+      mode: ExecutionMode::Isolation,
+      host_platform: platform(),
+      target_platform: platform(),
+      required_guarantees: guarantees_for(ExecutionMode::Isolation),
+      immutable_image: None,
+    };
+    let mut requirements = requirements();
+    requirements.capabilities = BTreeSet::from([ExecutionCapability::new("shell").unwrap()]);
+    requirements.runtime_class = RuntimeClass::Isolation;
+    requirements.host_platform = Some(platform());
+    requirements.required_guarantees = target.required_guarantees.clone();
+    let mut inventory = inventory();
+    inventory.execution_contract = ExecutionContractRange { min: 1, max: 2 };
+    inventory.runtimes.clear();
+    let capability = ExecutionCapabilityV2 {
+      provider: octacity_protocol::ExecutionProviderId::new("containerd").unwrap(),
+      mode: ExecutionMode::Isolation,
+      host_platform: platform(),
+      target_platform: platform(),
+      guarantees: target.required_guarantees.clone(),
+      immutable_images: true,
+    };
+    inventory.executions = vec![capability.clone()];
+    let mut snapshot = snapshot();
+    snapshot.backends = vec![BackendHealth {
+      backend: capability.provider.to_string(),
+      execution: Some(capability.clone()),
+      status: BackendHealthStatus::Ready,
+      message: None,
+    }];
+    let template = template_for_policy(JobRuntimePolicy::Current(RuntimeSpecV2 {
+      target,
+      cpu_millis: 1_500,
+      memory_bytes: 2_048,
+      writable_disk_bytes: 4_096,
+      timeout_seconds: 60,
+      network: NetworkPolicy::Disabled,
+      workload_identity_profile: None,
+    }));
+
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+    assert!(!is_compatible_with_contract(
+      &inventory,
+      &snapshot,
+      &requirements,
+      &template,
+      octacity_protocol::EXECUTION_CONTRACT_V1,
+    ));
+    assert!(is_compatible_with_contract(
+      &inventory,
+      &snapshot,
+      &requirements,
+      &template,
+      octacity_protocol::EXECUTION_CONTRACT_V2,
+    ));
+    inventory.executions[0].provider = octacity_protocol::ExecutionProviderId::new("apple-vf-isolation").unwrap();
+    snapshot.backends[0].backend = "apple-vf-isolation".to_owned();
+    snapshot.backends[0].execution = Some(inventory.executions[0].clone());
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+
+    requirements
+      .capabilities
+      .insert(ExecutionCapability::new("containerd").unwrap());
+    assert!(!is_compatible(&inventory, &snapshot, &requirements, &template));
+  }
+
   fn requirements() -> JobRequirements {
     JobRequirements {
       capabilities: BTreeSet::from([
@@ -280,6 +434,8 @@ mod tests {
       runtime_class: RuntimeClass::Native,
       operating_system: PlatformOs::Linux,
       architecture: PlatformArchitecture::Amd64,
+      host_platform: None,
+      required_guarantees: BTreeSet::new(),
     }
   }
 
@@ -288,6 +444,7 @@ mod tests {
       agent_id: "agent".to_owned(),
       agent_version: "1.0.0".to_owned(),
       coordinator_protocols: vec![1],
+      execution_contract: octacity_protocol::ExecutionContractRange { min: 1, max: 1 },
       labels: BTreeMap::from([("region".to_owned(), "test".to_owned())]),
       host_platform: platform(),
       host_capacity: HostCapacity {
@@ -303,6 +460,7 @@ mod tests {
         platform: platform(),
         isolation: None,
       }],
+      executions: Vec::new(),
       octa: OctaInventory {
         version: "1.0.0".to_owned(),
         runner_sha256: DIGEST.to_owned(),
@@ -342,6 +500,7 @@ mod tests {
       active_job: None,
       backends: vec![BackendHealth {
         backend: "native".to_owned(),
+        execution: None,
         status: BackendHealthStatus::Ready,
         message: None,
       }],
@@ -353,6 +512,18 @@ mod tests {
   }
 
   fn template_for(runtime_target: RuntimeTarget) -> JobSpecTemplate {
+    template_for_policy(JobRuntimePolicy::Legacy(RuntimeSpec {
+      target: runtime_target,
+      cpu_millis: 1_500,
+      memory_bytes: 2_048,
+      writable_disk_bytes: 4_096,
+      timeout_seconds: 60,
+      network: NetworkPolicy::Disabled,
+      workload_identity_profile: None,
+    }))
+  }
+
+  fn template_for_policy(runtime: JobRuntimePolicy) -> JobSpecTemplate {
     let build = JobSpecBuildSnapshot::new(
       BuildId::from_uuid(Uuid::from_u128(1)).unwrap(),
       ImmutableRevision::new("revision").unwrap(),
@@ -371,15 +542,7 @@ mod tests {
         plugin_protocol: 5,
         plugin_digests: BTreeMap::from([("shell".to_owned(), DIGEST.to_owned())]),
       },
-      RuntimeSpec {
-        target: runtime_target,
-        cpu_millis: 1_500,
-        memory_bytes: 2_048,
-        writable_disk_bytes: 4_096,
-        timeout_seconds: 60,
-        network: NetworkPolicy::Disabled,
-        workload_identity_profile: None,
-      },
+      runtime,
       None,
       None,
       OutputLimits {

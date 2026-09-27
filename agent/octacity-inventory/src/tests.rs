@@ -15,6 +15,7 @@ fn samples_capacity_and_bounded_availability() {
       None,
       vec![BackendHealth {
         backend: "microsandbox".to_owned(),
+        execution: None,
         status: BackendHealthStatus::Ready,
         message: None,
       }],

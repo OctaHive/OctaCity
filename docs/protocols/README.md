@@ -8,6 +8,7 @@ semantics independently of a particular implementation language.
 | Protocol | Status | Specification | Implementation |
 | --- | --- | --- | --- |
 | Signed JobSpec v1 | Implemented | [signed-job-spec-v1.md](signed-job-spec-v1.md) | `octacity-protocol` |
+| Signed JobSpec execution contract v2 | Negotiation, policy, placement, and wire contract implemented; platform providers follow in tasks 9.4–9.6 | [signed-job-spec-v2.md](signed-job-spec-v2.md) | `octacity-protocol`, `octacity-server-application`, `octacity-server-scheduler`, `octacity-coordinator` |
 | Source-plugin v1 | Implemented | [source-plugin README](../../agent/octacity-source-plugin/README.md) | `octacity-source-plugin`, `octacity-source`, `octacity-source-git` |
 | Octa runner v3 | Implemented in Octa | Published by the `octa-runner-protocol` crate | `octa-runner-protocol`, `octacity-runner` |
 | Server-agent transport v1 | Phases 5–7 implemented | [server-agent-v1.md](server-agent-v1.md) | `octacity-protocol`, `octacity-coordinator`, `octacity-lifecycle` |

@@ -1,9 +1,10 @@
 use std::{collections::BTreeSet, str::FromStr};
 
+use octacity_protocol::{ExecutionMode, PlatformArchitecture, PlatformOs, PlatformSpec, guarantees_for};
 use octacity_server_application::{
   ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, IdentityProfileName, PolicyCategory, PolicyDirective,
-  PolicyResolutionError, ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName,
-  resolve_project_policy,
+  PolicyResolutionError, ProjectExecutionTarget, ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy,
+  RuntimeClass, SecretProfileName, resolve_project_policy,
 };
 use octacity_server_domain::{PoolId, ProjectId, ProjectPolicyVersion, RepositoryId};
 
@@ -31,6 +32,19 @@ fn namespace(value: &str) -> CacheNamespace {
   CacheNamespace::new(value).unwrap()
 }
 
+fn execution_target(mode: ExecutionMode) -> ProjectExecutionTarget {
+  let platform = PlatformSpec {
+    os: PlatformOs::Linux,
+    architecture: PlatformArchitecture::Amd64,
+  };
+  ProjectExecutionTarget {
+    mode,
+    host_platform: platform,
+    target_platform: platform,
+    required_guarantees: guarantees_for(mode),
+  }
+}
+
 fn root_policy() -> ProjectPolicyLayer {
   ProjectPolicyLayer {
     project_id: project(1),
@@ -45,6 +59,10 @@ fn root_policy() -> ProjectPolicyLayer {
         RuntimeClass::Native,
         RuntimeClass::OciProcess,
         RuntimeClass::OciHypervisor,
+      ])),
+      execution_targets: PolicyDirective::Replace(BTreeSet::from([
+        execution_target(ExecutionMode::Host),
+        execution_target(ExecutionMode::Isolation),
       ])),
       cache: PolicyDirective::Replace(CachePolicy {
         namespaces: BTreeSet::from([namespace("project/main"), namespace("project/release")]),
@@ -84,6 +102,7 @@ fn inheriting_child(id: ProjectId, parent_id: ProjectId) -> ProjectPolicyLayer {
       secret_profiles: PolicyDirective::Inherit,
       identity_profiles: PolicyDirective::Inherit,
       runtimes: PolicyDirective::Inherit,
+      execution_targets: PolicyDirective::Inherit,
       cache: PolicyDirective::Inherit,
       artifacts: PolicyDirective::Inherit,
       concurrency: PolicyDirective::Inherit,
@@ -105,6 +124,14 @@ fn policy_layer_keeps_the_flat_persisted_document_shape() {
 
   value.as_object_mut().unwrap().insert("unknown".into(), true.into());
   assert!(serde_json::from_value::<ProjectPolicyLayer>(value).is_err());
+
+  let mut legacy = serde_json::to_value(root_policy()).unwrap();
+  legacy.as_object_mut().unwrap().remove("execution_targets");
+  let decoded: ProjectPolicyLayer = serde_json::from_value(legacy).unwrap();
+  assert!(matches!(
+    decoded.definition.execution_targets,
+    PolicyDirective::Replace(ref targets) if targets.is_empty()
+  ));
 }
 
 #[test]
@@ -132,6 +159,10 @@ fn narrow_intersects_grants_and_lowers_every_ceiling() {
   child.definition.identity_profiles =
     PolicyDirective::Narrow(BTreeSet::from([identity("reader"), identity("unknown")]));
   child.definition.runtimes = PolicyDirective::Narrow(BTreeSet::from([RuntimeClass::OciProcess]));
+  child.definition.execution_targets = PolicyDirective::Narrow(BTreeSet::from([
+    execution_target(ExecutionMode::Isolation),
+    execution_target(ExecutionMode::Virtualization),
+  ]));
   child.definition.cache = PolicyDirective::Narrow(CachePolicy {
     namespaces: BTreeSet::from([namespace("project/release"), namespace("foreign")]),
     read: false,
@@ -163,6 +194,10 @@ fn narrow_intersects_grants_and_lowers_every_ceiling() {
   assert_eq!(policy.secret_profiles, BTreeSet::from([secret("release")]));
   assert_eq!(policy.identity_profiles, BTreeSet::from([identity("reader")]));
   assert_eq!(policy.runtimes, BTreeSet::from([RuntimeClass::OciProcess]));
+  assert_eq!(
+    policy.execution_targets,
+    BTreeSet::from([execution_target(ExecutionMode::Isolation)])
+  );
   assert_eq!(policy.cache.namespaces, BTreeSet::from([namespace("project/release")]));
   assert!(!policy.cache.read);
   assert!(policy.cache.write);
@@ -284,6 +319,15 @@ fn every_protected_category_rejects_a_broader_replacement() {
     },
     {
       let mut child = inheriting_child(project(2), root.project_id);
+      child.definition.execution_targets = PolicyDirective::Replace(BTreeSet::from([
+        execution_target(ExecutionMode::Host),
+        execution_target(ExecutionMode::Isolation),
+        execution_target(ExecutionMode::Virtualization),
+      ]));
+      (PolicyCategory::ExecutionTargets, child)
+    },
+    {
+      let mut child = inheriting_child(project(2), root.project_id);
       child.definition.cache = PolicyDirective::Replace(CachePolicy {
         namespaces: BTreeSet::from([
           namespace("project/main"),
@@ -369,6 +413,11 @@ fn root_requires_an_explicit_replacement_for_every_category() {
     },
     {
       let mut value = root.clone();
+      value.definition.execution_targets = PolicyDirective::Inherit;
+      (PolicyCategory::ExecutionTargets, value)
+    },
+    {
+      let mut value = root.clone();
       value.definition.cache = PolicyDirective::Inherit;
       (PolicyCategory::Cache, value)
     },
@@ -416,6 +465,22 @@ fn artifact_shape_is_validated_once_for_policy_and_configuration_consumers() {
     PolicyResolutionError::InvalidValue {
       project_id: project(1),
       category: PolicyCategory::Artifacts,
+    }
+  );
+}
+
+#[test]
+fn execution_target_guarantees_are_validated_before_resolution() {
+  let mut root = root_policy();
+  let mut invalid = execution_target(ExecutionMode::Isolation);
+  invalid.required_guarantees.clear();
+  root.definition.execution_targets = PolicyDirective::Replace(BTreeSet::from([invalid]));
+
+  assert_eq!(
+    resolve_project_policy(&[root]).unwrap_err(),
+    PolicyResolutionError::InvalidValue {
+      project_id: project(1),
+      category: PolicyCategory::ExecutionTargets,
     }
   );
 }

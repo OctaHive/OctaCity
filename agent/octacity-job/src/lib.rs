@@ -30,8 +30,8 @@ use octacity_execution::{
 };
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
-  BeginCacheSessionResponse, JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OutputLimits,
-  PlatformArchitecture, PlatformOs, RuntimeMode, RuntimeTarget,
+  BeginCacheSessionResponse, ExecutionMode, JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation,
+  OutputLimits, PlatformArchitecture, PlatformOs, RuntimeMode, RuntimeTarget, VerifiedJobSpec,
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
@@ -48,7 +48,7 @@ use tracing::{info, warn};
 #[derive(Debug)]
 pub struct ExecuteJobRequest {
   /// JobSpec verified against the active lease before this layer is called.
-  pub spec: JobSpecV1,
+  pub spec: VerifiedJobSpec,
   /// Agent-resolved credential files keyed by source-plugin handle.
   pub source_credentials: BTreeMap<String, PathBuf>,
   /// Fenced cache authority obtained out of band from the signed JobSpec.
@@ -210,6 +210,9 @@ pub enum JobError {
   #[error("runtime mode '{0:?}' is not enabled")]
   /// No configured execution backend implements the requested runtime mode.
   RuntimeUnavailable(RuntimeMode),
+  /// No qualified provider implements a negotiated provider-neutral mode yet.
+  #[error("execution mode '{0:?}' is not enabled")]
+  ExecutionModeUnavailable(ExecutionMode),
   #[error("workload identity failed: {0}")]
   /// Local workload identity selection, provisioning, or revocation failed.
   WorkloadIdentity(#[source] Box<WorkloadIdentityError>),
@@ -365,7 +368,10 @@ impl JobExecutor {
     cancellation: CancellationToken,
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
-    let spec = request.spec;
+    let spec = match request.spec {
+      VerifiedJobSpec::V1(spec) => spec,
+      VerifiedJobSpec::V2(spec) => return Err(JobError::ExecutionModeUnavailable(spec.runtime.target.mode).into()),
+    };
     if spec.cache.is_some() != request.cache_grant.is_some() {
       return Err(
         JobError::Invalid("signed cache policy and fenced cache grant must be present together".to_owned()).into(),

@@ -305,11 +305,15 @@ impl CoordinatorClient for HttpCoordinatorClient {
         &request,
       )
       .await?;
-    response.validate(&request_id)?;
+    response.validate(&request_id, inventory.execution_contract)?;
+    let execution_contract_version = response
+      .execution_contract_version
+      .unwrap_or(octacity_protocol::EXECUTION_CONTRACT_V1);
     self.promote_registration_credential(&response.registration_id)?;
     Ok(Registration {
       agent_id: inventory.agent_id.clone(),
       registration_id: response.registration_id,
+      execution_contract_version,
       max_retry_delay: Duration::from_millis(response.max_retry_delay_ms).min(self.retry.max_delay),
     })
   }

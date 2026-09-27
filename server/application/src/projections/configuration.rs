@@ -89,12 +89,43 @@ pub struct AgentRequirementsProjection {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeClassProjection {
-  /// Native host execution.
+  /// Legacy Native execution contract.
   Native,
   /// OCI process isolation.
   OciProcess,
   /// OCI hypervisor isolation.
   OciHypervisor,
+  /// Direct provider-neutral host execution.
+  Host,
+  /// Provider-neutral bounded workload isolation.
+  Isolation,
+  /// Provider-neutral hardware-virtualized execution.
+  Virtualization,
+}
+
+/// One host or target platform exposed by the application boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PlatformProjection {
+  /// Operating system.
+  pub os: PlatformOsProjection,
+  /// CPU architecture.
+  pub architecture: PlatformArchitectureProjection,
+}
+
+/// Provider-neutral execution guarantee exposed by the application boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionGuaranteeProjection {
+  /// Isolated filesystem boundary.
+  FilesystemIsolation,
+  /// Isolated process boundary.
+  ProcessIsolation,
+  /// Enforced network boundary.
+  NetworkIsolation,
+  /// Enforced and accounted resources.
+  ResourceIsolation,
+  /// Hardware-virtualized guest boundary.
+  HardwareVirtualization,
 }
 
 /// Operating system exposed by the application boundary.
@@ -224,6 +255,12 @@ pub struct ConfigurationRuntimeProjection {
   pub operating_system: PlatformOsProjection,
   /// Required CPU architecture.
   pub architecture: PlatformArchitectureProjection,
+  /// Exact Agent host platform for provider-neutral execution.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub host_platform: Option<PlatformProjection>,
+  /// Complete guarantees required from the selected execution provider.
+  #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+  pub required_guarantees: BTreeSet<ExecutionGuaranteeProjection>,
   /// Immutable OCI image identity, when required by the runtime class.
   pub immutable_image: Option<String>,
   /// CPU execution limit in thousandths of one logical CPU.
@@ -359,6 +396,9 @@ impl TryFrom<PublishedBuildConfiguration> for BuildConfigurationProjection {
       RuntimeClass::Native => RuntimeClassProjection::Native,
       RuntimeClass::OciProcess => RuntimeClassProjection::OciProcess,
       RuntimeClass::OciHypervisor => RuntimeClassProjection::OciHypervisor,
+      RuntimeClass::Host => RuntimeClassProjection::Host,
+      RuntimeClass::Isolation => RuntimeClassProjection::Isolation,
+      RuntimeClass::Virtualization => RuntimeClassProjection::Virtualization,
     };
     let operating_system = match definition.runtime.operating_system {
       PlatformOs::Linux => PlatformOsProjection::Linux,
@@ -414,6 +454,33 @@ impl TryFrom<PublishedBuildConfiguration> for BuildConfigurationProjection {
         class: runtime_class,
         operating_system,
         architecture,
+        host_platform: definition.runtime.host_platform.map(|platform| PlatformProjection {
+          os: match platform.os {
+            PlatformOs::Linux => PlatformOsProjection::Linux,
+            PlatformOs::Windows => PlatformOsProjection::Windows,
+            PlatformOs::Macos => PlatformOsProjection::Macos,
+          },
+          architecture: match platform.architecture {
+            PlatformArchitecture::Amd64 => PlatformArchitectureProjection::Amd64,
+            PlatformArchitecture::Arm64 => PlatformArchitectureProjection::Arm64,
+          },
+        }),
+        required_guarantees: definition
+          .runtime
+          .required_guarantees
+          .into_iter()
+          .map(|guarantee| match guarantee {
+            octacity_protocol::ExecutionGuarantee::FilesystemIsolation => {
+              ExecutionGuaranteeProjection::FilesystemIsolation
+            }
+            octacity_protocol::ExecutionGuarantee::ProcessIsolation => ExecutionGuaranteeProjection::ProcessIsolation,
+            octacity_protocol::ExecutionGuarantee::NetworkIsolation => ExecutionGuaranteeProjection::NetworkIsolation,
+            octacity_protocol::ExecutionGuarantee::ResourceIsolation => ExecutionGuaranteeProjection::ResourceIsolation,
+            octacity_protocol::ExecutionGuarantee::HardwareVirtualization => {
+              ExecutionGuaranteeProjection::HardwareVirtualization
+            }
+          })
+          .collect(),
         immutable_image: definition.runtime.immutable_image,
         cpu_millis: definition.runtime.cpu_millis,
         memory_bytes: definition.runtime.memory_bytes,

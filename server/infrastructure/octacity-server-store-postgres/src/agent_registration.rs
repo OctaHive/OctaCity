@@ -142,6 +142,7 @@ pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<Age
     credential_id: request.credential_id,
     agent_id: request.agent_id,
     registration_epoch: authority.epoch,
+    execution_contract_version: request.execution_contract_version,
     pool_id: authority.pool_id,
     pool_version: authority.pool_version,
     expires_at: request.expires_at,
@@ -156,6 +157,7 @@ pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<Age
       safe_metadata: json!({
         "agent_id": request.agent_id,
         "registration_epoch": authority.epoch,
+        "execution_contract_version": request.execution_contract_version,
         "pool_id": authority.pool_id,
         "pool_version": authority.pool_version,
         "expires_at": request.expires_at,
@@ -179,6 +181,8 @@ async fn persist_agent_and_registration(
   authority: RegistrationAuthority,
 ) -> Result<(), StoreError> {
   let pool_version = number(authority.pool_version.get(), StoreOperation::RegisterAgent)?;
+  let execution_contract_version =
+    i16::try_from(request.execution_contract_version).map_err(|_| StoreError::Unavailable)?;
   if authority.create_agent {
     sqlx::query(
       "INSERT INTO agents \
@@ -214,15 +218,16 @@ async fn persist_agent_and_registration(
 
   sqlx::query(
     "INSERT INTO agent_registrations \
-       (id, agent_id, epoch, credential_hash, inventory, registered_at, expires_at) \
-     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0), \
-             to_timestamp($7::double precision / 1000.0))",
+       (id, agent_id, epoch, credential_hash, inventory, execution_contract_version, registered_at, expires_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0), \
+             to_timestamp($8::double precision / 1000.0))",
   )
   .bind(request.credential_id.as_uuid())
   .bind(request.agent_id.as_uuid())
   .bind(number(authority.epoch.get(), StoreOperation::RegisterAgent)?)
   .bind(request.credential.digest().as_bytes().as_slice())
   .bind(Json(request.inventory.clone()))
+  .bind(execution_contract_version)
   .bind(request.registered_at.unix_millis())
   .bind(request.expires_at.unix_millis())
   .execute(&mut **transaction)
@@ -327,6 +332,7 @@ fn replay(value: Value) -> Result<AgentRegistrationOutcome, StoreError> {
     credential_id: stored.credential_id,
     agent_id: stored.agent_id,
     registration_epoch: stored.registration_epoch,
+    execution_contract_version: stored.execution_contract_version,
     pool_id: stored.pool_id,
     pool_version: stored.pool_version,
     expires_at: stored.expires_at,
@@ -384,6 +390,7 @@ struct RequestFingerprint {
   agent_name: AgentName,
   proof: ProofFingerprint,
   platform: octacity_server_store::AgentPlatform,
+  execution_contract_version: u16,
   inventory: AgentInventory,
 }
 
@@ -413,6 +420,7 @@ impl From<&RegisterAgent> for RequestFingerprint {
       agent_name: request.agent_name.clone(),
       proof,
       platform: request.platform.clone(),
+      execution_contract_version: request.execution_contract_version,
       inventory: request.inventory.clone(),
     }
   }
@@ -437,6 +445,7 @@ struct StoredOutcome {
   credential_id: RegistrationCredentialId,
   agent_id: AgentId,
   registration_epoch: RegistrationEpoch,
+  execution_contract_version: u16,
   pool_id: PoolId,
   pool_version: PoolVersion,
   expires_at: Timestamp,
@@ -448,6 +457,7 @@ impl From<&AgentRegistrationOutcome> for StoredOutcome {
       credential_id: value.credential_id,
       agent_id: value.agent_id,
       registration_epoch: value.registration_epoch,
+      execution_contract_version: value.execution_contract_version,
       pool_id: value.pool_id,
       pool_version: value.pool_version,
       expires_at: value.expires_at,

@@ -266,6 +266,7 @@ mod tests {
           agent_id: inventory.agent_id.clone(),
           registration_id: "registration-coverage".to_owned(),
           max_retry_delay: Duration::from_secs(1),
+          execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
         })
       }
 

@@ -71,8 +71,9 @@ fn input() -> AgentTelemetryInput {
       registration_id: "registration".to_owned(),
       samples: vec![AgentTelemetrySample {
         observed_at_unix_ms: 1,
-        runtime: AgentTelemetryRuntime::Native,
-        isolation: AgentTelemetryIsolation::Native,
+        runtime: Some(AgentTelemetryRuntime::Native),
+        isolation: Some(AgentTelemetryIsolation::Native),
+        execution: None,
         cpu_time_ms: 1,
         memory_current_bytes: 2,
         io_read_bytes: 3,

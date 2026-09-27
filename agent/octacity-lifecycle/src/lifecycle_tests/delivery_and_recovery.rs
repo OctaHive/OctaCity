@@ -180,6 +180,7 @@ async fn network_failure_replays_without_loss_or_reordering() {
       agent_id: "agent-1".to_owned(),
       registration_id: "registration-1".to_owned(),
       max_retry_delay: Duration::from_secs(1),
+      execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
     },
     lease,
     spool: spool.clone(),
@@ -279,6 +280,7 @@ async fn permanent_event_rejection_stops_delivery_without_a_retry_loop() {
       agent_id: "agent-1".to_owned(),
       registration_id: "registration-1".to_owned(),
       max_retry_delay: Duration::from_secs(1),
+      execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
     },
     lease: octacity_protocol::LeaseAssignment {
       lease_id: fence.lease_id,

@@ -3,8 +3,10 @@ use std::fmt;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use octacity_protocol::{
-  JobBinding, JobSpecV1, MAX_SIGNED_JOB_SPEC_BYTES, SIGNATURE_ALGORITHM, SignedEnvelope, valid_signing_key_id,
+  JobBinding, JobSpecV1, JobSpecV2, MAX_SIGNED_JOB_SPEC_BYTES, SIGNATURE_ALGORITHM, SignedEnvelope,
+  valid_signing_key_id,
 };
+use serde::Serialize;
 use thiserror::Error;
 
 /// One active server-owned Ed25519 key used to sign Agent execution intent.
@@ -52,8 +54,7 @@ impl JobSpecSigner {
       .is_ok()
   }
 
-  /// Validates and signs the deterministic server serialization of `spec`.
-  pub(super) fn sign(&self, spec: &JobSpecV1) -> Result<SignedEnvelope, JobSpecSigningError> {
+  pub(super) fn sign_v1(&self, spec: &JobSpecV1) -> Result<SignedEnvelope, JobSpecSigningError> {
     spec
       .validate(&JobBinding {
         job_id: &spec.job_id,
@@ -61,6 +62,21 @@ impl JobSpecSigner {
         now: spec.issued_at,
       })
       .map_err(JobSpecSigningError::Validation)?;
+    self.sign_validated(spec)
+  }
+
+  pub(super) fn sign_v2(&self, spec: &JobSpecV2) -> Result<SignedEnvelope, JobSpecSigningError> {
+    spec
+      .validate(&JobBinding {
+        job_id: &spec.job_id,
+        attempt: spec.attempt,
+        now: spec.issued_at,
+      })
+      .map_err(JobSpecSigningError::Validation)?;
+    self.sign_validated(spec)
+  }
+
+  fn sign_validated<T: Serialize>(&self, spec: &T) -> Result<SignedEnvelope, JobSpecSigningError> {
     let payload = serde_json::to_vec(spec).map_err(JobSpecSigningError::Json)?;
     if payload.len() > MAX_SIGNED_JOB_SPEC_BYTES {
       return Err(JobSpecSigningError::PayloadTooLarge);

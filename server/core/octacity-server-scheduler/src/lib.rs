@@ -19,5 +19,5 @@ mod placement;
 mod pool;
 
 pub use lease::{LeaseEvent, LeaseState};
-pub use placement::is_compatible;
+pub use placement::{is_compatible, is_compatible_with_contract};
 pub use pool::{PoolDrainEvent, PoolDrainState, PoolDrainTransitionError};

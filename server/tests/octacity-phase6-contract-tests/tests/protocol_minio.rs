@@ -227,7 +227,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
     .run(
       VerifiedLease {
         lease: lease.clone(),
-        spec,
+        spec: spec.into(),
       },
       phase6_snapshot(&capacity),
       CancellationToken::new(),

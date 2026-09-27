@@ -178,6 +178,7 @@ impl InMemoryStore {
           pool_version: PoolVersion::INITIAL,
           expires_at,
           revoked,
+          execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
           inventory: Some(fixtures::compatible_inventory(agent_id)),
         },
       );

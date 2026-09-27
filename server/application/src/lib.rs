@@ -179,21 +179,22 @@ pub use project_cqrs::{
 };
 pub use project_policy::{
   ArtifactPolicy, CacheNamespace, CachePolicy, ConcurrencyPolicy, EffectiveProjectPolicy, IdentityProfileName,
-  MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource, ProjectPolicy,
-  ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass, SecretProfileName,
-  resolve_project_policy,
+  MAX_POLICY_REFERENCE_BYTES, PolicyCategory, PolicyDirective, PolicyResolutionError, PolicySource,
+  ProjectExecutionTarget, ProjectPolicy, ProjectPolicyDefinition, ProjectPolicyLayer, RetentionPolicy, RuntimeClass,
+  SecretProfileName, resolve_project_policy,
 };
 pub use projections::{
   AgentRequirementsProjection, ArtifactPolicyProjection, AttemptProjection, BuildConfigurationProjection,
   BuildProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection, DagCausalityProjection,
-  DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection, JobAssignmentProjection, JobExecutionProjection,
-  JobFailureClassification, JobOutputKind, JobOutputReference, JobPlacementProjection, JobProjection,
-  JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, NetworkPolicyProjection,
-  ParameterDefinitionProjection, ParameterSchemaProjection, ParameterTypeProjection, ParameterValueProjection,
-  PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection, PlatformArchitectureProjection,
-  PlatformOsProjection, ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection,
-  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
-  Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
+  DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection, ExecutionGuaranteeProjection,
+  JobAssignmentProjection, JobExecutionProjection, JobFailureClassification, JobOutputKind, JobOutputReference,
+  JobPlacementProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection,
+  NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection, ParameterTypeProjection,
+  ParameterValueProjection, PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection,
+  PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, ProjectProjection,
+  ProjectSummaryProjection, ProjectionError, RepositoryProjection, RepositorySelectionProjection, RetryClassProjection,
+  RetryPolicyProjection, RuntimeClassProjection, Sha256DigestProjection, TriggerCauseProjection,
+  TriggerHistoryProjection, TriggerKindProjection,
 };
 pub use retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};
 pub use retention_hold::{

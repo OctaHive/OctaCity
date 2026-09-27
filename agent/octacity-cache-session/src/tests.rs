@@ -4,8 +4,9 @@ use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use octacity_protocol::{
-  BeginCacheSessionResponse, CachePolicy, PlatformArchitecture, PlatformOs, PlatformSpec, RemoteCacheGrant,
-  RuntimeTarget,
+  BeginCacheSessionResponse, CachePolicy, ExecutionCacheIdentityV2, ExecutionEnvironmentId, ExecutionEvidenceV2,
+  ExecutionMode, ExecutionProviderId, ExecutionTargetV2, PlatformArchitecture, PlatformOs, PlatformSpec,
+  RemoteCacheGrant, RuntimeTarget, guarantees_for,
 };
 
 use super::*;
@@ -844,6 +845,37 @@ fn native_platform_keys_map_to_their_exact_octa_identity() {
       ..
     }
   ));
+}
+
+#[test]
+fn provider_neutral_cache_identity_separates_concrete_execution_environments() {
+  let target = ExecutionTargetV2 {
+    mode: ExecutionMode::Isolation,
+    host_platform: PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    },
+    target_platform: PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    },
+    required_guarantees: guarantees_for(ExecutionMode::Isolation),
+    immutable_image: None,
+  };
+  let identity = |provider| ExecutionCacheIdentityV2 {
+    execution: ExecutionEvidenceV2 {
+      provider: ExecutionProviderId::new(provider).unwrap(),
+      target: target.clone(),
+    },
+    environment: ExecutionEnvironmentId::new("linux-toolchain-v1").unwrap(),
+  };
+
+  let containerd = identity("containerd");
+  let apple = identity("apple-vf-isolation");
+  assert_ne!(
+    runtime_identity(&containerd, &BTreeMap::new()).unwrap(),
+    runtime_identity(&apple, &BTreeMap::new()).unwrap()
+  );
 }
 
 #[tokio::test]

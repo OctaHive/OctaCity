@@ -329,6 +329,9 @@ pub(super) fn configuration_resource(projection: BuildConfigurationProjection) -
     ApplicationRuntimeClass::Native => RuntimeClass::Native,
     ApplicationRuntimeClass::OciProcess => RuntimeClass::OciProcess,
     ApplicationRuntimeClass::OciHypervisor => RuntimeClass::OciHypervisor,
+    ApplicationRuntimeClass::Host => RuntimeClass::Host,
+    ApplicationRuntimeClass::Isolation => RuntimeClass::Isolation,
+    ApplicationRuntimeClass::Virtualization => RuntimeClass::Virtualization,
   };
   let operating_system = match projection.runtime.operating_system {
     ApplicationPlatformOs::Linux => PlatformOs::Linux,
@@ -348,6 +351,39 @@ pub(super) fn configuration_resource(projection: BuildConfigurationProjection) -
     class,
     operating_system,
     architecture,
+    host_platform: projection.runtime.host_platform.map(|platform| Platform {
+      os: match platform.os {
+        ApplicationPlatformOs::Linux => PlatformOs::Linux,
+        ApplicationPlatformOs::Windows => PlatformOs::Windows,
+        ApplicationPlatformOs::Macos => PlatformOs::Macos,
+      },
+      architecture: match platform.architecture {
+        ApplicationPlatformArchitecture::Amd64 => PlatformArchitecture::Amd64,
+        ApplicationPlatformArchitecture::Arm64 => PlatformArchitecture::Arm64,
+      },
+    }),
+    required_guarantees: projection
+      .runtime
+      .required_guarantees
+      .into_iter()
+      .map(|guarantee| match guarantee {
+        octacity_server_application::ExecutionGuaranteeProjection::FilesystemIsolation => {
+          ExecutionGuarantee::FilesystemIsolation
+        }
+        octacity_server_application::ExecutionGuaranteeProjection::ProcessIsolation => {
+          ExecutionGuarantee::ProcessIsolation
+        }
+        octacity_server_application::ExecutionGuaranteeProjection::NetworkIsolation => {
+          ExecutionGuarantee::NetworkIsolation
+        }
+        octacity_server_application::ExecutionGuaranteeProjection::ResourceIsolation => {
+          ExecutionGuarantee::ResourceIsolation
+        }
+        octacity_server_application::ExecutionGuaranteeProjection::HardwareVirtualization => {
+          ExecutionGuarantee::HardwareVirtualization
+        }
+      })
+      .collect(),
     immutable_image: projection.runtime.immutable_image,
     cpu_millis: projection.runtime.cpu_millis,
     memory_bytes: projection.runtime.memory_bytes,

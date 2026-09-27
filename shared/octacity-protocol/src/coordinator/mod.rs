@@ -15,7 +15,9 @@ pub use octa_cache_protocol::{
   TASK_RESULT_CACHE_HTTP_FEATURE_V1 as CACHE_HTTP_FEATURE_V1,
 };
 
-use crate::{CachePolicy, OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope};
+use crate::{
+  CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope,
+};
 
 mod credential;
 mod telemetry;
@@ -64,6 +66,9 @@ pub struct AgentInventory {
   pub agent_version: String,
   /// Coordinator protocol versions accepted by the agent.
   pub coordinator_protocols: Vec<u16>,
+  /// Signed execution-contract revisions accepted during negotiation.
+  #[serde(default = "legacy_execution_contract")]
+  pub execution_contract: ExecutionContractRange,
   /// Operator-owned scheduler labels.
   pub labels: BTreeMap<String, String>,
   /// Host operating system and architecture.
@@ -73,6 +78,9 @@ pub struct AgentInventory {
   /// Exact execution capabilities validated at startup; an empty list keeps
   /// an inventory-only agent visible but unschedulable.
   pub runtimes: Vec<RuntimeCapability>,
+  /// Provider-neutral v2 execution routes; provider names remain diagnostic evidence.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub executions: Vec<ExecutionCapabilityV2>,
   /// Verified Octa runner and task-plugin release.
   pub octa: OctaInventory,
   /// Verified operator-installed source plugins.
@@ -206,6 +214,12 @@ pub struct RegisterAgentResponse {
   pub request_id: String,
   /// Opaque identity of this registration epoch.
   pub registration_id: String,
+  /// Negotiated execution-contract revision for this registration.
+  ///
+  /// Revision one is omitted so servers can continue registering released
+  /// agents whose strict v1 decoder predates this field.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub execution_contract_version: Option<u16>,
   /// Server-provided ceiling for retry delays.
   pub max_retry_delay_ms: u64,
 }
@@ -753,10 +767,20 @@ pub struct RevokeCacheSessionResponse {
 pub struct BackendHealth {
   /// Stable backend name matching a registered runtime capability.
   pub backend: String,
+  /// Optional provider-neutral route described by this diagnostic entry.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub execution: Option<ExecutionCapabilityV2>,
   /// Current readiness state.
   pub status: BackendHealthStatus,
   /// Optional bounded diagnostic safe to send to the coordinator.
   pub message: Option<String>,
+}
+
+const fn legacy_execution_contract() -> ExecutionContractRange {
+  ExecutionContractRange {
+    min: crate::EXECUTION_CONTRACT_V1,
+    max: crate::EXECUTION_CONTRACT_V1,
+  }
 }
 
 /// Scheduler-facing backend readiness state.

@@ -3,12 +3,13 @@ use std::{str::FromStr as _, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use octacity_protocol::{
   AgentCredentialKind, AgentCredentialToken, AgentInventory, COORDINATOR_PROTOCOL_VERSION, PlatformArchitecture,
-  PlatformOs, RegisterAgentRequest,
+  PlatformOs, RegisterAgentRequest, SUPPORTED_EXECUTION_CONTRACTS,
 };
 use octacity_server_domain::{AgentId, AgentName, PoolId, RegistrationCredentialId, Timestamp};
 use octacity_server_store::{
-  AgentCredentialStore, AgentPlatform, AgentRegistrationProof, AuthenticateAgentRegistration, CredentialSecret,
-  FreshRegistrationCredential, RegisterAgent, RegistrationEpoch, RegistrationValidity, StoreError,
+  AgentCredentialStore, AgentPlatform, AgentRegistrationInventory, AgentRegistrationProof,
+  AuthenticateAgentRegistration, CredentialSecret, FreshRegistrationCredential, RegisterAgent, RegistrationEpoch,
+  RegistrationValidity, StoreError,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -33,6 +34,8 @@ pub struct AgentRegistrationOutcome {
   pub registration_id: String,
   /// Monotonic internal epoch used by fenced store operations.
   pub registration_epoch: RegistrationEpoch,
+  /// Execution-contract revision negotiated for this registration.
+  pub execution_contract_version: u16,
 }
 
 /// Agent action that must be authorized by the current registration.
@@ -218,6 +221,9 @@ where
     let agent_name =
       AgentName::new(input.request.inventory.agent_id.clone()).map_err(|_| AgentRegistrationError::InvalidRequest)?;
     let platform = platform(&input.request.inventory)?;
+    let execution_contract_version = SUPPORTED_EXECUTION_CONTRACTS
+      .negotiate(input.request.inventory.execution_contract)
+      .ok_or(AgentRegistrationError::InvalidRequest)?;
     let registration_id = stable_registration_id(&input.credential, &input.request.request_id)?;
     let credential = CredentialSecret::from_bytes(*input.credential.secret());
     let proof = match input.credential.kind() {
@@ -262,8 +268,11 @@ where
       agent_id,
       agent_name,
       proof,
-      platform,
-      input.request.inventory,
+      AgentRegistrationInventory {
+        platform,
+        execution_contract_version,
+        inventory: input.request.inventory,
+      },
       RegistrationValidity {
         registered_at,
         expires_at,
@@ -274,6 +283,7 @@ where
     Ok(AgentRegistrationOutcome {
       registration_id: outcome.credential_id.to_string(),
       registration_epoch: outcome.registration_epoch,
+      execution_contract_version: outcome.execution_contract_version,
     })
   }
 

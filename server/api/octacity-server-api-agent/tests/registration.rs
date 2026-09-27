@@ -124,6 +124,7 @@ impl AgentRegistrationUseCases for RecordingApplication {
     Ok(AgentRegistrationOutcome {
       registration_id: "registration-7".to_owned(),
       registration_epoch: RegistrationEpoch::new(7).unwrap(),
+      execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
     })
   }
 
@@ -293,7 +294,9 @@ async fn shared_registration_dto_reaches_only_the_application_boundary() {
   assert!(!application.lease_called.load(Ordering::SeqCst));
   let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
   let response: RegisterAgentResponse = serde_json::from_slice(&body).unwrap();
-  response.validate(&request.request_id).unwrap();
+  response
+    .validate(&request.request_id, request.inventory.execution_contract)
+    .unwrap();
   assert_eq!(response.registration_id, "registration-7");
   assert_eq!(response.max_retry_delay_ms, 5_000);
 }
@@ -615,8 +618,9 @@ async fn telemetry_exporter_outage_reports_loss_without_failing_heartbeat() {
 fn telemetry_sample() -> AgentTelemetrySample {
   AgentTelemetrySample {
     observed_at_unix_ms: 1,
-    runtime: AgentTelemetryRuntime::Native,
-    isolation: AgentTelemetryIsolation::Native,
+    runtime: Some(AgentTelemetryRuntime::Native),
+    isolation: Some(AgentTelemetryIsolation::Native),
+    execution: None,
     cpu_time_ms: 1,
     memory_current_bytes: 2,
     io_read_bytes: 3,

@@ -101,6 +101,7 @@ fn policy_document() -> Value {
     "secret_profiles": {"mode": "replace", "value": []},
     "identity_profiles": {"mode": "replace", "value": []},
     "runtimes": {"mode": "replace", "value": []},
+    "execution_targets": {"mode": "replace", "value": []},
     "cache": {"mode": "replace", "value": {"namespaces": [], "read": false, "write": false, "max_bytes": 0}},
     "artifacts": {"mode": "replace", "value": {"artifact_count": 0, "artifact_bytes": 0, "report_count": 0, "report_bytes": 0, "single_output_bytes": 0}},
     "concurrency": {"mode": "replace", "value": {"active_builds": 1, "active_jobs": 1}},

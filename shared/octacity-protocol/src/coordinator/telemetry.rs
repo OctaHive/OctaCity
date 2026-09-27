@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ExecutionEvidenceV2;
+
 /// Maximum number of resource snapshots accepted in one telemetry request.
 pub const MAX_AGENT_TELEMETRY_SAMPLES: usize = 128;
 /// Maximum encoded JSON bytes accepted for one telemetry request.
@@ -37,10 +39,15 @@ pub enum AgentTelemetryIsolation {
 pub struct AgentTelemetrySample {
   /// Unix time at which the agent observed the sample.
   pub observed_at_unix_ms: u64,
-  /// Runtime implementation producing the sample.
-  pub runtime: AgentTelemetryRuntime,
-  /// Enforced isolation category.
-  pub isolation: AgentTelemetryIsolation,
+  /// Legacy runtime implementation, retained only for v1 samples.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub runtime: Option<AgentTelemetryRuntime>,
+  /// Legacy Native/OCI isolation label, retained only for v1 samples.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub isolation: Option<AgentTelemetryIsolation>,
+  /// Provider-neutral semantic target plus concrete provider evidence for v2 samples.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub execution: Option<ExecutionEvidenceV2>,
   /// CPU time used by the execution tree during the measurement interval.
   pub cpu_time_ms: u64,
   /// Current accounted memory in bytes.
@@ -104,7 +111,8 @@ mod tests {
         .is_err()
     );
     let mut inconsistent = sample(1);
-    inconsistent.isolation = AgentTelemetryIsolation::OciHypervisor;
+    inconsistent.runtime = Some(AgentTelemetryRuntime::Native);
+    inconsistent.isolation = Some(AgentTelemetryIsolation::OciHypervisor);
     assert!(request(vec![inconsistent]).validate().is_err());
     assert!(request(vec![sample(2), sample(1)]).validate().is_err());
   }
@@ -119,6 +127,30 @@ mod tests {
     };
     assert!(response.validate("request", 2).is_ok());
     assert!(response.validate("request", 3).is_err());
+  }
+
+  #[test]
+  fn accepts_v2_execution_evidence_without_legacy_labels() {
+    let platform = crate::PlatformSpec {
+      os: crate::PlatformOs::Linux,
+      architecture: crate::PlatformArchitecture::Amd64,
+    };
+    let mut current = sample(1);
+    current.runtime = None;
+    current.isolation = None;
+    current.execution = Some(ExecutionEvidenceV2 {
+      provider: crate::ExecutionProviderId::new("containerd").unwrap(),
+      target: crate::ExecutionTargetV2 {
+        mode: crate::ExecutionMode::Isolation,
+        host_platform: platform,
+        target_platform: platform,
+        required_guarantees: crate::guarantees_for(crate::ExecutionMode::Isolation),
+        immutable_image: None,
+      },
+    });
+    request(vec![current.clone()]).validate().unwrap();
+    current.runtime = Some(AgentTelemetryRuntime::Containerd);
+    assert!(request(vec![current]).validate().is_err());
   }
 
   #[test]
@@ -144,8 +176,9 @@ mod tests {
   fn sample(observed_at_unix_ms: u64) -> AgentTelemetrySample {
     AgentTelemetrySample {
       observed_at_unix_ms,
-      runtime: AgentTelemetryRuntime::Native,
-      isolation: AgentTelemetryIsolation::Native,
+      runtime: Some(AgentTelemetryRuntime::Native),
+      isolation: Some(AgentTelemetryIsolation::Native),
+      execution: None,
       cpu_time_ms: 1,
       memory_current_bytes: 2,
       io_read_bytes: 3,

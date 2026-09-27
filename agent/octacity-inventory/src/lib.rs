@@ -14,8 +14,9 @@ use std::{
 
 use octacity_protocol::{
   ActiveJob, AgentInventory, BackendHealth, CACHE_FEATURE_V1, CACHE_HTTP_FEATURE_V1, COORDINATOR_PROTOCOL_VERSION,
-  CacheCapability, HostCapacity, HostSnapshot, OctaInventory, PlatformArchitecture, PlatformOs, PlatformSpec,
-  RuntimeCapability, SourcePluginInventory, TaskPluginInventory,
+  CacheCapability, EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V2, ExecutionContractRange, HostCapacity, HostSnapshot,
+  OctaInventory, PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeCapability, SourcePluginInventory,
+  TaskPluginInventory,
 };
 use octacity_runner::RunnerInstallation;
 use octacity_source::SourcePluginRegistry;
@@ -311,10 +312,15 @@ pub fn build_inventory(
     agent_id: config.agent_id,
     agent_version: config.agent_version,
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],
+    execution_contract: ExecutionContractRange {
+      min: EXECUTION_CONTRACT_V1,
+      max: EXECUTION_CONTRACT_V2,
+    },
     labels: config.labels,
     host_platform: host_platform()?,
     host_capacity: capacity,
     runtimes,
+    executions: Vec::new(),
     octa: OctaInventory {
       version: runner.capabilities.octa_version.clone(),
       runner_sha256: runner.sha256.clone(),

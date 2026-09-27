@@ -181,7 +181,7 @@ async fn poller_exposes_no_work_then_a_verified_lease() {
   let LeasePollOutcome::Lease(lease) = poller.next(true, &snapshot(), CancellationToken::new()).await.unwrap() else {
     panic!("expected a lease");
   };
-  assert_eq!(lease.spec.job_id, "job-1");
+  assert_eq!(lease.spec.job_id(), "job-1");
   assert_eq!(lease.lease.fencing_token, "fence-1");
 }
 

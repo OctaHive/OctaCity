@@ -95,10 +95,15 @@ The Artifact Store port lives in the core layer. Its S3-compatible adapter is
 an infrastructure crate selected only by a composition root; neither the core
 nor the server-Agent wire contract depends on the AWS SDK.
 
-`octacity-server-job` owns JobSpec derivation and the private-key signer. It
-accepts only immutable Build facts, a strict Pipeline execution template, and
-validated server policy; it never accepts a caller-created `JobSpecV1` or
-signed envelope. Materialization persists a stable `JobSpecTemplate` without
+`octacity-server-job` owns negotiated JobSpec derivation and the private-key
+signer. It accepts only immutable Build facts, a strict Pipeline execution
+template, and validated server policy; it never accepts a caller-created
+`JobSpecV1`, `JobSpecV2`, or signed envelope. Agent registration selects and
+persists the newest mutually supported execution-contract revision. Placement
+uses that persisted selection: legacy registrations can receive only v1
+Native/OCI intent, while v2 registrations may receive provider-neutral
+host/isolation/virtualization intent allowed by the exact Project execution
+target policy. Materialization persists a stable `JobSpecTemplate` without
 Job identity, Attempt number, issue time, or signature. The authoritative store
 adds those volatile facts and persists `jobs.signed_job_spec` in the same
 transaction that changes a root or dependent Job to `Ready`, before inserting

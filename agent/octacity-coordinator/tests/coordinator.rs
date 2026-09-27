@@ -20,7 +20,7 @@ use octacity_protocol::{
   AgentTelemetrySample, AppendEventsResponse, AttemptEventEnvelope, AttemptEventKind, BackendHealth,
   BackendHealthStatus, BeginCacheSessionRequest, BeginCacheSessionResponse, COORDINATOR_PROTOCOL_VERSION, CachePolicy,
   CompleteLeaseRequest, CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse,
-  CoordinatorErrorResponse, ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot,
+  CoordinatorErrorResponse, ExecutionContractRange, ExecutionSpec, HeartbeatDirective, HostCapacity, HostSnapshot,
   IngestAgentTelemetryResponse, JobCompletionStatus, JobLifecycleState, JobSpecV1, LeaseAssignment, NetworkPolicy,
   OciIsolation, OctaInventory, OctaSpec, OutputKind, OutputLimits, OutputUploadMetadata, PlatformArchitecture,
   PlatformOs, PlatformSpec, RegisterAgentResponse, RemoteCacheGrant, RevokeCacheSessionRequest,
@@ -187,6 +187,7 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
           request_id: request_id.unwrap_or_else(|| request.request_id.clone()),
           registration_id: "registration-1".to_owned(),
           max_retry_delay_ms: 50,
+          execution_contract_version: None,
         })
         .unwrap();
         write_response(stream, 200, &body).await;
@@ -316,6 +317,7 @@ fn inventory() -> AgentInventory {
     agent_id: "agent-1".to_owned(),
     agent_version: "0.1.0".to_owned(),
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],
+    execution_contract: ExecutionContractRange { min: 1, max: 1 },
     labels: BTreeMap::new(),
     host_platform: platform(),
     host_capacity: capacity(),
@@ -325,6 +327,7 @@ fn inventory() -> AgentInventory {
       platform: platform(),
       isolation: None,
     }],
+    executions: Vec::new(),
     octa: OctaInventory {
       version: "0.3.0".to_owned(),
       runner_sha256: "1".repeat(64),
@@ -372,6 +375,7 @@ fn snapshot() -> HostSnapshot {
     }),
     backends: vec![BackendHealth {
       backend: "native".to_owned(),
+      execution: None,
       status: BackendHealthStatus::Ready,
       message: None,
     }],
@@ -445,6 +449,7 @@ fn registration() -> Registration {
     agent_id: "agent-1".to_owned(),
     registration_id: "registration-1".to_owned(),
     max_retry_delay: Duration::from_millis(100),
+    execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
   }
 }
 
@@ -711,8 +716,9 @@ async fn uploads_telemetry_on_its_independent_bounded_endpoint() {
   let client = client(&server, 1, Duration::from_secs(1), 16 * 1024);
   let samples = [AgentTelemetrySample {
     observed_at_unix_ms: 1,
-    runtime: AgentTelemetryRuntime::Native,
-    isolation: AgentTelemetryIsolation::Native,
+    runtime: Some(AgentTelemetryRuntime::Native),
+    isolation: Some(AgentTelemetryIsolation::Native),
+    execution: None,
     cpu_time_ms: 1,
     memory_current_bytes: 2,
     io_read_bytes: 3,

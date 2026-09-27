@@ -54,6 +54,8 @@ POST /api/v1/agents/register
 
 - agent release, identity, labels, host platform, and static capacity;
 - exact Native or OCI platform/isolation routes;
+- the negotiated execution-contract range and separately qualified v2
+  host/isolation/virtualization routes;
 - installed Octa runner digest and supported schemas/protocols;
 - digest-verified task and source plugins.
 

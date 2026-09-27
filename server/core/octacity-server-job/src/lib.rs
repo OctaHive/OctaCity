@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use octacity_protocol::{PlatformArchitecture, PlatformOs};
+use octacity_protocol::{ExecutionGuarantee, PlatformArchitecture, PlatformOs, PlatformSpec};
 use octacity_server_domain::{EntityKind, RuntimeClass, TransitionError};
 use octacity_server_pipeline::ExecutionCapability;
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 mod spec;
 
 pub use spec::{
-  DerivedJobSpec, JobExecutionTemplate, JobPlacementPolicy, JobSpecBuildSnapshot, JobSpecDerivationError,
-  JobSpecPolicySnapshot, JobSpecSigner, JobSpecSigningError, JobSpecTemplate, JobSpecValidity,
+  DerivedJobSpec, JobExecutionTemplate, JobPlacementPolicy, JobRuntimePolicy, JobSpecBuildSnapshot,
+  JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner, JobSpecSigningError, JobSpecTemplate, JobSpecValidity,
   MAX_JOB_SPEC_VALIDITY_SECONDS, SourcePluginPolicy, derive_job_spec_template, sign_ready_job_spec,
 };
 
@@ -86,6 +86,12 @@ pub struct JobRequirements {
   pub operating_system: PlatformOs,
   /// Required CPU architecture.
   pub architecture: PlatformArchitecture,
+  /// Exact Agent host platform for provider-neutral v2 execution.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub host_platform: Option<PlatformSpec>,
+  /// Complete provider-neutral guarantees required by this Job.
+  #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+  pub required_guarantees: BTreeSet<ExecutionGuarantee>,
 }
 
 /// Fact applied to a [`JobState`].

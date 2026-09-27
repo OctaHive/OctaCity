@@ -35,6 +35,8 @@ pub struct Registration {
   pub agent_id: String,
   /// Opaque server-issued registration epoch.
   pub registration_id: String,
+  /// Execution-contract revision negotiated with the server.
+  pub execution_contract_version: u16,
   /// Server-provided ceiling for retry and idle-poll delays.
   pub max_retry_delay: Duration,
 }
@@ -55,6 +57,11 @@ impl Registration {
     }
     if self.max_retry_delay.is_zero() {
       return Err(invalid("registration retry delay must be greater than zero"));
+    }
+    if self.execution_contract_version == 0 {
+      return Err(invalid(
+        "registration execution-contract revision must be greater than zero",
+      ));
     }
     Ok(())
   }
@@ -310,7 +317,7 @@ pub(crate) fn verify_assignment(
   safety_margin: Duration,
 ) -> Result<VerifiedLease, CoordinatorError> {
   lease.validate(now, safety_margin.as_secs())?;
-  let spec = octacity_protocol::verify_job_spec(
+  let spec = octacity_protocol::verify_compatible_job_spec(
     &lease.signed_job_spec,
     keys,
     octacity_protocol::JobBinding {

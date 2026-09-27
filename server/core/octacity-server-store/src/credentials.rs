@@ -252,6 +252,17 @@ pub struct RegistrationValidity {
   pub expires_at: Timestamp,
 }
 
+/// Validated scheduler-visible facts bound to one registration epoch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentRegistrationInventory {
+  /// Platform measured by the registering process.
+  pub platform: AgentPlatform,
+  /// Execution-contract revision negotiated for this inventory.
+  pub execution_contract_version: u16,
+  /// Complete scheduler-visible capability advertisement.
+  pub inventory: AgentInventory,
+}
+
 /// Complete atomic request to create and supersede an Agent registration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterAgent {
@@ -267,6 +278,8 @@ pub struct RegisterAgent {
   pub proof: AgentRegistrationProof,
   /// Platform measured by the registering process.
   pub platform: AgentPlatform,
+  /// Execution-contract revision negotiated with this registration.
+  pub execution_contract_version: u16,
   /// Complete validated scheduler-visible inventory.
   pub inventory: AgentInventory,
   /// Authoritative registration time.
@@ -282,8 +295,7 @@ impl RegisterAgent {
     agent_id: AgentId,
     agent_name: AgentName,
     proof: AgentRegistrationProof,
-    platform: AgentPlatform,
-    inventory: AgentInventory,
+    registration_inventory: AgentRegistrationInventory,
     validity: RegistrationValidity,
   ) -> Result<Self, StoreError> {
     let request = Self {
@@ -292,8 +304,9 @@ impl RegisterAgent {
       agent_id,
       agent_name,
       proof,
-      platform,
-      inventory,
+      platform: registration_inventory.platform,
+      execution_contract_version: registration_inventory.execution_contract_version,
+      inventory: registration_inventory.inventory,
       registered_at: validity.registered_at,
       expires_at: validity.expires_at,
     };
@@ -305,6 +318,16 @@ impl RegisterAgent {
   pub fn validate(&self) -> Result<(), StoreError> {
     require_credential_window(StoreOperation::RegisterAgent, self.registered_at, self.expires_at)?;
     if self.inventory.validate().is_err() {
+      return Err(StoreError::invalid(
+        StoreOperation::RegisterAgent,
+        StoreInputError::InvalidAgentInventory,
+      ));
+    }
+    if !self
+      .inventory
+      .execution_contract
+      .contains(self.execution_contract_version)
+    {
       return Err(StoreError::invalid(
         StoreOperation::RegisterAgent,
         StoreInputError::InvalidAgentInventory,
@@ -331,6 +354,8 @@ pub struct AgentRegistrationOutcome {
   pub agent_id: AgentId,
   /// Monotonic epoch assigned to this process registration.
   pub registration_epoch: RegistrationEpoch,
+  /// Execution-contract revision selected for this registration.
+  pub execution_contract_version: u16,
   /// Agent Pool retained from enrollment.
   pub pool_id: PoolId,
   /// Immutable Pool policy version retained from enrollment.

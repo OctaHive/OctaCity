@@ -334,8 +334,11 @@ fn registration(
     agent_id,
     AgentName::new("contract-agent").unwrap(),
     proof,
-    platform(),
-    registration_inventory(),
+    crate::AgentRegistrationInventory {
+      platform: platform(),
+      execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
+      inventory: registration_inventory(),
+    },
     RegistrationValidity {
       registered_at: time(registered_at),
       expires_at: time(900),

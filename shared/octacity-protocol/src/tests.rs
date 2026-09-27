@@ -67,12 +67,53 @@ fn spec() -> JobSpecV1 {
 }
 
 fn envelope(spec: &JobSpecV1, signing_key: &SigningKey) -> SignedEnvelope {
+  signed_envelope(spec, signing_key)
+}
+
+fn signed_envelope(spec: &impl Serialize, signing_key: &SigningKey) -> SignedEnvelope {
   let payload = serde_json::to_vec(spec).unwrap();
   SignedEnvelope {
     key_id: "test-key".to_owned(),
     algorithm: SIGNATURE_ALGORITHM.to_owned(),
     payload: BASE64.encode(&payload),
     signature: BASE64.encode(signing_key.sign(&payload).to_bytes()),
+  }
+}
+
+fn v2_spec() -> JobSpecV2 {
+  let legacy = spec();
+  JobSpecV2 {
+    protocol_version: EXECUTION_CONTRACT_V2,
+    job_id: legacy.job_id,
+    attempt: legacy.attempt,
+    issued_at: legacy.issued_at,
+    expires_at: legacy.expires_at,
+    source: legacy.source,
+    octa: legacy.octa,
+    execution: legacy.execution,
+    runtime: RuntimeSpecV2 {
+      target: ExecutionTargetV2 {
+        mode: ExecutionMode::Virtualization,
+        host_platform: PlatformSpec {
+          os: PlatformOs::Macos,
+          architecture: PlatformArchitecture::Arm64,
+        },
+        target_platform: PlatformSpec {
+          os: PlatformOs::Linux,
+          architecture: PlatformArchitecture::Arm64,
+        },
+        required_guarantees: guarantees_for(ExecutionMode::Virtualization),
+        immutable_image: Some(format!("registry.example.com/octacity/build@sha256:{DIGEST}")),
+      },
+      cpu_millis: legacy.runtime.cpu_millis,
+      memory_bytes: legacy.runtime.memory_bytes,
+      writable_disk_bytes: legacy.runtime.writable_disk_bytes,
+      timeout_seconds: legacy.runtime.timeout_seconds,
+      network: legacy.runtime.network,
+      workload_identity_profile: legacy.runtime.workload_identity_profile,
+    },
+    cache: legacy.cache,
+    outputs: legacy.outputs,
   }
 }
 
@@ -141,6 +182,40 @@ fn verifies_exact_signed_payload_and_lease_binding() {
   )
   .unwrap();
   assert_eq!(verified, spec());
+}
+
+#[test]
+fn negotiates_v2_without_reinterpreting_legacy_envelopes() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let keys = BTreeMap::from([("test-key".to_owned(), signing_key.verifying_key())]);
+
+  let legacy = spec();
+  let verified = verify_compatible_job_spec(&envelope(&legacy, &signing_key), &keys, binding(&legacy)).unwrap();
+  let VerifiedJobSpec::V1(round_trip) = verified else {
+    panic!("a v1 envelope must remain a v1 Native/OCI document");
+  };
+  assert_eq!(round_trip, legacy);
+
+  let current = v2_spec();
+  let verified = verify_compatible_job_spec(
+    &signed_envelope(&current, &signing_key),
+    &keys,
+    JobBinding {
+      job_id: &current.job_id,
+      attempt: current.attempt,
+      now: current.issued_at,
+    },
+  )
+  .unwrap();
+  let VerifiedJobSpec::V2(round_trip) = verified else {
+    panic!("a v2 envelope must use provider-neutral execution intent");
+  };
+  assert_eq!(round_trip, current);
+  assert!(
+    serde_json::to_value(&round_trip).unwrap()["runtime"]["target"]
+      .get("provider")
+      .is_none()
+  );
 }
 
 #[test]

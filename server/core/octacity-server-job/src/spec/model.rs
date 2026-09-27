@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, num::NonZeroU64};
 
-use octacity_protocol::{CachePolicy, OctaSpec, OutputLimits, RuntimeSpec, SignedEnvelope};
+use octacity_protocol::{CachePolicy, OctaSpec, OutputLimits, RuntimeSpec, RuntimeSpecV2, SignedEnvelope};
 use octacity_server_domain::{
   BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference,
 };
@@ -11,6 +11,25 @@ use serde_json::Value;
 use super::JobSpecDerivationError;
 
 const MAX_SOURCE_PARAMETER_NAME_BYTES: usize = 64;
+
+/// Legacy or provider-neutral runtime policy retained without reinterpretation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum JobRuntimePolicy {
+  /// Exact v1 Native/OCI runtime document.
+  Legacy(RuntimeSpec),
+  /// Exact v2 host/isolation/virtualization runtime document.
+  Current(RuntimeSpecV2),
+}
+
+impl JobRuntimePolicy {
+  fn validate(&self) -> Result<(), String> {
+    match self {
+      Self::Legacy(runtime) => runtime.validate(),
+      Self::Current(runtime) => runtime.validate(),
+    }
+  }
+}
 
 /// Greatest validity interval accepted by the signed JobSpec model.
 ///
@@ -116,7 +135,7 @@ impl SourcePluginPolicy {
 pub struct JobSpecPolicySnapshot {
   pub(super) source: SourcePluginPolicy,
   pub(super) octa: OctaSpec,
-  pub(super) runtime: RuntimeSpec,
+  pub(super) runtime: JobRuntimePolicy,
   pub(super) secrets_profile: Option<SecretProfileName>,
   pub(super) cache: Option<CachePolicy>,
   pub(super) outputs: OutputLimits,
@@ -128,13 +147,16 @@ impl JobSpecPolicySnapshot {
   pub fn new(
     source: SourcePluginPolicy,
     octa: OctaSpec,
-    runtime: RuntimeSpec,
+    runtime: JobRuntimePolicy,
     secrets_profile: Option<SecretProfileName>,
     cache: Option<CachePolicy>,
     outputs: OutputLimits,
     validity: JobSpecValidity,
   ) -> Result<Self, JobSpecDerivationError> {
-    if outputs.validate().is_err() || cache.as_ref().is_some_and(|value| value.validate().is_err()) {
+    if runtime.validate().is_err()
+      || outputs.validate().is_err()
+      || cache.as_ref().is_some_and(|value| value.validate().is_err())
+    {
       return Err(JobSpecDerivationError::InvalidPolicy);
     }
     Ok(Self {
@@ -213,7 +235,7 @@ pub struct JobPlacementPolicy<'a> {
   /// Exact Octa and task-plugin requirements.
   pub octa: &'a octacity_protocol::OctaSpec,
   /// Exact runtime, isolation, platform, and resource policy.
-  pub runtime: &'a octacity_protocol::RuntimeSpec,
+  pub runtime: &'a JobRuntimePolicy,
   /// Whether this Job requires the registered Octa cache capability.
   pub requires_cache: bool,
 }
@@ -254,6 +276,7 @@ impl JobSpecTemplate {
   /// Revalidates a template decoded at a persistence or API boundary.
   pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
     if self.policy.source.validate().is_err()
+      || self.policy.runtime.validate().is_err()
       || self.policy.outputs.validate().is_err()
       || self
         .policy

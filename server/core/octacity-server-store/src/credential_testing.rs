@@ -57,6 +57,7 @@ struct RegistrationFingerprint {
   agent_name: AgentName,
   proof: ProofFingerprint,
   platform: AgentPlatform,
+  execution_contract_version: u16,
   inventory: AgentInventory,
 }
 
@@ -283,6 +284,7 @@ impl AgentCredentialStore for InMemoryStore {
       credential_id: request.credential_id,
       agent_id: request.agent_id,
       registration_epoch: plan.epoch,
+      execution_contract_version: request.execution_contract_version,
       pool_id: plan.pool_id,
       pool_version: plan.pool_version,
       expires_at: request.expires_at,
@@ -307,6 +309,7 @@ impl AgentCredentialStore for InMemoryStore {
         pool_version: plan.pool_version,
         expires_at: request.expires_at,
         revoked: false,
+        execution_contract_version: request.execution_contract_version,
         inventory: Some(request.inventory.clone()),
       },
     );
@@ -444,6 +447,7 @@ fn registration_fingerprint(request: &RegisterAgent) -> RegistrationFingerprint 
     agent_name: request.agent_name.clone(),
     proof,
     platform: request.platform.clone(),
+    execution_contract_version: request.execution_contract_version,
     inventory: request.inventory.clone(),
   }
 }

@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use octacity_protocol::{ExecutionMode, PlatformSpec};
+use octacity_server_domain::RuntimeClass;
 use octacity_server_store::{ParameterResolutionError, PublishedRepository, TriggerKind};
 use serde_json::Value;
 
@@ -66,7 +68,7 @@ pub(super) fn validate_context_for(
   if !policy.repositories.contains(&context.repository.id) {
     return Err(ManualTriggerInputError::RepositoryNotAllowed);
   }
-  if !policy.runtimes.contains(&definition.runtime.class) {
+  if !runtime_allowed(policy, &definition.runtime) {
     return Err(ManualTriggerInputError::RuntimeNotAllowed);
   }
   if let Some(namespace) = &definition.cache.namespace {
@@ -96,6 +98,34 @@ pub(super) fn validate_context_for(
     return Err(ManualTriggerInputError::ArtifactPolicyTooBroad);
   }
   Ok(())
+}
+
+fn runtime_allowed(policy: &crate::ProjectPolicy, runtime: &octacity_server_store::ConfigurationRuntimePolicy) -> bool {
+  match runtime.class {
+    RuntimeClass::Native | RuntimeClass::OciProcess | RuntimeClass::OciHypervisor => {
+      policy.runtimes.contains(&runtime.class)
+    }
+    RuntimeClass::Host | RuntimeClass::Isolation | RuntimeClass::Virtualization => {
+      let Some(host_platform) = runtime.host_platform else {
+        return false;
+      };
+      let mode = match runtime.class {
+        RuntimeClass::Host => ExecutionMode::Host,
+        RuntimeClass::Isolation => ExecutionMode::Isolation,
+        RuntimeClass::Virtualization => ExecutionMode::Virtualization,
+        RuntimeClass::Native | RuntimeClass::OciProcess | RuntimeClass::OciHypervisor => unreachable!(),
+      };
+      policy.execution_targets.contains(&crate::ProjectExecutionTarget {
+        mode,
+        host_platform,
+        target_platform: PlatformSpec {
+          os: runtime.operating_system,
+          architecture: runtime.architecture,
+        },
+        required_guarantees: runtime.required_guarantees.clone(),
+      })
+    }
+  }
 }
 
 fn artifact_policy_within(

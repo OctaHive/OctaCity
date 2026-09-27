@@ -18,7 +18,9 @@ use std::{
 
 use octa_cache_protocol::{CacheMode, Digest, DigestAlgorithm, LocalCacheCapacity, RuntimeIdentity};
 use octacity_execution::ExecutionCacheMounts;
-use octacity_protocol::{BeginCacheSessionResponse, CachePolicy, NetworkPolicy, PlatformSpec, RuntimeTarget};
+use octacity_protocol::{
+  BeginCacheSessionResponse, CachePolicy, ExecutionCacheIdentityV2, NetworkPolicy, PlatformSpec, RuntimeTarget,
+};
 use octacity_runner::RunnerCacheSession;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -77,6 +79,31 @@ pub struct CacheSessionContext {
   pub remaining_job: Duration,
   /// Job cancellation observed during potentially expensive scope admission.
   pub cancellation: CancellationToken,
+}
+
+/// Authenticated execution identity used to qualify one physical cache scope.
+///
+/// Legacy signed jobs retain their Native/OCI mapping. Provider-neutral jobs
+/// supply concrete provider and environment evidence selected by the execution
+/// route, preventing two materially different environments from sharing L1.
+#[derive(Clone, Copy, Debug)]
+pub enum CacheExecutionIdentity<'a> {
+  /// Legacy v1 Native or OCI runtime identity.
+  Legacy(&'a RuntimeTarget),
+  /// Concrete v2 provider, target, and environment evidence.
+  Current(&'a ExecutionCacheIdentityV2),
+}
+
+impl<'a> From<&'a RuntimeTarget> for CacheExecutionIdentity<'a> {
+  fn from(value: &'a RuntimeTarget) -> Self {
+    Self::Legacy(value)
+  }
+}
+
+impl<'a> From<&'a ExecutionCacheIdentityV2> for CacheExecutionIdentity<'a> {
+  fn from(value: &'a ExecutionCacheIdentityV2) -> Self {
+    Self::Current(value)
+  }
 }
 
 /// Validated operator policy used to narrow every cache grant.
@@ -229,11 +256,11 @@ impl CacheSessionManager {
   }
 
   /// Materializes one grant without placing bearer bytes in a serialized DTO.
-  pub async fn prepare(
+  pub async fn prepare<'a>(
     &self,
     policy: &CachePolicy,
     grant: BeginCacheSessionResponse,
-    runtime: &RuntimeTarget,
+    runtime: impl Into<CacheExecutionIdentity<'a>>,
     network: &NetworkPolicy,
     job_root: &Path,
     context: CacheSessionContext,
@@ -411,29 +438,43 @@ impl PreparedCacheSession {
   }
 }
 
-fn runtime_identity(
-  runtime: &RuntimeTarget,
+fn runtime_identity<'a>(
+  runtime: impl Into<CacheExecutionIdentity<'a>>,
   native: &BTreeMap<String, String>,
 ) -> Result<RuntimeIdentity, CacheSessionError> {
-  match runtime {
-    RuntimeTarget::Native { platform } => {
-      let key = platform.to_string();
-      let identity = native.get(&key).ok_or_else(|| {
-        CacheSessionError::Invalid(format!("Native cache environment identity '{key}' is not configured"))
-      })?;
-      RuntimeIdentity::native(platform.os.into(), platform.architecture.into(), identity)
-        .map_err(|error| CacheSessionError::Invalid(error.to_string()))
-    }
-    RuntimeTarget::Oci { platform, image, .. } => {
-      let (_, digest) = image
-        .rsplit_once("@sha256:")
-        .ok_or_else(|| CacheSessionError::Invalid("OCI cache runtime requires an immutable image".to_owned()))?;
-      Ok(RuntimeIdentity::Oci {
-        os: platform.os.into(),
-        architecture: platform.architecture.into(),
-        image: Digest::from_hex(DigestAlgorithm::Sha256, digest, 0)
-          .map_err(|error| CacheSessionError::Invalid(error.to_string()))?,
-      })
+  match runtime.into() {
+    CacheExecutionIdentity::Legacy(runtime) => match runtime {
+      RuntimeTarget::Native { platform } => {
+        let key = platform.to_string();
+        let identity = native.get(&key).ok_or_else(|| {
+          CacheSessionError::Invalid(format!("Native cache environment identity '{key}' is not configured"))
+        })?;
+        RuntimeIdentity::native(platform.os.into(), platform.architecture.into(), identity)
+          .map_err(|error| CacheSessionError::Invalid(error.to_string()))
+      }
+      RuntimeTarget::Oci { platform, image, .. } => {
+        let (_, digest) = image
+          .rsplit_once("@sha256:")
+          .ok_or_else(|| CacheSessionError::Invalid("OCI cache runtime requires an immutable image".to_owned()))?;
+        Ok(RuntimeIdentity::Oci {
+          os: platform.os.into(),
+          architecture: platform.architecture.into(),
+          image: Digest::from_hex(DigestAlgorithm::Sha256, digest, 0)
+            .map_err(|error| CacheSessionError::Invalid(error.to_string()))?,
+        })
+      }
+    },
+    CacheExecutionIdentity::Current(identity) => {
+      identity.validate().map_err(CacheSessionError::Invalid)?;
+      let encoded = serde_json::to_string(identity)
+        .map_err(|error| CacheSessionError::Invalid(format!("execution cache identity cannot be encoded: {error}")))?;
+      let platform = identity.execution.target.target_platform;
+      RuntimeIdentity::native(
+        platform.os.into(),
+        platform.architecture.into(),
+        &format!("execution-v2:{encoded}"),
+      )
+      .map_err(|error| CacheSessionError::Invalid(error.to_string()))
     }
   }
 }

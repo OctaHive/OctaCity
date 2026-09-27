@@ -13,6 +13,10 @@ impl AgentInventory {
     if !self.coordinator_protocols.contains(&COORDINATOR_PROTOCOL_VERSION) {
       return invalid("agent does not advertise coordinator protocol v1");
     }
+    self
+      .execution_contract
+      .validate()
+      .map_err(CoordinatorProtocolError::new)?;
     bounded_len("labels", self.labels.len())?;
     for (name, value) in &self.labels {
       identifier("label name", name)?;
@@ -26,6 +30,23 @@ impl AgentInventory {
       if !capabilities.insert(capability) {
         return invalid("runtime capabilities must not contain duplicates");
       }
+    }
+    bounded_len("execution capabilities", self.executions.len())?;
+    let mut executions = BTreeSet::new();
+    for capability in &self.executions {
+      capability.validate().map_err(CoordinatorProtocolError::new)?;
+      if capability.host_platform != self.host_platform {
+        return invalid("execution capability host platform differs from Agent host platform");
+      }
+      if !executions.insert(capability) {
+        return invalid("execution capabilities must not contain duplicates");
+      }
+    }
+    if !self.executions.is_empty()
+      && !(self.execution_contract.min <= crate::EXECUTION_CONTRACT_V2
+        && self.execution_contract.max >= crate::EXECUTION_CONTRACT_V2)
+    {
+      return invalid("v2 execution capabilities require execution-contract v2 support");
     }
     self.octa.validate()?;
     if let Some(cache) = &self.cache {
@@ -147,9 +168,17 @@ impl RegisterAgentRequest {
 
 impl RegisterAgentResponse {
   /// Validates response metadata and registration policy.
-  pub fn validate(&self, expected_request_id: &str) -> Result<(), CoordinatorProtocolError> {
+  pub fn validate(
+    &self,
+    expected_request_id: &str,
+    offered_execution_contracts: crate::ExecutionContractRange,
+  ) -> Result<(), CoordinatorProtocolError> {
     response(self.protocol_version, &self.request_id, expected_request_id)?;
     identifier("registration_id", &self.registration_id)?;
+    let selected = self.execution_contract_version.unwrap_or(crate::EXECUTION_CONTRACT_V1);
+    if !offered_execution_contracts.contains(selected) || !crate::SUPPORTED_EXECUTION_CONTRACTS.contains(selected) {
+      return invalid("server selected an execution-contract revision outside the negotiated range");
+    }
     if self.max_retry_delay_ms == 0 {
       return invalid("max_retry_delay_ms must be greater than zero");
     }
@@ -304,11 +333,15 @@ impl AgentTelemetrySample {
     if self.observed_at_unix_ms == 0 {
       return invalid("telemetry sample timestamp must be greater than zero");
     }
-    match (self.runtime, self.isolation) {
-      (AgentTelemetryRuntime::Native, AgentTelemetryIsolation::Native)
-      | (AgentTelemetryRuntime::Containerd, AgentTelemetryIsolation::OciProcess)
-      | (AgentTelemetryRuntime::Microsandbox, AgentTelemetryIsolation::OciHypervisor) => Ok(()),
-      _ => invalid("telemetry runtime and isolation are inconsistent"),
+    match (self.runtime, self.isolation, &self.execution) {
+      (Some(runtime), Some(isolation), None) => match (runtime, isolation) {
+        (AgentTelemetryRuntime::Native, AgentTelemetryIsolation::Native)
+        | (AgentTelemetryRuntime::Containerd, AgentTelemetryIsolation::OciProcess)
+        | (AgentTelemetryRuntime::Microsandbox, AgentTelemetryIsolation::OciHypervisor) => Ok(()),
+        _ => invalid("telemetry runtime and isolation are inconsistent"),
+      },
+      (None, None, Some(execution)) => execution.validate().map_err(CoordinatorProtocolError::new),
+      _ => invalid("telemetry must contain exactly one legacy or provider-neutral execution identity"),
     }
   }
 }
@@ -619,6 +652,12 @@ impl BackendHealth {
   /// Validates backend identity and bounds its optional diagnostic.
   pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
     identifier("backend health name", &self.backend)?;
+    if let Some(execution) = &self.execution {
+      execution.validate().map_err(CoordinatorProtocolError::new)?;
+      if execution.provider.as_str() != self.backend {
+        return invalid("backend health identity differs from its execution provider");
+      }
+    }
     if let Some(message) = &self.message
       && (message.is_empty() || message.len() > MAX_HEALTH_MESSAGE_BYTES || message.chars().any(char::is_control))
     {

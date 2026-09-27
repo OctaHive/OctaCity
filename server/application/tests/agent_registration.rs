@@ -144,6 +144,64 @@ fn restart_issues_a_fresh_epoch_and_fences_every_old_operation() {
   });
 }
 
+#[test]
+fn registration_negotiates_the_newest_common_execution_contract() {
+  run_ready(async {
+    let store = Arc::new(InMemoryStore::new());
+    let pool_id = id::<PoolId>(11);
+    store.seed_agent_pool(pool_id, PoolVersion::INITIAL).unwrap();
+    let enrollment_id = id::<EnrollmentCredentialId>(12);
+    issue_enrollment(&store, enrollment_id, [0x11; 32], pool_id, 100).await;
+    let service = AgentRegistrationService::new(store, Duration::from_secs(60)).unwrap();
+
+    let mut request = registration_request();
+    request.request_id = "register-current-execution".to_owned();
+    request.inventory.execution_contract = octacity_protocol::ExecutionContractRange {
+      min: octacity_protocol::EXECUTION_CONTRACT_V1,
+      max: octacity_protocol::EXECUTION_CONTRACT_V2,
+    };
+    let outcome = service
+      .register(AgentRegistrationInput {
+        request,
+        credential: enrollment_credential(enrollment_id),
+        observed_at_unix_ms: 200,
+      })
+      .await
+      .unwrap();
+
+    assert_eq!(
+      outcome.execution_contract_version,
+      octacity_protocol::EXECUTION_CONTRACT_V2
+    );
+  });
+}
+
+#[test]
+fn registration_rejects_an_execution_contract_without_a_common_revision() {
+  run_ready(async {
+    let store = Arc::new(InMemoryStore::new());
+    let pool_id = id::<PoolId>(21);
+    store.seed_agent_pool(pool_id, PoolVersion::INITIAL).unwrap();
+    let enrollment_id = id::<EnrollmentCredentialId>(22);
+    issue_enrollment(&store, enrollment_id, [0x11; 32], pool_id, 100).await;
+    let service = AgentRegistrationService::new(store, Duration::from_secs(60)).unwrap();
+
+    let mut request = registration_request();
+    request.request_id = "register-unsupported-execution".to_owned();
+    request.inventory.execution_contract = octacity_protocol::ExecutionContractRange { min: 3, max: 3 };
+    let error = service
+      .register(AgentRegistrationInput {
+        request,
+        credential: enrollment_credential(enrollment_id),
+        observed_at_unix_ms: 200,
+      })
+      .await
+      .unwrap_err();
+
+    assert!(matches!(error, AgentRegistrationError::InvalidRequest));
+  });
+}
+
 fn registration_request() -> RegisterAgentRequest {
   serde_json::from_str(include_str!(
     "../../../shared/protocol-fixtures/coordinator/register-request-v1.json"

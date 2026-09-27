@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use octacity_protocol::{PlatformArchitecture, PlatformOs};
+use octacity_protocol::{PlatformArchitecture, PlatformOs, PlatformSpec};
 use octacity_server_domain::{
   ArtifactPolicy, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, IntegrationId, NetworkHost,
   PipelineId, PipelineVersion, PoolId, ProjectId, RepositoryId, RepositoryLocator, RepositoryName, RepositoryVersion,
@@ -368,6 +368,12 @@ pub struct ConfigurationRuntimePolicy {
   pub operating_system: PlatformOs,
   /// Required CPU architecture.
   pub architecture: PlatformArchitecture,
+  /// Exact Agent host platform for provider-neutral v2 modes.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub host_platform: Option<PlatformSpec>,
+  /// Complete guarantees required from a provider-neutral v2 execution route.
+  #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+  pub required_guarantees: BTreeSet<octacity_protocol::ExecutionGuarantee>,
   /// Immutable OCI image required for OCI classes and forbidden for Native.
   pub immutable_image: Option<String>,
   /// CPU execution limit in thousandths of one logical CPU.
@@ -386,14 +392,43 @@ pub struct ConfigurationRuntimePolicy {
 
 impl ConfigurationRuntimePolicy {
   fn validate(&self) -> Result<(), StoreInputError> {
-    let image_valid = match self.class {
-      RuntimeClass::Native => self.immutable_image.is_none(),
-      RuntimeClass::OciProcess | RuntimeClass::OciHypervisor => self
-        .immutable_image
-        .as_ref()
-        .is_some_and(|image| valid_immutable_image(image)),
+    let target_platform = PlatformSpec {
+      os: self.operating_system,
+      architecture: self.architecture,
     };
-    if !image_valid
+    let execution_valid = match self.class {
+      RuntimeClass::Native => {
+        self.host_platform.is_none() && self.required_guarantees.is_empty() && self.immutable_image.is_none()
+      }
+      RuntimeClass::OciProcess | RuntimeClass::OciHypervisor => {
+        self
+          .immutable_image
+          .as_ref()
+          .is_some_and(|image| valid_immutable_image(image))
+          && self.host_platform.is_none()
+          && self.required_guarantees.is_empty()
+      }
+      RuntimeClass::Host | RuntimeClass::Isolation | RuntimeClass::Virtualization => {
+        let mode = match self.class {
+          RuntimeClass::Host => octacity_protocol::ExecutionMode::Host,
+          RuntimeClass::Isolation => octacity_protocol::ExecutionMode::Isolation,
+          RuntimeClass::Virtualization => octacity_protocol::ExecutionMode::Virtualization,
+          RuntimeClass::Native | RuntimeClass::OciProcess | RuntimeClass::OciHypervisor => unreachable!(),
+        };
+        self.host_platform.is_some_and(|host_platform| {
+          octacity_protocol::ExecutionTargetV2 {
+            mode,
+            host_platform,
+            target_platform,
+            required_guarantees: self.required_guarantees.clone(),
+            immutable_image: self.immutable_image.clone(),
+          }
+          .validate()
+          .is_ok()
+        })
+      }
+    };
+    if !execution_valid
       || self.cpu_millis == 0
       || self.memory_bytes == 0
       || self.writable_disk_bytes == 0
@@ -619,5 +654,68 @@ fn validate_encoded<T: Serialize>(value: &T, maximum: usize, error: StoreInputEr
     Ok(())
   } else {
     Err(error)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use octacity_protocol::{ExecutionMode, guarantees_for};
+
+  use super::*;
+
+  #[test]
+  fn provider_neutral_policy_requires_explicit_host_target_and_guarantees() {
+    let platform = PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    };
+    let mut policy = ConfigurationRuntimePolicy {
+      class: RuntimeClass::Host,
+      operating_system: platform.os,
+      architecture: platform.architecture,
+      host_platform: Some(platform),
+      required_guarantees: guarantees_for(ExecutionMode::Host),
+      immutable_image: None,
+      cpu_millis: 1_000,
+      memory_bytes: 1_024,
+      writable_disk_bytes: 2_048,
+      timeout_seconds: 60,
+      network: ConfigurationNetworkPolicy::Disabled,
+      workload_identity_profile: None,
+    };
+    policy.validate().unwrap();
+
+    policy.required_guarantees = guarantees_for(ExecutionMode::Isolation);
+    assert!(policy.validate().is_err());
+    policy.required_guarantees.clear();
+    policy.host_platform = Some(PlatformSpec {
+      os: PlatformOs::Macos,
+      architecture: PlatformArchitecture::Arm64,
+    });
+    assert!(policy.validate().is_err());
+  }
+
+  #[test]
+  fn legacy_native_cannot_be_relabelled_with_v2_evidence() {
+    let mut policy = ConfigurationRuntimePolicy {
+      class: RuntimeClass::Native,
+      operating_system: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+      host_platform: None,
+      required_guarantees: BTreeSet::new(),
+      immutable_image: None,
+      cpu_millis: 1_000,
+      memory_bytes: 1_024,
+      writable_disk_bytes: 2_048,
+      timeout_seconds: 60,
+      network: ConfigurationNetworkPolicy::Disabled,
+      workload_identity_profile: None,
+    };
+    policy.validate().unwrap();
+    policy.host_platform = Some(PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    });
+    assert!(policy.validate().is_err());
   }
 }

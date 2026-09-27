@@ -5,9 +5,10 @@
 //! agree on one canonical security boundary before a job reaches an agent.
 //!
 //! The language-neutral wire specification is documented in
-//! [Signed JobSpec protocol v1].
+//! [Signed JobSpec protocol v1] and its negotiated [execution contract v2].
 //!
 //! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/signed-job-spec-v1.md
+//! [execution contract v2]: https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/signed-job-spec-v2.md
 
 #![warn(missing_docs)]
 
@@ -20,9 +21,11 @@ use thiserror::Error;
 
 mod artifact;
 mod coordinator;
+mod execution;
 
 pub use artifact::*;
 pub use coordinator::*;
+pub use execution::*;
 
 /// Signed JobSpec wire version supported by this crate.
 pub const AGENT_PROTOCOL_VERSION: u16 = 1;
@@ -86,6 +89,92 @@ pub struct JobSpecV1 {
   pub cache: Option<CachePolicy>,
   /// Upper bounds for outputs accepted from the job.
   pub outputs: OutputLimits,
+}
+
+/// Provider-neutral signed execution intent introduced by execution contract v2.
+///
+/// Version two deliberately keeps the source, Octa, task, cache, and output
+/// sections identical to v1. Only the runtime contract changes, so a provider
+/// name cannot become Build intent and legacy Native/OCI documents retain
+/// their original wire shape and semantics.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobSpecV2 {
+  /// Wire version; must equal [`EXECUTION_CONTRACT_V2`].
+  pub protocol_version: u16,
+  /// Stable identity of the job bound to the surrounding lease.
+  pub job_id: String,
+  /// Positive execution attempt bound to the surrounding lease.
+  pub attempt: u32,
+  /// First Unix second in which this specification is valid.
+  pub issued_at: u64,
+  /// First Unix second in which this specification is no longer valid.
+  pub expires_at: u64,
+  /// Exact source provider and immutable revision to materialize.
+  pub source: SourceSpec,
+  /// Exact Octa release and plugin set authorized to run.
+  pub octa: OctaSpec,
+  /// Octafile tasks and values passed to the runner.
+  pub execution: ExecutionSpec,
+  /// Provider-neutral mode, platforms, guarantees, resources, and network policy.
+  pub runtime: RuntimeSpecV2,
+  /// Optional logical cache authority; transport credentials remain out of band.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache: Option<CachePolicy>,
+  /// Upper bounds for outputs accepted from the job.
+  pub outputs: OutputLimits,
+}
+
+/// Authenticated JobSpec from any revision supported during the compatibility window.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VerifiedJobSpec {
+  /// Legacy Native/OCI execution intent with unchanged v1 semantics.
+  V1(JobSpecV1),
+  /// Provider-neutral host/isolation/virtualization execution intent.
+  V2(JobSpecV2),
+}
+
+impl VerifiedJobSpec {
+  /// Borrows the signed cache policy independently of the negotiated revision.
+  #[must_use]
+  pub const fn cache(&self) -> Option<&CachePolicy> {
+    match self {
+      Self::V1(spec) => spec.cache.as_ref(),
+      Self::V2(spec) => spec.cache.as_ref(),
+    }
+  }
+
+  /// Borrows the authenticated Job identity independently of the negotiated revision.
+  #[must_use]
+  pub fn job_id(&self) -> &str {
+    match self {
+      Self::V1(spec) => &spec.job_id,
+      Self::V2(spec) => &spec.job_id,
+    }
+  }
+}
+
+impl From<JobSpecV1> for VerifiedJobSpec {
+  fn from(spec: JobSpecV1) -> Self {
+    Self::V1(spec)
+  }
+}
+
+impl From<JobSpecV2> for VerifiedJobSpec {
+  fn from(spec: JobSpecV2) -> Self {
+    Self::V2(spec)
+  }
+}
+
+impl VerifiedJobSpec {
+  /// Returns the exact execution-contract revision carried by the signed payload.
+  #[must_use]
+  pub const fn protocol_version(&self) -> u16 {
+    match self {
+      Self::V1(_) => EXECUTION_CONTRACT_V1,
+      Self::V2(_) => EXECUTION_CONTRACT_V2,
+    }
+  }
 }
 
 /// Repository-controlled cache permissions covered by the JobSpec signature.
@@ -442,6 +531,49 @@ pub fn verify_job_spec(
   keys: &BTreeMap<String, VerifyingKey>,
   binding: JobBinding<'_>,
 ) -> Result<JobSpecV1, JobSpecError> {
+  let payload = verify_envelope_payload(envelope, keys)?;
+  let spec: JobSpecV1 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
+  spec.validate(&binding).map_err(JobSpecError::Validation)?;
+  Ok(spec)
+}
+
+/// Verifies and decodes either the legacy v1 or provider-neutral v2 JobSpec.
+///
+/// Dispatch occurs only after signature verification and uses only the
+/// authenticated top-level `protocol_version`. This keeps the compatibility
+/// path from reinterpreting a v1 Native or OCI target as a v2 mode.
+pub fn verify_compatible_job_spec(
+  envelope: &SignedEnvelope,
+  keys: &BTreeMap<String, VerifyingKey>,
+  binding: JobBinding<'_>,
+) -> Result<VerifiedJobSpec, JobSpecError> {
+  let payload = verify_envelope_payload(envelope, keys)?;
+  #[derive(Deserialize)]
+  struct VersionProbe {
+    protocol_version: u16,
+  }
+  let version = serde_json::from_slice::<VersionProbe>(&payload).map_err(JobSpecError::Json)?;
+  match version.protocol_version {
+    EXECUTION_CONTRACT_V1 => {
+      let spec: JobSpecV1 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
+      spec.validate(&binding).map_err(JobSpecError::Validation)?;
+      Ok(VerifiedJobSpec::V1(spec))
+    }
+    EXECUTION_CONTRACT_V2 => {
+      let spec: JobSpecV2 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
+      spec.validate(&binding).map_err(JobSpecError::Validation)?;
+      Ok(VerifiedJobSpec::V2(spec))
+    }
+    version => Err(JobSpecError::Validation(format!(
+      "unsupported protocol version {version}"
+    ))),
+  }
+}
+
+fn verify_envelope_payload(
+  envelope: &SignedEnvelope,
+  keys: &BTreeMap<String, VerifyingKey>,
+) -> Result<Vec<u8>, JobSpecError> {
   if envelope.algorithm != SIGNATURE_ALGORITHM {
     return Err(JobSpecError::Algorithm(envelope.algorithm.clone()));
   }
@@ -470,41 +602,97 @@ pub fn verify_job_spec(
     .verify_strict(&payload, &signature)
     .map_err(|_| JobSpecError::InvalidSignature)?;
 
-  // Parsing only authenticated bytes avoids acting on fields that were not
-  // covered by the server signature.
-  let spec: JobSpecV1 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
-  spec.validate(&binding).map_err(JobSpecError::Validation)?;
-  Ok(spec)
+  Ok(payload)
 }
 
 impl JobSpecV1 {
   /// Validates the authenticated job against its lease identity and current time.
   pub fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
-    if self.protocol_version != AGENT_PROTOCOL_VERSION {
-      return Err(format!("unsupported protocol version {}", self.protocol_version));
-    }
-    non_empty("job_id", &self.job_id)?;
-    if self.job_id != binding.job_id || self.attempt != binding.attempt {
-      return Err("JobSpec does not match its lease binding".to_owned());
-    }
-    if self.attempt == 0 {
-      return Err("attempt must be greater than zero".to_owned());
-    }
-    if self.issued_at >= self.expires_at {
-      return Err("expires_at must be later than issued_at".to_owned());
-    }
-    if binding.now < self.issued_at || binding.now >= self.expires_at {
-      return Err("JobSpec is not valid at the current time".to_owned());
-    }
-    self.source.validate()?;
-    self.octa.validate()?;
-    self.execution.validate()?;
+    validate_job_identity(
+      self.protocol_version,
+      EXECUTION_CONTRACT_V1,
+      &self.job_id,
+      self.attempt,
+      self.issued_at,
+      self.expires_at,
+      binding,
+    )?;
     self.runtime.validate()?;
-    if let Some(cache) = &self.cache {
-      cache.validate()?;
-    }
-    self.outputs.validate()
+    validate_job_payload(
+      &self.source,
+      &self.octa,
+      &self.execution,
+      self.cache.as_ref(),
+      &self.outputs,
+    )
   }
+}
+
+impl JobSpecV2 {
+  /// Validates provider-neutral intent against its lease identity and current time.
+  pub fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
+    validate_job_identity(
+      self.protocol_version,
+      EXECUTION_CONTRACT_V2,
+      &self.job_id,
+      self.attempt,
+      self.issued_at,
+      self.expires_at,
+      binding,
+    )?;
+    self.runtime.validate()?;
+    validate_job_payload(
+      &self.source,
+      &self.octa,
+      &self.execution,
+      self.cache.as_ref(),
+      &self.outputs,
+    )
+  }
+}
+
+fn validate_job_payload(
+  source: &SourceSpec,
+  octa: &OctaSpec,
+  execution: &ExecutionSpec,
+  cache: Option<&CachePolicy>,
+  outputs: &OutputLimits,
+) -> Result<(), String> {
+  source.validate()?;
+  octa.validate()?;
+  execution.validate()?;
+  if let Some(cache) = cache {
+    cache.validate()?;
+  }
+  outputs.validate()
+}
+
+fn validate_job_identity(
+  protocol_version: u16,
+  expected_version: u16,
+  job_id: &str,
+  attempt: u32,
+  issued_at: u64,
+  expires_at: u64,
+  binding: &JobBinding<'_>,
+) -> Result<(), String> {
+  if protocol_version != expected_version {
+    return Err(format!("unsupported protocol version {protocol_version}"));
+  }
+  non_empty("job_id", job_id)?;
+  if job_id != binding.job_id || attempt != binding.attempt {
+    return Err("JobSpec does not match its lease binding".to_owned());
+  }
+  if attempt == 0 {
+    return Err("attempt must be greater than zero".to_owned());
+  }
+  if issued_at >= expires_at {
+    return Err("expires_at must be later than issued_at".to_owned());
+  }
+  if binding.now < issued_at || binding.now >= expires_at {
+    return Err("JobSpec is not valid at the current time".to_owned());
+  }
+  Ok(())
 }
 
 impl SourceSpec {
@@ -569,7 +757,8 @@ impl RuntimeSpec {
     }
   }
 
-  fn validate(&self) -> Result<(), String> {
+  /// Revalidates the legacy Native/OCI runtime document without changing its semantics.
+  pub fn validate(&self) -> Result<(), String> {
     if self.cpu_millis == 0 || self.memory_bytes == 0 || self.writable_disk_bytes == 0 || self.timeout_seconds == 0 {
       return Err("runtime limits must be greater than zero".to_owned());
     }
@@ -630,7 +819,7 @@ impl OutputLimits {
   }
 }
 
-fn non_empty(name: &str, value: &str) -> Result<(), String> {
+pub(crate) fn non_empty(name: &str, value: &str) -> Result<(), String> {
   if value.trim().is_empty() {
     Err(format!("{name} must not be empty"))
   } else {
@@ -650,7 +839,7 @@ fn sha256(name: &str, value: &str) -> Result<(), String> {
   }
 }
 
-fn immutable_oci_reference(name: &str, value: &str) -> Result<(), String> {
+pub(crate) fn immutable_oci_reference(name: &str, value: &str) -> Result<(), String> {
   let Some((repository, digest)) = value.rsplit_once("@sha256:") else {
     return Err(format!(
       "{name} must be an immutable OCI reference ending in @sha256:<digest>"

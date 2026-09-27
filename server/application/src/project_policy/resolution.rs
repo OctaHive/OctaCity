@@ -21,6 +21,8 @@ pub enum PolicyCategory {
   IdentityProfiles,
   /// Runtime and isolation allowlist.
   Runtime,
+  /// Provider-neutral execution target allowlist.
+  ExecutionTargets,
   /// Cache authority and quota.
   Cache,
   /// Artifact and report limits.
@@ -39,6 +41,7 @@ impl std::fmt::Display for PolicyCategory {
       Self::SecretProfiles => "secret_profiles",
       Self::IdentityProfiles => "identity_profiles",
       Self::Runtime => "runtime",
+      Self::ExecutionTargets => "execution_targets",
       Self::Cache => "cache",
       Self::Artifacts => "artifacts",
       Self::Concurrency => "concurrency",
@@ -213,6 +216,16 @@ pub fn resolve_project_policy(layers: &[ProjectPolicyLayer]) -> Result<Effective
         category: PolicyCategory::Artifacts,
       });
     }
+    let execution_targets = match &layer.definition.execution_targets {
+      PolicyDirective::Replace(value) | PolicyDirective::Narrow(value) => Some(value),
+      PolicyDirective::Inherit => None,
+    };
+    if execution_targets.is_some_and(|targets| targets.iter().any(|target| target.validate().is_err())) {
+      return Err(PolicyResolutionError::InvalidValue {
+        project_id: layer.project_id,
+        category: PolicyCategory::ExecutionTargets,
+      });
+    }
   }
   let root = layers.first().ok_or(PolicyResolutionError::EmptyLineage)?;
   if root.parent_id.is_some() {
@@ -239,6 +252,11 @@ pub fn resolve_project_policy(layers: &[ProjectPolicyLayer]) -> Result<Effective
       &root.definition.identity_profiles,
     )?,
     runtimes: root_value(root.project_id, PolicyCategory::Runtime, &root.definition.runtimes)?,
+    execution_targets: root_value(
+      root.project_id,
+      PolicyCategory::ExecutionTargets,
+      &root.definition.execution_targets,
+    )?,
     cache: root_value(root.project_id, PolicyCategory::Cache, &root.definition.cache)?,
     artifacts: root_value(root.project_id, PolicyCategory::Artifacts, &root.definition.artifacts)?,
     concurrency: root_value(
@@ -300,6 +318,12 @@ pub fn resolve_project_policy(layers: &[ProjectPolicyLayer]) -> Result<Effective
         PolicyCategory::Runtime,
         &policy.runtimes,
         &layer.definition.runtimes,
+      )?,
+      execution_targets: resolve_value(
+        layer.project_id,
+        PolicyCategory::ExecutionTargets,
+        &policy.execution_targets,
+        &layer.definition.execution_targets,
       )?,
       cache: resolve_value(
         layer.project_id,

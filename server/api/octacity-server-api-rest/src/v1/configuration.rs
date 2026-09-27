@@ -133,12 +133,44 @@ pub struct AgentRequirements {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeClass {
-  /// Execute directly on the Agent host.
+  /// Legacy Native execution contract.
   Native,
   /// Execute in an OCI container sharing the Agent kernel.
   OciProcess,
   /// Execute an OCI workload behind a hypervisor boundary.
   OciHypervisor,
+  /// Execute directly on the Agent host.
+  Host,
+  /// Execute through a bounded workload-isolation provider.
+  Isolation,
+  /// Execute in a hardware-virtualized guest.
+  Virtualization,
+}
+
+/// Exact host or target platform.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Platform {
+  /// Operating system.
+  pub os: PlatformOs,
+  /// CPU architecture.
+  pub architecture: PlatformArchitecture,
+}
+
+/// Observable boundary required from an execution provider.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionGuarantee {
+  /// Isolated filesystem boundary.
+  FilesystemIsolation,
+  /// Isolated process boundary.
+  ProcessIsolation,
+  /// Enforced network boundary.
+  NetworkIsolation,
+  /// Enforced and accounted resources.
+  ResourceIsolation,
+  /// Hardware-virtualized guest boundary.
+  HardwareVirtualization,
 }
 
 /// Required operating system.
@@ -188,6 +220,12 @@ pub struct RuntimePolicy {
   pub operating_system: PlatformOs,
   /// Required CPU architecture.
   pub architecture: PlatformArchitecture,
+  /// Exact Agent host platform for provider-neutral modes.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub host_platform: Option<Platform>,
+  /// Complete guarantees required from a provider-neutral provider.
+  #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+  pub required_guarantees: BTreeSet<ExecutionGuarantee>,
   /// Immutable OCI image identity when required.
   pub immutable_image: Option<String>,
   /// CPU limit in thousandths of one logical CPU.

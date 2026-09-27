@@ -755,6 +755,7 @@ fn lifecycle_fixture(
       agent_id: "agent-1".to_owned(),
       registration_id: "registration-1".to_owned(),
       max_retry_delay: Duration::from_secs(1),
+      execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
     },
     executor,
     outputs,
@@ -776,7 +777,15 @@ fn lifecycle_fixture(
     },
   )
   .unwrap();
-  (cache_root, lifecycle, VerifiedLease { lease, spec }, snapshot)
+  (
+    cache_root,
+    lifecycle,
+    VerifiedLease {
+      lease,
+      spec: spec.into(),
+    },
+    snapshot,
+  )
 }
 
 include!("lifecycle_tests/cache_and_output.rs");

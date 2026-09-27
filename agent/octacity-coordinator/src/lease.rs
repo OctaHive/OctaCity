@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{
-  AcquireLeaseResponse, HeartbeatDirective, HostCapacity, HostSnapshot, JobSpecV1, LeaseAssignment,
+  AcquireLeaseResponse, HeartbeatDirective, HostCapacity, HostSnapshot, LeaseAssignment, VerifiedJobSpec,
 };
 use tokio::{sync::watch, task::JoinHandle, time::Instant};
 use tokio_util::sync::CancellationToken;
@@ -18,7 +18,7 @@ pub struct VerifiedLease {
   /// Fencing and expiry values received from the coordinator.
   pub lease: LeaseAssignment,
   /// JobSpec whose signature and lease binding were verified.
-  pub spec: JobSpecV1,
+  pub spec: VerifiedJobSpec,
 }
 
 /// Terminal result of waiting for the next lease.

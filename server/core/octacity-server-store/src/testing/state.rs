@@ -101,6 +101,7 @@ pub(crate) struct RegistrationEligibility {
   pub(crate) pool_version: PoolVersion,
   pub(crate) expires_at: Timestamp,
   pub(crate) revoked: bool,
+  pub(crate) execution_contract_version: u16,
   pub(crate) inventory: Option<octacity_protocol::AgentInventory>,
 }
 
