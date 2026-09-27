@@ -28,6 +28,10 @@ use tokio::{
 };
 use uuid::Uuid;
 
+#[path = "release_vertical_slice/backend.rs"]
+mod backend;
+#[path = "release_vertical_slice/backend_config_tests.rs"]
+mod backend_config_tests;
 #[path = "release_vertical_slice/linux_native.rs"]
 mod linux_native;
 #[path = "release_vertical_slice/release.rs"]
@@ -35,6 +39,7 @@ mod release;
 #[path = "release_vertical_slice/support.rs"]
 mod support;
 
+use backend::ReleaseBackend;
 use support::{get_json, post_management, publish_policy_and_trigger_definition, resource_id, string};
 
 const SIGNING_SEED: [u8; 32] = [7; 32];
@@ -64,6 +69,25 @@ async fn released_linux_native_matrix_satisfies_the_end_to_end_contract() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires isolated server, Agent, and Octa release roots plus a provisioned Native or Microsandbox machine"]
 async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgres() {
+  run_released_oci_vertical_slice(None).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated released products and a provisioned Linux containerd runner"]
+async fn released_linux_containerd_matrix_satisfies_the_end_to_end_contract() {
+  run_released_oci_vertical_slice(Some("containerd")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires isolated released products and a provisioned Linux/KVM Microsandbox runner"]
+async fn released_linux_microsandbox_matrix_satisfies_the_end_to_end_contract() {
+  run_released_oci_vertical_slice(Some("linux-microsandbox")).await;
+}
+
+async fn run_released_oci_vertical_slice(expected_backend: Option<&str>) {
+  if let Some(expected) = expected_backend {
+    assert_eq!(required_string("OCTACITY_RELEASE_BACKEND"), expected);
+  }
   let backend = ReleaseBackend::from_environment();
   let postgres_url = required_string("OCTACITY_POSTGRES_URL");
   let object_endpoint = required_string("OCTACITY_MINIO_ENDPOINT");
@@ -106,6 +130,7 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
     &backend,
     &AgentConfigOverrides::default(),
   );
+  let workspace_baseline = backend_workspace_entries(&backend);
   let stdout_path = evidence.join("agent.stdout.log");
   let stderr_path = evidence.join("agent.stderr.log");
   let mut agent = spawn_agent(&release.agent_binary, &agent_config, &stdout_path, &stderr_path);
@@ -152,6 +177,11 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
     status.success(),
     "released Agent exited unsuccessfully; see {stderr_path:?}"
   );
+  assert_eq!(
+    backend_workspace_entries(&backend),
+    workspace_baseline,
+    "the released Agent left backend workspace state behind"
+  );
 
   fs::write(
     evidence.join("vertical-slice.json"),
@@ -168,112 +198,6 @@ async fn released_agent_completes_a_sequential_pipeline_through_rest_and_postgre
   )
   .unwrap();
   shutdown_server(&mut server, &server_stdout).await;
-}
-
-#[derive(Clone)]
-enum ReleaseBackend {
-  Native {
-    cgroup_root: PathBuf,
-    work_root: PathBuf,
-    cache_root: PathBuf,
-    bubblewrap: PathBuf,
-    path: String,
-    environment_identity: String,
-    workspace_bytes: u64,
-  },
-  Microsandbox {
-    work_root: PathBuf,
-    state_root: PathBuf,
-    executable: PathBuf,
-    libkrunfw: PathBuf,
-    image: String,
-    workspace_bytes: u64,
-  },
-}
-
-impl ReleaseBackend {
-  fn from_environment() -> Self {
-    match required_string("OCTACITY_RELEASE_BACKEND").as_str() {
-      "native" => {
-        assert_eq!(env::consts::OS, "linux", "Native release gate requires Linux");
-        Self::Native {
-          cgroup_root: required_path("OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT", true),
-          work_root: required_path("OCTACITY_CONTRACT_NATIVE_WORK_ROOT", true),
-          cache_root: required_path("OCTACITY_RELEASE_NATIVE_CACHE_ROOT", true),
-          bubblewrap: required_path("OCTACITY_CONTRACT_NATIVE_BWRAP", true),
-          path: required_string("OCTACITY_CONTRACT_NATIVE_PATH"),
-          environment_identity: required_string("OCTACITY_CONTRACT_NATIVE_ENVIRONMENT_IDENTITY"),
-          workspace_bytes: required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES"),
-        }
-      }
-      "microsandbox" => {
-        assert_eq!(
-          env::consts::OS,
-          "macos",
-          "macOS release gate requires Apple Silicon macOS"
-        );
-        assert_eq!(
-          env::consts::ARCH,
-          "aarch64",
-          "Microsandbox macOS gate requires Apple Silicon"
-        );
-        Self::Microsandbox {
-          work_root: required_path("OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT", true),
-          state_root: required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT", true),
-          executable: required_path("OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE", true),
-          libkrunfw: required_path("OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW", true),
-          image: required_string("OCTACITY_CONTRACT_MICROSANDBOX_IMAGE"),
-          workspace_bytes: required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES"),
-        }
-      }
-      value => panic!("unsupported OCTACITY_RELEASE_BACKEND '{value}'"),
-    }
-  }
-
-  fn name(&self) -> &'static str {
-    match self {
-      Self::Native { .. } => "native",
-      Self::Microsandbox { .. } => "microsandbox",
-    }
-  }
-
-  fn agent_platform(&self) -> (&'static str, &'static str) {
-    match self {
-      Self::Native { .. } => ("linux", host_architecture()),
-      Self::Microsandbox { .. } => ("macos", "arm64"),
-    }
-  }
-
-  fn guest_architecture(&self) -> &'static str {
-    host_architecture()
-  }
-
-  fn runtime_class(&self) -> &'static str {
-    match self {
-      Self::Native { .. } => "native",
-      Self::Microsandbox { .. } => "oci_hypervisor",
-    }
-  }
-
-  fn capability(&self) -> &'static str {
-    match self {
-      Self::Native { .. } => "native",
-      Self::Microsandbox { .. } => "oci.hypervisor",
-    }
-  }
-
-  fn immutable_image(&self) -> Value {
-    match self {
-      Self::Native { .. } => Value::Null,
-      Self::Microsandbox { image, .. } => Value::String(image.clone()),
-    }
-  }
-
-  fn workspace_bytes(&self) -> u64 {
-    match self {
-      Self::Native { workspace_bytes, .. } | Self::Microsandbox { workspace_bytes, .. } => *workspace_bytes,
-    }
-  }
 }
 
 struct PipelineResources {
@@ -529,7 +453,7 @@ fn write_agent_config(
       toml_text(&format!("linux-{}", host_architecture())),
       toml_text(environment_identity)
     ),
-    ReleaseBackend::Microsandbox { .. } => "{}".to_owned(),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } => "{}".to_owned(),
   };
   let (work, state, cache, runtime, cache_max_bytes, cache_scopes) = match backend {
     ReleaseBackend::Native {
@@ -590,6 +514,42 @@ oci_engines = [{{ engine = "microsandbox", executable = {}, libkrunfw = {}, metr
       16 * 1024 * 1024,
       1,
     ),
+    ReleaseBackend::Containerd {
+      work_root,
+      state_root,
+      endpoint,
+      namespace,
+      snapshotter,
+      runtime: container_runtime,
+      registry_config_dir,
+      ..
+    } => {
+      let registry_config = registry_config_dir.as_ref().map_or_else(String::new, |path| {
+        format!(", registry_config_dir = {}", toml_string(path))
+      });
+      (
+        work_root,
+        state_root,
+        &local_cache,
+        format!(
+          r#"
+enabled_runtime_modes = ["oci"]
+allow_native_execution = false
+native_linux_readonly_paths = []
+native_linux_pids_limit = 0
+native_environment = {{}}
+oci_engines = [{{ engine = "containerd", endpoint = {}, namespace = {}, snapshotter = {}, runtime = {}, pids_limit = 4096, open_files_limit = 65536{} }}]
+"#,
+          toml_string(endpoint),
+          toml_text(namespace),
+          toml_text(snapshotter),
+          toml_text(container_runtime),
+          registry_config
+        ),
+        16 * 1024 * 1024,
+        1,
+      )
+    }
   };
   let remote_cache_origins = overrides
     .remote_cache_origin
@@ -812,7 +772,7 @@ readiness_check_timeout_milliseconds = {RELEASE_READINESS_TIMEOUT_MILLISECONDS}
 agent_registration_lifetime_milliseconds = 900000
 agent_enrollment_lifetime_milliseconds = 900000
 agent_lease_lifetime_milliseconds = {RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS}
-supported_pipeline_capabilities = ["native", "oci.hypervisor", "shell"]
+supported_pipeline_capabilities = ["native", "oci.process", "oci.hypervisor", "shell"]
 
 [postgres]
 url_file = {}
@@ -928,6 +888,22 @@ fn host_architecture() -> &'static str {
     "amd64"
   }
 }
+
+fn backend_workspace_entries(backend: &ReleaseBackend) -> Vec<std::ffi::OsString> {
+  let work_root = match backend {
+    ReleaseBackend::Native { work_root, .. }
+    | ReleaseBackend::Microsandbox { work_root, .. }
+    | ReleaseBackend::Containerd { work_root, .. } => work_root,
+  };
+  let mut entries = fs::read_dir(work_root)
+    .unwrap_or_else(|error| panic!("failed to inspect backend work root {work_root:?}: {error}"))
+    .map(|entry| entry.map(|entry| entry.file_name()))
+    .collect::<Result<Vec<_>, _>>()
+    .unwrap();
+  entries.sort();
+  entries
+}
+
 fn required_string(name: &str) -> String {
   env::var(name)
     .unwrap_or_else(|_| panic!("{name} must be set"))
@@ -962,140 +938,6 @@ fn toml_string(path: &Path) -> String {
 }
 fn toml_text(value: &str) -> String {
   serde_json::to_string(value).unwrap()
-}
-
-#[test]
-fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
-  let directory = tempfile::tempdir().unwrap();
-  let roots = ["work", "state", "cache", "octa", "sources", "msb", "libkrunfw"];
-  for root in roots {
-    fs::create_dir(directory.path().join(root)).unwrap();
-  }
-  let source_plugins = directory.path().join("sources");
-  let octa_root = directory.path().join("octa");
-  let release = AgentReleasePaths {
-    source_plugins: &source_plugins,
-    octa_root: &octa_root,
-  };
-  let backend = ReleaseBackend::Microsandbox {
-    work_root: directory.path().join("work"),
-    state_root: directory.path().join("state"),
-    executable: directory.path().join("msb"),
-    libkrunfw: directory.path().join("libkrunfw"),
-    image: format!("example.invalid/octa@sha256:{}", "a".repeat(64)),
-    workspace_bytes: 1024 * 1024,
-  };
-  let cache = directory.path().join("agent-local/cache");
-  let certificate = directory.path().join("cache-ca.pem");
-  fs::write(&certificate, "test certificate").unwrap();
-  let upload_origins = ["http://127.0.0.1:9000"];
-  let config = write_agent_config(
-    directory.path(),
-    "http://127.0.0.1:12345",
-    "config-shape",
-    "credential",
-    release,
-    &backend,
-    &AgentConfigOverrides {
-      cache_read: true,
-      cache_write: true,
-      remote_cache_origin: Some("https://127.0.0.1:8443"),
-      cache_ca_certificate: Some(&certificate),
-      unrestricted_network: true,
-      upload_origins: &upload_origins,
-      output_limit_bytes: Some(4096),
-    },
-  );
-  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
-  assert!(document["allowed_upload_origins"].is_array());
-  assert_eq!(document["cache"]["root"].as_str(), cache.to_str());
-  assert_eq!(document["cache"]["ca_certificate_file"].as_str(), certificate.to_str());
-  assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
-  assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
-  assert_eq!(document["oci_engines"].as_array().unwrap().len(), 1);
-  assert_eq!(document["oci_engines"][0]["engine"].as_str(), Some("microsandbox"));
-}
-
-#[test]
-fn generated_native_agent_configuration_uses_the_bounded_cache_filesystem() {
-  let directory = tempfile::tempdir().unwrap();
-  let cache_root = directory.path().join("cache-mount");
-  for root in ["work", "octa", "sources", "cgroups"] {
-    fs::create_dir(directory.path().join(root)).unwrap();
-  }
-  fs::create_dir(&cache_root).unwrap();
-  let source_plugins = directory.path().join("sources");
-  let octa_root = directory.path().join("octa");
-  let release = AgentReleasePaths {
-    source_plugins: &source_plugins,
-    octa_root: &octa_root,
-  };
-  let backend = ReleaseBackend::Native {
-    cgroup_root: directory.path().join("cgroups"),
-    work_root: directory.path().join("work"),
-    cache_root: cache_root.clone(),
-    bubblewrap: PathBuf::from("/usr/bin/bwrap"),
-    path: "/usr/bin:/bin".to_owned(),
-    environment_identity: "test-native-environment-v1".to_owned(),
-    workspace_bytes: 1024 * 1024,
-  };
-  let config = write_agent_config(
-    directory.path(),
-    "http://127.0.0.1:12345",
-    "native-config-shape",
-    "credential",
-    release,
-    &backend,
-    &AgentConfigOverrides::default(),
-  );
-
-  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
-  assert_eq!(document["cache"]["root"].as_str(), cache_root.to_str());
-  assert_eq!(
-    document["cache"]["request_timeout_seconds"].as_integer(),
-    Some(RELEASE_CACHE_REQUEST_TIMEOUT_SECONDS as i64)
-  );
-  assert_eq!(
-    document["cache"]["native_environment_identities"]
-      .as_table()
-      .unwrap()
-      .len(),
-    1,
-    "cache-enabled Native release jobs require one host environment identity"
-  );
-  let platform = format!("linux-{}", host_architecture());
-  assert_eq!(
-    document["cache"]["native_environment_identities"][&platform].as_str(),
-    Some("test-native-environment-v1")
-  );
-}
-
-#[test]
-fn release_jobs_use_the_bounded_workspace_limit() {
-  let backend = ReleaseBackend::Native {
-    cgroup_root: PathBuf::from("/cgroups"),
-    work_root: PathBuf::from("/work"),
-    cache_root: PathBuf::from("/cache"),
-    bubblewrap: PathBuf::from("/usr/bin/bwrap"),
-    path: "/usr/bin:/bin".to_owned(),
-    environment_identity: "test-native-environment-v1".to_owned(),
-    workspace_bytes: 1024 * 1024 * 1024,
-  };
-
-  let configuration = build_configuration("project", "repository", "pipeline", "pool", &backend);
-  let definition = &configuration["definition"];
-  assert_eq!(
-    definition["agent_requirements"]["minimum_disk_bytes"].as_u64(),
-    Some(backend.workspace_bytes())
-  );
-  assert_eq!(
-    definition["runtime"]["writable_disk_bytes"].as_u64(),
-    Some(backend.workspace_bytes())
-  );
-  assert_eq!(
-    definition["runtime"]["timeout_seconds"].as_u64(),
-    Some(RELEASE_JOB_TIMEOUT_SECONDS)
-  );
 }
 
 #[test]

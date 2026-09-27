@@ -17,6 +17,7 @@ on:
           - phase6
           - linux-native
           - linux-containerd
+          - linux-microsandbox
           - macos-microsandbox
 
 permissions:
@@ -140,8 +141,8 @@ jobs:
         run: tools/runner/github-hosted-native.sh cleanup
 
   linux-containerd:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'linux-containerd' }}
-    runs-on: [self-hosted, linux, octacity-containerd]
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-containerd' }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -154,10 +155,108 @@ jobs:
           toolchain: 1.98.1
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - run: >-
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux OCI build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Prepare disposable containerd environment
+        working-directory: octacity
+        env:
+          OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}
+          OCTA_SOURCE_REVISION: ${{ steps.octa-source.outputs.revision }}
+        run: tools/runner/github-hosted-oci.sh setup containerd "$OCTA_RELEASE_VERSION" "$OCTA_SOURCE_REVISION"
+      - name: Run real containerd backend contract
+        run: >-
           cargo test -p octacity-job --test backend_contract
           containerd_process_engine_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
         working-directory: octacity
+      - name: Package the server and Agent release candidates
+        id: release-candidate
+        uses: ./octacity/.github/actions/package-release-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+      - name: Run released Linux containerd vertical slice
+        id: release-slice
+        uses: ./octacity/.github/actions/release-agent-vertical-slice
+        with:
+          server-root: ${{ steps.release-candidate.outputs.server-root }}
+          agent-root: ${{ steps.release-candidate.outputs.agent-root }}
+          backend: containerd
+      - name: Verify containerd cleanup
+        working-directory: octacity
+        run: tools/runner/github-hosted-oci.sh verify-clean containerd
+      - name: Retain Linux containerd release evidence
+        if: always() && steps.release-slice.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-slice-linux-containerd
+          path: ${{ steps.release-slice.outputs.evidence }}
+          if-no-files-found: error
+      - name: Clean up disposable containerd environment
+        if: always()
+        working-directory: octacity
+        run: tools/runner/github-hosted-oci.sh cleanup containerd
+
+  linux-microsandbox:
+    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-microsandbox' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Set up Microsandbox guest agent
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux OCI build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Prepare disposable Linux Microsandbox environment
+        working-directory: octacity
+        env:
+          OCTA_RELEASE_VERSION: ${{ steps.octa-source.outputs.version }}
+          OCTA_SOURCE_REVISION: ${{ steps.octa-source.outputs.revision }}
+        run: tools/runner/github-hosted-oci.sh setup microsandbox "$OCTA_RELEASE_VERSION" "$OCTA_SOURCE_REVISION"
+      - name: Run real Linux Microsandbox backend contract
+        run: >-
+          cargo test -p octacity-job --test backend_contract
+          microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+        working-directory: octacity
+      - name: Package the server and Agent release candidates
+        id: release-candidate
+        uses: ./octacity/.github/actions/package-release-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+      - name: Run released Linux Microsandbox vertical slice
+        id: release-slice
+        uses: ./octacity/.github/actions/release-agent-vertical-slice
+        with:
+          server-root: ${{ steps.release-candidate.outputs.server-root }}
+          agent-root: ${{ steps.release-candidate.outputs.agent-root }}
+          backend: linux-microsandbox
+      - name: Verify Microsandbox cleanup
+        working-directory: octacity
+        run: tools/runner/github-hosted-oci.sh verify-clean microsandbox
+      - name: Retain Linux Microsandbox release evidence
+        if: always() && steps.release-slice.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-slice-linux-microsandbox
+          path: ${{ steps.release-slice.outputs.evidence }}
+          if-no-files-found: error
+      - name: Clean up disposable Linux Microsandbox environment
+        if: always()
+        working-directory: octacity
+        run: tools/runner/github-hosted-oci.sh cleanup microsandbox
 
   macos-microsandbox:
     if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'macos-microsandbox' }}

@@ -12,10 +12,7 @@ pub(super) fn load(backend: &ReleaseBackend) -> InstalledRelease {
   })
   .unwrap_or_else(|error| panic!("released installation failed validation: {error}"));
 
-  let expected_product_platform = match backend {
-    ReleaseBackend::Native { .. } => format!("linux-{}", host_architecture()),
-    ReleaseBackend::Microsandbox { .. } => "macos-arm64".to_owned(),
-  };
+  let expected_product_platform = format!("{}-{}", std::env::consts::OS, host_architecture());
   assert_eq!(release.server_manifest.platform(), expected_product_platform);
   assert_eq!(release.agent_manifest.platform(), expected_product_platform);
 

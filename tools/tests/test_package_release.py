@@ -314,8 +314,9 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("value: ${{ steps.metadata.outputs.version }}", checkout)
 
         provisioner = (REPOSITORY / "tools/runner/github-hosted-native.sh").read_text(encoding="utf-8")
-        self.assertIn("sha256sum --check --strict", provisioner)
-        self.assertIn("octa-runner-capabilities.json", provisioner)
+        release_stager = (REPOSITORY / "tools/runner/github-hosted-release.sh").read_text(encoding="utf-8")
+        self.assertIn("sha256sum --check --strict", release_stager)
+        self.assertIn("octa-runner-capabilities.json", release_stager)
         self.assertIn("OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT", provisioner)
         self.assertIn("OCTACITY_RELEASE_NATIVE_CACHE_ROOT", provisioner)
         self.assertIn("OCTACITY_CONTRACT_NATIVE_ENVIRONMENT_IDENTITY", provisioner)
@@ -334,6 +335,34 @@ class PackageReleaseTests(unittest.TestCase):
             "Bubblewrap requires an explicit user namespace before it can disable nested user namespaces",
         )
         self.assertIn("Native work and cache roots must use separate filesystems", provisioner)
+
+    def test_linux_oci_release_gates_use_disposable_github_runners(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        containerd = workflow.split("  linux-containerd:\n", 1)[1].split("  linux-microsandbox:\n", 1)[0]
+        microsandbox = workflow.split("  linux-microsandbox:\n", 1)[1].split("  macos-microsandbox:\n", 1)[0]
+        for job, backend in ((containerd, "containerd"), (microsandbox, "microsandbox")):
+            self.assertIn("runs-on: ubuntu-24.04", job)
+            self.assertNotIn("self-hosted", job)
+            self.assertIn(f"github-hosted-oci.sh setup {backend}", job)
+            self.assertIn(f"github-hosted-oci.sh verify-clean {backend}", job)
+            self.assertIn(f"github-hosted-oci.sh cleanup {backend}", job)
+            self.assertIn("uses: ./octacity/.github/actions/package-release-candidate", job)
+            self.assertIn("uses: ./octacity/.github/actions/release-agent-vertical-slice", job)
+            self.assertIn("if: always()", job)
+
+        provisioner = (REPOSITORY / "tools/runner/github-hosted-oci.sh").read_text(encoding="utf-8")
+        self.assertIn("CONTAINERD_VERSION=2.3.6", provisioner)
+        self.assertIn("@sha256:", provisioner)
+        self.assertIn("63773f454664cd77e239f8e0b13ae7f18effe9e3d6612a325b5646eb3bda11f1", provisioner)
+        self.assertIn("83205934094144b56f645f86c42b84f81083f423b0bea9cb233f91c21bab0919", provisioner)
+        self.assertIn("sha256sum --check --strict", provisioner)
+        self.assertIn("containerd-2.3.6-linux-amd64.tar.gz", provisioner)
+        self.assertIn("containerd-2.3.6-linux-arm64.tar.gz", provisioner)
+        self.assertIn("containerd Transfer plugin is unavailable", provisioner)
+        self.assertIn('"OCTACITY_CONTRACT_CONTAINERD_SNAPSHOTTER=overlayfs"', provisioner)
+        self.assertIn("[[ -c /dev/kvm ]]", provisioner)
+        self.assertIn("tasks list --quiet", provisioner)
+        self.assertIn("containers list --quiet", provisioner)
 
     def test_workflows_pin_actions_runners_and_toolchains(self):
         action = re.compile(r"^\s*-?\s*uses:\s+[^\s@]+@([0-9a-f]{40})(?:\s+#.*)?$")

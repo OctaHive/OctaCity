@@ -908,14 +908,14 @@ fn native_roots(backend: &ReleaseBackend) -> (&Path, &Path) {
     ReleaseBackend::Native {
       work_root, cgroup_root, ..
     } => (work_root, cgroup_root),
-    ReleaseBackend::Microsandbox { .. } => unreachable!(),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } => unreachable!(),
   }
 }
 
 fn native_cache_root(backend: &ReleaseBackend) -> &Path {
   match backend {
     ReleaseBackend::Native { cache_root, .. } => cache_root,
-    ReleaseBackend::Microsandbox { .. } => unreachable!(),
+    ReleaseBackend::Microsandbox { .. } | ReleaseBackend::Containerd { .. } => unreachable!(),
   }
 }
 

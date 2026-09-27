@@ -12,10 +12,15 @@ The manual `backend contracts` GitHub Actions workflow assigns each exact test
 to a runner with the required kernel or hypervisor. Linux Native runs on a
 fresh GitHub-hosted `ubuntu-24.04` VM; the job downloads and verifies the
 pinned Octa release, delegates an isolated cgroup-v2 subtree, and mounts
-separate bounded loopback filesystems for workspaces and cache. Containerd and
-Apple Silicon Microsandbox remain explicit self-hosted suites because their
-runtime requirements are not available on standard hosted runners. The
-portable CI matrix remains independent of privileged host configuration.
+separate bounded loopback filesystems for workspaces and cache. Linux
+containerd and Linux Microsandbox also run on fresh `ubuntu-24.04` machines:
+the former downloads a checksum-pinned containerd 2.3.6 LTS bundle and starts
+its daemon privately as root with the `overlayfs` snapshotter, while the latter
+requires the hosted VM to expose KVM. GitHub does not guarantee nested
+virtualization, so the Microsandbox job is an explicit fail-closed release
+gate rather than a portable CI prerequisite. Apple Silicon Microsandbox
+remains an explicit self-hosted suite. The portable CI matrix remains
+independent of privileged host configuration.
 
 Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor. The
 hosted setup loads Ubuntu's packaged `bwrap-userns-restrict` profile rather
@@ -26,10 +31,11 @@ Each Native test command enters a dedicated sibling `runner` cgroup before it
 starts the Agent. The Agent can therefore move only its runner descendants into
 the clean `jobs` subtree without receiving authority over the VM's root cgroup.
 
-Select the default `linux-native` suite to run the full released-product Native
-matrix without owning a runner. The workflow creates all privileged Linux
-state on the disposable VM and removes it in an `always()` cleanup step; the
-VM is discarded after the job as an additional boundary.
+Select `linux-native`, `linux-containerd`, or `linux-microsandbox` to run one
+released-product Linux matrix without owning a runner. The workflow creates
+all privileged Linux state on the disposable VM and removes it in an
+`always()` cleanup step; the VM is discarded after the job as an additional
+boundary.
 
 The combined `released-agent` suite also schedules macOS Microsandbox. To run
 that additional slice, prepare one Apple Silicon macOS host and execute
@@ -56,8 +62,8 @@ mounted before the wizard runs. `tools/runner/preflight-backend-runner.sh`
 fails closed if any runtime, release checksum, Docker daemon, cgroup
 controller, or real backend contract is unavailable.
 
-The Linux Native and Apple Silicon macOS Microsandbox jobs build deterministic
-server and Agent release-candidate archives and use
+Every released Linux backend and the Apple Silicon macOS Microsandbox job
+build deterministic server and Agent release-candidate archives and use
 `octacity-release-harness` before every release scenario. The harness accepts
 only self-verifying extracted bundles, validates their exact versioned release
 contracts, checksum inventories, component digests and protocol ranges, and
@@ -80,9 +86,43 @@ server's cache ingress so the released runner uses the production HTTPS and CA
 contract. The workflow retains its installation receipt, release manifests,
 server and Agent logs, REST evidence, and Prometheus snapshot.
 
-The macOS job keeps the smaller released-product vertical slice until its full
-Microsandbox matrix is added in task 9.4. It executes a Linux guest through
-Microsandbox; host-native execution is deliberately Linux-only.
+The containerd and Linux Microsandbox jobs first run the strict backend
+contract, which verifies their digest-pinned image, filesystem boundary,
+resource accounting, cancellation, and orphan cleanup, and then run the
+packaged Agent against the real released server vertical slice. Their final
+cleanup assertion rejects remaining job workspaces and, for containerd,
+remaining tasks or containers. The macOS job keeps the smaller
+released-product vertical slice until its full Microsandbox matrix is added in
+task 9.4. It executes a Linux guest through Microsandbox; host-native execution
+is deliberately Linux-only.
+
+The hosted OCI fixture selects an architecture-specific immutable manifest
+digest for `linux/amd64` or `linux/arm64`. The adapter still reads the embedded
+configuration and rejects any OS or architecture that does not match the
+declared execution target.
+
+### OCI release-gate threat boundaries
+
+Repository input may select only the signed runtime class and the
+digest-pinned image recorded in the immutable Build snapshot. It cannot select
+the containerd socket, namespace, snapshotter, runtime, registry configuration,
+Microsandbox executable, firmware, or host paths; those remain operator-owned
+Agent configuration. The disposable gate verifies the downloaded
+Microsandbox and containerd bundles by hard-coded SHA-256 values before
+execution. It also requires containerd's Transfer plugin to be healthy before
+running any contract. Containerd then verifies the resolved image descriptor
+against the signed digest.
+
+The privileged host runtime is an explicit trust boundary. Containerd runs in
+a private namespace and receives no registry credential through JobSpec or a
+process argument. Job mounts remain limited to the verified read-only Octa
+release and the Agent-owned workspace, cache, and identity paths. Cancellation
+must remove the task or VM and its workspace. Cleanup accepts only a marked,
+non-symbolic direct child of `RUNNER_TEMP`; the root-owned containerd PID file
+must still identify the staged containerd executable before it is signalled.
+These checks address image substitution, host-path escape, credential leakage,
+resource-policy bypass, orphaned execution, and deletion of an unrelated host
+path.
 
 All tests require:
 

@@ -45,13 +45,13 @@ fn expected_microsandbox_runner_platform() -> &'static str {
 }
 
 struct FixtureSource {
-  network_probe: Option<NetworkProbe>,
+  oci_probe: Option<OciProbe>,
 }
 
 #[derive(Clone)]
-struct NetworkProbe {
-  allowed_host: String,
-  denied_host: String,
+enum OciProbe {
+  DisabledNetwork,
+  RestrictedNetwork { allowed_host: String, denied_host: String },
 }
 
 #[async_trait]
@@ -64,13 +64,18 @@ impl SourceMaterializer for FixtureSource {
     _cancellation_grace: Duration,
     _cancellation: CancellationToken,
   ) -> Result<MaterializedSource, SourceError> {
-    let octafile = if let Some(probe) = &self.network_probe {
-      format!(
-        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      curl --fail --silent --show-error --max-time 10 https://{}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{}/ > /dev/null 2>&1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n",
-        probe.allowed_host, probe.denied_host
-      )
-    } else {
-      FIXTURE_OCTAFILE.to_owned()
+    let octafile = match &self.oci_probe {
+      Some(OciProbe::RestrictedNetwork {
+        allowed_host,
+        denied_host,
+      }) => format!(
+        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      command -v curl > /dev/null\n      curl --fail --silent --show-error --max-time 10 https://{allowed_host}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{denied_host}/ > /dev/null 2>&1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n"
+      ),
+      Some(OciProbe::DisabledNetwork) => {
+        "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      command -v curl > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://example.com/ > /dev/null 2>&1\n      echo octacity-backend-contract\n  wait:\n    shell: sleep 60\n"
+          .to_owned()
+      }
+      None => FIXTURE_OCTAFILE.to_owned(),
     };
     std::fs::write(request.destination.join("Octafile.yml"), octafile).map_err(|source| {
       SourceError::Host(octacity_source::SourceHostError::Io {
@@ -116,7 +121,7 @@ async fn native_backend_satisfies_the_real_runner_contract() {
     work_root,
     workspace_bytes,
     backend,
-    false,
+    None,
     true,
   )
   .await;
@@ -152,7 +157,10 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
     work_root,
     workspace_bytes,
     backend,
-    true,
+    Some(OciProbe::RestrictedNetwork {
+      allowed_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST"),
+      denied_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST"),
+    }),
     false,
   )
   .await;
@@ -193,7 +201,7 @@ async fn containerd_process_engine_satisfies_the_real_runner_contract() {
     work_root,
     workspace_bytes,
     backend,
-    false,
+    Some(OciProbe::DisabledNetwork),
     false,
   )
   .await;
@@ -204,7 +212,7 @@ async fn run_contract(
   work_root: PathBuf,
   workspace_bytes: u64,
   backend: Arc<dyn ExecutionBackend>,
-  secure_oci_contract: bool,
+  oci_probe: Option<OciProbe>,
   native_cache_contract: bool,
 ) {
   let mode = match &target {
@@ -213,11 +221,7 @@ async fn run_contract(
   };
   let release_root = required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT");
   let runner = RunnerInstallation::load(&release_root).expect("the configured Octa release must be valid");
-  let network_probe = secure_oci_contract.then(|| NetworkProbe {
-    allowed_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST"),
-    denied_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST"),
-  });
-  let identity_source = network_probe.as_ref().map(|_| {
+  let identity_source = oci_probe.as_ref().map(|_| {
     let source = tempfile::NamedTempFile::new().expect("identity fixture must be creatable");
     std::fs::write(source.path(), "backend-contract-identity").expect("identity fixture must be writable");
     source
@@ -233,7 +237,7 @@ async fn run_contract(
   let executor = JobExecutor::new(
     runner.clone(),
     Arc::new(FixtureSource {
-      network_probe: network_probe.clone(),
+      oci_probe: oci_probe.clone(),
     }),
     Arc::new(identity),
     BTreeMap::from([(mode, backend)]),
@@ -241,11 +245,10 @@ async fn run_contract(
       work_root,
       max_workspace_bytes: workspace_bytes,
       allow_unrestricted_network: native_cache_contract,
-      allowed_network_hosts: network_probe
-        .as_ref()
-        .map(|probe| probe.allowed_host.clone())
-        .into_iter()
-        .collect(),
+      allowed_network_hosts: match &oci_probe {
+        Some(OciProbe::RestrictedNetwork { allowed_host, .. }) => vec![allowed_host.clone()],
+        Some(OciProbe::DisabledNetwork) | None => Vec::new(),
+      },
       max_output_limits: OutputLimits {
         artifact_count: 0,
         artifact_bytes: 0,
@@ -296,10 +299,12 @@ async fn run_contract(
       write: true,
     });
   }
-  if let Some(probe) = &network_probe {
+  if let Some(OciProbe::RestrictedNetwork { allowed_host, .. }) = &oci_probe {
     spec.runtime.network = NetworkPolicy::Restricted {
-      allowed_hosts: vec![probe.allowed_host.clone()],
+      allowed_hosts: vec![allowed_host.clone()],
     };
+  }
+  if oci_probe.is_some() {
     spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
   }
   let (sender, mut receiver) = mpsc::channel(128);

@@ -9,7 +9,7 @@ inputs:
     description: Extracted checksummed Agent release root
     required: true
   backend:
-    description: Provisioned execution backend (native or microsandbox)
+    description: Provisioned execution backend (native, containerd, linux-microsandbox, or microsandbox)
     required: true
   execution-wrapper:
     description: Optional host cgroup entrypoint used to execute the scenario command
@@ -107,6 +107,8 @@ runs:
         cp "${OCTACITY_RELEASE_INSTALLATION_RECEIPT}" "${evidence}/installation.json"
         case "${OCTACITY_RELEASE_BACKEND}" in
           native) test_name=released_linux_native_matrix_satisfies_the_end_to_end_contract ;;
+          containerd) test_name=released_linux_containerd_matrix_satisfies_the_end_to_end_contract ;;
+          linux-microsandbox) test_name=released_linux_microsandbox_matrix_satisfies_the_end_to_end_contract ;;
           microsandbox) test_name=released_agent_completes_a_sequential_pipeline_through_rest_and_postgres ;;
           *) printf 'unsupported release backend: %s\n' "${OCTACITY_RELEASE_BACKEND}" >&2; exit 1 ;;
         esac
