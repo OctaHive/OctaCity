@@ -38,6 +38,15 @@ pub struct ReleaseBundles {
   pub octa: PathBuf,
 }
 
+/// Released Agent and Octa bundle roots supplied to a portable Agent scenario.
+#[derive(Clone, Debug)]
+pub struct AgentRuntimeBundles {
+  /// Extracted checksummed Agent release root.
+  pub agent: PathBuf,
+  /// Extracted checksummed Octa release root.
+  pub octa: PathBuf,
+}
+
 /// Validated paths and identities consumed by a release scenario.
 #[derive(Clone, Debug, Serialize)]
 pub struct InstalledRelease {
@@ -63,6 +72,27 @@ pub struct InstalledRelease {
   pub octa_version: String,
   /// Validated server release manifest.
   pub server_manifest: ProductManifest,
+  /// Validated Agent release manifest.
+  pub agent_manifest: ProductManifest,
+  /// Validated capabilities advertised by the Octa runner.
+  pub octa_capabilities: RunnerCapabilities,
+  /// Digests and protocol versions used to issue signed Job specifications.
+  pub toolchain: InstalledToolchain,
+}
+
+/// Validated released Agent runtime used by portable host-mode scenarios.
+#[derive(Clone, Debug, Serialize)]
+pub struct InstalledAgentRuntime {
+  /// Isolated installation root.
+  pub root: PathBuf,
+  /// Validated Agent release root.
+  pub agent_root: PathBuf,
+  /// Validated Agent executable.
+  pub agent_binary: PathBuf,
+  /// Validated source-plugin registry.
+  pub source_plugins: PathBuf,
+  /// Validated Octa release root containing runner and task plugins.
+  pub octa_root: PathBuf,
   /// Validated Agent release manifest.
   pub agent_manifest: ProductManifest,
   /// Validated capabilities advertised by the Octa runner.
@@ -152,6 +182,47 @@ pub fn install(bundles: &ReleaseBundles, destination: &Path) -> Result<Installed
   Ok(installed)
 }
 
+/// Installs and revalidates only the released Agent and its Octa toolchain.
+///
+/// Portable host-mode gates use a narrow in-process coordinator and therefore
+/// do not need to build or install a same-platform server executable.
+pub fn install_agent_runtime(
+  bundles: &AgentRuntimeBundles,
+  destination: &Path,
+) -> Result<InstalledAgentRuntime, HarnessError> {
+  if destination.exists() {
+    return Err(invalid(format!(
+      "installation destination already exists: {}",
+      destination.display()
+    )));
+  }
+  let canonical_contract = ReleaseContract::canonical()?;
+  let agent_source = Bundle::load(&bundles.agent, "octacity-agent", &canonical_contract)?;
+  let octa_source = OctaBundle::load(&bundles.octa)?;
+  validate_agent_octa_compatibility(
+    &agent_source.manifest,
+    &octa_source,
+    bundle::runtime_platform(&agent_source.manifest.platform)?,
+  )?;
+
+  create_directory(destination)?;
+  let mut guard = InstallationGuard::new(destination);
+  let agent_root = destination.join("agent");
+  let octa_root = destination.join("octa");
+  agent_source.install(&agent_root)?;
+  octa_source.install(&octa_root)?;
+
+  let installed = load_agent_runtime(
+    &AgentRuntimeBundles {
+      agent: agent_root,
+      octa: octa_root,
+    },
+    destination.to_owned(),
+  )?;
+  guard.commit();
+  Ok(installed)
+}
+
 /// Revalidates an already isolated installation and returns its typed identity.
 pub fn validate_installed(bundles: &ReleaseBundles) -> Result<InstalledRelease, HarnessError> {
   let root = common_parent(bundles)?;
@@ -168,18 +239,7 @@ fn load_verified(bundles: &ReleaseBundles, root: PathBuf) -> Result<InstalledRel
   agent.verify_binary_version("agent")?;
 
   let source = agent.source_plugin()?;
-  let runner_protocol = octa.compatible_runner_protocol(agent.manifest.protocol("octa_runner")?)?;
-  let event_schema = octa.compatible_event_schema(agent.manifest.protocol("octa_event_schema")?)?;
-  let toolchain = InstalledToolchain {
-    source_version: source.version.clone(),
-    source_digest: source.sha256.clone(),
-    octa_version: octa.capabilities.octa_version.clone(),
-    runner_digest: octa.runner_digest.clone(),
-    runner_protocol,
-    event_schema,
-    plugin_protocol: octa.plugin_protocol,
-    plugin_digests: octa.plugin_digests.clone(),
-  };
+  let toolchain = installed_toolchain(&agent.manifest, &octa, source)?;
   Ok(InstalledRelease {
     root,
     server_root: bundles.server.clone(),
@@ -192,6 +252,31 @@ fn load_verified(bundles: &ReleaseBundles, root: PathBuf) -> Result<InstalledRel
     octa_platform: octa.capabilities.platform.clone(),
     octa_version: octa.capabilities.octa_version.clone(),
     server_manifest: server.manifest,
+    agent_manifest: agent.manifest,
+    octa_capabilities: octa.capabilities,
+    toolchain,
+  })
+}
+
+fn load_agent_runtime(bundles: &AgentRuntimeBundles, root: PathBuf) -> Result<InstalledAgentRuntime, HarnessError> {
+  let canonical_contract = ReleaseContract::canonical()?;
+  let agent = Bundle::load(&bundles.agent, "octacity-agent", &canonical_contract)?;
+  let octa = OctaBundle::load(&bundles.octa)?;
+  validate_agent_octa_compatibility(
+    &agent.manifest,
+    &octa,
+    bundle::runtime_platform(&agent.manifest.platform)?,
+  )?;
+  agent.verify_binary_version("agent")?;
+
+  let source = agent.source_plugin()?;
+  let toolchain = installed_toolchain(&agent.manifest, &octa, source)?;
+  Ok(InstalledAgentRuntime {
+    root,
+    agent_root: bundles.agent.clone(),
+    agent_binary: agent.component("agent")?,
+    source_plugins: bundles.agent.join("source-plugins"),
+    octa_root: bundles.octa.clone(),
     agent_manifest: agent.manifest,
     octa_capabilities: octa.capabilities,
     toolchain,
@@ -219,9 +304,18 @@ fn validate_compatibility(
       )));
     }
   }
+  validate_agent_octa_compatibility(agent, octa, octa_runtime_platform(&agent.platform)?)?;
+  Ok(())
+}
+
+fn validate_agent_octa_compatibility(
+  agent: &ProductManifest,
+  octa: &OctaBundle,
+  expected_octa_platform: &str,
+) -> Result<(), HarnessError> {
   octa.compatible_runner_protocol(agent.protocol("octa_runner")?)?;
   octa.compatible_event_schema(agent.protocol("octa_event_schema")?)?;
-  if octa.capabilities.platform != octa_runtime_platform(&agent.platform)? {
+  if octa.capabilities.platform != expected_octa_platform {
     return Err(invalid("Agent and Octa bundles target different runtime platforms"));
   }
   let expected_octa_revision = agent
@@ -240,6 +334,23 @@ fn validate_compatibility(
     ));
   }
   Ok(())
+}
+
+fn installed_toolchain(
+  agent: &ProductManifest,
+  octa: &OctaBundle,
+  source: &octacity_source_plugin::SourcePluginManifest,
+) -> Result<InstalledToolchain, HarnessError> {
+  Ok(InstalledToolchain {
+    source_version: source.version.clone(),
+    source_digest: source.sha256.clone(),
+    octa_version: octa.capabilities.octa_version.clone(),
+    runner_digest: octa.runner_digest.clone(),
+    runner_protocol: octa.compatible_runner_protocol(agent.protocol("octa_runner")?)?,
+    event_schema: octa.compatible_event_schema(agent.protocol("octa_event_schema")?)?,
+    plugin_protocol: octa.plugin_protocol,
+    plugin_digests: octa.plugin_digests.clone(),
+  })
 }
 
 fn common_parent(bundles: &ReleaseBundles) -> Result<PathBuf, HarnessError> {

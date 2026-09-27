@@ -2,13 +2,21 @@
 
 The portable workspace suite tests orchestration with an in-memory backend.
 The retained backend contract suite additionally runs a real signed job, real
-`octa-runner`, and the same Octafile through Native, containerd OCI process
-isolation, and Microsandbox OCI hypervisor execution. These tests are `ignored`
-because cgroup delegation, containerd, and a microVM runtime cannot be emulated
-honestly on an arbitrary developer machine. They never skip after an operator
-explicitly selects one: absent or invalid provisioning fails the test.
+`octa-runner`, and the same Octafile through direct Host execution, legacy
+Native, containerd isolation, and Microsandbox virtualization. These tests are
+`ignored` because they require an installed release and, except for Host,
+privileged runtime provisioning. They never skip after an operator explicitly
+selects one: absent or invalid provisioning fails the test.
 
-The manual `backend contracts` GitHub Actions workflow assigns each exact test
+The `host` suite runs on ordinary GitHub-hosted Linux, Apple Silicon macOS, and
+Windows machines. It verifies the downloaded Octa release and packaged Agent,
+runs the real Host backend contract, and then starts that released Agent
+against a narrow coordinator fixture. The fixture negotiates v2, checks exact
+host/target identity and zero isolation guarantees, completes one job, cancels
+a second running job, drains the Agent, and retains bounded event, resource,
+and cleanup evidence.
+
+The manual privileged `backend contracts` suites assign each exact test
 to a runner with the required kernel or hypervisor. Linux Native runs on a
 fresh GitHub-hosted `ubuntu-24.04` VM; the job downloads and verifies the
 pinned Octa release, delegates an isolated cgroup-v2 subtree, and mounts
@@ -95,9 +103,9 @@ packaged Agent against the real released server vertical slice. Their final
 cleanup assertion rejects remaining job workspaces and, for containerd,
 remaining tasks or containers. The macOS job keeps the smaller
 released-product vertical slice until its full Microsandbox matrix is added in
-task 9.6. It executes a Linux guest through Microsandbox. The current direct
-host compatibility slice is Linux-only; task 9.4 adds direct host execution on
-released Linux, macOS, and Windows Agents.
+task 9.6. It executes a Linux guest through Microsandbox. Direct Host execution
+is independently qualified on released Linux, macOS, and Windows Agents and is
+never reported as Native, isolation, or virtualization.
 
 The hosted OCI fixture selects an architecture-specific immutable manifest
 digest for `linux/amd64` or `linux/arm64`. The adapter still reads the embedded
@@ -151,6 +159,42 @@ Linux; the manifest lets the macOS agent inventory that release without trying
 to execute its ELF runner on the host. The adapter places the OCI root overlay
 in guest RAM and applies the signed disk budget to the writable workspace bind
 mount, so writes elsewhere in the image cannot escape both resource limits.
+
+## Host
+
+Host mode invokes the verified platform-native runner directly as the Agent
+service identity. It has dedicated work roots, owned-lifecycle process-group
+cancellation, bounded runner/event transport, and advisory resource accounting, but
+it deliberately claims no filesystem, process, network, resource, container,
+or guest isolation. Use it only for trusted repositories with an exact Host
+execution target in both Project policy and the Pool `execution_allowlist`.
+Host jobs require an unrestricted-network policy because the
+backend cannot honestly enforce disabled or allowlisted egress.
+Host also rejects workload identity because a direct host path cannot project
+the credential with an isolation boundary. Workspace accounting uses one
+non-overlapping, entry-bounded scan per execution; it is diagnostic rather than
+a disk-enforcement boundary. An abrupt Agent death can leave descendants, so
+Host must run under a dedicated/disposable service boundary where that risk is
+material.
+
+```shell
+export OCTACITY_CONTRACT_HOST_WORK_ROOT=/absolute/private/host-work
+export OCTACITY_CONTRACT_HOST_ENVIRONMENT_ID=host-toolchain-v1
+export OCTACITY_CONTRACT_WORKSPACE_BYTES=33554432
+cargo test -p octacity-job --test backend_contract \
+  host_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+```
+
+The portable released-Agent contract additionally requires
+`OCTACITY_RELEASE_AGENT_ROOT`. The `host` workflow stages both roots from
+self-verifying bundles and runs this test on all three supported operating
+systems:
+
+```shell
+cargo test -p octacity-release-harness --test released_host_agent \
+  released_host_agent_satisfies_the_portable_execution_contract \
+  -- --ignored --exact --nocapture
+```
 
 ## Native
 

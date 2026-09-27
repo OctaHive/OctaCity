@@ -173,7 +173,9 @@ impl AgentStore for InMemoryAgentStore {
       .count();
     let compatible = match &definition.admission_policy {
       PoolAdmissionPolicy::Any => true,
-      PoolAdmissionPolicy::Allowlist { platforms } => platforms.contains(&platform),
+      PoolAdmissionPolicy::Allowlist { platforms } | PoolAdmissionPolicy::ExecutionAllowlist { platforms, .. } => {
+        platforms.contains(&platform)
+      }
     };
     if !definition.enabled
       || definition.drain_state != octacity_server_scheduler::PoolDrainState::Accepting

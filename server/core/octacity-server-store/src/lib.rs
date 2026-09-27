@@ -240,8 +240,8 @@ pub use pipeline_port::PipelineStore;
 pub use pool_model::{
   AgentPoolDefinition, AgentPoolMutationOutcome, AgentPoolPage, CreateAgentPool, DeleteAgentPool,
   DeleteAgentPoolOutcome, ListAgentPools, MAX_AGENT_POOL_PAGE_SIZE, MAX_POOL_ADMISSION_PLATFORMS,
-  MAX_POOL_STATIC_CAPACITY, PoolAdmissionPolicy, PoolFairnessPolicy, PublishAgentPoolVersion, PublishedAgentPool,
-  validate_pool_drain_transition,
+  MAX_POOL_EXECUTION_TARGETS, MAX_POOL_STATIC_CAPACITY, PoolAdmissionPolicy, PoolExecutionTarget, PoolFairnessPolicy,
+  PublishAgentPoolVersion, PublishedAgentPool, validate_pool_drain_transition,
 };
 pub use pool_port::AgentPoolStore;
 pub use port::{

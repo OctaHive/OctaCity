@@ -143,6 +143,18 @@ pub(super) fn insert_agent_pool_schemas(schemas: &mut Map<String, Value>) {
     string_enum(&["accepting", "graceful_drain", "forced_drain", "drained"]),
   );
   schemas.insert(
+    "PoolExecutionTarget".to_owned(),
+    object(
+      [
+        ("mode", string_enum(&["host", "isolation", "virtualization"])),
+        ("host_platform", schema_ref("Platform")),
+        ("target_platform", schema_ref("Platform")),
+        ("required_guarantees", unique_array(schema_ref("ExecutionGuarantee"))),
+      ],
+      &["mode", "host_platform", "target_platform", "required_guarantees"],
+    ),
+  );
+  schemas.insert(
     "AgentPoolAdmissionPolicy".to_owned(),
     json!({
       "oneOf": [
@@ -162,6 +174,32 @@ pub(super) fn insert_agent_pool_schemas(schemas: &mut Map<String, Value>) {
             )
           ],
           &["mode", "platforms"]
+        ),
+        object(
+          [
+            ("mode", json!({"const": "execution_allowlist"})),
+            (
+              "platforms",
+              json!({
+                "type": "array",
+                "items": schema_ref("AgentPlatform"),
+                "uniqueItems": true,
+                "minItems": 1,
+                "maxItems": MAX_AGENT_POOL_ADMISSION_PLATFORMS
+              })
+            ),
+            (
+              "execution_targets",
+              json!({
+                "type": "array",
+                "items": schema_ref("PoolExecutionTarget"),
+                "uniqueItems": true,
+                "minItems": 1,
+                "maxItems": MAX_AGENT_POOL_EXECUTION_TARGETS
+              })
+            )
+          ],
+          &["mode", "platforms", "execution_targets"]
         )
       ],
       "discriminator": {"propertyName": "mode"}

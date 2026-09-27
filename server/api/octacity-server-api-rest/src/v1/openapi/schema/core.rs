@@ -1,6 +1,8 @@
 use serde_json::{Map, Value, json};
 
-use octacity_server_application::{MAX_AGENT_POOL_ADMISSION_PLATFORMS, MAX_AGENT_POOL_STATIC_CAPACITY};
+use octacity_server_application::{
+  MAX_AGENT_POOL_ADMISSION_PLATFORMS, MAX_AGENT_POOL_EXECUTION_TARGETS, MAX_AGENT_POOL_STATIC_CAPACITY,
+};
 
 use super::super::{
   MAX_CURSOR_BYTES, array, boolean, integer, mutation_response, non_empty_string, non_negative_integer, nullable,

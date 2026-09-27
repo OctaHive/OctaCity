@@ -112,6 +112,53 @@ pub(super) fn agent_pool_resource(projection: AgentPoolProjection) -> AgentPoolR
           .collect(),
       }
     }
+    octacity_server_application::AgentPoolAdmissionPolicyProjection::ExecutionAllowlist {
+      platforms,
+      execution_targets,
+    } => AgentPoolAdmissionPolicy::ExecutionAllowlist {
+      platforms: platforms
+        .into_iter()
+        .map(|platform| AgentPlatform {
+          operating_system: platform.operating_system,
+          architecture: platform.architecture,
+        })
+        .collect(),
+      execution_targets: execution_targets
+        .into_iter()
+        .map(|target| PoolExecutionTarget {
+          mode: match target.mode {
+            octacity_server_application::PoolExecutionModeProjection::Host => PoolExecutionMode::Host,
+            octacity_server_application::PoolExecutionModeProjection::Isolation => PoolExecutionMode::Isolation,
+            octacity_server_application::PoolExecutionModeProjection::Virtualization => {
+              PoolExecutionMode::Virtualization
+            }
+          },
+          host_platform: pool_platform(target.host_platform),
+          target_platform: pool_platform(target.target_platform),
+          required_guarantees: target
+            .required_guarantees
+            .into_iter()
+            .map(|guarantee| match guarantee {
+              octacity_server_application::ExecutionGuaranteeProjection::FilesystemIsolation => {
+                ExecutionGuarantee::FilesystemIsolation
+              }
+              octacity_server_application::ExecutionGuaranteeProjection::ProcessIsolation => {
+                ExecutionGuarantee::ProcessIsolation
+              }
+              octacity_server_application::ExecutionGuaranteeProjection::NetworkIsolation => {
+                ExecutionGuarantee::NetworkIsolation
+              }
+              octacity_server_application::ExecutionGuaranteeProjection::ResourceIsolation => {
+                ExecutionGuarantee::ResourceIsolation
+              }
+              octacity_server_application::ExecutionGuaranteeProjection::HardwareVirtualization => {
+                ExecutionGuarantee::HardwareVirtualization
+              }
+            })
+            .collect(),
+        })
+        .collect(),
+    },
   };
   AgentPoolResource {
     id: projection.id.to_string(),
@@ -133,6 +180,20 @@ pub(super) fn agent_pool_resource(projection: AgentPoolProjection) -> AgentPoolR
       static_capacity_limit: projection.static_capacity_limit,
     },
     published_at_unix_ms: projection.published_at.unix_millis(),
+  }
+}
+
+fn pool_platform(platform: octacity_server_application::PlatformProjection) -> Platform {
+  Platform {
+    os: match platform.os {
+      octacity_server_application::PlatformOsProjection::Linux => PlatformOs::Linux,
+      octacity_server_application::PlatformOsProjection::Windows => PlatformOs::Windows,
+      octacity_server_application::PlatformOsProjection::Macos => PlatformOs::Macos,
+    },
+    architecture: match platform.architecture {
+      octacity_server_application::PlatformArchitectureProjection::Amd64 => PlatformArchitecture::Amd64,
+      octacity_server_application::PlatformArchitectureProjection::Arm64 => PlatformArchitecture::Arm64,
+    },
   }
 }
 

@@ -14,7 +14,7 @@ use std::{
 };
 
 use ed25519_dalek::VerifyingKey;
-use octacity_protocol::{OutputLimits, PlatformSpec, RuntimeMode};
+use octacity_protocol::{ExecutionEnvironmentId, OutputLimits, PlatformSpec, RuntimeMode};
 use serde::Deserialize;
 
 pub use octa_cache_protocol::LocalCacheCapacity;
@@ -57,9 +57,12 @@ pub struct AgentConfig {
   pub cache: CacheConfig,
   /// Idle admission and cache-reclamation policy for disk pressure.
   pub maintenance: MaintenanceConfig,
-  /// Runtime modes this agent may advertise; empty makes it unschedulable.
+  /// Legacy v1 runtime modes this agent may advertise.
+  ///
+  /// This list may be empty when a provider-neutral v2 execution route, such
+  /// as direct Host execution, is enabled separately.
   pub enabled_runtime_modes: Vec<RuntimeMode>,
-  /// Explicit opt-in for host-native execution.
+  /// Explicit opt-in for the legacy Linux Native isolation backend.
   #[serde(default)]
   pub allow_native_execution: bool,
   /// Delegated cgroup-v2 root for Linux Native jobs.
@@ -76,6 +79,18 @@ pub struct AgentConfig {
   /// Explicit clean process environment for Native jobs.
   #[serde(default)]
   pub native_environment: BTreeMap<String, String>,
+  /// Explicit opt-in for direct v2 host execution without an isolation claim.
+  #[serde(default)]
+  pub allow_host_execution: bool,
+  /// Stable operator-owned cache identity for this host toolchain.
+  #[serde(default)]
+  pub host_environment_identity: Option<String>,
+  /// Complete clean environment inherited by direct host jobs.
+  #[serde(default)]
+  pub host_environment: BTreeMap<String, String>,
+  /// Maximum filesystem entries visited by one Host accounting scan.
+  #[serde(default = "default_host_accounting_max_entries")]
+  pub host_accounting_max_entries: usize,
   /// Explicit OCI lifecycle engines and their policies.
   #[serde(default)]
   pub oci_engines: Vec<OciEngineConfig>,
@@ -244,6 +259,13 @@ pub struct ValidatedConfig {
 /// have already been validated.
 #[derive(Clone, Debug)]
 pub enum ValidatedRuntimeConfig {
+  /// Direct execution on the Agent host without an isolation claim.
+  Host {
+    /// Stable environment identity used to separate physical cache scopes.
+    environment_identity: ExecutionEnvironmentId,
+    /// Explicit clean process environment.
+    environment: BTreeMap<String, String>,
+  },
   /// Complete Linux Native configuration.
   Native {
     /// Canonical delegated cgroup root.
@@ -519,7 +541,7 @@ impl AgentConfig {
       if self.native_linux_pids_limit == 0 {
         return invalid("native_linux_pids_limit must be greater than zero");
       }
-      validate_native_environment(&self.native_environment)?;
+      validate_process_environment("native_environment", &self.native_environment)?;
       Some(ValidatedRuntimeConfig::Native {
         cgroup_root,
         bubblewrap,
@@ -535,6 +557,29 @@ impl AgentConfig {
       return invalid("native Linux settings are only valid when NativeBackend is enabled");
     } else if !self.native_environment.is_empty() {
       return invalid("native_environment is only valid when NativeBackend is enabled");
+    } else {
+      None
+    };
+    let host_runtime = if self.allow_host_execution {
+      if !self.allow_unrestricted_network {
+        return invalid("host execution requires allow_unrestricted_network = true");
+      }
+      if self.host_accounting_max_entries == 0 {
+        return invalid("host_accounting_max_entries must be greater than zero");
+      }
+      validate_process_environment("host_environment", &self.host_environment)?;
+      let environment_identity = self
+        .host_environment_identity
+        .as_deref()
+        .ok_or_else(|| ConfigError::Invalid("host execution requires host_environment_identity".to_owned()))?
+        .parse::<ExecutionEnvironmentId>()
+        .map_err(ConfigError::Invalid)?;
+      Some(ValidatedRuntimeConfig::Host {
+        environment_identity,
+        environment: self.host_environment.clone(),
+      })
+    } else if self.host_environment_identity.is_some() || !self.host_environment.is_empty() {
+      return invalid("host settings are only valid when allow_host_execution = true");
     } else {
       None
     };
@@ -625,7 +670,10 @@ impl AgentConfig {
       runtime_modes = self.enabled_runtime_modes.len(),
       "validated agent configuration"
     );
-    let mut runtimes = Vec::with_capacity(self.enabled_runtime_modes.len());
+    let mut runtimes = Vec::with_capacity(self.enabled_runtime_modes.len() + usize::from(host_runtime.is_some()));
+    if let Some(host_runtime) = host_runtime {
+      runtimes.push(host_runtime);
+    }
     if let Some(native_runtime) = native_runtime {
       runtimes.push(native_runtime);
     }
@@ -640,6 +688,10 @@ impl AgentConfig {
       runtimes,
     })
   }
+}
+
+const fn default_host_accounting_max_entries() -> usize {
+  1_000_000
 }
 
 #[cfg(test)]

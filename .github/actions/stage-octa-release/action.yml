@@ -1,0 +1,39 @@
+name: Stage pinned Octa release
+description: Download, checksum, and extract the released Octa bundle for the current host
+
+inputs:
+  version:
+    description: Exact released Octa version
+    required: true
+  revision:
+    description: Exact Octa source revision represented by the release
+    required: true
+
+outputs:
+  root:
+    description: Absolute path to the extracted checksummed Octa release root
+    value: ${{ steps.stage.outputs.root }}
+
+runs:
+  using: composite
+  steps:
+    - id: stage
+      name: Download and verify released Octa toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) platform=linux-amd64 ;;
+          Linux-ARM64) platform=linux-arm64 ;;
+          macOS-ARM64) platform=macos-arm64 ;;
+          macOS-X64) platform=macos-amd64 ;;
+          Windows-X64) platform=windows-amd64 ;;
+          *) echo "unsupported Octa release host ${RUNNER_OS}-${RUNNER_ARCH}" >&2; exit 1 ;;
+        esac
+        root=$(python3 "${GITHUB_ACTION_PATH}/../../../tools/stage_octa_release.py" \
+          --version "${{ inputs.version }}" \
+          --revision "${{ inputs.revision }}" \
+          --platform "${platform}" \
+          --output "${RUNNER_TEMP}/octacity-host-octa")
+        printf 'OCTACITY_CONTRACT_OCTA_RELEASE_ROOT=%s\n' "${root}" >> "${GITHUB_ENV}"
+        printf 'root=%s\n' "${root}" >> "${GITHUB_OUTPUT}"

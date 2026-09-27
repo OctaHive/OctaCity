@@ -69,14 +69,17 @@ pub(super) fn validate_oci_engines(engines: &mut [OciEngineConfig], oci_enabled:
   Ok(())
 }
 
-/// Validates the complete, explicit environment inherited by Native jobs.
-pub(super) fn validate_native_environment(environment: &BTreeMap<String, String>) -> Result<(), ConfigError> {
+/// Validates one complete, explicit environment inherited by runner processes.
+pub(super) fn validate_process_environment(
+  field: &str,
+  environment: &BTreeMap<String, String>,
+) -> Result<(), ConfigError> {
   if environment.get("PATH").is_none_or(|path| path.trim().is_empty()) {
-    return invalid("native_environment must define a non-empty PATH");
+    return invalid(format!("{field} must define a non-empty PATH"));
   }
   for (name, value) in environment {
     if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
-      return invalid("native_environment contains an invalid name or NUL byte");
+      return invalid(format!("{field} contains an invalid name or NUL byte"));
     }
   }
   Ok(())

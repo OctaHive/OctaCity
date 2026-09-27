@@ -54,6 +54,12 @@ uses exact operating-system and architecture pairs. Pool deletion returns a
 conflict while any Build Configuration, Agent, Lease, or Ready Job references
 the Pool.
 
+Provider-neutral `host`, `isolation`, and `virtualization` Jobs require the
+explicit `execution_allowlist` admission mode. It combines the Agent platform
+allowlist with exact mode, host platform, target platform, and guarantee
+grants. The legacy `any` and `allowlist` modes remain valid for v1 placement
+but grant no provider-neutral execution target.
+
 ```json
 {
   "name": "linux-native",
@@ -69,6 +75,34 @@ the Pool.
     "concurrency_limit": 4,
     "fairness_policy": "priority_fifo",
     "static_capacity_limit": 8
+  }
+}
+```
+
+A direct Linux Host Pool uses an empty guarantee set and repeats the exact host
+platform in the enrollment and execution boundaries:
+
+```json
+{
+  "name": "trusted-linux-host",
+  "definition": {
+    "enabled": true,
+    "drain_state": "accepting",
+    "admission_policy": {
+      "mode": "execution_allowlist",
+      "platforms": [
+        {"operating_system": "linux", "architecture": "amd64"}
+      ],
+      "execution_targets": [{
+        "mode": "host",
+        "host_platform": {"os": "linux", "architecture": "amd64"},
+        "target_platform": {"os": "linux", "architecture": "amd64"},
+        "required_guarantees": []
+      }]
+    },
+    "concurrency_limit": 1,
+    "fairness_policy": "priority_fifo",
+    "static_capacity_limit": 1
   }
 }
 ```

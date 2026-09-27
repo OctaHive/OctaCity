@@ -191,12 +191,14 @@ Extract below `%ProgramFiles%\OctaCity`, create separate protected roots below
 before registering the virtual service account. Substitute additional
 workload-identity files if configured:
 
-The initial Windows package has no execution backend. Its bundled example
-already sets `enabled_runtime_modes = []`, `allow_native_execution = false`,
-`native_environment = {}`, and `oci_engines = []`. The agent therefore
-registers an empty runtime inventory and is
-intentionally unschedulable; this exercises installation and service lifecycle
-without silently running jobs outside the promised isolation boundary.
+The Windows package supports direct Host execution, but its bundled example is
+fail-closed: `allow_host_execution = false`, `enabled_runtime_modes = []`, and
+`oci_engines = []`. It therefore registers no execution route until an
+operator explicitly enables Host with a stable environment identity, a clean
+`PATH`, unrestricted-network admission, exact Project policy, and an exact
+Pool `execution_allowlist`. Host runs repository code as the service identity and
+makes no isolation claim; prefer a qualified isolation or virtualization mode
+for untrusted workloads.
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:ProgramData\OctaCity\config", "$env:ProgramData\OctaCity\work", "$env:ProgramData\OctaCity\state", "$env:ProgramData\OctaCity\cache" | Out-Null

@@ -171,7 +171,7 @@ pub use pool_cqrs::{
   AgentPlatformProjection, AgentPoolAdmissionPolicyProjection, AgentPoolCommandOutcome, AgentPoolDrainStateProjection,
   AgentPoolFairnessPolicyProjection, AgentPoolHandlers, AgentPoolPageProjection, AgentPoolProjection,
   CreateAgentPoolCommand, DeleteAgentPoolCommand, DeleteAgentPoolCommandOutcome, GetAgentPoolQuery,
-  ListAgentPoolsQuery, PublishAgentPoolVersionCommand,
+  ListAgentPoolsQuery, PoolExecutionModeProjection, PoolExecutionTargetProjection, PublishAgentPoolVersionCommand,
 };
 pub use project_cqrs::{
   CreateProjectCommand, DeleteProjectCommand, DeleteProjectCommandOutcome, GetProjectQuery, ListProjectsQuery,
@@ -222,6 +222,8 @@ pub const MAX_AGENT_POOL_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_AGENT_
 pub const MAX_AGENT_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_AGENT_PAGE_SIZE;
 /// Maximum exact platforms accepted by one Agent Pool admission allowlist.
 pub const MAX_AGENT_POOL_ADMISSION_PLATFORMS: usize = octacity_server_store::MAX_POOL_ADMISSION_PLATFORMS;
+/// Maximum provider-neutral execution targets in one Agent Pool allowlist.
+pub const MAX_AGENT_POOL_EXECUTION_TARGETS: usize = octacity_server_store::MAX_POOL_EXECUTION_TARGETS;
 /// Maximum statically configured Agent capacity of one Pool.
 pub const MAX_AGENT_POOL_STATIC_CAPACITY: u32 = octacity_server_store::MAX_POOL_STATIC_CAPACITY;
 /// Maximum number of Job events accepted by one management read query.

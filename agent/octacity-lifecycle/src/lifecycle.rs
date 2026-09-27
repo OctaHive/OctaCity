@@ -342,7 +342,7 @@ impl JobLifecycle {
       }
     }
 
-    let (status, final_usage, results, cleanup) = match job_result {
+    let (status, final_usage, execution, results, cleanup) = match job_result {
       Some(Ok(completion)) => {
         if !attempt_events.running {
           let result = attempt_events
@@ -361,6 +361,7 @@ impl JobLifecycle {
         }
         let mut status = runner_status(completion.runner().status);
         let usage = Some(resource_snapshot(&completion.runner().final_usage));
+        let execution = completion.execution().cloned();
         let mut results = completion.runner().results.clone();
         let mut frozen = None;
         if lifecycle_error.is_none() {
@@ -418,7 +419,7 @@ impl JobLifecycle {
         } else {
           Ok(())
         };
-        (status, usage, results, cleanup)
+        (status, usage, execution, results, cleanup)
       }
       Some(Err(failure)) => {
         let status = job_error_status(failure.error());
@@ -428,10 +429,11 @@ impl JobLifecycle {
         } else {
           Ok(())
         };
-        (status, None, Vec::new(), cleanup)
+        (status, None, None, Vec::new(), cleanup)
       }
       None => (
         JobCompletionStatus::InfrastructureFailed,
+        None,
         None,
         Vec::new(),
         panic_cleanup,
@@ -466,7 +468,7 @@ impl JobLifecycle {
       lease_outcome,
       draining,
     }
-    .complete(status, final_usage, results)
+    .complete(status, final_usage, execution, results)
     .await
   }
 }

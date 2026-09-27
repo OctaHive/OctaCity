@@ -1,21 +1,26 @@
 //! Job orchestration tests using backend-neutral fakes.
 
+mod execution_v2;
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use octacity_execution::{
-  ExecutionError, ExecutionExit, ExecutionIo, ExecutionPaths, ExecutionReader, ExecutionWriter, ResourceUsage,
+  ExecutionArchitecture, ExecutionError, ExecutionExit, ExecutionIo, ExecutionOs, ExecutionPaths, ExecutionPlatform,
+  ExecutionReader, ExecutionTarget, ExecutionWriter, OciIsolation as ExecutionOciIsolation, ResourceUsage,
   RunnerProgram, RunningExecution,
 };
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2, ExecutionMode, ExecutionSpec,
-  ExecutionTargetV2, JobSpecV2, NetworkPolicy, OctaSpec, OutputLimits, RuntimeSpec, RuntimeSpecV2, SourceSpec,
-  guarantees_for,
+  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2, ExecutionCapabilityV2,
+  ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, ExecutionSpec, ExecutionTargetV2, JobSpecV1, JobSpecV2,
+  NetworkPolicy, OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs,
+  PlatformSpec, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerCapabilities};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
+use super::execution_route::legacy_execution_target;
 use super::*;
 
 const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -73,15 +78,20 @@ impl ExecutionBackend for FakeBackend {
     _cancellation: CancellationToken,
   ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
     self.starts.fetch_add(1, Ordering::SeqCst);
-    assert_eq!(
+    assert!(matches!(
       request.root,
       ExecutionTarget::Native {
         platform: ExecutionPlatform {
           os: ExecutionOs::Linux,
           architecture: ExecutionArchitecture::Amd64,
         },
+      } | ExecutionTarget::Host {
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
       }
-    );
+    ));
     assert_eq!(request.network, NetworkAccess::Unrestricted);
     let exposed_identity = request
       .workload_identity
@@ -385,72 +395,6 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
   assert!(destroyed.load(Ordering::SeqCst));
   assert!(completion.workspace().join("Octafile.yml").is_file());
   completion.cleanup().await.unwrap();
-  assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
-}
-
-#[tokio::test]
-async fn reports_an_unqualified_v2_mode_without_falling_back_to_a_legacy_backend() {
-  let work_root = tempfile::tempdir().unwrap();
-  let source_calls = Arc::new(AtomicUsize::new(0));
-  let executor = executor(
-    work_root.path(),
-    Arc::new(FakeSource {
-      calls: source_calls.clone(),
-      fail: false,
-    }),
-    Some(Arc::new(FakeBackend {
-      starts: Arc::new(AtomicUsize::new(0)),
-      destroyed: Arc::new(AtomicBool::new(false)),
-    })),
-  );
-  let legacy = specification(RuntimeMode::Native);
-  let platform = legacy.runtime.platform();
-  let spec = JobSpecV2 {
-    protocol_version: EXECUTION_CONTRACT_V2,
-    job_id: legacy.job_id,
-    attempt: legacy.attempt,
-    issued_at: legacy.issued_at,
-    expires_at: legacy.expires_at,
-    source: legacy.source,
-    octa: legacy.octa,
-    execution: legacy.execution,
-    runtime: RuntimeSpecV2 {
-      target: ExecutionTargetV2 {
-        mode: ExecutionMode::Host,
-        host_platform: platform,
-        target_platform: platform,
-        required_guarantees: guarantees_for(ExecutionMode::Host),
-        immutable_image: None,
-      },
-      cpu_millis: legacy.runtime.cpu_millis,
-      memory_bytes: legacy.runtime.memory_bytes,
-      writable_disk_bytes: legacy.runtime.writable_disk_bytes,
-      timeout_seconds: legacy.runtime.timeout_seconds,
-      network: legacy.runtime.network,
-      workload_identity_profile: legacy.runtime.workload_identity_profile,
-    },
-    cache: legacy.cache,
-    outputs: legacy.outputs,
-  };
-  let (events, _receiver) = mpsc::channel(1);
-  let error = executor
-    .execute(
-      ExecuteJobRequest {
-        spec: spec.into(),
-        source_credentials: BTreeMap::new(),
-        cache_grant: None,
-      },
-      CancellationToken::new(),
-      &events,
-    )
-    .await
-    .unwrap_err();
-
-  assert!(matches!(
-    error.error(),
-    JobError::ExecutionModeUnavailable(ExecutionMode::Host)
-  ));
-  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
@@ -869,10 +813,13 @@ async fn rejects_cache_authority_without_local_support_and_cleans_the_job() {
 #[test]
 fn translates_every_runtime_target_variant() {
   let native = specification(RuntimeMode::Native);
-  assert!(matches!(execution_target(&native), ExecutionTarget::Native { .. }));
+  assert!(matches!(
+    legacy_execution_target(&native.runtime),
+    ExecutionTarget::Native { .. }
+  ));
 
   let mut oci = specification(RuntimeMode::Oci);
-  let root = execution_target(&oci);
+  let root = legacy_execution_target(&oci.runtime);
   assert!(matches!(
     root,
     ExecutionTarget::Oci {
@@ -888,7 +835,7 @@ fn translates_every_runtime_target_variant() {
     platform.architecture = PlatformArchitecture::Arm64;
     *isolation = ProtocolOciIsolation::Process;
   }
-  let root = execution_target(&oci);
+  let root = legacy_execution_target(&oci.runtime);
   assert!(matches!(
     root,
     ExecutionTarget::Oci {

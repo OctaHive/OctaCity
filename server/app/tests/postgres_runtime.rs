@@ -417,6 +417,7 @@ async fn finish_job(
     last_event_sequence: 1,
     status: JobCompletionStatus::Succeeded,
     final_usage: None,
+    execution: None,
     results: Vec::new(),
   };
   let _: octacity_protocol::CompleteLeaseResponse = protocol_post(

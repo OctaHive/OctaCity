@@ -195,6 +195,7 @@ async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
       lease: access,
       final_sequence: Some(EventSequence::new(1).unwrap()),
       kind: JobCompletionKind::Failed(JobFailureClass::Execution),
+      execution: None,
       completed_at: time(2_000),
     })
     .await
@@ -637,6 +638,7 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     lease: access,
     final_sequence: Some(EventSequence::new(1)?),
     kind: JobCompletionKind::Succeeded,
+    execution: None,
     completed_at: time(2_000),
   };
   let completed = store.complete_job(completion.clone()).await?;
@@ -728,6 +730,7 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
       lease: child_access,
       final_sequence: Some(EventSequence::new(1)?),
       kind: JobCompletionKind::Succeeded,
+      execution: None,
       completed_at: time(4_000),
     })
     .await?;

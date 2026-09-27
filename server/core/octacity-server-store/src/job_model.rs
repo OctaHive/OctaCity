@@ -526,6 +526,8 @@ pub struct JobCompletion {
   pub final_sequence: Option<EventSequence>,
   /// Terminal outcome.
   pub kind: JobCompletionKind,
+  /// Concrete provider evidence for a provider-neutral v2 execution.
+  pub execution: Option<octacity_protocol::ExecutionEvidenceV2>,
   /// Authoritative completion time.
   pub completed_at: Timestamp,
 }

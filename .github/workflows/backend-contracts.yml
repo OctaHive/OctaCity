@@ -14,6 +14,7 @@ on:
         options:
           - released-agent
           - all
+          - host
           - phase6
           - linux-native
           - linux-containerd
@@ -24,6 +25,80 @@ permissions:
   contents: read
 
 jobs:
+  released-host:
+    if: ${{ github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'host' }}
+    name: released host (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+          - platform: macos-arm64
+            runner: macos-14
+          - platform: windows-amd64
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        id: octa-source
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Set up Microsandbox guest agent for the Agent build
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux Agent build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Stage the pinned released Octa toolchain
+        uses: ./octacity/.github/actions/stage-octa-release
+        with:
+          version: ${{ steps.octa-source.outputs.version }}
+          revision: ${{ steps.octa-source.outputs.revision }}
+      - name: Package the released Agent candidate
+        id: release-candidate
+        uses: ./octacity/.github/actions/package-release-candidate
+        with:
+          octa-revision: ${{ steps.octa-source.outputs.revision }}
+          include-server: "false"
+      - name: Prepare private Host contract roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/octacity-host-contract"
+          mkdir -p "${root}/work" "${root}/evidence"
+          printf 'OCTACITY_CONTRACT_HOST_WORK_ROOT=%s\n' "${root}/work" >> "${GITHUB_ENV}"
+          printf 'OCTACITY_CONTRACT_HOST_ENVIRONMENT_ID=host-release-v1\n' >> "${GITHUB_ENV}"
+          printf 'OCTACITY_CONTRACT_WORKSPACE_BYTES=33554432\n' >> "${GITHUB_ENV}"
+          printf 'OCTACITY_RELEASE_HOST_EVIDENCE_DIR=%s\n' "${root}/evidence" >> "${GITHUB_ENV}"
+      - name: Run the real direct Host backend contract
+        run: >-
+          cargo test -p octacity-job --test backend_contract
+          host_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
+        working-directory: octacity
+      - name: Run the released Host Agent contract
+        env:
+          OCTACITY_RELEASE_AGENT_ROOT: ${{ steps.release-candidate.outputs.agent-root }}
+        run: >-
+          cargo test -p octacity-release-harness --test released_host_agent
+          released_host_agent_satisfies_the_portable_execution_contract -- --ignored --exact --nocapture
+        working-directory: octacity
+      - name: Retain released Host evidence
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-host-${{ matrix.platform }}
+          path: ${{ runner.temp }}/octacity-host-contract/evidence
+          if-no-files-found: error
+
   phase6-vault-minio:
     if: ${{ inputs.suite == 'all' || inputs.suite == 'phase6' }}
     runs-on: ubuntu-24.04

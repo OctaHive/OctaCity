@@ -9,8 +9,8 @@ use std::{fs, path::PathBuf};
 
 use octacity_coordinator::{CoordinatorError, LeaseMonitorOutcome};
 use octacity_protocol::{
-  COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, JobCompletionStatus, JobLifecycleState, LeaseAssignment,
-  LeaseFence, ResourceUsageSnapshot,
+  COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, ExecutionEvidenceV2, JobCompletionStatus, JobLifecycleState,
+  LeaseAssignment, LeaseFence, ResourceUsageSnapshot,
 };
 use tokio::{sync::watch, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -42,6 +42,7 @@ impl TerminalAttempt<'_> {
     mut self,
     status: JobCompletionStatus,
     final_usage: Option<ResourceUsageSnapshot>,
+    execution: Option<ExecutionEvidenceV2>,
     results: Vec<serde_json::Value>,
   ) -> Result<JobLifecycleOutcome, JobLifecycleError> {
     if self.lease_outcome.is_none() && self.monitor.is_finished() {
@@ -84,6 +85,7 @@ impl TerminalAttempt<'_> {
       last_event_sequence,
       status,
       final_usage,
+      execution,
       results,
     };
     if let Err(error) = persist_completion(&self.attempt_root, &completion) {

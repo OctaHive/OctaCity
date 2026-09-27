@@ -695,6 +695,7 @@ async fn appends_fenced_events_and_completes_with_stable_idempotency() {
     last_event_sequence: 1,
     status: JobCompletionStatus::Succeeded,
     final_usage: None,
+    execution: None,
     results: Vec::new(),
   };
   client

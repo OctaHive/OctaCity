@@ -328,6 +328,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("octacity-hosted-native/runner/cgroup.procs", provisioner)
         self.assertIn("bwrap-userns-restrict", provisioner)
         self.assertIn("apparmor_parser", provisioner)
+
         self.assertIn("probe_bubblewrap", provisioner)
         self.assertIn('provision_workspace "$root/work" "$workspace_bytes"', provisioner)
         self.assertNotIn('provision_filesystem "$root/work.ext4"', provisioner)
@@ -338,6 +339,17 @@ class PackageReleaseTests(unittest.TestCase):
             "Bubblewrap requires an explicit user namespace before it can disable nested user namespaces",
         )
         self.assertIn("Native work and cache roots must use separate filesystems", provisioner)
+
+    def test_released_host_gate_covers_every_supported_host_without_self_hosting(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        host = workflow.split("  released-host:\n", 1)[1].split("  phase6-vault-minio:\n", 1)[0]
+        for runner in ("ubuntu-24.04", "macos-14", "windows-2025"):
+            self.assertIn(f"runner: {runner}", host)
+        self.assertNotIn("self-hosted", host)
+        self.assertIn("uses: ./octacity/.github/actions/stage-octa-release", host)
+        self.assertIn("host_backend_satisfies_the_real_runner_contract", host)
+        self.assertIn("released_host_agent_satisfies_the_portable_execution_contract", host)
+        self.assertIn("include-server: \"false\"", host)
 
     def test_linux_oci_release_gates_use_disposable_github_runners(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")

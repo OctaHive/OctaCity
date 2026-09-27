@@ -15,6 +15,11 @@
 
 #![warn(missing_docs)]
 
+mod execution_route;
+
+pub use execution_route::ExecutionBackendRoute;
+use execution_route::{ExecutableJobSpec, ExecutableRuntime, SelectedBackend};
+
 use std::{
   collections::{BTreeMap, BTreeSet},
   fs,
@@ -24,14 +29,11 @@ use std::{
 };
 
 use octacity_cache_session::{CacheSessionContext, CacheSessionError, CacheSessionManager, PreparedCacheSession};
-use octacity_execution::{
-  ExecutionArchitecture, ExecutionBackend, ExecutionError, ExecutionOs, ExecutionPlatform, ExecutionTarget,
-  NetworkAccess, OciIsolation as ExecutionOciIsolation, StartExecution,
-};
+use octacity_execution::{ExecutionBackend, ExecutionError, NetworkAccess, StartExecution};
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
-  BeginCacheSessionResponse, ExecutionMode, JobSpecV1, NetworkPolicy, OciIsolation as ProtocolOciIsolation,
-  OutputLimits, PlatformArchitecture, PlatformOs, RuntimeMode, RuntimeTarget, VerifiedJobSpec,
+  BeginCacheSessionResponse, ExecutionCacheIdentityV2, ExecutionEvidenceV2, ExecutionMode, ExecutionProviderId,
+  NetworkPolicy, OutputLimits, RuntimeMode, VerifiedJobSpec,
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
@@ -63,6 +65,7 @@ pub struct JobCompletion {
   output_limits: octacity_protocol::OutputLimits,
   workspace: PathBuf,
   job_root: Option<PathBuf>,
+  execution: Option<ExecutionEvidenceV2>,
 }
 
 /// Failed execution plus any workspace that must be cleaned by the caller.
@@ -160,6 +163,12 @@ impl JobCompletion {
     &self.workspace
   }
 
+  /// Concrete provider evidence for a provider-neutral v2 execution.
+  #[must_use]
+  pub const fn execution(&self) -> Option<&ExecutionEvidenceV2> {
+    self.execution.as_ref()
+  }
+
   /// Permanently removes all filesystem state retained for this job.
   pub async fn cleanup(mut self) -> Result<(), JobError> {
     let Some(job_root) = self.job_root.as_ref() else {
@@ -216,6 +225,9 @@ pub enum JobError {
   #[error("workload identity failed: {0}")]
   /// Local workload identity selection, provisioning, or revocation failed.
   WorkloadIdentity(#[source] Box<WorkloadIdentityError>),
+  /// The selected execution mode cannot safely project workload identity.
+  #[error("execution mode '{0:?}' does not support workload identity projection")]
+  WorkloadIdentityUnsupported(ExecutionMode),
   /// Cache grant validation, private bearer provisioning, or revocation failed.
   #[error("cache session failed: {0}")]
   CacheSession(#[source] Box<CacheSessionError>),
@@ -286,6 +298,7 @@ pub struct JobExecutor {
   identity: Arc<dyn WorkloadIdentityProvider>,
   cache: Option<Arc<CacheSessionManager>>,
   backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>>,
+  execution_backends: BTreeMap<ExecutionProviderId, ExecutionBackendRoute>,
   work_root: PathBuf,
   max_workspace_bytes: u64,
   allow_unrestricted_network: bool,
@@ -344,6 +357,7 @@ impl JobExecutor {
       identity,
       cache: None,
       backends,
+      execution_backends: BTreeMap::new(),
       work_root,
       max_workspace_bytes: config.max_workspace_bytes,
       allow_unrestricted_network: config.allow_unrestricted_network,
@@ -360,6 +374,22 @@ impl JobExecutor {
     self
   }
 
+  /// Enables explicitly configured provider-neutral execution routes.
+  pub fn with_execution_backends(
+    mut self,
+    routes: impl IntoIterator<Item = ExecutionBackendRoute>,
+  ) -> Result<Self, JobError> {
+    for route in routes {
+      let provider = route.capability.provider.clone();
+      if self.execution_backends.insert(provider.clone(), route).is_some() {
+        return Err(JobError::Invalid(format!(
+          "execution provider '{provider}' is configured more than once"
+        )));
+      }
+    }
+    Ok(self)
+  }
+
   /// Runs one verified job and retains its workspace for output processing.
   /// The caller must finish by invoking [`JobCompletion::cleanup`].
   pub async fn execute(
@@ -368,10 +398,7 @@ impl JobExecutor {
     cancellation: CancellationToken,
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
-    let spec = match request.spec {
-      VerifiedJobSpec::V1(spec) => spec,
-      VerifiedJobSpec::V2(spec) => return Err(JobError::ExecutionModeUnavailable(spec.runtime.target.mode).into()),
-    };
+    let spec = ExecutableJobSpec::from(request.spec);
     if spec.cache.is_some() != request.cache_grant.is_some() {
       return Err(
         JobError::Invalid("signed cache policy and fenced cache grant must be present together".to_owned()).into(),
@@ -384,14 +411,19 @@ impl JobExecutor {
       .runner
       .verify(&spec.octa)
       .map_err(|error| JobError::RunnerInstallation(Box::new(error)))?;
-    let backend = self
-      .backends
-      .get(&spec.runtime.mode())
-      .ok_or(JobError::RuntimeUnavailable(spec.runtime.mode()))?;
-    if spec.runtime.writable_disk_bytes > self.max_workspace_bytes {
+    let selected = self.select_backend(&spec.runtime)?;
+    if spec.runtime.workload_identity_profile().is_some()
+      && selected
+        .evidence
+        .as_ref()
+        .is_some_and(|evidence| evidence.target.mode == ExecutionMode::Host)
+    {
+      return Err(JobError::WorkloadIdentityUnsupported(ExecutionMode::Host).into());
+    }
+    if spec.runtime.writable_disk_bytes() > self.max_workspace_bytes {
       return Err(
         JobError::WorkspaceLimit {
-          requested: spec.runtime.writable_disk_bytes,
+          requested: spec.runtime.writable_disk_bytes(),
           maximum: self.max_workspace_bytes,
         }
         .into(),
@@ -400,8 +432,8 @@ impl JobExecutor {
     if !spec.outputs.is_within(&self.max_output_limits) {
       return Err(JobError::OutputLimit.into());
     }
-    let network = self.authorize_network(&spec.runtime.network)?;
-    if let Some(profile) = &spec.runtime.workload_identity_profile
+    let network = self.authorize_network(spec.runtime.network())?;
+    if let Some(profile) = spec.runtime.workload_identity_profile()
       && !self.identity.supports(profile)
     {
       return Err(JobError::WorkloadIdentity(Box::new(WorkloadIdentityError::UnknownProfile(profile.clone()))).into());
@@ -410,14 +442,14 @@ impl JobExecutor {
       return Err(JobError::Cancelled.into());
     }
 
-    let execution_id = execution_id(&spec);
+    let execution_id = execution_id(&spec.job_id, spec.attempt);
     let job_root = self.work_root.join(&execution_id);
     create_private_directory(&job_root)?;
     let result = async {
       let workspace = job_root.join("workspace");
       create_private_directory(&workspace)?;
-      let deadline = Instant::now() + Duration::from_secs(spec.runtime.timeout_seconds);
-      info!(job_id = %spec.job_id, attempt = spec.attempt, runtime = ?spec.runtime.mode(), "starting job");
+      let deadline = Instant::now() + Duration::from_secs(spec.runtime.timeout_seconds());
+      info!(job_id = %spec.job_id, attempt = spec.attempt, runtime = ?spec.runtime.label(), "starting job");
 
       let source = self
         .source
@@ -430,7 +462,7 @@ impl JobExecutor {
             reference: spec.source.reference.clone(),
             parameters: spec.source.parameters.clone(),
             credential_files: request.source_credentials,
-            max_workspace_bytes: spec.runtime.writable_disk_bytes,
+            max_workspace_bytes: spec.runtime.writable_disk_bytes(),
           },
           remaining(deadline)?,
           self.cancellation_grace,
@@ -444,7 +476,7 @@ impl JobExecutor {
       }
       let data_dir = workspace.join(".octacity");
       create_private_directory(&data_dir)?;
-      let identity = match &spec.runtime.workload_identity_profile {
+      let identity = match spec.runtime.workload_identity_profile() {
         Some(profile) => Some(
           self
             .identity
@@ -463,8 +495,8 @@ impl JobExecutor {
             .prepare(
               policy,
               grant,
-              &spec.runtime.target,
-              &spec.runtime.network,
+              spec.runtime.cache_identity(selected.cache_identity.as_ref())?,
+              spec.runtime.network(),
               &job_root,
               CacheSessionContext {
                 now: unix_now()?,
@@ -490,11 +522,11 @@ impl JobExecutor {
           .await;
         }
       };
-      let root = execution_target(&spec);
+      let root = spec.runtime.execution_target()?;
       let operation = async {
         supervise(
           &self.runner,
-          backend.as_ref(),
+          selected.backend.as_ref(),
           RunnerJobRequest {
             request_id: execution_id.clone(),
             octa: spec.octa.clone(),
@@ -505,9 +537,9 @@ impl JobExecutor {
               data_dir,
               workload_identity: identity.as_ref().map(|lease| lease.path().to_owned()),
               cache: cache.as_ref().map(|session| session.execution().clone()),
-              cpu_millis: spec.runtime.cpu_millis,
-              memory_bytes: spec.runtime.memory_bytes,
-              writable_disk_bytes: spec.runtime.writable_disk_bytes,
+              cpu_millis: spec.runtime.cpu_millis(),
+              memory_bytes: spec.runtime.memory_bytes(),
+              writable_disk_bytes: spec.runtime.writable_disk_bytes(),
               max_duration: remaining(deadline)?,
               root,
               network,
@@ -544,6 +576,7 @@ impl JobExecutor {
         output_limits: spec.outputs,
         workspace,
         job_root: Some(job_root),
+        execution: selected.evidence,
       }),
       Err(operation) => Err(JobFailure::with_workspace(operation, job_root)),
     }
@@ -557,6 +590,12 @@ impl JobExecutor {
       if let Err(error) = backend.cleanup_orphans().await {
         warn!(backend = ?kind, error = %error, "failed to clean up backend orphans");
         failures.push(format!("{kind:?} backend: {error}"));
+      }
+    }
+    for (provider, route) in &self.execution_backends {
+      if let Err(error) = route.backend.cleanup_orphans().await {
+        warn!(provider = %provider, error = %error, "failed to clean up execution-provider orphans");
+        failures.push(format!("{provider} provider: {error}"));
       }
     }
 
@@ -611,6 +650,42 @@ impl JobExecutor {
       }
     }
   }
+
+  fn select_backend(&self, runtime: &ExecutableRuntime) -> Result<SelectedBackend, JobError> {
+    match runtime {
+      ExecutableRuntime::Legacy(runtime) => {
+        let backend = self
+          .backends
+          .get(&runtime.mode())
+          .cloned()
+          .ok_or(JobError::RuntimeUnavailable(runtime.mode()))?;
+        Ok(SelectedBackend {
+          backend,
+          evidence: None,
+          cache_identity: None,
+        })
+      }
+      ExecutableRuntime::Current(runtime) => {
+        let route = self
+          .execution_backends
+          .values()
+          .find(|route| route.capability.satisfies(&runtime.target))
+          .ok_or(JobError::ExecutionModeUnavailable(runtime.target.mode))?;
+        let evidence = ExecutionEvidenceV2 {
+          provider: route.capability.provider.clone(),
+          target: runtime.target.clone(),
+        };
+        Ok(SelectedBackend {
+          backend: route.backend.clone(),
+          cache_identity: Some(ExecutionCacheIdentityV2 {
+            execution: evidence.clone(),
+            environment: route.environment.clone(),
+          }),
+          evidence: Some(evidence),
+        })
+      }
+    }
+  }
 }
 
 /// Makes cache-token removal authoritative without hiding execution failure.
@@ -660,51 +735,17 @@ async fn finish_identity<T>(
   }
 }
 
-fn execution_target(spec: &JobSpecV1) -> ExecutionTarget {
-  match &spec.runtime.target {
-    RuntimeTarget::Native { platform } => ExecutionTarget::Native {
-      platform: execution_platform(*platform),
-    },
-    RuntimeTarget::Oci {
-      platform,
-      isolation,
-      image,
-    } => ExecutionTarget::Oci {
-      reference: image.clone(),
-      platform: execution_platform(*platform),
-      isolation: match isolation {
-        ProtocolOciIsolation::Process => ExecutionOciIsolation::Process,
-        ProtocolOciIsolation::Hypervisor => ExecutionOciIsolation::Hypervisor,
-      },
-    },
-  }
-}
-
-fn execution_platform(platform: octacity_protocol::PlatformSpec) -> ExecutionPlatform {
-  ExecutionPlatform {
-    os: match platform.os {
-      PlatformOs::Linux => ExecutionOs::Linux,
-      PlatformOs::Windows => ExecutionOs::Windows,
-      PlatformOs::Macos => ExecutionOs::Macos,
-    },
-    architecture: match platform.architecture {
-      PlatformArchitecture::Amd64 => ExecutionArchitecture::Amd64,
-      PlatformArchitecture::Arm64 => ExecutionArchitecture::Arm64,
-    },
-  }
-}
-
 fn remaining(deadline: Instant) -> Result<Duration, JobError> {
   deadline
     .checked_duration_since(Instant::now())
     .ok_or(JobError::TimedOut)
 }
 
-fn execution_id(spec: &JobSpecV1) -> String {
+fn execution_id(job_id: &str, attempt: u32) -> String {
   let mut digest = Sha256::new();
-  digest.update(spec.job_id.as_bytes());
+  digest.update(job_id.as_bytes());
   digest.update([0]);
-  digest.update(spec.attempt.to_be_bytes());
+  digest.update(attempt.to_be_bytes());
   format!("job-{:x}", digest.finalize())
 }
 

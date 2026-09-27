@@ -1,15 +1,16 @@
 use std::collections::BTreeSet;
 
+use octacity_protocol::{AgentInventory, EXECUTION_CONTRACT_V2, ExecutionEvidenceV2};
 use octacity_server_domain::{EntityKind, JobId, PoolId};
-use octacity_server_job::{JobFailureClass, JobSpecSigner};
+use octacity_server_job::{JobFailureClass, JobRuntimePolicy, JobSpecSigner, JobSpecTemplate};
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
   CompletionDisposition, EventSequence, JobCompletion, JobCompletionKind, MutationDisposition, StoreError,
-  StoreOperation, complete_job_state,
+  StoreInputError, StoreOperation, complete_job_state,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
 use uuid::Uuid;
 
 use crate::{
@@ -34,6 +35,7 @@ pub(crate) async fn execute(
     "final_sequence": request.final_sequence.map(EventSequence::get),
     "fence": request.lease.fence.expose(),
     "failure_class": failure_class(request.kind),
+    "execution": request.execution,
     "kind": completion_kind(request.kind),
     "lease_id": request.lease.lease_id,
     "registration_epoch": request.lease.registration_epoch.get(),
@@ -59,12 +61,13 @@ pub(crate) async fn execute(
   if lease.attempt_id != attempt_id {
     return Err(StoreError::Unavailable);
   }
+  require_valid_execution_evidence(&mut transaction, &lease, &request).await?;
   let required = request.final_sequence.map_or(0, EventSequence::get);
   let required_db = number(required, StoreOperation::CompleteJob)?;
   let kind = completion_kind(request.kind);
 
   let existing: Option<CompletionRow> = sqlx::query_as(
-    "SELECT completion_id, lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, build_state \
+    "SELECT completion_id, lease_id, final_sequence, kind, failure_class, execution, ready_job_ids, skipped_job_ids, attempt_state, build_state \
      FROM job_completions WHERE job_id = $1 FOR UPDATE",
   )
   .bind(lease.job_id)
@@ -147,6 +150,68 @@ pub(crate) async fn execute(
   )
   .await?;
   Ok(outcome)
+}
+
+#[derive(FromRow)]
+struct CompletionExecutionContext {
+  job_spec_template: Json<JobSpecTemplate>,
+  inventory: Json<AgentInventory>,
+  execution_contract_version: i16,
+}
+
+async fn require_valid_execution_evidence(
+  transaction: &mut Transaction<'_, Postgres>,
+  lease: &lease::LeaseRow,
+  request: &JobCompletion,
+) -> Result<(), StoreError> {
+  let context: CompletionExecutionContext = sqlx::query_as(
+    "SELECT job.job_spec_template, registration.inventory, registration.execution_contract_version \
+     FROM jobs AS job \
+     JOIN agent_registrations AS registration ON registration.id = $2 \
+     WHERE job.id = $1",
+  )
+  .bind(lease.job_id)
+  .bind(lease.registration_id)
+  .fetch_one(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  let runtime = context.job_spec_template.0.placement_policy().runtime;
+  if execution_evidence_is_valid(
+    request.kind,
+    runtime,
+    &context.inventory.0,
+    context.execution_contract_version,
+    request.execution.as_ref(),
+  ) {
+    Ok(())
+  } else {
+    Err(StoreError::InvalidInput {
+      operation: StoreOperation::CompleteJob,
+      source: StoreInputError::InvalidExecutionEvidence,
+    })
+  }
+}
+
+fn execution_evidence_is_valid(
+  kind: JobCompletionKind,
+  runtime: &JobRuntimePolicy,
+  inventory: &AgentInventory,
+  execution_contract_version: i16,
+  evidence: Option<&ExecutionEvidenceV2>,
+) -> bool {
+  match (runtime, evidence) {
+    (JobRuntimePolicy::Legacy(_), None) => true,
+    (JobRuntimePolicy::Legacy(_), Some(_)) => false,
+    (JobRuntimePolicy::Current(_), None) => kind != JobCompletionKind::Succeeded,
+    (JobRuntimePolicy::Current(runtime), Some(evidence)) => {
+      execution_contract_version == i16::try_from(EXECUTION_CONTRACT_V2).expect("v2 fits PostgreSQL SMALLINT")
+        && evidence.target == runtime.target
+        && inventory
+          .executions
+          .iter()
+          .any(|capability| capability.provider == evidence.provider && capability.satisfies(&evidence.target))
+    }
+  }
 }
 
 async fn append_orchestrator_fact(
@@ -293,9 +358,9 @@ async fn persist_completion(
 ) -> Result<(), StoreError> {
   sqlx::query(
     "INSERT INTO job_completions \
-       (job_id, completion_id, lease_id, final_sequence, kind, failure_class, ready_job_ids, skipped_job_ids, attempt_state, \
-        build_state, completed_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision / 1000.0))",
+       (job_id, completion_id, lease_id, final_sequence, kind, failure_class, execution, ready_job_ids, skipped_job_ids, \
+        attempt_state, build_state, completed_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000.0))",
   )
   .bind(write.job_id)
   .bind(write.request.completion_id.as_str())
@@ -303,6 +368,7 @@ async fn persist_completion(
   .bind(write.final_sequence)
   .bind(write.kind)
   .bind(failure_class(write.request.kind))
+  .bind(write.request.execution.as_ref().map(Json))
   .bind(write.ready)
   .bind(write.skipped)
   .bind(attempt_state(write.attempt_state))
@@ -321,6 +387,7 @@ struct CompletionRow {
   final_sequence: i64,
   kind: String,
   failure_class: Option<String>,
+  execution: Option<Json<ExecutionEvidenceV2>>,
   ready_job_ids: Vec<Uuid>,
   skipped_job_ids: Vec<Uuid>,
   attempt_state: String,
@@ -334,6 +401,7 @@ impl CompletionRow {
       && self.final_sequence == final_sequence
       && self.kind == kind
       && self.failure_class.as_deref() == failure_class(request.kind)
+      && self.execution.as_ref().map(|execution| &execution.0) == request.execution.as_ref()
   }
 }
 
@@ -407,6 +475,7 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
       "final_sequence": request.final_sequence.map(EventSequence::get),
       "kind": completion_kind(request.kind),
       "failure_class": failure_class(request.kind),
+      "execution": request.execution,
       "lease_id": request.lease.lease_id,
       "completion_id": request.completion_id,
       "ready_job_count": outcome.ready_jobs.len(),
@@ -418,6 +487,7 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
       "job_id": outcome.job_id,
       "kind": completion_kind(request.kind),
       "failure_class": failure_class(request.kind),
+      "execution": request.execution,
       "ready_jobs": outcome.ready_jobs,
       "skipped_jobs": outcome.skipped_jobs,
       "attempt_state": attempt_state(outcome.attempt_state),
@@ -449,5 +519,88 @@ fn parse_failure_class(value: Option<&str>) -> Result<Option<JobFailureClass>, S
     Some("execution") => Ok(Some(JobFailureClass::Execution)),
     Some("infrastructure") => Ok(Some(JobFailureClass::Infrastructure)),
     Some(_) => Err(StoreError::Unavailable),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::collections::BTreeSet;
+
+  use octacity_protocol::{
+    ExecutionCapabilityV2, ExecutionContractRange, ExecutionMode, ExecutionProviderId, ExecutionTargetV2,
+    NetworkPolicy, PlatformArchitecture, PlatformOs, PlatformSpec, RuntimeSpecV2, guarantees_for,
+  };
+  use octacity_server_domain::AgentId;
+
+  use super::*;
+
+  #[test]
+  fn completion_evidence_must_match_signed_intent_and_registered_provider() {
+    let platform = PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    };
+    let provider = ExecutionProviderId::new("host").unwrap();
+    let target = ExecutionTargetV2 {
+      mode: ExecutionMode::Host,
+      host_platform: platform,
+      target_platform: platform,
+      required_guarantees: guarantees_for(ExecutionMode::Host),
+      immutable_image: None,
+    };
+    let runtime = JobRuntimePolicy::Current(RuntimeSpecV2 {
+      target: target.clone(),
+      cpu_millis: 1,
+      memory_bytes: 1,
+      writable_disk_bytes: 1,
+      timeout_seconds: 1,
+      network: NetworkPolicy::Unrestricted,
+      workload_identity_profile: None,
+    });
+    let evidence = ExecutionEvidenceV2 {
+      provider: provider.clone(),
+      target,
+    };
+    let agent_id = AgentId::from_uuid(uuid::Uuid::from_u128(1)).unwrap();
+    let mut inventory = octacity_server_store::testing::compatible_inventory(agent_id);
+    inventory.execution_contract = ExecutionContractRange { min: 1, max: 2 };
+    inventory.executions = vec![ExecutionCapabilityV2 {
+      provider,
+      mode: ExecutionMode::Host,
+      host_platform: platform,
+      target_platform: platform,
+      guarantees: BTreeSet::new(),
+      immutable_images: false,
+    }];
+
+    assert!(execution_evidence_is_valid(
+      JobCompletionKind::Succeeded,
+      &runtime,
+      &inventory,
+      2,
+      Some(&evidence),
+    ));
+    assert!(!execution_evidence_is_valid(
+      JobCompletionKind::Succeeded,
+      &runtime,
+      &inventory,
+      2,
+      None,
+    ));
+    assert!(execution_evidence_is_valid(
+      JobCompletionKind::Failed(JobFailureClass::Infrastructure),
+      &runtime,
+      &inventory,
+      2,
+      None,
+    ));
+    inventory.executions.clear();
+    assert!(!execution_evidence_is_valid(
+      JobCompletionKind::Succeeded,
+      &runtime,
+      &inventory,
+      2,
+      Some(&evidence),
+    ));
   }
 }

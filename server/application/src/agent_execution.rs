@@ -221,6 +221,7 @@ where
             lease: lease.access,
             final_sequence: Some(final_sequence),
             kind,
+            execution: input.request.execution,
             completed_at,
           })
           .await?;
@@ -345,8 +346,9 @@ mod tests {
   use base64::{Engine as _, engine::general_purpose::STANDARD};
   use octacity_artifact_store::{LogChunkStoreError, LogChunkWrite};
   use octacity_protocol::{
-    AgentLifecycleEvent, AttemptEventEnvelope, AttemptEventKind, COORDINATOR_PROTOCOL_VERSION, JobLifecycleState,
-    LeaseFence as ProtocolLeaseFence, RunnerEventPayload,
+    AgentLifecycleEvent, AttemptEventEnvelope, AttemptEventKind, COORDINATOR_PROTOCOL_VERSION, ExecutionEvidenceV2,
+    ExecutionMode, ExecutionProviderId, ExecutionTargetV2, JobLifecycleState, LeaseFence as ProtocolLeaseFence,
+    PlatformArchitecture, PlatformOs, PlatformSpec, RunnerEventPayload, guarantees_for,
   };
   use octacity_server_domain::{AgentId, JobId, LeaseId, LogChunkId, PoolId};
   use octacity_server_orchestrator::{AttemptState, BuildState};
@@ -624,6 +626,15 @@ mod tests {
       JobCompletionKind::Failed(JobFailureClass::Execution)
     );
     assert_eq!(completions[0].final_sequence.unwrap().get(), 1);
+    assert_eq!(
+      completions[0]
+        .execution
+        .as_ref()
+        .expect("provider evidence must reach the durable completion")
+        .provider
+        .as_str(),
+      "host"
+    );
     assert_eq!(*registrations.operations.lock().unwrap(), [AgentOperation::Complete]);
   }
 
@@ -698,10 +709,28 @@ mod tests {
         last_event_sequence: 1,
         status: JobCompletionStatus::TimedOut,
         final_usage: None,
+        execution: Some(host_execution_evidence()),
         results: Vec::new(),
       },
       credential: credential(),
       observed_at_unix_ms: 2_000,
+    }
+  }
+
+  fn host_execution_evidence() -> ExecutionEvidenceV2 {
+    let platform = PlatformSpec {
+      os: PlatformOs::Linux,
+      architecture: PlatformArchitecture::Amd64,
+    };
+    ExecutionEvidenceV2 {
+      provider: ExecutionProviderId::new("host").unwrap(),
+      target: ExecutionTargetV2 {
+        mode: ExecutionMode::Host,
+        host_platform: platform,
+        target_platform: platform,
+        required_guarantees: guarantees_for(ExecutionMode::Host),
+        immutable_image: None,
+      },
     }
   }
 

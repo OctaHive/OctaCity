@@ -24,6 +24,7 @@ tracing.workspace = true
 [dev-dependencies]
 async-trait.workspace = true
 octacity-execution-containerd = { path = "../octacity-execution-containerd" }
+octacity-execution-host = { path = "../octacity-execution-host" }
 octacity-execution-microsandbox = { path = "../octacity-execution-microsandbox" }
 octacity-execution-native = { path = "../octacity-execution-native" }
 octacity-execution-oci = { path = "../octacity-execution-oci" }

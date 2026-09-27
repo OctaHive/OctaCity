@@ -17,15 +17,17 @@ use octacity_coordinator::{
 };
 use octacity_execution::{ExecutionArchitecture, ExecutionBackend, ExecutionOs, ExecutionPlatform, OciIsolation};
 use octacity_execution_containerd::{CONTAINERD_ENGINE_NAME, ContainerdEngine, ContainerdEngineConfig};
+use octacity_execution_host::{HOST_BACKEND_NAME, HostBackend, HostBackendConfig};
 use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NATIVE_BACKEND_NAME, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciCapability, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_inventory::{AgentInventoryConfig, HostMonitor, build_inventory, host_platform};
-use octacity_job::{JobExecutor, JobExecutorConfig};
+use octacity_job::{ExecutionBackendRoute, JobExecutor, JobExecutorConfig};
 use octacity_output::{OutputPublisher, PresignedOutputPublisher, PresignedOutputPublisherConfig};
 use octacity_protocol::{
-  AgentInventory, BackendHealth, BackendHealthStatus, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode,
+  AgentInventory, BackendHealth, BackendHealthStatus, ExecutionCapabilityV2, ExecutionMode, ExecutionProviderId,
+  PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode, guarantees_for,
 };
 use octacity_runner::{RunnerInstallation, RunnerSupervisionPolicy};
 use octacity_source::{SourceMaterializer, SourcePluginRegistry};
@@ -53,8 +55,13 @@ impl Components {
     let runner = RunnerInstallation::load(&validated.config.octa_release_root)?;
     let source_plugins = Arc::new(SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?);
     let source_plugin_count = source_plugins.len();
-    let (executor, runtimes, backend_health, cache) =
-      build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
+    let ExecutorAssembly {
+      executor,
+      runtimes,
+      executions,
+      backend_health,
+      cache,
+    } = build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
     let workspace_capacity_reservation = workspace_capacity_reservation(&runtimes);
     let virtualization_available = workspace_capacity_reservation == WorkspaceCapacityReservation::Required;
     let host = HostMonitor::new(
@@ -62,7 +69,7 @@ impl Components {
       validated.config.state_root.clone(),
       virtualization_available,
     )?;
-    let inventory = build_inventory(
+    let mut inventory = build_inventory(
       AgentInventoryConfig {
         agent_id: validated.config.agent_id.clone(),
         agent_version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -74,6 +81,8 @@ impl Components {
       &source_plugins,
       host.capacity().clone(),
     )?;
+    inventory.executions = executions;
+    inventory.validate()?;
     let retry = RetryPolicy {
       max_attempts: validated.config.retry_max_attempts,
       initial_delay: Duration::from_millis(validated.config.retry_initial_delay_milliseconds),
@@ -115,21 +124,22 @@ impl Components {
   }
 }
 
+struct ExecutorAssembly {
+  executor: JobExecutor,
+  runtimes: Vec<RuntimeCapability>,
+  executions: Vec<ExecutionCapabilityV2>,
+  backend_health: Vec<BackendHealth>,
+  cache: Arc<CacheSessionManager>,
+}
+
 async fn build_executor(
   validated: &ValidatedConfig,
   runner: RunnerInstallation,
   source_plugins: Arc<SourcePluginRegistry>,
-) -> Result<
-  (
-    JobExecutor,
-    Vec<RuntimeCapability>,
-    Vec<BackendHealth>,
-    Arc<CacheSessionManager>,
-  ),
-  Box<dyn std::error::Error>,
-> {
+) -> Result<ExecutorAssembly, Box<dyn std::error::Error>> {
   #[cfg(unix)]
   if validated.runtimes.iter().any(|runtime| match runtime {
+    ValidatedRuntimeConfig::Host { .. } => false,
     ValidatedRuntimeConfig::Native { .. } => true,
     ValidatedRuntimeConfig::Oci { engines } => engines
       .iter()
@@ -145,10 +155,40 @@ async fn build_executor(
     octacity_execution::validate_process_cache_capacity_root(&validated.config.cache.root, aggregate_max_bytes)?;
   }
   let mut backends: BTreeMap<RuntimeMode, Arc<dyn ExecutionBackend>> = BTreeMap::new();
+  let mut execution_routes = Vec::new();
   let mut runtime_capabilities = Vec::new();
+  let mut execution_capabilities = Vec::new();
   let mut backend_health = Vec::new();
   for runtime in &validated.runtimes {
-    let (mode, backend): (RuntimeMode, Arc<dyn ExecutionBackend>) = match runtime {
+    match runtime {
+      ValidatedRuntimeConfig::Host {
+        environment_identity,
+        environment,
+      } => {
+        let backend = Arc::new(HostBackend::new(HostBackendConfig {
+          work_root: validated.config.work_root.clone(),
+          runner_platform: runner.capabilities.platform.clone(),
+          environment: environment.clone(),
+          cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+          max_accounted_workspace_entries: validated.config.host_accounting_max_entries,
+        })?);
+        let platform = host_platform()?;
+        let capability = ExecutionCapabilityV2 {
+          provider: ExecutionProviderId::new(HOST_BACKEND_NAME).map_err(octacity_execution::ExecutionError::Invalid)?,
+          mode: ExecutionMode::Host,
+          host_platform: platform,
+          target_platform: platform,
+          guarantees: guarantees_for(ExecutionMode::Host),
+          immutable_images: false,
+        };
+        execution_routes.push(ExecutionBackendRoute::new(
+          capability.clone(),
+          environment_identity.clone(),
+          backend,
+        )?);
+        backend_health.push(ready_execution(&capability));
+        execution_capabilities.push(capability);
+      }
       ValidatedRuntimeConfig::Native {
         cgroup_root,
         bubblewrap,
@@ -174,7 +214,7 @@ async fn build_executor(
           isolation: None,
         });
         backend_health.push(ready_backend(NATIVE_BACKEND_NAME));
-        (RuntimeMode::Native, backend)
+        backends.insert(RuntimeMode::Native, backend);
       }
       ValidatedRuntimeConfig::Oci { engines: configured } => {
         let mut engines: Vec<Arc<dyn OciEngine>> = Vec::new();
@@ -233,10 +273,9 @@ async fn build_executor(
           backend_health.push(ready_backend(name));
           engines.push(engine);
         }
-        (RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?))
+        backends.insert(RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?));
       }
-    };
-    backends.insert(mode, backend);
+    }
   }
   let source: Arc<dyn SourceMaterializer> = source_plugins;
   let identity = Arc::new(FileWorkloadIdentityProvider::new(
@@ -274,8 +313,15 @@ async fn build_executor(
       },
     },
   )?
+  .with_execution_backends(execution_routes)?
   .with_cache(cache.clone());
-  Ok((executor, runtime_capabilities, backend_health, cache))
+  Ok(ExecutorAssembly {
+    executor,
+    runtimes: runtime_capabilities,
+    executions: execution_capabilities,
+    backend_health,
+    cache,
+  })
 }
 
 fn advertised_oci_capability(backend: &str, capability: OciCapability) -> RuntimeCapability {
@@ -308,6 +354,15 @@ fn ready_backend(backend: &str) -> BackendHealth {
   BackendHealth {
     backend: backend.to_owned(),
     execution: None,
+    status: BackendHealthStatus::Ready,
+    message: None,
+  }
+}
+
+fn ready_execution(capability: &ExecutionCapabilityV2) -> BackendHealth {
+  BackendHealth {
+    backend: capability.provider.to_string(),
+    execution: Some(capability.clone()),
     status: BackendHealthStatus::Ready,
     message: None,
   }

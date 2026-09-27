@@ -99,13 +99,15 @@ OctaCity Agent
     |- inventories the installed Octa release
     |- verifies signed JobSpec and lease fencing
     |- invokes a trusted source plugin for an exact revision
-    |- selects Native or OCI execution without fallback
+    |- selects a qualified v1 or v2 execution route without fallback
     |- supervises the octa-runner protocol
     |- spools and forwards events
     `- validates and uploads artifacts/reports
             |
             v
       ExecutionBackend
+          |- HostBackend
+          |   `- direct process execution with no isolation claim
           |- NativeBackend
           |   `- platform-native process sandbox and resource controls
           `- OciBackend
@@ -121,10 +123,11 @@ OctaCity Agent
 The host agent must never execute an arbitrary command taken from the
 repository or `JobSpec`. On the host it may run only configured agent
 components, operator-installed source plugins, the selected execution backend,
-and the verified `octa-runner` when native execution is explicitly allowed.
+and the verified `octa-runner` when Native or Host execution is explicitly allowed.
 Octa tasks and plugins run wherever the selected execution backend places the
-runner. Untrusted jobs must require OCI `hypervisor` isolation or a disposable
-agent machine; OCI `process` and Native remain lower trust tiers.
+runner. Untrusted jobs must require a qualified isolation/virtualization route
+or a disposable agent machine. Host is for trusted workloads only; OCI
+`process` and legacy Native remain lower trust tiers.
 
 ## Provisioning and execution modes
 
@@ -191,7 +194,8 @@ macOS OCI guest mode.
 The scheduler uses the execution-contract revision persisted at registration.
 For v1 it matches the signed guest platform, architecture, runtime mode, OCI
 isolation tier, and backend capabilities. For v2 it matches the exact signed
-host/target platforms, mode, guarantees, and Project execution-target policy,
+host/target platforms, mode, guarantees, and both Project and Pool
+execution-target policy,
 then selects a qualified provider as runtime evidence. A request can never fall
 back to a weaker isolation boundary or to legacy Native.
 
@@ -416,10 +420,8 @@ execution
   secrets profile path
 
 runtime
-  mode: native or oci
-  guest platform and architecture
-  isolation: process or hypervisor when OCI is selected
-  OCI image by immutable digest when OCI is selected
+  v1: native or oci, guest platform, OCI isolation, and immutable OCI image
+  v2: host, isolation, or virtualization plus exact host/target platforms and guarantees
   CPU and memory limits
   writable disk limit
   wall-clock timeout
@@ -493,6 +495,10 @@ native_linux_cgroup_root
 native_linux_bubblewrap_executable
 native_linux_readonly_paths
 native_linux_pids_limit
+allow_host_execution
+host_environment_identity
+host_environment
+host_accounting_max_entries
 oci_engines
 allow_unrestricted_network
 allowed_network_hosts
@@ -543,6 +549,13 @@ source-plugin registry, and fails before registration if a security
 requirement is not met. Enabling `NativeBackend` requires the explicit
 `allow_native_execution = true` setting; its presence is never inferred from a
 missing or unavailable sandbox.
+
+Enabling `HostBackend` independently requires `allow_host_execution = true`, a
+stable environment identity, a complete clean environment containing `PATH`,
+positive `host_accounting_max_entries`, and
+`allow_unrestricted_network = true`. The Agent rejects Host jobs requesting
+workload identity, disabled/restricted networking, or any isolation guarantee
+because Host cannot enforce those properties.
 
 Linux Native settings are required only when Native is enabled. OCI engine
 settings are likewise explicit: containerd and Microsandbox are never
@@ -708,6 +721,8 @@ above is the complete behavioral boundary.
 
 The compatibility implementation includes:
 
+- `HostBackend`, which starts the configured digest-verified runner directly
+  as the Agent service identity for an exact v2 Host target;
 - `NativeBackend`, which starts only the configured and digest-verified
   `octa-runner` and plugin bundle through the host platform's Native containment;
 - `OciBackend`, which starts the same release from an immutable OCI image using
@@ -717,8 +732,8 @@ For v1, the signed JobSpec selects one legacy backend. For v2, signed intent
 selects semantic mode/platform/guarantees and the Agent chooses only a qualified
 provider route that supplies matching evidence. The agent rejects a disabled,
 unavailable, incompatible, or unqualified route. It never falls back to a
-weaker mode. Server Project policy authorizes exact v2 execution targets rather
-than provider names or repository-controlled labels.
+weaker mode. Server Project and Pool policies must both authorize the exact v2
+execution target rather than provider names or repository-controlled labels.
 
 Linux Native relies on the one-job-per-agent invariant and requires `work_root`
 itself to be quota-backed. It combines cgroup v2 limits and accounting with
@@ -742,9 +757,14 @@ identity, or network restriction.
 All implementations must expose the same runner lifecycle: bidirectional
 non-PTY JSONL, bounded stderr, graceful cancellation, forced termination,
 terminal status, resource sampling, and verified cleanup. A shared backend
-contract suite runs against every supported host/isolation combination. Native
-cleanup proves that no runner or plugin process remains; OCI cleanup additionally
-proves that no container, VM, snapshot, or persisted engine state remains.
+contract suite runs against every supported host/isolation combination. During
+the owned Agent lifecycle, Host and Native cleanup prove that no runner or
+plugin process remains; OCI cleanup additionally proves that no container, VM,
+snapshot, or persisted engine state remains. Host process-group cleanup is
+best-effort after an abrupt Agent or machine failure because a restarted Agent
+cannot safely rediscover process ownership from PIDs alone. Host therefore
+requires a dedicated or disposable service identity/machine when that residual
+risk is unacceptable; startup removes only recognized stale workspaces.
 
 The OCI guest layout is fixed:
 

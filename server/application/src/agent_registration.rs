@@ -2,8 +2,8 @@ use std::{str::FromStr as _, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use octacity_protocol::{
-  AgentCredentialKind, AgentCredentialToken, AgentInventory, COORDINATOR_PROTOCOL_VERSION, PlatformArchitecture,
-  PlatformOs, RegisterAgentRequest, SUPPORTED_EXECUTION_CONTRACTS,
+  AgentCredentialKind, AgentCredentialToken, AgentInventory, COORDINATOR_PROTOCOL_VERSION, RegisterAgentRequest,
+  SUPPORTED_EXECUTION_CONTRACTS,
 };
 use octacity_server_domain::{AgentId, AgentName, PoolId, RegistrationCredentialId, Timestamp};
 use octacity_server_store::{
@@ -220,7 +220,7 @@ where
     let agent_id = stable_agent_id(&input.request.inventory.agent_id)?;
     let agent_name =
       AgentName::new(input.request.inventory.agent_id.clone()).map_err(|_| AgentRegistrationError::InvalidRequest)?;
-    let platform = platform(&input.request.inventory)?;
+    let platform = platform(&input.request.inventory);
     let execution_contract_version = SUPPORTED_EXECUTION_CONTRACTS
       .negotiate(input.request.inventory.execution_contract)
       .ok_or(AgentRegistrationError::InvalidRequest)?;
@@ -337,17 +337,8 @@ fn stable_registration_id(
     .map_err(|_| AgentRegistrationError::InvalidRequest)
 }
 
-fn platform(inventory: &AgentInventory) -> Result<AgentPlatform, AgentRegistrationError> {
-  let operating_system = match inventory.host_platform.os {
-    PlatformOs::Linux => "linux",
-    PlatformOs::Windows => "windows",
-    PlatformOs::Macos => "macos",
-  };
-  let architecture = match inventory.host_platform.architecture {
-    PlatformArchitecture::Amd64 => "amd64",
-    PlatformArchitecture::Arm64 => "arm64",
-  };
-  AgentPlatform::new(operating_system, architecture).map_err(|_| AgentRegistrationError::InvalidRequest)
+fn platform(inventory: &AgentInventory) -> AgentPlatform {
+  AgentPlatform::from_protocol(inventory.host_platform)
 }
 
 fn timestamp(value: i64) -> Result<Timestamp, AgentRegistrationError> {

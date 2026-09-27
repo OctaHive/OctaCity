@@ -1,7 +1,9 @@
 use octacity_protocol::{AgentInventory, HostSnapshot, SignedEnvelope};
 use octacity_server_domain::{AttemptNumber, EntityKind, JobId};
 use octacity_server_job::{JobRequirements, JobSpecTemplate};
-use octacity_server_store::{JobClaim, JobClaimOutcome, LeaseGrant, StoreError, StoreInputError, StoreOperation};
+use octacity_server_store::{
+  JobClaim, JobClaimOutcome, LeaseGrant, PoolAdmissionPolicy, StoreError, StoreInputError, StoreOperation,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
@@ -43,10 +45,10 @@ pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaim
 
   let registration: Option<RegistrationRow> = sqlx::query_as(
     "SELECT registration.id AS registration_id, registration.execution_contract_version, \
-            pool.version AS pool_version, pool.fairness_policy, registration.inventory \
+            pool.version AS pool_version, pool.fairness_policy, pool.admission_policy, registration.inventory \
      FROM agent_registrations AS registration \
      JOIN agents AS agent ON agent.id = registration.agent_id \
-     JOIN LATERAL (SELECT version, enabled, drain_state, concurrency_limit, fairness_policy FROM pools \
+     JOIN LATERAL (SELECT version, enabled, drain_state, admission_policy, concurrency_limit, fairness_policy FROM pools \
        WHERE id = agent.pool_id ORDER BY version DESC LIMIT 1) AS pool ON true \
      WHERE agent.id = $1 AND registration.epoch = $2 AND agent.pool_id = $3 AND agent.state = 'online' \
        AND registration.revoked_at IS NULL \
@@ -94,6 +96,7 @@ pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaim
     &registration.inventory.0,
     &request.snapshot,
     u16::try_from(registration.execution_contract_version).map_err(|_| StoreError::Unavailable)?,
+    &serde_json::from_value(registration.admission_policy.0).map_err(|_| StoreError::Unavailable)?,
   )
   .await?;
   let Some(candidate) = candidate else {
@@ -163,6 +166,7 @@ struct RegistrationRow {
   execution_contract_version: i16,
   pool_version: i64,
   fairness_policy: String,
+  admission_policy: Json<Value>,
   inventory: Json<AgentInventory>,
 }
 
@@ -190,6 +194,7 @@ async fn select_candidate(
   inventory: &AgentInventory,
   snapshot: &HostSnapshot,
   execution_contract_version: u16,
+  pool_admission_policy: &PoolAdmissionPolicy,
 ) -> Result<Option<CandidateRow>, StoreError> {
   const PAGE_SIZE: i64 = 64;
   let mut after_priority = None;
@@ -250,6 +255,9 @@ async fn select_candidate(
     };
     let next_cursor = (last.priority, last.fairness_rank, last.enqueue_order, last.job_id);
     for candidate in candidates {
+      if !pool_admission_policy.permits_runtime(candidate.job_spec_template.0.placement_policy().runtime) {
+        continue;
+      }
       if !octacity_server_scheduler::is_compatible_with_contract(
         inventory,
         snapshot,

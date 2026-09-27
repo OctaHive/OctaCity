@@ -43,7 +43,14 @@ native_linux_bubblewrap_executable = "/usr/bin/bwrap"
 native_linux_readonly_paths = []
 native_linux_pids_limit = 4096
 native_environment = { PATH = "/usr/local/bin:/usr/bin:/bin" }
+# Direct Host execution is separate from legacy Linux Native isolation. Enable
+# it only for trusted repositories and pair it with explicit Project/Pool policy.
+allow_host_execution = false
+# host_environment_identity = "linux-arm64-host-toolchain-v1"
+# host_environment = { PATH = "/usr/local/bin:/usr/bin:/bin" }
+# Host execution requires this to be true because it cannot filter network access.
 allow_unrestricted_network = false
+host_accounting_max_entries = 1000000
 allowed_network_hosts = ["vault.example.com", "identity.example.com"]
 allowed_upload_origins = ["https://artifacts.example.com"]
 max_archive_entries = 100000

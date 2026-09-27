@@ -44,7 +44,9 @@ pub(super) async fn start_prepared(prepared: PreparedExecution<'_>) -> Result<Co
     labels,
     image: match &request.root {
       ExecutionTarget::Oci { reference, .. } => reference.clone(),
-      ExecutionTarget::Native { .. } => return Err(invalid("containerd requires an OCI execution target")),
+      ExecutionTarget::Host { .. } | ExecutionTarget::Native { .. } => {
+        return Err(invalid("containerd requires an OCI execution target"));
+      }
     },
     runtime: Some(Runtime {
       name: config.runtime.clone(),

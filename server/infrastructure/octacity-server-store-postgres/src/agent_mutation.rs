@@ -333,7 +333,7 @@ async fn ensure_compatible(
 ) -> Result<(), StoreError> {
   let accepts_platform = match &definition.admission_policy {
     PoolAdmissionPolicy::Any => true,
-    PoolAdmissionPolicy::Allowlist { platforms } => agent
+    PoolAdmissionPolicy::Allowlist { platforms } | PoolAdmissionPolicy::ExecutionAllowlist { platforms, .. } => agent
       .platform
       .as_ref()
       .is_some_and(|platform| platforms.contains(platform)),

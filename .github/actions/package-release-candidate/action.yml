@@ -5,6 +5,10 @@ inputs:
   octa-revision:
     description: Exact pinned Octa source revision represented by the candidate
     required: true
+  include-server:
+    description: Also build and package the server bundle used by full vertical slices
+    required: false
+    default: "true"
 
 outputs:
   agent-archive:
@@ -32,42 +36,58 @@ runs:
         OCTACITY_BUILD_COMMIT: ${{ github.sha }}
       run: |
         set -euo pipefail
-        case "$(uname -s)-$(uname -m)" in
-          Linux-x86_64) platform=linux-amd64 ;;
-          Linux-aarch64|Linux-arm64) platform=linux-arm64 ;;
-          Darwin-arm64) platform=macos-arm64 ;;
-          *) echo "unsupported release-gate host $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) platform=linux-amd64 ;;
+          Linux-ARM64) platform=linux-arm64 ;;
+          macOS-ARM64) platform=macos-arm64 ;;
+          Windows-X64) platform=windows-amd64 ;;
+          *) echo "unsupported release-gate host ${RUNNER_OS}-${RUNNER_ARCH}" >&2; exit 1 ;;
         esac
+
+        executable_suffix=
+        archive_extension=tar.gz
+        if [[ "${RUNNER_OS}" == Windows ]]; then
+          executable_suffix=.exe
+          archive_extension=zip
+        fi
 
         stage=$(mktemp -d "${RUNNER_TEMP}/octacity-release-candidate.XXXXXX")
         metadata="${stage}/source-plugin-package.json"
-        agent_archive="${stage}/octacity-agent-${platform}.tar.gz"
-        server_archive="${stage}/octacity-server-${platform}.tar.gz"
+        agent_archive="${stage}/octacity-agent-${platform}.${archive_extension}"
+        server_archive="${stage}/octacity-server-${platform}.${archive_extension}"
         agent_root="${stage}/agent-root"
         server_root="${stage}/server-root"
         mkdir -p "${agent_root}" "${server_root}"
 
-        cargo build --locked --release -p octacity-agent -p octacity-server -p octacity-source-git
-        target/release/octacity-source-git package-metadata > "${metadata}"
+        packages=(-p octacity-agent -p octacity-source-git)
+        if [[ "${{ inputs.include-server }}" == true ]]; then
+          packages+=(-p octacity-server)
+        fi
+        cargo build --locked --release "${packages[@]}"
+        target/release/octacity-source-git${executable_suffix} package-metadata > "${metadata}"
         version=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "${metadata}")
-        test "$(target/release/octacity-agent --version)" = "octacity-agent ${version}"
-        test "$(target/release/octacity-server --version)" = "octacity-server ${version}"
+        test "$(target/release/octacity-agent${executable_suffix} --version)" = "octacity-agent ${version}"
         python3 tools/package_release.py \
           --platform "${platform}" \
           --version "${version}" \
-          --agent target/release/octacity-agent \
-          --source-git target/release/octacity-source-git \
+          --agent "target/release/octacity-agent${executable_suffix}" \
+          --source-git "target/release/octacity-source-git${executable_suffix}" \
           --source-metadata "${metadata}" \
           --octacity-revision "$(git rev-parse HEAD)" \
           --octa-revision "${OCTA_SOURCE_REVISION}" \
           --output "${agent_archive}"
-        python3 tools/package_server_release.py \
-          --platform "${platform}" \
-          --version "${version}" \
-          --server target/release/octacity-server \
-          --octacity-revision "$(git rev-parse HEAD)" \
-          --output "${server_archive}"
-        python3 - "${agent_archive}" "${server_archive}" <<'PY'
+        archives=("${agent_archive}")
+        if [[ "${{ inputs.include-server }}" == true ]]; then
+          test "$(target/release/octacity-server${executable_suffix} --version)" = "octacity-server ${version}"
+          python3 tools/package_server_release.py \
+            --platform "${platform}" \
+            --version "${version}" \
+            --server "target/release/octacity-server${executable_suffix}" \
+            --octacity-revision "$(git rev-parse HEAD)" \
+            --output "${server_archive}"
+          archives+=("${server_archive}")
+        fi
+        python3 - "${archives[@]}" <<'PY'
         import hashlib
         import pathlib
         import sys
@@ -78,7 +98,14 @@ runs:
             if name != archive.name or hashlib.sha256(archive.read_bytes()).hexdigest() != expected:
                 raise SystemExit(f"release-candidate archive checksum mismatch: {archive.name}")
         PY
-        tar -xzf "${agent_archive}" -C "${agent_root}"
-        tar -xzf "${server_archive}" -C "${server_root}"
+        python3 -c 'import shutil,sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])' \
+          "${agent_archive}" "${agent_root}"
+        if [[ "${{ inputs.include-server }}" == true ]]; then
+          python3 -c 'import shutil,sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])' \
+            "${server_archive}" "${server_root}"
+        else
+          server_archive=
+          server_root=
+        fi
         printf 'agent-archive=%s\nagent-root=%s\nserver-archive=%s\nserver-root=%s\n' \
           "${agent_archive}" "${agent_root}" "${server_archive}" "${server_root}" >> "${GITHUB_OUTPUT}"

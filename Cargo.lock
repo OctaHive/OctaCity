@@ -4052,6 +4052,7 @@ dependencies = [
  "octacity-coordinator",
  "octacity-execution",
  "octacity-execution-containerd",
+ "octacity-execution-host",
  "octacity-execution-microsandbox",
  "octacity-execution-native",
  "octacity-execution-oci",
@@ -4205,6 +4206,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-execution-host"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "octacity-execution",
+ "processkit",
+ "sysinfo",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "octacity-execution-microsandbox"
 version = "0.1.0"
 dependencies = [
@@ -4282,6 +4297,7 @@ dependencies = [
  "octacity-cache-session",
  "octacity-execution",
  "octacity-execution-containerd",
+ "octacity-execution-host",
  "octacity-execution-microsandbox",
  "octacity-execution-native",
  "octacity-execution-oci",
@@ -4415,12 +4431,14 @@ dependencies = [
 name = "octacity-release-harness"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "chrono",
  "clap",
  "ed25519-dalek",
  "octa-cache-protocol",
  "octa-plugin-lock",
+ "octacity-private-fs",
  "octacity-protocol",
  "octacity-runner",
  "octacity-source-plugin",

@@ -77,6 +77,10 @@ impl Fixture {
       native_linux_readonly_paths: Vec::new(),
       native_linux_pids_limit: 4096,
       native_environment: BTreeMap::from([("PATH".to_owned(), "/usr/bin:/bin".to_owned())]),
+      allow_host_execution: false,
+      host_environment_identity: None,
+      host_environment: BTreeMap::new(),
+      host_accounting_max_entries: 1_000_000,
       oci_engines: Vec::new(),
       allow_unrestricted_network: false,
       allowed_network_hosts: vec!["vault.example.com".to_owned()],
@@ -332,6 +336,91 @@ fn rejects_native_execution_without_explicit_consent() {
       .unwrap_err()
       .to_string()
       .contains("allow_native_execution")
+  );
+}
+
+#[test]
+fn host_execution_requires_explicit_consent_identity_and_clean_environment() {
+  let mut fixture = Fixture::new();
+  fixture.config.allow_host_execution = true;
+  fixture.config.allow_unrestricted_network = true;
+  assert!(
+    fixture
+      .config
+      .clone()
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("PATH")
+  );
+
+  fixture
+    .config
+    .host_environment
+    .insert("PATH".to_owned(), "/usr/bin:/bin".to_owned());
+  assert!(
+    fixture
+      .config
+      .clone()
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("host_environment_identity")
+  );
+
+  fixture.config.host_environment_identity = Some("host-toolchain-v1".to_owned());
+  let validated = fixture.config.validate().unwrap();
+  assert!(
+    validated
+      .runtimes
+      .iter()
+      .any(|runtime| matches!(runtime, ValidatedRuntimeConfig::Host {
+    environment_identity,
+    environment,
+  } if environment_identity.as_str() == "host-toolchain-v1" && environment.contains_key("PATH")))
+  );
+}
+
+#[test]
+fn host_execution_requires_an_honest_network_and_accounting_policy() {
+  let mut fixture = Fixture::new();
+  fixture.config.allow_host_execution = true;
+  fixture.config.host_environment_identity = Some("host-toolchain-v1".to_owned());
+  fixture.config.host_environment = BTreeMap::from([("PATH".to_owned(), "/usr/bin:/bin".to_owned())]);
+
+  assert!(
+    fixture
+      .config
+      .clone()
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("allow_unrestricted_network")
+  );
+
+  fixture.config.allow_unrestricted_network = true;
+  fixture.config.host_accounting_max_entries = 0;
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("host_accounting_max_entries")
+  );
+}
+
+#[test]
+fn disabled_host_execution_rejects_dormant_host_settings() {
+  let mut fixture = Fixture::new();
+  fixture.config.host_environment_identity = Some("unused-host".to_owned());
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("only valid when allow_host_execution")
   );
 }
 

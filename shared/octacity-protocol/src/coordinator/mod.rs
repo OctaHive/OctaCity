@@ -16,7 +16,8 @@ pub use octa_cache_protocol::{
 };
 
 use crate::{
-  CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, OciIsolation, PlatformSpec, RuntimeMode, SignedEnvelope,
+  CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, ExecutionEvidenceV2, OciIsolation, PlatformSpec,
+  RuntimeMode, SignedEnvelope,
 };
 
 mod credential;
@@ -536,6 +537,9 @@ pub struct CompleteLeaseRequest {
   pub status: JobCompletionStatus,
   /// Final cumulative resource totals, when the backend supplied them.
   pub final_usage: Option<ResourceUsageSnapshot>,
+  /// Concrete provider evidence for a provider-neutral v2 execution.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub execution: Option<ExecutionEvidenceV2>,
   /// Runner-produced structured task results.
   #[serde(default)]
   pub results: Vec<serde_json::Value>,

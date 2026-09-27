@@ -17,15 +17,18 @@ use async_trait::async_trait;
 use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
 use octacity_execution::{ExecutionBackend, LocalCacheCapacity};
 use octacity_execution_containerd::{ContainerdEngine, ContainerdEngineConfig};
+use octacity_execution_host::{HOST_BACKEND_NAME, HostBackend, HostBackendConfig};
 use octacity_execution_microsandbox::{MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
-use octacity_job::{ExecuteJobRequest, JobExecutor, JobExecutorConfig};
+use octacity_job::{ExecuteJobRequest, ExecutionBackendRoute, JobExecutor, JobExecutorConfig};
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, ExecutionSpec, JobSpecV1, NetworkPolicy,
-  OciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RemoteCacheGrant, RuntimeMode,
-  RuntimeSpec, RuntimeTarget, SourceSpec,
+  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2, ExecutionCapabilityV2,
+  ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, ExecutionSpec, ExecutionTargetV2, JobSpecV1, JobSpecV2,
+  NetworkPolicy, OciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec,
+  RemoteCacheGrant, RuntimeMode, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, VerifiedJobSpec,
+  guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerInstallation, RunnerStreamItem, RunnerSupervisionPolicy};
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
@@ -125,6 +128,57 @@ async fn native_backend_satisfies_the_real_runner_contract() {
     true,
   )
   .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires a released Octa host bundle; exercised on Linux, macOS, and Windows in backend-contract CI"]
+async fn host_backend_satisfies_the_real_runner_contract() {
+  let work_root = required_path("OCTACITY_CONTRACT_HOST_WORK_ROOT");
+  let workspace_bytes = required_u64("OCTACITY_CONTRACT_WORKSPACE_BYTES");
+  let release_root = required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT");
+  let runner = RunnerInstallation::load(&release_root).expect("the configured Octa release must be valid");
+  let platform = host_platform();
+  let capability = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new(HOST_BACKEND_NAME).unwrap(),
+    mode: ExecutionMode::Host,
+    host_platform: platform,
+    target_platform: platform,
+    guarantees: guarantees_for(ExecutionMode::Host),
+    immutable_images: false,
+  };
+  let backend = Arc::new(
+    HostBackend::new(HostBackendConfig {
+      work_root: work_root.clone(),
+      runner_platform: runner.capabilities.platform.clone(),
+      environment: host_environment(),
+      cleanup_timeout: Duration::from_secs(10),
+      max_accounted_workspace_entries: 100_000,
+    })
+    .expect("Host backend configuration must be usable"),
+  );
+  let executor = JobExecutor::new(
+    runner.clone(),
+    Arc::new(FixtureSource { oci_probe: None }),
+    Arc::new(FileWorkloadIdentityProvider::default()),
+    BTreeMap::new(),
+    executor_config(work_root, workspace_bytes, true, Vec::new()),
+  )
+  .expect("job executor configuration must be valid")
+  .with_execution_backends([ExecutionBackendRoute::new(
+    capability,
+    ExecutionEnvironmentId::new(required_string("OCTACITY_CONTRACT_HOST_ENVIRONMENT_ID")).unwrap(),
+    backend,
+  )
+  .unwrap()])
+  .expect("Host execution route must be valid");
+  executor.cleanup_orphans().await.expect("pre-test cleanup must succeed");
+  let now = unix_now();
+  let spec = host_specification(platform, workspace_bytes, now, &runner);
+  exercise_contract(&executor, spec.into(), None, Some(HOST_BACKEND_NAME), "Host").await;
+  executor
+    .cleanup_orphans()
+    .await
+    .expect("post-test cleanup must succeed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -241,24 +295,15 @@ async fn run_contract(
     }),
     Arc::new(identity),
     BTreeMap::from([(mode, backend)]),
-    JobExecutorConfig {
+    executor_config(
       work_root,
-      max_workspace_bytes: workspace_bytes,
-      allow_unrestricted_network: native_cache_contract,
-      allowed_network_hosts: match &oci_probe {
+      workspace_bytes,
+      native_cache_contract,
+      match &oci_probe {
         Some(OciProbe::RestrictedNetwork { allowed_host, .. }) => vec![allowed_host.clone()],
         Some(OciProbe::DisabledNetwork) | None => Vec::new(),
       },
-      max_output_limits: OutputLimits {
-        artifact_count: 0,
-        artifact_bytes: 0,
-        report_count: 0,
-        report_bytes: 0,
-        single_output_bytes: 0,
-      },
-      cancellation_grace: Duration::from_secs(5),
-      runner_supervision: RunnerSupervisionPolicy::default(),
-    },
+    ),
   )
   .expect("job executor configuration must be valid");
   let executor = if native_cache_contract {
@@ -286,10 +331,7 @@ async fn run_contract(
     .await
     .expect("pre-test orphan cleanup must succeed");
 
-  let now = SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .expect("system clock must be after the Unix epoch")
-    .as_secs();
+  let now = unix_now();
   let mut spec = specification(target.clone(), workspace_bytes, now, &runner);
   if native_cache_contract {
     spec.runtime.network = NetworkPolicy::Unrestricted;
@@ -307,24 +349,40 @@ async fn run_contract(
   if oci_probe.is_some() {
     spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
   }
+  let cache_grant = native_cache_contract.then(|| BeginCacheSessionResponse {
+    protocol_version: 1,
+    request_id: "backend-contract-cache".to_owned(),
+    session_id: "backend-contract-session".to_owned(),
+    scope_id: "backend-contract-scope".to_owned(),
+    remote: Some(RemoteCacheGrant {
+      endpoint: "https://cache.example".to_owned(),
+      bearer_token: "backend-contract-token".to_owned(),
+      expires_at: now + 300,
+    }),
+  });
+  exercise_contract(&executor, spec.into(), cache_grant, None, &format!("{mode:?}")).await;
+  executor
+    .cleanup_orphans()
+    .await
+    .expect("post-test backend cleanup must find no leaked state");
+}
+
+async fn exercise_contract(
+  executor: &JobExecutor,
+  spec: VerifiedJobSpec,
+  cache_grant: Option<BeginCacheSessionResponse>,
+  expected_provider: Option<&str>,
+  label: &str,
+) {
+  let cancellation_spec = cancellation_spec(spec.clone());
   let (sender, mut receiver) = mpsc::channel(128);
   let started = Instant::now();
   let completion = executor
     .execute(
       ExecuteJobRequest {
-        spec: spec.into(),
+        spec,
         source_credentials: BTreeMap::new(),
-        cache_grant: native_cache_contract.then(|| BeginCacheSessionResponse {
-          protocol_version: 1,
-          request_id: "backend-contract-cache".to_owned(),
-          session_id: "backend-contract-session".to_owned(),
-          scope_id: "backend-contract-scope".to_owned(),
-          remote: Some(RemoteCacheGrant {
-            endpoint: "https://cache.example".to_owned(),
-            bearer_token: "backend-contract-token".to_owned(),
-            expires_at: now + 300,
-          }),
-        }),
+        cache_grant,
       },
       CancellationToken::new(),
       &sender,
@@ -338,6 +396,18 @@ async fn run_contract(
   }
 
   assert_eq!(completion.runner().status, RunStatus::Succeeded);
+  match expected_provider {
+    Some(provider) => {
+      let evidence = completion
+        .execution()
+        .expect("v2 execution must retain provider evidence");
+      assert_eq!(evidence.provider.as_str(), provider);
+      assert_eq!(evidence.target.mode, ExecutionMode::Host);
+      assert!(evidence.target.required_guarantees.is_empty());
+      assert_eq!(evidence.target.host_platform, evidence.target.target_platform);
+    }
+    None => assert!(completion.execution().is_none()),
+  }
   assert!(saw_event, "the real runner must emit at least one structured event");
   let usage = &completion.runner().final_usage;
   assert!(usage.memory_peak_bytes > 0);
@@ -356,29 +426,16 @@ async fn run_contract(
     .to_owned();
   completion.cleanup().await.expect("job workspace cleanup must succeed");
   assert!(!job_root.exists(), "job filesystem state must be removed");
-  run_cancellation_contract(&executor, target, workspace_bytes, now, &runner).await;
-  executor
-    .cleanup_orphans()
-    .await
-    .expect("post-test backend cleanup must find no leaked state");
-  eprintln!("{mode:?} real backend contract completed in {:?}", started.elapsed());
+  run_cancellation_contract(executor, cancellation_spec).await;
+  eprintln!("{label} real backend contract completed in {:?}", started.elapsed());
 }
 
-async fn run_cancellation_contract(
-  executor: &JobExecutor,
-  target: RuntimeTarget,
-  workspace_bytes: u64,
-  now: u64,
-  runner: &RunnerInstallation,
-) {
-  let mut spec = specification(target, workspace_bytes, now, runner);
-  spec.job_id.push_str("-cancel");
-  spec.execution.commands = vec!["wait".to_owned()];
+async fn run_cancellation_contract(executor: &JobExecutor, spec: VerifiedJobSpec) {
   let cancellation = CancellationToken::new();
   let (sender, mut receiver) = mpsc::channel(128);
   let execution = executor.execute(
     ExecuteJobRequest {
-      spec: spec.into(),
+      spec,
       source_credentials: BTreeMap::new(),
       cache_grant: None,
     },
@@ -484,6 +541,118 @@ fn specification(target: RuntimeTarget, workspace_bytes: u64, now: u64, runner: 
       single_output_bytes: 0,
     },
   }
+}
+
+fn host_specification(
+  platform: PlatformSpec,
+  workspace_bytes: u64,
+  now: u64,
+  runner: &RunnerInstallation,
+) -> JobSpecV2 {
+  let legacy = specification(RuntimeTarget::Native { platform }, workspace_bytes, now, runner);
+  JobSpecV2 {
+    protocol_version: EXECUTION_CONTRACT_V2,
+    job_id: "backend-contract-host".to_owned(),
+    attempt: legacy.attempt,
+    issued_at: legacy.issued_at,
+    expires_at: legacy.expires_at,
+    source: legacy.source,
+    octa: legacy.octa,
+    execution: legacy.execution,
+    runtime: RuntimeSpecV2 {
+      target: ExecutionTargetV2 {
+        mode: ExecutionMode::Host,
+        host_platform: platform,
+        target_platform: platform,
+        required_guarantees: guarantees_for(ExecutionMode::Host),
+        immutable_image: None,
+      },
+      cpu_millis: legacy.runtime.cpu_millis,
+      memory_bytes: legacy.runtime.memory_bytes,
+      writable_disk_bytes: legacy.runtime.writable_disk_bytes,
+      timeout_seconds: legacy.runtime.timeout_seconds,
+      network: NetworkPolicy::Unrestricted,
+      workload_identity_profile: None,
+    },
+    cache: None,
+    outputs: legacy.outputs,
+  }
+}
+
+fn cancellation_spec(mut spec: VerifiedJobSpec) -> VerifiedJobSpec {
+  match &mut spec {
+    VerifiedJobSpec::V1(spec) => {
+      spec.job_id.push_str("-cancel");
+      spec.execution.commands = vec!["wait".to_owned()];
+      spec.cache = None;
+    }
+    VerifiedJobSpec::V2(spec) => {
+      spec.job_id.push_str("-cancel");
+      spec.execution.commands = vec!["wait".to_owned()];
+      spec.cache = None;
+    }
+  }
+  spec
+}
+
+fn executor_config(
+  work_root: PathBuf,
+  workspace_bytes: u64,
+  allow_unrestricted_network: bool,
+  allowed_network_hosts: Vec<String>,
+) -> JobExecutorConfig {
+  JobExecutorConfig {
+    work_root,
+    max_workspace_bytes: workspace_bytes,
+    allow_unrestricted_network,
+    allowed_network_hosts,
+    max_output_limits: OutputLimits {
+      artifact_count: 0,
+      artifact_bytes: 0,
+      report_count: 0,
+      report_bytes: 0,
+      single_output_bytes: 0,
+    },
+    cancellation_grace: Duration::from_secs(5),
+    runner_supervision: RunnerSupervisionPolicy::default(),
+  }
+}
+
+fn unix_now() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .expect("system clock must be after the Unix epoch")
+    .as_secs()
+}
+
+fn host_environment() -> BTreeMap<String, String> {
+  let path = env::var("OCTACITY_CONTRACT_HOST_PATH")
+    .or_else(|_| env::var("PATH"))
+    .expect("Host backend contract requires PATH");
+  let mut environment = BTreeMap::from([("PATH".to_owned(), path)]);
+  for name in ["COMSPEC", "HOME", "PATHEXT", "SYSTEMROOT", "TMP", "TEMP", "WINDIR"] {
+    if let Ok(value) = env::var(name)
+      && !value.is_empty()
+    {
+      environment.insert(name.to_owned(), value);
+    }
+  }
+  environment
+}
+
+fn host_platform() -> PlatformSpec {
+  let os = match std::env::consts::OS {
+    "linux" => PlatformOs::Linux,
+    "macos" => PlatformOs::Macos,
+    "windows" => PlatformOs::Windows,
+    other => panic!("unsupported host operating system '{other}'"),
+  };
+  let architecture = match std::env::consts::ARCH {
+    "x86_64" => PlatformArchitecture::Amd64,
+    "aarch64" => PlatformArchitecture::Arm64,
+    other => panic!("unsupported host architecture '{other}'"),
+  };
+  PlatformSpec { os, architecture }
 }
 
 fn linux_platform() -> PlatformSpec {

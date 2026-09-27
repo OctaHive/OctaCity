@@ -1,12 +1,12 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
-  AcceptManualTriggerRequest, AgentPoolResource, AgentResource, ArtifactDownload, ArtifactOutputType, ArtifactResource,
-  BuildLogSearchPage, CacheSessionResource, CacheSessionState, ContractValueError, CreateAgentPoolRequest,
-  CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest,
-  CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse,
-  IdempotencyKey, InternalTriggerDefinitionRequest, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
-  MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, PlaceBuildResultHoldRequest, ProjectResource,
-  VersionPrecondition,
+  AcceptManualTriggerRequest, AgentPoolAdmissionPolicy, AgentPoolResource, AgentResource, ArtifactDownload,
+  ArtifactOutputType, ArtifactResource, BuildLogSearchPage, CacheSessionResource, CacheSessionState,
+  ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest, CreateManagedWebhookRequest,
+  CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage,
+  DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
+  IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES,
+  OperationalMetadata, PlaceBuildResultHoldRequest, ProjectResource, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -50,6 +50,25 @@ fn v1_golden_documents_round_trip_without_application_types() {
 fn agent_enrollment_response_debug_output_redacts_the_bearer() {
   let response: IssueAgentEnrollmentResponse = serde_json::from_str(ISSUED_AGENT_ENROLLMENT).unwrap();
   assert!(!format!("{response:?}").contains(&response.credential));
+}
+
+#[test]
+fn pool_execution_allowlist_has_an_explicit_strict_wire_shape() {
+  let policy = json!({
+    "mode": "execution_allowlist",
+    "platforms": [{"operating_system": "linux", "architecture": "amd64"}],
+    "execution_targets": [{
+      "mode": "host",
+      "host_platform": {"os": "linux", "architecture": "amd64"},
+      "target_platform": {"os": "linux", "architecture": "amd64"},
+      "required_guarantees": []
+    }]
+  });
+  assert!(serde_json::from_value::<AgentPoolAdmissionPolicy>(policy.clone()).is_ok());
+
+  let mut unknown = policy;
+  unknown["execution_targets"][0]["provider"] = json!("host");
+  assert!(serde_json::from_value::<AgentPoolAdmissionPolicy>(unknown).is_err());
 }
 
 #[test]

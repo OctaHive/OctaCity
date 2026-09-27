@@ -7,6 +7,7 @@ members = [
   "agent/octacity-coordinator",
   "agent/octacity-execution",
   "agent/octacity-execution-containerd",
+  "agent/octacity-execution-host",
   "agent/octacity-execution-microsandbox",
   "agent/octacity-execution-native",
   "agent/octacity-execution-oci",

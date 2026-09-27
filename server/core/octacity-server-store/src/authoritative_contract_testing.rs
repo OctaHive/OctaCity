@@ -347,6 +347,7 @@ where
     lease: access,
     final_sequence: Some(EventSequence::new(4).unwrap()),
     kind: JobCompletionKind::Succeeded,
+    execution: None,
     completed_at: time(3_000),
   };
   assert_eq!(
@@ -362,6 +363,7 @@ where
     lease: access,
     final_sequence: Some(EventSequence::new(3).unwrap()),
     kind: JobCompletionKind::Succeeded,
+    execution: None,
     completed_at: time(3_000),
   };
   let completed = store.complete_job(completion.clone()).await.unwrap();
@@ -456,6 +458,7 @@ where
       lease: child_access,
       final_sequence: None,
       kind: JobCompletionKind::Failed(JobFailureClass::Execution),
+      execution: None,
       completed_at: time(3_600),
     })
     .await
@@ -539,6 +542,7 @@ where
     lease: failed_access,
     final_sequence: None,
     kind: JobCompletionKind::Failed(JobFailureClass::Infrastructure),
+    execution: None,
     completed_at: time(4_100),
   };
   let failed = store.complete_job(failure.clone()).await.unwrap();

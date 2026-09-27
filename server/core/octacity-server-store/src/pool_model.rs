@@ -1,6 +1,8 @@
 use std::{collections::BTreeSet, num::NonZeroU16};
 
+use octacity_protocol::{ExecutionGuarantee, ExecutionMode, PlatformSpec, guarantees_for};
 use octacity_server_domain::{PoolId, PoolName, PoolVersion, Timestamp};
+use octacity_server_job::JobRuntimePolicy;
 use octacity_server_scheduler::PoolDrainState;
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +12,8 @@ use crate::{AgentPlatform, IdempotencyKey, MutationDisposition, StoreError, Stor
 pub const MAX_AGENT_POOL_PAGE_SIZE: u16 = 200;
 /// Maximum number of exact platforms in one Pool admission allowlist.
 pub const MAX_POOL_ADMISSION_PLATFORMS: usize = 32;
+/// Maximum provider-neutral execution targets in one Pool allowlist.
+pub const MAX_POOL_EXECUTION_TARGETS: usize = 32;
 /// Maximum configured static Agents in one Pool.
 pub const MAX_POOL_STATIC_CAPACITY: u32 = 10_000;
 
@@ -34,6 +38,53 @@ pub enum PoolAdmissionPolicy {
     /// Non-empty bounded set of accepted host platforms.
     platforms: BTreeSet<AgentPlatform>,
   },
+  /// Only listed host platforms may enroll and only listed provider-neutral
+  /// execution targets may be placed in the Pool.
+  ExecutionAllowlist {
+    /// Non-empty bounded set of accepted host platforms.
+    platforms: BTreeSet<AgentPlatform>,
+    /// Non-empty bounded set of provider-neutral execution grants.
+    execution_targets: BTreeSet<PoolExecutionTarget>,
+  },
+}
+
+/// Exact provider-neutral execution boundary permitted by one Pool version.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolExecutionTarget {
+  /// Permitted provider-neutral execution mode.
+  pub mode: ExecutionMode,
+  /// Exact Agent host platform.
+  pub host_platform: PlatformSpec,
+  /// Exact platform exposed to the runner.
+  pub target_platform: PlatformSpec,
+  /// Complete guarantees required by the mode.
+  pub required_guarantees: BTreeSet<ExecutionGuarantee>,
+}
+
+impl PoolExecutionTarget {
+  fn validate(&self) -> Result<(), StoreInputError> {
+    if self.required_guarantees != guarantees_for(self.mode)
+      || (self.mode == ExecutionMode::Host && self.host_platform != self.target_platform)
+    {
+      return Err(StoreInputError::InvalidPoolAdmissionPolicy);
+    }
+    Ok(())
+  }
+
+  fn matches(&self, runtime: &JobRuntimePolicy) -> bool {
+    let JobRuntimePolicy::Current(runtime) = runtime else {
+      return false;
+    };
+    self.mode == runtime.target.mode
+      && self.host_platform == runtime.target.host_platform
+      && self.target_platform == runtime.target.target_platform
+      && self.required_guarantees == runtime.target.required_guarantees
+  }
+
+  fn host_platform_matches(&self, platform: &AgentPlatform) -> bool {
+    platform.matches_protocol(self.host_platform)
+  }
 }
 
 impl PoolAdmissionPolicy {
@@ -45,6 +96,42 @@ impl PoolAdmissionPolicy {
         Err(StoreInputError::InvalidPoolAdmissionPolicy)
       }
       Self::Allowlist { .. } => Ok(()),
+      Self::ExecutionAllowlist {
+        platforms,
+        execution_targets,
+      } if platforms.is_empty()
+        || platforms.len() > MAX_POOL_ADMISSION_PLATFORMS
+        || execution_targets.is_empty()
+        || execution_targets.len() > MAX_POOL_EXECUTION_TARGETS =>
+      {
+        Err(StoreInputError::InvalidPoolAdmissionPolicy)
+      }
+      Self::ExecutionAllowlist {
+        platforms,
+        execution_targets,
+      } => execution_targets.iter().try_for_each(|target| {
+        target.validate()?;
+        if platforms.iter().any(|platform| target.host_platform_matches(platform)) {
+          Ok(())
+        } else {
+          Err(StoreInputError::InvalidPoolAdmissionPolicy)
+        }
+      }),
+    }
+  }
+
+  /// Reports whether this Pool version explicitly permits the signed runtime.
+  ///
+  /// Legacy policies remain valid for v1 placement but deliberately grant no
+  /// provider-neutral execution mode.
+  #[must_use]
+  pub fn permits_runtime(&self, runtime: &JobRuntimePolicy) -> bool {
+    match self {
+      Self::Any | Self::Allowlist { .. } => matches!(runtime, JobRuntimePolicy::Legacy(_)),
+      Self::ExecutionAllowlist { execution_targets, .. } => match runtime {
+        JobRuntimePolicy::Legacy(_) => true,
+        JobRuntimePolicy::Current(_) => execution_targets.iter().any(|target| target.matches(runtime)),
+      },
     }
   }
 }
@@ -217,6 +304,8 @@ pub struct AgentPoolPage {
 
 #[cfg(test)]
 mod tests {
+  use octacity_protocol::{ExecutionTargetV2, NetworkPolicy, RuntimeSpecV2};
+
   use super::*;
 
   #[test]
@@ -243,6 +332,52 @@ mod tests {
       ..valid_definition()
     };
     assert_eq!(definition.validate(), Ok(()));
+  }
+
+  #[test]
+  fn provider_neutral_placement_requires_an_exact_pool_grant() {
+    let platform = PlatformSpec {
+      os: octacity_protocol::PlatformOs::Linux,
+      architecture: octacity_protocol::PlatformArchitecture::Amd64,
+    };
+    let target = PoolExecutionTarget {
+      mode: ExecutionMode::Host,
+      host_platform: platform,
+      target_platform: platform,
+      required_guarantees: guarantees_for(ExecutionMode::Host),
+    };
+    let runtime = JobRuntimePolicy::Current(RuntimeSpecV2 {
+      target: ExecutionTargetV2 {
+        mode: target.mode,
+        host_platform: target.host_platform,
+        target_platform: target.target_platform,
+        required_guarantees: target.required_guarantees.clone(),
+        immutable_image: None,
+      },
+      cpu_millis: 1,
+      memory_bytes: 1,
+      writable_disk_bytes: 1,
+      timeout_seconds: 1,
+      network: NetworkPolicy::Unrestricted,
+      workload_identity_profile: None,
+    });
+
+    assert!(!PoolAdmissionPolicy::Any.permits_runtime(&runtime));
+    assert_eq!(
+      PoolAdmissionPolicy::ExecutionAllowlist {
+        platforms: BTreeSet::from([AgentPlatform::new("windows", "amd64").unwrap()]),
+        execution_targets: BTreeSet::from([target.clone()]),
+      }
+      .validate(),
+      Err(StoreInputError::InvalidPoolAdmissionPolicy)
+    );
+    assert!(
+      PoolAdmissionPolicy::ExecutionAllowlist {
+        platforms: BTreeSet::from([AgentPlatform::new("linux", "amd64").unwrap()]),
+        execution_targets: BTreeSet::from([target]),
+      }
+      .permits_runtime(&runtime)
+    );
   }
 
   #[test]

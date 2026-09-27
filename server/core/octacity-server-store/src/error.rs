@@ -363,6 +363,9 @@ pub enum StoreInputError {
   /// A registration inventory is incomplete or violates the shared protocol contract.
   #[error("an agent inventory is invalid")]
   InvalidAgentInventory,
+  /// Completion execution evidence disagrees with signed intent or registered inventory.
+  #[error("job completion execution evidence is invalid")]
+  InvalidExecutionEvidence,
   /// A Lease must expire strictly after it is claimed.
   #[error("a lease expiry must be later than its claim time")]
   InvalidLeaseWindow,

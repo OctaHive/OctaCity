@@ -1,0 +1,20 @@
+[package]
+name = "octacity-execution-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Direct host execution backend for OctaCity"
+
+[dependencies]
+async-trait.workspace = true
+octacity-execution = { path = "../octacity-execution" }
+processkit.workspace = true
+sysinfo.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -471,6 +471,13 @@ impl CompleteLeaseRequest {
     if let Some(usage) = &self.final_usage {
       usage.validate()?;
     }
+    if self
+      .execution
+      .as_ref()
+      .is_some_and(|execution| execution.validate().is_err())
+    {
+      return invalid("completion execution evidence is invalid");
+    }
     Ok(())
   }
 }

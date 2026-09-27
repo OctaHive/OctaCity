@@ -46,12 +46,13 @@ use super::{
   JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource,
   JobTerminalResource, ManualSource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
   OPTIMISTIC_PRECONDITION_HEADER, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
-  PipelineNode, PipelineResource, Platform, PlatformArchitecture, PlatformOs, ProjectDetails, ProjectPolicyResource,
-  ProjectResource, PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest,
-  PublishPipelineVersionRequest, PublishProjectPolicyRequest, PublishRepositoryVersionRequest,
-  ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy,
-  RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, ScheduleResource,
-  TriggerDefinitionResource, TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
+  PipelineNode, PipelineResource, Platform, PlatformArchitecture, PlatformOs, PoolExecutionMode, PoolExecutionTarget,
+  ProjectDetails, ProjectPolicyResource, ProjectResource, PublishAgentPoolVersionRequest,
+  PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest, PublishProjectPolicyRequest,
+  PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition,
+  RepositoryResource, RepositorySelectionPolicy, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass,
+  RuntimePolicy, ScheduleResource, TriggerDefinitionResource, TriggerEvaluationResponse, TriggerKind,
+  VersionPrecondition,
 };
 use crate::RequestId;
 

@@ -70,6 +70,15 @@ impl ExecutionCacheMounts {
         .map(|_| PathBuf::from(CACHE_CA_CERTIFICATE_PATH)),
     }
   }
+
+  /// Returns the canonical paths used by a runner executing directly on the host.
+  pub fn host_paths(&self) -> ExecutionCachePaths {
+    ExecutionCachePaths {
+      local_directory: self.local_directory.clone(),
+      token_file: self.token_file.clone(),
+      ca_certificate_file: self.ca_certificate_file.clone(),
+    }
+  }
 }
 
 /// Protocol streams connected to the isolated `octa-runner` process.
@@ -117,6 +126,11 @@ impl RunnerProgram {
 /// Root filesystem selected for an execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ExecutionTarget {
+  /// Run directly on an agent host without claiming an isolation boundary.
+  Host {
+    /// Exact host platform that must also be observed by the runner.
+    platform: ExecutionPlatform,
+  },
   /// Run directly on an agent host matching the signed platform.
   Native {
     /// Host platform that must execute the runner directly.

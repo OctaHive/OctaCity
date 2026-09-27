@@ -9,7 +9,10 @@ use octacity_server_store::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ApplicationError, Command, CommandHandler, CommandTransaction, MutationDisposition, Query, QueryHandler};
+use crate::{
+  ApplicationError, Command, CommandHandler, CommandTransaction, ExecutionGuaranteeProjection, MutationDisposition,
+  PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, Query, QueryHandler,
+};
 
 /// Creates one static Agent Pool and its initial version.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,6 +143,38 @@ pub enum AgentPoolAdmissionPolicyProjection {
     /// Canonically ordered accepted platform pairs.
     platforms: Vec<AgentPlatformProjection>,
   },
+  /// Exact host platforms and provider-neutral execution targets are allowed.
+  ExecutionAllowlist {
+    /// Canonically ordered accepted Agent host platforms.
+    platforms: Vec<AgentPlatformProjection>,
+    /// Canonically ordered provider-neutral execution grants.
+    execution_targets: Vec<PoolExecutionTargetProjection>,
+  },
+}
+
+/// Safe application projection of one Pool execution grant.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PoolExecutionTargetProjection {
+  /// Permitted execution mode.
+  pub mode: PoolExecutionModeProjection,
+  /// Exact Agent host platform.
+  pub host_platform: PlatformProjection,
+  /// Exact runner-visible target platform.
+  pub target_platform: PlatformProjection,
+  /// Complete guarantees required by the mode.
+  pub required_guarantees: std::collections::BTreeSet<ExecutionGuaranteeProjection>,
+}
+
+/// Provider-neutral execution mode exposed by the Pool policy boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolExecutionModeProjection {
+  /// Direct execution on the Agent host.
+  Host,
+  /// Bounded workload isolation on the Agent host.
+  Isolation,
+  /// Hardware-virtualized guest execution.
+  Virtualization,
 }
 
 /// Safe application projection of one Agent host platform.
@@ -377,6 +412,51 @@ impl From<octacity_server_store::PublishedAgentPool> for AgentPoolProjection {
           })
           .collect(),
       },
+      PoolAdmissionPolicy::ExecutionAllowlist {
+        platforms,
+        execution_targets,
+      } => AgentPoolAdmissionPolicyProjection::ExecutionAllowlist {
+        platforms: platforms
+          .into_iter()
+          .map(|platform| AgentPlatformProjection {
+            operating_system: platform.operating_system().to_owned(),
+            architecture: platform.architecture().to_owned(),
+          })
+          .collect(),
+        execution_targets: execution_targets
+          .into_iter()
+          .map(|target| PoolExecutionTargetProjection {
+            mode: match target.mode {
+              octacity_protocol::ExecutionMode::Host => PoolExecutionModeProjection::Host,
+              octacity_protocol::ExecutionMode::Isolation => PoolExecutionModeProjection::Isolation,
+              octacity_protocol::ExecutionMode::Virtualization => PoolExecutionModeProjection::Virtualization,
+            },
+            host_platform: project_platform(target.host_platform),
+            target_platform: project_platform(target.target_platform),
+            required_guarantees: target
+              .required_guarantees
+              .into_iter()
+              .map(|guarantee| match guarantee {
+                octacity_protocol::ExecutionGuarantee::FilesystemIsolation => {
+                  ExecutionGuaranteeProjection::FilesystemIsolation
+                }
+                octacity_protocol::ExecutionGuarantee::ProcessIsolation => {
+                  ExecutionGuaranteeProjection::ProcessIsolation
+                }
+                octacity_protocol::ExecutionGuarantee::NetworkIsolation => {
+                  ExecutionGuaranteeProjection::NetworkIsolation
+                }
+                octacity_protocol::ExecutionGuarantee::ResourceIsolation => {
+                  ExecutionGuaranteeProjection::ResourceIsolation
+                }
+                octacity_protocol::ExecutionGuarantee::HardwareVirtualization => {
+                  ExecutionGuaranteeProjection::HardwareVirtualization
+                }
+              })
+              .collect(),
+          })
+          .collect(),
+      },
     };
     Self {
       id: pool.id,
@@ -395,5 +475,19 @@ impl From<octacity_server_store::PublishedAgentPool> for AgentPoolProjection {
       static_capacity_limit: pool.definition.static_capacity_limit,
       published_at: pool.published_at,
     }
+  }
+}
+
+fn project_platform(platform: octacity_protocol::PlatformSpec) -> PlatformProjection {
+  PlatformProjection {
+    os: match platform.os {
+      octacity_protocol::PlatformOs::Linux => PlatformOsProjection::Linux,
+      octacity_protocol::PlatformOs::Windows => PlatformOsProjection::Windows,
+      octacity_protocol::PlatformOs::Macos => PlatformOsProjection::Macos,
+    },
+    architecture: match platform.architecture {
+      octacity_protocol::PlatformArchitecture::Amd64 => PlatformArchitectureProjection::Amd64,
+      octacity_protocol::PlatformArchitecture::Arm64 => PlatformArchitectureProjection::Arm64,
+    },
   }
 }

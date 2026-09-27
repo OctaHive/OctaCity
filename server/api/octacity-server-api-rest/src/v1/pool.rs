@@ -1,4 +1,8 @@
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
+
+use super::{ExecutionGuarantee, Platform};
 
 /// Request body for creating one static Agent Pool.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -71,6 +75,39 @@ pub enum AgentPoolAdmissionPolicy {
     /// Bounded unique accepted platform pairs.
     platforms: Vec<AgentPlatform>,
   },
+  /// Only listed host platforms and provider-neutral execution targets are allowed.
+  ExecutionAllowlist {
+    /// Bounded unique accepted Agent host platforms.
+    platforms: Vec<AgentPlatform>,
+    /// Bounded unique provider-neutral execution grants.
+    execution_targets: Vec<PoolExecutionTarget>,
+  },
+}
+
+/// Exact provider-neutral execution boundary permitted by one Pool version.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PoolExecutionTarget {
+  /// Permitted execution mode.
+  pub mode: PoolExecutionMode,
+  /// Exact Agent host platform.
+  pub host_platform: Platform,
+  /// Exact runner-visible target platform.
+  pub target_platform: Platform,
+  /// Complete guarantees required by the mode.
+  pub required_guarantees: BTreeSet<ExecutionGuarantee>,
+}
+
+/// Provider-neutral execution mode permitted by a Pool version.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolExecutionMode {
+  /// Direct execution on the Agent host.
+  Host,
+  /// Bounded workload isolation on the Agent host.
+  Isolation,
+  /// Hardware-virtualized guest execution.
+  Virtualization,
 }
 
 /// Provider-neutral Agent host platform.

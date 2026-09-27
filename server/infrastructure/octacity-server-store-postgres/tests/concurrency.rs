@@ -238,6 +238,7 @@ async fn concurrent_event_and_completion_replays_have_one_dag_transition() {
       lease: access,
       final_sequence: Some(EventSequence::new(2).unwrap()),
       kind: JobCompletionKind::Succeeded,
+      execution: None,
       completed_at: time(3_000),
     };
     let barrier = Arc::new(Barrier::new(2));
@@ -749,6 +750,7 @@ fn successful_completion(grant: octacity_server_store::LeaseGrant, completed_at:
     },
     final_sequence: None,
     kind: JobCompletionKind::Succeeded,
+    execution: None,
     completed_at: time(completed_at),
   }
 }

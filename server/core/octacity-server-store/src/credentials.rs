@@ -1,6 +1,6 @@
 use std::fmt;
 
-use octacity_protocol::AgentInventory;
+use octacity_protocol::{AgentInventory, PlatformArchitecture, PlatformOs, PlatformSpec};
 use octacity_server_domain::{
   AgentId, AgentName, EnrollmentCredentialId, PoolId, PoolVersion, RegistrationCredentialId, Timestamp,
 };
@@ -113,6 +113,30 @@ impl AgentPlatform {
       operating_system,
       architecture,
     })
+  }
+
+  /// Converts the closed protocol platform vocabulary into canonical Pool labels.
+  #[must_use]
+  pub fn from_protocol(platform: PlatformSpec) -> Self {
+    let operating_system = match platform.os {
+      PlatformOs::Linux => "linux",
+      PlatformOs::Windows => "windows",
+      PlatformOs::Macos => "macos",
+    };
+    let architecture = match platform.architecture {
+      PlatformArchitecture::Amd64 => "amd64",
+      PlatformArchitecture::Arm64 => "arm64",
+    };
+    Self {
+      operating_system: operating_system.to_owned(),
+      architecture: architecture.to_owned(),
+    }
+  }
+
+  /// Reports whether these extensible labels identify an exact protocol platform.
+  #[must_use]
+  pub fn matches_protocol(&self, platform: PlatformSpec) -> bool {
+    self == &Self::from_protocol(platform)
   }
 
   /// Returns the canonical operating-system label.
