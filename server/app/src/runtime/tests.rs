@@ -13,6 +13,16 @@ use crate::{
 
 struct HealthyCheck;
 
+struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+impl Drop for DropSignal {
+  fn drop(&mut self) {
+    if let Some(sender) = self.0.take() {
+      let _ = sender.send(());
+    }
+  }
+}
+
 static LISTENER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[async_trait]
@@ -29,16 +39,6 @@ impl ReadinessCheck for HealthyCheck {
 fn healthy_checks() -> ReadinessChecks {
   let check = || Arc::new(HealthyCheck) as Arc<dyn ReadinessCheck>;
   ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
-}
-
-async fn assert_listener_stops(address: SocketAddr) {
-  let stopped = tokio::time::timeout(std::time::Duration::from_secs(1), async {
-    while tokio::net::TcpStream::connect(address).await.is_ok() {
-      tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-    }
-  })
-  .await;
-  assert!(stopped.is_ok(), "shutdown did not stop ingress listener {address}");
 }
 
 fn test_config() -> ServerConfig {
@@ -130,22 +130,55 @@ async fn startup_separates_ingress_and_exposes_operational_metadata() {
 
 #[tokio::test]
 async fn shutdown_cancels_the_listener_and_waits_for_its_task() {
-  let _listener_guard = LISTENER_TEST_LOCK.lock().await;
-  let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
-    .await
-    .unwrap();
-  let addresses = [runtime.management_addr(), runtime.agent_addr().unwrap()];
-  for address in addresses {
-    tokio::net::TcpStream::connect(address)
+  let cancellation = CancellationToken::new();
+  let readiness_cancellation = cancellation.child_token();
+  let listener_cancellation = cancellation.child_token();
+  let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
+  let (cancelled_sender, cancelled_receiver) = tokio::sync::oneshot::channel();
+  let (completion_sender, completion_receiver) = tokio::sync::oneshot::channel();
+  let (dropped_sender, dropped_receiver) = tokio::sync::oneshot::channel();
+  let mut listener_tasks = JoinSet::new();
+  listener_tasks.spawn(async move {
+    let _drop_signal = DropSignal(Some(dropped_sender));
+    let _ = started_sender.send(());
+    listener_cancellation.cancelled().await;
+    let _ = cancelled_sender.send(());
+    completion_receiver
       .await
-      .expect("running ingress listener must accept TCP connections");
-  }
+      .expect("test must release listener task completion");
+    Ok("management")
+  });
+  let runtime = ServerRuntime {
+    management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+    agent_addr: None,
+    cache_addr: None,
+    webhook_addr: None,
+    shutdown_grace: std::time::Duration::from_secs(1),
+    readiness: Arc::new(ReadinessState::default()),
+    cancellation,
+    listener_tasks,
+    readiness_task: Some(tokio::spawn(async move {
+      readiness_cancellation.cancelled().await;
+    })),
+    worker_task: None,
+    notification_task: None,
+    metrics_task: None,
+  };
 
-  runtime.shutdown().await.unwrap();
+  started_receiver.await.unwrap();
+  let shutdown = tokio::spawn(runtime.shutdown());
+  tokio::time::timeout(std::time::Duration::from_secs(1), cancelled_receiver)
+    .await
+    .expect("shutdown must cancel the listener task")
+    .unwrap();
+  assert!(
+    !shutdown.is_finished(),
+    "shutdown must wait for listener task completion"
+  );
 
-  for address in addresses {
-    assert_listener_stops(address).await;
-  }
+  completion_sender.send(()).unwrap();
+  shutdown.await.unwrap().unwrap();
+  dropped_receiver.await.unwrap();
 }
 
 #[tokio::test]
@@ -214,16 +247,6 @@ async fn wait_reports_a_worker_failure_without_waiting_for_a_listener() {
 
 #[tokio::test]
 async fn dropping_runtime_aborts_owned_listener_work() {
-  struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
-
-  impl Drop for DropSignal {
-    fn drop(&mut self) {
-      if let Some(sender) = self.0.take() {
-        let _ = sender.send(());
-      }
-    }
-  }
-
   let (started_sender, started_receiver) = tokio::sync::oneshot::channel();
   let (dropped_sender, dropped_receiver) = tokio::sync::oneshot::channel();
   let mut listener_tasks = JoinSet::new();
