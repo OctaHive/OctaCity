@@ -118,6 +118,21 @@ async fn management_and_agent_http_complete_a_sequential_pipeline() {
   .await;
   let repository_id = resource_id(&repository_resource);
 
+  let mut invalid_configuration = build_configuration(&project_id, &repository_id, &pipeline_id, &pool_id);
+  invalid_configuration["definition"]["retry"]["max_attempts"] = json!(2);
+  let invalid_response = client
+    .post(format!("{management_origin}/api/v1/build-configurations"))
+    .header("idempotency-key", format!("{run}-invalid-configuration"))
+    .json(&invalid_configuration)
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(invalid_response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(
+    invalid_response.json::<Value>().await.unwrap()["code"],
+    "invalid_request"
+  );
+
   let configuration_resource = post_management(
     &client,
     &management_origin,

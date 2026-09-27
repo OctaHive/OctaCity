@@ -94,7 +94,6 @@ struct ConfigurationInput<'a> {
   pool_id: &'a str,
   triggers: &'a [&'a str],
   cache: bool,
-  retry_max_attempts: u32,
   backend: &'a ReleaseBackend,
 }
 
@@ -456,7 +455,6 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: true,
-    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -471,7 +469,6 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["scheduled"],
     cache: true,
-    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -486,7 +483,6 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["internal"],
     cache: false,
-    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -501,7 +497,6 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: false,
-    retry_max_attempts: 1,
     backend,
   })
   .await;
@@ -516,7 +511,6 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: false,
-    retry_max_attempts: 2,
     backend,
   })
   .await;
@@ -649,7 +643,7 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
           "report_bytes": OUTPUT_BYTES,
           "single_output_bytes": OUTPUT_BYTES
         },
-        "retry": {"max_attempts": input.retry_max_attempts, "retry_on": []}
+        "retry": {"max_attempts": 1, "retry_on": []}
       }
     }),
   )

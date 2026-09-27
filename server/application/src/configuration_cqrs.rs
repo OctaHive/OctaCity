@@ -242,7 +242,7 @@ where
     &self,
     command: CreateBuildConfigurationCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
-    validate_configuration_projection(&command.definition)?;
+    validate_configuration_input(&command.definition)?;
     let outcome = self
       .create_build_configuration(CreateBuildConfiguration {
         id: command.id,
@@ -303,7 +303,7 @@ where
     &self,
     command: PublishBuildConfigurationVersionCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
-    validate_configuration_projection(&command.definition)?;
+    validate_configuration_input(&command.definition)?;
     let outcome = self
       .publish_build_configuration_version(PublishBuildConfigurationVersion {
         id: command.id,
@@ -318,6 +318,10 @@ where
       configuration: outcome.configuration.try_into()?,
     })
   }
+}
+
+fn validate_configuration_input(definition: &BuildConfigurationDefinition) -> Result<(), ApplicationError> {
+  validate_configuration_projection(definition).map_err(|_| ApplicationError::invalid())
 }
 
 #[async_trait]
