@@ -375,6 +375,41 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("source-allow-file:", package_action)
         self.assertIn("source_policy+=(--source-allow-file)", package_action)
 
+    def test_backend_matrix_separates_portable_and_privileged_cadence(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
+        release = (REPOSITORY / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        linux_native = workflow.split("  linux-native:\n", 1)[1].split("  linux-containerd:\n", 1)[0]
+        self.assertIn('cron: "17 2 * * *"', workflow)
+        self.assertIn("workflow_call:", workflow)
+        self.assertIn("OCTACITY_RUNNER_INVENTORY_TOKEN:", workflow)
+        self.assertIn("Self-hosted runners read access", workflow)
+        self.assertNotIn("Authorization: Bearer ${GITHUB_TOKEN}", workflow)
+        self.assertIn("matrix-plan:", workflow)
+        self.assertIn("tools/backend_matrix.py plan", workflow)
+        self.assertIn("runner-inventory:", workflow)
+        self.assertIn("tools/backend_matrix.py inventory", workflow)
+        self.assertIn("backend-evidence:", workflow)
+        self.assertIn("tools/backend_matrix.py verify", workflow)
+        self.assertNotIn("github.event_name == 'push'", linux_native)
+        self.assertIn("needs: matrix-plan", linux_native)
+        self.assertIn("needs.matrix-plan.outputs.run_linux_native == 'true'", linux_native)
+        self.assertNotIn("needs: runner-inventory", linux_native)
+        self.assertIn("uses: ./.github/workflows/backend-contracts.yml", release)
+        self.assertIn("needs: backend-release-gate", release)
+        self.assertIn(
+            "OCTACITY_RUNNER_INVENTORY_TOKEN: ${{ secrets.OCTACITY_RUNNER_INVENTORY_TOKEN }}",
+            release,
+        )
+
+        macos_microsandbox = workflow.split("  macos-microsandbox:\n", 1)[1].split(
+            "  windows-microsandbox-preview:\n", 1
+        )[0]
+        self.assertIn("group: octacity-release", macos_microsandbox)
+        self.assertIn(
+            "needs.runner-inventory.outputs.runner_macos_microsandbox == 'true'",
+            macos_microsandbox,
+        )
+
     def test_linux_oci_release_gates_use_disposable_github_runners(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
         containerd = workflow.split("  linux-containerd:\n", 1)[1].split("  linux-microsandbox:\n", 1)[0]
@@ -444,7 +479,8 @@ class PackageReleaseTests(unittest.TestCase):
         apple_vf = workflow.split("  macos-apple-vf:\n", 1)[1]
         self.assertIn("backend: microsandbox", macos_microsandbox)
         self.assertIn("name: release-slice-macos-microsandbox", macos_microsandbox)
-        self.assertIn("runs-on: [self-hosted, macOS, ARM64, octacity-apple-vf]", apple_vf)
+        self.assertIn("group: octacity-release", apple_vf)
+        self.assertIn("labels: [self-hosted, macOS, ARM64, octacity-apple-vf]", apple_vf)
         self.assertIn("self-hosted-apple-vf.sh setup", apple_vf)
         self.assertIn("apple_vf_isolation_provider_satisfies_the_real_runner_contract", apple_vf)
         self.assertIn("backend: apple-vf-isolation", apple_vf)
@@ -469,15 +505,19 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("default_registration_url=https://github.com/$organization", registration)
         self.assertIn("--runnergroup", registration)
         self.assertIn("octacity-release", registration)
-        self.assertIn("backend-contracts.yml@refs/heads/main", registration)
+        self.assertIn("Allow all workflows in the selected repository", registration)
+        self.assertNotIn("backend-contracts.yml@refs/heads/main", registration)
+        self.assertIn("OCTACITY_RUNNER_INVENTORY_TOKEN", registration)
         self.assertNotIn("Start the wizard on the other backend host", registration)
 
     def test_windows_microsandbox_remains_an_explicit_preview_gate(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
         preview = workflow.split("  windows-microsandbox-preview:\n", 1)[1].split("  macos-apple-vf:\n", 1)[0]
-        self.assertIn("inputs.suite == 'windows-microsandbox-preview'", preview)
-        self.assertNotIn("inputs.suite == 'all'", preview)
-        self.assertIn("runs-on: [self-hosted, Windows, X64, octacity-microsandbox-whp]", preview)
+        self.assertIn("needs.matrix-plan.outputs.run_windows_microsandbox_preview == 'true'", preview)
+        self.assertNotIn("github.event_name", preview)
+        self.assertNotIn("inputs.suite", preview)
+        self.assertIn("group: octacity-release", preview)
+        self.assertIn("labels: [self-hosted, Windows, X64, octacity-microsandbox-whp]", preview)
         self.assertIn("self-hosted-microsandbox-whp.ps1 setup", preview)
         self.assertIn("microsandbox_backend_satisfies_the_real_runner_contract", preview)
         self.assertIn("include-server: \"false\"", preview)

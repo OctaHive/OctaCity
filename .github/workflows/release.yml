@@ -10,7 +10,15 @@ permissions:
   contents: read
 
 jobs:
+  backend-release-gate:
+    uses: ./.github/workflows/backend-contracts.yml
+    with:
+      cadence: release
+    secrets:
+      OCTACITY_RUNNER_INVENTORY_TOKEN: ${{ secrets.OCTACITY_RUNNER_INVENTORY_TOKEN }}
+
   package:
+    needs: backend-release-gate
     name: package ${{ matrix.platform }}
     strategy:
       fail-fast: false

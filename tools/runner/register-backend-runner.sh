@@ -204,6 +204,7 @@ default_registration_url=https://github.com/$organization
 case "$(uname -s)/$(uname -m)" in
   Darwin/arm64)
     runner_root=${OCTACITY_RUNNER_ROOT:-$HOME/.octacity-runner}
+    runner_image="macOS and ARM64"
     case "$OCTACITY_RUNNER_MACOS_BACKEND" in
       apple-vf)
         backend_label=octacity-apple-vf
@@ -220,6 +221,7 @@ case "$(uname -s)/$(uname -m)" in
     ;;
   Linux/aarch64|Linux/arm64)
     runner_root=${OCTACITY_RUNNER_ROOT:-/opt/octacity-runner}
+    runner_image="Linux and ARM64"
     backend_label=octacity-native
     workflow_suite=linux-native
     preflight_arguments=()
@@ -240,41 +242,21 @@ say "The selected backend prerequisites must pass before this machine can accept
 pause "Preflight passed. Press Enter to choose the registration scope."
 
 stage "Restrict the GitHub runner scope"
-note "Press Enter to register for the organization: $default_registration_url"
-ask REGISTRATION_URL "Runner registration scope URL:"
-REGISTRATION_URL=${REGISTRATION_URL:-$default_registration_url}
-[[ $REGISTRATION_URL =~ ^https://github\.com/[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)?$ ]] || {
-  warn "expected an https://github.com/OWNER or https://github.com/OWNER/REPOSITORY URL"
-  exit 1
-}
-registration_path=${REGISTRATION_URL#https://github.com/}
-case "$registration_path" in
-  */*)
-    registration_page="https://github.com/$registration_path/settings/actions/runners/new"
-    RUNNER_GROUP=
-    ;;
-  *)
-    registration_page="https://github.com/organizations/$registration_path/settings/actions/runners/new"
-    note "Press Enter to use the dedicated group: octacity-release"
-    ask RUNNER_GROUP "Organization runner group:"
-    RUNNER_GROUP=${RUNNER_GROUP:-octacity-release}
-    [[ $RUNNER_GROUP =~ ^[A-Za-z0-9_.-]+$ ]] || {
-      warn "runner group must contain only letters, digits, dot, underscore, or hyphen"
-      exit 1
-    }
-    write_env RUNNER_GROUP "$RUNNER_GROUP"
-    open_url "https://github.com/organizations/$registration_path/settings/actions/runner-groups"
-    step "Create or open group '$RUNNER_GROUP'."
-    step "Allow public repositories, choose Selected repositories, and select '$repository_name' only."
-    step "If workflow restrictions are available, allow only '$repository_path/.github/workflows/backend-contracts.yml@refs/heads/main'."
-    pause "The restricted runner group is ready?"
-    ;;
-esac
+REGISTRATION_URL=$default_registration_url
+RUNNER_GROUP=octacity-release
+registration_page="https://github.com/organizations/$organization/settings/actions/runners/new"
+write_env RUNNER_GROUP "$RUNNER_GROUP"
 write_env REGISTRATION_URL "$REGISTRATION_URL"
+open_url "https://github.com/organizations/$organization/settings/actions/runner-groups"
+step "Create or open group '$RUNNER_GROUP'."
+step "Allow public repositories, choose Selected repositories, and select '$repository_name' only."
+step "Allow all workflows in the selected repository; tag releases cannot use a branch-pinned workflow restriction."
+step "Ensure repository Actions secret OCTACITY_RUNNER_INVENTORY_TOKEN has organization Self-hosted runners read access."
+pause "The restricted runner group is ready?"
 
 stage "Open the GitHub runner registration page"
 open_url "$registration_page"
-step "Choose macOS and ARM64. The runner package is already installed; do not repeat the download commands."
+step "Choose $runner_image. The runner package is already installed; do not repeat the download commands."
 step "Refresh this page if a token was exposed, then copy only the new one-hour token from the configure command."
 pause "The registration page is ready?"
 

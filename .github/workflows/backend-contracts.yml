@@ -4,6 +4,18 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_call:
+    inputs:
+      cadence:
+        description: Invocation class selected by the calling release workflow
+        required: true
+        type: string
+    secrets:
+      OCTACITY_RUNNER_INVENTORY_TOKEN:
+        description: Fine-grained token with organization Self-hosted runners read access
+        required: false
   workflow_dispatch:
     inputs:
       suite:
@@ -27,8 +39,60 @@ permissions:
   contents: read
 
 jobs:
+  matrix-plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      requires_self_hosted: ${{ steps.plan.outputs.requires_self_hosted }}
+      run_released_host: ${{ steps.plan.outputs.run_released_host }}
+      run_phase6_vault_minio: ${{ steps.plan.outputs.run_phase6_vault_minio }}
+      run_linux_native: ${{ steps.plan.outputs.run_linux_native }}
+      run_linux_containerd: ${{ steps.plan.outputs.run_linux_containerd }}
+      run_linux_microsandbox: ${{ steps.plan.outputs.run_linux_microsandbox }}
+      run_macos_apple_vf: ${{ steps.plan.outputs.run_macos_apple_vf }}
+      run_macos_microsandbox: ${{ steps.plan.outputs.run_macos_microsandbox }}
+      run_windows_microsandbox_preview: ${{ steps.plan.outputs.run_windows_microsandbox_preview }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Plan backend jobs for this invocation
+        id: plan
+        run: >-
+          python3 octacity/tools/backend_matrix.py plan
+          --event-name "${{ github.event_name }}"
+          --suite "${{ inputs.suite }}"
+          --cadence "${{ inputs.cadence }}"
+          --github-output "${GITHUB_OUTPUT}"
+
+  runner-inventory:
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.requires_self_hosted == 'true' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      inventory_available: ${{ steps.runners.outputs.inventory_available }}
+      runner_group_available: ${{ steps.runners.outputs.runner_group_available }}
+      runner_macos_apple_vf: ${{ steps.runners.outputs.runner_macos_apple_vf }}
+      runner_macos_microsandbox: ${{ steps.runners.outputs.runner_macos_microsandbox }}
+      runner_windows_microsandbox_preview: ${{ steps.runners.outputs.runner_windows_microsandbox_preview }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Inspect explicitly provisioned self-hosted runners
+        id: runners
+        env:
+          OCTACITY_RUNNER_INVENTORY_TOKEN: ${{ secrets.OCTACITY_RUNNER_INVENTORY_TOKEN }}
+        run: >-
+          python3 octacity/tools/backend_matrix.py inventory
+          --api-url "${GITHUB_API_URL}"
+          --organization "${GITHUB_REPOSITORY_OWNER}"
+          --repository "${{ github.event.repository.name }}"
+          --repository-private "${{ github.event.repository.private }}"
+          --github-output "${GITHUB_OUTPUT}"
+
   released-host:
-    if: ${{ github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'host' }}
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_released_host == 'true' }}
     name: released host
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -104,7 +168,8 @@ jobs:
           if-no-files-found: error
 
   phase6-vault-minio:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'phase6' }}
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_phase6_vault_minio == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -161,7 +226,8 @@ jobs:
         run: docker rm --force octacity-phase6-vault octacity-phase6-minio || true
 
   linux-native:
-    if: ${{ github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-native' }}
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_linux_native == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -220,7 +286,8 @@ jobs:
         run: tools/runner/github-hosted-native.sh cleanup
 
   linux-containerd:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-containerd' }}
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_linux_containerd == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -279,7 +346,8 @@ jobs:
         run: tools/runner/github-hosted-oci.sh cleanup containerd
 
   linux-microsandbox:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'linux-microsandbox' }}
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_linux_microsandbox == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -338,8 +406,11 @@ jobs:
         run: tools/runner/github-hosted-oci.sh cleanup microsandbox
 
   macos-microsandbox:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'macos-microsandbox' }}
-    runs-on: [self-hosted, macOS, ARM64, octacity-microsandbox]
+    needs: [matrix-plan, runner-inventory]
+    if: ${{ needs.matrix-plan.outputs.run_macos_microsandbox == 'true' && needs.runner-inventory.outputs.runner_macos_microsandbox == 'true' }}
+    runs-on:
+      group: octacity-release
+      labels: [self-hosted, macOS, ARM64, octacity-microsandbox]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -382,8 +453,11 @@ jobs:
 
   windows-microsandbox-preview:
     name: Windows WHP Microsandbox preview (not release-qualified)
-    if: ${{ inputs.suite == 'windows-microsandbox-preview' }}
-    runs-on: [self-hosted, Windows, X64, octacity-microsandbox-whp]
+    needs: [matrix-plan, runner-inventory]
+    if: ${{ needs.matrix-plan.outputs.run_windows_microsandbox_preview == 'true' && needs.runner-inventory.outputs.runner_windows_microsandbox_preview == 'true' }}
+    runs-on:
+      group: octacity-release
+      labels: [self-hosted, Windows, X64, octacity-microsandbox-whp]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -428,8 +502,11 @@ jobs:
         run: tools/runner/self-hosted-microsandbox-whp.ps1 cleanup
 
   macos-apple-vf:
-    if: ${{ inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'macos-apple-vf' }}
-    runs-on: [self-hosted, macOS, ARM64, octacity-apple-vf]
+    needs: [matrix-plan, runner-inventory]
+    if: ${{ needs.matrix-plan.outputs.run_macos_apple_vf == 'true' && needs.runner-inventory.outputs.runner_macos_apple_vf == 'true' }}
+    runs-on:
+      group: octacity-release
+      labels: [self-hosted, macOS, ARM64, octacity-apple-vf]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -481,3 +558,34 @@ jobs:
         if: always()
         working-directory: octacity
         run: tools/runner/self-hosted-apple-vf.sh cleanup
+
+  backend-evidence:
+    if: ${{ always() }}
+    needs:
+      - matrix-plan
+      - runner-inventory
+      - released-host
+      - phase6-vault-minio
+      - linux-native
+      - linux-containerd
+      - linux-microsandbox
+      - macos-microsandbox
+      - windows-microsandbox-preview
+      - macos-apple-vf
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Verify required backend release evidence
+        env:
+          OCTACITY_BACKEND_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          needs="${RUNNER_TEMP}/octacity-backend-needs.json"
+          printf '%s\n' "${OCTACITY_BACKEND_NEEDS}" > "${needs}"
+          python3 octacity/tools/backend_matrix.py verify \
+            --event-name "${{ github.event_name }}" \
+            --suite "${{ inputs.suite }}" \
+            --cadence "${{ inputs.cadence }}" \
+            --needs "${needs}"

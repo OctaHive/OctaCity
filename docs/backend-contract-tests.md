@@ -34,6 +34,31 @@ Virtualization.framework boundary, so neither suite is treated as portable CI
 evidence. The portable CI matrix remains independent of privileged host
 configuration.
 
+### Release-matrix cadence and runner evidence
+
+An ordinary push to `main` runs only the released Host matrix on GitHub-hosted
+Linux, macOS, and Windows. The privileged Linux and Apple Silicon provider
+matrices run only when selected manually, in the nightly backend workflow, or
+as a required gate before release packaging. The Windows WHP Microsandbox
+preview remains manual-only and is not accepted as release evidence.
+
+Nightly and release invocations inspect the canonical `octacity-release`
+runner group before GitHub creates a self-hosted job. The group must allow this
+repository, public repositories, and every trusted workflow in this repository;
+do not restrict it to a branch-pinned workflow because release jobs execute the
+same reusable workflow from a tag. Jobs also name the group in `runs-on`, so an
+unrelated organization runner with matching labels cannot satisfy the preflight
+and then leave the job queued.
+
+Configure the repository Actions secret `OCTACITY_RUNNER_INVENTORY_TOKEN` with
+a fine-grained token limited to the OctaHive organization and the
+`Self-hosted runners: read` organization permission. The workflow follows every
+GitHub API page and never uses this token on a self-hosted machine. If the token
+is absent or invalid, the group is not visible to the repository, or a required
+labelled runner is offline at planning time, the corresponding job is skipped
+and the hosted `backend-evidence` job fails with explicit missing-evidence
+diagnostics rather than reporting a successful release gate.
+
 Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor. The
 hosted setup loads Ubuntu's packaged `bwrap-userns-restrict` profile rather
 than disabling that system-wide protection, then executes a namespace probe
@@ -61,6 +86,13 @@ one-hour GitHub registration token is read without echo and is never written
 to disk. Because self-hosted runners execute repository code, use this
 procedure only for a trusted revision and do not enable it for unreviewed
 public pull requests.
+
+A full nightly or release gate requires both macOS labels to be online before
+the workflow starts. Provision two ephemeral runner installations, normally on
+two hosts. A single sufficiently provisioned host may use two terminals and
+distinct `OCTACITY_RUNNER_ROOT` directories; never reuse one configured
+`actions-runner` directory for both registrations. Individual manual suites
+still require only their selected backend runner.
 
 An optional self-hosted ARM64 Linux runner still needs one initial cgroup
 installation:
