@@ -256,6 +256,87 @@ fn transient_adapter_failures_survive_restart_and_end_in_a_safe_dead_letter() {
   });
 }
 
+#[test]
+fn unauthenticated_deliveries_never_reach_the_trigger_engine() {
+  run(async {
+    let mut fixture = fixture();
+    fixture.context.configuration.definition.triggers.allowed = BTreeSet::from([TriggerKind::External]);
+    let acceptance = Arc::new(RecordingStore::default());
+    let integration_id = id::<IntegrationId>(87);
+    let store = Arc::new(StaticExternalStore {
+      integration: Mutex::new(WebhookIntegrationRecord {
+        integration_id,
+        trigger: fixture.command.trigger,
+        target: fixture.command.target,
+        enabled: true,
+        definition: UnmanagedWebhookDefinition {
+          adapter_id: "rejecting".to_owned(),
+          adapter_sha256: DIGEST.to_owned(),
+          verification_material_handle: "secret:webhook".to_owned(),
+          verification_headers: BTreeSet::from(["x-signature".to_owned()]),
+          repository_id: fixture.context.repository.id,
+          event_kind: TriggerEventKind::new("push").unwrap(),
+          parameters: fixture.command.parameters,
+          priority: fixture.command.priority,
+        },
+      }),
+      deliveries: Mutex::new(StaticDeliveryState::default()),
+    });
+    let ingress = WebhookIngressService::new(store.clone(), store.clone());
+    let missing_proof = ingress
+      .handle_command(AcceptWebhookDeliveryCommand {
+        integration_id,
+        headers: BTreeMap::new(),
+        body: b"delivery".to_vec(),
+        received_at: time(100),
+      })
+      .await;
+    assert!(matches!(
+      missing_proof,
+      Err(octacity_server_application::WebhookDeliveryError::AuthenticationFailed)
+    ));
+    assert!(store.deliveries.lock().unwrap().deliveries.is_empty());
+
+    let accepted = ingress
+      .handle_command(AcceptWebhookDeliveryCommand {
+        integration_id,
+        headers: BTreeMap::from([("x-signature".to_owned(), "invalid".to_owned())]),
+        body: b"delivery".to_vec(),
+        received_at: time(110),
+      })
+      .await
+      .unwrap();
+    let trigger_engine = Arc::new(ManualTriggerService::new(
+      acceptance.clone(),
+      Arc::new(StaticContext(fixture.context)),
+      Arc::new(RecordingResolver::succeed("0123456789abcdef")),
+    ));
+    let outcome = WebhookDeliveryWorker::new(
+      store.clone(),
+      store.clone(),
+      trigger_engine,
+      Arc::new(RejectingWebhookVerifier),
+      DurableRetryPolicy::new(3, 10, 100).unwrap(),
+    )
+    .run_once(WorkerOwner::new("webhook:reject").unwrap(), time(120), time(200), 1)
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.dead_letters, 1);
+    assert_eq!(outcome.retries_scheduled, 0);
+    assert_eq!(acceptance.calls(), 0);
+    let diagnostic = store.webhook_delivery(accepted.delivery_id).await.unwrap();
+    assert_eq!(
+      diagnostic.failure_code,
+      Some(octacity_server_store::WebhookFailureCode::AuthenticationFailed)
+    );
+    assert_eq!(
+      diagnostic.state,
+      octacity_server_store::WebhookDeliveryState::DeadLetter
+    );
+  });
+}
+
 struct StaticExternalStore {
   integration: Mutex<WebhookIntegrationRecord>,
   deliveries: Mutex<StaticDeliveryState>,
@@ -461,6 +542,18 @@ struct StaticWebhookVerifier {
 }
 
 struct UnavailableVerifier(AtomicUsize);
+
+struct RejectingWebhookVerifier;
+
+#[async_trait]
+impl WebhookDeliveryVerifier for RejectingWebhookVerifier {
+  async fn verify(
+    &self,
+    _delivery: VerifyWebhookDelivery,
+  ) -> Result<AuthenticatedWebhookEvent, WebhookVerificationError> {
+    Err(WebhookVerificationError::AuthenticationFailed)
+  }
+}
 
 #[async_trait]
 impl WebhookDeliveryVerifier for UnavailableVerifier {

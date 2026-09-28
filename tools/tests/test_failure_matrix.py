@@ -1,11 +1,13 @@
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "tools"))
 SPEC = importlib.util.spec_from_file_location(
     "failure_matrix", REPOSITORY / "tools/failure_matrix.py"
 )

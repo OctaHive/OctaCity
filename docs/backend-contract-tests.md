@@ -63,6 +63,34 @@ variables used by CI and execute:
 python3 tools/failure_matrix.py run --evidence-dir /tmp/octacity-failure-matrix
 ```
 
+Nightly and release invocations also require the hosted `security-matrix` job.
+Its trust boundaries are every place where an untrusted caller, repository,
+provider, plugin, workload, or stored object can influence authority or expose
+sensitive data. The protected assets are Agent credentials and Pool authority,
+immutable policy and signed execution intent, provider credentials, webhook
+authenticity, logical secret references, verified executable and object
+digests, Agent-owned filesystem roots, redacted logs, transfer capabilities,
+and project-local cache data.
+
+The catalog in `tools/security_matrix.py` maps those assets to executable
+negative contracts for Agent enrollment, Pool and execution-mode admission,
+Project policy, signed JobSpecs, provider configuration, webhook
+authentication, malicious repository data, plugin digests, artifact paths,
+log archive and search redaction, presigned URL redaction, and cache namespace
+isolation. It refuses an incomplete catalog and requires authentication,
+authorization, integrity, isolation, non-execution, redaction, and fail-closed
+evidence. Every group runs even after an earlier failure. The retained
+per-group logs and `security-matrix.json` therefore distinguish a complete
+passing gate from missing or partial evidence.
+
+Run this hosted gate alone from `backend contracts` with suite `security`. For
+a local run, provide a disposable PostgreSQL database and execute:
+
+```shell
+export OCTACITY_POSTGRES_URL=postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+python3 tools/security_matrix.py run --evidence-dir /tmp/octacity-security-matrix
+```
+
 Nightly and release invocations inspect the canonical `octacity-release`
 runner group before GitHub creates a self-hosted job. The group must allow this
 repository, public repositories, and every trusted workflow in this repository;

@@ -17,6 +17,7 @@ RUNNER_GROUP = "octacity-release"
 RELEASE_JOBS = frozenset(
     {
         "failure-matrix",
+        "security-matrix",
         "released-host",
         "linux-native",
         "linux-containerd",
@@ -29,6 +30,7 @@ MANUAL_SUITES = {
     "all": RELEASE_JOBS | {"phase6-vault-minio"},
     "released-agent": RELEASE_JOBS,
     "failure": frozenset({"failure-matrix"}),
+    "security": frozenset({"security-matrix"}),
     "host": frozenset({"released-host"}),
     "phase6": frozenset({"phase6-vault-minio"}),
     "linux-native": frozenset({"linux-native"}),

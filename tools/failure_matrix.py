@@ -4,14 +4,11 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 from enum import StrEnum
-import json
 from pathlib import Path
-import subprocess
-import sys
-import time
 from typing import Callable, NamedTuple, Sequence
+
+from contract_matrix import execute, run_contracts as execute_contracts
 
 
 class Boundary(StrEnum):
@@ -191,25 +188,6 @@ def validate_contracts(contracts: Sequence[FailureContract] = CONTRACTS) -> None
         raise ValueError("every failure contract must execute an explicit Cargo test command")
 
 
-def execute(command: Sequence[str], repository: Path, log_path: Path) -> int:
-    """Stream one test command to CI and a retained evidence log."""
-    with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(
-            command,
-            cwd=repository,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        assert process.stdout is not None
-        for line in process.stdout:
-            sys.stdout.write(line)
-            log.write(line)
-        return process.wait()
-
-
 def run_contracts(
     repository: Path,
     evidence_dir: Path,
@@ -218,35 +196,14 @@ def run_contracts(
 ) -> int:
     """Run every contract, retain all outcomes, and fail after the full matrix."""
     validate_contracts()
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    outcomes = []
-    failed = False
-    for contract in CONTRACTS:
-        print(f"\n::group::failure contract: {contract.name}", flush=True)
-        started = time.monotonic()
-        status = runner(contract.command, repository, evidence_dir / f"{contract.name}.log")
-        duration = time.monotonic() - started
-        print("::endgroup::", flush=True)
-        outcomes.append(
-            {
-                **contract._asdict(),
-                "command": list(contract.command),
-                "duration_seconds": round(duration, 3),
-                "status": "passed" if status == 0 else "failed",
-                "exit_code": status,
-            }
-        )
-        failed |= status != 0
-    report = {
-        "schema_version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "result": "failed" if failed else "passed",
-        "contracts": outcomes,
-    }
-    (evidence_dir / "failure-matrix.json").write_text(
-        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    return execute_contracts(
+        CONTRACTS,
+        repository,
+        evidence_dir,
+        group="failure contract",
+        report_name="failure-matrix.json",
+        runner=runner,
     )
-    return 1 if failed else 0
 
 
 def parser() -> argparse.ArgumentParser:

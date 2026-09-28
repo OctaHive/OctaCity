@@ -27,6 +27,7 @@ on:
           - released-agent
           - all
           - failure
+          - security
           - host
           - phase6
           - linux-native
@@ -46,6 +47,7 @@ jobs:
       requires_self_hosted: ${{ steps.plan.outputs.requires_self_hosted }}
       run_released_host: ${{ steps.plan.outputs.run_released_host }}
       run_failure_matrix: ${{ steps.plan.outputs.run_failure_matrix }}
+      run_security_matrix: ${{ steps.plan.outputs.run_security_matrix }}
       run_phase6_vault_minio: ${{ steps.plan.outputs.run_phase6_vault_minio }}
       run_linux_native: ${{ steps.plan.outputs.run_linux_native }}
       run_linux_containerd: ${{ steps.plan.outputs.run_linux_containerd }}
@@ -236,6 +238,61 @@ jobs:
         with:
           name: release-failure-matrix
           path: ${{ runner.temp }}/octacity-failure-matrix
+          if-no-files-found: error
+
+  security-matrix:
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_security_matrix == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Set up Microsandbox guest agent for compilation
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Start disposable security-state dependency
+        run: |
+          docker run --detach --rm --name octacity-security-postgres \
+            -p 127.0.0.1:15432:5432 \
+            -e POSTGRES_USER=octacity \
+            -e POSTGRES_PASSWORD=octacity-secret \
+            -e POSTGRES_DB=postgres \
+            postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+          for attempt in {1..30}; do
+            if docker exec octacity-security-postgres \
+              pg_isready -U octacity -d postgres >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs octacity-security-postgres
+          exit 1
+      - name: Run the complete security-boundary matrix
+        working-directory: octacity
+        env:
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          python3 tools/security_matrix.py run
+          --evidence-dir "${RUNNER_TEMP}/octacity-security-matrix"
+      - name: Stop disposable security-state dependency
+        if: always()
+        run: docker rm --force octacity-security-postgres || true
+      - name: Retain security-boundary evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-security-matrix
+          path: ${{ runner.temp }}/octacity-security-matrix
           if-no-files-found: error
 
   phase6-vault-minio:
@@ -636,6 +693,7 @@ jobs:
       - matrix-plan
       - runner-inventory
       - failure-matrix
+      - security-matrix
       - released-host
       - phase6-vault-minio
       - linux-native
