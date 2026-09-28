@@ -747,8 +747,8 @@ mod tests {
 
   use super::*;
 
-  #[tokio::test]
-  async fn microsandbox_matrix_documents_request_provider_neutral_virtualization() {
+  #[test]
+  fn microsandbox_matrix_documents_request_provider_neutral_virtualization() {
     let backend = ReleaseBackend::Microsandbox {
       work_root: PathBuf::from("/work"),
       state_root: PathBuf::from("/state"),
@@ -804,19 +804,6 @@ mod tests {
       json!([execution_target])
     );
     assert_eq!(cache_proxy_advertised_host(&backend), "host.microsandbox.internal");
-
-    let directory = tempfile::tempdir().unwrap();
-    let proxy = TlsCacheProxy::start(
-      unused_loopback_address(),
-      directory.path(),
-      cache_proxy_advertised_host(&backend),
-    )
-    .await;
-    assert_eq!(
-      reqwest::Url::parse(&proxy.origin).unwrap().host_str(),
-      Some(MICROSANDBOX_HOST_ALIAS)
-    );
-    proxy.shutdown().await;
   }
 }
 

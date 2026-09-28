@@ -62,7 +62,7 @@ impl TlsCacheProxy {
       while connections.join_next().await.is_some() {}
     });
     Self {
-      origin: format!("https://{advertised_host}:{}", address.port()),
+      origin: advertised_origin(advertised_host, address.port()),
       ca_certificate,
       stop,
       task,
@@ -72,5 +72,22 @@ impl TlsCacheProxy {
   pub(super) async fn shutdown(self) {
     self.stop.cancel();
     self.task.await.unwrap();
+  }
+}
+
+fn advertised_origin(host: &str, port: u16) -> String {
+  format!("https://{host}:{port}")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn advertised_origin_preserves_the_guest_visible_host() {
+    assert_eq!(
+      advertised_origin("host.microsandbox.internal", 8443),
+      "https://host.microsandbox.internal:8443"
+    );
   }
 }
