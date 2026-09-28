@@ -59,7 +59,7 @@ jobs:
         uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: protoc,cargo-fuzz@0.13.2
-          fallback: none
+          fallback: cargo-install
       - name: Install Linux system dependencies
         run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
       - name: Fuzz bounded protocol decoders

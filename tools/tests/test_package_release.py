@@ -556,6 +556,16 @@ class PackageReleaseTests(unittest.TestCase):
             if "rust-toolchain@" in workflow:
                 self.assertIn("toolchain: 1.98.1", workflow)
 
+    def test_security_workflow_installs_the_pinned_fuzzer_from_source(self):
+        workflow = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
+        audit = workflow.split("  dependency-audit:\n", 1)[1].split("  fuzz-protocols:\n", 1)[0]
+        fuzz = workflow.split("  fuzz-protocols:\n", 1)[1]
+        self.assertIn("tool: cargo-audit@0.22.2", audit)
+        self.assertIn("fallback: none", audit)
+        self.assertIn("tool: protoc,cargo-fuzz@0.13.2", fuzz)
+        self.assertIn("fallback: cargo-install", fuzz)
+        self.assertNotIn("fallback: none", fuzz)
+
     def test_coverage_runs_every_postgres_integration_contract(self):
         workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertRegex(
