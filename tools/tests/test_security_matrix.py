@@ -70,6 +70,18 @@ class SecurityMatrixTests(unittest.TestCase):
         self.assertIn("name: release-security-matrix", workflow)
         self.assertIn("      - security-matrix\n", workflow)
 
+    def test_release_workflow_checks_out_the_pinned_octa_dependency(self):
+        workflow = (
+            REPOSITORY / ".github/workflows/backend-contracts.yml"
+        ).read_text(encoding="utf-8")
+        security_job = workflow.split("\n  security-matrix:\n", 1)[1].split(
+            "\n  phase6-vault-minio:\n", 1
+        )[0]
+
+        self.assertIn(
+            "uses: ./octacity/.github/actions/checkout-octa", security_job
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
