@@ -51,6 +51,12 @@ class BackendMatrixTests(unittest.TestCase):
             frozenset({"windows-microsandbox-preview"}),
         )
 
+    def test_manual_lifecycle_suite_requires_every_qualified_provider(self):
+        self.assertEqual(
+            BACKEND_MATRIX.expected_jobs("workflow_dispatch", "lifecycle", ""),
+            BACKEND_MATRIX.LIFECYCLE_JOBS | {"lifecycle-matrix"},
+        )
+
     def test_runner_inventory_requires_online_runner_with_every_label(self):
         runners = (
             {

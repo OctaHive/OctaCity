@@ -91,6 +91,42 @@ export OCTACITY_POSTGRES_URL=postgres://octacity:octacity-secret@127.0.0.1:15432
 python3 tools/security_matrix.py run --evidence-dir /tmp/octacity-security-matrix
 ```
 
+Nightly and release invocations also require the `lifecycle-matrix` job. Its
+catalog names only release-qualified platform/provider pairs: systemd with
+Host, legacy Native, containerd, or Microsandbox; launchd with Host, Apple VF,
+or Microsandbox; and Windows SCM with Host. The Windows WHP Microsandbox
+preview is deliberately excluded until it becomes release-qualified.
+
+The hosted portion verifies packaged service definitions, dedicated service
+identities, configuration validation, restart and orphan recovery, graceful
+and forced server-directed drain, provider teardown, and immutable release
+installation. Package contracts build consecutive Linux, macOS, and Windows
+candidates, install them into separate version directories, revalidate every
+checksum, and prove the previous candidate remains intact for rollback. The
+catalog covers every install, validate, start, reboot, drain, upgrade,
+rollback-window, and uninstall phase both without a Pipeline and with an active
+Pipeline where work can exist.
+
+Lifecycle evidence is intentionally composite. A hosted unit or package test
+cannot claim that a privileged backend completed a released job. Therefore the
+manual `lifecycle` suite, nightly gate, and release gate also require the real
+`released-host`, `linux-native`, `linux-containerd`, `linux-microsandbox`,
+`macos-apple-vf`, and `macos-microsandbox` jobs. Those jobs install verified
+release bundles, run active Pipelines, exercise cancellation or graceful
+drain, and reject leftover provider state. `backend-evidence` accepts the
+lifecycle gate only when both the hosted catalog and every required real job
+succeed.
+
+Run the portable catalog locally with:
+
+```shell
+python3 tools/lifecycle_matrix.py run --evidence-dir /tmp/octacity-lifecycle-matrix
+```
+
+Run the complete released-host and provider gate from `backend contracts` with
+suite `lifecycle`; the two Apple Silicon jobs require the documented ephemeral
+self-hosted runners.
+
 Nightly and release invocations inspect the canonical `octacity-release`
 runner group before GitHub creates a self-hosted job. The group must allow this
 repository, public repositories, and every trusted workflow in this repository;

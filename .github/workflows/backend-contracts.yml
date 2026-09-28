@@ -28,6 +28,7 @@ on:
           - all
           - failure
           - security
+          - lifecycle
           - host
           - phase6
           - linux-native
@@ -48,6 +49,7 @@ jobs:
       run_released_host: ${{ steps.plan.outputs.run_released_host }}
       run_failure_matrix: ${{ steps.plan.outputs.run_failure_matrix }}
       run_security_matrix: ${{ steps.plan.outputs.run_security_matrix }}
+      run_lifecycle_matrix: ${{ steps.plan.outputs.run_lifecycle_matrix }}
       run_phase6_vault_minio: ${{ steps.plan.outputs.run_phase6_vault_minio }}
       run_linux_native: ${{ steps.plan.outputs.run_linux_native }}
       run_linux_containerd: ${{ steps.plan.outputs.run_linux_containerd }}
@@ -295,6 +297,41 @@ jobs:
         with:
           name: release-security-matrix
           path: ${{ runner.temp }}/octacity-security-matrix
+          if-no-files-found: error
+
+  lifecycle-matrix:
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_lifecycle_matrix == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Set up Microsandbox guest agent for compilation
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Run the complete service and provider lifecycle matrix
+        working-directory: octacity
+        run: >-
+          python3 tools/lifecycle_matrix.py run
+          --evidence-dir "${RUNNER_TEMP}/octacity-lifecycle-matrix"
+      - name: Retain release lifecycle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-lifecycle-matrix
+          path: ${{ runner.temp }}/octacity-lifecycle-matrix
           if-no-files-found: error
 
   phase6-vault-minio:
@@ -696,6 +733,7 @@ jobs:
       - runner-inventory
       - failure-matrix
       - security-matrix
+      - lifecycle-matrix
       - released-host
       - phase6-vault-minio
       - linux-native

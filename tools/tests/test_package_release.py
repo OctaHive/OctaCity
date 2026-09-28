@@ -124,6 +124,58 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertIn('executable = "octacity-source-git.exe"', plugin)
                 self.assertIn('git_path = "C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe"', plugin)
 
+    def test_upgrade_candidates_remain_separate_and_rollback_verifiable(self):
+        for platform in ("linux-amd64", "macos-arm64", "windows-amd64"):
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                suffix = ".zip" if platform.startswith("windows-") else ".tar.gz"
+                previous = PACKAGE_RELEASE.package(
+                    self.fixture(root, platform, f"agent-1.2.3{suffix}")
+                )
+                previous_digest = PACKAGE_RELEASE.sha256(previous)
+
+                candidate = self.fixture(root, platform, f"agent-1.2.4{suffix}")
+                candidate.version = "1.2.4"
+                candidate.agent.write_bytes(b"agent-release-1.2.4")
+                candidate.source_git.write_bytes(b"source-release-1.2.4")
+                metadata = json.loads(candidate.source_metadata.read_text(encoding="utf-8"))
+                metadata["version"] = candidate.version
+                candidate.source_metadata.write_text(json.dumps(metadata), encoding="utf-8")
+                replacement = PACKAGE_RELEASE.package(candidate)
+
+                releases = root / "releases"
+                previous_root = releases / "1.2.3"
+                replacement_root = releases / "1.2.4"
+                self.extract_release(previous, previous_root)
+                self.extract_release(replacement, replacement_root)
+
+                self.assertEqual(PACKAGE_RELEASE.sha256(previous), previous_digest)
+                self.assert_release_is_self_verifying(previous_root, "1.2.3")
+                self.assert_release_is_self_verifying(replacement_root, "1.2.4")
+                executable = PACKAGE_RELEASE.PLATFORMS[platform].agent_name
+                self.assertEqual((previous_root / "bin" / executable).read_bytes(), b"agent-release")
+                self.assertEqual(
+                    (replacement_root / "bin" / executable).read_bytes(),
+                    b"agent-release-1.2.4",
+                )
+
+    def extract_release(self, archive: Path, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        if archive.suffix == ".zip":
+            with zipfile.ZipFile(archive) as source:
+                source.extractall(destination)
+        else:
+            with tarfile.open(archive, "r:gz") as source:
+                source.extractall(destination, filter="data")
+
+    def assert_release_is_self_verifying(self, root: Path, version: str) -> None:
+        manifest = json.loads((root / "release-manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], version)
+        checksums = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+        for line in checksums:
+            expected, relative = line.split("  ", 1)
+            self.assertEqual(PACKAGE_RELEASE.sha256(root / relative), expected)
+
     def test_contract_candidate_can_explicitly_allow_a_local_source(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
