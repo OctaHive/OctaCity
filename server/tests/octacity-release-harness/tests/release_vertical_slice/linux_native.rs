@@ -42,6 +42,7 @@ use scenarios::{
 
 const FIXTURE_OCTAFILE: &str = "fixtures/release/linux-native/Octafile.yml";
 const CACHE_NAMESPACE: &str = "release-linux-native";
+const MICROSANDBOX_HOST_ALIAS: &str = "host.microsandbox.internal";
 const ARTIFACT_CONTENT: &[u8] = b"OctaCity released Linux Native artifact\n";
 const MEMORY_BYTES: u64 = 512 * 1024 * 1024;
 const OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
@@ -153,7 +154,7 @@ async fn run_matrix(expected_backend: &str) {
   let management_addr = unused_loopback_address();
   let agent_addr = unused_loopback_address();
   let cache_addr = unused_loopback_address();
-  let cache_proxy = TlsCacheProxy::start(cache_addr, temporary.path()).await;
+  let cache_proxy = TlsCacheProxy::start(cache_addr, temporary.path(), cache_proxy_advertised_host(&backend)).await;
   let server_config = write_server_config(
     temporary.path(),
     &ServerConfigInput {
@@ -746,8 +747,8 @@ mod tests {
 
   use super::*;
 
-  #[test]
-  fn microsandbox_matrix_documents_request_provider_neutral_virtualization() {
+  #[tokio::test]
+  async fn microsandbox_matrix_documents_request_provider_neutral_virtualization() {
     let backend = ReleaseBackend::Microsandbox {
       work_root: PathBuf::from("/work"),
       state_root: PathBuf::from("/state"),
@@ -802,6 +803,20 @@ mod tests {
       backend.pool_admission_policy()["execution_targets"],
       json!([execution_target])
     );
+    assert_eq!(cache_proxy_advertised_host(&backend), "host.microsandbox.internal");
+
+    let directory = tempfile::tempdir().unwrap();
+    let proxy = TlsCacheProxy::start(
+      unused_loopback_address(),
+      directory.path(),
+      cache_proxy_advertised_host(&backend),
+    )
+    .await;
+    assert_eq!(
+      reqwest::Url::parse(&proxy.origin).unwrap().host_str(),
+      Some(MICROSANDBOX_HOST_ALIAS)
+    );
+    proxy.shutdown().await;
   }
 }
 
@@ -978,6 +993,13 @@ fn backend_work_root(backend: &ReleaseBackend) -> &Path {
     | ReleaseBackend::Microsandbox { work_root, .. }
     | ReleaseBackend::Containerd { work_root, .. }
     | ReleaseBackend::AppleVf { work_root, .. } => work_root,
+  }
+}
+
+fn cache_proxy_advertised_host(backend: &ReleaseBackend) -> &'static str {
+  match backend {
+    ReleaseBackend::Microsandbox { .. } => MICROSANDBOX_HOST_ALIAS,
+    ReleaseBackend::Native { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => "127.0.0.1",
   }
 }
 

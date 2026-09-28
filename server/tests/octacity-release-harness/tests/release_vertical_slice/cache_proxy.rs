@@ -25,8 +25,8 @@ pub(super) struct TlsCacheProxy {
 }
 
 impl TlsCacheProxy {
-  pub(super) async fn start(upstream: SocketAddr, directory: &Path) -> Self {
-    let certified = rcgen::generate_simple_self_signed(["127.0.0.1".to_owned()]).unwrap();
+  pub(super) async fn start(upstream: SocketAddr, directory: &Path, advertised_host: &str) -> Self {
+    let certified = rcgen::generate_simple_self_signed([advertised_host.to_owned()]).unwrap();
     let ca_certificate = private_file(directory, "cache-ca.pem", &certified.cert.pem());
     let key = PrivatePkcs8KeyDer::from(certified.signing_key.serialize_der());
     let config = rustls::ServerConfig::builder()
@@ -62,7 +62,7 @@ impl TlsCacheProxy {
       while connections.join_next().await.is_some() {}
     });
     Self {
-      origin: format!("https://{address}"),
+      origin: format!("https://{advertised_host}:{}", address.port()),
       ca_certificate,
       stop,
       task,
