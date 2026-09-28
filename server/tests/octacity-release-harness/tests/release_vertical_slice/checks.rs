@@ -134,6 +134,21 @@ pub(super) fn has_cache_hit(job: &Value) -> bool {
     .any(|event| event["payload"]["source"] == "runner" && event["payload"]["event"]["data"]["type"] == "cache_hit")
 }
 
+pub(super) fn cache_events(run: &BuildRun) -> Vec<Value> {
+  run
+    .jobs
+    .iter()
+    .flat_map(|job| job["events"]["items"].as_array().unwrap())
+    .filter(|event| {
+      event["payload"]["source"] == "runner"
+        && event["payload"]["event"]["data"]["type"]
+          .as_str()
+          .is_some_and(|event_type| event_type.starts_with("cache_"))
+    })
+    .cloned()
+    .collect()
+}
+
 pub(super) fn assert_internal_causality(manual: &Value, upstream: &Value, downstream: &Value) {
   assert_eq!(downstream["immutable_revision"], upstream["immutable_revision"]);
   assert_eq!(downstream["trigger"]["kind"], "internal");
@@ -237,6 +252,31 @@ async fn wait_for_search(
       "timed out waiting for {mode} log search: {page}"
     );
     sleep(Duration::from_millis(500)).await;
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn cache_diagnostics_keep_only_runner_cache_events() {
+    let run = BuildRun {
+      build: Value::Null,
+      attempt: Value::Null,
+      jobs: vec![json!({
+        "events": {"items": [
+          {"payload": {"source": "runner", "event": {"data": {"type": "cache_error"}}}},
+          {"payload": {"source": "runner", "event": {"data": {"type": "task_finished"}}}},
+          {"payload": {"source": "agent", "event": {"data": {"type": "cache_hit"}}}}
+        ]}
+      })],
+    };
+
+    let events = cache_events(&run);
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["payload"]["event"]["data"]["type"], "cache_error");
   }
 }
 

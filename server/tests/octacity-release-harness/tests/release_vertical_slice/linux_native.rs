@@ -226,6 +226,7 @@ async fn run_matrix(expected_backend: &str) {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
+  write_cache_diagnostics(&evidence, "manual", &manual_run);
   assert_dag_and_events(&manual_run, Some(backend.workspace_bytes()));
   let downstream_build_id = wait_for_trigger_build(&pool, &resources.internal_trigger_id).await;
   let downstream_run = wait_for_successful_run(
@@ -293,9 +294,11 @@ async fn run_matrix(expected_backend: &str) {
   assert_eq!(scheduled_run.build["trigger"]["kind"], "scheduled");
   assert_successful_job_events(&scheduled_run);
   assert_eq!(occurrence_count(&pool, &scheduled_trigger_id).await, 1);
+  let scheduled_cache_diagnostics = write_cache_diagnostics(&evidence, "scheduled", &scheduled_run);
   assert!(
     scheduled_run.jobs.iter().any(has_cache_hit),
-    "the second Agent had an empty L1, so the scheduled Build must restore from remote L2"
+    "the second Agent had an empty L1, so the scheduled Build must restore from remote L2: {}",
+    serde_json::to_string_pretty(&scheduled_cache_diagnostics).unwrap()
   );
 
   let retried_run = run_and_retry(
@@ -988,6 +991,16 @@ fn cache_proxy_advertised_host(backend: &ReleaseBackend) -> &'static str {
     ReleaseBackend::Microsandbox { .. } => MICROSANDBOX_HOST_ALIAS,
     ReleaseBackend::Native { .. } | ReleaseBackend::Containerd { .. } | ReleaseBackend::AppleVf { .. } => "127.0.0.1",
   }
+}
+
+fn write_cache_diagnostics(evidence: &Path, phase: &str, run: &BuildRun) -> Value {
+  let diagnostics = json!({"events": cache_events(run)});
+  fs::write(
+    evidence.join(format!("cache-{phase}.json")),
+    serde_json::to_vec_pretty(&diagnostics).unwrap(),
+  )
+  .unwrap();
+  diagnostics
 }
 
 fn native_roots(backend: &ReleaseBackend) -> Option<(&Path, &Path)> {
