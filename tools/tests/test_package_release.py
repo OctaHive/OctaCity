@@ -359,6 +359,8 @@ class PackageReleaseTests(unittest.TestCase):
         host = workflow.split("  released-host:\n", 1)[1].split("  phase6-vault-minio:\n", 1)[0]
         for runner in ("ubuntu-24.04", "macos-14", "windows-2025"):
             self.assertIn(f"runner: {runner}", host)
+        self.assertIn("name: released host\n", host)
+        self.assertNotIn("name: released host (${{ matrix.platform }})", host)
         self.assertNotIn("self-hosted", host)
         self.assertIn("uses: ./octacity/.github/actions/stage-octa-release", host)
         self.assertIn("host_backend_satisfies_the_real_runner_contract", host)

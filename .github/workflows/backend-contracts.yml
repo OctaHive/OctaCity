@@ -29,7 +29,7 @@ permissions:
 jobs:
   released-host:
     if: ${{ github.event_name == 'push' || inputs.suite == 'all' || inputs.suite == 'released-agent' || inputs.suite == 'host' }}
-    name: released host (${{ matrix.platform }})
+    name: released host
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
