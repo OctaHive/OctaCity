@@ -401,6 +401,14 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("tasks list --quiet", provisioner)
         self.assertIn("containers list --quiet", provisioner)
 
+    def test_linux_microsandbox_state_root_contract_is_explicit(self):
+        provisioner = (REPOSITORY / "tools/runner/github-hosted-oci.sh").read_text(encoding="utf-8")
+        self.assertIn('"OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root"', provisioner)
+        self.assertIn("validated_microsandbox_state_root", provisioner)
+        self.assertIn('[[ $owner == "$(id -u)" && $mode == 700 ]]', provisioner)
+        self.assertIn('rm --recursive --force --one-file-system -- "$state_root"', provisioner)
+
+    @unittest.skipIf(sys.platform == "win32", "Linux Microsandbox provisioner executes only on POSIX hosts")
     def test_linux_microsandbox_uses_a_bounded_private_runtime_state_path(self):
         provisioner = (REPOSITORY / "tools/runner/github-hosted-oci.sh").read_text(encoding="utf-8")
         function = provisioner.split("microsandbox_state_root() {\n", 1)[1].split("\n}", 1)[0]
@@ -425,10 +433,6 @@ class PackageReleaseTests(unittest.TestCase):
         )
         result = subprocess.run(["bash"], input=script.encode("utf-8"), check=False, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
-        self.assertIn('"OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root"', provisioner)
-        self.assertIn("validated_microsandbox_state_root", provisioner)
-        self.assertIn('[[ $owner == "$(id -u)" && $mode == 700 ]]', provisioner)
-        self.assertIn('rm --recursive --force --one-file-system -- "$state_root"', provisioner)
 
     def test_apple_vf_release_gate_is_explicit_and_self_hosted(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
