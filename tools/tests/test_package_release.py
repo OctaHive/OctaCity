@@ -423,8 +423,8 @@ class PackageReleaseTests(unittest.TestCase):
                 '&& fail "unsafe GITHUB_RUN_ID was accepted" || true',
             )
         )
-        result = subprocess.run(["bash"], input=script, check=False, text=True, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(["bash"], input=script.encode("utf-8"), check=False, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
         self.assertIn('"OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root"', provisioner)
         self.assertIn("validated_microsandbox_state_root", provisioner)
         self.assertIn('[[ $owner == "$(id -u)" && $mode == 700 ]]', provisioner)
