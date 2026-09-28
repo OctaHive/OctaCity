@@ -127,6 +127,46 @@ Run the complete released-host and provider gate from `backend contracts` with
 suite `lifecycle`; the two Apple Silicon jobs require the documented ephemeral
 self-hosted runners.
 
+### Performance budgets and raw evidence
+
+The nightly and release Linux Native slice enables the performance gate. A
+manual run can select suite `performance`; it uses the same GitHub-hosted real
+Native backend and does not require a self-hosted runner. The slice records raw
+operation samples in `performance-measurements.json`, and
+`tools/performance_matrix.py` evaluates them against the versioned limits in
+`tools/performance_budgets.json`. The retained `performance-report.json`
+contains the calculated p95, minimum, or maximum and the result of every
+budget. A missing metric, wrong unit, insufficient sample count, malformed
+number, or exceeded limit fails the job.
+
+The measurements cover manual Trigger acceptance and replay, an internal DAG
+transition, queue-to-lease-preparation latency, repeated management REST reads,
+durable event throughput, log-index catch-up and both search modes, lifecycle
+preparing-to-running and cleaning-to-completing backend boundaries, artifact
+download throughput, remote L2 cache restore, 32 simultaneous PostgreSQL
+queries through a four-connection pool, and 100 concurrent authenticated idle
+Agent registrations followed by five no-work poll cycles per Agent. The soak
+uses real enrollment and registration credentials against the released server,
+but does not start 100 runner processes or consume jobs.
+
+Validate the budget document without provisioning a backend:
+
+```shell
+python3 tools/performance_matrix.py validate
+```
+
+Evaluate retained raw evidence locally with:
+
+```shell
+python3 tools/performance_matrix.py evaluate \
+  --measurements /path/to/performance-measurements.json \
+  --report /tmp/performance-report.json
+```
+
+Budgets are absolute release safety ceilings, not a moving comparison with the
+previous run. Change them only in review together with evidence explaining the
+new product expectation; never relax a limit automatically after a slow run.
+
 Nightly and release invocations inspect the canonical `octacity-release`
 runner group before GitHub creates a self-hosted job. The group must allow this
 repository, public repositories, and every trusted workflow in this repository;
@@ -454,13 +494,12 @@ a substitute for this real-machine gate.
 Each test verifies signed runtime and isolation selection, real bidirectional
 runner JSONL, structured events, terminal resource accounting, graceful
 cancellation of a second long-running job, workspace removal after both jobs,
-and a final orphan-cleanup pass. It also prints end-to-end latency for the
-success-and-cancel contract. The dedicated release pipeline should run all
-commands and preserve their output as the backend performance baseline. The
-Microsandbox variant additionally verifies the fixed workload-identity mount
-and allows/denies real network probes according to its restricted egress
-policy; the service-backed Phase 6 contract proves the actual Vault login and
-secret-redaction path.
+and a final orphan-cleanup pass. Release vertical slices retain structured raw
+performance samples instead of treating a complete test's wall-clock duration
+as operation latency. The Microsandbox variant additionally verifies the fixed
+workload-identity mount and allows/denies real network probes according to its
+restricted egress policy; the service-backed Phase 6 contract proves the actual
+Vault login and secret-redaction path.
 
 ## Including a real backend in Linux coverage
 

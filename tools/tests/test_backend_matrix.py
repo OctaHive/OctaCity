@@ -22,11 +22,16 @@ class BackendMatrixTests(unittest.TestCase):
             self.assertIn(f"      {output}: ${{{{ steps.plan.outputs.{output} }}}}", workflow)
             self.assertIn(f"needs.matrix-plan.outputs.{output} == 'true'", workflow)
             self.assertIn(f"      - {job}\n", workflow)
+        self.assertIn(
+            "run_performance_gate: ${{ steps.plan.outputs.run_performance_gate }}",
+            workflow,
+        )
 
     def test_ordinary_push_requires_only_portable_host_evidence(self):
         self.assertEqual(
             BACKEND_MATRIX.expected_jobs("push", "", ""), frozenset({"released-host"})
         )
+        self.assertFalse(BACKEND_MATRIX.plan_outputs("push", "", "")["run_performance_gate"])
 
     def test_nightly_and_release_require_every_qualified_backend(self):
         self.assertEqual(
@@ -40,8 +45,12 @@ class BackendMatrixTests(unittest.TestCase):
 
         outputs = BACKEND_MATRIX.plan_outputs("schedule", "", "")
         self.assertTrue(outputs["requires_self_hosted"])
+        self.assertTrue(outputs["run_performance_gate"])
         self.assertTrue(outputs["run_macos_apple_vf"])
         self.assertFalse(outputs["run_windows_microsandbox_preview"])
+        self.assertTrue(
+            BACKEND_MATRIX.plan_outputs("workflow_call", "", "release")["run_performance_gate"]
+        )
 
     def test_manual_preview_does_not_expand_into_the_release_matrix(self):
         self.assertEqual(
@@ -56,6 +65,23 @@ class BackendMatrixTests(unittest.TestCase):
             BACKEND_MATRIX.expected_jobs("workflow_dispatch", "lifecycle", ""),
             BACKEND_MATRIX.LIFECYCLE_JOBS | {"lifecycle-matrix"},
         )
+
+    def test_manual_performance_suite_uses_the_hosted_real_backend(self):
+        self.assertEqual(
+            BACKEND_MATRIX.expected_jobs("workflow_dispatch", "performance", ""),
+            frozenset({"linux-native"}),
+        )
+
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("OCTACITY_PERFORMANCE_GATE", workflow)
+        self.assertIn("python3 tools/performance_matrix.py evaluate", workflow)
+        self.assertIn("performance-measurements.json", workflow)
+        self.assertTrue(
+            BACKEND_MATRIX.plan_outputs("workflow_dispatch", "performance", "")["run_performance_gate"]
+        )
+        self.assertTrue(BACKEND_MATRIX.plan_outputs("workflow_dispatch", "all", "")["run_performance_gate"])
 
     def test_runner_inventory_requires_online_runner_with_every_label(self):
         runners = (

@@ -11,14 +11,15 @@ tasks:
     cache: {}
     artifacts:
       - name: release-result
-        path: dist/message.txt
-        content_type: text/plain
+        path: dist/performance.bin
+        content_type: application/octet-stream
     reports:
       - name: release-junit
         path: reports/junit.xml
         format: junit
     shell: >-
       sleep 2 && mkdir -p dist reports && cp input/message.txt dist/message.txt &&
+      head -c 1048576 /dev/zero > dist/performance.bin &&
       printf '<testsuite name="release" tests="1" failures="0"/>\n' > reports/junit.xml &&
       echo 'release cache source ready at dist/message.txt'
 

@@ -2,6 +2,7 @@
 
 use std::{path::Path, time::Duration};
 
+use chrono::Utc;
 use reqwest::Client;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -11,7 +12,7 @@ use tokio::{
 };
 use url::Url;
 
-use super::{ARTIFACT_CONTENT, BuildRun, MEMORY_BYTES, get_json, string, wait_for_terminal_build};
+use super::{ARTIFACT_BYTES, BuildRun, MEMORY_BYTES, get_json, string, wait_for_terminal_build};
 
 pub(super) async fn wait_for_successful_run(
   client: &Client,
@@ -164,7 +165,7 @@ pub(super) fn assert_internal_causality(manual: &Value, upstream: &Value, downst
   assert_eq!(downstream["trigger"]["causality"]["depth"], 1);
 }
 
-pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Value) -> Value {
+pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Value) -> (Value, f64) {
   let page = get_json(
     client,
     format!("{origin}/api/v1/builds/{}/artifacts?limit=10", string(build, "id")),
@@ -189,6 +190,7 @@ pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Valu
     .json::<Value>()
     .await
     .unwrap();
+  let download_started = Instant::now();
   let bytes = client
     .get(string(&download, "get_url"))
     .send()
@@ -199,31 +201,54 @@ pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Valu
     .bytes()
     .await
     .unwrap();
-  assert_eq!(bytes.as_ref(), ARTIFACT_CONTENT);
+  let elapsed = download_started.elapsed().as_secs_f64().max(f64::EPSILON);
+  assert_eq!(bytes.len(), ARTIFACT_BYTES);
+  assert!(bytes.iter().all(|byte| *byte == 0));
   assert_eq!(download["artifact"]["sha256"], format!("{:x}", Sha256::digest(&bytes)));
-  json!({"page": page, "downloaded_sha256": download["artifact"]["sha256"]})
+  (
+    json!({"page": page, "downloaded_sha256": download["artifact"]["sha256"]}),
+    bytes.len() as f64 / elapsed,
+  )
 }
 
-pub(super) async fn verify_log_search(client: &Client, origin: &str, project_id: &str, build: &Value) -> Value {
-  let full_text = wait_for_search(
+pub(super) async fn verify_log_search(
+  client: &Client,
+  origin: &str,
+  project_id: &str,
+  run: &BuildRun,
+) -> (Value, Vec<Duration>, Vec<Duration>) {
+  let source_timestamp = run
+    .jobs
+    .iter()
+    .flat_map(|job| job["events"]["items"].as_array().unwrap())
+    .filter_map(|event| event["occurred_at_unix_ms"].as_i64())
+    .max()
+    .expect("successful Build must retain timestamped events");
+  let (full_text, full_text_lag, full_text_query) = wait_for_search(
     client,
     origin,
     project_id,
-    &string(build, "id"),
+    &string(&run.build, "id"),
     "release cache",
     "full_text",
+    source_timestamp,
   )
   .await;
-  let literal = wait_for_search(
+  let (literal, literal_lag, literal_query) = wait_for_search(
     client,
     origin,
     project_id,
-    &string(build, "id"),
+    &string(&run.build, "id"),
     "dist/message.txt",
     "literal",
+    source_timestamp,
   )
   .await;
-  json!({"full_text": full_text, "literal": literal})
+  (
+    json!({"full_text": full_text, "literal": literal}),
+    vec![full_text_lag, literal_lag],
+    vec![full_text_query, literal_query],
+  )
 }
 
 async fn wait_for_search(
@@ -233,7 +258,8 @@ async fn wait_for_search(
   build_id: &str,
   query: &str,
   mode: &str,
-) -> Value {
+  source_timestamp: i64,
+) -> (Value, Duration, Duration) {
   let deadline = Instant::now() + Duration::from_secs(60);
   loop {
     let mut url = Url::parse(&format!("{origin}/api/v1/projects/{project_id}/build-logs/search")).unwrap();
@@ -243,9 +269,16 @@ async fn wait_for_search(
       .append_pair("mode", mode)
       .append_pair("build_id", build_id)
       .append_pair("limit", "10");
+    let query_started = Instant::now();
     let page = get_json(client, url.into()).await;
+    let query_elapsed = query_started.elapsed();
     if page["freshness"]["caught_up"] == true && !page["items"].as_array().unwrap().is_empty() {
-      return page;
+      let lag_milliseconds = Utc::now().timestamp_millis().saturating_sub(source_timestamp);
+      return (
+        page,
+        Duration::from_millis(u64::try_from(lag_milliseconds).unwrap()),
+        query_elapsed,
+      );
     }
     assert!(
       Instant::now() < deadline,

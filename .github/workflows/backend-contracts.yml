@@ -29,6 +29,7 @@ on:
           - failure
           - security
           - lifecycle
+          - performance
           - host
           - phase6
           - linux-native
@@ -46,6 +47,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       requires_self_hosted: ${{ steps.plan.outputs.requires_self_hosted }}
+      run_performance_gate: ${{ steps.plan.outputs.run_performance_gate }}
       run_released_host: ${{ steps.plan.outputs.run_released_host }}
       run_failure_matrix: ${{ steps.plan.outputs.run_failure_matrix }}
       run_security_matrix: ${{ steps.plan.outputs.run_security_matrix }}
@@ -396,6 +398,8 @@ jobs:
     needs: matrix-plan
     if: ${{ needs.matrix-plan.outputs.run_linux_native == 'true' }}
     runs-on: ubuntu-24.04
+    env:
+      OCTACITY_PERFORMANCE_GATE: ${{ needs.matrix-plan.outputs.run_performance_gate }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -440,6 +444,13 @@ jobs:
           agent-root: ${{ steps.release-candidate.outputs.agent-root }}
           backend: native
           execution-wrapper: ${{ github.workspace }}/octacity/tools/runner/github-hosted-native.sh
+      - name: Enforce explicit release performance budgets
+        if: ${{ env.OCTACITY_PERFORMANCE_GATE == 'true' && steps.release-slice.outcome == 'success' }}
+        working-directory: octacity
+        run: >-
+          python3 tools/performance_matrix.py evaluate
+          --measurements "${{ steps.release-slice.outputs.evidence }}/performance-measurements.json"
+          --report "${{ steps.release-slice.outputs.evidence }}/performance-report.json"
       - name: Retain Linux Native release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -105,7 +105,7 @@
 - [x] 9.8 Inject Agent, server, PostgreSQL, S3, build-log indexer, VCS, webhook, secret-provider, telemetry-exporter, backend, guest, and network failures at each lifecycle phase; verify fencing, replay, search-index rebuild, outbox recovery, bounded retry, teardown, and no false success.
 - [x] 9.9 Verify security boundaries for Agent enrollment, Pool admission, project policy, signed JobSpec, execution-mode admission, provider configuration, webhook authentication, secret references, malicious repositories, plugin digests, artifact paths, build-log archive and search redaction, presigned URL redaction, and cache namespaces.
 - [x] 9.10 Verify install, reboot, graceful drain, forced drain, upgrade, rollback window, and uninstall behavior for supported service managers and execution providers while Pipelines are absent and active.
-- [ ] 9.11 Measure Trigger latency, DAG transition latency, queue acquisition, REST latency, event throughput, build-log indexing lag and query latency, backend startup and teardown, artifact throughput, cache restore, database contention, and 100-Agent soak behavior against explicit budgets.
+- [x] 9.11 Measure Trigger latency, DAG transition latency, queue acquisition, REST latency, event throughput, build-log indexing lag and query latency, backend startup and teardown, artifact throughput, cache restore, database contention, and 100-Agent soak behavior against explicit budgets.
 
 ## 10. Production Hardening and Operations
 

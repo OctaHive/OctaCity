@@ -35,6 +35,7 @@ MANUAL_SUITES = {
     "failure": frozenset({"failure-matrix"}),
     "security": frozenset({"security-matrix"}),
     "lifecycle": LIFECYCLE_JOBS | {"lifecycle-matrix"},
+    "performance": frozenset({"linux-native"}),
     "host": frozenset({"released-host"}),
     "phase6": frozenset({"phase6-vault-minio"}),
     "linux-native": frozenset({"linux-native"}),
@@ -78,11 +79,21 @@ def expected_jobs(event_name: str, suite: str, cadence: str) -> frozenset[str]:
     raise ValueError(f"unsupported backend workflow event: {event_name}")
 
 
+def performance_gate_required(event_name: str, suite: str, cadence: str) -> bool:
+    """Return whether the hosted Linux Native job must enforce performance budgets."""
+    return (
+        cadence == "release"
+        or event_name == "schedule"
+        or (event_name == "workflow_dispatch" and suite in {"all", "released-agent", "performance"})
+    )
+
+
 def plan_outputs(event_name: str, suite: str, cadence: str) -> dict[str, bool]:
     """Translate one invocation into stable GitHub job outputs."""
     expected = expected_jobs(event_name, suite, cadence)
     return {
         "requires_self_hosted": bool(expected & SELF_HOSTED_LABELS.keys()),
+        "run_performance_gate": performance_gate_required(event_name, suite, cadence),
         **{RUN_OUTPUTS[job]: job in expected for job in sorted(ALL_JOBS)},
     }
 

@@ -401,6 +401,13 @@ Required invariant: queues and memory stay bounded under a slow or unavailable
 server. Any material regression against the previous released agent must be
 investigated or explained before release.
 
+The first release gate is implemented by the Linux Native vertical slice and
+`tools/performance_matrix.py`. Its explicit absolute budgets live in
+`tools/performance_budgets.json`; nightly, release, and manual `performance`
+invocations retain raw operation samples plus the evaluated report. Provider-
+specific measurements remain in each provider's release evidence and must not
+be replaced with Cargo compilation or whole-test duration.
+
 ## Definition of done
 
 The agent is ready for the server's first production vertical slice when an

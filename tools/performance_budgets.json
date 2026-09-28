@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "budgets": {
+    "agent_soak_agents": {
+      "unit": "agents",
+      "statistic": "minimum",
+      "limit": 100,
+      "minimum_samples": 1
+    },
+    "agent_soak_errors": {
+      "unit": "errors",
+      "statistic": "maximum",
+      "limit": 0,
+      "minimum_samples": 1
+    },
+    "agent_soak_poll_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 2000,
+      "minimum_samples": 500
+    },
+    "agent_soak_registration_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 2000,
+      "minimum_samples": 100
+    },
+    "artifact_throughput_bytes_per_second": {
+      "unit": "bytes_per_second",
+      "statistic": "minimum",
+      "limit": 524288,
+      "minimum_samples": 1
+    },
+    "backend_startup_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 15000,
+      "minimum_samples": 2
+    },
+    "backend_teardown_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 15000,
+      "minimum_samples": 2
+    },
+    "cache_restore_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 5000,
+      "minimum_samples": 1
+    },
+    "dag_transition_latency_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 5000,
+      "minimum_samples": 1
+    },
+    "database_contention_latency_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 1000,
+      "minimum_samples": 32
+    },
+    "event_throughput_per_second": {
+      "unit": "events_per_second",
+      "statistic": "minimum",
+      "limit": 1,
+      "minimum_samples": 1
+    },
+    "log_index_lag_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 5000,
+      "minimum_samples": 1
+    },
+    "log_query_latency_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 500,
+      "minimum_samples": 2
+    },
+    "queue_acquisition_latency_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 5000,
+      "minimum_samples": 2
+    },
+    "rest_latency_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 500,
+      "minimum_samples": 20
+    },
+    "trigger_latency_ms": {
+      "unit": "milliseconds",
+      "statistic": "p95",
+      "limit": 1000,
+      "minimum_samples": 2
+    }
+  }
+}

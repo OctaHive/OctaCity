@@ -31,6 +31,8 @@ use super::{
 #[path = "cache_proxy.rs"]
 mod cache_proxy;
 mod checks;
+#[path = "linux_native/performance.rs"]
+mod performance;
 #[path = "linux_native/scenarios.rs"]
 mod scenarios;
 
@@ -43,7 +45,7 @@ use scenarios::{
 const FIXTURE_OCTAFILE: &str = "fixtures/release/linux-native/Octafile.yml";
 const CACHE_NAMESPACE: &str = "release-linux-native";
 const MICROSANDBOX_HOST_ALIAS: &str = "host.microsandbox.internal";
-const ARTIFACT_CONTENT: &[u8] = b"OctaCity released Linux Native artifact\n";
+const ARTIFACT_BYTES: usize = 1024 * 1024;
 const MEMORY_BYTES: u64 = 512 * 1024 * 1024;
 const OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -129,6 +131,7 @@ async fn run_matrix(expected_backend: &str) {
   let source_repository = required_string("OCTACITY_RELEASE_SOURCE_REPOSITORY");
   let evidence = required_path("OCTACITY_RELEASE_EVIDENCE_DIR", false);
   fs::create_dir_all(&evidence).unwrap();
+  let mut performance = performance::Recorder::new(backend.name());
   let release = release::load(&backend);
   let revision = release.server_manifest.octacity_revision().to_owned();
   let temporary = tempfile::tempdir().unwrap();
@@ -194,7 +197,9 @@ async fn run_matrix(expected_backend: &str) {
     object_endpoint: &object_endpoint,
   })
   .await;
+  performance::wait_for_agent_registration(&client, &management_origin, &agent_a_name).await;
 
+  let trigger_started = Instant::now();
   let manual = accept_manual_build(
     &client,
     &management_origin,
@@ -204,6 +209,8 @@ async fn run_matrix(expected_backend: &str) {
     &revision,
   )
   .await;
+  performance.duration("trigger_latency_ms", trigger_started.elapsed());
+  let replay_started = Instant::now();
   let replay = accept_manual_build(
     &client,
     &management_origin,
@@ -213,6 +220,7 @@ async fn run_matrix(expected_backend: &str) {
     &revision,
   )
   .await;
+  performance.duration("trigger_latency_ms", replay_started.elapsed());
   assert_eq!(manual["build_id"], replay["build_id"]);
   assert_eq!(manual["trigger_occurrence_id"], replay["trigger_occurrence_id"]);
   assert_eq!(replay["disposition"], "replayed");
@@ -226,6 +234,7 @@ async fn run_matrix(expected_backend: &str) {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
+  performance::record_run(&mut performance, &manual_run);
   write_cache_diagnostics(&evidence, "manual", &manual_run);
   assert_dag_and_events(&manual_run, Some(backend.workspace_bytes()));
   let downstream_build_id = wait_for_trigger_build(&pool, &resources.internal_trigger_id).await;
@@ -237,12 +246,39 @@ async fn run_matrix(expected_backend: &str) {
     &evidence.join("agent-a.stderr.log"),
   )
   .await;
+  performance.sample(
+    "dag_transition_latency_ms",
+    "milliseconds",
+    downstream_run.build["created_at_unix_ms"]
+      .as_i64()
+      .unwrap()
+      .saturating_sub(manual_run.build["updated_at_unix_ms"].as_i64().unwrap()) as f64,
+  );
+  performance::record_run(&mut performance, &downstream_run);
   assert_internal_causality(&manual, &manual_run.build, &downstream_run.build);
   assert_successful_job_events(&downstream_run);
   assert_eq!(occurrence_count(&pool, &resources.internal_trigger_id).await, 1);
 
-  let artifacts = verify_artifacts(&client, &management_origin, &manual_run.build).await;
-  let searches = verify_log_search(&client, &management_origin, &resources.project_id, &manual_run.build).await;
+  let (artifacts, artifact_throughput) = verify_artifacts(&client, &management_origin, &manual_run.build).await;
+  performance.sample(
+    "artifact_throughput_bytes_per_second",
+    "bytes_per_second",
+    artifact_throughput,
+  );
+  let (searches, index_lag, query_latency) =
+    verify_log_search(&client, &management_origin, &resources.project_id, &manual_run).await;
+  for sample in index_lag {
+    performance.duration("log_index_lag_ms", sample);
+  }
+  for sample in query_latency {
+    performance.duration("log_query_latency_ms", sample);
+  }
+  for sample in performance::rest_latency(&client, &management_origin, &string(&manual, "build_id")).await {
+    performance.duration("rest_latency_ms", sample);
+  }
+  for sample in performance::database_contention(&pool, &string(&manual, "build_id")).await {
+    performance.duration("database_contention_latency_ms", sample);
+  }
   stop_agent(
     &client,
     &management_origin,
@@ -273,6 +309,7 @@ async fn run_matrix(expected_backend: &str) {
     object_endpoint: &object_endpoint,
   })
   .await;
+  performance::wait_for_agent_registration(&client, &management_origin, &agent_b_name).await;
   let schedule = create_schedule(
     &client,
     &management_origin,
@@ -291,6 +328,7 @@ async fn run_matrix(expected_backend: &str) {
     &evidence.join("agent-b.stderr.log"),
   )
   .await;
+  performance::record_run(&mut performance, &scheduled_run);
   assert_eq!(scheduled_run.build["trigger"]["kind"], "scheduled");
   assert_successful_job_events(&scheduled_run);
   assert_eq!(occurrence_count(&pool, &scheduled_trigger_id).await, 1);
@@ -300,6 +338,7 @@ async fn run_matrix(expected_backend: &str) {
     "the second Agent had an empty L1, so the scheduled Build must restore from remote L2: {}",
     serde_json::to_string_pretty(&scheduled_cache_diagnostics).unwrap()
   );
+  performance.duration("cache_restore_ms", performance::cache_restore_duration(&scheduled_run));
 
   let retried_run = run_and_retry(
     RetryInput {
@@ -351,6 +390,26 @@ async fn run_matrix(expected_backend: &str) {
 
   if let (Some(cache_root), Some(cache_baseline)) = (cache_root, cache_baseline.as_ref()) {
     remove_agent_cache_entries(cache_root, cache_baseline);
+  }
+  if performance::enabled() {
+    let (registrations, polls, errors, registered_agents) = performance::agent_soak(
+      &client,
+      &management_origin,
+      &agent_origin,
+      &run_id,
+      &resources.pool_id,
+      &backend,
+      &pool,
+    )
+    .await;
+    for sample in registrations {
+      performance.duration("agent_soak_registration_ms", sample);
+    }
+    for sample in polls {
+      performance.duration("agent_soak_poll_ms", sample);
+    }
+    performance.sample("agent_soak_errors", "errors", errors as f64);
+    performance.sample("agent_soak_agents", "agents", registered_agents as f64);
   }
   sleep(Duration::from_secs(1)).await;
   assert_eq!(
@@ -412,6 +471,7 @@ async fn run_matrix(expected_backend: &str) {
     .unwrap(),
   )
   .unwrap();
+  performance.write(&evidence);
   cache_proxy.shutdown().await;
   shutdown_server(&mut server, &server_stdout).await;
 }
@@ -436,7 +496,7 @@ async fn create_resources(
         "admission_policy": backend.pool_admission_policy(),
         "concurrency_limit": 1,
         "fairness_policy": "priority_fifo",
-        "static_capacity_limit": 2
+        "static_capacity_limit": if performance::enabled() { 128 } else { 2 }
       }
     }),
   )
