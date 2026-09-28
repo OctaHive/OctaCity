@@ -158,6 +158,10 @@ impl ReleaseBackend {
     }
   }
 
+  pub(super) fn required_capabilities(&self) -> Vec<&'static str> {
+    self.legacy_capability().into_iter().chain(["shell"]).collect()
+  }
+
   pub(super) fn host_platform(&self) -> Value {
     match self {
       Self::Microsandbox { .. } => json!({

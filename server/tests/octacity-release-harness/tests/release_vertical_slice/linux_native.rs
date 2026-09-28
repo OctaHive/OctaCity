@@ -419,7 +419,6 @@ async fn create_resources(
   source_repository: &str,
   backend: &ReleaseBackend,
 ) -> MatrixResources {
-  let (operating_system, architecture) = backend.agent_platform();
   let pool = post_management(
     client,
     origin,
@@ -430,10 +429,7 @@ async fn create_resources(
       "definition": {
         "enabled": true,
         "drain_state": "accepting",
-        "admission_policy": {"mode": "allowlist", "platforms": [{
-          "operating_system": operating_system,
-          "architecture": architecture
-        }]},
+        "admission_policy": backend.pool_admission_policy(),
         "concurrency_limit": 1,
         "fairness_policy": "priority_fifo",
         "static_capacity_limit": 2
@@ -476,14 +472,15 @@ async fn create_resources(
     &project_id,
     "main",
     &["cacheable", "downstream"],
-    true,
+    backend,
   )
   .await;
-  let scheduled_pipeline = create_pipeline(client, origin, run, &project_id, "scheduled", &["cacheable"], false).await;
+  let scheduled_pipeline =
+    create_pipeline(client, origin, run, &project_id, "scheduled", &["cacheable"], backend).await;
   let downstream_pipeline =
-    create_pipeline(client, origin, run, &project_id, "downstream", &["downstream"], false).await;
-  let cancellation_pipeline = create_pipeline(client, origin, run, &project_id, "cancel", &["slow"], false).await;
-  let retry_pipeline = create_pipeline(client, origin, run, &project_id, "retry", &["failing"], false).await;
+    create_pipeline(client, origin, run, &project_id, "downstream", &["downstream"], backend).await;
+  let cancellation_pipeline = create_pipeline(client, origin, run, &project_id, "cancel", &["slow"], backend).await;
+  let retry_pipeline = create_pipeline(client, origin, run, &project_id, "retry", &["failing"], backend).await;
   let manual_configuration_id = create_configuration(ConfigurationInput {
     client,
     origin,
@@ -554,7 +551,7 @@ async fn create_resources(
     backend,
   })
   .await;
-  publish_matrix_policy(client, origin, run, &project_id, &repository_id, &pool_id).await;
+  publish_matrix_policy(client, origin, run, &project_id, &repository_id, &pool_id, backend).await;
   let manual_trigger_id = create_manual_definition(client, origin, run, "main", &manual_configuration_id).await;
   let cancellation_trigger_id =
     create_manual_definition(client, origin, run, "cancel", &cancellation_configuration_id).await;
@@ -598,30 +595,16 @@ async fn create_pipeline(
   project_id: &str,
   name: &str,
   tasks: &[&str],
-  sequential: bool,
+  backend: &ReleaseBackend,
 ) -> String {
   let nodes = tasks
     .iter()
-    .map(|task| {
-      json!({
-        "id": task,
-        "name": task,
-        "dependency_policy": "all_succeeded",
-        "required_capabilities": ["native", "shell"],
-        "execution": {
-          "octafile": FIXTURE_OCTAFILE,
-          "commands": [task],
-          "parallel": false,
-          "failfast": true
-        }
-      })
-    })
+    .map(|task| matrix_pipeline_node(task, backend))
     .collect::<Vec<_>>();
-  let edges = if sequential {
-    vec![json!({"predecessor": tasks[0], "dependent": tasks[1]})]
-  } else {
-    Vec::new()
-  };
+  let edges = tasks
+    .windows(2)
+    .map(|pair| json!({"predecessor": pair[0], "dependent": pair[1]}))
+    .collect::<Vec<_>>();
   let response = post_management(
     client,
     origin,
@@ -639,56 +622,77 @@ async fn create_configuration(input: ConfigurationInput<'_>) -> String {
     input.origin,
     "/api/v1/build-configurations",
     &format!("{}-{}-configuration", input.run, input.name),
-    json!({
-      "project_id": input.project_id,
-      "name": input.name,
-      "definition": {
-        "enabled": true,
-        "job_concurrency_limit": 1,
-        "repository_id": input.repository_id,
-        "repository_version": 1,
-        "pipeline_id": input.pipeline_id,
-        "pipeline_version": 1,
-        "parameters": {"parameters": {}, "deny_unknown": true},
-        "triggers": input.triggers,
-        "agent_requirements": {
-          "capabilities": ["native", "shell"],
-          "labels": {},
-          "minimum_cpu_millis": 1000,
-          "minimum_memory_bytes": MEMORY_BYTES,
-          "minimum_disk_bytes": input.backend.workspace_bytes()
-        },
-        "allowed_pools": [input.pool_id],
-        "runtime": {
-          "class": "native",
-          "operating_system": "linux",
-          "architecture": input.backend.guest_architecture(),
-          "immutable_image": null,
-          "cpu_millis": 1000,
-          "memory_bytes": MEMORY_BYTES,
-          "writable_disk_bytes": input.backend.workspace_bytes(),
-          "timeout_seconds": RELEASE_JOB_TIMEOUT_SECONDS,
-          "network": {"mode": if input.cache { "unrestricted" } else { "disabled" }},
-          "workload_identity_profile": null
-        },
-        "cache": {
-          "namespace": if input.cache { Value::String(CACHE_NAMESPACE.to_owned()) } else { Value::Null },
-          "read": input.cache,
-          "write": input.cache
-        },
-        "artifacts": {
-          "artifact_count": 1,
-          "artifact_bytes": OUTPUT_BYTES,
-          "report_count": 1,
-          "report_bytes": OUTPUT_BYTES,
-          "single_output_bytes": OUTPUT_BYTES
-        },
-        "retry": {"max_attempts": 1, "retry_on": []}
-      }
-    }),
+    matrix_configuration_body(&input),
   )
   .await;
   resource_id(&response)
+}
+
+fn matrix_configuration_body(input: &ConfigurationInput<'_>) -> Value {
+  json!({
+    "project_id": input.project_id,
+    "name": input.name,
+    "definition": {
+      "enabled": true,
+      "job_concurrency_limit": 1,
+      "repository_id": input.repository_id,
+      "repository_version": 1,
+      "pipeline_id": input.pipeline_id,
+      "pipeline_version": 1,
+      "parameters": {"parameters": {}, "deny_unknown": true},
+      "triggers": input.triggers,
+      "agent_requirements": {
+        "capabilities": input.backend.required_capabilities(),
+        "labels": {},
+        "minimum_cpu_millis": 1000,
+        "minimum_memory_bytes": MEMORY_BYTES,
+        "minimum_disk_bytes": input.backend.workspace_bytes()
+      },
+      "allowed_pools": [input.pool_id],
+      "runtime": {
+        "class": input.backend.runtime_class(),
+        "operating_system": "linux",
+        "architecture": input.backend.guest_architecture(),
+        "host_platform": input.backend.host_platform(),
+        "required_guarantees": input.backend.required_guarantees(),
+        "immutable_image": input.backend.immutable_image(),
+        "cpu_millis": 1000,
+        "memory_bytes": MEMORY_BYTES,
+        "writable_disk_bytes": input.backend.workspace_bytes(),
+        "timeout_seconds": RELEASE_JOB_TIMEOUT_SECONDS,
+        "network": {"mode": if input.cache { "unrestricted" } else { "disabled" }},
+        "workload_identity_profile": null
+      },
+      "cache": {
+        "namespace": if input.cache { Value::String(CACHE_NAMESPACE.to_owned()) } else { Value::Null },
+        "read": input.cache,
+        "write": input.cache
+      },
+      "artifacts": {
+        "artifact_count": 1,
+        "artifact_bytes": OUTPUT_BYTES,
+        "report_count": 1,
+        "report_bytes": OUTPUT_BYTES,
+        "single_output_bytes": OUTPUT_BYTES
+      },
+      "retry": {"max_attempts": 1, "retry_on": []}
+    }
+  })
+}
+
+fn matrix_pipeline_node(task: &str, backend: &ReleaseBackend) -> Value {
+  json!({
+    "id": task,
+    "name": task,
+    "dependency_policy": "all_succeeded",
+    "required_capabilities": backend.required_capabilities(),
+    "execution": {
+      "octafile": FIXTURE_OCTAFILE,
+      "commands": [task],
+      "parallel": false,
+      "failfast": true
+    }
+  })
 }
 
 async fn publish_matrix_policy(
@@ -698,33 +702,107 @@ async fn publish_matrix_policy(
   project_id: &str,
   repository_id: &str,
   pool_id: &str,
+  backend: &ReleaseBackend,
 ) {
   post_management(
     client,
     origin,
     &format!("/api/v1/projects/{project_id}/policy-versions"),
     &format!("{run}-policy"),
-    json!({"policy": {
-      "pools": {"mode": "replace", "value": [pool_id]},
-      "repositories": {"mode": "replace", "value": [repository_id]},
-      "secret_profiles": {"mode": "replace", "value": []},
-      "identity_profiles": {"mode": "replace", "value": []},
-      "runtimes": {"mode": "replace", "value": ["native"]},
-      "cache": {"mode": "replace", "value": {
-        "namespaces": [CACHE_NAMESPACE], "read": true, "write": true, "max_bytes": OUTPUT_BYTES
-      }},
-      "artifacts": {"mode": "replace", "value": {
-        "artifact_count": 1, "artifact_bytes": OUTPUT_BYTES,
-        "report_count": 1, "report_bytes": OUTPUT_BYTES, "single_output_bytes": OUTPUT_BYTES
-      }},
-      "concurrency": {"mode": "replace", "value": {"active_builds": 8, "active_jobs": 1}},
-      "retention": {"mode": "replace", "value": {
-        "build_seconds": 86400, "log_seconds": 86400,
-        "artifact_seconds": 86400, "cache_seconds": 86400
-      }}
-    }}),
+    matrix_policy_body(repository_id, pool_id, backend),
   )
   .await;
+}
+
+fn matrix_policy_body(repository_id: &str, pool_id: &str, backend: &ReleaseBackend) -> Value {
+  json!({"policy": {
+    "pools": {"mode": "replace", "value": [pool_id]},
+    "repositories": {"mode": "replace", "value": [repository_id]},
+    "secret_profiles": {"mode": "replace", "value": []},
+    "identity_profiles": {"mode": "replace", "value": []},
+    "runtimes": {"mode": "replace", "value": [backend.runtime_class()]},
+    "execution_targets": {
+      "mode": "replace",
+      "value": backend.execution_target().into_iter().collect::<Vec<_>>()
+    },
+    "cache": {"mode": "replace", "value": {
+      "namespaces": [CACHE_NAMESPACE], "read": true, "write": true, "max_bytes": OUTPUT_BYTES
+    }},
+    "artifacts": {"mode": "replace", "value": {
+      "artifact_count": 1, "artifact_bytes": OUTPUT_BYTES,
+      "report_count": 1, "report_bytes": OUTPUT_BYTES, "single_output_bytes": OUTPUT_BYTES
+    }},
+    "concurrency": {"mode": "replace", "value": {"active_builds": 8, "active_jobs": 1}},
+    "retention": {"mode": "replace", "value": {
+      "build_seconds": 86400, "log_seconds": 86400,
+      "artifact_seconds": 86400, "cache_seconds": 86400
+    }}
+  }})
+}
+
+#[cfg(test)]
+mod tests {
+  use std::path::PathBuf;
+
+  use super::*;
+
+  #[test]
+  fn microsandbox_matrix_documents_request_provider_neutral_virtualization() {
+    let backend = ReleaseBackend::Microsandbox {
+      work_root: PathBuf::from("/work"),
+      state_root: PathBuf::from("/state"),
+      executable: PathBuf::from("/opt/microsandbox/bin/msb"),
+      libkrunfw: PathBuf::from("/opt/microsandbox/lib/libkrunfw.so"),
+      environment_identity: "microsandbox-linux-guest-v1".to_owned(),
+      image: format!("example.invalid/octa@sha256:{}", "a".repeat(64)),
+      workspace_bytes: 1024 * 1024 * 1024,
+    };
+    let client = Client::new();
+    let configuration = matrix_configuration_body(&ConfigurationInput {
+      client: &client,
+      origin: "http://127.0.0.1",
+      run: "run",
+      name: "manual",
+      project_id: "project",
+      repository_id: "repository",
+      pipeline_id: "pipeline",
+      pool_id: "pool",
+      triggers: &["manual"],
+      cache: true,
+      backend: &backend,
+    });
+    let execution_target = backend.execution_target().unwrap();
+
+    assert_eq!(
+      configuration["definition"]["agent_requirements"]["capabilities"],
+      json!(["shell"])
+    );
+    assert_eq!(configuration["definition"]["runtime"]["class"], "virtualization");
+    assert_eq!(
+      configuration["definition"]["runtime"]["host_platform"],
+      execution_target["host_platform"]
+    );
+    assert_eq!(
+      configuration["definition"]["runtime"]["required_guarantees"],
+      execution_target["required_guarantees"]
+    );
+    assert_eq!(
+      matrix_pipeline_node("cacheable", &backend)["required_capabilities"],
+      json!(["shell"])
+    );
+    assert_eq!(
+      matrix_policy_body("repository", "pool", &backend)["policy"]["runtimes"]["value"],
+      json!(["virtualization"])
+    );
+    assert_eq!(
+      matrix_policy_body("repository", "pool", &backend)["policy"]["execution_targets"]["value"],
+      json!([execution_target.clone()])
+    );
+    assert_eq!(
+      backend.pool_admission_policy()["execution_targets"],
+      json!([execution_target])
+    );
+  }
 }
 
 async fn create_manual_definition(client: &Client, origin: &str, run: &str, name: &str, configuration: &str) -> String {

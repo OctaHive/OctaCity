@@ -23,6 +23,41 @@ hosted_root() {
   esac
 }
 
+microsandbox_state_root() {
+  local run_id=${GITHUB_RUN_ID:-local} attempt=${GITHUB_RUN_ATTEMPT:-1}
+  [[ $run_id == local || $run_id =~ ^[1-9][0-9]{0,19}$ ]] \
+    || fail "GITHUB_RUN_ID cannot identify a bounded Microsandbox state root"
+  [[ $attempt =~ ^[1-9][0-9]{0,9}$ ]] \
+    || fail "GITHUB_RUN_ATTEMPT cannot identify a bounded Microsandbox state root"
+  printf '/tmp/ocm-%s-%s\n' "$run_id" "$attempt"
+}
+
+mark_microsandbox_state_root() {
+  local root=$1
+  printf 'microsandbox:%s:%s\n' "${GITHUB_RUN_ID:-local}" "${GITHUB_RUN_ATTEMPT:-1}" \
+    >"$root/.octacity-msb-state"
+  chmod 0600 "$root/.octacity-msb-state"
+}
+
+validated_microsandbox_state_root() {
+  local root expected temp_real root_real marker owner mode
+  expected=$(microsandbox_state_root)
+  [[ -d $expected && ! -L $expected ]] || fail "Microsandbox state root is absent or symbolic: $expected"
+  temp_real=$(realpath -e /tmp)
+  root_real=$(realpath -e "$expected")
+  [[ $(dirname "$root_real") == "$temp_real" && $(basename "$root_real") == "$(basename "$expected")" ]] \
+    || fail "refusing a Microsandbox state root outside the system temporary directory: $root_real"
+  owner=$(stat -c %u "$root_real")
+  mode=$(stat -c %a "$root_real")
+  [[ $owner == "$(id -u)" && $mode == 700 ]] \
+    || fail "Microsandbox state root has unsafe ownership or permissions: $root_real"
+  marker=$root_real/.octacity-msb-state
+  [[ -f $marker && ! -L $marker ]] || fail "Microsandbox state root has no ownership marker: $root_real"
+  [[ $(<"$marker") == "microsandbox:${GITHUB_RUN_ID:-local}:${GITHUB_RUN_ATTEMPT:-1}" ]] \
+    || fail "Microsandbox state root ownership marker is invalid: $root_real"
+  printf '%s\n' "$root_real"
+}
+
 mark_root() {
   local backend=$1 root=$2
   printf '%s\n' "$backend" >"$root/.octacity-hosted-oci"
@@ -155,7 +190,7 @@ microsandbox_asset() {
 }
 
 setup_microsandbox() {
-  local root=$1 asset digest archive=$root/microsandbox.tar.gz runtime=$root/runtime image
+  local root=$1 asset digest archive=$root/microsandbox.tar.gz runtime=$root/runtime image state_root
   for command in curl find mountpoint python3 sha256sum sudo tar; do
     require_command "$command"
   done
@@ -167,7 +202,11 @@ setup_microsandbox() {
     --output "$archive" \
     "https://github.com/superradcompany/microsandbox/releases/download/v${MICROSANDBOX_VERSION}/${asset}"
   printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --strict
-  mkdir -p "$runtime" "$root/work" "$root/state"
+  state_root=$(microsandbox_state_root)
+  [[ ! -e $state_root ]] || fail "Microsandbox state root already exists: $state_root"
+  mkdir --mode=0700 -- "$state_root"
+  mark_microsandbox_state_root "$state_root"
+  mkdir -p "$runtime" "$root/work"
   tar --extract --gzip --file "$archive" --directory "$runtime" --no-same-owner --no-same-permissions
   chmod 0755 "$runtime/msb"
   "$runtime/msb" --version | grep -Fx "msb $MICROSANDBOX_VERSION" >/dev/null \
@@ -181,7 +220,7 @@ setup_microsandbox() {
     "OCTACITY_CONTRACT_OCTA_RELEASE_ROOT=$root/octa-release" \
     "OCTACITY_CONTRACT_WORKSPACE_BYTES=$WORKSPACE_BYTES" \
     "OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=$root/work" \
-    "OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$root/state" \
+    "OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root" \
     "OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=$runtime/msb" \
     "OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=$firmware" \
     "OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY=microsandbox-${MICROSANDBOX_VERSION}-linux-$(uname -m)" \
@@ -205,6 +244,7 @@ verify_clean() {
       ;;
     microsandbox)
       [[ -d $root/work ]] || fail "Microsandbox work root is missing"
+      validated_microsandbox_state_root >/dev/null
       ;;
   esac
   [[ -d $root/work && ! -L $root/work ]] || fail "$backend work root is absent or symbolic"
@@ -213,7 +253,7 @@ verify_clean() {
 }
 
 cleanup() {
-  local backend=$1 root pid executable containerd_executable
+  local backend=$1 root pid executable containerd_executable state_root
   [[ -e $(hosted_root "$backend") ]] || return 0
   root=$(validated_root "$backend")
   if [[ -f $root/containerd.pid ]]; then
@@ -237,6 +277,13 @@ cleanup() {
   fi
   if mountpoint --quiet "$root/cache"; then
     sudo umount "$root/cache"
+  fi
+  if [[ $backend == microsandbox ]]; then
+    state_root=$(microsandbox_state_root)
+    if [[ -e $state_root ]]; then
+      state_root=$(validated_microsandbox_state_root)
+      rm --recursive --force --one-file-system -- "$state_root"
+    fi
   fi
   [[ ! -e $root ]] || sudo rm -rf -- "$root"
 }

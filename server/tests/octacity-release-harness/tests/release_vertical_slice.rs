@@ -336,15 +336,11 @@ async fn create_pipeline_resources(
 }
 
 fn pipeline_node(id: &str, name: &str, backend: &ReleaseBackend) -> Value {
-  let mut required_capabilities = vec!["shell"];
-  if let Some(capability) = backend.legacy_capability() {
-    required_capabilities.insert(0, capability);
-  }
   json!({
     "id": id,
     "name": name,
     "dependency_policy": "all_succeeded",
-    "required_capabilities": required_capabilities,
+    "required_capabilities": backend.required_capabilities(),
     "execution": {
       "octafile": "example/simple/Octafile.yml",
       "commands": ["echo"],
@@ -355,10 +351,6 @@ fn pipeline_node(id: &str, name: &str, backend: &ReleaseBackend) -> Value {
 }
 
 fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &str, backend: &ReleaseBackend) -> Value {
-  let mut required_capabilities = vec!["shell"];
-  if let Some(capability) = backend.legacy_capability() {
-    required_capabilities.insert(0, capability);
-  }
   json!({
     "project_id": project,
     "name": "release",
@@ -372,7 +364,7 @@ fn build_configuration(project: &str, repository: &str, pipeline: &str, pool: &s
       "parameters": {"parameters": {}, "deny_unknown": true},
       "triggers": ["manual"],
       "agent_requirements": {
-        "capabilities": required_capabilities,
+        "capabilities": backend.required_capabilities(),
         "labels": {},
         "minimum_cpu_millis": 1000,
         "minimum_memory_bytes": 536870912_u64,
