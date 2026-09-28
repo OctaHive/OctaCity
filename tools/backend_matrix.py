@@ -14,24 +14,24 @@ from urllib.request import Request, urlopen
 
 
 RUNNER_GROUP = "octacity-release"
-LIFECYCLE_JOBS = frozenset(
-    {
-        "released-host",
-        "linux-native",
-        "linux-containerd",
-        "linux-microsandbox",
-        "macos-apple-vf",
-        "macos-microsandbox",
-    }
+HOSTED_PROVIDER_JOBS = frozenset(
+    {"linux-native", "linux-containerd", "linux-microsandbox"}
 )
-RELEASE_JOBS = LIFECYCLE_JOBS | {
+SELF_HOSTED_PROVIDER_JOBS = frozenset({"macos-apple-vf", "macos-microsandbox"})
+HOSTED_NIGHTLY_JOBS = HOSTED_PROVIDER_JOBS | {
+    "released-host",
     "failure-matrix",
     "security-matrix",
     "lifecycle-matrix",
 }
+LIFECYCLE_JOBS = (
+    HOSTED_PROVIDER_JOBS | SELF_HOSTED_PROVIDER_JOBS | {"released-host"}
+)
+RELEASE_JOBS = HOSTED_NIGHTLY_JOBS | SELF_HOSTED_PROVIDER_JOBS
 MANUAL_SUITES = {
     "all": RELEASE_JOBS | {"phase6-vault-minio"},
-    "released-agent": RELEASE_JOBS,
+    "hosted": HOSTED_NIGHTLY_JOBS,
+    "release-qualified": RELEASE_JOBS,
     "failure": frozenset({"failure-matrix"}),
     "security": frozenset({"security-matrix"}),
     "lifecycle": LIFECYCLE_JOBS | {"lifecycle-matrix"},
@@ -67,8 +67,10 @@ class RunnerInventory(NamedTuple):
 
 def expected_jobs(event_name: str, suite: str, cadence: str) -> frozenset[str]:
     """Return jobs whose evidence is mandatory for this invocation."""
-    if cadence == "release" or event_name == "schedule":
+    if cadence == "release":
         return RELEASE_JOBS
+    if event_name == "schedule":
+        return HOSTED_NIGHTLY_JOBS
     if event_name == "push":
         return frozenset({"released-host"})
     if event_name == "workflow_dispatch":
@@ -84,7 +86,10 @@ def performance_gate_required(event_name: str, suite: str, cadence: str) -> bool
     return (
         cadence == "release"
         or event_name == "schedule"
-        or (event_name == "workflow_dispatch" and suite in {"all", "released-agent", "performance"})
+        or (
+            event_name == "workflow_dispatch"
+            and suite in {"all", "hosted", "release-qualified", "performance"}
+        )
     )
 
 

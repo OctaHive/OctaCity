@@ -19,13 +19,14 @@ on:
   workflow_dispatch:
     inputs:
       suite:
-        description: Real backend suite to execute
+        description: Cadence or exact backend suite to execute
         required: true
         default: linux-native
         type: choice
         options:
-          - released-agent
           - all
+          - hosted
+          - release-qualified
           - failure
           - security
           - lifecycle

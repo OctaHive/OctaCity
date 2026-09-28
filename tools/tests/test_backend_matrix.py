@@ -33,24 +33,58 @@ class BackendMatrixTests(unittest.TestCase):
         )
         self.assertFalse(BACKEND_MATRIX.plan_outputs("push", "", "")["run_performance_gate"])
 
-    def test_nightly_and_release_require_every_qualified_backend(self):
+    def test_nightly_requires_only_github_hosted_release_evidence(self):
         self.assertEqual(
-            BACKEND_MATRIX.expected_jobs("schedule", "", ""), BACKEND_MATRIX.RELEASE_JOBS
+            BACKEND_MATRIX.expected_jobs("schedule", "", ""),
+            BACKEND_MATRIX.HOSTED_NIGHTLY_JOBS,
         )
+        self.assertFalse(
+            BACKEND_MATRIX.HOSTED_NIGHTLY_JOBS & BACKEND_MATRIX.SELF_HOSTED_LABELS.keys()
+        )
+
+        outputs = BACKEND_MATRIX.plan_outputs("schedule", "", "")
+        self.assertFalse(outputs["requires_self_hosted"])
+        self.assertTrue(outputs["run_performance_gate"])
+        self.assertFalse(outputs["run_macos_apple_vf"])
+        self.assertFalse(outputs["run_macos_microsandbox"])
+
+    def test_release_requires_every_qualified_backend(self):
         self.assertEqual(
             BACKEND_MATRIX.expected_jobs("workflow_call", "", "release"),
             BACKEND_MATRIX.RELEASE_JOBS,
         )
         self.assertNotIn("windows-microsandbox-preview", BACKEND_MATRIX.RELEASE_JOBS)
 
-        outputs = BACKEND_MATRIX.plan_outputs("schedule", "", "")
+        outputs = BACKEND_MATRIX.plan_outputs("workflow_call", "", "release")
         self.assertTrue(outputs["requires_self_hosted"])
         self.assertTrue(outputs["run_performance_gate"])
         self.assertTrue(outputs["run_macos_apple_vf"])
+        self.assertTrue(outputs["run_macos_microsandbox"])
         self.assertFalse(outputs["run_windows_microsandbox_preview"])
-        self.assertTrue(
-            BACKEND_MATRIX.plan_outputs("workflow_call", "", "release")["run_performance_gate"]
+
+    def test_manual_aggregate_suites_name_their_operational_scope(self):
+        workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(
+            encoding="utf-8"
         )
+        self.assertEqual(
+            BACKEND_MATRIX.expected_jobs("workflow_dispatch", "hosted", ""),
+            BACKEND_MATRIX.HOSTED_NIGHTLY_JOBS,
+        )
+        self.assertEqual(
+            BACKEND_MATRIX.expected_jobs("workflow_dispatch", "release-qualified", ""),
+            BACKEND_MATRIX.RELEASE_JOBS,
+        )
+        self.assertNotIn("released-agent", BACKEND_MATRIX.MANUAL_SUITES)
+        self.assertNotIn("          - released-agent\n", workflow)
+
+        hosted = BACKEND_MATRIX.plan_outputs("workflow_dispatch", "hosted", "")
+        release = BACKEND_MATRIX.plan_outputs(
+            "workflow_dispatch", "release-qualified", ""
+        )
+        self.assertFalse(hosted["requires_self_hosted"])
+        self.assertTrue(hosted["run_performance_gate"])
+        self.assertTrue(release["requires_self_hosted"])
+        self.assertTrue(release["run_performance_gate"])
 
     def test_manual_preview_does_not_expand_into_the_release_matrix(self):
         self.assertEqual(

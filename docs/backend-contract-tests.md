@@ -37,11 +37,23 @@ configuration.
 
 ### Release-matrix cadence and runner evidence
 
-An ordinary push to `main` runs only the released Host matrix on GitHub-hosted
-Linux, macOS, and Windows. The privileged Linux and Apple Silicon provider
-matrices run only when selected manually, in the nightly backend workflow, or
-as a required gate before release packaging. The Windows WHP Microsandbox
-preview remains manual-only and is not accepted as release evidence.
+The workflow uses the following fixed cadence:
+
+| Invocation | Required evidence |
+| --- | --- |
+| Pull request | The portable workspace checks in `ci.yml`; no released backend job |
+| Push to `main` | Released Host on GitHub-hosted Linux, macOS, and Windows |
+| Nightly schedule | Every GitHub-hosted release job: Host, the three Linux providers, failure, security, lifecycle, and performance |
+| Manual `hosted` | The same GitHub-hosted set as the nightly schedule |
+| Manual exact suite | Only the selected backend or hosted contract catalog |
+| Manual `release-qualified` | The complete release gate, including both self-hosted macOS providers |
+| Manual `all` | `release-qualified` plus the Phase 6 Vault and MinIO contract |
+| Release workflow or `v*` tag | The complete release-qualified gate before packaging |
+
+The manual `lifecycle` suite is intentionally a complete lifecycle gate and
+therefore includes both self-hosted macOS providers. The Windows WHP
+Microsandbox preview remains available only through its exact manual suite; it
+is excluded from `all` and is not accepted as release evidence.
 
 Nightly and release invocations also require the hosted `failure-matrix` job.
 It starts disposable pinned PostgreSQL and MinIO services and executes the
@@ -108,14 +120,14 @@ rollback-window, and uninstall phase both without a Pipeline and with an active
 Pipeline where work can exist.
 
 Lifecycle evidence is intentionally composite. A hosted unit or package test
-cannot claim that a privileged backend completed a released job. Therefore the
-manual `lifecycle` suite, nightly gate, and release gate also require the real
-`released-host`, `linux-native`, `linux-containerd`, `linux-microsandbox`,
-`macos-apple-vf`, and `macos-microsandbox` jobs. Those jobs install verified
-release bundles, run active Pipelines, exercise cancellation or graceful
-drain, and reject leftover provider state. `backend-evidence` accepts the
-lifecycle gate only when both the hosted catalog and every required real job
-succeed.
+cannot claim that a privileged backend completed a released job. The nightly
+gate therefore combines the lifecycle catalog with `released-host` and all
+three GitHub-hosted Linux providers. The manual `lifecycle` suite and release
+gate additionally require `macos-apple-vf` and `macos-microsandbox`. Those jobs
+install verified release bundles, run active Pipelines, exercise cancellation
+or graceful drain, and reject leftover provider state. `backend-evidence`
+accepts the selected cadence only when every job required by that cadence
+succeeds.
 
 Run the portable catalog locally with:
 
@@ -167,13 +179,14 @@ Budgets are absolute release safety ceilings, not a moving comparison with the
 previous run. Change them only in review together with evidence explaining the
 new product expectation; never relax a limit automatically after a slow run.
 
-Nightly and release invocations inspect the canonical `octacity-release`
-runner group before GitHub creates a self-hosted job. The group must allow this
-repository, public repositories, and every trusted workflow in this repository;
-do not restrict it to a branch-pinned workflow because release jobs execute the
-same reusable workflow from a tag. Jobs also name the group in `runs-on`, so an
-unrelated organization runner with matching labels cannot satisfy the preflight
-and then leave the job queued.
+Manual suites that select a self-hosted backend and release invocations inspect
+the canonical `octacity-release` runner group before GitHub creates a
+self-hosted job. Nightly runs never inspect or require that group. The group
+must allow this repository, public repositories, and every trusted workflow in
+this repository; do not restrict it to a branch-pinned workflow because release
+jobs execute the same reusable workflow from a tag. Jobs also name the group in
+`runs-on`, so an unrelated organization runner with matching labels cannot
+satisfy the preflight and then leave the job queued.
 
 Configure the repository Actions secret `OCTACITY_RUNNER_INVENTORY_TOKEN` with
 a fine-grained token limited to the OctaHive organization and the
@@ -212,12 +225,13 @@ to disk. Because self-hosted runners execute repository code, use this
 procedure only for a trusted revision and do not enable it for unreviewed
 public pull requests.
 
-A full nightly or release gate requires both macOS labels to be online before
-the workflow starts. Provision two ephemeral runner installations, normally on
-two hosts. A single sufficiently provisioned host may use two terminals and
-distinct `OCTACITY_RUNNER_ROOT` directories; never reuse one configured
-`actions-runner` directory for both registrations. Individual manual suites
-still require only their selected backend runner.
+A manual `release-qualified`, `all`, or `lifecycle` run and every release gate
+require both macOS labels to be online before the workflow starts. Provision
+two ephemeral runner installations, normally on two hosts. A single
+sufficiently provisioned host may use two terminals and distinct
+`OCTACITY_RUNNER_ROOT` directories; never reuse one configured `actions-runner`
+directory for both registrations. Individual macOS suites require only their
+selected backend runner, and nightly runs require neither.
 
 An optional self-hosted ARM64 Linux runner still needs one initial cgroup
 installation:
@@ -485,7 +499,8 @@ cargo test -p octacity-job --test backend_contract \
   apple_vf_isolation_provider_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
 
-For the release gate, select `macos-apple-vf`. The workflow runs
+To qualify Apple VF independently, select `macos-apple-vf`. A complete release
+gate selects it automatically and requires its runner to be online. The job runs
 `tools/runner/self-hosted-apple-vf.sh`, the strict backend contract, and the
 released server/Agent vertical slice, then retains evidence and checks that no
 workspace or owned container marker remains. A green portable macOS job is not
