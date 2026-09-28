@@ -300,6 +300,11 @@ mod tests {
   use super::*;
   use crate::TraceSpan;
 
+  // Tracing callsite interest is cached process-wide. Keep the metrics-only
+  // emission test from racing the test that installs a scoped subscriber for
+  // the same callsites.
+  static TRACING_CALLSITE_LOCK: Mutex<()> = Mutex::new(());
+
   #[derive(Default)]
   struct CapturedMetrics {
     keys: Mutex<Vec<Key>>,
@@ -346,6 +351,7 @@ mod tests {
 
   #[test]
   fn representative_components_emit_bounded_outcome_metrics() {
+    let _tracing_callsite_guard = TRACING_CALLSITE_LOCK.lock().unwrap();
     let recorder = CapturedMetrics::default();
     with_local_recorder(&recorder, || {
       record_http_request(
@@ -450,6 +456,7 @@ mod tests {
 
   #[test]
   fn trace_events_inherit_safe_request_correlation_without_diagnostics() {
+    let _tracing_callsite_guard = TRACING_CALLSITE_LOCK.lock().unwrap();
     let output = CapturedLogs::default();
     let subscriber = tracing_subscriber::fmt()
       .json()
