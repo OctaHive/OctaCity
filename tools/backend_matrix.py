@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 RUNNER_GROUP = "octacity-release"
 RELEASE_JOBS = frozenset(
     {
+        "failure-matrix",
         "released-host",
         "linux-native",
         "linux-containerd",
@@ -27,6 +28,7 @@ RELEASE_JOBS = frozenset(
 MANUAL_SUITES = {
     "all": RELEASE_JOBS | {"phase6-vault-minio"},
     "released-agent": RELEASE_JOBS,
+    "failure": frozenset({"failure-matrix"}),
     "host": frozenset({"released-host"}),
     "phase6": frozenset({"phase6-vault-minio"}),
     "linux-native": frozenset({"linux-native"}),

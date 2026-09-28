@@ -26,6 +26,7 @@ on:
         options:
           - released-agent
           - all
+          - failure
           - host
           - phase6
           - linux-native
@@ -44,6 +45,7 @@ jobs:
     outputs:
       requires_self_hosted: ${{ steps.plan.outputs.requires_self_hosted }}
       run_released_host: ${{ steps.plan.outputs.run_released_host }}
+      run_failure_matrix: ${{ steps.plan.outputs.run_failure_matrix }}
       run_phase6_vault_minio: ${{ steps.plan.outputs.run_phase6_vault_minio }}
       run_linux_native: ${{ steps.plan.outputs.run_linux_native }}
       run_linux_containerd: ${{ steps.plan.outputs.run_linux_containerd }}
@@ -165,6 +167,75 @@ jobs:
         with:
           name: release-host-${{ matrix.platform }}
           path: ${{ runner.temp }}/octacity-host-contract/evidence
+          if-no-files-found: error
+
+  failure-matrix:
+    needs: matrix-plan
+    if: ${{ needs.matrix-plan.outputs.run_failure_matrix == 'true' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: octacity
+      - name: Checkout pinned Octa revision
+        uses: ./octacity/.github/actions/checkout-octa
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: 1.98.1
+      - name: Set up Microsandbox guest agent for compilation
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
+      - name: Start disposable failure-injection dependencies
+        run: |
+          docker run --detach --rm --name octacity-failure-minio \
+            -p 127.0.0.1:19000:9000 \
+            -e MINIO_ROOT_USER=octacity \
+            -e MINIO_ROOT_PASSWORD=octacity-secret \
+            docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
+            server /bitnami/minio/data
+          docker run --detach --rm --name octacity-failure-postgres \
+            -p 127.0.0.1:15432:5432 \
+            -e POSTGRES_USER=octacity \
+            -e POSTGRES_PASSWORD=octacity-secret \
+            -e POSTGRES_DB=postgres \
+            postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null \
+              && docker exec octacity-failure-postgres pg_isready -U octacity -d postgres >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs octacity-failure-minio
+          docker logs octacity-failure-postgres
+          exit 1
+      - name: Run the complete failure-injection matrix
+        working-directory: octacity
+        env:
+          OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
+          OCTACITY_MINIO_ACCESS_KEY: octacity
+          OCTACITY_MINIO_SECRET_KEY: octacity-secret
+          OCTACITY_POSTGRES_URL: postgres://octacity:octacity-secret@127.0.0.1:15432/postgres
+        run: >-
+          python3 tools/failure_matrix.py run
+          --evidence-dir "${RUNNER_TEMP}/octacity-failure-matrix"
+      - name: Stop disposable failure-injection dependencies
+        if: always()
+        run: >-
+          docker rm --force
+          octacity-failure-minio octacity-failure-postgres || true
+      - name: Retain failure-injection evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-failure-matrix
+          path: ${{ runner.temp }}/octacity-failure-matrix
           if-no-files-found: error
 
   phase6-vault-minio:
@@ -564,6 +635,7 @@ jobs:
     needs:
       - matrix-plan
       - runner-inventory
+      - failure-matrix
       - released-host
       - phase6-vault-minio
       - linux-native

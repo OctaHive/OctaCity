@@ -369,6 +369,11 @@ mod tests {
     configuration: SecretProviderConfiguration,
   }
 
+  struct FailingProvider {
+    configuration: SecretProviderConfiguration,
+    class: SecretProviderFailureClass,
+  }
+
   #[async_trait]
   impl SecretGrantProvider for FixtureProvider {
     fn configuration(&self) -> &SecretProviderConfiguration {
@@ -389,6 +394,21 @@ mod tests {
         )
         .unwrap(),
       )
+    }
+  }
+
+  #[async_trait]
+  impl SecretGrantProvider for FailingProvider {
+    fn configuration(&self) -> &SecretProviderConfiguration {
+      &self.configuration
+    }
+
+    async fn check(&self) -> Result<(), SecretProviderFailure> {
+      Err(SecretProviderFailure::new(self.class))
+    }
+
+    async fn issue_grant(&self, _request: &GrantRequest) -> Result<DelegatedGrant, SecretProviderFailure> {
+      Err(SecretProviderFailure::new(self.class))
     }
   }
 
@@ -504,6 +524,30 @@ mod tests {
       grant.into_credential().expose_for_delivery(),
       b"fixture-delegated-token"
     );
+  }
+
+  #[test]
+  fn provider_failures_remain_classified_and_never_return_a_grant() {
+    for class in [
+      SecretProviderFailureClass::InvalidRequest,
+      SecretProviderFailureClass::Unsupported,
+      SecretProviderFailureClass::Denied,
+      SecretProviderFailureClass::Unavailable,
+    ] {
+      let configuration = configuration();
+      let request = request(&configuration);
+      let provider: Arc<dyn SecretGrantProvider> = Arc::new(FailingProvider { configuration, class });
+      let registry = SecretProviderRegistry::new([provider]).unwrap();
+
+      assert_eq!(
+        run_ready(registry.check()),
+        Err(GrantError::Provider(SecretProviderFailure::new(class)))
+      );
+      assert_eq!(
+        run_ready(registry.issue(&request)).unwrap_err(),
+        GrantError::Provider(SecretProviderFailure::new(class))
+      );
+    }
   }
 
   fn run_ready<T>(future: impl Future<Output = T>) -> T {

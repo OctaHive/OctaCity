@@ -14,8 +14,9 @@ Windows machines. It verifies the downloaded Octa release and packaged Agent,
 runs the real Host backend contract, and then starts that released Agent
 against a narrow coordinator fixture. The fixture negotiates v2, checks exact
 host/target identity and zero isolation guarantees, completes one job, cancels
-a second running job, drains the Agent, and retains bounded event, resource,
-and cleanup evidence.
+a second running job, loses one event acknowledgement after durable receipt,
+verifies idempotent replay without duplicate events or completion, drains the
+Agent, and retains bounded event, resource, and cleanup evidence.
 
 The manual privileged `backend contracts` suites assign each exact test
 to a runner with the required kernel or hypervisor. Linux Native runs on a
@@ -41,6 +42,26 @@ Linux, macOS, and Windows. The privileged Linux and Apple Silicon provider
 matrices run only when selected manually, in the nightly backend workflow, or
 as a required gate before release packaging. The Windows WHP Microsandbox
 preview remains manual-only and is not accepted as release evidence.
+
+Nightly and release invocations also require the hosted `failure-matrix` job.
+It starts disposable pinned PostgreSQL and MinIO services and executes the
+production fault contracts for Agent and server restart behavior, database
+rollback and recovery, S3 outage and corrupt content, log-index retry and
+rebuild, VCS and webhook crashes, secret-provider rejection, telemetry-exporter
+loss, backend and guest failure, and network replay. The catalog in
+`tools/failure_matrix.py` is validated before execution: all lifecycle phases
+and the fencing, replay, index-rebuild, outbox-recovery, bounded-retry,
+teardown, and no-false-success invariants must remain covered. Every command is
+run even after an earlier failure, and the gate retains per-contract logs plus
+`failure-matrix.json`; any failed command makes the release evidence fail.
+
+Run this hosted gate alone from `backend contracts` with suite `failure`. For a
+local run, provide the same `OCTACITY_POSTGRES_URL` and `OCTACITY_MINIO_*`
+variables used by CI and execute:
+
+```shell
+python3 tools/failure_matrix.py run --evidence-dir /tmp/octacity-failure-matrix
+```
 
 Nightly and release invocations inspect the canonical `octacity-release`
 runner group before GitHub creates a self-hosted job. The group must allow this

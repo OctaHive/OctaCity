@@ -1,7 +1,7 @@
 //! Portable black-box contract for direct Host execution by a released Agent.
 
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, BTreeSet},
   env, fs,
   net::SocketAddr,
   path::{Path, PathBuf},
@@ -12,16 +12,18 @@ use std::{
 use axum::{
   Json, Router,
   extract::{Path as AxumPath, State},
+  http::StatusCode,
+  response::{IntoResponse, Response},
   routing::post,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signer as _, SigningKey};
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AppendEventsRequest,
-  AppendEventsResponse, AttemptEventKind, CompleteLeaseRequest, CompleteLeaseResponse, EXECUTION_CONTRACT_V2,
-  ExecutionMode, ExecutionSpec, ExecutionTargetV2, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse,
-  JobCompletionStatus, JobSpecV2, LeaseAssignment, MAX_APPEND_REQUEST_OVERHEAD_BYTES, NetworkPolicy, OctaSpec,
-  OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RegisterAgentRequest, RegisterAgentResponse,
+  AppendEventsResponse, AttemptEventKind, CompleteLeaseRequest, CompleteLeaseResponse, CoordinatorErrorResponse,
+  EXECUTION_CONTRACT_V2, ExecutionMode, ExecutionSpec, ExecutionTargetV2, HeartbeatDirective, HeartbeatRequest,
+  HeartbeatResponse, JobCompletionStatus, JobSpecV2, LeaseAssignment, MAX_APPEND_REQUEST_OVERHEAD_BYTES, NetworkPolicy,
+  OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, RegisterAgentRequest, RegisterAgentResponse,
   RuntimeSpecV2, SIGNATURE_ALGORITHM, SignedEnvelope, SourceSpec, guarantees_for,
 };
 use octacity_release_harness::{AgentRuntimeBundles, InstalledAgentRuntime, install_agent_runtime};
@@ -47,8 +49,11 @@ struct CoordinatorState {
   inventory: Option<AgentInventory>,
   events: Vec<octacity_protocol::AttemptEventEnvelope>,
   completions: BTreeMap<String, CompleteLeaseRequest>,
+  completion_calls: BTreeMap<String, usize>,
   largest_batch_bytes: usize,
   append_batches: BTreeMap<String, usize>,
+  append_failure_injected: bool,
+  replayed_append_batches: usize,
 }
 
 impl Default for CoordinatorState {
@@ -58,8 +63,11 @@ impl Default for CoordinatorState {
       inventory: None,
       events: Vec::new(),
       completions: BTreeMap::new(),
+      completion_calls: BTreeMap::new(),
       largest_batch_bytes: 0,
       append_batches: BTreeMap::new(),
+      append_failure_injected: false,
+      replayed_append_batches: 0,
     }
   }
 }
@@ -119,9 +127,11 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
     read_log(&stderr_path)
   );
 
-  let (inventory, success, cancelled, events, largest_batch_bytes, success_batches) = {
+  let (inventory, success, cancelled, events, largest_batch_bytes, success_batches, replayed_batches) = {
     let snapshot = state.lock().unwrap();
     assert_eq!(snapshot.phase, ScenarioPhase::Draining);
+    assert_eq!(snapshot.completion_calls.get("host-success"), Some(&1));
+    assert_eq!(snapshot.completion_calls.get("host-cancellation"), Some(&1));
     (
       snapshot.inventory.clone().expect("Agent must register inventory"),
       snapshot
@@ -137,6 +147,7 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
       snapshot.events.clone(),
       snapshot.largest_batch_bytes,
       snapshot.append_batches.get("host-success").copied().unwrap_or_default(),
+      snapshot.replayed_append_batches,
     )
   };
   assert_host_inventory(&inventory);
@@ -166,10 +177,23 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
       .any(|event| matches!(event.kind, AttemptEventKind::Runner { .. }))
   );
   assert!(
-    success_batches > 1,
+    success_batches.saturating_sub(replayed_batches) > 1,
     "bounded Host output must be delivered in multiple batches"
   );
   assert!(largest_batch_bytes <= EVENT_BATCH_BYTES + MAX_APPEND_REQUEST_OVERHEAD_BYTES);
+  assert!(
+    replayed_batches > 0,
+    "released Agent did not replay the unacknowledged batch"
+  );
+  assert_eq!(
+    events
+      .iter()
+      .map(|event| (&event.job_id, event.stream_sequence))
+      .collect::<BTreeSet<_>>()
+      .len(),
+    events.len(),
+    "replayed events must remain idempotent"
+  );
   if let Some(evidence) = env::var_os("OCTACITY_RELEASE_HOST_EVIDENCE_DIR") {
     let evidence = PathBuf::from(evidence);
     fs::create_dir_all(&evidence).unwrap();
@@ -181,6 +205,7 @@ async fn released_host_agent_satisfies_the_portable_execution_contract() {
         "execution": inventory.executions,
         "success": success,
         "cancellation": cancelled,
+        "replayed_append_batches": replayed_batches,
       }))
       .unwrap(),
     )
@@ -280,7 +305,7 @@ async fn append_events(
   State(state): State<SharedState>,
   AxumPath(lease_id): AxumPath<String>,
   Json(request): Json<AppendEventsRequest>,
-) -> Json<AppendEventsResponse> {
+) -> Response {
   assert_eq!(lease_id, request.lease.lease_id);
   request.validate().unwrap();
   let acknowledged_sequence = request.events.last().unwrap().stream_sequence;
@@ -288,12 +313,49 @@ async fn append_events(
   let mut state = state.lock().unwrap();
   state.largest_batch_bytes = state.largest_batch_bytes.max(encoded_bytes);
   *state.append_batches.entry(request.lease.job_id.clone()).or_default() += 1;
-  state.events.extend(request.events);
+  let replayed = request.events.iter().all(|candidate| {
+    state
+      .events
+      .iter()
+      .any(|stored| stored.job_id == candidate.job_id && stored.stream_sequence == candidate.stream_sequence)
+  });
+  if replayed {
+    state.replayed_append_batches += 1;
+  } else {
+    let new_events = request
+      .events
+      .iter()
+      .filter(|candidate| {
+        !state
+          .events
+          .iter()
+          .any(|stored| stored.job_id == candidate.job_id && stored.stream_sequence == candidate.stream_sequence)
+      })
+      .cloned()
+      .collect::<Vec<_>>();
+    state.events.extend(new_events);
+  }
+  if request.lease.job_id == "host-success" && !state.append_failure_injected {
+    state.append_failure_injected = true;
+    return (
+      StatusCode::SERVICE_UNAVAILABLE,
+      Json(CoordinatorErrorResponse {
+        protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
+        request_id: request.request_id,
+        code: "temporarily_unavailable".to_owned(),
+        message: "stored the batch but lost its acknowledgement".to_owned(),
+        retryable: true,
+        retry_after_ms: Some(1),
+      }),
+    )
+      .into_response();
+  }
   Json(AppendEventsResponse {
     protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
     request_id: request.request_id,
     acknowledged_sequence,
   })
+  .into_response()
 }
 
 async fn complete(
@@ -315,6 +377,7 @@ async fn complete(
     }
     other => panic!("unexpected completed job '{other}'"),
   }
+  *state.completion_calls.entry(request.lease.job_id.clone()).or_default() += 1;
   state.completions.insert(request.lease.job_id.clone(), request.clone());
   Json(CompleteLeaseResponse {
     protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
