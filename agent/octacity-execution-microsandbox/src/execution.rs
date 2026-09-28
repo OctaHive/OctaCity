@@ -17,7 +17,7 @@ pub(super) struct MicrosandboxExecution {
   pub(super) event_task: JoinHandle<()>,
   pub(super) cleanup_timeout: Duration,
   pub(super) started: Instant,
-  pub(super) host_workspace: PathBuf,
+  pub(super) host_job_root: PathBuf,
   pub(super) memory_peak_bytes: u64,
   pub(super) disk_peak_bytes: u64,
 }
@@ -35,7 +35,7 @@ impl RunningExecution for MicrosandboxExecution {
   async fn sample_usage(&mut self) -> Result<ResourceUsage, ExecutionError> {
     let metrics = self.sandbox.metrics().await.map_err(msb_error)?;
     self.memory_peak_bytes = self.memory_peak_bytes.max(metrics.memory_bytes);
-    let disk_current_bytes = directory_size_async(self.host_workspace.clone()).await?;
+    let disk_current_bytes = directory_size_async(self.host_job_root.clone()).await?;
     self.disk_peak_bytes = self.disk_peak_bytes.max(disk_current_bytes);
     Ok(ResourceUsage {
       elapsed_ms: millis(self.started.elapsed()),

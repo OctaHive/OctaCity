@@ -1,8 +1,8 @@
 //! Runs `octa-runner` inside an attached Microsandbox microVM.
 //!
 //! The adapter maps the backend-neutral execution contract to one ephemeral,
-//! digest-pinned sandbox. The workspace is the only disk-backed writable mount
-//! and has the job's quota; the OCI root overlay is RAM-backed and therefore
+//! digest-pinned sandbox. The job-private root is the only disk-backed writable
+//! mount and has the job's quota; the OCI root overlay is RAM-backed and therefore
 //! charged to the VM memory limit. The verified Octa release is mounted
 //! read-only. Runner stdin/stdout/stderr remain byte streams, so the
 //! higher-level supervisor uses exactly the same protocol in Native and
@@ -237,10 +237,10 @@ impl OciEngine for MicrosandboxEngine {
           .max_duration(duration_seconds_ceil(request.max_duration))
           .metrics_sample_interval(self.metrics_sample_interval)
           .label(OWNER_LABEL, &self.agent_id)
-          .volume(&plan.guest_workspace, |mount| {
+          .volume(&plan.guest_job_root, |mount| {
             mount
-              .bind(&request.workspace)
-              .quota(plan.workspace_quota_mib)
+              .bind(&plan.host_job_root)
+              .quota(plan.job_root_quota_mib)
               .nosuid()
               .nodev()
           })
@@ -250,6 +250,11 @@ impl OciEngine for MicrosandboxEngine {
         if let Some(identity) = &plan.workload_identity {
           builder = builder.volume(WORKLOAD_IDENTITY_PATH, |mount| {
             mount.bind(identity).readonly().nosuid().nodev()
+          });
+        }
+        for directory in &plan.masked_job_directories {
+          builder = builder.volume(directory, |mount| {
+            mount.tmpfs().size(1_u32).readonly().noexec().nosuid().nodev()
           });
         }
         if let Some(cache) = &plan.cache {
@@ -344,7 +349,7 @@ impl OciEngine for MicrosandboxEngine {
       event_task,
       cleanup_timeout: self.cleanup_timeout,
       started: Instant::now(),
-      host_workspace: request.workspace,
+      host_job_root: plan.host_job_root,
       memory_peak_bytes: 0,
       disk_peak_bytes: 0,
     }))

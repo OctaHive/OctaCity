@@ -231,15 +231,21 @@ async fn maps_verified_host_paths_into_the_guest() {
   let root = temporary.path().canonicalize().unwrap();
   let release = root.join("release");
   let work_root = root.join("work");
-  let workspace = work_root.join("workspace");
+  let job_root = work_root.join("job-1");
+  let workspace = job_root.join("workspace");
   fs::create_dir(&release).unwrap();
   fs::create_dir(&work_root).unwrap();
+  fs::create_dir(&job_root).unwrap();
   fs::create_dir(&workspace).unwrap();
   fs::create_dir(workspace.join(".octacity")).unwrap();
-  let identity = work_root.join("identity-token");
+  let identity_directory = job_root.join("identity");
+  fs::create_dir(&identity_directory).unwrap();
+  let identity = identity_directory.join("token");
   fs::write(&identity, "signed-jwt").unwrap();
   let cache = root.join("cache");
-  let cache_token = root.join("cache-token");
+  let cache_session = job_root.join("cache-session");
+  fs::create_dir(&cache_session).unwrap();
+  let cache_token = cache_session.join("token");
   let cache_ca = root.join("cache-ca.pem");
   fs::create_dir(&cache).unwrap();
   fs::write(&cache_token, "cache-secret").unwrap();
@@ -260,15 +266,30 @@ async fn maps_verified_host_paths_into_the_guest() {
     .unwrap();
   assert_eq!(plan.guest_executable, "/opt/octacity/octa/octa-runner");
   assert_eq!(plan.guest_plugins_dir, Path::new("/opt/octacity/octa/plugins"));
-  assert_eq!(plan.guest_data_dir, Path::new("/workspace/.octacity"));
+  assert_eq!(plan.host_job_root, job_root);
+  assert_eq!(plan.guest_job_root, "/work");
+  assert_eq!(plan.guest_workspace, "/work/workspace");
+  assert_eq!(plan.guest_data_dir, Path::new("/work/workspace/.octacity"));
   assert_eq!(plan.root_tmpfs_mib, 256);
-  assert_eq!(plan.workspace_quota_mib, 1024);
+  assert_eq!(plan.job_root_quota_mib, 1023);
+  assert_eq!(
+    plan.masked_job_directories,
+    vec!["/work/cache-session".to_owned(), "/work/identity".to_owned()]
+  );
   assert_eq!(plan.workload_identity, Some(identity));
   let cache_plan = plan.cache.unwrap();
   assert_eq!(cache_plan.mounts.capacity_root, cache);
   assert_eq!(cache_plan.mounts.token_file, Some(cache_token));
   assert_eq!(cache_plan.mounts.ca_certificate_file, Some(cache_ca));
   assert_eq!(cache_plan.quota_mib, 2);
+
+  let exposed_identity = job_root.join("exposed-token");
+  fs::write(&exposed_identity, "secret").unwrap();
+  request.workload_identity = Some(exposed_identity);
+  assert!(matches!(
+    SandboxPlan::build("agent-1", &runner(&release), &request).await,
+    Err(ExecutionError::Invalid(message)) if message.contains("dedicated directory")
+  ));
 }
 
 #[tokio::test]
@@ -287,6 +308,12 @@ async fn rejects_unrepresentable_limits_and_host_roots() {
     platform: test_capability().platform,
   };
   assert!(SandboxPlan::build("agent-1", &runner(&release), &value).await.is_err());
+
+  let value = request(&workspace);
+  assert!(matches!(
+    SandboxPlan::build("agent-1", &runner(&release), &value).await,
+    Err(ExecutionError::Invalid(message)) if message.contains("job-private root")
+  ));
 }
 
 #[test]
@@ -369,16 +396,21 @@ fn converts_sdk_durations_without_losing_limits() {
 }
 
 #[tokio::test]
-async fn rejects_exhausted_workspace_quotas_and_invalid_mappings() {
+async fn rejects_exhausted_job_root_quotas_and_invalid_mappings() {
   let temporary = tempfile::tempdir().unwrap();
   let release = temporary.path().join("release");
-  let workspace = temporary.path().join("workspace");
+  let work_root = temporary.path().join("work");
+  let job_root = work_root.join("job-1");
+  let workspace = job_root.join("workspace");
   fs::create_dir(&release).unwrap();
+  fs::create_dir(&work_root).unwrap();
+  fs::create_dir(&job_root).unwrap();
   fs::create_dir(&workspace).unwrap();
   fs::create_dir(workspace.join(".octacity")).unwrap();
   fs::write(workspace.join("existing.bin"), vec![0; (MEBIBYTE + 1) as usize]).unwrap();
 
   let mut value = request(&workspace);
+  value.workspace_root = work_root;
   value.writable_disk_bytes = MEBIBYTE;
   assert!(matches!(
     SandboxPlan::build("agent-1", &runner(&release), &value).await,

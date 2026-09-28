@@ -20,11 +20,15 @@ pub(super) struct SandboxPlan {
   pub(super) cpus: u8,
   /// Guest memory limit in whole MiB.
   pub(super) memory_mib: u32,
-  /// RAM-backed capacity for writes outside the mounted workspace.
+  /// RAM-backed capacity for writes outside the mounted job root.
   pub(super) root_tmpfs_mib: u32,
-  /// Remaining disk allowance after accounting for materialized sources.
-  pub(super) workspace_quota_mib: u32,
-  /// Fixed workspace mount point visible inside the guest.
+  /// Canonical job-private host root mounted into the guest.
+  pub(super) host_job_root: PathBuf,
+  /// Remaining disk allowance after accounting for existing job files.
+  pub(super) job_root_quota_mib: u32,
+  /// Fixed job-private mount point visible inside the guest.
+  pub(super) guest_job_root: String,
+  /// Workspace path below the guest job root.
   pub(super) guest_workspace: String,
   /// Fixed read-only Octa release mount point inside the guest.
   pub(super) guest_release: String,
@@ -38,6 +42,8 @@ pub(super) struct SandboxPlan {
   pub(super) guest_plugin_lock: PathBuf,
   /// Optional job-private identity source exposed read-only in the guest.
   pub(super) workload_identity: Option<PathBuf>,
+  /// Job-private credential directories hidden behind empty read-only mounts.
+  pub(super) masked_job_directories: Vec<String>,
   /// Canonical cache mount plus the remaining VM-enforced growth quota.
   pub(super) cache: Option<SandboxCachePlan>,
 }
@@ -69,20 +75,30 @@ impl SandboxPlan {
     if cpus == 0 || !request.cpu_millis.is_multiple_of(1000) {
       return Err(unavailable("Microsandbox CPU limits must use whole vCPUs"));
     }
+    let workspace_root = request.workspace_root.canonicalize().map_err(ExecutionError::Io)?;
+    let workspace = request.workspace.canonicalize().map_err(ExecutionError::Io)?;
+    let job_root = workspace
+      .parent()
+      .filter(|parent| parent.parent() == Some(workspace_root.as_path()))
+      .ok_or_else(|| invalid("Microsandbox workspace must be inside one job-private root below work_root"))?
+      .to_owned();
+    if workspace.file_name() != Some(std::ffi::OsStr::new("workspace")) {
+      return Err(invalid("Microsandbox job-private workspace must be named 'workspace'"));
+    }
     let memory_mib = exact_mib("memory", request.memory_bytes)?;
-    // Keep incidental writes outside /workspace off disk without allowing the
+    // Keep incidental writes outside /work off disk without allowing the
     // root overlay to consume the VM's entire memory allocation.
     let root_tmpfs_mib = (memory_mib / 2).max(1);
-    let workspace_limit_mib = exact_mib("writable disk", request.writable_disk_bytes)?;
-    let existing_bytes = directory_size_async(request.workspace.clone()).await?;
+    let job_root_limit_mib = exact_mib("writable disk", request.writable_disk_bytes)?;
+    let existing_bytes = directory_size_async(job_root.clone()).await?;
     if existing_bytes > request.writable_disk_bytes {
       return Err(unavailable(
-        "materialized workspace already exceeds its writable disk limit",
+        "materialized job root already exceeds its writable disk limit",
       ));
     }
     let existing_mib = existing_bytes.div_ceil(MEBIBYTE);
-    let workspace_quota_mib = u32::try_from(u64::from(workspace_limit_mib).saturating_sub(existing_mib))
-      .map_err(|_| unavailable("Microsandbox workspace quota is not representable"))?;
+    let job_root_quota_mib = u32::try_from(u64::from(job_root_limit_mib).saturating_sub(existing_mib))
+      .map_err(|_| unavailable("Microsandbox job-root quota is not representable"))?;
     let cache = match &request.cache {
       Some(cache) => {
         let limit_mib = exact_mib("cache", cache.local_capacity.max_bytes)?;
@@ -104,19 +120,44 @@ impl SandboxPlan {
     };
 
     let guest_release = "/opt/octacity/octa".to_owned();
-    let guest_workspace = "/workspace".to_owned();
+    let guest_job_root = "/work".to_owned();
+    let guest_workspace = guest_path(&guest_job_root, &job_root, &workspace)?;
+    let private_files = request
+      .workload_identity
+      .iter()
+      .chain(request.cache.iter().filter_map(|cache| cache.token_file.as_ref()));
+    let mut masked_job_directories = Vec::new();
+    for private_file in private_files {
+      if !private_file.starts_with(&job_root) {
+        continue;
+      }
+      let directory = private_file
+        .parent()
+        .ok_or_else(|| invalid("job-private credential has no parent directory"))?;
+      if directory == job_root || directory.starts_with(&workspace) {
+        return Err(invalid(
+          "job-private credentials must use a dedicated directory outside workspace",
+        ));
+      }
+      masked_job_directories.push(guest_path(&guest_job_root, &job_root, directory)?);
+    }
+    masked_job_directories.sort();
+    masked_job_directories.dedup();
     Ok(Self {
       name: sandbox_name(agent_id, &request.execution_id),
       image: reference.clone(),
       cpus,
       memory_mib,
       root_tmpfs_mib,
-      workspace_quota_mib,
+      host_job_root: job_root.clone(),
+      job_root_quota_mib,
+      guest_job_root: guest_job_root.clone(),
       guest_executable: guest_path(&guest_release, &runner.release_root, &runner.executable)?,
-      guest_data_dir: guest_path_buf(&guest_workspace, &request.workspace, &request.data_dir)?,
+      guest_data_dir: guest_path_buf(&guest_job_root, &job_root, &request.data_dir)?,
       guest_plugins_dir: guest_path_buf(&guest_release, &runner.release_root, &runner.plugins_dir)?,
       guest_plugin_lock: guest_path_buf(&guest_release, &runner.release_root, &runner.plugin_lock)?,
       workload_identity: request.workload_identity.clone(),
+      masked_job_directories,
       cache,
       guest_workspace,
       guest_release,
