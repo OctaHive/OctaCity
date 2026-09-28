@@ -415,13 +415,15 @@ class PackageReleaseTests(unittest.TestCase):
                 "export GITHUB_RUN_ID=18446744073709551615",
                 "export GITHUB_RUN_ATTEMPT=9999999999",
                 "state_root=$(microsandbox_state_root)",
-                "[[ $state_root == /tmp/ocm-18446744073709551615-9999999999 ]]",
-                "(( ${#state_root} <= 40 ))",
+                "[[ $state_root == /tmp/ocm-18446744073709551615-9999999999 ]] "
+                '|| fail "unexpected Microsandbox state root: $state_root"',
+                '(( ${#state_root} <= 40 )) || fail "Microsandbox state root exceeds 40 bytes"',
                 "export GITHUB_RUN_ID=../escape",
-                "! (microsandbox_state_root)",
+                '(microsandbox_state_root >/dev/null 2>&1) '
+                '&& fail "unsafe GITHUB_RUN_ID was accepted" || true',
             )
         )
-        result = subprocess.run(["bash", "-c", script], check=False, text=True, capture_output=True)
+        result = subprocess.run(["bash"], input=script, check=False, text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=$state_root"', provisioner)
         self.assertIn("validated_microsandbox_state_root", provisioner)
