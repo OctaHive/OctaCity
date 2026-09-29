@@ -142,6 +142,31 @@ only initial state and transitions, with a stable non-secret dependency name
 and unavailable/timeout reason. Liveness remains process-local and independent
 of this snapshot.
 
+Ingress overload control is also composed only in `octacity-server`. Each
+replica keeps bounded, disposable fixed-window counters for management clients,
+expensive management reads, Agent credentials, Agent heartbeats, and webhook
+senders. Peer identity comes from the accepted socket; forwarded-address
+headers are not trusted. Credential material is reduced to a one-way digest
+before it can become an in-memory key. Health and metrics probes bypass the
+management quota, while Agent heartbeats use a dedicated quota that ordinary
+Agent traffic cannot consume. Rejections use HTTP `429` plus `Retry-After` (and
+the Agent protocol's `retry_after_ms`). These counters are deliberately neither
+durable nor shared between replicas: resetting or evicting one can only change
+best-effort admission, never authorize a mutation or alter Build, Job, Lease,
+Trigger, audit, idempotency, or outbox state. Operators can tune the bounded
+policy through the `[admission]` server configuration table.
+
+```toml
+[admission]
+window_milliseconds = 1000
+tracked_identities = 4096
+management_requests = 200
+expensive_management_requests = 20
+agent_requests = 200
+agent_heartbeats = 20
+webhook_requests = 50
+```
+
 The same composition root constructs the production management application
 from typed Project, Pipeline, Repository, Build Configuration, Pool, Agent,
 enrollment, Trigger, Build-run and Job-event handlers. It separately constructs

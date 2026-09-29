@@ -109,7 +109,7 @@
 
 ## 10. Production Hardening and Operations
 
-- [ ] 10.1 Add bounded per-client, per-Agent, webhook, and expensive-endpoint rate limits that do not become correctness state; verify overload returns stable retry guidance without starving heartbeats.
+- [x] 10.1 Add bounded per-client, per-Agent, webhook, and expensive-endpoint rate limits that do not become correctness state; verify overload returns stable retry guidance without starving heartbeats.
 - [ ] 10.2 Run multi-replica contention and rolling-restart tests for every schedule, Trigger, Orchestrator, outbox, queue, lease, retry, and retention claim, including Build Result hold-versus-expiration races; verify correctness does not depend on process-local locks, timers, or notifications.
 - [ ] 10.3 Define and test schema compatibility, forward migration rehearsal, failed migration behavior, and previous-binary rollback using database snapshots.
 - [ ] 10.4 Implement and rehearse coordinated PostgreSQL and object-store backup/restore with integrity reconciliation plus log-search projection restore or rebuild; verify a restored system never publishes metadata for missing or unverified objects and reports honest search freshness until catch-up.

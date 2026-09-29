@@ -1,11 +1,16 @@
 use std::{net::SocketAddr, path::Path, time::Duration};
 
 use super::{
-  AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, RetentionWorkerPolicy,
-  RetryingWorkerPolicy, ServerConfig, SigningConfig, VcsIntegrationConfig, WebhookWorkerPolicy, WorkerPolicy,
+  AdmissionConfig, AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig,
+  RetentionWorkerPolicy, RetryingWorkerPolicy, ServerConfig, SigningConfig, VcsIntegrationConfig, WebhookWorkerPolicy,
+  WorkerPolicy,
 };
 
 impl ServerConfig {
+  pub(crate) const fn admission(&self) -> AdmissionConfig {
+    self.admission
+  }
+
   /// Address on which the management and health listener is bound.
   pub const fn management_bind(&self) -> SocketAddr {
     self.management_bind

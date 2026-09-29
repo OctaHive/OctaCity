@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::readiness::ReadinessState;
 
+mod admission;
 mod application;
 mod assembly;
 mod composition;

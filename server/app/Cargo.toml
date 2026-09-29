@@ -32,6 +32,7 @@ octacity-vcs-protocol = { path = "../protocols/octacity-vcs-protocol" }
 octacity-webhook-provider-protocol = { path = "../protocols/octacity-webhook-provider-protocol" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
@@ -48,7 +49,6 @@ rustix.workspace = true
 
 [dev-dependencies]
 reqwest.workspace = true
-sha2.workspace = true
 tempfile.workspace = true
 tower = { workspace = true, features = ["util"] }
 uuid.workspace = true

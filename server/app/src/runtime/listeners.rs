@@ -8,6 +8,7 @@ use tracing::info;
 
 use super::{
   ListenerTaskResult, ServerRuntime, ServerRuntimeError,
+  admission::IngressAdmission,
   notifications::spawn_ready_job_listener,
   telemetry::spawn_metrics_upkeep,
   workers::{self, DurableWorkers},
@@ -120,6 +121,7 @@ impl ServerRuntime {
       agent_addr.is_some(),
       webhook_addr.is_some(),
     );
+    let admission = IngressAdmission::new(config.admission());
     let management_router = match (management_application, metrics) {
       (Some(application), Some(metrics)) => {
         octacity_server_api_rest::management_router_with_application_metadata_and_metrics(
@@ -138,6 +140,9 @@ impl ServerRuntime {
         octacity_server_api_rest::management_router_with_metadata(move || router_readiness.is_ready(), metadata)
       }
     };
+    let management_router = admission.protect_management(management_router);
+    let agent_router = admission.protect_agent(agent_router);
+    let webhook_router = webhook_router.map(|router| admission.protect_webhook(router));
     let mut listener_tasks = JoinSet::new();
     spawn_listener(
       &mut listener_tasks,
@@ -225,7 +230,7 @@ fn spawn_listener(
   cancellation: CancellationToken,
 ) {
   tasks.spawn(async move {
-    axum::serve(listener, router)
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
       .with_graceful_shutdown(cancellation.cancelled_owned())
       .await
       .map_err(|source| (ingress, source))?;

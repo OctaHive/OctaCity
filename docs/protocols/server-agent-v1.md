@@ -258,6 +258,13 @@ and optional `retry_after_ms`. Both the HTTP status and the flag must permit a
 retry. Error bodies obey the same body-size and operation-deadline bounds as
 successful bodies.
 
+Replica-local overload control returns HTTP `429` with code `rate_limited`,
+`retryable: true`, matching `Retry-After` and positive `retry_after_ms`
+guidance. Ordinary Agent operations and heartbeats use independent credential
+quotas, so backpressured event, telemetry, artifact, or cache traffic cannot
+consume heartbeat admission. These disposable counters never replace current
+registration and Lease-fence validation.
+
 Every fenced endpoint uses `lease_fenced` when a newer fencing token owns the
 attempt and `lease_expired` when the lease has expired. These two codes are
 permanent and authoritative; the agent preserves them as lease-loss outcomes

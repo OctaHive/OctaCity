@@ -27,7 +27,8 @@ pub fn openapi_document() -> Value {
           "200": {
             "description": "OpenAPI 3.1 document",
             "content": {"application/json": {"schema": {"type": "object"}}}
-          }
+          },
+          "429": {"$ref": "#/components/responses/ManagementRateLimited"}
         }
       }
     }),
@@ -63,6 +64,18 @@ pub fn openapi_document() -> Value {
       "responses": {
         "ManagementError": {
           "description": "Stable management API error",
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
+          }
+        },
+        "ManagementRateLimited": {
+          "description": "Per-client request rate exceeded",
+          "headers": {
+            "Retry-After": {
+              "description": "Minimum retry delay in whole seconds",
+              "schema": {"type": "integer", "minimum": 1}
+            }
+          },
           "content": {
             "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
           }
@@ -114,6 +127,7 @@ fn responses(operation: &ManagementOperation) -> Value {
   ] {
     responses.insert(status.to_owned(), error_response(description));
   }
+  responses.insert("429".to_owned(), rate_limit_response());
   if operation.request_schema.is_some() {
     responses.insert("413".to_owned(), error_response("Request body too large"));
     responses.insert("415".to_owned(), error_response("Unsupported request media type"));
@@ -135,6 +149,10 @@ fn responses(operation: &ManagementOperation) -> Value {
 
 fn error_response(description: &str) -> Value {
   json!({"description": description, "$ref": "#/components/responses/ManagementError"})
+}
+
+fn rate_limit_response() -> Value {
+  json!({"$ref": "#/components/responses/ManagementRateLimited"})
 }
 
 mod operations;

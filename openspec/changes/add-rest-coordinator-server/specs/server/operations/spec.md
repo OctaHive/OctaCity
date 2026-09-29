@@ -50,6 +50,26 @@ The first release SHALL expose management operations without operator authentica
 - **WHEN** the server is configured to listen on a non-loopback management address without explicitly acknowledging unauthenticated management access
 - **THEN** configuration validation fails before the listener starts
 
+### Requirement: Bounded non-authoritative ingress admission
+Each server replica SHALL apply configurable bounded rate limits to management
+clients, authenticated Agent credentials, webhook senders, and expensive
+management reads. Rate-limit counters SHALL remain disposable process-local
+overload state and SHALL NOT authorize, reject, or reconstruct an authoritative
+coordination transition after restart. A rejection SHALL use HTTP `429`, the
+stable `rate_limited` code, and a positive bounded retry delay.
+
+#### Scenario: Expensive management client exceeds its quota
+- **WHEN** one socket peer exceeds the configured expensive-read capacity while another peer remains within its capacity
+- **THEN** the first peer receives `429` with `Retry-After` and the second peer remains independently admissible
+
+#### Scenario: Agent event traffic is overloaded
+- **WHEN** one Agent credential exhausts its ordinary request quota while its current Lease still requires heartbeat renewal
+- **THEN** ordinary requests receive a correlated retryable `rate_limited` response with `retry_after_ms`, while heartbeat admission uses an independent quota and can still renew or terminate the Lease
+
+#### Scenario: Rate-limit state is lost
+- **WHEN** a server replica restarts or evicts an old bounded counter entry
+- **THEN** no Build, Job, Lease, Trigger, idempotency outcome, audit fact, or outbox entry changes because of that loss
+
 ### Requirement: Secret-provider isolation
 The server SHALL store and expose logical secret and workload-identity references rather than secret values. Secret-provider credentials and returned sensitive material SHALL remain inside the configured provider adapter and SHALL be delivered only through the bounded agent or workload mechanism selected by policy.
 

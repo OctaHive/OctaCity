@@ -3,6 +3,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use serde::Deserialize;
 
 mod accessors;
+mod admission;
 mod defaults;
 mod infrastructure;
 mod integrations;
@@ -10,6 +11,7 @@ mod loading;
 mod validation;
 mod workers;
 
+pub(crate) use admission::AdmissionConfig;
 use defaults::*;
 pub(crate) use infrastructure::{
   AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, SigningConfig,
@@ -22,6 +24,8 @@ pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWor
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+  #[serde(default)]
+  admission: AdmissionConfig,
   #[serde(default = "default_management_bind")]
   management_bind: SocketAddr,
   #[serde(default)]

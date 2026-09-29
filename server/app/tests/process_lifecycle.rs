@@ -109,6 +109,21 @@ enrollment_key_file = "agent-enrollment-key"
     assert!(ServerConfig::parse_toml(&unbounded_telemetry).is_err());
   }
 
+  for setting in [
+    "window_milliseconds = 0",
+    "tracked_identities = 0",
+    "management_requests = 10\nexpensive_management_requests = 11",
+    "agent_requests = 100001",
+    "agent_heartbeats = 0",
+    "webhook_requests = 0",
+  ] {
+    let unbounded_admission = valid_configuration().replace(
+      "supported_pipeline_capabilities = [\"native\"]",
+      &format!("supported_pipeline_capabilities = [\"native\"]\n\n[admission]\n{setting}"),
+    );
+    assert!(ServerConfig::parse_toml(&unbounded_admission).is_err());
+  }
+
   let oversized = "x".repeat(1024 * 1024 + 1);
   assert!(matches!(
     ServerConfig::parse_toml(&oversized),

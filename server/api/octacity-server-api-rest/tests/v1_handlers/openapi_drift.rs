@@ -90,6 +90,14 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
         "#/components/responses/ManagementError"
       );
     }
+    assert_eq!(
+      documented["responses"]["429"]["$ref"],
+      "#/components/responses/ManagementRateLimited"
+    );
+    assert_eq!(
+      document["components"]["responses"]["ManagementRateLimited"]["headers"]["Retry-After"]["schema"]["minimum"],
+      1
+    );
     if operation.operation_id.contains("ManagedWebhook") {
       assert_eq!(
         documented["responses"]["422"]["$ref"],
