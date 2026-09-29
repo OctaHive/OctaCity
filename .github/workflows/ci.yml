@@ -1,7 +1,10 @@
 name: ci
 
 on:
+  workflow_call:
   push:
+    branches:
+      - "**"
   pull_request:
 
 permissions:

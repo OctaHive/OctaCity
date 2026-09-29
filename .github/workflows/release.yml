@@ -10,6 +10,14 @@ permissions:
   contents: read
 
 jobs:
+  portable-release-gate:
+    uses: ./.github/workflows/ci.yml
+
+  security-release-gate:
+    uses: ./.github/workflows/security.yml
+    with:
+      run_fuzz: true
+
   backend-release-gate:
     uses: ./.github/workflows/backend-contracts.yml
     with:
@@ -18,7 +26,10 @@ jobs:
       OCTACITY_RUNNER_INVENTORY_TOKEN: ${{ secrets.OCTACITY_RUNNER_INVENTORY_TOKEN }}
 
   package:
-    needs: backend-release-gate
+    needs:
+      - portable-release-gate
+      - security-release-gate
+      - backend-release-gate
     name: package ${{ matrix.platform }}
     strategy:
       fail-fast: false

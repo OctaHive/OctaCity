@@ -1,14 +1,25 @@
 name: security
 
 on:
+  workflow_call:
+    inputs:
+      run_fuzz:
+        description: Run the bounded protocol fuzzing gate for this invocation
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * 1"
   push:
+    branches:
+      - "**"
     paths:
       - "**/Cargo.toml"
       - "Cargo.lock"
       - "fuzz/**"
+      - "deny.toml"
+      - ".gitleaks.toml"
       - ".github/octa-source-revision"
       - ".github/actions/checkout-octa/action.yml"
       - ".github/workflows/security.yml"
@@ -29,21 +40,39 @@ jobs:
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: 1.98.1
-      - name: Install pinned cargo-audit
+      - name: Install pinned dependency scanners
         uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
-          tool: cargo-audit@0.22.2
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
           fallback: none
-      - name: Audit locked dependencies
+      - name: Install checksum-verified Gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_LINUX_X64_SHA256}  ${archive}" | sha256sum --check --strict
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}" gitleaks
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+      - name: Audit locked dependencies and licenses
         run: |
           cargo metadata --locked --format-version 1 >/dev/null
           cargo metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 >/dev/null
           cargo audit
           cargo audit --file fuzz/Cargo.lock
+          cargo deny --locked check licenses sources
+          cargo deny --locked --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml check licenses sources
         working-directory: octacity
+      - name: Reject committed secrets in release sources
+        run: |
+          gitleaks dir --config octacity/.gitleaks.toml --redact --no-banner --no-color octacity
+          gitleaks dir --config octacity/.gitleaks.toml --redact --no-banner --no-color octa
 
   fuzz-protocols:
-    if: github.event_name != 'push'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.run_fuzz == true
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -69,3 +98,4 @@ jobs:
           cargo fuzz run server-agent-json -- -max_total_time=30
           cargo fuzz run runner-json -- -max_total_time=30
           cargo fuzz run source-plugin -- -max_total_time=30
+          cargo fuzz run server-protocols -- -max_total_time=30

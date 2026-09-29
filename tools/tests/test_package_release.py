@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 import zipfile
 import xml.etree.ElementTree as ET
@@ -447,7 +448,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("needs.matrix-plan.outputs.run_linux_native == 'true'", linux_native)
         self.assertNotIn("needs: runner-inventory", linux_native)
         self.assertIn("uses: ./.github/workflows/backend-contracts.yml", release)
-        self.assertIn("needs: backend-release-gate", release)
+        self.assertIn("      - backend-release-gate\n", release)
         self.assertIn(
             "OCTACITY_RUNNER_INVENTORY_TOKEN: ${{ secrets.OCTACITY_RUNNER_INVENTORY_TOKEN }}",
             release,
@@ -648,15 +649,68 @@ class PackageReleaseTests(unittest.TestCase):
             if "rust-toolchain@" in workflow:
                 self.assertIn("toolchain: 1.98.1", workflow)
 
-    def test_security_workflow_installs_the_pinned_fuzzer_from_source(self):
+    def test_security_workflow_installs_pinned_verified_security_tools(self):
         workflow = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
+        gitleaks = tomllib.loads((REPOSITORY / ".gitleaks.toml").read_text(encoding="utf-8"))
         audit = workflow.split("  dependency-audit:\n", 1)[1].split("  fuzz-protocols:\n", 1)[0]
         fuzz = workflow.split("  fuzz-protocols:\n", 1)[1]
         self.assertIn("tool: cargo-audit@0.22.2", audit)
+        self.assertIn("cargo-deny@0.20.2", audit)
         self.assertIn("fallback: none", audit)
+        self.assertIn("GITLEAKS_VERSION: 8.30.1", audit)
+        self.assertIn(
+            "GITLEAKS_LINUX_X64_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
+            audit,
+        )
+        self.assertIn("sha256sum --check --strict", audit)
+        self.assertIn('      - ".gitleaks.toml"', workflow)
+        self.assertIn("cargo deny --locked check licenses sources", audit)
+        self.assertIn(
+            "cargo deny --locked --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml check licenses sources",
+            audit,
+        )
+        command = "gitleaks dir --config octacity/.gitleaks.toml --redact --no-banner --no-color"
+        self.assertIn(f"          {command} octacity\n", audit)
+        self.assertIn(f"          {command} octa\n", audit)
+        self.assertEqual(gitleaks["extend"], {"useDefault": True})
+        self.assertEqual(
+            gitleaks["allowlists"],
+            [
+                {
+                    "description": "The pinned Octa repository contains a public test-only cache TLS key fixture.",
+                    "targetRules": ["private-key"],
+                    "paths": [r"crates/octa-runner/tests/fixtures/cache-key\.pem$"],
+                }
+            ],
+        )
         self.assertIn("tool: protoc,cargo-fuzz@0.13.2", fuzz)
         self.assertIn("fallback: cargo-install", fuzz)
         self.assertNotIn("fallback: none", fuzz)
+        for target in ("server-agent-json", "runner-json", "source-plugin", "server-protocols"):
+            self.assertIn(f"cargo fuzz run {target} -- -max_total_time=30", fuzz)
+
+    def test_release_requires_every_quality_and_security_gate(self):
+        ci = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        security = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
+        release = (REPOSITORY / ".github/workflows/release.yml").read_text(encoding="utf-8")
+
+        self.assertIn("workflow_call:\n", ci)
+        self.assertIn("workflow_call:\n", security)
+        for reusable in (ci, security):
+            self.assertIn('  push:\n    branches:\n      - "**"\n', reusable)
+        self.assertIn("uses: ./.github/workflows/ci.yml", release)
+        self.assertIn("uses: ./.github/workflows/security.yml", release)
+        self.assertIn("run_fuzz: true", release)
+        package = release.split("  package:\n", 1)[1].split("  attest-and-publish:\n", 1)[0]
+        for gate in ("portable-release-gate", "security-release-gate", "backend-release-gate"):
+            self.assertIn(f"      - {gate}\n", package)
+
+        self.assertIn("cargo clippy --workspace --all-targets --all-features -- -D warnings", ci)
+        self.assertIn("RUSTDOCFLAGS: -D missing_docs", ci)
+        self.assertIn("python3 tools/check_architecture.py", ci)
+        self.assertIn("--fail-under-lines 80", ci)
+        for workflow in (ci, security, release):
+            self.assertNotIn("continue-on-error:", workflow)
 
     def test_coverage_runs_every_postgres_integration_contract(self):
         workflow = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")

@@ -160,7 +160,7 @@ by supplying an absolute Unix-millisecond expiry:
 curl --fail-with-body -X POST \
   https://management.internal.example.test/api/v1/builds/BUILD_ID/retention/hold \
   -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: incident-2026-0042-hold' \
+  -H 'Idempotency-Key: example-hold-key' \
   --data '{"reason":"incident 2026-0042 evidence","expires_at_unix_ms":1798761600000}'
 ```
 

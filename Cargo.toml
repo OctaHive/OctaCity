@@ -65,7 +65,7 @@ repository = "https://github.com/OctaHive/OctaCity"
 
 [workspace.dependencies]
 async-trait = "0.1.89"
-aws-sdk-s3 = { version = "1.147.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio"] }
+aws-sdk-s3 = { version = "1.150.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio"] }
 axum = "0.8.9"
 base64 = "0.22.1"
 blake3 = "1.8.2"

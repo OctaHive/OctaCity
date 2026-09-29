@@ -8,7 +8,7 @@
     "attempt": 1,
     "fencing_token": "fence-42-1"
   },
-  "upload_key": "0c7bfdde707110f750228b58fb68e0f7f6afdeac343919b4d118f08407e2d736",
+  "upload_key": "0000000000000000000000000000000000000000000000000000000000000000",
   "output": {
     "run_id": 17,
     "task_id": 23,

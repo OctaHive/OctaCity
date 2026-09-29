@@ -14,7 +14,7 @@ fn managed_credentials_are_redacted_from_debug_output() {
   let operation = ManagedRegistrationOperation {
     operation_id: "operation-01".to_owned(),
     integration_id: "integration-01".to_owned(),
-    idempotency_key: "idempotency-01".to_owned(),
+    idempotency_key: "test-key".to_owned(),
     callback_url: "https://hooks.example.test/callback".to_owned(),
     credential_handle: "provider-administration-secret".to_owned(),
   };
@@ -189,7 +189,7 @@ mod process {
       command: WebhookCommand::CreateRegistration(ManagedRegistrationOperation {
         operation_id: "operation-01".to_owned(),
         integration_id: "integration-01".to_owned(),
-        idempotency_key: "idempotency-01".to_owned(),
+        idempotency_key: "test-key".to_owned(),
         callback_url: "https://hooks.example.test/callback".to_owned(),
         credential_handle: "credential-handle".to_owned(),
       }),
@@ -282,7 +282,7 @@ mod process {
       command: WebhookCommand::CreateRegistration(ManagedRegistrationOperation {
         operation_id: "operation-01".to_owned(),
         integration_id: "integration-01".to_owned(),
-        idempotency_key: "idempotency-01".to_owned(),
+        idempotency_key: "test-key".to_owned(),
         callback_url: "https://hooks.example.test/callback".to_owned(),
         credential_handle: "credential-handle".to_owned(),
       }),

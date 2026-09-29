@@ -388,6 +388,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-adapter-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "octacity-execution"
 version = "0.1.0"
 dependencies = [
@@ -410,6 +418,8 @@ dependencies = [
  "octacity-protocol",
  "octacity-runner",
  "octacity-source-plugin",
+ "octacity-vcs-protocol",
+ "octacity-webhook-provider-protocol",
  "serde_json",
 ]
 
@@ -457,6 +467,28 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+]
+
+[[package]]
+name = "octacity-vcs-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "octacity-adapter-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "octacity-webhook-provider-protocol"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "octacity-adapter-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

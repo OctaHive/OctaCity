@@ -329,7 +329,9 @@ runtime-specific privileges, rotation, drain, upgrade, recovery, and removal
 are documented in [`docs/operations.md`](docs/operations.md). Packaged services
 run as dedicated non-root identities; Native cgroup access, containerd control,
 and Microsandbox virtualization access are separate explicit operator choices.
-Dependency auditing and protocol-fuzzing ownership are documented in
+The release threat model is documented in
+[`docs/server-threat-model.md`](docs/server-threat-model.md); dependency,
+license, secret-scanning, and protocol-fuzzing ownership are documented in
 [`docs/security-testing.md`](docs/security-testing.md).
 Language-neutral wire specifications are indexed in
 [`docs/protocols/README.md`](docs/protocols/README.md).

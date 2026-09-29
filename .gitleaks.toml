@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "The pinned Octa repository contains a public test-only cache TLS key fixture."
+targetRules = ["private-key"]
+paths = ['''crates/octa-runner/tests/fixtures/cache-key\.pem$''']
