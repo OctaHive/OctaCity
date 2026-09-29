@@ -15,11 +15,11 @@ use octacity_server_domain::{
 use octacity_server_job::JobRequirements;
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
-  AppendJobEvents, AppendJobEventsOutcome, ClaimDueSchedules, CompletionDisposition, CreateSchedule,
-  CreateTriggerDefinition, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion,
-  JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, MaterializedJob,
-  MissedRunPolicy, MutationDisposition, ScheduleDefinition, ScheduleStore as _, TriggerAcceptanceStore as _,
-  TriggerKind, WorkerOwner, testing::authoritative_store_contract_fixture,
+  AppendJobEvents, AppendJobEventsOutcome, ClaimDueSchedules, CompleteScheduleClaim, CompletionDisposition,
+  CreateSchedule, CreateTriggerDefinition, DueScheduleClaim, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim,
+  JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence,
+  LeaseWindow, MaterializedJob, MissedRunPolicy, MutationDisposition, ScheduleDefinition, ScheduleStore as _,
+  TriggerAcceptanceStore as _, TriggerKind, WorkerOwner, testing::authoritative_store_contract_fixture,
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
 use serde_json::json;
@@ -43,6 +43,7 @@ async fn concurrent_servers_accept_one_trigger_occurrence_once() {
   let left = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
   let right = PostgresAuthoritativeStore::new(independent_pool(&database.pool).await, support::test_signer());
   let request = fixture.request;
+  let replay_request = request.clone();
   let occurrence_id = request.trigger.id;
   let target = request.trigger.target;
   let verify_pool = database.pool.clone();
@@ -107,6 +108,11 @@ async fn concurrent_servers_accept_one_trigger_occurrence_once() {
       })
     );
     assert_eq!(metadata.0, json!({}));
+
+    let restarted = PostgresAuthoritativeStore::new(independent_pool(&verify_pool).await, support::test_signer());
+    let replayed = restarted.accept_trigger(replay_request).await.unwrap();
+    assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+    assert_eq!(replayed.build_id, left_outcome.build_id);
   })
   .await;
 
@@ -141,6 +147,14 @@ async fn concurrent_agents_lease_one_ready_job_once() {
     fixture.registration_epoch,
     fixture.allowed_pool,
   );
+  let verify_pool = database.pool.clone();
+  let replacement_claim = claim(
+    703,
+    [3; 32],
+    fixture.agent_id,
+    fixture.registration_epoch,
+    fixture.allowed_pool,
+  );
 
   let result = tokio::spawn(async move {
     let barrier = Arc::new(Barrier::new(2));
@@ -160,6 +174,12 @@ async fn concurrent_agents_lease_one_ready_job_once() {
         .filter(|outcome| matches!(outcome, JobClaimOutcome::Empty))
         .count(),
       1
+    );
+    let restarted = PostgresAuthoritativeStore::new(independent_pool(&verify_pool).await, support::test_signer());
+    assert_eq!(
+      restarted.claim_ready_job(replacement_claim).await.unwrap(),
+      JobClaimOutcome::Empty,
+      "a replacement replica must observe the committed Lease without relying on a local queue"
     );
   })
   .await;
@@ -241,6 +261,7 @@ async fn concurrent_event_and_completion_replays_have_one_dag_transition() {
       execution: None,
       completed_at: time(3_000),
     };
+    let replayed_completion = completion.clone();
     let barrier = Arc::new(Barrier::new(2));
     let left_task = tokio::spawn(complete_after_barrier(left, completion.clone(), barrier.clone()));
     let right_task = tokio::spawn(complete_after_barrier(right, completion, barrier));
@@ -260,6 +281,11 @@ async fn concurrent_event_and_completion_replays_have_one_dag_transition() {
       1
     );
     assert!(completed.iter().all(|outcome| outcome.ready_jobs == [child_job]));
+
+    let restarted = PostgresAuthoritativeStore::new(independent_pool(&verify_pool).await, support::test_signer());
+    let replayed = restarted.complete_job(replayed_completion).await.unwrap();
+    assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+    assert_eq!(replayed.ready_jobs, [child_job]);
   })
   .await;
 
@@ -412,12 +438,67 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
       claim_schedule(left_store.clone(), "server-a", barrier.clone()),
       claim_schedule(right_store.clone(), "server-b", barrier)
     );
+    let mut schedule_claims = [left_claim.unwrap(), right_claim.unwrap()].concat();
+    assert_eq!(schedule_claims.len(), 1);
+    let abandoned = schedule_claims.pop().unwrap();
+    let restarted = PostgresStore::new(independent_pool(&verify_pool).await);
+    assert!(
+      restarted
+        .claim_due_schedules(
+          ClaimDueSchedules::new(
+            WorkerOwner::new("server:replacement-before-expiry").unwrap(),
+            time(1_999),
+            time(3_000),
+            1,
+          )
+          .unwrap(),
+        )
+        .await
+        .unwrap()
+        .is_empty(),
+      "a live Schedule claim must survive owner process loss"
+    );
+    let mut reclaimed = restarted
+      .claim_due_schedules(
+        ClaimDueSchedules::new(
+          WorkerOwner::new("server:replacement").unwrap(),
+          time(2_000),
+          time(3_000),
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(reclaimed.len(), 1);
+    let reclaimed = reclaimed.pop().unwrap();
+    assert_eq!(reclaimed.schedule.trigger, abandoned.schedule.trigger);
+    assert!(matches!(
+      restarted
+        .complete_schedule_claim(CompleteScheduleClaim {
+          trigger: abandoned.schedule.trigger,
+          owner: abandoned.owner,
+          expected_next_occurrence_at: abandoned.schedule.next_occurrence_at,
+          next_occurrence_at: time(4_000),
+          completed_at: time(2_001),
+        })
+        .await,
+      Err(octacity_server_store::StoreError::Conflict {
+        entity: EntityKind::Trigger
+      })
+    ));
     assert_eq!(
-      [left_claim.unwrap(), right_claim.unwrap()]
-        .iter()
-        .filter(|claimed| **claimed)
-        .count(),
-      1
+      restarted
+        .complete_schedule_claim(CompleteScheduleClaim {
+          trigger: reclaimed.schedule.trigger,
+          owner: reclaimed.owner,
+          expected_next_occurrence_at: reclaimed.schedule.next_occurrence_at,
+          next_occurrence_at: time(4_000),
+          completed_at: time(2_001),
+        })
+        .await
+        .unwrap(),
+      MutationDisposition::Applied
     );
     let barrier = Arc::new(Barrier::new(2));
     let (left_attempt, right_attempt) = tokio::join!(
@@ -534,7 +615,7 @@ async fn claim_schedule(
   store: PostgresStore,
   owner: &str,
   barrier: Arc<Barrier>,
-) -> Result<bool, octacity_server_store::StoreError> {
+) -> Result<Vec<DueScheduleClaim>, octacity_server_store::StoreError> {
   barrier.wait().await;
   store
     .claim_due_schedules(ClaimDueSchedules::new(
@@ -544,7 +625,6 @@ async fn claim_schedule(
       1,
     )?)
     .await
-    .map(|claims| claims.len() == 1)
 }
 
 async fn insert_second_attempt(

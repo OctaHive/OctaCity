@@ -5,7 +5,7 @@ mod support;
 use std::sync::Arc;
 
 use authoritative_fixture::seed_authoritative_prerequisites;
-use octacity_server_domain::{Timestamp, TriggerId, TriggerVersion};
+use octacity_server_domain::{EntityKind, Timestamp, TriggerId, TriggerVersion};
 use octacity_server_store::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition, CreateTriggerDefinition,
   IdempotencyKey, InternalTriggerDefinitionStore as _, InternalTriggerEventStore as _, ListInternalTriggerDefinitions,
@@ -145,12 +145,55 @@ async fn terminal_build_outbox_is_claimed_once_and_restart_safe() {
     [internal_trigger_id, fan_out_trigger_id]
   );
 
-  let store = PostgresStore::new(database.pool.clone());
+  let store = PostgresStore::new(independent_pool(&database.pool).await);
+  assert!(
+    store
+      .claim_internal_trigger_events(
+        ClaimInternalTriggerEvents::new(
+          WorkerOwner::new("server:replacement-before-expiry").unwrap(),
+          Timestamp::from_unix_millis(1_999).unwrap(),
+          Timestamp::from_unix_millis(3_000).unwrap(),
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap()
+      .is_empty(),
+    "a live outbox claim must survive owner process loss"
+  );
+  let mut reclaimed = store
+    .claim_internal_trigger_events(
+      ClaimInternalTriggerEvents::new(
+        WorkerOwner::new("server:replacement").unwrap(),
+        Timestamp::from_unix_millis(2_000).unwrap(),
+        Timestamp::from_unix_millis(3_000).unwrap(),
+        1,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(reclaimed.len(), 1);
+  let reclaimed = reclaimed.pop().unwrap();
+  assert_eq!(reclaimed.event_identity, claim.event_identity);
+  assert!(matches!(
+    store
+      .complete_internal_trigger_event(CompleteInternalTriggerEvent {
+        event_identity: claim.event_identity.clone(),
+        owner: claim.owner,
+        completed_at: Timestamp::from_unix_millis(2_001).unwrap(),
+      })
+      .await,
+    Err(octacity_server_store::StoreError::Conflict {
+      entity: EntityKind::Trigger
+    })
+  ));
   store
     .complete_internal_trigger_event(CompleteInternalTriggerEvent {
-      event_identity: claim.event_identity,
-      owner: claim.owner,
-      completed_at: Timestamp::from_unix_millis(1_500).unwrap(),
+      event_identity: reclaimed.event_identity,
+      owner: reclaimed.owner,
+      completed_at: Timestamp::from_unix_millis(2_001).unwrap(),
     })
     .await
     .unwrap();

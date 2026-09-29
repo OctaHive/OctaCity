@@ -115,6 +115,7 @@ async fn retention_deadlines_and_interrupted_cleanup_are_durable() {
     .await
     .unwrap();
 
+  let store = PostgresStore::new(independent_pool(&database.pool).await);
   let second_owner = WorkerOwner::new("retention:second").unwrap();
   assert!(
     store
@@ -495,8 +496,8 @@ async fn hold_and_first_visibility_transition_serialize_as_one_decision() {
     .into_iter()
     .find(|claim| claim.component == BuildResultComponent::Metadata)
     .unwrap();
-  let hold_store = store.clone();
-  let retention_store = store.clone();
+  let hold_store = PostgresStore::new(independent_pool(&database.pool).await);
+  let retention_store = PostgresStore::new(independent_pool(&database.pool).await);
   let build_id = fixture.request.build.id;
   let (hold, preparation) = tokio::join!(
     hold_store.place_build_result_hold(place_request(
@@ -702,4 +703,10 @@ fn id(value: u128) -> octacity_server_domain::LeaseId {
 
 fn time(milliseconds: i64) -> Timestamp {
   Timestamp::from_unix_millis(milliseconds).unwrap()
+}
+
+async fn independent_pool(source: &sqlx::PgPool) -> sqlx::PgPool {
+  sqlx::PgPool::connect_with((*source.connect_options()).clone())
+    .await
+    .expect("connect an independent server pool to the test database")
 }

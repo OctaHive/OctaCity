@@ -75,6 +75,32 @@ variables used by CI and execute:
 python3 tools/failure_matrix.py run --evidence-dir /tmp/octacity-failure-matrix
 ```
 
+### Replica contention and rolling restart
+
+The PostgreSQL portion of the nightly failure matrix runs every ignored
+`octacity-server-store-postgres` integration test against a disposable database.
+Replica-safety coverage uses independent connection pools and reconstructs store
+adapters between claim attempts, so passing does not depend on a shared Rust
+mutex, process timer, or notification receiver.
+
+| Durable responsibility | Executable PostgreSQL contract |
+| --- | --- |
+| Schedule cursor claim | `concurrent_schema_primitives_have_one_visible_winner` |
+| Trigger acceptance | `concurrent_servers_accept_one_trigger_occurrence_once` |
+| Trigger retry claim | `trigger_retry_claims_are_exclusive_and_survive_rolling_restart` |
+| Orchestrator DAG transition | `concurrent_event_and_completion_replays_have_one_dag_transition` and `concurrent_fan_in_completions_cannot_leave_a_satisfied_child_blocked` |
+| Transactional outbox | `terminal_build_outbox_is_claimed_once_and_restart_safe` |
+| Ready queue | `concurrent_agents_lease_one_ready_job_once` |
+| Lease expiry | `replicas_never_own_the_same_expired_lease_concurrently` |
+| Build Result retention | `retention_deadlines_and_interrupted_cleanup_are_durable` |
+| Hold versus expiration | `hold_and_first_visibility_transition_serialize_as_one_decision` and `time_bounded_hold_expires_at_the_boundary_and_cannot_revive_hidden_data` |
+
+Each abandoned worker claim remains unavailable until its persisted deadline.
+At the exact deadline, at most one replacement replica acquires it; the previous
+owner is fenced from completion. Replayed Trigger, queue, and Orchestrator work
+observes the committed result after adapter replacement rather than relying on
+the process that first handled it.
+
 Nightly and release invocations also require the hosted `security-matrix` job.
 Its trust boundaries are every place where an untrusted caller, repository,
 provider, plugin, workload, or stored object can influence authority or expose

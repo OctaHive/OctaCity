@@ -74,6 +74,16 @@ class FailureMatrixTests(unittest.TestCase):
         self.assertIn("name: release-failure-matrix", workflow)
         self.assertIn("      - failure-matrix\n", workflow)
 
+    def test_postgresql_contract_retains_replica_recovery_evidence(self):
+        contract = next(
+            contract
+            for contract in FAILURE_MATRIX.CONTRACTS
+            if contract.name == "postgresql-recovery"
+        )
+        self.assertIn(FAILURE_MATRIX.Invariant.REPLICA_RECOVERY, contract.invariants)
+        self.assertIn("--tests", contract.command)
+        self.assertIn("--ignored", contract.command)
+
 
 if __name__ == "__main__":
     unittest.main()

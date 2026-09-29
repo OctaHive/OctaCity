@@ -50,6 +50,7 @@ class Invariant(StrEnum):
     BOUNDED_RETRY = "bounded-retry"
     TEARDOWN = "teardown"
     NO_FALSE_SUCCESS = "no-false-success"
+    REPLICA_RECOVERY = "replica-recovery"
 
 
 class FailureContract(NamedTuple):
@@ -142,6 +143,7 @@ CONTRACTS = (
             Invariant.OUTBOX_RECOVERY,
             Invariant.BOUNDED_RETRY,
             Invariant.NO_FALSE_SUCCESS,
+            Invariant.REPLICA_RECOVERY,
         ),
         command=(
             "cargo", "test", "--locked", "--all-features",

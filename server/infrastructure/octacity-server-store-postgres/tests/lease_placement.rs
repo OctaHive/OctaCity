@@ -193,8 +193,8 @@ async fn verify_exclusive_expiry_claims(pool: &PgPool) -> Result<(), Box<dyn std
   .bind(i64::try_from(fixture.request.build.configuration_version.get())?)
   .execute(pool)
   .await?;
-  let left = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
-  let right = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
+  let left = PostgresAuthoritativeStore::new(independent_pool(pool).await, support::test_signer());
+  let right = PostgresAuthoritativeStore::new(independent_pool(pool).await, support::test_signer());
   left.accept_trigger(fixture.request.clone()).await?;
   let grant = match left.claim_ready_job(placement_claim(&fixture)).await? {
     JobClaimOutcome::Claimed(grant) => *grant,
@@ -206,13 +206,49 @@ async fn verify_exclusive_expiry_claims(pool: &PgPool) -> Result<(), Box<dyn std
     left.claim_expired_leases(left_claim),
     right.claim_expired_leases(right_claim)
   );
-  let claims = left_claims?.into_iter().chain(right_claims?).collect::<Vec<_>>();
+  let mut claims = left_claims?.into_iter().chain(right_claims?).collect::<Vec<_>>();
   assert_eq!(claims.len(), 1);
-  assert_eq!(claims[0].lease_id, grant.lease_id);
-  let recovered = left
+  let abandoned = claims.pop().unwrap();
+  assert_eq!(abandoned.lease_id, grant.lease_id);
+  let restarted = PostgresAuthoritativeStore::new(independent_pool(pool).await, support::test_signer());
+  assert!(
+    restarted
+      .claim_expired_leases(ClaimExpiredLeases::new(
+        WorkerOwner::new("replica-before-claim-expiry")?,
+        time(29_999),
+        time(40_000),
+        1,
+      )?)
+      .await?
+      .is_empty(),
+    "a live Lease-recovery claim must survive owner process loss"
+  );
+  let mut replacement_claims = restarted
+    .claim_expired_leases(ClaimExpiredLeases::new(
+      WorkerOwner::new("replica-replacement")?,
+      time(30_000),
+      time(40_000),
+      1,
+    )?)
+    .await?;
+  assert_eq!(replacement_claims.len(), 1);
+  let replacement_claim = replacement_claims.pop().unwrap();
+  assert_eq!(replacement_claim.lease_id, grant.lease_id);
+  assert!(matches!(
+    restarted
+      .recover_expired_lease(RecoverExpiredLease {
+        claim: abandoned,
+        recovered_at: time(30_001),
+      })
+      .await,
+    Err(StoreError::Conflict {
+      entity: octacity_server_domain::EntityKind::Lease
+    })
+  ));
+  let recovered = restarted
     .recover_expired_lease(RecoverExpiredLease {
-      claim: claims[0].clone(),
-      recovered_at: time(20_001),
+      claim: replacement_claim,
+      recovered_at: time(30_001),
     })
     .await?;
   assert_eq!(recovered.action, LeaseRecoveryAction::Requeued);
@@ -223,13 +259,13 @@ async fn verify_exclusive_expiry_claims(pool: &PgPool) -> Result<(), Box<dyn std
     registration_epoch: grant.registration_epoch,
   };
   assert_eq!(
-    left
+    restarted
       .renew_lease(heartbeat(
         "expired-owner-is-fenced",
         access,
         &grant,
-        time(20_002),
         time(30_002),
+        time(40_002),
       ))
       .await?,
     LeaseHeartbeatOutcome::Fenced
@@ -242,31 +278,37 @@ async fn verify_exclusive_expiry_claims(pool: &PgPool) -> Result<(), Box<dyn std
     fixture.registration_epoch,
     fixture.allowed_pool,
     octacity_server_store::testing::compatible_snapshot(),
-    LeaseWindow::new(time(21_000), time(22_000))?,
+    LeaseWindow::new(time(31_000), time(32_000))?,
   )?;
-  let second_grant = match left.claim_ready_job(second_claim).await? {
+  let second_grant = match restarted.claim_ready_job(second_claim).await? {
     JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => return Err("requeued Job was not claimable".into()),
   };
-  let claims = left
+  let claims = restarted
     .claim_expired_leases(ClaimExpiredLeases::new(
       WorkerOwner::new("replica-left")?,
-      time(23_000),
-      time(30_000),
+      time(33_000),
+      time(40_000),
       1,
     )?)
     .await?;
   assert_eq!(claims.len(), 1);
   assert_eq!(claims[0].lease_id, second_grant.lease_id);
-  let exhausted = left
+  let exhausted = restarted
     .recover_expired_lease(RecoverExpiredLease {
       claim: claims[0].clone(),
-      recovered_at: time(23_001),
+      recovered_at: time(33_001),
     })
     .await?;
   assert_eq!(exhausted.action, LeaseRecoveryAction::Failed);
   assert_eq!(exhausted.infrastructure_requeues, 1);
   Ok(())
+}
+
+async fn independent_pool(source: &PgPool) -> PgPool {
+  PgPool::connect_with((*source.connect_options()).clone())
+    .await
+    .expect("connect an independent server pool to the test database")
 }
 
 async fn verify_heartbeat_directives(pool: &PgPool) -> Result<(), Box<dyn std::error::Error>> {
