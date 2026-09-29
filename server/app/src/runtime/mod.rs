@@ -21,7 +21,10 @@ mod workers;
 
 pub use assembly::RuntimeAssemblyError;
 pub use error::{DurableWorkerError, ServerRuntimeError};
-pub use maintenance::{LogSearchMaintenanceError, rebuild_log_search};
+pub use maintenance::{
+  LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, rebuild_log_search,
+  reconcile_restored_state,
+};
 
 type ListenerTaskResult = Result<&'static str, (&'static str, std::io::Error)>;
 

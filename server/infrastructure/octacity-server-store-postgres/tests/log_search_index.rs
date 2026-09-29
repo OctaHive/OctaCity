@@ -212,6 +212,12 @@ async fn operator_rebuild_requeues_authoritative_work_and_restores_deletion_tomb
   let summary = index.start_rebuild(project_id).await.unwrap();
   assert_eq!(summary.queued, 2);
   assert_eq!(summary.committed_through, LogIndexPosition::new(2).ok());
+  assert_eq!(
+    index.indexed_through(project_id).await.unwrap(),
+    None,
+    "a reset projection must report lag until durable replay catches up"
+  );
+  assert_eq!(index.start_rebuild_all().await.unwrap(), 1);
   let tombstoned: bool = sqlx::query_scalar(
     "SELECT EXISTS(SELECT 1 FROM log_search_build_tombstones WHERE project_id = $1 AND build_id = $2)",
   )

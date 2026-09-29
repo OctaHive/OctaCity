@@ -9,8 +9,8 @@ use octacity_server_store::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactReportFormat,
   ArtifactRetentionPolicy, ArtifactState, ArtifactTransitionAuthority, ArtifactType, ArtifactUploadRecord,
   ArtifactVerificationResult, BeginArtifactUpload, BeginArtifactUploadOutcome, IdempotencyKey, ListPublishedArtifacts,
-  MutationDisposition, ReserveArtifact, StoreError, StoreInputError, StoreOperation, TransitionArtifact,
-  VerifyArtifactUpload, artifact_authority_is_valid,
+  MAX_RESTORE_RECONCILIATION_BATCH_SIZE, MutationDisposition, ReserveArtifact, RestoreArtifactPage, StoreError,
+  StoreInputError, StoreOperation, TransitionArtifact, VerifyArtifactUpload, artifact_authority_is_valid,
 };
 use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
 use uuid::Uuid;
@@ -461,6 +461,49 @@ pub(crate) async fn list_published(
   .into_iter()
   .map(TryInto::try_into)
   .collect()
+}
+
+pub(crate) async fn restore_page(
+  pool: &PgPool,
+  after: Option<ArtifactId>,
+  limit: u16,
+) -> Result<RestoreArtifactPage, StoreError> {
+  validate_restore_limit(limit)?;
+  let fetch_limit = i64::from(limit) + 1;
+  let mut rows = sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
+    "artifact.state = 'published' AND \
+     ((artifact.artifact_type = 'artifact' AND build.artifacts_visible) OR \
+      (artifact.artifact_type = 'report' AND build.reports_visible)) AND \
+     ($1::UUID IS NULL OR artifact.id > $1) ORDER BY artifact.id LIMIT $2"
+  ))
+  .bind(after.map(ArtifactId::as_uuid))
+  .bind(fetch_limit)
+  .fetch_all(pool)
+  .await
+  .map_err(unavailable)?;
+  let has_more = rows.len() > usize::from(limit);
+  rows.truncate(usize::from(limit));
+  let items = rows
+    .into_iter()
+    .map(TryInto::try_into)
+    .collect::<Result<Vec<ArtifactUploadRecord>, StoreError>>()?;
+  let next_after = has_more.then(|| {
+    items
+      .last()
+      .expect("a restore page with more rows cannot be empty")
+      .artifact
+      .identity()
+      .artifact_id
+  });
+  Ok(RestoreArtifactPage { items, next_after })
+}
+
+fn validate_restore_limit(limit: u16) -> Result<(), StoreError> {
+  if limit == 0 || limit > MAX_RESTORE_RECONCILIATION_BATCH_SIZE {
+    Err(invalid(StoreOperation::ListPublishedArtifacts))
+  } else {
+    Ok(())
+  }
 }
 
 async fn change_verification(

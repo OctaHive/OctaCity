@@ -9,8 +9,8 @@ use octacity_server_domain::{AttemptId, JobId, LeaseId, Timestamp};
 use octacity_server_store::{
   AppendJobEvents, BuildLogStream, ClaimOrphanLogChunks, CompleteOrphanLogChunk, DurableJobEvent, EventSequence,
   JobClaim, JobClaimOutcome, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow,
-  LogChunkManifest, LogChunkManifestStore as _, LogIndexWorkStore as _, OrphanLogChunkStore as _, StageOrphanLogChunk,
-  StoreError, TriggerAcceptanceStore as _, WorkerOwner,
+  LogChunkManifest, LogChunkManifestStore as _, LogIndexWorkStore as _, OrphanLogChunkStore as _,
+  RestoreInventoryStore as _, StageOrphanLogChunk, StoreError, TriggerAcceptanceStore as _, WorkerOwner,
   testing::{authoritative_store_contract_fixture, compatible_snapshot},
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
@@ -105,6 +105,7 @@ async fn verify_atomic_log_append(pool: &sqlx::PgPool) -> Result<(), Box<dyn std
   );
   let request = archived_event(access, job_id, b"safe stdout")?;
   let chunk_id = request.log_chunks[0].chunk_id();
+  let expected_chunk = request.log_chunks[0].clone();
   let first = store.append_job_events(request.clone()).await?;
   assert_eq!(first.acknowledged_through.get(), 1);
   assert_eq!(first.inserted, 1);
@@ -133,6 +134,9 @@ async fn verify_atomic_log_append(pool: &sqlx::PgPool) -> Result<(), Box<dyn std
   .fetch_one(pool)
   .await?;
   assert_eq!(counts, (1, 1, 1, 1));
+  let restored = PostgresStore::new(pool.clone()).restore_log_chunk_page(None, 1).await?;
+  assert_eq!(restored.items, vec![expected_chunk]);
+  assert_eq!(restored.next_after, None);
   Ok(())
 }
 

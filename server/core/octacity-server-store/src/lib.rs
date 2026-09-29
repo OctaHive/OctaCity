@@ -76,6 +76,7 @@ mod project_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod project_testing;
+mod restore;
 mod retention_hold_model;
 mod retention_hold_port;
 mod retention_model;
@@ -255,6 +256,10 @@ pub use project_model::{
 pub use project_policy::ProjectPolicyDocument;
 pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
+pub use restore::{
+  MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
+  RestoreInventoryStore, RestoreLogChunkPage,
+};
 pub use retention_hold_model::{
   BuildResultRetentionState, BuildResultVisibility, GetBuildResultRetention, MAX_RETENTION_ACTOR_IDENTITY_BYTES,
   MAX_RETENTION_HOLD_REASON_BYTES, MAX_RETENTION_REQUEST_IDENTITY_BYTES, PlaceBuildResultHold, ReleaseBuildResultHold,

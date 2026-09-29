@@ -64,4 +64,5 @@ cargo test -p octacity-server-store-postgres --test migrations -- --ignored
 The configured role must be allowed to create and drop disposable databases.
 The template snapshot is test evidence, not the production backup mechanism;
 the coordinated database/object-store backup procedure owns that operational
-mechanism.
+mechanism. Follow [`server-backup-restore.md`](server-backup-restore.md) for
+the protected recovery set, consistency boundary, and offline integrity gate.

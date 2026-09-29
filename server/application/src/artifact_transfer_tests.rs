@@ -1,7 +1,10 @@
 use std::{
   collections::BTreeMap,
   future::Future,
-  sync::{Arc, Mutex},
+  sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+  },
   task::{Context, Poll, Waker},
   time::Duration,
 };
@@ -54,7 +57,7 @@ impl AgentRegistrationUseCases for RegistrationStub {
 }
 
 struct ByteStoreStub {
-  reject_completion: bool,
+  reject_integrity: Arc<AtomicBool>,
   authorized: Mutex<Vec<ArtifactObject>>,
 }
 
@@ -74,7 +77,17 @@ impl ArtifactStore for ByteStoreStub {
   }
 
   async fn complete_upload(&self, _object: &ArtifactObject) -> Result<(), ArtifactStoreError> {
-    if self.reject_completion {
+    if self.reject_integrity.load(Ordering::Relaxed) {
+      Err(ArtifactStoreError::Integrity {
+        reason: ArtifactIntegrityError::DigestMismatch,
+      })
+    } else {
+      Ok(())
+    }
+  }
+
+  async fn verify_published(&self, _object: &ArtifactObject) -> Result<(), ArtifactStoreError> {
+    if self.reject_integrity.load(Ordering::Relaxed) {
       Err(ArtifactStoreError::Integrity {
         reason: ArtifactIntegrityError::DigestMismatch,
       })
@@ -152,11 +165,44 @@ fn integrity_failure_returns_the_logical_upload_to_unpublished_pending_state() {
   assert!(!upload.artifact.state().is_visible());
 }
 
+#[test]
+fn published_metadata_is_not_returned_after_its_object_fails_verification() {
+  let (store, service, reject_integrity) = service_with_integrity_gate(false);
+  let begun = run_ready(service.begin_upload(begin_input("request-1"))).unwrap();
+  run_ready(service.complete_upload(complete_input("complete-1", &begun.upload_id))).unwrap();
+  let upload = run_ready(store.artifact_upload(begun.upload_id.parse().unwrap())).unwrap();
+  let artifact_id = upload.artifact.identity().artifact_id;
+  reject_integrity.store(true, Ordering::Relaxed);
+
+  let get = run_ready(QueryHandler::handle_query(&service, GetArtifactQuery { artifact_id })).unwrap_err();
+  assert_eq!(get.classification(), crate::ApplicationFailure::Unavailable);
+  let list = run_ready(QueryHandler::handle_query(
+    &service,
+    ListBuildArtifactsQuery {
+      build_id: id(2),
+      limit: 10,
+    },
+  ))
+  .unwrap_err();
+  assert_eq!(list.classification(), crate::ApplicationFailure::Unavailable);
+}
+
 fn service(
   reject_completion: bool,
 ) -> (
   Arc<InMemoryArtifactRecordStore>,
   ArtifactHandlers<InMemoryArtifactRecordStore, ByteStoreStub>,
+) {
+  let (store, service, _) = service_with_integrity_gate(reject_completion);
+  (store, service)
+}
+
+fn service_with_integrity_gate(
+  reject_integrity: bool,
+) -> (
+  Arc<InMemoryArtifactRecordStore>,
+  ArtifactHandlers<InMemoryArtifactRecordStore, ByteStoreStub>,
+  Arc<AtomicBool>,
 ) {
   let access = lease_access();
   let store = Arc::new(InMemoryArtifactRecordStore::new(ArtifactLeaseFixture {
@@ -167,18 +213,19 @@ fn service(
     job_id: id(4),
     expires_at: time(10_000),
   }));
+  let reject_integrity = Arc::new(AtomicBool::new(reject_integrity));
   let service = ArtifactHandlers::new(
     Arc::new(RegistrationStub),
     store.clone(),
     Arc::new(ByteStoreStub {
-      reject_completion,
+      reject_integrity: reject_integrity.clone(),
       authorized: Mutex::default(),
     }),
     Duration::from_secs(60),
     Duration::from_secs(30),
   )
   .unwrap();
-  (store, service)
+  (store, service, reject_integrity)
 }
 
 fn begin_input(request_id: &str) -> BeginAgentArtifactUploadInput {

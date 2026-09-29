@@ -46,6 +46,7 @@ mod pool_cqrs;
 mod project_cqrs;
 mod project_policy;
 mod projections;
+mod restore;
 mod retention;
 mod retention_hold;
 mod retry_policy;
@@ -196,6 +197,7 @@ pub use projections::{
   RetryPolicyProjection, RuntimeClassProjection, Sha256DigestProjection, TriggerCauseProjection,
   TriggerHistoryProjection, TriggerKindProjection,
 };
+pub use restore::{RestoreReconciler, RestoreReconciliationError, RestoreReconciliationSummary};
 pub use retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};
 pub use retention_hold::{
   BuildResultHoldProjection, BuildResultHoldStateProjection, BuildResultRetentionCommandOutcome,

@@ -125,6 +125,8 @@ pub enum ArtifactStoreOperation {
   CompleteUpload,
   /// Create a download capability.
   AuthorizeDownload,
+  /// Reconcile one published object after restore.
+  VerifyPublished,
   /// Delete pending and published bytes.
   Delete,
 }
@@ -135,6 +137,7 @@ impl std::fmt::Display for ArtifactStoreOperation {
       Self::AuthorizeUpload => "authorize upload",
       Self::CompleteUpload => "complete upload",
       Self::AuthorizeDownload => "authorize download",
+      Self::VerifyPublished => "verify published object",
       Self::Delete => "delete object",
     })
   }
@@ -225,6 +228,12 @@ pub trait ArtifactStore: Send + Sync {
 
   /// Verifies and atomically publishes an uploaded object, idempotently.
   async fn complete_upload(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError>;
+
+  /// Independently verifies the immutable bytes behind published metadata.
+  ///
+  /// Restore reconciliation and management reads use this operation so a
+  /// database snapshot cannot advertise missing or corrupt object bytes.
+  async fn verify_published(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError>;
 
   /// Creates a short-lived GET capability for an already published object.
   async fn authorize_download(

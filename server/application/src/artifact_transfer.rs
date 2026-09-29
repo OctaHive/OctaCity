@@ -370,7 +370,10 @@ where
   type Error = ApplicationError;
 
   async fn handle_query(&self, query: GetArtifactQuery) -> Result<ArtifactProjection, Self::Error> {
-    project(self.store.published_artifact(query.artifact_id).await?)
+    let upload = self.store.published_artifact(query.artifact_id).await?;
+    let object = artifact_object(&upload).map_err(map_artifact_error)?;
+    self.bytes.verify_published(&object).await.map_err(map_storage_error)?;
+    project(upload)
   }
 }
 
@@ -383,16 +386,20 @@ where
   type Error = ApplicationError;
 
   async fn handle_query(&self, query: ListBuildArtifactsQuery) -> Result<Vec<ArtifactProjection>, Self::Error> {
-    self
+    let uploads = self
       .store
       .list_published_artifacts(ListPublishedArtifacts {
         build_id: query.build_id,
         limit: query.limit,
       })
-      .await?
-      .into_iter()
-      .map(project)
-      .collect::<Result<_, _>>()
+      .await?;
+    let mut projections = Vec::with_capacity(uploads.len());
+    for upload in uploads {
+      let object = artifact_object(&upload).map_err(map_artifact_error)?;
+      self.bytes.verify_published(&object).await.map_err(map_storage_error)?;
+      projections.push(project(upload)?);
+    }
+    Ok(projections)
   }
 }
 

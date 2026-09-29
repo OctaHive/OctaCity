@@ -1,7 +1,7 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use octacity_server::{ServerConfig, ServerRuntime, rebuild_log_search};
+use octacity_server::{ServerConfig, ServerRuntime, rebuild_log_search, reconcile_restored_state};
 use octacity_server_domain::ProjectId;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
@@ -39,6 +39,14 @@ enum Command {
     #[arg(long)]
     project: ProjectId,
   },
+  /// Verify one restored database/object-store consistency unit while offline.
+  ReconcileRestore {
+    /// Path to the restored server TOML configuration.
+    config: PathBuf,
+    /// Reset every derived Build-log search projection for durable replay.
+    #[arg(long)]
+    rebuild_log_search: bool,
+  },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -57,6 +65,10 @@ fn main() -> ExitCode {
     Command::Validate { config } => validate(config),
     Command::Run { config } => run_async(run(config)),
     Command::RebuildLogSearch { config, project } => run_async(rebuild(config, project)),
+    Command::ReconcileRestore {
+      config,
+      rebuild_log_search,
+    } => run_async(reconcile_restore(config, rebuild_log_search)),
   };
   match result {
     Ok(()) => ExitCode::SUCCESS,
@@ -65,6 +77,19 @@ fn main() -> ExitCode {
       ExitCode::FAILURE
     }
   }
+}
+
+async fn reconcile_restore(path: PathBuf, rebuild_search: bool) -> Result<(), Box<dyn std::error::Error>> {
+  let config = ServerConfig::load(&path)?;
+  let summary = reconcile_restored_state(&config, rebuild_search).await?;
+  info!(
+    artifacts = summary.objects.artifacts,
+    log_chunks = summary.objects.log_chunks,
+    cache_blobs = summary.objects.cache_blobs,
+    rebuilt_search_projects = summary.rebuilt_search_projects,
+    "restored PostgreSQL and object-store state reconciled"
+  );
+  Ok(())
 }
 
 async fn rebuild(path: PathBuf, project_id: ProjectId) -> Result<(), Box<dyn std::error::Error>> {
@@ -193,5 +218,23 @@ mod tests {
     ])
     .unwrap();
     assert!(matches!(cli.command, Command::RebuildLogSearch { .. }));
+  }
+
+  #[test]
+  fn parses_restore_reconciliation_with_projection_rebuild() {
+    let cli = Cli::try_parse_from([
+      "octacity-server",
+      "reconcile-restore",
+      "server.toml",
+      "--rebuild-log-search",
+    ])
+    .unwrap();
+    assert!(matches!(
+      cli.command,
+      Command::ReconcileRestore {
+        rebuild_log_search: true,
+        ..
+      }
+    ));
   }
 }

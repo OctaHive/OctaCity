@@ -9,6 +9,8 @@ use octacity_server_store::{
 use sha2::{Digest as _, Sha256};
 use sqlx::{FromRow, PgPool, Postgres, QueryBuilder};
 
+const REBUILD_PROJECT_BATCH_SIZE: i64 = 1_000;
+
 /// Rebuildable PostgreSQL projection implementing backend-neutral Build-log search.
 #[derive(Clone)]
 pub struct PostgresLogSearchIndex {
@@ -96,6 +98,34 @@ impl PostgresLogSearchIndex {
       queued,
       committed_through,
     })
+  }
+
+  /// Clears and requeues every Project projection represented by authoritative
+  /// log-index work, one short transaction per Project.
+  pub async fn start_rebuild_all(&self) -> Result<u64, LogSearchError> {
+    let mut rebuilt = 0_u64;
+    let mut after = None;
+    loop {
+      let projects: Vec<uuid::Uuid> = sqlx::query_scalar(
+        "SELECT project_id FROM log_index_project_positions \
+         WHERE ($1::UUID IS NULL OR project_id > $1) \
+         ORDER BY project_id LIMIT $2",
+      )
+      .bind(after)
+      .bind(REBUILD_PROJECT_BATCH_SIZE)
+      .fetch_all(&self.pool)
+      .await
+      .map_err(unavailable)?;
+      if projects.is_empty() {
+        return Ok(rebuilt);
+      }
+      for project in &projects {
+        let project = ProjectId::from_uuid(*project).map_err(|_| LogSearchError::Unavailable)?;
+        self.start_rebuild(project).await?;
+        rebuilt = rebuilt.checked_add(1).ok_or(LogSearchError::Unavailable)?;
+      }
+      after = projects.last().copied();
+    }
   }
 }
 

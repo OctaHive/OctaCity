@@ -298,6 +298,22 @@ impl ArtifactStore for S3ArtifactStore {
       .await
   }
 
+  async fn verify_published(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError> {
+    self
+      .within_operation(ArtifactStoreOperation::VerifyPublished, async {
+        validate_s3_object(object)?;
+        self
+          .verified_etag(
+            &self.published_key(object),
+            object,
+            ArtifactStoreOperation::VerifyPublished,
+          )
+          .await?;
+        Ok(())
+      })
+      .await
+  }
+
   async fn authorize_download(
     &self,
     object: &ArtifactObject,
@@ -306,12 +322,13 @@ impl ArtifactStore for S3ArtifactStore {
     self
       .within_operation(ArtifactStoreOperation::AuthorizeDownload, async {
         validate_s3_object(object)?;
-        if !self
-          .published_is_valid(object, ArtifactStoreOperation::AuthorizeDownload)
-          .await?
-        {
-          return Err(ArtifactStoreError::NotFound);
-        }
+        self
+          .verified_etag(
+            &self.published_key(object),
+            object,
+            ArtifactStoreOperation::AuthorizeDownload,
+          )
+          .await?;
         let request = self
           .client
           .get_object()

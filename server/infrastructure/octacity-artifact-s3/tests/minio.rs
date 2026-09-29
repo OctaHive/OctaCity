@@ -138,6 +138,7 @@ async fn verify_upload_download_and_delete(store: &S3ArtifactStore) {
   upload(store, &stored, bytes).await;
   store.complete_upload(&stored).await.unwrap();
   store.complete_upload(&stored).await.unwrap();
+  store.verify_published(&stored).await.unwrap();
 
   let empty = object(b"");
   upload(store, &empty, b"").await;
@@ -178,6 +179,7 @@ async fn verify_upload_download_and_delete(store: &S3ArtifactStore) {
       .await
       .is_err()
   );
+  assert_eq!(store.verify_published(&stored).await, Err(ArtifactStoreError::NotFound));
 }
 
 async fn verify_mismatched_generations_remain_unpublished(client: &Client, bucket: &str, store: &S3ArtifactStore) {

@@ -8,7 +8,8 @@ use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_server_domain::{ArtifactName, Timestamp};
 use octacity_server_store::{
   ArtifactContentDigest, ArtifactIdentity, ArtifactMediaType, ArtifactRetentionPolicy, ArtifactType, JobClaim,
-  JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, TriggerAcceptanceStore as _,
+  JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, RestoreInventoryStore as _,
+  TriggerAcceptanceStore as _,
   testing::{
     ArtifactRecordStoreContractFixture, ArtifactUploadStoreContractFixture, authoritative_store_contract_fixture,
     compatible_snapshot, verify_artifact_record_store_contract, verify_artifact_upload_store_contract,
@@ -106,6 +107,12 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
     },
   )
   .await;
+  let restored = PostgresStore::new(database.pool.clone())
+    .restore_artifact_page(None, 1)
+    .await?;
+  assert_eq!(restored.items.len(), 1);
+  assert_eq!(restored.items[0].artifact.identity().artifact_id, id(953));
+  assert_eq!(restored.next_after, None);
   Ok(())
 }
 

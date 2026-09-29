@@ -267,6 +267,10 @@ for readiness. The full probe repeats after the configured capability recheck
 interval and after any availability failure or failed artifact operation. For
 a versioned bucket, lifecycle policy must expire noncurrent versions and delete
 markers below `<prefix>/health/` as well as normal retained artifact objects.
+PostgreSQL and this object prefix form one backup consistency unit. Keep a
+restored deployment offline until `octacity-server reconcile-restore` verifies
+every published object reference; see the
+[backup and restore runbook](docs/server-backup-restore.md).
 
 Validate it without opening a listener, then run it with:
 

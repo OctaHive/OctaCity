@@ -136,6 +136,14 @@ or failed artifact operation does so immediately. Qualification and
 invalidation are serialized so a concurrent older successful probe cannot hide
 an object-operation failure. Versioned buckets require lifecycle cleanup for
 noncurrent probe versions and delete markers below the health prefix. Recurring
+migration readiness does not replace disaster-recovery reconciliation.
+PostgreSQL and the object prefix are restored as one offline consistency unit;
+the composition root exposes a listener-free `reconcile-restore` command that
+checks every visible immutable-object reference before an operator starts the
+normal runtime. Artifact reads independently repeat published-object integrity
+verification. Optional search rebuild preserves the committed watermark while
+resetting the indexed watermark, so freshness remains false until replay.
+Recurring
 migration readiness performs a read-only compatibility check
 and takes the migration lock only while the schema is an exact older prefix.
 A failed, newer, gapped, reordered, or checksum-mismatched history remains

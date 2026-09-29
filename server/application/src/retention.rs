@@ -652,6 +652,10 @@ mod tests {
       unreachable!()
     }
 
+    async fn verify_published(&self, _object: &ArtifactObject) -> Result<(), ArtifactStoreError> {
+      unreachable!()
+    }
+
     async fn authorize_download(
       &self,
       _object: &ArtifactObject,

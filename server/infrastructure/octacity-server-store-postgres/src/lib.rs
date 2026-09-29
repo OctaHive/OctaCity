@@ -51,6 +51,7 @@ mod project_query;
 mod project_row;
 mod ready_queue_notification;
 mod repository_mutation;
+mod restore;
 mod retention;
 mod retention_hold;
 mod retry_build;

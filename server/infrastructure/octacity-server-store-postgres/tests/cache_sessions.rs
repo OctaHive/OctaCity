@@ -11,7 +11,7 @@ use octacity_server_domain::Timestamp;
 use octacity_server_store::{
   BeginCacheSession, CacheBlobPreparationOutcome, CacheDataAccess, CacheDataStore as _, CachePublicationOutcome,
   CacheSessionStore as _, IdempotencyKey, JobClaim, JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  LeaseWindow, PublishCacheAction, PublishCacheBlob, TriggerAcceptanceStore as _,
+  LeaseWindow, PublishCacheAction, PublishCacheBlob, RestoreInventoryStore as _, TriggerAcceptanceStore as _,
   testing::{
     CacheSessionStoreContractFixture, authoritative_store_contract_fixture, compatible_snapshot,
     job_spec_template_with_cache, verify_cache_session_store_contract,
@@ -166,6 +166,10 @@ async fn verify_l2_metadata(
       .await?,
     CachePublicationOutcome::Published
   );
+  let restored = store.restore_cache_blob_page(None, 1).await?;
+  assert_eq!(restored.items.len(), 1);
+  assert_eq!(restored.items[0].descriptor(), &blob);
+  assert_eq!(restored.next_after, None);
   assert!(
     store
       .find_missing_cache_blobs(access(1_300), vec![blob.clone()])
