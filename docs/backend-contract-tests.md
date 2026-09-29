@@ -101,6 +101,17 @@ owner is fenced from completion. Replayed Trigger, queue, and Orchestrator work
 observes the committed result after adapter replacement rather than relying on
 the process that first handled it.
 
+### Schema migration and rollback rehearsal
+
+The same disposable PostgreSQL gate runs the migration contract in
+`tests/migrations.rs`. It creates a database at the declared previous-binary
+schema boundary, seeds durable data, and captures a PostgreSQL template
+snapshot. Separate restores prove the forward migration, atomic failure and
+retry path, and previous-binary rollback path. Additional mutations of the
+migration ledger prove that a future version, checksum mismatch, or history gap
+keeps readiness incompatible. The operational rule and local command are in
+[`server-schema-migrations.md`](server-schema-migrations.md).
+
 Nightly and release invocations also require the hosted `security-matrix` job.
 Its trust boundaries are every place where an untrusted caller, repository,
 provider, plugin, workload, or stored object can influence authority or expose

@@ -37,6 +37,7 @@ mod lease_heartbeat;
 mod lease_recovery;
 mod log_index_work;
 mod log_search;
+mod migration;
 mod mutation;
 mod pipeline_mutation;
 mod pipeline_query;
@@ -60,74 +61,18 @@ mod telemetry;
 mod trigger_evaluation;
 mod trigger_query;
 
-use sqlx::{PgPool, migrate::MigrateError};
+use sqlx::PgPool;
 
 pub use log_search::{LogSearchRebuildSummary, PostgresLogSearchIndex};
+pub use migration::{
+  MIGRATOR, MigrationStatus, PREVIOUS_BINARY_SCHEMA_VERSION, current_schema_version, migrate, migration_status,
+  run_migrator,
+};
 pub use ready_queue_notification::ready_job_count;
 pub use store::{PostgresAuthoritativeStore, PostgresStore};
 
 /// PostgreSQL notification channel emitted after a ready-queue transaction commits.
 pub const READY_JOB_NOTIFICATION_CHANNEL: &str = "octacity_ready_jobs";
-
-/// Ordered embedded forward migrations for the authoritative PostgreSQL store.
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
-
-/// Applies every pending forward migration to one PostgreSQL database.
-pub async fn migrate(pool: &PgPool) -> Result<(), MigrateError> {
-  MIGRATOR.run(pool).await
-}
-
-/// Read-only compatibility state of the database migration history.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MigrationStatus {
-  /// Every embedded forward migration is applied with its original checksum.
-  Current,
-  /// The migration table is absent or at least one embedded migration is pending.
-  Pending,
-  /// Applied history is dirty, unknown to this binary, or has a changed checksum.
-  Incompatible,
-}
-
-/// Inspects migration compatibility without taking the migrator advisory lock.
-///
-/// Readiness can call this frequently. The comparatively expensive, locking
-/// migration path is needed only while the schema is actually behind.
-pub async fn migration_status(pool: &PgPool) -> Result<MigrationStatus, sqlx::Error> {
-  let table_exists = sqlx::query_scalar::<_, bool>("SELECT to_regclass('_sqlx_migrations') IS NOT NULL")
-    .fetch_one(pool)
-    .await?;
-  if !table_exists {
-    return Ok(MigrationStatus::Pending);
-  }
-
-  let applied = sqlx::query_as::<_, (i64, bool, Vec<u8>)>(
-    "SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version",
-  )
-  .fetch_all(pool)
-  .await?;
-  if applied.iter().any(|(_, success, _)| !success) {
-    return Ok(MigrationStatus::Incompatible);
-  }
-
-  let expected: Vec<_> = MIGRATOR
-    .iter()
-    .filter(|migration| !migration.migration_type.is_down_migration())
-    .collect();
-  for (version, _, checksum) in &applied {
-    let Some(migration) = expected.iter().find(|migration| migration.version == *version) else {
-      return Ok(MigrationStatus::Incompatible);
-    };
-    if migration.checksum.as_ref() != checksum {
-      return Ok(MigrationStatus::Incompatible);
-    }
-  }
-
-  Ok(if applied.len() == expected.len() {
-    MigrationStatus::Current
-  } else {
-    MigrationStatus::Pending
-  })
-}
 
 /// Checks that PostgreSQL can execute a trivial query through the pool.
 pub async fn health_check(pool: &PgPool) -> bool {

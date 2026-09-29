@@ -99,7 +99,9 @@ using Build-log search, PostgreSQL must provide the `pg_trgm` extension. The
 migration role must either be allowed to run `CREATE EXTENSION pg_trgm`, or an
 administrator must install that extension before the server applies migrations;
 otherwise migration readiness remains false rather than silently disabling
-literal-fragment search.
+literal-fragment search. The exact-prefix compatibility rule, failed-migration
+behavior, and snapshot-based previous-binary rollback window are documented in
+the [server schema migration contract](docs/server-schema-migrations.md).
 
 If the derived Build-log search tables are lost or deliberately recreated,
 queue an atomic Project-scoped replay while a server is running:

@@ -137,7 +137,12 @@ invalidation are serialized so a concurrent older successful probe cannot hide
 an object-operation failure. Versioned buckets require lifecycle cleanup for
 noncurrent probe versions and delete markers below the health prefix. Recurring
 migration readiness performs a read-only compatibility check
-and takes the migration lock only while the schema is behind. The monitor logs
+and takes the migration lock only while the schema is an exact older prefix.
+A failed, newer, gapped, reordered, or checksum-mismatched history remains
+unready. Failed migration sessions are discarded so their PostgreSQL advisory
+locks cannot poison the connection pool. Rollback to the previous binary uses
+the declared pre-upgrade database snapshot boundary; it never runs that binary
+against an unknown newer schema. The monitor logs
 only initial state and transitions, with a stable non-secret dependency name
 and unavailable/timeout reason. Liveness remains process-local and independent
 of this snapshot.
