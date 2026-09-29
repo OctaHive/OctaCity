@@ -137,7 +137,10 @@ batch-size settings bound each workload separately. Manual Trigger intent is
 likewise persisted before a mutable VCS lookup, and transient resolution
 failures resume from leased work without creating another Build. Exact
 revisions remain a local fast path. The repository intentionally ships no
-production GitHub or Gerrit webhook adapter. A minimal `server.toml` is:
+production GitHub or Gerrit webhook adapter. CI validates the deployable
+[`reverse-proxy`](docs/server.reverse-proxy.example.toml) and
+[`trusted-network`](docs/server.trusted-network.example.toml) examples against
+the production parser. The complete configuration surface is:
 
 ```toml
 management_bind = "127.0.0.1:8080"
@@ -318,6 +321,9 @@ proves its protocol versions with `Hello` after the selected backend starts it.
 
 The implementation sequence and security boundaries are documented in
 [`docs/agent-implementation-plan.md`](docs/agent-implementation-plan.md).
+Server TLS/proxy topology, trusted-network isolation, key rotation, retention
+holds, capacity alerts, and incident recovery are documented in
+[`docs/server-operations.md`](docs/server-operations.md).
 Release archives, provenance verification, enrollment, service installation,
 runtime-specific privileges, rotation, drain, upgrade, recovery, and removal
 are documented in [`docs/operations.md`](docs/operations.md). Packaged services

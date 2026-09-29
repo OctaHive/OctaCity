@@ -1,0 +1,48 @@
+# Private-network topology. Every port needs an explicit firewall allowlist.
+# The acknowledgement is mandatory because management has no operator auth.
+management_bind = "0.0.0.0:8080"
+agent_bind = "0.0.0.0:8081"
+webhook_bind = "0.0.0.0:8082"
+cache_bind = "0.0.0.0:8083"
+acknowledge_unauthenticated_management = true
+webhook_public_base_url = "https://hooks.example.test"
+webhook_adapter_registry = "/etc/octacity/webhook-adapters"
+supported_pipeline_capabilities = ["native"]
+
+[admission]
+window_milliseconds = 1000
+tracked_identities = 4096
+management_requests = 200
+expensive_management_requests = 20
+agent_requests = 200
+agent_heartbeats = 20
+webhook_requests = 50
+
+[postgres]
+url_file = "/run/secrets/octacity-postgres-url"
+max_connections = 10
+
+[object_storage]
+endpoint = "https://objects.example.test"
+region = "us-east-1"
+bucket = "octacity-artifacts"
+prefix = "octacity/v1"
+access_key_file = "/run/secrets/octacity-s3-access-key"
+secret_key_file = "/run/secrets/octacity-s3-secret-key"
+force_path_style = false
+
+[signing]
+key_id = "server-key-2026-09"
+key_file = "/run/secrets/octacity-jobspec-ed25519-key"
+
+[agent_credentials]
+enrollment_key_file = "/run/secrets/octacity-agent-enrollment-key"
+
+[cache]
+endpoint = "https://cache.example.test"
+credential_key_file = "/run/secrets/octacity-cache-credential-key"
+session_lifetime_milliseconds = 300000
+max_blob_bytes = 67108864
+
+[job_spec]
+policy_file = "/etc/octacity/job-spec-policy.json"

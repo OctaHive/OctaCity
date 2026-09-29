@@ -1,53 +1,28 @@
 use super::*;
 
 pub(super) fn valid_webhook_callback_origin(value: &str) -> bool {
-  let Some(authority) = value.strip_prefix("https://").or_else(|| value.strip_prefix("http://")) else {
+  if value.ends_with('/') {
+    return false;
+  }
+  let Ok(origin) = url::Url::parse(value) else {
     return false;
   };
-  if authority.is_empty()
-    || authority.contains(['/', '?', '#', '@'])
-    || authority
-      .chars()
-      .any(|character| character.is_whitespace() || character.is_control())
-  {
-    return false;
-  }
-  if let Some(ipv6) = authority.strip_prefix('[') {
-    let Some((address, suffix)) = ipv6.split_once(']') else {
-      return false;
-    };
-    return address.parse::<std::net::Ipv6Addr>().is_ok() && valid_port_suffix(suffix);
-  }
-  if authority.matches(':').count() > 1 {
-    return false;
-  }
-  let (host, port) = authority
-    .split_once(':')
-    .map_or((authority, None), |(host, port)| (host, Some(port)));
-  valid_host(host) && port.is_none_or(valid_port)
+  let loopback_http = origin.scheme() == "http" && origin.host().is_some_and(loopback_host);
+  (origin.scheme() == "https" || loopback_http)
+    && origin.host().is_some()
+    && origin.path() == "/"
+    && origin.query().is_none()
+    && origin.fragment().is_none()
+    && origin.username().is_empty()
+    && origin.password().is_none()
 }
 
-fn valid_host(host: &str) -> bool {
-  if host.parse::<std::net::Ipv4Addr>().is_ok() {
-    return true;
+fn loopback_host(host: url::Host<&str>) -> bool {
+  match host {
+    url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+    url::Host::Ipv4(address) => address.is_loopback(),
+    url::Host::Ipv6(address) => address.is_loopback(),
   }
-  !host.is_empty()
-    && host.len() <= 253
-    && host.split('.').all(|label| {
-      !label.is_empty()
-        && label.len() <= 63
-        && !label.starts_with('-')
-        && !label.ends_with('-')
-        && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-    })
-}
-
-fn valid_port_suffix(suffix: &str) -> bool {
-  suffix.is_empty() || suffix.strip_prefix(':').is_some_and(valid_port)
-}
-
-fn valid_port(port: &str) -> bool {
-  !port.is_empty() && port.parse::<u16>().is_ok()
 }
 
 pub(super) fn validated_webhook_definition(

@@ -482,12 +482,13 @@ pub struct ManagedWebhookRegistrationRequest {
   pub administration_credential_handle: String,
 }
 
-/// Validated public origin used to construct webhook callback URLs.
+/// Validated HTTPS or loopback-development origin used for webhook callbacks.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebhookCallbackOrigin(String);
 
 impl WebhookCallbackOrigin {
-  /// Validates an HTTP(S) origin without path, query, fragment, or credentials.
+  /// Validates an HTTPS origin, or loopback HTTP for development, without
+  /// path, query, fragment, trailing slash, or credentials.
   pub fn new(value: impl Into<String>) -> Result<Self, ApplicationError> {
     let value = value.into();
     if !valid_webhook_callback_origin(&value) {

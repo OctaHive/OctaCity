@@ -192,6 +192,7 @@ fn webhook_ingress_requires_its_authenticated_configuration() {
   );
 
   for invalid_origin in [
+    "http://hooks.example.test",
     "https://user@hooks.example.test",
     "https://hooks.example.test/path",
     "https://hooks.example.test/",
@@ -200,6 +201,9 @@ fn webhook_ingress_requires_its_authenticated_configuration() {
     let invalid = configured.replace("https://hooks.example.test", invalid_origin);
     assert!(ServerConfig::parse_toml(&invalid).is_err());
   }
+
+  let loopback_development = configured.replace("https://hooks.example.test", "http://127.0.0.1:8082");
+  ServerConfig::parse_toml(&loopback_development).expect("loopback HTTP must remain available for development");
 }
 
 #[test]

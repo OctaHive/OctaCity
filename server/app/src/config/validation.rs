@@ -56,7 +56,7 @@ impl ServerConfig {
       && octacity_server_application::WebhookCallbackOrigin::new(base.clone()).is_err()
     {
       return Err(ServerConfigError::Invalid(
-        "webhook_public_base_url must be a credential-free HTTP(S) origin without a path, query, fragment, or trailing slash"
+        "webhook_public_base_url must be a credential-free HTTPS origin (or loopback HTTP for development) without a path, query, fragment, or trailing slash"
           .to_owned(),
       ));
     }

@@ -570,6 +570,44 @@ The `freshness` object reports `indexed_through`, authoritative
 does not prove that no committed log matches; repeat the search after indexing
 catches up. Regular-expression mode is intentionally unsupported.
 
+## 12. Inspect and hold a Build Result
+
+Read the immutable automatic-retention deadlines, current logical visibility,
+and latest whole-Result hold:
+
+```shell
+curl --fail-with-body \
+  http://octacity.example.test:8080/api/v1/builds/BUILD_ID/retention
+```
+
+Place an idempotent permanent hold by omitting `expires_at_unix_ms`, or provide
+an absolute Unix-millisecond expiry for a time-bounded hold:
+
+```shell
+curl --fail-with-body -X POST \
+  http://octacity.example.test:8080/api/v1/builds/BUILD_ID/retention/hold \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: incident-42-hold' \
+  --data '{"reason":"incident evidence","expires_at_unix_ms":1798761600000}'
+```
+
+Release it using the returned positive hold `version` as the entity
+precondition:
+
+```shell
+curl --fail-with-body -X POST \
+  http://octacity.example.test:8080/api/v1/builds/BUILD_ID/retention/hold/release \
+  -H 'Idempotency-Key: incident-42-release' \
+  -H 'If-Match: "1"'
+```
+
+The hold protects metadata, logs, artifacts, and reports together but does not
+change their original deadlines. Releasing or expiring an overdue hold makes
+the Result eligible for the next retention pass. A hold cannot revive a Result
+after deletion has begun, and retained bytes continue to consume their normal
+quota. See [Server production operations](server-operations.md) for capacity,
+rotation, alerting, and incident procedures.
+
 Use `/api/v1/openapi.json` as the authoritative schema inventory. Mutable VCS
 revision resolution is implemented by its later feature task.
 
