@@ -8,9 +8,9 @@ use octacity_server_store::{CreatePipeline, IdempotencyKey, PipelineStore, Publi
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, MutationDisposition, PipelineProjection, ProjectionError, Query,
-  QueryHandler,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
+  PipelineProjection, ProjectionError, Query, QueryHandler,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -36,11 +36,13 @@ impl Command for CreatePipelineCommand {
 }
 
 impl ManagementAuthorizationTarget for CreatePipelineCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::Pipeline,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::Pipeline,
       ManagementResourceKind::Project,
@@ -69,11 +71,10 @@ impl Command for PublishPipelineVersionCommand {
 }
 
 impl ManagementAuthorizationTarget for PublishPipelineVersionCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Publish
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Publish, ManagementResourceKind::Pipeline);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Pipeline, self.id)
   }
 }
@@ -101,11 +102,10 @@ impl Query for GetPipelineQuery {
 }
 
 impl ManagementAuthorizationTarget for GetPipelineQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Pipeline);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Pipeline, self.pipeline_id)
   }
 }

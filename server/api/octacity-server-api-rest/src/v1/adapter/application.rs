@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, BuildLogSearchError,
@@ -7,90 +7,15 @@ use octacity_server_application::{
   CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
   DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
   GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
-  GetInternalTriggerQuery, GetJobQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery,
-  GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery,
-  ListAuditFactsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery,
-  ListProjectsQuery, ManageWebhookRegistrationCommand, ManagementAuthorizationTarget, ManualTriggerError,
-  MoveProjectCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
+  GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
+  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand,
+  ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
   PublishProjectPolicyCommand, PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery,
   ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
   SearchBuildLogsQuery,
 };
-
-/// One OpenAPI operation backed by a typed management authorization target.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ManagementAuthorizationOperation {
-  /// Stable OpenAPI operation identifier.
-  pub operation_id: &'static str,
-}
-
-const fn mapped_operation<T: ManagementAuthorizationTarget>(
-  operation_id: &'static str,
-) -> ManagementAuthorizationOperation {
-  let _request_type = PhantomData::<fn() -> T>;
-  ManagementAuthorizationOperation { operation_id }
-}
-
-/// Complete typed authorization inventory for registered management operations.
-pub const MANAGEMENT_AUTHORIZATION_OPERATIONS: &[ManagementAuthorizationOperation] = &[
-  mapped_operation::<CreateAgentPoolCommand>("createAgentPool"),
-  mapped_operation::<ListAgentPoolsQuery>("listAgentPools"),
-  mapped_operation::<PublishAgentPoolVersionCommand>("publishAgentPoolVersion"),
-  mapped_operation::<GetAgentPoolQuery>("getAgentPoolVersion"),
-  mapped_operation::<DeleteAgentPoolCommand>("deleteAgentPool"),
-  mapped_operation::<IssueAgentEnrollmentCommand>("issueAgentEnrollment"),
-  mapped_operation::<ListAgentsQuery>("listAgents"),
-  mapped_operation::<GetAgentQuery>("getAgent"),
-  mapped_operation::<ReassignAgentPoolCommand>("reassignAgentPool"),
-  mapped_operation::<DrainAgentCommand>("drainAgent"),
-  mapped_operation::<ListBuildArtifactsQuery>("listBuildArtifacts"),
-  mapped_operation::<GetArtifactQuery>("getArtifact"),
-  mapped_operation::<AuthorizeArtifactDownloadQuery>("authorizeArtifactDownload"),
-  mapped_operation::<ListBuildCacheSessionsQuery>("listBuildCacheSessions"),
-  mapped_operation::<GetCacheSessionQuery>("getCacheSession"),
-  mapped_operation::<GetBuildQuery>("getBuild"),
-  mapped_operation::<GetBuildResultRetentionQuery>("getBuildResultRetention"),
-  mapped_operation::<PlaceBuildResultHoldCommand>("placeBuildResultRetentionHold"),
-  mapped_operation::<ReleaseBuildResultHoldCommand>("releaseBuildResultRetentionHold"),
-  mapped_operation::<CancelBuildCommand>("cancelBuild"),
-  mapped_operation::<RetryBuildCommand>("retryBuild"),
-  mapped_operation::<GetAttemptQuery>("getAttempt"),
-  mapped_operation::<GetJobQuery>("getJob"),
-  mapped_operation::<ReadJobEventsQuery>("readJobEvents"),
-  mapped_operation::<SearchBuildLogsQuery>("searchBuildLogs"),
-  mapped_operation::<GetOperationalMetadataQuery>("getOperationalMetadata"),
-  mapped_operation::<ListAuditFactsQuery>("listAuditFacts"),
-  mapped_operation::<CreateProjectCommand>("createProject"),
-  mapped_operation::<ListProjectsQuery>("listProjects"),
-  mapped_operation::<GetProjectQuery>("getProject"),
-  mapped_operation::<DeleteProjectCommand>("deleteProject"),
-  mapped_operation::<RenameProjectCommand>("renameProject"),
-  mapped_operation::<MoveProjectCommand>("moveProject"),
-  mapped_operation::<PublishProjectPolicyCommand>("publishProjectPolicyVersion"),
-  mapped_operation::<CreatePipelineCommand>("createPipeline"),
-  mapped_operation::<PublishPipelineVersionCommand>("publishPipelineVersion"),
-  mapped_operation::<GetPipelineQuery>("getPipelineVersion"),
-  mapped_operation::<CreateRepositoryCommand>("createRepository"),
-  mapped_operation::<PublishRepositoryVersionCommand>("publishRepositoryVersion"),
-  mapped_operation::<GetRepositoryQuery>("getRepositoryVersion"),
-  mapped_operation::<CreateBuildConfigurationCommand>("createBuildConfiguration"),
-  mapped_operation::<PublishBuildConfigurationVersionCommand>("publishBuildConfigurationVersion"),
-  mapped_operation::<GetBuildConfigurationQuery>("getBuildConfigurationVersion"),
-  mapped_operation::<CreateTriggerDefinitionCommand>("createManualTriggerDefinition"),
-  mapped_operation::<CreateScheduleCommand>("createScheduledTriggerDefinition"),
-  mapped_operation::<CreateInternalTriggerCommand>("createInternalTriggerDefinition"),
-  mapped_operation::<ListInternalTriggersQuery>("listInternalTriggerDefinitions"),
-  mapped_operation::<PublishInternalTriggerVersionCommand>("publishInternalTriggerDefinitionVersion"),
-  mapped_operation::<GetInternalTriggerQuery>("getInternalTriggerDefinitionVersion"),
-  mapped_operation::<CreateUnmanagedWebhookCommand>("createUnmanagedWebhookIntegration"),
-  mapped_operation::<CreateManagedWebhookCommand>("createManagedWebhookIntegration"),
-  mapped_operation::<ManageWebhookRegistrationCommand>("observeManagedWebhookIntegration"),
-  mapped_operation::<ManageWebhookRegistrationCommand>("rotateManagedWebhookIntegration"),
-  mapped_operation::<ManageWebhookRegistrationCommand>("deleteManagedWebhookIntegration"),
-  mapped_operation::<GetScheduleQuery>("getSchedule"),
-  mapped_operation::<AcceptManualTriggerCommand>("acceptManualTrigger"),
-];
 
 type ProjectCreate = dyn CommandHandler<CreateProjectCommand, Error = ApplicationError>;
 type ProjectRename = dyn CommandHandler<RenameProjectCommand, Error = ApplicationError>;

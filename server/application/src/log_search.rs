@@ -8,8 +8,9 @@ use octacity_server_store::{
 use thiserror::Error;
 
 use crate::{
-  ApplicationError, ApplicationFailure, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
-  ManagementResourceKind, Query, QueryHandler, management_security::owned_collection_resource,
+  ApplicationError, ApplicationFailure, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, Query, QueryHandler,
+  management_security::owned_collection_resource,
 };
 
 /// Typed application query for bounded redacted Build-log search.
@@ -105,11 +106,13 @@ impl Query for SearchBuildLogsQuery {
 }
 
 impl ManagementAuthorizationTarget for SearchBuildLogsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Search
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Search,
+    ManagementResourceKind::BuildLog,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::BuildLog,
       ManagementResourceKind::Project,

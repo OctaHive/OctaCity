@@ -11,9 +11,9 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, MutationDisposition, Query, QueryHandler,
-  management_security::instance_resource,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
+  MutationDisposition, Query, QueryHandler, management_security::instance_resource,
 };
 
 /// Reads one enrolled Agent.
@@ -28,11 +28,10 @@ impl Query for GetAgentQuery {
 }
 
 impl ManagementAuthorizationTarget for GetAgentQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Agent);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Agent, self.agent_id)
   }
 }
@@ -51,11 +50,10 @@ impl Query for ListAgentsQuery {
 }
 
 impl ManagementAuthorizationTarget for ListAgentsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::collection(ManagementAction::View, ManagementResourceKind::Agent);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     ManagementResource::collection(ManagementResourceKind::Agent)
   }
 }
@@ -80,11 +78,10 @@ impl Command for ReassignAgentPoolCommand {
 }
 
 impl ManagementAuthorizationTarget for ReassignAgentPoolCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Update
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Update, ManagementResourceKind::Agent);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Agent, self.agent_id)
   }
 }
@@ -109,11 +106,10 @@ impl Command for DrainAgentCommand {
 }
 
 impl ManagementAuthorizationTarget for DrainAgentCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Administer
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Administer, ManagementResourceKind::Agent);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Agent, self.agent_id)
   }
 }

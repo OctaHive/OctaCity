@@ -5,17 +5,28 @@ use async_trait::async_trait;
 use crate::{Command, Query};
 
 use super::{
-  ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
-  ManagementRequestContext, ManagementRequestId, ManagementResource,
+  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationMapping,
+  ManagementAuthorizationPolicy, ManagementRequestContext, ManagementRequestId, ManagementResource,
+  ManagementResourceResult, ManagementSecurityError,
 };
 
 /// Typed action and resource mapping owned by a management command or query.
 pub trait ManagementAuthorizationTarget {
-  /// Returns the stable capability requested by this operation.
-  fn management_action(&self) -> ManagementAction;
+  /// Static action and resource contract used by route coverage checks.
+  const AUTHORIZATION: ManagementAuthorizationMapping;
 
   /// Returns the smallest resource description known before application dispatch.
-  fn management_resource(&self) -> ManagementResource;
+  fn management_resource(&self) -> ManagementResourceResult;
+
+  /// Resolves and validates the concrete target against the declared mapping.
+  fn validated_management_resource(&self) -> Result<ManagementResource, ManagementSecurityError> {
+    let resource = self.management_resource()?;
+    if Self::AUTHORIZATION.accepts(&resource) {
+      Ok(resource)
+    } else {
+      Err(ManagementSecurityError::UnsupportedResourceShape)
+    }
+  }
 }
 
 /// Context-aware implementation seam for one authorized management command.
@@ -178,8 +189,13 @@ impl<H> AuthorizedCommandHandler<H> {
     C: Command + ManagementAuthorizationTarget,
     H: ManagementCommandUseCase<C>,
   {
-    let action = command.management_action();
-    let resource = command.management_resource();
+    let action = C::AUTHORIZATION.action();
+    let resource = command.validated_management_resource().map_err(|_| {
+      ManagementHandlerError::Forbidden(ManagementAuthorizationFailure::new(
+        context.request_id(),
+        ManagementAuthorizationDenial::forbidden(),
+      ))
+    })?;
     let grant = self
       .policy
       .authorize(context, action, &resource)
@@ -218,8 +234,13 @@ impl<H> AuthorizedQueryHandler<H> {
     Q: Query + ManagementAuthorizationTarget,
     H: ManagementQueryUseCase<Q>,
   {
-    let action = query.management_action();
-    let resource = query.management_resource();
+    let action = Q::AUTHORIZATION.action();
+    let resource = query.validated_management_resource().map_err(|_| {
+      ManagementHandlerError::Forbidden(ManagementAuthorizationFailure::new(
+        context.request_id(),
+        ManagementAuthorizationDenial::forbidden(),
+      ))
+    })?;
     let grant = self
       .policy
       .authorize(context, action, &resource)

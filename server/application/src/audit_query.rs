@@ -6,8 +6,8 @@ use octacity_server_store::{AuditActorKind, AuditCursor, AuditFactPage, AuditFac
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query,
-  QueryHandler,
+  ApplicationError, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, ManagementResourceResult, Query, QueryHandler,
 };
 
 /// Transport-independent input for a bounded immutable audit read.
@@ -93,11 +93,10 @@ impl Query for ListAuditFactsQuery {
 }
 
 impl ManagementAuthorizationTarget for ListAuditFactsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Search
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::collection(ManagementAction::Search, ManagementResourceKind::AuditFact);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     ManagementResource::collection(ManagementResourceKind::AuditFact)
   }
 }

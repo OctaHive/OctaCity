@@ -10,7 +10,7 @@ use axum::{
 };
 use octacity_server_api_rest::{
   management_router_with_application,
-  v1::{ErrorCode, MANAGEMENT_AUTHORIZATION_OPERATIONS, MANAGEMENT_OPERATIONS},
+  v1::{ErrorCode, MANAGEMENT_OPERATIONS, management_authorization_operations},
 };
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuditActorKind, AuditActorProjection, AuditFactPageProjection,
@@ -24,11 +24,11 @@ use octacity_server_application::{
   GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
   ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError,
-  ManageWebhookRegistrationCommand, ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, QueryHandler,
-  ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
-  SearchBuildLogsQuery,
+  ManageWebhookRegistrationCommand, ManagementAuthorizationTarget, ManualTriggerError, MoveProjectCommand,
+  PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
+  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
+  PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, SearchBuildLogsQuery,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;

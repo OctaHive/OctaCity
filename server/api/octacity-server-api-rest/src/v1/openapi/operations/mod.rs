@@ -1,3 +1,7 @@
+use std::any::{TypeId, type_name};
+
+use octacity_server_application::{ManagementAuthorizationMapping, ManagementAuthorizationTarget};
+
 /// One management operation in the versioned REST contract.
 ///
 /// The router and OpenAPI drift test use this registry as the stable inventory
@@ -24,9 +28,57 @@ pub struct ManagementOperation {
   pub idempotent_mutation: bool,
   /// Whether the operation requires an optimistic `If-Match` precondition.
   pub optimistic_precondition: bool,
+  authorization: Option<ManagementOperationAuthorization>,
   pub(super) parameter_profile: ParameterProfile,
   pub(super) capability_unavailable_response: bool,
   pub(super) precondition_failed_response: bool,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ManagementOperationAuthorization {
+  request_type_id: fn() -> TypeId,
+  request_type_name: fn() -> &'static str,
+  mapping: fn() -> ManagementAuthorizationMapping,
+}
+
+impl ManagementOperationAuthorization {
+  pub(crate) fn request_type_id(self) -> TypeId {
+    (self.request_type_id)()
+  }
+
+  pub(crate) fn request_type_name(self) -> &'static str {
+    (self.request_type_name)()
+  }
+
+  pub(crate) fn mapping(self) -> ManagementAuthorizationMapping {
+    (self.mapping)()
+  }
+}
+
+impl std::fmt::Debug for ManagementOperationAuthorization {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("ManagementOperationAuthorization")
+      .field("request_type", &self.request_type_name())
+      .field("mapping", &self.mapping())
+      .finish()
+  }
+}
+
+impl PartialEq for ManagementOperationAuthorization {
+  fn eq(&self, other: &Self) -> bool {
+    self.request_type_id() == other.request_type_id() && self.mapping() == other.mapping()
+  }
+}
+
+impl Eq for ManagementOperationAuthorization {}
+
+const fn authorization<T: ManagementAuthorizationTarget + 'static>() -> ManagementOperationAuthorization {
+  ManagementOperationAuthorization {
+    request_type_id: TypeId::of::<T>,
+    request_type_name: type_name::<T>,
+    mapping: || T::AUTHORIZATION,
+  }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -45,6 +97,12 @@ pub(crate) enum ParameterProfile {
 }
 
 impl ManagementOperation {
+  pub(crate) fn authorization(&self) -> ManagementOperationAuthorization {
+    self
+      .authorization
+      .expect("published management operations carry authorization metadata")
+  }
+
   const fn with_parameters(mut self, profile: ParameterProfile) -> Self {
     self.parameter_profile = profile;
     self
@@ -62,7 +120,7 @@ impl ManagementOperation {
 }
 
 macro_rules! operation {
-  ($method:literal, $path:literal, $id:literal, $tag:literal, $summary:literal, $request:expr, $response:literal, $status:literal, $mutation:literal, $precondition:literal) => {
+  ($target:ty, $method:literal, $path:literal, $id:literal, $tag:literal, $summary:literal, $request:expr, $response:literal, $status:literal, $mutation:literal, $precondition:literal) => {
     ManagementOperation {
       method: $method,
       path: $path,
@@ -74,6 +132,7 @@ macro_rules! operation {
       success_status: $status,
       idempotent_mutation: $mutation,
       optimistic_precondition: $precondition,
+      authorization: Some($crate::v1::openapi::operations::authorization::<$target>()),
       parameter_profile: ParameterProfile::None,
       capability_unavailable_response: false,
       precondition_failed_response: false,
@@ -115,6 +174,7 @@ const EMPTY_OPERATION: ManagementOperation = ManagementOperation {
   success_status: "",
   idempotent_mutation: false,
   optimistic_precondition: false,
+  authorization: None,
   parameter_profile: ParameterProfile::None,
   capability_unavailable_response: false,
   precondition_failed_response: false,

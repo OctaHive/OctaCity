@@ -8,9 +8,9 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, MutationDisposition, ProjectProjection, ProjectSummaryProjection, Query,
-  QueryHandler,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
+  MutationDisposition, ProjectProjection, ProjectSummaryProjection, Query, QueryHandler,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -104,11 +104,13 @@ command_outcome!(MoveProjectCommand, ProjectCommandOutcome);
 command_outcome!(DeleteProjectCommand, DeleteProjectCommandOutcome);
 
 impl ManagementAuthorizationTarget for CreateProjectCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::collection_or_owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::Project,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     self.parent_id.map_or_else(
       || ManagementResource::collection(ManagementResourceKind::Project),
       |parent_id| {
@@ -125,11 +127,10 @@ impl ManagementAuthorizationTarget for CreateProjectCommand {
 macro_rules! project_instance_target {
   ($request:ty, $action:expr, $field:ident) => {
     impl ManagementAuthorizationTarget for $request {
-      fn management_action(&self) -> ManagementAction {
-        $action
-      }
+      const AUTHORIZATION: ManagementAuthorizationMapping =
+        ManagementAuthorizationMapping::instance($action, ManagementResourceKind::Project);
 
-      fn management_resource(&self) -> ManagementResource {
+      fn management_resource(&self) -> ManagementResourceResult {
         instance_resource(ManagementResourceKind::Project, self.$field)
       }
     }
@@ -169,11 +170,13 @@ impl Query for ListProjectsQuery {
 }
 
 impl ManagementAuthorizationTarget for ListProjectsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::collection_or_owned_collection(
+    ManagementAction::View,
+    ManagementResourceKind::Project,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     self.parent_id.map_or_else(
       || ManagementResource::collection(ManagementResourceKind::Project),
       |parent_id| {

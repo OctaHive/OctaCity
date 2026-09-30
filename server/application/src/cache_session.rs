@@ -17,7 +17,8 @@ use url::Url;
 
 use crate::{
   AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, ManagementAction,
-  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query, QueryHandler, agent_lease,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
+  Query, QueryHandler, agent_lease,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -128,11 +129,10 @@ impl Query for GetCacheSessionQuery {
 }
 
 impl ManagementAuthorizationTarget for GetCacheSessionQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::CacheSession);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::CacheSession, self.session_id)
   }
 }
@@ -153,11 +153,13 @@ impl Query for ListBuildCacheSessionsQuery {
 }
 
 impl ManagementAuthorizationTarget for ListBuildCacheSessionsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::View,
+    ManagementResourceKind::CacheSession,
+    ManagementResourceKind::Build,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::CacheSession,
       ManagementResourceKind::Build,

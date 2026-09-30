@@ -125,6 +125,131 @@ impl ManagementResourceKind {
   ];
 }
 
+/// Structural resource pattern declared by one management operation.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ManagementResourcePattern {
+  /// A top-level collection.
+  Collection,
+  /// One resource with a known identity.
+  Instance,
+  /// A collection owned by the named resource kind.
+  OwnedCollection(ManagementResourceKind),
+  /// Either a top-level collection or a collection owned by the named kind.
+  CollectionOrOwnedCollection(ManagementResourceKind),
+}
+
+/// Static action and resource contract declared by a management request type.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ManagementAuthorizationMapping {
+  action: ManagementAction,
+  resource_kind: ManagementResourceKind,
+  resource_pattern: ManagementResourcePattern,
+}
+
+impl ManagementAuthorizationMapping {
+  /// Declares a top-level collection mapping.
+  #[must_use]
+  pub const fn collection(action: ManagementAction, resource_kind: ManagementResourceKind) -> Self {
+    Self::new(action, resource_kind, ManagementResourcePattern::Collection)
+  }
+
+  /// Declares an instance mapping.
+  #[must_use]
+  pub const fn instance(action: ManagementAction, resource_kind: ManagementResourceKind) -> Self {
+    Self::new(action, resource_kind, ManagementResourcePattern::Instance)
+  }
+
+  /// Declares an owned-collection mapping.
+  #[must_use]
+  pub const fn owned_collection(
+    action: ManagementAction,
+    resource_kind: ManagementResourceKind,
+    owner_kind: ManagementResourceKind,
+  ) -> Self {
+    Self::new(
+      action,
+      resource_kind,
+      ManagementResourcePattern::OwnedCollection(owner_kind),
+    )
+  }
+
+  /// Declares a collection that may be top-level or nested below one owner kind.
+  #[must_use]
+  pub const fn collection_or_owned_collection(
+    action: ManagementAction,
+    resource_kind: ManagementResourceKind,
+    owner_kind: ManagementResourceKind,
+  ) -> Self {
+    Self::new(
+      action,
+      resource_kind,
+      ManagementResourcePattern::CollectionOrOwnedCollection(owner_kind),
+    )
+  }
+
+  const fn new(
+    action: ManagementAction,
+    resource_kind: ManagementResourceKind,
+    resource_pattern: ManagementResourcePattern,
+  ) -> Self {
+    Self {
+      action,
+      resource_kind,
+      resource_pattern,
+    }
+  }
+
+  /// Returns the protected capability.
+  #[must_use]
+  pub const fn action(self) -> ManagementAction {
+    self.action
+  }
+
+  /// Returns the protected resource kind.
+  #[must_use]
+  pub const fn resource_kind(self) -> ManagementResourceKind {
+    self.resource_kind
+  }
+
+  /// Returns the required structural resource pattern.
+  #[must_use]
+  pub const fn resource_pattern(self) -> ManagementResourcePattern {
+    self.resource_pattern
+  }
+
+  /// Returns whether this declaration names a supported resource shape.
+  #[must_use]
+  pub const fn is_supported(self) -> bool {
+    match self.resource_pattern {
+      ManagementResourcePattern::Collection => supports_collection(self.resource_kind),
+      ManagementResourcePattern::Instance => supports_instance(self.resource_kind),
+      ManagementResourcePattern::OwnedCollection(owner_kind) => {
+        supports_owned_collection(self.resource_kind, owner_kind)
+      }
+      ManagementResourcePattern::CollectionOrOwnedCollection(owner_kind) => {
+        supports_collection(self.resource_kind) && supports_owned_collection(self.resource_kind, owner_kind)
+      }
+    }
+  }
+
+  pub(crate) fn accepts(self, resource: &ManagementResource) -> bool {
+    if resource.kind != self.resource_kind {
+      return false;
+    }
+    match (self.resource_pattern, &resource.scope) {
+      (ManagementResourcePattern::Collection, ManagementResourceScope::Collection)
+      | (ManagementResourcePattern::Instance, ManagementResourceScope::Instance(_))
+      | (ManagementResourcePattern::CollectionOrOwnedCollection(_), ManagementResourceScope::Collection) => true,
+      (
+        ManagementResourcePattern::OwnedCollection(expected)
+        | ManagementResourcePattern::CollectionOrOwnedCollection(expected),
+        ManagementResourceScope::OwnedCollection { owner_kind, .. },
+      ) => expected == *owner_kind,
+      _ => false,
+    }
+  }
+}
+
 /// Bounded opaque identity retained with a typed management resource kind.
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ManagementResourceIdentity(String);
@@ -169,23 +294,33 @@ pub struct ManagementResource {
   scope: ManagementResourceScope,
 }
 
+/// Result of validating a concrete management resource description.
+pub type ManagementResourceResult = Result<ManagementResource, ManagementSecurityError>;
+
 impl ManagementResource {
   /// Describes a top-level collection without fabricating a resource identity.
-  #[must_use]
-  pub const fn collection(kind: ManagementResourceKind) -> Self {
-    Self {
+  pub fn collection(kind: ManagementResourceKind) -> Result<Self, ManagementSecurityError> {
+    if !supports_collection(kind) {
+      return Err(ManagementSecurityError::UnsupportedResourceShape);
+    }
+    Ok(Self {
       kind,
       scope: ManagementResourceScope::Collection,
-    }
+    })
   }
 
   /// Describes one resource whose opaque identity is already known.
-  #[must_use]
-  pub const fn instance(kind: ManagementResourceKind, identity: ManagementResourceIdentity) -> Self {
-    Self {
+  pub fn instance(
+    kind: ManagementResourceKind,
+    identity: ManagementResourceIdentity,
+  ) -> Result<Self, ManagementSecurityError> {
+    if !supports_instance(kind) {
+      return Err(ManagementSecurityError::UnsupportedResourceShape);
+    }
+    Ok(Self {
       kind,
       scope: ManagementResourceScope::Instance(identity),
-    }
+    })
   }
 
   /// Describes a collection owned by another typed resource.
@@ -240,6 +375,39 @@ impl ManagementResource {
   }
 }
 
+const fn supports_collection(kind: ManagementResourceKind) -> bool {
+  matches!(
+    kind,
+    ManagementResourceKind::ControlPlane
+      | ManagementResourceKind::Project
+      | ManagementResourceKind::Trigger
+      | ManagementResourceKind::AgentPool
+      | ManagementResourceKind::Agent
+      | ManagementResourceKind::AuditFact
+  )
+}
+
+const fn supports_instance(kind: ManagementResourceKind) -> bool {
+  matches!(
+    kind,
+    ManagementResourceKind::Project
+      | ManagementResourceKind::Pipeline
+      | ManagementResourceKind::Repository
+      | ManagementResourceKind::BuildConfiguration
+      | ManagementResourceKind::Trigger
+      | ManagementResourceKind::Schedule
+      | ManagementResourceKind::Build
+      | ManagementResourceKind::Attempt
+      | ManagementResourceKind::Job
+      | ManagementResourceKind::Artifact
+      | ManagementResourceKind::CacheSession
+      | ManagementResourceKind::AgentPool
+      | ManagementResourceKind::Agent
+      | ManagementResourceKind::WebhookIntegration
+      | ManagementResourceKind::Retention
+  )
+}
+
 const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: ManagementResourceKind) -> bool {
   matches!(
     (kind, owner_kind),
@@ -276,22 +444,25 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
   )
 }
 
-pub(crate) fn resource_identity(value: impl fmt::Display) -> ManagementResourceIdentity {
+pub(crate) fn resource_identity(
+  value: impl fmt::Display,
+) -> Result<ManagementResourceIdentity, ManagementSecurityError> {
   ManagementResourceIdentity::new(value.to_string())
-    .expect("validated domain identity must fit the management resource boundary")
 }
 
-pub(crate) fn instance_resource(kind: ManagementResourceKind, identity: impl fmt::Display) -> ManagementResource {
-  ManagementResource::instance(kind, resource_identity(identity))
+pub(crate) fn instance_resource(
+  kind: ManagementResourceKind,
+  identity: impl fmt::Display,
+) -> Result<ManagementResource, ManagementSecurityError> {
+  ManagementResource::instance(kind, resource_identity(identity)?)
 }
 
 pub(crate) fn owned_collection_resource(
   kind: ManagementResourceKind,
   owner_kind: ManagementResourceKind,
   owner_identity: impl fmt::Display,
-) -> ManagementResource {
-  ManagementResource::owned_collection(kind, owner_kind, resource_identity(owner_identity))
-    .expect("application mapping must declare a supported management resource shape")
+) -> Result<ManagementResource, ManagementSecurityError> {
+  ManagementResource::owned_collection(kind, owner_kind, resource_identity(owner_identity)?)
 }
 
 impl fmt::Debug for ManagementResource {
@@ -348,11 +519,11 @@ impl ManagementVisibility {
   pub fn restricted(resources: impl IntoIterator<Item = ManagementResource>) -> Result<Self, ManagementSecurityError> {
     let mut restricted = BTreeSet::new();
     for resource in resources {
-      if restricted.len() >= MAX_MANAGEMENT_VISIBILITY_RESOURCES {
-        return Err(ManagementSecurityError::VisibilityTooLarge);
-      }
       if !restricted.insert(resource) {
         return Err(ManagementSecurityError::DuplicateVisibilityResource);
+      }
+      if restricted.len() > MAX_MANAGEMENT_VISIBILITY_RESOURCES {
+        return Err(ManagementSecurityError::VisibilityTooLarge);
       }
     }
     if restricted.is_empty() {

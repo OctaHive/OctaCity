@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
-  ManagementResourceKind, ManualSourceSelection, MutationDisposition, ProjectionError, Query, QueryHandler,
+  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
+  ManualSourceSelection, MutationDisposition, ProjectionError, Query, QueryHandler,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -135,11 +136,13 @@ impl Command for CreateInternalTriggerCommand {
 }
 
 impl ManagementAuthorizationTarget for CreateInternalTriggerCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::Trigger,
+    ManagementResourceKind::BuildConfiguration,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::Trigger,
       ManagementResourceKind::BuildConfiguration,
@@ -153,11 +156,10 @@ impl Command for PublishInternalTriggerVersionCommand {
 }
 
 impl ManagementAuthorizationTarget for PublishInternalTriggerVersionCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Publish
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Publish, ManagementResourceKind::Trigger);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Trigger, self.id)
   }
 }
@@ -167,11 +169,10 @@ impl Query for GetInternalTriggerQuery {
 }
 
 impl ManagementAuthorizationTarget for GetInternalTriggerQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Trigger);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Trigger, self.trigger_id)
   }
 }
@@ -181,11 +182,10 @@ impl Query for ListInternalTriggersQuery {
 }
 
 impl ManagementAuthorizationTarget for ListInternalTriggersQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::collection(ManagementAction::View, ManagementResourceKind::Trigger);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     ManagementResource::collection(ManagementResourceKind::Trigger)
   }
 }

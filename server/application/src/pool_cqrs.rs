@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   ApplicationError, Command, CommandHandler, CommandTransaction, ExecutionGuaranteeProjection, ManagementAction,
-  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, MutationDisposition,
-  PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, Query, QueryHandler,
-  management_security::instance_resource,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind,
+  ManagementResourceResult, MutationDisposition, PlatformArchitectureProjection, PlatformOsProjection,
+  PlatformProjection, Query, QueryHandler, management_security::instance_resource,
 };
 
 /// Creates one static Agent Pool and its initial version.
@@ -230,11 +230,10 @@ impl Command for DeleteAgentPoolCommand {
 macro_rules! pool_instance_target {
   ($request:ty, $action:expr, $field:ident) => {
     impl ManagementAuthorizationTarget for $request {
-      fn management_action(&self) -> ManagementAction {
-        $action
-      }
+      const AUTHORIZATION: ManagementAuthorizationMapping =
+        ManagementAuthorizationMapping::instance($action, ManagementResourceKind::AgentPool);
 
-      fn management_resource(&self) -> ManagementResource {
+      fn management_resource(&self) -> ManagementResourceResult {
         instance_resource(ManagementResourceKind::AgentPool, self.$field)
       }
     }
@@ -242,11 +241,10 @@ macro_rules! pool_instance_target {
 }
 
 impl ManagementAuthorizationTarget for CreateAgentPoolCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::collection(ManagementAction::Create, ManagementResourceKind::AgentPool);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     ManagementResource::collection(ManagementResourceKind::AgentPool)
   }
 }
@@ -256,11 +254,10 @@ pool_instance_target!(DeleteAgentPoolCommand, ManagementAction::Delete, id);
 pool_instance_target!(GetAgentPoolQuery, ManagementAction::View, pool_id);
 
 impl ManagementAuthorizationTarget for ListAgentPoolsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::collection(ManagementAction::View, ManagementResourceKind::AgentPool);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     ManagementResource::collection(ManagementResourceKind::AgentPool)
   }
 }

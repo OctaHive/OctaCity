@@ -115,14 +115,18 @@ struct ManagementState {
 }
 
 fn health_routes(readiness: impl Fn() -> bool + Send + Sync + 'static, metadata: v1::OperationalMetadata) -> Router {
-  Router::new()
+  let router = Router::new()
     .route("/health/live", get(liveness))
-    .route("/health/ready", get(readiness_handler))
-    .route("/api/v1/operations/metadata", get(operational_metadata))
-    .with_state(ManagementState {
-      readiness: Arc::new(readiness) as ReadinessProbe,
-      metadata: Arc::new(metadata),
-    })
+    .route("/health/ready", get(readiness_handler));
+  let router = v1::register_management_get::<octacity_server_application::GetOperationalMetadataQuery, _, _, _>(
+    router,
+    "getOperationalMetadata",
+    operational_metadata,
+  );
+  router.with_state(ManagementState {
+    readiness: Arc::new(readiness) as ReadinessProbe,
+    metadata: Arc::new(metadata),
+  })
 }
 
 #[derive(Serialize)]

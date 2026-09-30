@@ -10,8 +10,9 @@ mod tests;
 
 pub use authorization::{
   MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction,
-  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementResource, ManagementResourceIdentity,
-  ManagementResourceKind, ManagementVisibility, ManagementVisibilityKind,
+  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationMapping, ManagementResource,
+  ManagementResourceIdentity, ManagementResourceKind, ManagementResourcePattern, ManagementResourceResult,
+  ManagementVisibility, ManagementVisibilityKind,
 };
 pub(crate) use authorization::{instance_resource, owned_collection_resource};
 pub use context::{

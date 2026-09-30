@@ -1,7 +1,15 @@
+use octacity_server_application::{
+  CreateBuildConfigurationCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
+  DeleteProjectCommand, GetBuildConfigurationQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
+  ListProjectsQuery, MoveProjectCommand, PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, RenameProjectCommand,
+};
+
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    CreateProjectCommand,
     "POST",
     "/api/v1/projects",
     "createProject",
@@ -14,6 +22,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListProjectsQuery,
     "GET",
     "/api/v1/projects",
     "listProjects",
@@ -27,6 +36,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::ProjectList),
   operation!(
+    GetProjectQuery,
     "GET",
     "/api/v1/projects/{project_id}",
     "getProject",
@@ -39,6 +49,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    DeleteProjectCommand,
     "DELETE",
     "/api/v1/projects/{project_id}",
     "deleteProject",
@@ -51,6 +62,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    RenameProjectCommand,
     "POST",
     "/api/v1/projects/{project_id}/rename",
     "renameProject",
@@ -63,6 +75,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    MoveProjectCommand,
     "POST",
     "/api/v1/projects/{project_id}/move",
     "moveProject",
@@ -75,6 +88,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    PublishProjectPolicyCommand,
     "POST",
     "/api/v1/projects/{project_id}/policy-versions",
     "publishProjectPolicyVersion",
@@ -87,6 +101,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreatePipelineCommand,
     "POST",
     "/api/v1/pipelines",
     "createPipeline",
@@ -99,6 +114,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    PublishPipelineVersionCommand,
     "POST",
     "/api/v1/pipelines/{pipeline_id}/versions",
     "publishPipelineVersion",
@@ -111,6 +127,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    GetPipelineQuery,
     "GET",
     "/api/v1/pipelines/{pipeline_id}/versions/{version}",
     "getPipelineVersion",
@@ -123,6 +140,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreateRepositoryCommand,
     "POST",
     "/api/v1/repositories",
     "createRepository",
@@ -135,6 +153,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    PublishRepositoryVersionCommand,
     "POST",
     "/api/v1/repositories/{repository_id}/versions",
     "publishRepositoryVersion",
@@ -147,6 +166,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    GetRepositoryQuery,
     "GET",
     "/api/v1/repositories/{repository_id}/versions/{version}",
     "getRepositoryVersion",
@@ -159,6 +179,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreateBuildConfigurationCommand,
     "POST",
     "/api/v1/build-configurations",
     "createBuildConfiguration",
@@ -171,6 +192,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    PublishBuildConfigurationVersionCommand,
     "POST",
     "/api/v1/build-configurations/{configuration_id}/versions",
     "publishBuildConfigurationVersion",
@@ -183,6 +205,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    GetBuildConfigurationQuery,
     "GET",
     "/api/v1/build-configurations/{configuration_id}/versions/{version}",
     "getBuildConfigurationVersion",

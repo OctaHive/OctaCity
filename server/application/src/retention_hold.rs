@@ -9,8 +9,9 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
-  ManagementResourceKind, MutationDisposition, Query, QueryHandler, management_security::instance_resource,
+  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition, Query,
+  QueryHandler, management_security::instance_resource,
 };
 
 /// Maximum UTF-8 bytes accepted in a Build Result hold reason.
@@ -30,11 +31,10 @@ impl Query for GetBuildResultRetentionQuery {
 }
 
 impl ManagementAuthorizationTarget for GetBuildResultRetentionQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Retention);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Retention, self.build_id)
   }
 }
@@ -63,11 +63,10 @@ impl Command for PlaceBuildResultHoldCommand {
 }
 
 impl ManagementAuthorizationTarget for PlaceBuildResultHoldCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Administer
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Administer, ManagementResourceKind::Retention);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Retention, self.build_id)
   }
 }
@@ -94,11 +93,10 @@ impl Command for ReleaseBuildResultHoldCommand {
 }
 
 impl ManagementAuthorizationTarget for ReleaseBuildResultHoldCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Administer
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Administer, ManagementResourceKind::Retention);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Retention, self.build_id)
   }
 }

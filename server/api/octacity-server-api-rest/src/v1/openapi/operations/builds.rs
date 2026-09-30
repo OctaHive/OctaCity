@@ -1,7 +1,14 @@
+use octacity_server_application::{
+  CancelBuildCommand, GetAttemptQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetJobQuery,
+  PlaceBuildResultHoldCommand, ReadJobEventsQuery, ReleaseBuildResultHoldCommand, RetryBuildCommand,
+  SearchBuildLogsQuery,
+};
+
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    GetBuildQuery,
     "GET",
     "/api/v1/builds/{build_id}",
     "getBuild",
@@ -14,6 +21,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    GetBuildResultRetentionQuery,
     "GET",
     "/api/v1/builds/{build_id}/retention",
     "getBuildResultRetention",
@@ -26,6 +34,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    PlaceBuildResultHoldCommand,
     "POST",
     "/api/v1/builds/{build_id}/retention/hold",
     "placeBuildResultRetentionHold",
@@ -38,6 +47,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ReleaseBuildResultHoldCommand,
     "POST",
     "/api/v1/builds/{build_id}/retention/hold/release",
     "releaseBuildResultRetentionHold",
@@ -51,6 +61,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_precondition_failed_response(),
   operation!(
+    CancelBuildCommand,
     "POST",
     "/api/v1/builds/{build_id}/cancel",
     "cancelBuild",
@@ -63,6 +74,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    RetryBuildCommand,
     "POST",
     "/api/v1/builds/{build_id}/retry",
     "retryBuild",
@@ -75,6 +87,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    GetAttemptQuery,
     "GET",
     "/api/v1/attempts/{attempt_id}",
     "getAttempt",
@@ -87,6 +100,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    GetJobQuery,
     "GET",
     "/api/v1/jobs/{job_id}",
     "getJob",
@@ -99,6 +113,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ReadJobEventsQuery,
     "GET",
     "/api/v1/jobs/{job_id}/events",
     "readJobEvents",
@@ -112,6 +127,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::JobEvents),
   operation!(
+    SearchBuildLogsQuery,
     "GET",
     "/api/v1/projects/{project_id}/build-logs/search",
     "searchBuildLogs",

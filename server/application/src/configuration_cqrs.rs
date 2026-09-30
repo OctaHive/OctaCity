@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   ApplicationError, BuildConfigurationProjection, Command, CommandHandler, CommandTransaction, ManagementAction,
-  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, MutationDisposition, Query, QueryHandler,
-  RepositoryProjection,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
+  MutationDisposition, Query, QueryHandler, RepositoryProjection,
   management_security::{instance_resource, owned_collection_resource},
   projections::validate_configuration_projection,
 };
@@ -41,11 +41,13 @@ impl Command for CreateRepositoryCommand {
 }
 
 impl ManagementAuthorizationTarget for CreateRepositoryCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::Repository,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::Repository,
       ManagementResourceKind::Project,
@@ -74,11 +76,10 @@ impl Command for PublishRepositoryVersionCommand {
 }
 
 impl ManagementAuthorizationTarget for PublishRepositoryVersionCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Publish
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Publish, ManagementResourceKind::Repository);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Repository, self.id)
   }
 }
@@ -106,11 +107,10 @@ impl Query for GetRepositoryQuery {
 }
 
 impl ManagementAuthorizationTarget for GetRepositoryQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Repository);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Repository, self.repository_id)
   }
 }
@@ -137,11 +137,13 @@ impl Command for CreateBuildConfigurationCommand {
 }
 
 impl ManagementAuthorizationTarget for CreateBuildConfigurationCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::BuildConfiguration,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::BuildConfiguration,
       ManagementResourceKind::Project,
@@ -170,11 +172,10 @@ impl Command for PublishBuildConfigurationVersionCommand {
 }
 
 impl ManagementAuthorizationTarget for PublishBuildConfigurationVersionCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Publish
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Publish, ManagementResourceKind::BuildConfiguration);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::BuildConfiguration, self.id)
   }
 }
@@ -202,11 +203,10 @@ impl Query for GetBuildConfigurationQuery {
 }
 
 impl ManagementAuthorizationTarget for GetBuildConfigurationQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::BuildConfiguration);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::BuildConfiguration, self.configuration_id)
   }
 }

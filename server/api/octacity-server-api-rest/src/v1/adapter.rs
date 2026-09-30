@@ -4,14 +4,13 @@ use std::{
 };
 
 use axum::{
-  Json, Router,
+  Json,
   extract::{
-    DefaultBodyLimit, Extension, OriginalUri, Path, Query, State,
+    Extension, OriginalUri, Path, Query, State,
     rejection::{JsonRejection, QueryRejection},
   },
   http::{HeaderMap, StatusCode},
   response::IntoResponse,
-  routing::{get, post},
 };
 use octacity_server_application::{
   AgentCommandOutcome, AgentEnrollmentSecretKey, AgentPageProjection, AgentPoolCommandOutcome, AgentPoolPageProjection,
@@ -34,7 +33,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
-  API_PREFIX, AcceptManualTriggerRequest, AgentCapacity, AgentDrainMode, AgentPlatform, AgentPoolAdmissionPolicy,
+  AcceptManualTriggerRequest, AgentCapacity, AgentDrainMode, AgentPlatform, AgentPoolAdmissionPolicy,
   AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy, AgentPoolResource, AgentRequirements,
   AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptSummaryResource, BuildConfigurationDefinition,
   BuildConfigurationResource, BuildResource, CachePolicy, CancelBuildResponse, CreateAgentPoolRequest,
@@ -73,6 +72,7 @@ mod pipeline;
 mod project;
 mod representations;
 mod retention;
+mod routes;
 mod schedule;
 mod webhook;
 
@@ -87,9 +87,8 @@ pub use application::{
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-  JobEventManagementApplication, MANAGEMENT_AUTHORIZATION_OPERATIONS, ManagementApplicationHandlers,
-  ManagementAuthorizationOperation, ManualTriggerManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ScheduleManagementApplication,
+  JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use audit::list_audit_facts;
@@ -113,6 +112,8 @@ use project::{
 };
 use representations::*;
 use retention::{get_build_result_retention, place_build_result_hold, release_build_result_hold};
+pub(crate) use routes::register_management_get;
+pub use routes::{ManagementAuthorizationOperation, management_authorization_operations, router};
 use schedule::{create_scheduled_trigger_definition, get_schedule};
 use webhook::{
   create_managed_webhook, create_unmanaged_webhook, delete_managed_webhook, observe_managed_webhook,
@@ -207,174 +208,6 @@ impl ManagementApplication {
       audit,
     })
   }
-}
-
-/// Builds the registered management routes below `/api/v1`.
-pub fn router(application: ManagementApplication) -> Router {
-  Router::new()
-    .route(&format!("{API_PREFIX}/openapi.json"), get(openapi))
-    .route(
-      &format!("{API_PREFIX}/projects"),
-      post(create_project).get(list_projects),
-    )
-    .route(
-      &format!("{API_PREFIX}/projects/{{project_id}}"),
-      get(get_project).delete(delete_project),
-    )
-    .route(
-      &format!("{API_PREFIX}/projects/{{project_id}}/rename"),
-      post(rename_project),
-    )
-    .route(
-      &format!("{API_PREFIX}/projects/{{project_id}}/move"),
-      post(move_project),
-    )
-    .route(
-      &format!("{API_PREFIX}/projects/{{project_id}}/policy-versions"),
-      post(publish_project_policy),
-    )
-    .route(&format!("{API_PREFIX}/pipelines"), post(create_pipeline))
-    .route(
-      &format!("{API_PREFIX}/pipelines/{{pipeline_id}}/versions"),
-      post(publish_pipeline),
-    )
-    .route(
-      &format!("{API_PREFIX}/pipelines/{{pipeline_id}}/versions/{{version}}"),
-      get(get_pipeline),
-    )
-    .route(&format!("{API_PREFIX}/repositories"), post(create_repository))
-    .route(
-      &format!("{API_PREFIX}/repositories/{{repository_id}}/versions"),
-      post(publish_repository),
-    )
-    .route(
-      &format!("{API_PREFIX}/repositories/{{repository_id}}/versions/{{version}}"),
-      get(get_repository),
-    )
-    .route(
-      &format!("{API_PREFIX}/build-configurations"),
-      post(create_build_configuration),
-    )
-    .route(
-      &format!("{API_PREFIX}/build-configurations/{{configuration_id}}/versions"),
-      post(publish_build_configuration),
-    )
-    .route(
-      &format!("{API_PREFIX}/build-configurations/{{configuration_id}}/versions/{{version}}"),
-      get(get_build_configuration),
-    )
-    .route(
-      &format!("{API_PREFIX}/trigger-definitions/manual"),
-      post(create_manual_trigger_definition),
-    )
-    .route(
-      &format!("{API_PREFIX}/trigger-definitions/scheduled"),
-      post(create_scheduled_trigger_definition),
-    )
-    .route(
-      &format!("{API_PREFIX}/trigger-definitions/internal"),
-      post(create_internal_trigger).get(list_internal_triggers),
-    )
-    .route(
-      &format!("{API_PREFIX}/trigger-definitions/internal/{{trigger_id}}/versions"),
-      post(publish_internal_trigger),
-    )
-    .route(
-      &format!("{API_PREFIX}/trigger-definitions/internal/{{trigger_id}}/versions/{{version}}"),
-      get(get_internal_trigger),
-    )
-    .route(
-      &format!("{API_PREFIX}/webhook-integrations/unmanaged"),
-      post(create_unmanaged_webhook),
-    )
-    .route(
-      &format!("{API_PREFIX}/webhook-integrations/managed"),
-      post(create_managed_webhook),
-    )
-    .route(
-      &format!("{API_PREFIX}/webhook-integrations/managed/{{integration_id}}/observe"),
-      post(observe_managed_webhook),
-    )
-    .route(
-      &format!("{API_PREFIX}/webhook-integrations/managed/{{integration_id}}/rotate"),
-      post(rotate_managed_webhook),
-    )
-    .route(
-      &format!("{API_PREFIX}/webhook-integrations/managed/{{integration_id}}"),
-      axum::routing::delete(delete_managed_webhook),
-    )
-    .route(
-      &format!("{API_PREFIX}/schedules/{{trigger_id}}/versions/{{version}}"),
-      get(get_schedule),
-    )
-    .route(&format!("{API_PREFIX}/triggers/manual"), post(accept_manual_trigger))
-    .route(&format!("{API_PREFIX}/builds/{{build_id}}"), get(get_build))
-    .route(
-      &format!("{API_PREFIX}/builds/{{build_id}}/retention"),
-      get(get_build_result_retention),
-    )
-    .route(
-      &format!("{API_PREFIX}/builds/{{build_id}}/retention/hold"),
-      post(place_build_result_hold),
-    )
-    .route(
-      &format!("{API_PREFIX}/builds/{{build_id}}/retention/hold/release"),
-      post(release_build_result_hold),
-    )
-    .route(
-      &format!("{API_PREFIX}/builds/{{build_id}}/artifacts"),
-      get(list_build_artifacts),
-    )
-    .route(&format!("{API_PREFIX}/artifacts/{{artifact_id}}"), get(get_artifact))
-    .route(
-      &format!("{API_PREFIX}/artifacts/{{artifact_id}}/download"),
-      post(authorize_artifact_download),
-    )
-    .route(
-      &format!("{API_PREFIX}/builds/{{build_id}}/cache-sessions"),
-      get(list_build_cache_sessions),
-    )
-    .route(
-      &format!("{API_PREFIX}/cache-sessions/{{cache_session_id}}"),
-      get(get_cache_session),
-    )
-    .route(&format!("{API_PREFIX}/builds/{{build_id}}/cancel"), post(cancel_build))
-    .route(&format!("{API_PREFIX}/builds/{{build_id}}/retry"), post(retry_build))
-    .route(&format!("{API_PREFIX}/attempts/{{attempt_id}}"), get(get_attempt))
-    .route(
-      &format!("{API_PREFIX}/agent-pools"),
-      post(create_agent_pool).get(list_agent_pools),
-    )
-    .route(
-      &format!("{API_PREFIX}/agent-pools/{{pool_id}}"),
-      axum::routing::delete(delete_agent_pool),
-    )
-    .route(
-      &format!("{API_PREFIX}/agent-pools/{{pool_id}}/versions"),
-      post(publish_agent_pool),
-    )
-    .route(
-      &format!("{API_PREFIX}/agent-pools/{{pool_id}}/versions/{{version}}"),
-      get(get_agent_pool),
-    )
-    .route(&format!("{API_PREFIX}/agents"), get(list_agents))
-    .route(&format!("{API_PREFIX}/agent-enrollments"), post(issue_agent_enrollment))
-    .route(&format!("{API_PREFIX}/agents/{{agent_id}}"), get(get_agent))
-    .route(
-      &format!("{API_PREFIX}/agents/{{agent_id}}/pool"),
-      post(reassign_agent_pool),
-    )
-    .route(&format!("{API_PREFIX}/agents/{{agent_id}}/drain"), post(drain_agent))
-    .route(&format!("{API_PREFIX}/jobs/{{job_id}}"), get(get_job))
-    .route(&format!("{API_PREFIX}/jobs/{{job_id}}/events"), get(read_job_events))
-    .route(
-      &format!("{API_PREFIX}/projects/{{project_id}}/build-logs/search"),
-      get(search_build_logs),
-    )
-    .route(&format!("{API_PREFIX}/audit-facts"), get(list_audit_facts))
-    .fallback(api_not_found)
-    .layer(DefaultBodyLimit::max(MAX_MANAGEMENT_BODY_BYTES))
-    .with_state(Arc::new(application))
 }
 
 async fn openapi() -> Json<Value> {

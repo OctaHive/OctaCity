@@ -1,7 +1,10 @@
+use octacity_server_application::{GetOperationalMetadataQuery, ListAuditFactsQuery};
+
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    GetOperationalMetadataQuery,
     "GET",
     "/api/v1/operations/metadata",
     "getOperationalMetadata",
@@ -14,6 +17,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListAuditFactsQuery,
     "GET",
     "/api/v1/audit-facts",
     "listAuditFacts",

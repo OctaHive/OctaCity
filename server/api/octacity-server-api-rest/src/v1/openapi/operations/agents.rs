@@ -1,7 +1,14 @@
+use octacity_server_application::{
+  CreateAgentPoolCommand, DeleteAgentPoolCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery,
+  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, PublishAgentPoolVersionCommand,
+  ReassignAgentPoolCommand,
+};
+
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    CreateAgentPoolCommand,
     "POST",
     "/api/v1/agent-pools",
     "createAgentPool",
@@ -14,6 +21,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListAgentPoolsQuery,
     "GET",
     "/api/v1/agent-pools",
     "listAgentPools",
@@ -27,6 +35,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::AgentPoolList),
   operation!(
+    PublishAgentPoolVersionCommand,
     "POST",
     "/api/v1/agent-pools/{pool_id}/versions",
     "publishAgentPoolVersion",
@@ -39,6 +48,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    GetAgentPoolQuery,
     "GET",
     "/api/v1/agent-pools/{pool_id}/versions/{version}",
     "getAgentPoolVersion",
@@ -51,6 +61,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    DeleteAgentPoolCommand,
     "DELETE",
     "/api/v1/agent-pools/{pool_id}",
     "deleteAgentPool",
@@ -63,6 +74,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    IssueAgentEnrollmentCommand,
     "POST",
     "/api/v1/agent-enrollments",
     "issueAgentEnrollment",
@@ -75,6 +87,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListAgentsQuery,
     "GET",
     "/api/v1/agents",
     "listAgents",
@@ -88,6 +101,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::AgentList),
   operation!(
+    GetAgentQuery,
     "GET",
     "/api/v1/agents/{agent_id}",
     "getAgent",
@@ -100,6 +114,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ReassignAgentPoolCommand,
     "POST",
     "/api/v1/agents/{agent_id}/pool",
     "reassignAgentPool",
@@ -112,6 +127,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    DrainAgentCommand,
     "POST",
     "/api/v1/agents/{agent_id}/drain",
     "drainAgent",

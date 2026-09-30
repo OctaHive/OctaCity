@@ -18,8 +18,8 @@ use serde_json::{Value, json};
 use thiserror::Error;
 
 use crate::{
-  ApplicationError, ApplicationFailure, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, MutationDisposition,
+  ApplicationError, ApplicationFailure, Command, CommandHandler, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -72,11 +72,13 @@ impl Command for CreateUnmanagedWebhookCommand {
 }
 
 impl ManagementAuthorizationTarget for CreateUnmanagedWebhookCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::WebhookIntegration,
+    ManagementResourceKind::Repository,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::WebhookIntegration,
       ManagementResourceKind::Repository,
@@ -179,11 +181,13 @@ impl Command for CreateManagedWebhookCommand {
 }
 
 impl ManagementAuthorizationTarget for CreateManagedWebhookCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::WebhookIntegration,
+    ManagementResourceKind::Repository,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::WebhookIntegration,
       ManagementResourceKind::Repository,
@@ -210,11 +214,10 @@ impl Command for ManageWebhookRegistrationCommand {
 }
 
 impl ManagementAuthorizationTarget for ManageWebhookRegistrationCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Administer
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Administer, ManagementResourceKind::WebhookIntegration);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::WebhookIntegration, self.integration_id)
   }
 }

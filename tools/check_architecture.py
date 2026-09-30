@@ -212,6 +212,17 @@ SHARED_SOURCE_RULES = (
     ),
 )
 
+REST_API_SOURCE = Path("server/api/octacity-server-api-rest/src")
+TYPED_MANAGEMENT_ROUTE_REGISTRY = Path("v1/adapter/routes.rs")
+MANAGEMENT_PATH_DECLARATIONS = Path("v1/openapi/operations")
+MANAGEMENT_PREFIX_OWNERS = frozenset({
+    Path("v1/mod.rs"),
+    Path("v1/openapi.rs"),
+    TYPED_MANAGEMENT_ROUTE_REGISTRY,
+})
+OPERATIONAL_ROUTE_PATHS = frozenset({"/health/live", "/health/ready", "/metrics"})
+ROUTE_LITERAL = re.compile(r"\.\s*route\s*\(\s*\"([^\"]+)\"")
+
 SHARED_FORBIDDEN_SOURCE_DIRECTORIES = frozenset({
     "database",
     "domain",
@@ -612,6 +623,60 @@ def check_shared_sources(graph: Graph) -> list[Violation]:
     return sorted(violations, key=lambda violation: (violation.code, violation.message))
 
 
+def check_management_route_sources(workspace: Path) -> list[Violation]:
+    """Keep every management route behind the typed authorization registry."""
+
+    source_root = workspace / REST_API_SOURCE
+    if not source_root.is_dir():
+        return []
+
+    violations: list[Violation] = []
+    for source_path in sorted(source_root.rglob("*.rs")):
+        relative_path = source_path.relative_to(source_root)
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise MetadataError(f"cannot read REST API source {source_path}: {error}") from error
+
+        if (
+            relative_path.parts[:1] == ("v1",)
+            and relative_path != TYPED_MANAGEMENT_ROUTE_REGISTRY
+            and re.search(r"\.\s*route\s*\(", source)
+        ):
+            violations.append(
+                Violation(
+                    "ARCH013_UNTYPED_MANAGEMENT_ROUTE",
+                    f"REST API source bypasses the typed management route registry: {relative_path}",
+                )
+            )
+
+        if "API_PREFIX" in source and relative_path not in MANAGEMENT_PREFIX_OWNERS:
+            violations.append(
+                Violation(
+                    "ARCH013_UNTYPED_MANAGEMENT_ROUTE",
+                    f"REST API source uses the management prefix outside its route owners: {relative_path}",
+                )
+            )
+
+        for route_path in ROUTE_LITERAL.findall(source):
+            if route_path.startswith("/api/v1") and not relative_path.is_relative_to(MANAGEMENT_PATH_DECLARATIONS):
+                violations.append(
+                    Violation(
+                        "ARCH013_UNTYPED_MANAGEMENT_ROUTE",
+                        f"REST API source declares a management path outside OpenAPI operations: {relative_path}",
+                    )
+                )
+            if relative_path == Path("lib.rs") and route_path not in OPERATIONAL_ROUTE_PATHS:
+                violations.append(
+                    Violation(
+                        "ARCH013_UNTYPED_MANAGEMENT_ROUTE",
+                        f"top-level REST router declares an unowned route {route_path!r}",
+                    )
+                )
+
+    return sorted(set(violations), key=lambda violation: (violation.code, violation.message))
+
+
 def cargo_metadata(workspace: Path) -> dict[str, Any]:
     """Read locked workspace-only Cargo metadata without building packages."""
 
@@ -663,7 +728,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         metadata = read_metadata(options.metadata) if options.metadata else cargo_metadata(options.workspace)
         graph = graph_from_metadata(metadata)
-        violations = check(graph) + check_shared_sources(graph)
+        violations = (
+            check(graph)
+            + check_shared_sources(graph)
+            + check_management_route_sources(options.workspace)
+        )
         violations.sort(key=lambda violation: (violation.code, violation.message))
     except MetadataError as error:
         print(f"architecture check failed: {error}", file=sys.stderr)

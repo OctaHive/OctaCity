@@ -151,10 +151,11 @@ pub use management_security::{
   AuthorizedCommandHandler, AuthorizedQueryHandler, MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES,
   MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES,
   ManagementAction, ManagementActor, ManagementActorKind, ManagementAuthorizationDenial,
-  ManagementAuthorizationFailure, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
-  ManagementAuthorizationTarget, ManagementClientKind, ManagementCommandUseCase, ManagementHandlerError,
-  ManagementIngress, ManagementQueryUseCase, ManagementRequestAttributes, ManagementRequestContext,
-  ManagementRequestId, ManagementResource, ManagementResourceIdentity, ManagementResourceKind, ManagementSecurityError,
+  ManagementAuthorizationFailure, ManagementAuthorizationGrant, ManagementAuthorizationMapping,
+  ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementClientKind, ManagementCommandUseCase,
+  ManagementHandlerError, ManagementIngress, ManagementQueryUseCase, ManagementRequestAttributes,
+  ManagementRequestContext, ManagementRequestId, ManagementResource, ManagementResourceIdentity,
+  ManagementResourceKind, ManagementResourcePattern, ManagementResourceResult, ManagementSecurityError,
   ManagementSecurityScope, ManagementVisibility, ManagementVisibilityKind, TrustedNetworkManagementPolicy,
 };
 pub use manual_trigger::{

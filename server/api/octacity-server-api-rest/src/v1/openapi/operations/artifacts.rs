@@ -1,7 +1,13 @@
+use octacity_server_application::{
+  AuthorizeArtifactDownloadQuery, GetArtifactQuery, GetCacheSessionQuery, ListBuildArtifactsQuery,
+  ListBuildCacheSessionsQuery,
+};
+
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    ListBuildArtifactsQuery,
     "GET",
     "/api/v1/builds/{build_id}/artifacts",
     "listBuildArtifacts",
@@ -15,6 +21,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::ArtifactList),
   operation!(
+    GetArtifactQuery,
     "GET",
     "/api/v1/artifacts/{artifact_id}",
     "getArtifact",
@@ -27,6 +34,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    AuthorizeArtifactDownloadQuery,
     "POST",
     "/api/v1/artifacts/{artifact_id}/download",
     "authorizeArtifactDownload",
@@ -39,6 +47,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListBuildCacheSessionsQuery,
     "GET",
     "/api/v1/builds/{build_id}/cache-sessions",
     "listBuildCacheSessions",
@@ -52,6 +61,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::CacheSessionList),
   operation!(
+    GetCacheSessionQuery,
     "GET",
     "/api/v1/cache-sessions/{cache_session_id}",
     "getCacheSession",

@@ -25,7 +25,9 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def test_current_workspace_satisfies_the_policy(self):
         graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
         self.assertEqual(
-            ARCHITECTURE.check(graph) + ARCHITECTURE.check_shared_sources(graph),
+            ARCHITECTURE.check(graph)
+            + ARCHITECTURE.check_shared_sources(graph)
+            + ARCHITECTURE.check_management_route_sources(REPOSITORY),
             [],
         )
 
@@ -87,6 +89,35 @@ class ArchitecturePolicyTests(unittest.TestCase):
                 self.assertEqual(
                     [violation.code for violation in ARCHITECTURE.check_shared_sources(graph)],
                     ["ARCH008_SHARED_REPRESENTATION"],
+                )
+
+    def test_management_routes_cannot_bypass_the_typed_registry(self):
+        invalid_sources = {
+            "v1 direct route": (
+                "server/api/octacity-server-api-rest/src/v1/bypass.rs",
+                'router.route("/api/v1/shadow", handler);',
+            ),
+            "top-level management route": (
+                "server/api/octacity-server-api-rest/src/lib.rs",
+                'Router::new().route("/api/v1/shadow", handler);',
+            ),
+            "management prefix outside owner": (
+                "server/api/octacity-server-api-rest/src/lib.rs",
+                'let path = format!("{API_PREFIX}/shadow");',
+            ),
+        }
+        for label, (relative_path, source) in invalid_sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary_directory:
+                workspace = Path(temporary_directory)
+                source_path = workspace / relative_path
+                source_path.parent.mkdir(parents=True)
+                source_path.write_text(source, encoding="utf-8")
+
+                violations = ARCHITECTURE.check_management_route_sources(workspace)
+
+                self.assertEqual(
+                    {violation.code for violation in violations},
+                    {"ARCH013_UNTYPED_MANAGEMENT_ROUTE"},
                 )
 
     def test_only_named_infrastructure_support_packages_may_be_shared_by_adapters(self):

@@ -13,8 +13,9 @@ use uuid::Uuid;
 use crate::{
   ApplicationError, AttemptProjection, BuildProjection, Command, CommandHandler, DagCausalityProjection,
   JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection,
-  ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, MutationDisposition,
-  Query, QueryHandler, TriggerHistoryProjection, management_security::instance_resource,
+  ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind,
+  ManagementResourceResult, MutationDisposition, Query, QueryHandler, TriggerHistoryProjection,
+  management_security::instance_resource,
 };
 
 const RETRY_ATTEMPT_NAMESPACE: Uuid = Uuid::from_u128(0xe0de_164d_8f62_5f1e_9e0c_02bd_619a_3861);
@@ -31,11 +32,10 @@ impl Query for GetBuildQuery {
 }
 
 impl ManagementAuthorizationTarget for GetBuildQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Build);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Build, self.build_id)
   }
 }
@@ -52,11 +52,10 @@ impl Query for GetAttemptQuery {
 }
 
 impl ManagementAuthorizationTarget for GetAttemptQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Attempt);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Attempt, self.attempt_id)
   }
 }
@@ -73,11 +72,10 @@ impl Query for GetJobQuery {
 }
 
 impl ManagementAuthorizationTarget for GetJobQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Job);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Job, self.job_id)
   }
 }
@@ -98,11 +96,10 @@ impl Command for CancelBuildCommand {
 }
 
 impl ManagementAuthorizationTarget for CancelBuildCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Cancel
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Cancel, ManagementResourceKind::Build);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Build, self.build_id)
   }
 }
@@ -123,11 +120,10 @@ impl Command for RetryBuildCommand {
 }
 
 impl ManagementAuthorizationTarget for RetryBuildCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Retry
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Retry, ManagementResourceKind::Build);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Build, self.build_id)
   }
 }

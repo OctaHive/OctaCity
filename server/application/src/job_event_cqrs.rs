@@ -6,8 +6,9 @@ use octacity_server_store::{JobEventReadStore, ReadJobEvents, StoreError, StoreI
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query,
-  QueryHandler, management_security::owned_collection_resource,
+  ApplicationError, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
+  ManagementResourceKind, ManagementResourceResult, Query, QueryHandler,
+  management_security::owned_collection_resource,
 };
 
 /// Greatest bounded wait accepted by the management Job-event query.
@@ -31,11 +32,13 @@ impl Query for ReadJobEventsQuery {
 }
 
 impl ManagementAuthorizationTarget for ReadJobEventsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::View,
+    ManagementResourceKind::JobEvent,
+    ManagementResourceKind::Job,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::JobEvent,
       ManagementResourceKind::Job,

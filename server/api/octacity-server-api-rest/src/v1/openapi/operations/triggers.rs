@@ -1,7 +1,14 @@
+use octacity_server_application::{
+  AcceptManualTriggerCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreateScheduleCommand,
+  CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, GetInternalTriggerQuery, GetScheduleQuery,
+  ListInternalTriggersQuery, ManageWebhookRegistrationCommand, PublishInternalTriggerVersionCommand,
+};
+
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    CreateTriggerDefinitionCommand,
     "POST",
     "/api/v1/trigger-definitions/manual",
     "createManualTriggerDefinition",
@@ -14,6 +21,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreateScheduleCommand,
     "POST",
     "/api/v1/trigger-definitions/scheduled",
     "createScheduledTriggerDefinition",
@@ -26,6 +34,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreateInternalTriggerCommand,
     "POST",
     "/api/v1/trigger-definitions/internal",
     "createInternalTriggerDefinition",
@@ -38,6 +47,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListInternalTriggersQuery,
     "GET",
     "/api/v1/trigger-definitions/internal",
     "listInternalTriggerDefinitions",
@@ -51,6 +61,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_parameters(ParameterProfile::InternalTriggerList),
   operation!(
+    PublishInternalTriggerVersionCommand,
     "POST",
     "/api/v1/trigger-definitions/internal/{trigger_id}/versions",
     "publishInternalTriggerDefinitionVersion",
@@ -63,6 +74,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true
   ),
   operation!(
+    GetInternalTriggerQuery,
     "GET",
     "/api/v1/trigger-definitions/internal/{trigger_id}/versions/{version}",
     "getInternalTriggerDefinitionVersion",
@@ -75,6 +87,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreateUnmanagedWebhookCommand,
     "POST",
     "/api/v1/webhook-integrations/unmanaged",
     "createUnmanagedWebhookIntegration",
@@ -87,6 +100,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    CreateManagedWebhookCommand,
     "POST",
     "/api/v1/webhook-integrations/managed",
     "createManagedWebhookIntegration",
@@ -100,6 +114,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
+    ManageWebhookRegistrationCommand,
     "POST",
     "/api/v1/webhook-integrations/managed/{integration_id}/observe",
     "observeManagedWebhookIntegration",
@@ -113,6 +128,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
+    ManageWebhookRegistrationCommand,
     "POST",
     "/api/v1/webhook-integrations/managed/{integration_id}/rotate",
     "rotateManagedWebhookIntegration",
@@ -126,6 +142,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
+    ManageWebhookRegistrationCommand,
     "DELETE",
     "/api/v1/webhook-integrations/managed/{integration_id}",
     "deleteManagedWebhookIntegration",
@@ -139,6 +156,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
+    GetScheduleQuery,
     "GET",
     "/api/v1/schedules/{trigger_id}/versions/{version}",
     "getSchedule",
@@ -151,6 +169,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    AcceptManualTriggerCommand,
     "POST",
     "/api/v1/triggers/manual",
     "acceptManualTrigger",

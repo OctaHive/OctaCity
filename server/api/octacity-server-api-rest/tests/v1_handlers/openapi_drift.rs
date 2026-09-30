@@ -111,13 +111,38 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     })
     .collect::<BTreeSet<_>>();
   assert_eq!(documented, registered);
+  let authorized = management_authorization_operations();
   validate_authorization_inventory(
     MANAGEMENT_OPERATIONS.iter().map(|operation| operation.operation_id),
-    MANAGEMENT_AUTHORIZATION_OPERATIONS
-      .iter()
-      .map(|operation| operation.operation_id),
+    authorized.iter().map(|operation| operation.operation_id),
   )
   .expect("every registered management operation must have exactly one typed authorization mapping");
+  assert_eq!(
+    authorized
+      .iter()
+      .map(|operation| (operation.method, operation.path, operation.operation_id))
+      .collect::<BTreeSet<_>>(),
+    MANAGEMENT_OPERATIONS
+      .iter()
+      .map(|operation| (operation.method, operation.path, operation.operation_id))
+      .collect::<BTreeSet<_>>()
+  );
+  for operation in &authorized {
+    assert!(!operation.request_type.is_empty());
+    assert!(operation.authorization.is_supported());
+  }
+  let create_project = authorized
+    .iter()
+    .find(|operation| operation.operation_id == "createProject")
+    .unwrap();
+  assert_eq!(
+    create_project.request_type,
+    std::any::type_name::<CreateProjectCommand>()
+  );
+  assert_eq!(
+    create_project.authorization,
+    <CreateProjectCommand as ManagementAuthorizationTarget>::AUTHORIZATION
+  );
 
   for operation in MANAGEMENT_OPERATIONS {
     let method = operation.method.to_ascii_lowercase();

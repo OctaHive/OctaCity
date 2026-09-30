@@ -14,8 +14,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-  ApplicationFailure, Command, EffectiveProjectPolicy, ManagementAction, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, MutationDisposition, management_security::instance_resource,
+  ApplicationFailure, Command, EffectiveProjectPolicy, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
+  management_security::instance_resource,
 };
 
 /// Source expression supplied by a trusted-network manual Build command.
@@ -65,11 +66,10 @@ impl Command for AcceptManualTriggerCommand {
 }
 
 impl ManagementAuthorizationTarget for AcceptManualTriggerCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Execute
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Execute, ManagementResourceKind::Trigger);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Trigger, self.trigger.trigger.id)
   }
 }

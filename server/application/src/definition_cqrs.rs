@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, MutationDisposition, ProjectPolicyDefinition,
-  management_security::owned_collection_resource,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
+  ProjectPolicyDefinition, management_security::owned_collection_resource,
 };
 
 /// Publishes exactly the next immutable policy version for one Project.
@@ -81,11 +81,13 @@ impl Command for PublishProjectPolicyCommand {
 }
 
 impl ManagementAuthorizationTarget for PublishProjectPolicyCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Publish
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Publish,
+    ManagementResourceKind::ProjectPolicy,
+    ManagementResourceKind::Project,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::ProjectPolicy,
       ManagementResourceKind::Project,
@@ -99,11 +101,13 @@ impl Command for CreateTriggerDefinitionCommand {
 }
 
 impl ManagementAuthorizationTarget for CreateTriggerDefinitionCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::Create,
+    ManagementResourceKind::Trigger,
+    ManagementResourceKind::BuildConfiguration,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::Trigger,
       ManagementResourceKind::BuildConfiguration,

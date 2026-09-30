@@ -266,6 +266,9 @@ impl ManagementRequestContext {
       ManagementActorKind::AuthenticatedManagement if attributes.ingress() != ManagementIngress::VerifiedIdentity => {
         return Err(ManagementSecurityError::InvalidAuthenticatedContext);
       }
+      ManagementActorKind::AuthenticatedManagement if security_scope.is_trusted_network() => {
+        return Err(ManagementSecurityError::InvalidAuthenticatedContext);
+      }
       _ => {}
     }
     Ok(Self {

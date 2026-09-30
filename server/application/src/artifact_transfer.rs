@@ -18,7 +18,8 @@ use thiserror::Error;
 
 use crate::{
   AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, ManagementAction,
-  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query, QueryHandler, agent_lease,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
+  Query, QueryHandler, agent_lease,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -136,11 +137,10 @@ impl Query for GetArtifactQuery {
 }
 
 impl ManagementAuthorizationTarget for GetArtifactQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Artifact);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Artifact, self.artifact_id)
   }
 }
@@ -159,11 +159,13 @@ impl Query for ListBuildArtifactsQuery {
 }
 
 impl ManagementAuthorizationTarget for ListBuildArtifactsQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping = ManagementAuthorizationMapping::owned_collection(
+    ManagementAction::View,
+    ManagementResourceKind::Artifact,
+    ManagementResourceKind::Build,
+  );
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     owned_collection_resource(
       ManagementResourceKind::Artifact,
       ManagementResourceKind::Build,
@@ -186,11 +188,10 @@ impl Query for AuthorizeArtifactDownloadQuery {
 }
 
 impl ManagementAuthorizationTarget for AuthorizeArtifactDownloadQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Download
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Download, ManagementResourceKind::Artifact);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     instance_resource(ManagementResourceKind::Artifact, self.artifact_id)
   }
 }

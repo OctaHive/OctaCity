@@ -11,6 +11,7 @@ use std::{
 use async_trait::async_trait;
 use uuid::Uuid;
 
+use super::authorization::resource_identity;
 use super::*;
 
 fn request_id() -> ManagementRequestId {
@@ -22,6 +23,42 @@ fn resource(index: usize) -> ManagementResource {
     ManagementResourceKind::Project,
     ManagementResourceIdentity::new(format!("project-{index}")).expect("bounded fixture"),
   )
+  .expect("Project instances are supported")
+}
+
+fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
+  let identity = || ManagementResourceIdentity::new("fixture-id").unwrap();
+  match kind {
+    ManagementResourceKind::ControlPlane
+    | ManagementResourceKind::Project
+    | ManagementResourceKind::Trigger
+    | ManagementResourceKind::AgentPool
+    | ManagementResourceKind::Agent
+    | ManagementResourceKind::AuditFact => ManagementResource::collection(kind).unwrap(),
+    ManagementResourceKind::ProjectPolicy => {
+      ManagementResource::owned_collection(kind, ManagementResourceKind::Project, identity()).unwrap()
+    }
+    ManagementResourceKind::JobEvent => {
+      ManagementResource::owned_collection(kind, ManagementResourceKind::Job, identity()).unwrap()
+    }
+    ManagementResourceKind::BuildLog => {
+      ManagementResource::owned_collection(kind, ManagementResourceKind::Project, identity()).unwrap()
+    }
+    ManagementResourceKind::AgentEnrollment => {
+      ManagementResource::owned_collection(kind, ManagementResourceKind::AgentPool, identity()).unwrap()
+    }
+    ManagementResourceKind::Pipeline
+    | ManagementResourceKind::Repository
+    | ManagementResourceKind::BuildConfiguration
+    | ManagementResourceKind::Schedule
+    | ManagementResourceKind::Build
+    | ManagementResourceKind::Attempt
+    | ManagementResourceKind::Job
+    | ManagementResourceKind::Artifact
+    | ManagementResourceKind::CacheSession
+    | ManagementResourceKind::WebhookIntegration
+    | ManagementResourceKind::Retention => ManagementResource::instance(kind, identity()).unwrap(),
+  }
 }
 
 #[test]
@@ -60,10 +97,21 @@ fn bounded_identity_constructors_reject_oversized_values() {
 }
 
 #[test]
-fn resource_construction_rejects_missing_identities_and_unsupported_ownership() {
+fn resource_construction_rejects_missing_identities_and_every_unsupported_shape() {
   assert_eq!(
     ManagementResourceIdentity::new(""),
     Err(ManagementSecurityError::InvalidResourceIdentity)
+  );
+  assert_eq!(
+    ManagementResource::collection(ManagementResourceKind::Artifact),
+    Err(ManagementSecurityError::UnsupportedResourceShape)
+  );
+  assert_eq!(
+    ManagementResource::instance(
+      ManagementResourceKind::ControlPlane,
+      ManagementResourceIdentity::new("control-plane-1").unwrap(),
+    ),
+    Err(ManagementSecurityError::UnsupportedResourceShape)
   );
   assert_eq!(
     ManagementResource::owned_collection(
@@ -84,74 +132,6 @@ fn resource_construction_rejects_missing_identities_and_unsupported_ownership() 
   assert_eq!(
     artifacts.owner().map(|(kind, identity)| (kind, identity.as_str())),
     Some((ManagementResourceKind::Build, "build-1"))
-  );
-}
-
-#[test]
-fn every_registered_management_request_has_a_typed_mapping() {
-  fn assert_mapping<T: ManagementAuthorizationTarget>() {}
-
-  macro_rules! assert_mappings {
-    ($($request:ty),+ $(,)?) => {
-      $(assert_mapping::<$request>();)+
-    };
-  }
-
-  assert_mappings!(
-    crate::CreateProjectCommand,
-    crate::RenameProjectCommand,
-    crate::MoveProjectCommand,
-    crate::DeleteProjectCommand,
-    crate::GetProjectQuery,
-    crate::ListProjectsQuery,
-    crate::CreatePipelineCommand,
-    crate::PublishPipelineVersionCommand,
-    crate::GetPipelineQuery,
-    crate::CreateRepositoryCommand,
-    crate::PublishRepositoryVersionCommand,
-    crate::GetRepositoryQuery,
-    crate::CreateBuildConfigurationCommand,
-    crate::PublishBuildConfigurationVersionCommand,
-    crate::GetBuildConfigurationQuery,
-    crate::CreateAgentPoolCommand,
-    crate::PublishAgentPoolVersionCommand,
-    crate::DeleteAgentPoolCommand,
-    crate::GetAgentPoolQuery,
-    crate::ListAgentPoolsQuery,
-    crate::GetAgentQuery,
-    crate::ListAgentsQuery,
-    crate::ReassignAgentPoolCommand,
-    crate::DrainAgentCommand,
-    crate::IssueAgentEnrollmentCommand,
-    crate::GetBuildQuery,
-    crate::GetAttemptQuery,
-    crate::GetJobQuery,
-    crate::CancelBuildCommand,
-    crate::RetryBuildCommand,
-    crate::PublishProjectPolicyCommand,
-    crate::CreateTriggerDefinitionCommand,
-    crate::CreateUnmanagedWebhookCommand,
-    crate::CreateManagedWebhookCommand,
-    crate::ManageWebhookRegistrationCommand,
-    crate::AcceptManualTriggerCommand,
-    crate::ReadJobEventsQuery,
-    crate::CreateScheduleCommand,
-    crate::GetScheduleQuery,
-    crate::CreateInternalTriggerCommand,
-    crate::PublishInternalTriggerVersionCommand,
-    crate::GetInternalTriggerQuery,
-    crate::ListInternalTriggersQuery,
-    crate::GetArtifactQuery,
-    crate::ListBuildArtifactsQuery,
-    crate::AuthorizeArtifactDownloadQuery,
-    crate::GetCacheSessionQuery,
-    crate::ListBuildCacheSessionsQuery,
-    crate::SearchBuildLogsQuery,
-    crate::GetOperationalMetadataQuery,
-    crate::GetBuildResultRetentionQuery,
-    crate::PlaceBuildResultHoldCommand,
-    crate::ReleaseBuildResultHoldCommand,
-    crate::ListAuditFactsQuery,
   );
 }
 
@@ -206,6 +186,15 @@ fn request_context_rejects_untrusted_actor_combinations() {
     ),
     Err(ManagementSecurityError::InvalidAuthenticatedContext)
   );
+  assert_eq!(
+    ManagementRequestContext::new(
+      ManagementActor::authenticated("operator-1").unwrap(),
+      ManagementSecurityScope::trusted_network(),
+      request_id(),
+      verified_attributes,
+    ),
+    Err(ManagementSecurityError::InvalidAuthenticatedContext)
+  );
 }
 
 #[test]
@@ -237,6 +226,7 @@ fn debug_output_redacts_actor_scope_and_resource_identities() {
     ManagementResourceKind::Project,
     ManagementResourceIdentity::new("private-resource").unwrap(),
   );
+  let protected = protected.unwrap();
 
   let output = format!("{context:?} {protected:?}");
   assert!(!output.contains("private-subject"));
@@ -258,6 +248,14 @@ fn restricted_visibility_is_non_empty_unique_and_bounded() {
   assert_eq!(
     ManagementVisibility::restricted((0..=MAX_MANAGEMENT_VISIBILITY_RESOURCES).map(resource)),
     Err(ManagementSecurityError::VisibilityTooLarge)
+  );
+  let mut resources = (0..MAX_MANAGEMENT_VISIBILITY_RESOURCES)
+    .map(resource)
+    .collect::<Vec<_>>();
+  resources.push(resource(0));
+  assert_eq!(
+    ManagementVisibility::restricted(resources),
+    Err(ManagementSecurityError::DuplicateVisibilityResource)
   );
 
   let visibility = ManagementVisibility::restricted([resource(1), resource(2)]).unwrap();
@@ -284,7 +282,8 @@ fn trusted_network_policy_covers_every_declared_action_and_resource_kind() {
 
   for action in ManagementAction::ALL {
     for resource_kind in ManagementResourceKind::ALL {
-      let grant = run_ready(policy.authorize(&context, action, &ManagementResource::collection(resource_kind)))
+      let resource = representative_resource(resource_kind);
+      let grant = run_ready(policy.authorize(&context, action, &resource))
         .expect("canonical trusted-network context must retain current behavior");
       assert_eq!(grant.visibility().kind(), ManagementVisibilityKind::All);
     }
@@ -294,7 +293,7 @@ fn trusted_network_policy_covers_every_declared_action_and_resource_kind() {
 #[test]
 fn trusted_network_policy_fails_closed_for_every_other_valid_actor_shape() {
   let policy = TrustedNetworkManagementPolicy;
-  let resource = ManagementResource::collection(ManagementResourceKind::Project);
+  let resource = ManagementResource::collection(ManagementResourceKind::Project).unwrap();
 
   for client_kind in [
     None,
@@ -338,12 +337,11 @@ impl crate::Command for FixtureCommand {
 }
 
 impl ManagementAuthorizationTarget for FixtureCommand {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::Create
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Create, ManagementResourceKind::Project);
 
-  fn management_resource(&self) -> ManagementResource {
-    resource(7)
+  fn management_resource(&self) -> ManagementResourceResult {
+    Ok(resource(7))
   }
 }
 
@@ -355,13 +353,38 @@ impl crate::Query for FixtureQuery {
 }
 
 impl ManagementAuthorizationTarget for FixtureQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Project);
 
-  fn management_resource(&self) -> ManagementResource {
-    resource(8)
+  fn management_resource(&self) -> ManagementResourceResult {
+    Ok(resource(8))
   }
+}
+
+struct InvalidFixtureTarget;
+
+impl ManagementAuthorizationTarget for InvalidFixtureTarget {
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Project);
+
+  fn management_resource(&self) -> ManagementResourceResult {
+    ManagementResource::instance(
+      ManagementResourceKind::Agent,
+      ManagementResourceIdentity::new("agent-1").unwrap(),
+    )
+  }
+}
+
+#[test]
+fn authorization_targets_reject_resources_that_disagree_with_their_static_mapping() {
+  assert_eq!(
+    InvalidFixtureTarget.validated_management_resource(),
+    Err(ManagementSecurityError::UnsupportedResourceShape)
+  );
+  assert_eq!(
+    resource_identity("x".repeat(MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES + 1)),
+    Err(ManagementSecurityError::InvalidResourceIdentity)
+  );
 }
 
 struct RecordingPolicy {

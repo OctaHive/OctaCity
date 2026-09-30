@@ -1,4 +1,7 @@
-use crate::{ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query};
+use crate::{
+  ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResource,
+  ManagementResourceKind, ManagementResourceResult, Query,
+};
 
 /// Reads safe deployment metadata for the running management control plane.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -9,11 +12,10 @@ impl Query for GetOperationalMetadataQuery {
 }
 
 impl ManagementAuthorizationTarget for GetOperationalMetadataQuery {
-  fn management_action(&self) -> ManagementAction {
-    ManagementAction::View
-  }
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::collection(ManagementAction::View, ManagementResourceKind::ControlPlane);
 
-  fn management_resource(&self) -> ManagementResource {
+  fn management_resource(&self) -> ManagementResourceResult {
     ManagementResource::collection(ManagementResourceKind::ControlPlane)
   }
 }
