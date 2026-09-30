@@ -4,10 +4,10 @@ tasks:
   cacheable:
     files:
       inputs:
-        - fixtures/release/linux-native/input/message.txt
+        - server/tests/octacity-release-harness/fixtures/release-matrix/input/message.txt
       outputs:
-        - fixtures/release/linux-native/dist
-        - fixtures/release/linux-native/reports
+        - server/tests/octacity-release-harness/fixtures/release-matrix/dist
+        - server/tests/octacity-release-harness/fixtures/release-matrix/reports
     cache: {}
     artifacts:
       - name: release-result

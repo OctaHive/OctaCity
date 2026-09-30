@@ -45,7 +45,7 @@ use scenarios::{
 };
 use support::*;
 
-const FIXTURE_OCTAFILE: &str = "fixtures/release/linux-native/Octafile.yml";
+const FIXTURE_OCTAFILE: &str = "server/tests/octacity-release-harness/fixtures/release-matrix/Octafile.yml";
 const CACHE_NAMESPACE: &str = "release-linux-native";
 const MICROSANDBOX_HOST_ALIAS: &str = "host.microsandbox.internal";
 const ARTIFACT_BYTES: usize = 1024 * 1024;
@@ -877,15 +877,17 @@ mod tests {
     const CACHE_PUBLICATION_COMPRESSION_RATIO_LIMIT: usize = 1_000;
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let fixture = repository.join(FIXTURE_OCTAFILE);
+    let fixture_path = Path::new(FIXTURE_OCTAFILE);
+    let fixture_root = fixture_path.parent().unwrap();
+    let fixture = repository.join(fixture_path);
     let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fs::read_to_string(fixture).unwrap()).unwrap();
     let shell = document["tasks"]["cacheable"]["shell"].as_str().unwrap();
     let shell = shell.strip_prefix("sleep 2 && ").unwrap();
     let temporary = tempfile::tempdir().unwrap();
-    let workspace = temporary.path().join("fixtures/release/linux-native");
+    let workspace = temporary.path().join(fixture_root);
     fs::create_dir_all(workspace.join("input")).unwrap();
     fs::copy(
-      repository.join("fixtures/release/linux-native/input/message.txt"),
+      repository.join(fixture_root).join("input/message.txt"),
       workspace.join("input/message.txt"),
     )
     .unwrap();

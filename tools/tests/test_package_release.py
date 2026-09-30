@@ -357,7 +357,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn('${{ steps.test.outputs.evidence }}', action)
         self.assertIn('> "${OCTACITY_RELEASE_EVIDENCE_DIR}/minio.log"', action)
         self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
-        fixture = REPOSITORY / "fixtures/release/linux-native/Octafile.yml"
+        fixture = REPOSITORY / "server/tests/octacity-release-harness/fixtures/release-matrix/Octafile.yml"
         self.assertTrue(fixture.is_file())
         fixture_text = fixture.read_text(encoding="utf-8")
         self.assertIn("cache: {}", fixture_text)
