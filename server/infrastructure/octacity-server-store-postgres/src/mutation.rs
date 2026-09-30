@@ -1,5 +1,5 @@
 use octacity_server_domain::{EntityKind, Timestamp};
-use octacity_server_store::{AuditActorKind, AuditMetadata, StoreError};
+use octacity_server_store::{AuditActorKind, AuditMetadata, MutationAuditContext, StoreError};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -74,15 +74,74 @@ impl MutationIdentity {
 }
 
 pub(crate) struct MutationFacts {
-  pub(crate) actor_kind: &'static str,
-  pub(crate) actor_identity: Option<String>,
-  pub(crate) target_identity: String,
-  pub(crate) safe_metadata: Value,
-  pub(crate) outbox_payload: Value,
+  actor_kind: AuditActorKind,
+  actor_identity: Option<String>,
+  request_identity: Option<String>,
+  target_identity: String,
+  safe_metadata: Value,
+  outbox_payload: Value,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum NonManagementActor {
+  Agent(String),
+  Trigger(String),
+  Adapter(String),
+  Worker(String),
+}
+
+impl NonManagementActor {
+  fn into_parts(self) -> (AuditActorKind, String) {
+    match self {
+      Self::Agent(identity) => (AuditActorKind::Agent, identity),
+      Self::Trigger(identity) => (AuditActorKind::Trigger, identity),
+      Self::Adapter(identity) => (AuditActorKind::Adapter, identity),
+      Self::Worker(identity) => (AuditActorKind::Worker, identity),
+    }
+  }
+}
+
+impl MutationFacts {
+  /// Builds mutation evidence from the management actor accepted by the
+  /// application layer. Keeping this translation at the transaction boundary
+  /// prevents individual adapters from selecting or replacing that actor.
+  pub(crate) fn management(
+    audit: &MutationAuditContext,
+    target_identity: String,
+    safe_metadata: Value,
+    outbox_payload: Value,
+  ) -> Self {
+    Self {
+      actor_kind: audit.actor().kind,
+      actor_identity: audit.actor().identity.clone(),
+      request_identity: Some(audit.request_identity().to_owned()),
+      target_identity,
+      safe_metadata,
+      outbox_payload,
+    }
+  }
+
+  /// Builds evidence for an actor established by a non-management protocol.
+  pub(crate) fn non_management(
+    actor: NonManagementActor,
+    target_identity: String,
+    safe_metadata: Value,
+    outbox_payload: Value,
+  ) -> Self {
+    let (actor_kind, actor_identity) = actor.into_parts();
+    Self {
+      actor_kind,
+      actor_identity: Some(actor_identity),
+      request_identity: None,
+      target_identity,
+      safe_metadata,
+      outbox_payload,
+    }
+  }
 }
 
 pub(crate) struct AdditionalAuditFact {
-  pub(crate) actor_kind: &'static str,
+  pub(crate) actor_kind: AuditActorKind,
   pub(crate) actor_identity: Option<String>,
   pub(crate) operation: &'static str,
   pub(crate) target_kind: &'static str,
@@ -112,11 +171,13 @@ pub(crate) enum MutationKind {
   PublishInternalTriggerVersion,
   CreateUnmanagedWebhook,
   CreateManagedWebhook,
+  EnqueueManagedWebhookOperation,
   CompleteManagedWebhookCreate,
   ObserveManagedWebhook,
   RotateManagedWebhook,
   DeleteManagedWebhook,
   CreateSchedule,
+  ReserveTriggerEvaluation,
   AcceptTrigger,
   SuppressTrigger,
   ClaimReadyJob,
@@ -267,6 +328,12 @@ impl MutationKind {
         "integration",
         "webhook-integration.managed-created"
       ),
+      Self::EnqueueManagedWebhookOperation => metadata!(
+        b"octacity.enqueue-managed-webhook-operation.v1\0",
+        "enqueue-managed-webhook-operation",
+        "integration",
+        "webhook-integration.operation-enqueued"
+      ),
       Self::CompleteManagedWebhookCreate => metadata!(
         b"octacity.complete-managed-webhook-create.v1\0",
         "complete-managed-webhook-create",
@@ -296,6 +363,12 @@ impl MutationKind {
         "create-schedule",
         "trigger",
         "schedule.created"
+      ),
+      Self::ReserveTriggerEvaluation => metadata!(
+        b"octacity.reserve-trigger-evaluation.v1\0",
+        "reserve-trigger-evaluation",
+        "trigger",
+        "trigger.evaluation-reserved"
       ),
       Self::AcceptTrigger => metadata!(
         b"octacity.accept-trigger.v2\0",
@@ -473,10 +546,6 @@ pub(crate) async fn commit(
   facts: MutationFacts,
   outcome: Value,
 ) -> Result<(), StoreError> {
-  let actor_kind = facts
-    .actor_kind
-    .parse::<AuditActorKind>()
-    .map_err(|_| StoreError::Unavailable)?;
   let safe_metadata = AuditMetadata::try_new(facts.safe_metadata).map_err(|_| StoreError::Unavailable)?;
   sqlx::query(
     "INSERT INTO audit_facts \
@@ -486,12 +555,12 @@ pub(crate) async fn commit(
              to_timestamp($10::double precision / 1000.0))",
   )
   .bind(stable_record_id("audit", identity))
-  .bind(actor_kind.as_str())
+  .bind(facts.actor_kind.as_str())
   .bind(facts.actor_identity)
   .bind(identity.kind.scope())
   .bind(identity.kind.target_kind())
   .bind(&facts.target_identity)
-  .bind(&identity.request_identity)
+  .bind(facts.request_identity.as_deref().unwrap_or(&identity.request_identity))
   .bind(&identity.key)
   .bind(Json(safe_metadata.as_value()))
   .bind(identity.occurred_at.unix_millis())
@@ -528,15 +597,35 @@ pub(crate) async fn commit(
   transaction.commit().await.map_err(unavailable)
 }
 
+/// Commits evidence for a mutation whose domain-specific uniqueness record was
+/// reserved in the same transaction instead of through [`begin`].
+pub(crate) async fn commit_fresh(
+  mut transaction: Transaction<'_, Postgres>,
+  identity: &MutationIdentity,
+  facts: MutationFacts,
+  outcome: Value,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO idempotency_records \
+       (scope, idempotency_key, request_digest, outcome, created_at) \
+     VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0))",
+  )
+  .bind(identity.kind.scope())
+  .bind(&identity.key)
+  .bind(identity.request_digest.as_slice())
+  .bind(Json(json!({"status": PENDING_OUTCOME})))
+  .bind(identity.occurred_at.unix_millis())
+  .execute(&mut *transaction)
+  .await
+  .map_err(unavailable)?;
+  commit(transaction, identity, facts, outcome).await
+}
+
 pub(crate) async fn append_additional_audit_fact(
   transaction: &mut Transaction<'_, Postgres>,
   identity: &MutationIdentity,
   fact: AdditionalAuditFact,
 ) -> Result<(), StoreError> {
-  let actor_kind = fact
-    .actor_kind
-    .parse::<AuditActorKind>()
-    .map_err(|_| StoreError::Unavailable)?;
   let metadata = AuditMetadata::try_new(fact.safe_metadata).map_err(|_| StoreError::Unavailable)?;
   sqlx::query(
     "INSERT INTO audit_facts \
@@ -546,7 +635,7 @@ pub(crate) async fn append_additional_audit_fact(
        to_timestamp($10::double precision / 1000.0))",
   )
   .bind(stable_record_id(fact.operation, identity))
-  .bind(actor_kind.as_str())
+  .bind(fact.actor_kind.as_str())
   .bind(fact.actor_identity)
   .bind(fact.operation)
   .bind(fact.target_kind)

@@ -6,9 +6,9 @@ use octacity_server_store::{
   CreateUnmanagedWebhook, EnqueueManagedWebhookOperation, EnqueueWebhookDelivery, FailManagedWebhookOperation,
   FailWebhookDelivery, IdempotencyKey, ManagedWebhookDefinition, ManagedWebhookMutationOutcome,
   ManagedWebhookOperation, ManagedWebhookOperationClaim, ManagedWebhookRecord, ManagedWebhookRegistration,
-  MutationDisposition, RecordManagedWebhookRegistration, RecordWebhookEvent, RecordWebhookEventOutcome, StoreError,
-  StoreOperation, SuppressWebhookDelivery, TriggerDefinitionRef, TriggerKind, TriggerTarget,
-  UnmanagedWebhookMutationOutcome, WebhookDeliveryClaim, WebhookDeliveryDiagnostic, WebhookDeliveryId,
+  MutationAuditContext, MutationDisposition, RecordManagedWebhookRegistration, RecordWebhookEvent,
+  RecordWebhookEventOutcome, StoreError, StoreOperation, SuppressWebhookDelivery, TriggerDefinitionRef, TriggerKind,
+  TriggerTarget, UnmanagedWebhookMutationOutcome, WebhookDeliveryClaim, WebhookDeliveryDiagnostic, WebhookDeliveryId,
   WebhookDeliveryState, WebhookDeliveryWork, WebhookFailureCode, WebhookIntegrationRecord,
 };
 use serde::Serialize;
@@ -17,7 +17,9 @@ use sqlx::{FromRow, types::Json};
 
 use crate::{
   database::{classify, number, unavailable},
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
 };
 
 mod decoding;
@@ -57,9 +59,16 @@ struct RegistrationFingerprint<'a> {
   registration: &'a ManagedWebhookRegistration,
 }
 
+#[derive(Serialize)]
+struct EnqueueOperationFingerprint {
+  integration_id: IntegrationId,
+  operation: ManagedWebhookOperation,
+}
+
 pub(crate) async fn create(
   pool: &sqlx::PgPool,
   request: CreateUnmanagedWebhook,
+  audit: &MutationAuditContext,
 ) -> Result<UnmanagedWebhookMutationOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::new(
@@ -126,21 +135,20 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.integration_id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::management(
+      audit,
+      request.integration_id.to_string(),
+      json!({
         "trigger_id": request.trigger.id,
         "trigger_version": request.trigger.version,
         "adapter_id": request.definition.adapter_id,
       }),
-      outbox_payload: json!({
+      json!({
         "integration_id": request.integration_id,
         "trigger_id": request.trigger.id,
         "trigger_version": request.trigger.version,
       }),
-    },
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -194,6 +202,7 @@ pub(crate) async fn read(
 pub(crate) async fn create_managed(
   pool: &sqlx::PgPool,
   request: CreateManagedWebhook,
+  audit: &MutationAuditContext,
 ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::new(
@@ -276,23 +285,22 @@ pub(crate) async fn create_managed(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.integration_id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::management(
+      audit,
+      request.integration_id.to_string(),
+      json!({
         "trigger_id": request.trigger.id,
         "trigger_version": request.trigger.version,
         "adapter_id": request.definition.delivery.adapter_id,
         "management_mode": "managed",
       }),
-      outbox_payload: json!({
+      json!({
         "integration_id": request.integration_id,
         "trigger_id": request.trigger.id,
         "trigger_version": request.trigger.version,
         "registration_state": "pending",
       }),
-    },
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -460,20 +468,19 @@ pub(crate) async fn record_managed(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "adapter",
-      actor_identity: Some(request.owner.as_str().to_owned()),
-      target_identity: request.integration_id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::non_management(
+      NonManagementActor::Adapter(request.owner.as_str().to_owned()),
+      request.integration_id.to_string(),
+      json!({
         "operation": request.operation,
         "registration_status": request.registration.status,
       }),
-      outbox_payload: json!({
+      json!({
         "integration_id": request.integration_id,
         "operation": request.operation,
         "registration_status": request.registration.status,
       }),
-    },
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -483,7 +490,30 @@ pub(crate) async fn record_managed(
 pub(crate) async fn enqueue_managed_operation(
   pool: &sqlx::PgPool,
   request: EnqueueManagedWebhookOperation,
+  audit: &MutationAuditContext,
 ) -> Result<MutationDisposition, StoreError> {
+  let identity = MutationIdentity::new(
+    MutationKind::EnqueueManagedWebhookOperation,
+    format!(
+      "{}:{}:{}",
+      request.integration_id,
+      managed_operation(request.operation),
+      request.idempotency_key
+    ),
+    request.requested_at,
+    EntityKind::Integration,
+    &EnqueueOperationFingerprint {
+      integration_id: request.integration_id,
+      operation: request.operation,
+    },
+  )?;
+  let mut transaction = match crate::mutation::begin(pool, &identity).await? {
+    MutationStart::Fresh(transaction) => transaction,
+    MutationStart::Replay(outcome) => {
+      let _: MutationDisposition = decode_outcome(outcome)?;
+      return Ok(MutationDisposition::Replayed);
+    }
+  };
   let result = sqlx::query(
     "INSERT INTO managed_webhook_operations \
        (integration_id, operation, idempotency_key, requested_at, next_attempt_at) \
@@ -495,14 +525,27 @@ pub(crate) async fn enqueue_managed_operation(
   .bind(managed_operation(request.operation))
   .bind(request.idempotency_key.as_str())
   .bind(request.requested_at.unix_millis())
-  .execute(pool)
+  .execute(&mut *transaction)
   .await
   .map_err(|error| classify(error, EntityKind::Integration))?;
-  Ok(if result.rows_affected() == 1 {
+  let disposition = if result.rows_affected() == 1 {
     MutationDisposition::Applied
   } else {
     MutationDisposition::Replayed
-  })
+  };
+  crate::mutation::commit(
+    transaction,
+    &identity,
+    MutationFacts::management(
+      audit,
+      request.integration_id.to_string(),
+      json!({"operation": request.operation}),
+      json!({"integration_id": request.integration_id, "operation": request.operation}),
+    ),
+    encode_outcome(&disposition)?,
+  )
+  .await?;
+  Ok(disposition)
 }
 
 pub(crate) async fn claim_managed_operations(

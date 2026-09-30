@@ -5,9 +5,9 @@ use crate::{
   ClaimManagedWebhookOperations, ClaimWebhookDeliveries, CompleteWebhookDelivery, CreateManagedWebhook,
   CreateUnmanagedWebhook, EnqueueManagedWebhookOperation, EnqueueWebhookDelivery, FailManagedWebhookOperation,
   FailWebhookDelivery, ManagedWebhookMutationOutcome, ManagedWebhookOperationClaim, ManagedWebhookRecord,
-  MutationDisposition, RecordManagedWebhookRegistration, RecordWebhookEvent, RecordWebhookEventOutcome, StoreError,
-  SuppressWebhookDelivery, UnmanagedWebhookMutationOutcome, WebhookDeliveryClaim, WebhookDeliveryDiagnostic,
-  WebhookDeliveryId, WebhookIntegrationRecord,
+  ManagementMutation, MutationDisposition, RecordManagedWebhookRegistration, RecordWebhookEvent,
+  RecordWebhookEventOutcome, StoreError, SuppressWebhookDelivery, UnmanagedWebhookMutationOutcome,
+  WebhookDeliveryClaim, WebhookDeliveryDiagnostic, WebhookDeliveryId, WebhookIntegrationRecord,
 };
 
 /// Atomic persistence for webhook integration creation.
@@ -16,13 +16,13 @@ pub trait WebhookConfigurationStore: Send + Sync {
   /// Atomically creates one integration and its external Trigger definition.
   async fn create_unmanaged_webhook(
     &self,
-    request: CreateUnmanagedWebhook,
+    request: ManagementMutation<CreateUnmanagedWebhook>,
   ) -> Result<UnmanagedWebhookMutationOutcome, StoreError>;
 
   /// Atomically reserves one managed integration before the provider call.
   async fn create_managed_webhook(
     &self,
-    request: CreateManagedWebhook,
+    request: ManagementMutation<CreateManagedWebhook>,
   ) -> Result<ManagedWebhookMutationOutcome, StoreError>;
 }
 
@@ -39,7 +39,7 @@ pub trait ManagedWebhookOperationStore: Send + Sync {
   /// Durably enqueues an idempotent operation before provider execution.
   async fn enqueue_managed_webhook_operation(
     &self,
-    request: EnqueueManagedWebhookOperation,
+    request: ManagementMutation<EnqueueManagedWebhookOperation>,
   ) -> Result<MutationDisposition, StoreError>;
 
   /// Claims a bounded batch of due or abandoned operations.

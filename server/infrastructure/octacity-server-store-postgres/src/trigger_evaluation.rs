@@ -1,12 +1,16 @@
 use octacity_server_domain::{EntityKind, ImmutableRevision, Timestamp, TriggerOccurrenceId};
 use octacity_server_store::{
-  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, RecordTriggerEvaluationRevision,
-  ReserveTriggerEvaluation, StoreError, TriggerEvaluationClaim, TriggerEvaluationReservation,
+  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, MutationAuditContext,
+  RecordTriggerEvaluationRevision, ReserveTriggerEvaluation, StoreError, TriggerEvaluationClaim,
+  TriggerEvaluationReservation,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sqlx::{FromRow, types::Json};
 
-use crate::database::unavailable;
+use crate::{
+  database::unavailable,
+  mutation::{MutationFacts, MutationIdentity, MutationKind, encode_outcome},
+};
 
 #[derive(FromRow)]
 struct WorkRow {
@@ -24,6 +28,7 @@ struct WorkRow {
 pub(crate) async fn reserve(
   pool: &sqlx::PgPool,
   request: ReserveTriggerEvaluation,
+  audit: &MutationAuditContext,
 ) -> Result<TriggerEvaluationReservation, StoreError> {
   request.validate()?;
   let mut transaction = pool.begin().await.map_err(unavailable)?;
@@ -45,15 +50,35 @@ pub(crate) async fn reserve(
   .rows_affected()
     == 1;
   if inserted {
-    transaction.commit().await.map_err(unavailable)?;
-    return Ok(TriggerEvaluationReservation::Claimed(TriggerEvaluationClaim {
+    let outcome = TriggerEvaluationReservation::Claimed(TriggerEvaluationClaim {
       occurrence_id: request.occurrence_id,
       payload: request.payload,
       resolved_revision: None,
       attempt: 1,
       owner: request.owner,
       claim_expires_at: request.claim_expires_at,
-    }));
+    });
+    let mut identity = MutationIdentity::with_digest(
+      MutationKind::ReserveTriggerEvaluation,
+      request.occurrence_id.to_string(),
+      request.requested_at,
+      EntityKind::Trigger,
+      request.intent_digest,
+    );
+    identity.request_identity = audit.request_identity().to_owned();
+    crate::mutation::commit_fresh(
+      transaction,
+      &identity,
+      MutationFacts::management(
+        audit,
+        request.occurrence_id.to_string(),
+        json!({"claim_owner": outcome_owner(&outcome)}),
+        json!({"trigger_occurrence_id": request.occurrence_id}),
+      ),
+      encode_outcome(&request.occurrence_id)?,
+    )
+    .await?;
+    return Ok(outcome);
   }
 
   let row = sqlx::query_as::<_, WorkRow>(
@@ -112,6 +137,15 @@ pub(crate) async fn reserve(
   };
   transaction.commit().await.map_err(unavailable)?;
   Ok(outcome)
+}
+
+fn outcome_owner(outcome: &TriggerEvaluationReservation) -> Option<&str> {
+  match outcome {
+    TriggerEvaluationReservation::Claimed(claim) => Some(claim.owner.as_str()),
+    TriggerEvaluationReservation::Pending
+    | TriggerEvaluationReservation::Completed
+    | TriggerEvaluationReservation::DeadLetter => None,
+  }
 }
 
 pub(crate) async fn claim(

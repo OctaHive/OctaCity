@@ -2,15 +2,18 @@ use async_trait::async_trait;
 use octacity_server_domain::{TriggerId, TriggerVersion};
 
 use crate::{
-  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MutationDisposition, ScheduleRecord,
-  StoreError, TriggerDefinitionMutationOutcome,
+  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, ManagementMutation, MutationDisposition,
+  ScheduleRecord, StoreError, TriggerDefinitionMutationOutcome,
 };
 
 /// Durable schedule management and replica-safe work claims.
 #[async_trait]
 pub trait ScheduleStore: Send + Sync {
   /// Atomically creates a scheduled Trigger and its first cursor.
-  async fn create_schedule(&self, request: CreateSchedule) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
+  async fn create_schedule(
+    &self,
+    request: ManagementMutation<CreateSchedule>,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
 
   /// Reads one exact schedule for management projection.
   async fn schedule(&self, trigger_id: TriggerId, version: TriggerVersion) -> Result<ScheduleRecord, StoreError>;

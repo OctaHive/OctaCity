@@ -286,11 +286,13 @@ async fn internal_trigger_versions_are_replay_safe_queryable_and_disableable() {
     },
   };
   let created = store
-    .create_internal_trigger_definition(create(trigger_id))
+    .create_internal_trigger_definition(octacity_server_store::testing::management_mutation(create(trigger_id)))
     .await
     .unwrap();
   let replayed = store
-    .create_internal_trigger_definition(create(TriggerId::from_uuid(uuid::Uuid::from_u128(8_101)).unwrap()))
+    .create_internal_trigger_definition(octacity_server_store::testing::management_mutation(create(
+      TriggerId::from_uuid(uuid::Uuid::from_u128(8_101)).unwrap(),
+    )))
     .await
     .unwrap();
   assert_eq!(replayed.trigger_id, created.trigger_id);
@@ -300,15 +302,17 @@ async fn internal_trigger_versions_are_replay_safe_queryable_and_disableable() {
   );
 
   let published = store
-    .publish_internal_trigger_version(PublishInternalTriggerVersion {
-      id: trigger_id,
-      expected_current_version: TriggerVersion::INITIAL,
-      target,
-      enabled: false,
-      definition,
-      idempotency_key: IdempotencyKey::new("internal:disable").unwrap(),
-      published_at: Timestamp::from_unix_millis(2_000).unwrap(),
-    })
+    .publish_internal_trigger_version(octacity_server_store::testing::management_mutation(
+      PublishInternalTriggerVersion {
+        id: trigger_id,
+        expected_current_version: TriggerVersion::INITIAL,
+        target,
+        enabled: false,
+        definition,
+        idempotency_key: IdempotencyKey::new("internal:disable").unwrap(),
+        published_at: Timestamp::from_unix_millis(2_000).unwrap(),
+      },
+    ))
     .await
     .unwrap();
   assert_eq!(published.version, TriggerVersion::new(2).unwrap());

@@ -11,7 +11,7 @@ use crate::{
   ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
   MutationDisposition, ProjectProjection, ProjectSummaryProjection, Query,
-  management_security::{instance_resource, owned_collection_resource},
+  management_security::{audited_mutation, instance_resource, owned_collection_resource},
 };
 
 /// Creates one root or nested Project.
@@ -218,15 +218,22 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: CreateProjectCommand) -> Result<ProjectCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: CreateProjectCommand,
+  ) -> Result<ProjectCommandOutcome, Self::Error> {
     let outcome = self
-      .create_project(CreateProject {
-        id: command.id,
-        parent_id: command.parent_id,
-        name: command.name,
-        idempotency_key: command.idempotency_key,
-        created_at: command.created_at,
-      })
+      .create_project(audited_mutation(
+        context,
+        CreateProject {
+          id: command.id,
+          parent_id: command.parent_id,
+          name: command.name,
+          idempotency_key: command.idempotency_key,
+          created_at: command.created_at,
+        },
+      )?)
       .await?;
     Ok(ProjectCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -244,11 +251,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateProjectCommand,
   ) -> Result<ProjectCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -259,15 +266,22 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: RenameProjectCommand) -> Result<ProjectCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: RenameProjectCommand,
+  ) -> Result<ProjectCommandOutcome, Self::Error> {
     let outcome = self
-      .rename_project(RenameProject {
-        id: command.id,
-        expected_version: command.expected_version,
-        name: command.name,
-        idempotency_key: command.idempotency_key,
-        renamed_at: command.renamed_at,
-      })
+      .rename_project(audited_mutation(
+        context,
+        RenameProject {
+          id: command.id,
+          expected_version: command.expected_version,
+          name: command.name,
+          idempotency_key: command.idempotency_key,
+          renamed_at: command.renamed_at,
+        },
+      )?)
       .await?;
     Ok(ProjectCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -285,11 +299,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: RenameProjectCommand,
   ) -> Result<ProjectCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -300,15 +314,22 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: MoveProjectCommand) -> Result<ProjectCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: MoveProjectCommand,
+  ) -> Result<ProjectCommandOutcome, Self::Error> {
     let outcome = self
-      .move_project(MoveProject {
-        id: command.id,
-        expected_version: command.expected_version,
-        parent_id: command.parent_id,
-        idempotency_key: command.idempotency_key,
-        moved_at: command.moved_at,
-      })
+      .move_project(audited_mutation(
+        context,
+        MoveProject {
+          id: command.id,
+          expected_version: command.expected_version,
+          parent_id: command.parent_id,
+          idempotency_key: command.idempotency_key,
+          moved_at: command.moved_at,
+        },
+      )?)
       .await?;
     Ok(ProjectCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -326,11 +347,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: MoveProjectCommand,
   ) -> Result<ProjectCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -341,14 +362,21 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: DeleteProjectCommand) -> Result<DeleteProjectCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: DeleteProjectCommand,
+  ) -> Result<DeleteProjectCommandOutcome, Self::Error> {
     let outcome = self
-      .delete_project(DeleteProject {
-        id: command.id,
-        expected_version: command.expected_version,
-        idempotency_key: command.idempotency_key,
-        deleted_at: command.deleted_at,
-      })
+      .delete_project(audited_mutation(
+        context,
+        DeleteProject {
+          id: command.id,
+          expected_version: command.expected_version,
+          idempotency_key: command.idempotency_key,
+          deleted_at: command.deleted_at,
+        },
+      )?)
       .await?;
     Ok(DeleteProjectCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -366,11 +394,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: DeleteProjectCommand,
   ) -> Result<DeleteProjectCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 

@@ -9,6 +9,8 @@ use super::Cursor;
 pub enum AuditActorKind {
   /// A request on the unauthenticated trusted-network listener.
   UnauthenticatedManagement,
+  /// A management subject verified before entering the application layer.
+  AuthenticatedManagement,
   /// An authenticated Agent process.
   Agent,
   /// A normalized Trigger decision.

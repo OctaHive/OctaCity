@@ -6,7 +6,10 @@ use octacity_protocol::RegisterAgentRequest;
 use octacity_server_domain::{AgentId, AgentName, EntityKind, PoolId, PoolVersion};
 
 use crate::test_support::{id, run_ready, time};
-use crate::testing::{InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe};
+use crate::testing::{
+  InMemoryStore, ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, assert_management_audit_facts,
+  expected_management_audit, management_mutation,
+};
 use crate::{
   AgentCredentialStore, AgentCredentialTarget, AgentPlatform, AgentRegistrationProof, AuthenticateAgentRegistration,
   ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, MutationDisposition, RegisterAgent,
@@ -44,14 +47,18 @@ pub fn agent_credential_store_contract_fixture() -> AgentCredentialStoreContract
 pub async fn verify_agent_credential_store_contract<S, P>(store: Arc<S>, evidence: Arc<P>)
 where
   S: AgentCredentialStore + 'static,
-  P: MutationEvidenceProbe + 'static,
+  P: ManagementAuditProbe + MutationEvidenceProbe + 'static,
 {
+  let mut expected_audit = Vec::new();
   let fixture = agent_credential_store_contract_fixture();
   let enrollment = fixture.enrollment;
   let mut unknown_pool = enrollment.clone();
   unknown_pool.pool_id = id::<PoolId>(999);
   assert_eq!(
-    store.issue_agent_enrollment(unknown_pool).await.unwrap_err(),
+    store
+      .issue_agent_enrollment(management_mutation(unknown_pool))
+      .await
+      .unwrap_err(),
     StoreError::NotFound {
       entity: EntityKind::Pool
     },
@@ -60,7 +67,10 @@ where
   let mut invalid_enrollment = enrollment.clone();
   invalid_enrollment.expires_at = invalid_enrollment.issued_at;
   assert_eq!(
-    store.issue_agent_enrollment(invalid_enrollment).await.unwrap_err(),
+    store
+      .issue_agent_enrollment(management_mutation(invalid_enrollment))
+      .await
+      .unwrap_err(),
     StoreError::InvalidInput {
       operation: StoreOperation::IssueAgentEnrollment,
       source: crate::StoreInputError::InvalidCredentialWindow,
@@ -69,17 +79,26 @@ where
   );
   assert_eq!(
     store
-      .issue_agent_enrollment(enrollment.clone())
+      .issue_agent_enrollment(management_mutation(enrollment.clone()))
       .await
       .unwrap()
       .disposition,
     MutationDisposition::Applied
   );
+  expected_audit.push(expected_management_audit(
+    StoreOperation::IssueAgentEnrollment,
+    EntityKind::AgentEnrollmentCredential,
+    enrollment.credential_id,
+  ));
   assert_eq!(
     {
       let mut replay = enrollment.clone();
       replay.issued_at = time(101);
-      store.issue_agent_enrollment(replay).await.unwrap().disposition
+      store
+        .issue_agent_enrollment(management_mutation(replay))
+        .await
+        .unwrap()
+        .disposition
     },
     MutationDisposition::Replayed,
     "an enrollment replay must ignore a newly observed server issue time"
@@ -171,7 +190,15 @@ where
   );
 
   let platform_enrollment = enrollment_request(20, 0x31, ExpectedAgentPlatform::Exact(platform()), 1_000);
-  store.issue_agent_enrollment(platform_enrollment.clone()).await.unwrap();
+  store
+    .issue_agent_enrollment(management_mutation(platform_enrollment.clone()))
+    .await
+    .unwrap();
+  expected_audit.push(expected_management_audit(
+    StoreOperation::IssueAgentEnrollment,
+    EntityKind::AgentEnrollmentCredential,
+    platform_enrollment.credential_id,
+  ));
   let mut wrong_platform = registration(
     21,
     0x32,
@@ -202,7 +229,15 @@ where
     .unwrap();
 
   let expired = enrollment_request(30, 0x41, ExpectedAgentPlatform::Any, 150);
-  store.issue_agent_enrollment(expired.clone()).await.unwrap();
+  store
+    .issue_agent_enrollment(management_mutation(expired.clone()))
+    .await
+    .unwrap();
+  expected_audit.push(expected_management_audit(
+    StoreOperation::IssueAgentEnrollment,
+    EntityKind::AgentEnrollmentCredential,
+    expired.credential_id,
+  ));
   assert_eq!(
     store
       .register_agent(registration(
@@ -221,17 +256,36 @@ where
   );
 
   let revoked = enrollment_request(40, 0x51, ExpectedAgentPlatform::Any, 1_000);
-  store.issue_agent_enrollment(revoked.clone()).await.unwrap();
+  store
+    .issue_agent_enrollment(management_mutation(revoked.clone()))
+    .await
+    .unwrap();
+  expected_audit.push(expected_management_audit(
+    StoreOperation::IssueAgentEnrollment,
+    EntityKind::AgentEnrollmentCredential,
+    revoked.credential_id,
+  ));
   let revoke_enrollment = RevokeAgentCredential {
     target: AgentCredentialTarget::Enrollment(revoked.credential_id),
     revoked_at: time(300),
   };
   assert_eq!(
-    store.revoke_agent_credential(revoke_enrollment).await.unwrap(),
+    store
+      .revoke_agent_credential(management_mutation(revoke_enrollment))
+      .await
+      .unwrap(),
     MutationDisposition::Applied
   );
+  expected_audit.push(expected_management_audit(
+    StoreOperation::RevokeAgentCredential,
+    EntityKind::AgentEnrollmentCredential,
+    revoked.credential_id,
+  ));
   assert_eq!(
-    store.revoke_agent_credential(revoke_enrollment).await.unwrap(),
+    store
+      .revoke_agent_credential(management_mutation(revoke_enrollment))
+      .await
+      .unwrap(),
     MutationDisposition::Replayed
   );
   assert_eq!(
@@ -256,11 +310,22 @@ where
     revoked_at: time(400),
   };
   assert_eq!(
-    store.revoke_agent_credential(revoke_registration).await.unwrap(),
+    store
+      .revoke_agent_credential(management_mutation(revoke_registration))
+      .await
+      .unwrap(),
     MutationDisposition::Applied
   );
+  expected_audit.push(expected_management_audit(
+    StoreOperation::RevokeAgentCredential,
+    EntityKind::AgentRegistration,
+    current.credential_id,
+  ));
   assert_eq!(
-    store.revoke_agent_credential(revoke_registration).await.unwrap(),
+    store
+      .revoke_agent_credential(management_mutation(revoke_registration))
+      .await
+      .unwrap(),
     MutationDisposition::Replayed
   );
   assert_eq!(
@@ -276,7 +341,15 @@ where
   );
 
   let recovery = enrollment_request(50, 0x61, ExpectedAgentPlatform::Exact(platform()), 1_000);
-  store.issue_agent_enrollment(recovery.clone()).await.unwrap();
+  store
+    .issue_agent_enrollment(management_mutation(recovery.clone()))
+    .await
+    .unwrap();
+  expected_audit.push(expected_management_audit(
+    StoreOperation::IssueAgentEnrollment,
+    EntityKind::AgentEnrollmentCredential,
+    recovery.credential_id,
+  ));
   let recovered = store
     .register_agent(registration(
       51,
@@ -304,6 +377,7 @@ where
     },
     "every accepted credential mutation must atomically persist its evidence"
   );
+  assert_management_audit_facts(evidence.as_ref(), expected_audit).await;
 }
 
 /// Runs the credential contract against a new in-memory adapter without a runtime.

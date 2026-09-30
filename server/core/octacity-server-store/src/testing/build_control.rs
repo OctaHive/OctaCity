@@ -2,7 +2,11 @@
 
 use super::*;
 
-pub(super) async fn cancel(store: &InMemoryStore, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
+pub(super) async fn cancel(
+  store: &InMemoryStore,
+  request: CancelBuild,
+  audit: &MutationAuditContext,
+) -> Result<CancellationDisposition, StoreError> {
   let mut state = MemoryTransaction::begin(store.lock()?);
   if let Some(build_id) = state.cancellation_keys.get(&request.idempotency_key) {
     if *build_id != request.build_id {
@@ -28,6 +32,12 @@ pub(super) async fn cancel(store: &InMemoryStore, request: CancelBuild) -> Resul
       .cancellation_keys
       .insert(request.idempotency_key, request.build_id);
     record_evidence(&mut state, evidence_identity);
+    state.management_audit_facts.insert(recorded_management_audit(
+      audit,
+      StoreOperation::CancelBuild,
+      EntityKind::Build,
+      request.build_id,
+    ));
     state.commit();
     return Ok(outcome);
   }
@@ -110,12 +120,23 @@ pub(super) async fn cancel(store: &InMemoryStore, request: CancelBuild) -> Resul
     },
   );
   record_evidence(&mut state, evidence_identity);
+  state.management_audit_facts.insert(recorded_management_audit(
+    audit,
+    StoreOperation::CancelBuild,
+    EntityKind::Build,
+    request.build_id,
+  ));
   state.commit();
   Ok(outcome)
 }
 
-pub(super) async fn retry(store: &InMemoryStore, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
+pub(super) async fn retry(
+  store: &InMemoryStore,
+  request: RetryBuild,
+  audit: &MutationAuditContext,
+) -> Result<RetryDisposition, StoreError> {
   request.validate()?;
+  let build_id = request.build_id;
   let mut state = MemoryTransaction::begin(store.lock()?);
   if let Some(existing) = state.retries.get(&request.idempotency_key) {
     if same_retry(&existing.request, &request) {
@@ -216,6 +237,12 @@ pub(super) async fn retry(store: &InMemoryStore, request: RetryBuild) -> Result<
     },
   );
   record_evidence(&mut state, evidence_identity);
+  state.management_audit_facts.insert(recorded_management_audit(
+    audit,
+    StoreOperation::RetryBuild,
+    EntityKind::Build,
+    build_id,
+  ));
   state.commit();
   Ok(outcome)
 }

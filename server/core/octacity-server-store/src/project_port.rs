@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use octacity_server_domain::ProjectId;
 
 use crate::{
-  CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MoveProject, ProjectDetails,
+  CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, ManagementMutation, MoveProject, ProjectDetails,
   ProjectMutationOutcome, ProjectPage, RenameProject, StoreError,
 };
 
@@ -13,13 +13,19 @@ use crate::{
 #[async_trait]
 pub trait ProjectStore: Send + Sync {
   /// Creates one root or nested Project.
-  async fn create_project(&self, request: CreateProject) -> Result<ProjectMutationOutcome, StoreError>;
+  async fn create_project(
+    &self,
+    request: ManagementMutation<CreateProject>,
+  ) -> Result<ProjectMutationOutcome, StoreError>;
 
   /// Renames one Project if its optimistic version is current.
-  async fn rename_project(&self, request: RenameProject) -> Result<ProjectMutationOutcome, StoreError>;
+  async fn rename_project(
+    &self,
+    request: ManagementMutation<RenameProject>,
+  ) -> Result<ProjectMutationOutcome, StoreError>;
 
   /// Moves one Project while preserving acyclic ancestry.
-  async fn move_project(&self, request: MoveProject) -> Result<ProjectMutationOutcome, StoreError>;
+  async fn move_project(&self, request: ManagementMutation<MoveProject>) -> Result<ProjectMutationOutcome, StoreError>;
 
   /// Reads one Project and its root-to-parent ancestry.
   async fn project(&self, project_id: ProjectId) -> Result<ProjectDetails, StoreError>;
@@ -28,5 +34,8 @@ pub trait ProjectStore: Send + Sync {
   async fn list_projects(&self, request: ListProjects) -> Result<ProjectPage, StoreError>;
 
   /// Deletes a Project only when no child or domain resource references it.
-  async fn delete_project(&self, request: DeleteProject) -> Result<DeleteProjectOutcome, StoreError>;
+  async fn delete_project(
+    &self,
+    request: ManagementMutation<DeleteProject>,
+  ) -> Result<DeleteProjectOutcome, StoreError>;
 }

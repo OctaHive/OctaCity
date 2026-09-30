@@ -202,16 +202,18 @@ impl BuildResultRetentionHoldStore for PostgresStore {
 
   async fn place_build_result_hold(
     &self,
-    request: PlaceBuildResultHold,
+    request: ManagementMutation<PlaceBuildResultHold>,
   ) -> Result<RetentionHoldMutationOutcome, StoreError> {
-    crate::retention_hold::place(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::retention_hold::place(&self.pool, request, &audit).await
   }
 
   async fn release_build_result_hold(
     &self,
-    request: ReleaseBuildResultHold,
+    request: ManagementMutation<ReleaseBuildResultHold>,
   ) -> Result<RetentionHoldMutationOutcome, ReleaseBuildResultHoldError> {
-    crate::retention_hold::release(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::retention_hold::release(&self.pool, request, &audit).await
   }
 }
 

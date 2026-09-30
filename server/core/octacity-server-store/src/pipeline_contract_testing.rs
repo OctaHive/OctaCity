@@ -9,40 +9,52 @@ use octacity_server_pipeline::{
 use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
-use crate::testing::{InMemoryPipelineStore, MutationEvidenceProbe};
-use crate::{CreatePipeline, IdempotencyKey, MutationDisposition, PipelineStore, PublishPipelineVersion, StoreError};
+use crate::testing::{
+  InMemoryPipelineStore, ManagementAuditProbe, MutationEvidenceProbe, assert_management_audit_facts,
+  expected_management_audit, management_mutation,
+};
+use crate::{
+  CreatePipeline, IdempotencyKey, MutationDisposition, PipelineStore, PublishPipelineVersion, StoreError,
+  StoreOperation,
+};
 
 /// Runs the reusable immutable Pipeline contract against one prepared adapter.
 pub async fn verify_pipeline_store_contract<S, P>(store: Arc<S>, evidence: Arc<P>, project_id: ProjectId)
 where
   S: PipelineStore + 'static,
-  P: MutationEvidenceProbe + 'static,
+  P: ManagementAuditProbe + MutationEvidenceProbe + 'static,
 {
+  let mut expected_audit = Vec::new();
   let pipeline_id = id::<PipelineId>(10);
   let initial_dag = dag("build");
   let created = store
-    .create_pipeline(CreatePipeline {
+    .create_pipeline(management_mutation(CreatePipeline {
       id: pipeline_id,
       project_id,
       name: PipelineName::new("main").unwrap(),
       dag: initial_dag.clone(),
       idempotency_key: key("create-main"),
       published_at: time(10),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(created.disposition, MutationDisposition::Applied);
   assert_eq!(created.pipeline.version, PipelineVersion::INITIAL);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CreatePipeline,
+    EntityKind::Pipeline,
+    pipeline_id,
+  ));
 
   let replay = store
-    .create_pipeline(CreatePipeline {
+    .create_pipeline(management_mutation(CreatePipeline {
       id: pipeline_id,
       project_id,
       name: PipelineName::new("main").unwrap(),
       dag: initial_dag.clone(),
       idempotency_key: key("create-main"),
       published_at: time(999),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(replay.disposition, MutationDisposition::Replayed);
@@ -50,28 +62,28 @@ where
 
   assert_eq!(
     store
-      .create_pipeline(CreatePipeline {
+      .create_pipeline(management_mutation(CreatePipeline {
         id: id(11),
         project_id,
         name: PipelineName::new("other").unwrap(),
         dag: initial_dag.clone(),
         idempotency_key: key("create-main"),
         published_at: time(11),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict()
   );
   assert_eq!(
     store
-      .create_pipeline(CreatePipeline {
+      .create_pipeline(management_mutation(CreatePipeline {
         id: id(11),
         project_id,
         name: PipelineName::new("main").unwrap(),
         dag: initial_dag.clone(),
         idempotency_key: key("duplicate-name"),
         published_at: time(11),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict()
@@ -79,26 +91,31 @@ where
 
   let second_dag = dag("package");
   let published = store
-    .publish_pipeline_version(PublishPipelineVersion {
+    .publish_pipeline_version(management_mutation(PublishPipelineVersion {
       id: pipeline_id,
       expected_current_version: PipelineVersion::INITIAL,
       dag: second_dag.clone(),
       idempotency_key: key("publish-v2"),
       published_at: time(20),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(published.disposition, MutationDisposition::Applied);
   assert_eq!(published.pipeline.version.get(), 2);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::PublishPipelineVersion,
+    EntityKind::Pipeline,
+    pipeline_id,
+  ));
 
   let replay = store
-    .publish_pipeline_version(PublishPipelineVersion {
+    .publish_pipeline_version(management_mutation(PublishPipelineVersion {
       id: pipeline_id,
       expected_current_version: PipelineVersion::INITIAL,
       dag: second_dag,
       idempotency_key: key("publish-v2"),
       published_at: time(999),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(replay.disposition, MutationDisposition::Replayed);
@@ -114,13 +131,13 @@ where
 
   assert_eq!(
     store
-      .publish_pipeline_version(PublishPipelineVersion {
+      .publish_pipeline_version(management_mutation(PublishPipelineVersion {
         id: pipeline_id,
         expected_current_version: PipelineVersion::INITIAL,
         dag: dag("changed-v1"),
         idempotency_key: key("attempt-mutation"),
         published_at: time(30),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict(),
@@ -137,14 +154,14 @@ where
   );
   assert_eq!(
     store
-      .create_pipeline(CreatePipeline {
+      .create_pipeline(management_mutation(CreatePipeline {
         id: id(99),
         project_id: id(999),
         name: PipelineName::new("orphan").unwrap(),
         dag: initial_dag,
         idempotency_key: key("missing-project"),
         published_at: time(40),
-      })
+      }))
       .await
       .unwrap_err(),
     StoreError::NotFound {
@@ -156,6 +173,7 @@ where
   assert_eq!(counts.idempotency, 2);
   assert_eq!(counts.audit, 2);
   assert_eq!(counts.outbox, 2);
+  assert_management_audit_facts(evidence.as_ref(), expected_audit).await;
 }
 
 /// Runs the Pipeline contract against the deterministic in-memory adapter.

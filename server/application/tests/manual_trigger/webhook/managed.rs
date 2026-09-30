@@ -219,15 +219,16 @@ struct PendingManagedOperation {
 impl WebhookConfigurationStore for ManagedExternalStore {
   async fn create_unmanaged_webhook(
     &self,
-    _request: CreateUnmanagedWebhook,
+    _request: octacity_server_store::ManagementMutation<CreateUnmanagedWebhook>,
   ) -> Result<UnmanagedWebhookMutationOutcome, StoreError> {
     Err(StoreError::Unavailable)
   }
 
   async fn create_managed_webhook(
     &self,
-    request: CreateManagedWebhook,
+    request: octacity_server_store::ManagementMutation<CreateManagedWebhook>,
   ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
+    let (request, _audit) = request.into_parts();
     let mut state = self.state.lock().unwrap();
     if let Some(record) = &state.record {
       if state.create_key.as_ref() != Some(&request.idempotency_key) {
@@ -294,8 +295,9 @@ impl ManagedWebhookRegistrationStore for ManagedExternalStore {
 impl ManagedWebhookOperationStore for ManagedExternalStore {
   async fn enqueue_managed_webhook_operation(
     &self,
-    request: EnqueueManagedWebhookOperation,
+    request: octacity_server_store::ManagementMutation<EnqueueManagedWebhookOperation>,
   ) -> Result<StoreDisposition, StoreError> {
+    let (request, _audit) = request.into_parts();
     let mut state = self.state.lock().unwrap();
     if state.pending.is_some() {
       return Ok(StoreDisposition::Replayed);

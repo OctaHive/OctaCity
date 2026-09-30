@@ -1,8 +1,8 @@
 use octacity_server_domain::{EntityKind, Timestamp, TriggerId, TriggerVersion};
 use octacity_server_store::{
   CreateInternalTriggerDefinition, InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord,
-  ListInternalTriggerDefinitions, MutationDisposition, PublishInternalTriggerVersion, StoreError, StoreInputError,
-  StoreOperation, TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerTarget,
+  ListInternalTriggerDefinitions, MutationAuditContext, MutationDisposition, PublishInternalTriggerVersion, StoreError,
+  StoreInputError, StoreOperation, TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerTarget,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -36,14 +36,16 @@ struct DefinitionRow {
 pub(crate) async fn create(
   pool: &PgPool,
   request: CreateInternalTriggerDefinition,
+  audit: &MutationAuditContext,
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
-  crate::definition_mutation::create_trigger(pool, request.trigger).await
+  crate::definition_mutation::create_trigger(pool, request.trigger, audit).await
 }
 
 pub(crate) async fn publish(
   pool: &PgPool,
   request: PublishInternalTriggerVersion,
+  audit: &MutationAuditContext,
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::new(
@@ -131,13 +133,12 @@ pub(crate) async fn publish(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.id.to_string(),
-      safe_metadata: json!({"version": next_version.get(), "kind": "internal", "enabled": request.enabled}),
-      outbox_payload: json!({"trigger_id": request.id, "version": next_version}),
-    },
+    MutationFacts::management(
+      audit,
+      request.id.to_string(),
+      json!({"version": next_version.get(), "kind": "internal", "enabled": request.enabled}),
+      json!({"trigger_id": request.id, "version": next_version}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;

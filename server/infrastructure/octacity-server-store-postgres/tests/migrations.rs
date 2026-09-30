@@ -49,7 +49,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     octacity_server_store_postgres::migration_status(&previous.pool).await?,
     MigrationStatus::Current
   );
-  assert!(column_exists(&previous.pool, "job_completions", "execution").await?);
+  assert!(authenticated_management_actor_is_allowed(&previous.pool).await?);
   assert_snapshot_marker(&previous.pool).await?;
 
   let failed = snapshot.restore().await;
@@ -78,7 +78,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     maximum_applied_version(&rollback.pool).await?,
     PREVIOUS_BINARY_SCHEMA_VERSION
   );
-  assert!(!column_exists(&rollback.pool, "job_completions", "execution").await?);
+  assert!(!authenticated_management_actor_is_allowed(&rollback.pool).await?);
   assert_snapshot_marker(&rollback.pool).await?;
 
   rollback.cleanup().await;
@@ -210,17 +210,14 @@ async fn maximum_applied_version(pool: &sqlx::PgPool) -> Result<i64, sqlx::Error
     .await
 }
 
-async fn column_exists(pool: &sqlx::PgPool, table: &str, column: &str) -> Result<bool, sqlx::Error> {
-  sqlx::query_scalar(
-    "SELECT EXISTS (\
-       SELECT 1 FROM information_schema.columns \
-       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2\
-     )",
+async fn authenticated_management_actor_is_allowed(pool: &sqlx::PgPool) -> Result<bool, sqlx::Error> {
+  let definition: String = sqlx::query_scalar(
+    "SELECT pg_get_constraintdef(oid) FROM pg_constraint \
+     WHERE conrelid = 'audit_facts'::regclass AND conname = 'audit_facts_actor_kind_known'",
   )
-  .bind(table)
-  .bind(column)
   .fetch_one(pool)
-  .await
+  .await?;
+  Ok(definition.contains("'authenticated_management'::text"))
 }
 
 async fn table_exists(pool: &sqlx::PgPool, table: &str) -> Result<bool, sqlx::Error> {

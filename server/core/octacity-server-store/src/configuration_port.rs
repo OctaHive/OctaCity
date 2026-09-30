@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, RepositoryId, RepositoryVersion};
 
 use crate::{
-  BuildConfigurationMutationOutcome, CreateBuildConfiguration, CreateRepository, PublishBuildConfigurationVersion,
-  PublishRepositoryVersion, PublishedBuildConfiguration, PublishedRepository, RepositoryMutationOutcome, StoreError,
+  BuildConfigurationMutationOutcome, CreateBuildConfiguration, CreateRepository, ManagementMutation,
+  PublishBuildConfigurationVersion, PublishRepositoryVersion, PublishedBuildConfiguration, PublishedRepository,
+  RepositoryMutationOutcome, StoreError,
 };
 
 /// Backend-neutral append-only Repository and Build Configuration operations.
@@ -14,12 +15,15 @@ use crate::{
 #[async_trait]
 pub trait ConfigurationStore: Send + Sync {
   /// Creates one Repository identity together with version one.
-  async fn create_repository(&self, request: CreateRepository) -> Result<RepositoryMutationOutcome, StoreError>;
+  async fn create_repository(
+    &self,
+    request: ManagementMutation<CreateRepository>,
+  ) -> Result<RepositoryMutationOutcome, StoreError>;
 
   /// Appends exactly the next Repository version.
   async fn publish_repository_version(
     &self,
-    request: PublishRepositoryVersion,
+    request: ManagementMutation<PublishRepositoryVersion>,
   ) -> Result<RepositoryMutationOutcome, StoreError>;
 
   /// Reads one exact immutable Repository version.
@@ -32,13 +36,13 @@ pub trait ConfigurationStore: Send + Sync {
   /// Creates one Build Configuration identity together with version one.
   async fn create_build_configuration(
     &self,
-    request: CreateBuildConfiguration,
+    request: ManagementMutation<CreateBuildConfiguration>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError>;
 
   /// Appends exactly the next Build Configuration version.
   async fn publish_build_configuration_version(
     &self,
-    request: PublishBuildConfigurationVersion,
+    request: ManagementMutation<PublishBuildConfigurationVersion>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError>;
 
   /// Reads one exact immutable Build Configuration version.

@@ -72,6 +72,7 @@ pub(super) async fn list_audit_facts(
 fn actor_kind(kind: AuditActorKind) -> ApplicationActorKind {
   match kind {
     AuditActorKind::UnauthenticatedManagement => ApplicationActorKind::UnauthenticatedManagement,
+    AuditActorKind::AuthenticatedManagement => ApplicationActorKind::AuthenticatedManagement,
     AuditActorKind::Agent => ApplicationActorKind::Agent,
     AuditActorKind::Trigger => ApplicationActorKind::Trigger,
     AuditActorKind::Orchestrator => ApplicationActorKind::Orchestrator,
@@ -104,6 +105,7 @@ fn project_page(page: AuditFactPageProjection, request_id: &RequestId) -> Result
         actor: AuditActor {
           kind: match fact.actor.kind {
             ApplicationActorKind::UnauthenticatedManagement => AuditActorKind::UnauthenticatedManagement,
+            ApplicationActorKind::AuthenticatedManagement => AuditActorKind::AuthenticatedManagement,
             ApplicationActorKind::Agent => AuditActorKind::Agent,
             ApplicationActorKind::Trigger => AuditActorKind::Trigger,
             ApplicationActorKind::Orchestrator => AuditActorKind::Orchestrator,

@@ -16,7 +16,7 @@ use crate::{
   ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
   ManagementResourceKind, ManagementResourceResult, ManualSourceSelection, ManualTriggerCommand, ManualTriggerError,
   ManualTriggerService, MutationDisposition, Query,
-  management_security::{instance_resource, owned_collection_resource},
+  management_security::{audited_mutation, instance_resource, owned_collection_resource},
 };
 
 /// Immutable Build input evaluated for every occurrence of one schedule.
@@ -145,7 +145,7 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateScheduleCommand,
   ) -> Result<ScheduleCommandOutcome, Self::Error> {
@@ -161,21 +161,24 @@ where
     let definition = serde_json::to_value(&command.build).map_err(|_| ApplicationError::invalid())?;
     let outcome = self
       .store
-      .create_schedule(CreateSchedule {
-        trigger: CreateTriggerDefinition {
-          id: command.id,
-          version: command.version,
-          configuration_id: command.configuration_id,
-          configuration_version: command.configuration_version,
-          kind: TriggerKind::Scheduled,
-          enabled: command.enabled,
-          definition,
-          idempotency_key: command.idempotency_key,
-          created_at: command.created_at,
+      .create_schedule(audited_mutation(
+        context,
+        CreateSchedule {
+          trigger: CreateTriggerDefinition {
+            id: command.id,
+            version: command.version,
+            configuration_id: command.configuration_id,
+            configuration_version: command.configuration_version,
+            kind: TriggerKind::Scheduled,
+            enabled: command.enabled,
+            definition,
+            idempotency_key: command.idempotency_key,
+            created_at: command.created_at,
+          },
+          schedule: command.schedule,
+          next_occurrence_at,
         },
-        schedule: command.schedule,
-        next_occurrence_at,
-      })
+      )?)
       .await?;
     Ok(ScheduleCommandOutcome {
       disposition: outcome.disposition.into(),

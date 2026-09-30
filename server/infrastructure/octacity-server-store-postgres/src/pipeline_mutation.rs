@@ -1,8 +1,8 @@
 use octacity_server_domain::{EntityKind, PipelineId, PipelineName, PipelineVersion, ProjectId};
 use octacity_server_pipeline::PublishablePipelineDag;
 use octacity_server_store::{
-  CreatePipeline, MutationDisposition, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline, StoreError,
-  StoreInputError, StoreOperation,
+  CreatePipeline, MutationAuditContext, MutationDisposition, PipelineMutationOutcome, PublishPipelineVersion,
+  PublishedPipeline, StoreError, StoreInputError, StoreOperation,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -30,6 +30,7 @@ struct PublishFingerprint<'a> {
 pub(crate) async fn create(
   pool: &sqlx::PgPool,
   request: CreatePipeline,
+  audit: &MutationAuditContext,
 ) -> Result<PipelineMutationOutcome, StoreError> {
   validate_dag(&request.dag, StoreOperation::CreatePipeline)?;
   let identity = MutationIdentity::new(
@@ -85,7 +86,7 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(MutationKind::CreatePipeline, &outcome.pipeline),
+    facts(audit, MutationKind::CreatePipeline, &outcome.pipeline),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -95,6 +96,7 @@ pub(crate) async fn create(
 pub(crate) async fn publish(
   pool: &sqlx::PgPool,
   request: PublishPipelineVersion,
+  audit: &MutationAuditContext,
 ) -> Result<PipelineMutationOutcome, StoreError> {
   validate_dag(&request.dag, StoreOperation::PublishPipelineVersion)?;
   let identity = MutationIdentity::new(
@@ -157,7 +159,7 @@ pub(crate) async fn publish(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(MutationKind::PublishPipelineVersion, &outcome.pipeline),
+    facts(audit, MutationKind::PublishPipelineVersion, &outcome.pipeline),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -229,24 +231,23 @@ fn validate_dag(dag: &PublishablePipelineDag, operation: StoreOperation) -> Resu
   })
 }
 
-fn facts(kind: MutationKind, pipeline: &PublishedPipeline) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: pipeline.id.to_string(),
-    safe_metadata: json!({
+fn facts(audit: &MutationAuditContext, kind: MutationKind, pipeline: &PublishedPipeline) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    pipeline.id.to_string(),
+    json!({
       "edge_count": pipeline.dag.edges().len(),
       "node_count": pipeline.dag.nodes().len(),
       "project_id": pipeline.project_id,
       "version": pipeline.version.get(),
     }),
-    outbox_payload: json!({
+    json!({
       "event": kind.outbox_topic(),
       "pipeline_id": pipeline.id,
       "project_id": pipeline.project_id,
       "version": pipeline.version.get(),
     }),
-  }
+  )
 }
 
 fn replay(value: Value) -> Result<PipelineMutationOutcome, StoreError> {

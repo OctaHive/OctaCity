@@ -1,7 +1,7 @@
 use octacity_server_domain::{EnrollmentCredentialId, EntityKind, PoolId, PoolVersion, Timestamp};
 use octacity_server_store::{
-  ExpectedAgentPlatform, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, MutationDisposition, StoreError,
-  StoreOperation,
+  ExpectedAgentPlatform, IssueAgentEnrollment, IssueAgentEnrollmentOutcome, MutationAuditContext, MutationDisposition,
+  StoreError, StoreOperation,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -15,6 +15,7 @@ use crate::{
 pub(crate) async fn execute(
   pool: &PgPool,
   request: IssueAgentEnrollment,
+  audit: &MutationAuditContext,
 ) -> Result<IssueAgentEnrollmentOutcome, StoreError> {
   request.validate()?;
   let digest = request.credential.digest().as_bytes();
@@ -83,21 +84,20 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.credential_id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::management(
+      audit,
+      request.credential_id.to_string(),
+      json!({
         "pool_id": request.pool_id,
         "pool_version": request.pool_version,
         "expires_at": request.expires_at,
       }),
-      outbox_payload: json!({
+      json!({
         "credential_id": request.credential_id,
         "pool_id": request.pool_id,
         "pool_version": request.pool_version,
       }),
-    },
+    ),
     encode_outcome(&stored)?,
   )
   .await?;

@@ -209,6 +209,36 @@ fn canonical_context_carries_only_bounded_safe_facts() {
 }
 
 #[test]
+fn accepted_context_translates_to_exact_mutation_audit_evidence() {
+  let anonymous_context = ManagementRequestContext::trusted_network(request_id());
+  let anonymous_audit = crate::MutationAuditContext::try_from(&anonymous_context).unwrap();
+  assert_eq!(
+    anonymous_audit.actor().kind,
+    crate::AuditActorKind::UnauthenticatedManagement
+  );
+  assert_eq!(anonymous_audit.actor().identity, None);
+  assert_eq!(anonymous_audit.request_identity(), request_id().to_string());
+
+  let authenticated_context = ManagementRequestContext::new(
+    ManagementActor::authenticated("operator-1").unwrap(),
+    ManagementSecurityScope::new("operator:1").unwrap(),
+    request_id(),
+    ManagementRequestAttributes::new(
+      ManagementIngress::VerifiedIdentity,
+      Some(ManagementClientKind::Automation),
+    ),
+  )
+  .unwrap();
+  let authenticated_audit = crate::MutationAuditContext::try_from(&authenticated_context).unwrap();
+  assert_eq!(
+    authenticated_audit.actor().kind,
+    crate::AuditActorKind::AuthenticatedManagement
+  );
+  assert_eq!(authenticated_audit.actor().identity.as_deref(), Some("operator-1"));
+  assert_eq!(authenticated_audit.request_identity(), request_id().to_string());
+}
+
+#[test]
 fn debug_output_redacts_actor_scope_and_resource_identities() {
   let actor = ManagementActor::authenticated("private-subject").unwrap();
   let scope = ManagementSecurityScope::new("private:scope").unwrap();

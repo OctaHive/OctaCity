@@ -25,7 +25,11 @@ pub(super) async fn replay(
   Ok(Some(TriggerEvaluationOutcome::Suppressed(outcome)))
 }
 
-pub(super) async fn accept(store: &InMemoryStore, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
+pub(super) async fn accept(
+  store: &InMemoryStore,
+  request: AcceptTrigger,
+  audit: Option<MutationAuditContext>,
+) -> Result<AcceptTriggerOutcome, StoreError> {
   request.validate()?;
   let mut state = MemoryTransaction::begin(store.lock()?);
   if !state
@@ -124,6 +128,14 @@ pub(super) async fn accept(store: &InMemoryStore, request: AcceptTrigger) -> Res
     enqueue(&mut state, job_id);
   }
   let occurrence_id = request.trigger.id;
+  if let Some(audit) = audit {
+    state.management_audit_facts.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::AcceptTrigger,
+      EntityKind::Build,
+      outcome.build_id,
+    ));
+  }
   state.accepted.insert(
     occurrence_id,
     AcceptedRecord {
@@ -142,6 +154,7 @@ pub(super) async fn accept(store: &InMemoryStore, request: AcceptTrigger) -> Res
 pub(super) async fn suppress(
   store: &InMemoryStore,
   request: SuppressTrigger,
+  audit: Option<MutationAuditContext>,
 ) -> Result<SuppressTriggerOutcome, StoreError> {
   request.validate()?;
   let mut state = MemoryTransaction::begin(store.lock()?);
@@ -177,6 +190,14 @@ pub(super) async fn suppress(
     disposition: MutationDisposition::Applied,
     trigger_occurrence_id: occurrence_id,
   };
+  if let Some(audit) = audit {
+    state.management_audit_facts.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::SuppressTrigger,
+      EntityKind::Trigger,
+      occurrence_id,
+    ));
+  }
   state
     .suppressed
     .insert(occurrence_id, SuppressedRecord { request, outcome });

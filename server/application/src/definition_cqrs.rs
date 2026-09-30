@@ -13,7 +13,8 @@ use serde_json::Value;
 use crate::{
   ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
-  ProjectPolicyDefinition, management_security::owned_collection_resource,
+  ProjectPolicyDefinition,
+  management_security::{audited_mutation, owned_collection_resource},
 };
 
 /// Publishes exactly the next immutable policy version for one Project.
@@ -137,17 +138,21 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: PublishProjectPolicyCommand,
   ) -> Result<ProjectPolicyCommandOutcome, Self::Error> {
     let policy = serde_json::to_value(command.policy).map_err(|_| ApplicationError::unavailable())?;
     let outcome = self
-      .publish_project_policy(PublishProjectPolicy {
-        project_id: command.project_id,
-        expected_current_version: command.expected_current_version,
-        policy,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .publish_project_policy(audited_mutation(
+        context,
+        PublishProjectPolicy {
+          project_id: command.project_id,
+          expected_current_version: command.expected_current_version,
+          policy,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(ProjectPolicyCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -166,11 +171,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: PublishProjectPolicyCommand,
   ) -> Result<ProjectPolicyCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -183,6 +188,7 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: CreateTriggerDefinitionCommand,
   ) -> Result<TriggerDefinitionCommandOutcome, Self::Error> {
     if command.kind == TriggerKind::Internal {
@@ -190,17 +196,20 @@ where
         .map_err(|_| ApplicationError::invalid())?;
     }
     let outcome = self
-      .create_trigger_definition(CreateTriggerDefinition {
-        id: command.id,
-        version: command.version,
-        configuration_id: command.configuration_id,
-        configuration_version: command.configuration_version,
-        kind: command.kind,
-        enabled: command.enabled,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        created_at: command.created_at,
-      })
+      .create_trigger_definition(audited_mutation(
+        context,
+        CreateTriggerDefinition {
+          id: command.id,
+          version: command.version,
+          configuration_id: command.configuration_id,
+          configuration_version: command.configuration_version,
+          kind: command.kind,
+          enabled: command.enabled,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          created_at: command.created_at,
+        },
+      )?)
       .await?;
     Ok(TriggerDefinitionCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -219,10 +228,10 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateTriggerDefinitionCommand,
   ) -> Result<TriggerDefinitionCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }

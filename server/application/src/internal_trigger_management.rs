@@ -15,7 +15,7 @@ use crate::{
   ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
   ManagementResource, ManagementResourceKind, ManagementResourceResult, ManualSourceSelection, MutationDisposition,
   ProjectionError, Query,
-  management_security::{instance_resource, owned_collection_resource},
+  management_security::{audited_mutation, instance_resource, owned_collection_resource},
 };
 
 /// Explicit source strategy for a downstream Build created by an internal Trigger.
@@ -211,7 +211,7 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateInternalTriggerCommand,
   ) -> Result<InternalTriggerCommandOutcome, Self::Error> {
@@ -220,19 +220,22 @@ where
     let encoded = serde_json::to_value(&definition).map_err(|_| ApplicationError::invalid())?;
     let outcome = self
       .store
-      .create_internal_trigger_definition(CreateInternalTriggerDefinition {
-        trigger: CreateTriggerDefinition {
-          id: command.id,
-          version: TriggerVersion::INITIAL,
-          configuration_id: command.target.configuration_id,
-          configuration_version: command.target.configuration_version,
-          kind: TriggerKind::Internal,
-          enabled: command.enabled,
-          definition: encoded,
-          idempotency_key: command.idempotency_key,
-          created_at: command.created_at,
+      .create_internal_trigger_definition(audited_mutation(
+        context,
+        CreateInternalTriggerDefinition {
+          trigger: CreateTriggerDefinition {
+            id: command.id,
+            version: TriggerVersion::INITIAL,
+            configuration_id: command.target.configuration_id,
+            configuration_version: command.target.configuration_version,
+            kind: TriggerKind::Internal,
+            enabled: command.enabled,
+            definition: encoded,
+            idempotency_key: command.idempotency_key,
+            created_at: command.created_at,
+          },
         },
-      })
+      )?)
       .await?;
     let trigger = project(
       self
@@ -256,7 +259,7 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: PublishInternalTriggerVersionCommand,
   ) -> Result<InternalTriggerCommandOutcome, Self::Error> {
@@ -265,15 +268,18 @@ where
     let encoded = serde_json::to_value(&definition).map_err(|_| ApplicationError::invalid())?;
     let outcome = self
       .store
-      .publish_internal_trigger_version(PublishInternalTriggerVersion {
-        id: command.id,
-        expected_current_version: command.expected_current_version,
-        target: command.target,
-        enabled: command.enabled,
-        definition: encoded,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .publish_internal_trigger_version(audited_mutation(
+        context,
+        PublishInternalTriggerVersion {
+          id: command.id,
+          expected_current_version: command.expected_current_version,
+          target: command.target,
+          enabled: command.enabled,
+          definition: encoded,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     let trigger = project(
       self

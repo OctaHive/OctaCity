@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::Command;
+use crate::{Command, ManagementRequestContext};
 
 /// One authoritative transaction boundary for a typed command.
 ///
@@ -17,5 +17,5 @@ where
   type Error: Send;
 
   /// Executes the command and returns only after its authoritative commit.
-  async fn commit_command(&self, command: C) -> Result<C::Outcome, Self::Error>;
+  async fn commit_command(&self, context: &ManagementRequestContext, command: C) -> Result<C::Outcome, Self::Error>;
 }

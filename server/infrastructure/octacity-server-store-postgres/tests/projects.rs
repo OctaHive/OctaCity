@@ -3,6 +3,7 @@ mod support;
 use std::{fmt::Debug, str::FromStr, sync::Arc};
 
 use octacity_server_domain::{EntityKind, ProjectId, ProjectName, Timestamp};
+use octacity_server_store::testing::management_mutation;
 use octacity_server_store::{CreateProject, DeleteProject, IdempotencyKey, MoveProject, ProjectStore as _, StoreError};
 use octacity_server_store_postgres::PostgresStore;
 use support::TestDatabase;
@@ -24,13 +25,13 @@ async fn concurrent_opposite_moves_cannot_create_a_cycle() {
       tokio::spawn(async move {
         barrier.wait().await;
         store
-          .move_project(MoveProject {
+          .move_project(management_mutation(MoveProject {
             id: left.id,
             expected_version: left.version,
             parent_id: Some(right.id),
             idempotency_key: key("move-left-under-right"),
             moved_at: time(2),
-          })
+          }))
           .await
       })
     };
@@ -40,13 +41,13 @@ async fn concurrent_opposite_moves_cannot_create_a_cycle() {
       tokio::spawn(async move {
         barrier.wait().await;
         store
-          .move_project(MoveProject {
+          .move_project(management_mutation(MoveProject {
             id: right.id,
             expected_version: right.version,
             parent_id: Some(left.id),
             idempotency_key: key("move-right-under-left"),
             moved_at: time(2),
-          })
+          }))
           .await
       })
     };
@@ -91,13 +92,13 @@ async fn sibling_name_race_has_one_winner() {
       tasks.push(tokio::spawn(async move {
         barrier.wait().await;
         store
-          .create_project(CreateProject {
+          .create_project(management_mutation(CreateProject {
             id: id(id_value),
             parent_id: Some(parent.id),
             name: ProjectName::new("same-name").unwrap(),
             idempotency_key: key(key_value),
             created_at: time(2),
-          })
+          }))
           .await
       }));
     }
@@ -143,12 +144,12 @@ async fn non_hierarchy_reference_guards_deletion() {
 
     assert_eq!(
       store
-        .delete_project(DeleteProject {
+        .delete_project(management_mutation(DeleteProject {
           id: project.id,
           expected_version: project.version,
           idempotency_key: key("delete-referenced"),
           deleted_at: time(2),
-        })
+        }))
         .await
         .unwrap_err(),
       StoreError::Conflict {
@@ -172,13 +173,13 @@ async fn create(
   at: i64,
 ) -> octacity_server_store::Project {
   store
-    .create_project(CreateProject {
+    .create_project(management_mutation(CreateProject {
       id: id(id_value),
       parent_id,
       name: ProjectName::new(name).unwrap(),
       idempotency_key: key(key_value),
       created_at: time(at),
-    })
+    }))
     .await
     .unwrap()
     .project

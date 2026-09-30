@@ -5,7 +5,7 @@ use std::sync::Arc;
 use octacity_server_domain::{EntityKind, Timestamp, TriggerOccurrenceId};
 use octacity_server_store::{
   ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, ReserveTriggerEvaluation, StoreError,
-  TriggerEvaluationReservation, TriggerEvaluationWorkStore as _, WorkerOwner,
+  TriggerEvaluationReservation, TriggerEvaluationWorkStore as _, WorkerOwner, testing::management_mutation,
 };
 use octacity_server_store_postgres::PostgresStore;
 use serde_json::json;
@@ -26,7 +26,7 @@ async fn trigger_retry_claims_are_exclusive_and_survive_rolling_restart() {
     claim_expires_at: time(2_000),
   };
   let initial = PostgresStore::new(independent_pool(&database.pool).await)
-    .reserve_trigger_evaluation(reservation.clone())
+    .reserve_trigger_evaluation(management_mutation(reservation.clone()))
     .await
     .unwrap();
   assert!(matches!(initial, TriggerEvaluationReservation::Claimed(_)));
@@ -102,12 +102,12 @@ async fn trigger_retry_claims_are_exclusive_and_survive_rolling_restart() {
   let after_restart = PostgresStore::new(independent_pool(&database.pool).await);
   assert_eq!(
     after_restart
-      .reserve_trigger_evaluation(ReserveTriggerEvaluation {
+      .reserve_trigger_evaluation(management_mutation(ReserveTriggerEvaluation {
         owner: owner("replica:replay"),
         requested_at: time(5_000),
         claim_expires_at: time(6_000),
         ..reservation
-      })
+      }))
       .await
       .unwrap(),
     TriggerEvaluationReservation::Completed

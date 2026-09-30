@@ -1,7 +1,9 @@
 use async_trait::async_trait;
 use octacity_server_domain::{PipelineId, PipelineVersion};
 
-use crate::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline, StoreError};
+use crate::{
+  CreatePipeline, ManagementMutation, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline, StoreError,
+};
 
 /// Backend-neutral append-only operations for immutable Pipeline versions.
 ///
@@ -11,12 +13,15 @@ use crate::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, Pub
 #[async_trait]
 pub trait PipelineStore: Send + Sync {
   /// Creates a Pipeline identity together with immutable version one.
-  async fn create_pipeline(&self, request: CreatePipeline) -> Result<PipelineMutationOutcome, StoreError>;
+  async fn create_pipeline(
+    &self,
+    request: ManagementMutation<CreatePipeline>,
+  ) -> Result<PipelineMutationOutcome, StoreError>;
 
   /// Appends exactly the next version when the optimistic precondition is current.
   async fn publish_pipeline_version(
     &self,
-    request: PublishPipelineVersion,
+    request: ManagementMutation<PublishPipelineVersion>,
   ) -> Result<PipelineMutationOutcome, StoreError>;
 
   /// Reads one exact immutable Pipeline version.

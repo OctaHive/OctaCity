@@ -5,7 +5,9 @@ use sqlx::PgPool;
 
 use crate::{
   database::{classify, unavailable},
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
 };
 
 pub(crate) async fn execute(pool: &PgPool, request: RenewLease) -> Result<LeaseHeartbeatOutcome, StoreError> {
@@ -118,20 +120,19 @@ fn facts(request: &RenewLease, outcome: LeaseHeartbeatOutcome) -> MutationFacts 
     LeaseHeartbeatOutcome::Fenced => "fenced",
     LeaseHeartbeatOutcome::Drain { .. } => "drain",
   };
-  MutationFacts {
-    actor_kind: "agent",
-    actor_identity: Some(request.lease.agent_id.to_string()),
-    target_identity: request.lease.lease_id.to_string(),
-    safe_metadata: json!({
+  MutationFacts::non_management(
+    NonManagementActor::Agent(request.lease.agent_id.to_string()),
+    request.lease.lease_id.to_string(),
+    json!({
       "directive": directive,
       "job_id": request.job_id,
       "registration_epoch": request.lease.registration_epoch.get(),
     }),
-    outbox_payload: json!({
+    json!({
       "directive": directive,
       "job_id": request.job_id,
       "lease_id": request.lease.lease_id,
       "schema_version": 1,
     }),
-  }
+  )
 }

@@ -20,7 +20,19 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
     crate::telemetry::observe(
       Operation::Accept,
-      crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request),
+      crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request, None),
+    )
+    .await
+  }
+
+  async fn accept_management_trigger(
+    &self,
+    request: ManagementMutation<AcceptTrigger>,
+  ) -> Result<AcceptTriggerOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::telemetry::observe(
+      Operation::Accept,
+      crate::accept_trigger::execute(&self.store.pool, &self.job_spec_signer, request, Some(&audit)),
     )
     .await
   }
@@ -28,7 +40,19 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,
-      crate::accept_trigger::suppress(&self.store.pool, request),
+      crate::accept_trigger::suppress(&self.store.pool, request, None),
+    )
+    .await
+  }
+
+  async fn suppress_management_trigger(
+    &self,
+    request: ManagementMutation<SuppressTrigger>,
+  ) -> Result<SuppressTriggerOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::telemetry::observe(
+      Operation::Complete,
+      crate::accept_trigger::suppress(&self.store.pool, request, Some(&audit)),
     )
     .await
   }
@@ -38,9 +62,10 @@ impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
 impl TriggerEvaluationWorkStore for PostgresStore {
   async fn reserve_trigger_evaluation(
     &self,
-    request: ReserveTriggerEvaluation,
+    request: ManagementMutation<ReserveTriggerEvaluation>,
   ) -> Result<TriggerEvaluationReservation, StoreError> {
-    crate::trigger_evaluation::reserve(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::trigger_evaluation::reserve(&self.pool, request, &audit).await
   }
 
   async fn claim_trigger_evaluations(
@@ -161,16 +186,18 @@ impl InternalTriggerEventStore for PostgresStore {
 impl InternalTriggerDefinitionStore for PostgresStore {
   async fn create_internal_trigger_definition(
     &self,
-    request: CreateInternalTriggerDefinition,
+    request: ManagementMutation<CreateInternalTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
-    crate::internal_trigger_definition::create(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::internal_trigger_definition::create(&self.pool, request, &audit).await
   }
 
   async fn publish_internal_trigger_version(
     &self,
-    request: PublishInternalTriggerVersion,
+    request: ManagementMutation<PublishInternalTriggerVersion>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
-    crate::internal_trigger_definition::publish(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::internal_trigger_definition::publish(&self.pool, request, &audit).await
   }
 
   async fn internal_trigger_definition(
@@ -238,12 +265,17 @@ impl JobEventReadStore for PostgresAuthoritativeStore {
 
 #[async_trait]
 impl BuildControlStore for PostgresAuthoritativeStore {
-  async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
-    crate::cancel_build::execute(&self.store.pool, request).await
+  async fn cancel_build(
+    &self,
+    request: ManagementMutation<CancelBuild>,
+  ) -> Result<CancellationDisposition, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::cancel_build::execute(&self.store.pool, request, &audit).await
   }
 
-  async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
-    crate::retry_build::execute(&self.store.pool, &self.job_spec_signer, request).await
+  async fn retry_build(&self, request: ManagementMutation<RetryBuild>) -> Result<RetryDisposition, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::retry_build::execute(&self.store.pool, &self.job_spec_signer, request, &audit).await
   }
 }
 

@@ -19,16 +19,18 @@ impl TriggerDefinitionStore for PostgresStore {
 impl WebhookConfigurationStore for PostgresStore {
   async fn create_unmanaged_webhook(
     &self,
-    request: CreateUnmanagedWebhook,
+    request: ManagementMutation<CreateUnmanagedWebhook>,
   ) -> Result<UnmanagedWebhookMutationOutcome, StoreError> {
-    crate::external_trigger::create(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::external_trigger::create(&self.pool, request, &audit).await
   }
 
   async fn create_managed_webhook(
     &self,
-    request: CreateManagedWebhook,
+    request: ManagementMutation<CreateManagedWebhook>,
   ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
-    crate::external_trigger::create_managed(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::external_trigger::create_managed(&self.pool, request, &audit).await
   }
 }
 
@@ -46,9 +48,10 @@ impl ManagedWebhookRegistrationStore for PostgresStore {
 impl ManagedWebhookOperationStore for PostgresStore {
   async fn enqueue_managed_webhook_operation(
     &self,
-    request: octacity_server_store::EnqueueManagedWebhookOperation,
+    request: ManagementMutation<octacity_server_store::EnqueueManagedWebhookOperation>,
   ) -> Result<MutationDisposition, StoreError> {
-    crate::external_trigger::enqueue_managed_operation(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::external_trigger::enqueue_managed_operation(&self.pool, request, &audit).await
   }
 
   async fn claim_managed_webhook_operations(

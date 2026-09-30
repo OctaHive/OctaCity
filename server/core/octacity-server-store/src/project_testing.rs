@@ -6,11 +6,14 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, ProjectId, ProjectVersion};
 
-use crate::testing::{MutationEvidenceCounts, MutationEvidenceProbe, MutationFailurePoint};
+use crate::testing::{
+  ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, MutationFailurePoint,
+  RecordedManagementAuditFact, recorded_management_audit,
+};
 use crate::{
-  CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, MoveProject, MutationDisposition, Project,
-  ProjectDetails, ProjectMutationOutcome, ProjectPage, ProjectStore, RenameProject, StoreError,
-  validate_project_ancestry,
+  CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, ManagementMutation, MoveProject,
+  MutationAuditContext, MutationDisposition, Project, ProjectDetails, ProjectMutationOutcome, ProjectPage,
+  ProjectStore, RenameProject, StoreError, StoreOperation, validate_project_ancestry,
 };
 
 /// Deterministic process-local Project-store adapter for application tests.
@@ -60,7 +63,7 @@ struct ProjectMemoryState {
   projects: BTreeMap<ProjectId, Project>,
   mutations: BTreeMap<(&'static str, String), StoredMutation>,
   active_references: BTreeSet<ProjectId>,
-  audit_facts: BTreeSet<String>,
+  audit_facts: BTreeSet<RecordedManagementAuditFact>,
   outbox_entries: BTreeSet<String>,
   next_create_failure: Option<MutationFailurePoint>,
 }
@@ -112,8 +115,25 @@ impl MutationEvidenceProbe for InMemoryProjectStore {
 }
 
 #[async_trait]
+impl ManagementAuditProbe for InMemoryProjectStore {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    self
+      .lock()
+      .expect("in-memory Project store must remain available")
+      .audit_facts
+      .iter()
+      .cloned()
+      .collect()
+  }
+}
+
+#[async_trait]
 impl ProjectStore for InMemoryProjectStore {
-  async fn create_project(&self, request: CreateProject) -> Result<ProjectMutationOutcome, StoreError> {
+  async fn create_project(
+    &self,
+    request: ManagementMutation<CreateProject>,
+  ) -> Result<ProjectMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let scope = "create-project";
     let fingerprint = MutationFingerprint::Create {
       parent_id: request.parent_id,
@@ -150,7 +170,7 @@ impl ProjectStore for InMemoryProjectStore {
       StoredOutcome::Project(project.clone()),
     );
     inject_failure(failure, MutationFailurePoint::IdempotencyOutcome)?;
-    record_audit_fact(&mut transaction, scope, request.idempotency_key.as_str());
+    record_audit_fact(&mut transaction, &audit, StoreOperation::CreateProject, request.id);
     inject_failure(failure, MutationFailurePoint::AuditFact)?;
     record_outbox_entry(&mut transaction, scope, request.idempotency_key.as_str());
     inject_failure(failure, MutationFailurePoint::OutboxEntry)?;
@@ -162,7 +182,11 @@ impl ProjectStore for InMemoryProjectStore {
     })
   }
 
-  async fn rename_project(&self, request: RenameProject) -> Result<ProjectMutationOutcome, StoreError> {
+  async fn rename_project(
+    &self,
+    request: ManagementMutation<RenameProject>,
+  ) -> Result<ProjectMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let scope = "rename-project";
     let fingerprint = MutationFingerprint::Rename {
       id: request.id,
@@ -189,6 +213,7 @@ impl ProjectStore for InMemoryProjectStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Project(project.clone()),
+      recorded_management_audit(&audit, StoreOperation::RenameProject, EntityKind::Project, request.id),
     );
     Ok(ProjectMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -196,7 +221,8 @@ impl ProjectStore for InMemoryProjectStore {
     })
   }
 
-  async fn move_project(&self, request: MoveProject) -> Result<ProjectMutationOutcome, StoreError> {
+  async fn move_project(&self, request: ManagementMutation<MoveProject>) -> Result<ProjectMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let scope = "move-project";
     let fingerprint = MutationFingerprint::Move {
       id: request.id,
@@ -225,6 +251,7 @@ impl ProjectStore for InMemoryProjectStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Project(project.clone()),
+      recorded_management_audit(&audit, StoreOperation::MoveProject, EntityKind::Project, request.id),
     );
     Ok(ProjectMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -267,7 +294,11 @@ impl ProjectStore for InMemoryProjectStore {
     Ok(ProjectPage { projects, next_cursor })
   }
 
-  async fn delete_project(&self, request: DeleteProject) -> Result<DeleteProjectOutcome, StoreError> {
+  async fn delete_project(
+    &self,
+    request: ManagementMutation<DeleteProject>,
+  ) -> Result<DeleteProjectOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let scope = "delete-project";
     let fingerprint = MutationFingerprint::Delete {
       id: request.id,
@@ -296,6 +327,7 @@ impl ProjectStore for InMemoryProjectStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Deleted(request.id),
+      recorded_management_audit(&audit, StoreOperation::DeleteProject, EntityKind::Project, request.id),
     );
     Ok(DeleteProjectOutcome {
       disposition: MutationDisposition::Applied,
@@ -356,9 +388,10 @@ fn record_mutation(
   key: &str,
   fingerprint: MutationFingerprint,
   outcome: StoredOutcome,
+  audit_fact: RecordedManagementAuditFact,
 ) {
   record_idempotency_outcome(state, scope, key, fingerprint, outcome);
-  record_audit_fact(state, scope, key);
+  state.audit_facts.insert(audit_fact);
   record_outbox_entry(state, scope, key);
 }
 
@@ -374,8 +407,18 @@ fn record_idempotency_outcome(
     .insert((scope, key.to_owned()), StoredMutation { fingerprint, outcome });
 }
 
-fn record_audit_fact(state: &mut ProjectMemoryState, scope: &'static str, key: &str) {
-  state.audit_facts.insert(format!("{scope}:{key}"));
+fn record_audit_fact(
+  state: &mut ProjectMemoryState,
+  audit: &MutationAuditContext,
+  operation: StoreOperation,
+  target_id: ProjectId,
+) {
+  state.audit_facts.insert(recorded_management_audit(
+    audit,
+    operation,
+    EntityKind::Project,
+    target_id,
+  ));
 }
 
 fn record_outbox_entry(state: &mut ProjectMemoryState, scope: &'static str, key: &str) {

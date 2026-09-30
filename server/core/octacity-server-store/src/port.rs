@@ -3,8 +3,8 @@ use async_trait::async_trait;
 use crate::{
   AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, CancelBuild, CancellationDisposition,
   CompletionDisposition, JobClaim, JobClaimOutcome, JobCompletion, JobEventAppendPreparation, JobEventPage,
-  LeaseAccess, LeaseHeartbeatOutcome, ReadJobEvents, RenewLease, RetryBuild, RetryDisposition, StoreError,
-  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
+  LeaseAccess, LeaseHeartbeatOutcome, ManagementMutation, ReadJobEvents, RenewLease, RetryBuild, RetryDisposition,
+  StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
 };
 use octacity_server_domain::LogChunkId;
 
@@ -22,8 +22,20 @@ pub trait TriggerAcceptanceStore: Send + Sync {
   /// complete materialized DAG, and root ready-queue entries together.
   async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError>;
 
+  /// Accepts a manual Trigger with actor evidence already validated at management ingress.
+  async fn accept_management_trigger(
+    &self,
+    request: ManagementMutation<AcceptTrigger>,
+  ) -> Result<AcceptTriggerOutcome, StoreError>;
+
   /// Commits one terminal suppressed occurrence without Build or queue state.
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError>;
+
+  /// Suppresses a manual Trigger with actor evidence already validated at management ingress.
+  async fn suppress_management_trigger(
+    &self,
+    request: ManagementMutation<SuppressTrigger>,
+  ) -> Result<SuppressTriggerOutcome, StoreError>;
 }
 
 /// Atomic persistence used only by the latency-sensitive Lease heartbeat path.
@@ -83,11 +95,12 @@ pub trait JobEventReadStore: Send + Sync {
 pub trait BuildControlStore: Send + Sync {
   /// Persists one idempotent Build cancellation intent and atomically removes
   /// queued work or requests cancellation from current Lease owners.
-  async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError>;
+  async fn cancel_build(&self, request: ManagementMutation<CancelBuild>)
+  -> Result<CancellationDisposition, StoreError>;
 
   /// Locks one failed Build, allocates exactly its next Attempt number, verifies
   /// the candidate DAG against immutable prior snapshots, and enqueues roots.
-  async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError>;
+  async fn retry_build(&self, request: ManagementMutation<RetryBuild>) -> Result<RetryDisposition, StoreError>;
 }
 
 /// Complete backend-neutral authoritative-store contract.

@@ -13,7 +13,10 @@ use octacity_server_secrets::{IdentityProfileName, SecretProfileName};
 use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
-use crate::testing::{InMemoryConfigurationStore, MutationEvidenceProbe};
+use crate::testing::{
+  InMemoryConfigurationStore, ManagementAuditProbe, MutationEvidenceProbe, assert_management_audit_facts,
+  expected_management_audit, management_mutation,
+};
 use crate::{
   ArtifactPolicy, BuildConfigurationDefinition, ConfigurationAgentRequirements, ConfigurationCachePolicy,
   ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy, ConfigurationStore,
@@ -34,60 +37,66 @@ pub async fn verify_configuration_store_contract<S, P>(
   allowed_pool: PoolId,
 ) where
   S: ConfigurationStore + 'static,
-  P: MutationEvidenceProbe + 'static,
+  P: ManagementAuditProbe + MutationEvidenceProbe + 'static,
 {
+  let mut expected_audit = Vec::new();
   let repository_id = id::<RepositoryId>(100);
   let repository_v1 = repository_definition("octahive/octacity");
   let created_repository = store
-    .create_repository(CreateRepository {
+    .create_repository(management_mutation(CreateRepository {
       id: repository_id,
       project_id,
       name: RepositoryName::new("source").unwrap(),
       definition: repository_v1.clone(),
       idempotency_key: key("create-repository"),
       published_at: time(10),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(created_repository.disposition, MutationDisposition::Applied);
   assert_eq!(created_repository.repository.version, RepositoryVersion::INITIAL);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CreateRepository,
+    EntityKind::Repository,
+    repository_id,
+  ));
   let replayed_repository = store
-    .create_repository(CreateRepository {
+    .create_repository(management_mutation(CreateRepository {
       id: repository_id,
       project_id,
       name: RepositoryName::new("source").unwrap(),
       definition: repository_v1.clone(),
       idempotency_key: key("create-repository"),
       published_at: time(999),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(replayed_repository.disposition, MutationDisposition::Replayed);
   assert_eq!(replayed_repository.repository, created_repository.repository);
   assert_eq!(
     store
-      .create_repository(CreateRepository {
+      .create_repository(management_mutation(CreateRepository {
         id: id(101),
         project_id,
         name: RepositoryName::new("other").unwrap(),
         definition: repository_v1.clone(),
         idempotency_key: key("create-repository"),
         published_at: time(11),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict(EntityKind::Repository)
   );
   assert_eq!(
     store
-      .create_repository(CreateRepository {
+      .create_repository(management_mutation(CreateRepository {
         id: id(101),
         project_id,
         name: RepositoryName::new("source").unwrap(),
         definition: repository_v1.clone(),
         idempotency_key: key("duplicate-repository-name"),
         published_at: time(11),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict(EntityKind::Repository)
@@ -95,24 +104,29 @@ pub async fn verify_configuration_store_contract<S, P>(
 
   let repository_v2 = repository_definition("octahive/octacity-renamed");
   let published_repository = store
-    .publish_repository_version(PublishRepositoryVersion {
+    .publish_repository_version(management_mutation(PublishRepositoryVersion {
       id: repository_id,
       expected_current_version: RepositoryVersion::INITIAL,
       definition: repository_v2.clone(),
       idempotency_key: key("publish-repository-v2"),
       published_at: time(20),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(published_repository.repository.version.get(), 2);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::PublishRepositoryVersion,
+    EntityKind::Repository,
+    repository_id,
+  ));
   let replayed_repository_publication = store
-    .publish_repository_version(PublishRepositoryVersion {
+    .publish_repository_version(management_mutation(PublishRepositoryVersion {
       id: repository_id,
       expected_current_version: RepositoryVersion::INITIAL,
       definition: repository_v2.clone(),
       idempotency_key: key("publish-repository-v2"),
       published_at: time(999),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(
@@ -132,13 +146,13 @@ pub async fn verify_configuration_store_contract<S, P>(
   );
   assert_eq!(
     store
-      .publish_repository_version(PublishRepositoryVersion {
+      .publish_repository_version(management_mutation(PublishRepositoryVersion {
         id: repository_id,
         expected_current_version: RepositoryVersion::INITIAL,
         definition: repository_definition("attempted/rewrite"),
         idempotency_key: key("rewrite-repository-v1"),
         published_at: time(30),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict(EntityKind::Repository)
@@ -252,29 +266,34 @@ pub async fn verify_configuration_store_contract<S, P>(
   )
   .await;
   let created_configuration = store
-    .create_build_configuration(CreateBuildConfiguration {
+    .create_build_configuration(management_mutation(CreateBuildConfiguration {
       id: configuration_id,
       project_id,
       name: BuildConfigurationName::new("main").unwrap(),
       definition: configuration_v1.clone(),
       idempotency_key: key("create-configuration"),
       published_at: time(30),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(
     created_configuration.configuration.version,
     BuildConfigurationVersion::INITIAL
   );
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CreateBuildConfiguration,
+    EntityKind::Configuration,
+    configuration_id,
+  ));
   let replayed_configuration = store
-    .create_build_configuration(CreateBuildConfiguration {
+    .create_build_configuration(management_mutation(CreateBuildConfiguration {
       id: configuration_id,
       project_id,
       name: BuildConfigurationName::new("main").unwrap(),
       definition: configuration_v1.clone(),
       idempotency_key: key("create-configuration"),
       published_at: time(999),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(replayed_configuration.disposition, MutationDisposition::Replayed);
@@ -284,14 +303,14 @@ pub async fn verify_configuration_store_contract<S, P>(
   );
   assert_eq!(
     store
-      .create_build_configuration(CreateBuildConfiguration {
+      .create_build_configuration(management_mutation(CreateBuildConfiguration {
         id: id(201),
         project_id,
         name: BuildConfigurationName::new("main").unwrap(),
         definition: configuration_v1.clone(),
         idempotency_key: key("duplicate-configuration-name"),
         published_at: time(31),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict(EntityKind::Configuration)
@@ -308,24 +327,29 @@ pub async fn verify_configuration_store_contract<S, P>(
     "release",
   );
   let published_configuration = store
-    .publish_build_configuration_version(PublishBuildConfigurationVersion {
+    .publish_build_configuration_version(management_mutation(PublishBuildConfigurationVersion {
       id: configuration_id,
       expected_current_version: BuildConfigurationVersion::INITIAL,
       definition: configuration_v2.clone(),
       idempotency_key: key("publish-configuration-v2"),
       published_at: time(40),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(published_configuration.configuration.version.get(), 2);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::PublishBuildConfigurationVersion,
+    EntityKind::Configuration,
+    configuration_id,
+  ));
   let replayed_configuration_publication = store
-    .publish_build_configuration_version(PublishBuildConfigurationVersion {
+    .publish_build_configuration_version(management_mutation(PublishBuildConfigurationVersion {
       id: configuration_id,
       expected_current_version: BuildConfigurationVersion::INITIAL,
       definition: configuration_v2,
       idempotency_key: key("publish-configuration-v2"),
       published_at: time(999),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(
@@ -346,13 +370,13 @@ pub async fn verify_configuration_store_contract<S, P>(
   );
   assert_eq!(
     store
-      .publish_build_configuration_version(PublishBuildConfigurationVersion {
+      .publish_build_configuration_version(management_mutation(PublishBuildConfigurationVersion {
         id: configuration_id,
         expected_current_version: BuildConfigurationVersion::INITIAL,
         definition: configuration_v1,
         idempotency_key: key("rewrite-configuration-v1"),
         published_at: time(50),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict(EntityKind::Configuration)
@@ -362,6 +386,7 @@ pub async fn verify_configuration_store_contract<S, P>(
   assert_eq!(counts.idempotency, 4);
   assert_eq!(counts.audit, 4);
   assert_eq!(counts.outbox, 4);
+  assert_management_audit_facts(evidence.as_ref(), expected_audit).await;
 }
 
 async fn assert_missing_configuration_reference<S>(
@@ -376,14 +401,14 @@ async fn assert_missing_configuration_reference<S>(
 {
   assert_eq!(
     store
-      .create_build_configuration(CreateBuildConfiguration {
+      .create_build_configuration(management_mutation(CreateBuildConfiguration {
         id,
         project_id,
         name: BuildConfigurationName::new(key_value).unwrap(),
         definition,
         idempotency_key: key(key_value),
         published_at: time(29),
-      })
+      }))
       .await
       .unwrap_err(),
     StoreError::NotFound { entity }
@@ -401,14 +426,14 @@ async fn assert_invalid_configuration<S>(
 {
   assert_eq!(
     store
-      .create_build_configuration(CreateBuildConfiguration {
+      .create_build_configuration(management_mutation(CreateBuildConfiguration {
         id,
         project_id,
         name: BuildConfigurationName::new(key_value).unwrap(),
         definition,
         idempotency_key: key(key_value),
         published_at: time(29),
-      })
+      }))
       .await
       .unwrap_err(),
     StoreError::InvalidInput {

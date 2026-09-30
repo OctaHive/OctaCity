@@ -8,7 +8,9 @@ use octacity_server_domain::{
 use octacity_server_pipeline::{
   CapabilityCatalog, DependencyPolicy, ExecutionCapability, PipelineNode, PublishablePipelineDag,
 };
-use octacity_server_store::{CreatePipeline, IdempotencyKey, PipelineStore as _, PublishPipelineVersion, StoreError};
+use octacity_server_store::{
+  CreatePipeline, IdempotencyKey, PipelineStore as _, PublishPipelineVersion, StoreError, testing::management_mutation,
+};
 use octacity_server_store_postgres::PostgresStore;
 use serde_json::json;
 use support::TestDatabase;
@@ -30,14 +32,14 @@ async fn concurrent_publications_append_one_next_version() {
   let store = PostgresStore::new(database.pool.clone());
   let pipeline_id = PipelineId::from_uuid(uuid::Uuid::from_u128(2)).unwrap();
   store
-    .create_pipeline(CreatePipeline {
+    .create_pipeline(management_mutation(CreatePipeline {
       id: pipeline_id,
       project_id,
       name: PipelineName::new("main").unwrap(),
       dag: dag("initial"),
       idempotency_key: key("create"),
       published_at: time(10),
-    })
+    }))
     .await
     .unwrap();
 
@@ -81,7 +83,7 @@ async fn publish_after_barrier(
   barrier: Arc<Barrier>,
 ) -> Result<octacity_server_store::PipelineMutationOutcome, StoreError> {
   barrier.wait().await;
-  store.publish_pipeline_version(request).await
+  store.publish_pipeline_version(management_mutation(request)).await
 }
 
 fn publish(id: PipelineId, node: &str, idempotency_key: &str) -> PublishPipelineVersion {

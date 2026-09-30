@@ -1,7 +1,9 @@
 use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId};
 use octacity_server_job::JobState;
 use octacity_server_orchestrator::{AttemptState, BuildState, CancellationError, cancel_job_states};
-use octacity_server_store::{CancelBuild, CancellationDisposition, MutationDisposition, StoreError};
+use octacity_server_store::{
+  CancelBuild, CancellationDisposition, MutationAuditContext, MutationDisposition, StoreError,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
@@ -13,7 +15,11 @@ use crate::{
   state::{attempt_state, build_state, job_state, parse_attempt_state, parse_build_state, parse_job_state},
 };
 
-pub(crate) async fn execute(pool: &PgPool, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
+pub(crate) async fn execute(
+  pool: &PgPool,
+  request: CancelBuild,
+  audit: &MutationAuditContext,
+) -> Result<CancellationDisposition, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::CancelBuild,
     request.idempotency_key.to_string(),
@@ -39,7 +45,7 @@ pub(crate) async fn execute(pool: &PgPool, request: CancelBuild) -> Result<Cance
     crate::mutation::commit(
       transaction,
       &identity,
-      facts(&outcome),
+      facts(audit, &outcome),
       encode_outcome(&StoredOutcome::from(&outcome))?,
     )
     .await?;
@@ -154,7 +160,7 @@ pub(crate) async fn execute(pool: &PgPool, request: CancelBuild) -> Result<Cance
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(&outcome),
+    facts(audit, &outcome),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
@@ -348,17 +354,16 @@ fn replay(value: Value) -> Result<CancellationDisposition, StoreError> {
   })
 }
 
-fn facts(outcome: &CancellationDisposition) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: outcome.build_id.to_string(),
-    safe_metadata: json!({
+fn facts(audit: &MutationAuditContext, outcome: &CancellationDisposition) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    outcome.build_id.to_string(),
+    json!({
       "attempt_id": outcome.attempt_id,
       "cancelled_job_count": outcome.cancelled_jobs.len(),
       "cancelling_job_count": outcome.cancelling_jobs.len(),
     }),
-    outbox_payload: json!({
+    json!({
       "attempt_id": outcome.attempt_id,
       "build_id": outcome.build_id,
       "cancelled_jobs": outcome.cancelled_jobs,
@@ -366,5 +371,5 @@ fn facts(outcome: &CancellationDisposition) -> MutationFacts {
       "build_state": crate::state::build_state(outcome.build_state),
       "schema_version": 1,
     }),
-  }
+  )
 }

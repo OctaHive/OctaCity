@@ -221,7 +221,7 @@ async fn issue_enrollment(
   issued_at: i64,
 ) {
   store
-    .issue_agent_enrollment(
+    .issue_agent_enrollment(octacity_server_store::testing::management_mutation(
       IssueAgentEnrollment::new(
         credential_id,
         CredentialSecret::from_bytes(secret),
@@ -232,7 +232,7 @@ async fn issue_enrollment(
         Timestamp::from_unix_millis(10_000).unwrap(),
       )
       .unwrap(),
-    )
+    ))
     .await
     .unwrap();
 }

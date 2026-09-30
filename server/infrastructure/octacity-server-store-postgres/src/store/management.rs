@@ -6,16 +6,25 @@ use super::PostgresStore;
 
 #[async_trait]
 impl ProjectStore for PostgresStore {
-  async fn create_project(&self, request: CreateProject) -> Result<ProjectMutationOutcome, StoreError> {
-    crate::project_mutation::create(&self.pool, request).await
+  async fn create_project(
+    &self,
+    request: ManagementMutation<CreateProject>,
+  ) -> Result<ProjectMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::project_mutation::create(&self.pool, request, &audit).await
   }
 
-  async fn rename_project(&self, request: RenameProject) -> Result<ProjectMutationOutcome, StoreError> {
-    crate::project_mutation::rename(&self.pool, request).await
+  async fn rename_project(
+    &self,
+    request: ManagementMutation<RenameProject>,
+  ) -> Result<ProjectMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::project_mutation::rename(&self.pool, request, &audit).await
   }
 
-  async fn move_project(&self, request: MoveProject) -> Result<ProjectMutationOutcome, StoreError> {
-    crate::project_mutation::move_project(&self.pool, request).await
+  async fn move_project(&self, request: ManagementMutation<MoveProject>) -> Result<ProjectMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::project_mutation::move_project(&self.pool, request, &audit).await
   }
 
   async fn project(&self, project_id: ProjectId) -> Result<ProjectDetails, StoreError> {
@@ -26,8 +35,12 @@ impl ProjectStore for PostgresStore {
     crate::project_query::list(&self.pool, request).await
   }
 
-  async fn delete_project(&self, request: DeleteProject) -> Result<DeleteProjectOutcome, StoreError> {
-    crate::project_mutation::delete(&self.pool, request).await
+  async fn delete_project(
+    &self,
+    request: ManagementMutation<DeleteProject>,
+  ) -> Result<DeleteProjectOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::project_mutation::delete(&self.pool, request, &audit).await
   }
 }
 
@@ -42,23 +55,29 @@ impl ProjectPolicyStore for PostgresStore {
 impl DefinitionStore for PostgresStore {
   async fn publish_project_policy(
     &self,
-    request: PublishProjectPolicy,
+    request: ManagementMutation<PublishProjectPolicy>,
   ) -> Result<ProjectPolicyMutationOutcome, StoreError> {
-    crate::definition_mutation::publish_policy(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::definition_mutation::publish_policy(&self.pool, request, &audit).await
   }
 
   async fn create_trigger_definition(
     &self,
-    request: CreateTriggerDefinition,
+    request: ManagementMutation<CreateTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
-    crate::definition_mutation::create_trigger(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::definition_mutation::create_trigger(&self.pool, request, &audit).await
   }
 }
 
 #[async_trait]
 impl ScheduleStore for PostgresStore {
-  async fn create_schedule(&self, request: CreateSchedule) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
-    crate::schedule::create(&self.pool, request).await
+  async fn create_schedule(
+    &self,
+    request: ManagementMutation<CreateSchedule>,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::schedule::create(&self.pool, request, &audit).await
   }
 
   async fn schedule(
@@ -80,15 +99,20 @@ impl ScheduleStore for PostgresStore {
 
 #[async_trait]
 impl AgentPoolStore for PostgresStore {
-  async fn create_agent_pool(&self, request: CreateAgentPool) -> Result<AgentPoolMutationOutcome, StoreError> {
-    crate::pool_mutation::create(&self.pool, request).await
+  async fn create_agent_pool(
+    &self,
+    request: ManagementMutation<CreateAgentPool>,
+  ) -> Result<AgentPoolMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::pool_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_agent_pool_version(
     &self,
-    request: PublishAgentPoolVersion,
+    request: ManagementMutation<PublishAgentPoolVersion>,
   ) -> Result<AgentPoolMutationOutcome, StoreError> {
-    crate::pool_mutation::publish(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::pool_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn agent_pool_version(&self, pool_id: PoolId, version: PoolVersion) -> Result<PublishedAgentPool, StoreError> {
@@ -99,8 +123,12 @@ impl AgentPoolStore for PostgresStore {
     crate::pool_query::list(&self.pool, request).await
   }
 
-  async fn delete_agent_pool(&self, request: DeleteAgentPool) -> Result<DeleteAgentPoolOutcome, StoreError> {
-    crate::pool_mutation::delete(&self.pool, request).await
+  async fn delete_agent_pool(
+    &self,
+    request: ManagementMutation<DeleteAgentPool>,
+  ) -> Result<DeleteAgentPoolOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::pool_mutation::delete(&self.pool, request, &audit).await
   }
 }
 
@@ -117,12 +145,17 @@ impl AgentStore for PostgresStore {
     crate::agent_query::list(&self.pool, request).await
   }
 
-  async fn reassign_agent_pool(&self, request: ReassignAgentPool) -> Result<ReassignAgentPoolOutcome, StoreError> {
-    crate::agent_mutation::reassign(&self.pool, request).await
+  async fn reassign_agent_pool(
+    &self,
+    request: ManagementMutation<ReassignAgentPool>,
+  ) -> Result<ReassignAgentPoolOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::agent_mutation::reassign(&self.pool, request, &audit).await
   }
 
-  async fn drain_agent(&self, request: DrainAgent) -> Result<DrainAgentOutcome, StoreError> {
-    crate::agent_mutation::drain(&self.pool, request).await
+  async fn drain_agent(&self, request: ManagementMutation<DrainAgent>) -> Result<DrainAgentOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::agent_mutation::drain(&self.pool, request, &audit).await
   }
 }
 
@@ -130,16 +163,18 @@ impl AgentStore for PostgresStore {
 impl PipelineStore for PostgresStore {
   async fn create_pipeline(
     &self,
-    request: octacity_server_store::CreatePipeline,
+    request: ManagementMutation<octacity_server_store::CreatePipeline>,
   ) -> Result<PipelineMutationOutcome, StoreError> {
-    crate::pipeline_mutation::create(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::pipeline_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_pipeline_version(
     &self,
-    request: PublishPipelineVersion,
+    request: ManagementMutation<PublishPipelineVersion>,
   ) -> Result<PipelineMutationOutcome, StoreError> {
-    crate::pipeline_mutation::publish(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::pipeline_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn pipeline_version(
@@ -153,15 +188,20 @@ impl PipelineStore for PostgresStore {
 
 #[async_trait]
 impl ConfigurationStore for PostgresStore {
-  async fn create_repository(&self, request: CreateRepository) -> Result<RepositoryMutationOutcome, StoreError> {
-    crate::repository_mutation::create(&self.pool, request).await
+  async fn create_repository(
+    &self,
+    request: ManagementMutation<CreateRepository>,
+  ) -> Result<RepositoryMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::repository_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_repository_version(
     &self,
-    request: PublishRepositoryVersion,
+    request: ManagementMutation<PublishRepositoryVersion>,
   ) -> Result<RepositoryMutationOutcome, StoreError> {
-    crate::repository_mutation::publish(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::repository_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn repository_version(
@@ -174,16 +214,18 @@ impl ConfigurationStore for PostgresStore {
 
   async fn create_build_configuration(
     &self,
-    request: CreateBuildConfiguration,
+    request: ManagementMutation<CreateBuildConfiguration>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
-    crate::build_configuration_mutation::create(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::build_configuration_mutation::create(&self.pool, request, &audit).await
   }
 
   async fn publish_build_configuration_version(
     &self,
-    request: PublishBuildConfigurationVersion,
+    request: ManagementMutation<PublishBuildConfigurationVersion>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
-    crate::build_configuration_mutation::publish(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::build_configuration_mutation::publish(&self.pool, request, &audit).await
   }
 
   async fn build_configuration_version(
@@ -199,9 +241,10 @@ impl ConfigurationStore for PostgresStore {
 impl AgentCredentialStore for PostgresStore {
   async fn issue_agent_enrollment(
     &self,
-    request: IssueAgentEnrollment,
+    request: ManagementMutation<IssueAgentEnrollment>,
   ) -> Result<IssueAgentEnrollmentOutcome, StoreError> {
-    crate::agent_enrollment::execute(&self.pool, request).await
+    let (request, audit) = request.into_parts();
+    crate::agent_enrollment::execute(&self.pool, request, &audit).await
   }
 
   async fn register_agent(&self, request: RegisterAgent) -> Result<AgentRegistrationOutcome, StoreError> {
@@ -215,7 +258,11 @@ impl AgentCredentialStore for PostgresStore {
     crate::agent_credential_auth::execute(&self.pool, request).await
   }
 
-  async fn revoke_agent_credential(&self, request: RevokeAgentCredential) -> Result<MutationDisposition, StoreError> {
-    crate::agent_credential_revocation::execute(&self.pool, request).await
+  async fn revoke_agent_credential(
+    &self,
+    request: ManagementMutation<RevokeAgentCredential>,
+  ) -> Result<MutationDisposition, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::agent_credential_revocation::execute(&self.pool, request, &audit).await
   }
 }

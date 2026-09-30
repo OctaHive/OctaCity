@@ -11,9 +11,11 @@ use octacity_server_domain::{
 use crate::{
   AgentCredentialStore, AgentCredentialTarget, AgentPlatform, AgentRegistrationOutcome, AgentRegistrationProof,
   AuthenticateAgentRegistration, AuthenticatedAgentRegistration, CredentialDigest, ExpectedAgentPlatform,
-  IssueAgentEnrollment, IssueAgentEnrollmentOutcome, MutationDisposition, RegisterAgent, RegistrationEpoch,
-  RevokeAgentCredential, StoreError, StoreOperation,
-  testing::{InMemoryStore, RegistrationEligibility, ensure_evidence_available, record_evidence},
+  IssueAgentEnrollment, IssueAgentEnrollmentOutcome, ManagementMutation, MutationDisposition, RegisterAgent,
+  RegistrationEpoch, RevokeAgentCredential, StoreError, StoreOperation,
+  testing::{
+    InMemoryStore, RegistrationEligibility, ensure_evidence_available, record_evidence, recorded_management_audit,
+  },
 };
 
 #[derive(Clone, Default)]
@@ -86,8 +88,9 @@ struct AgentRecord {
 impl AgentCredentialStore for InMemoryStore {
   async fn issue_agent_enrollment(
     &self,
-    request: IssueAgentEnrollment,
+    request: ManagementMutation<IssueAgentEnrollment>,
   ) -> Result<IssueAgentEnrollmentOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request.validate()?;
     let mut state = self.lock()?;
     if !state.pools.contains_key(&(request.pool_id, request.pool_version)) {
@@ -132,6 +135,12 @@ impl AgentCredentialStore for InMemoryStore {
       },
     );
     record_evidence(&mut state, evidence_identity);
+    state.management_audit_facts.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::IssueAgentEnrollment,
+      EntityKind::AgentEnrollmentCredential,
+      request.credential_id,
+    ));
     Ok(outcome)
   }
 
@@ -354,9 +363,13 @@ impl AgentCredentialStore for InMemoryStore {
     })
   }
 
-  async fn revoke_agent_credential(&self, request: RevokeAgentCredential) -> Result<MutationDisposition, StoreError> {
+  async fn revoke_agent_credential(
+    &self,
+    request: ManagementMutation<RevokeAgentCredential>,
+  ) -> Result<MutationDisposition, StoreError> {
+    let (request, audit) = request.into_parts();
     let mut state = self.lock()?;
-    let evidence = match request.target {
+    let (evidence, operation, target_kind, target_identity) = match request.target {
       AgentCredentialTarget::Enrollment(credential_id) => {
         let record = state
           .credentials
@@ -368,7 +381,12 @@ impl AgentCredentialStore for InMemoryStore {
         if record.revoked_at.is_some() {
           return Ok(MutationDisposition::Replayed);
         }
-        format!("revoke-agent-enrollment:{credential_id}")
+        (
+          format!("revoke-agent-enrollment:{credential_id}"),
+          StoreOperation::RevokeAgentCredential,
+          EntityKind::AgentEnrollmentCredential,
+          credential_id.to_string(),
+        )
       }
       AgentCredentialTarget::Registration(credential_id) => {
         let record = state
@@ -381,7 +399,12 @@ impl AgentCredentialStore for InMemoryStore {
         if record.revoked_at.is_some() {
           return Ok(MutationDisposition::Replayed);
         }
-        format!("revoke-agent-registration:{credential_id}")
+        (
+          format!("revoke-agent-registration:{credential_id}"),
+          StoreOperation::RevokeAgentCredential,
+          EntityKind::AgentRegistration,
+          credential_id.to_string(),
+        )
       }
     };
     ensure_evidence_available(&state, &evidence)?;
@@ -410,6 +433,12 @@ impl AgentCredentialStore for InMemoryStore {
       }
     }
     record_evidence(&mut state, evidence);
+    state.management_audit_facts.insert(recorded_management_audit(
+      &audit,
+      operation,
+      target_kind,
+      target_identity,
+    ));
     Ok(MutationDisposition::Applied)
   }
 }

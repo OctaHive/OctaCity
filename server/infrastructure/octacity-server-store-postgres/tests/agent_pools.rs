@@ -4,6 +4,7 @@ use std::str::FromStr as _;
 
 use octacity_server_domain::{EntityKind, PoolId, PoolName, PoolVersion, Timestamp};
 use octacity_server_scheduler::PoolDrainState;
+use octacity_server_store::testing::management_mutation;
 use octacity_server_store::{
   AgentPoolDefinition, AgentPoolStore as _, CreateAgentPool, DeleteAgentPool, IdempotencyKey, PoolAdmissionPolicy,
   PoolFairnessPolicy, StoreError,
@@ -20,7 +21,7 @@ async fn postgres_prevents_deletion_for_every_protected_pool_reference() {
   let pool_ids = [id(1), id(2), id(3), id(4)];
   for (offset, pool_id) in pool_ids.into_iter().enumerate() {
     store
-      .create_agent_pool(CreateAgentPool {
+      .create_agent_pool(management_mutation(CreateAgentPool {
         id: pool_id,
         name: PoolName::new(format!("guarded-{offset}")).unwrap(),
         definition: AgentPoolDefinition {
@@ -33,7 +34,7 @@ async fn postgres_prevents_deletion_for_every_protected_pool_reference() {
         },
         idempotency_key: key(&format!("create-guarded-{offset}")),
         published_at: time(10),
-      })
+      }))
       .await
       .unwrap();
   }
@@ -42,12 +43,12 @@ async fn postgres_prevents_deletion_for_every_protected_pool_reference() {
   for (offset, pool_id) in pool_ids.into_iter().enumerate() {
     assert_eq!(
       store
-        .delete_agent_pool(DeleteAgentPool {
+        .delete_agent_pool(management_mutation(DeleteAgentPool {
           id: pool_id,
           expected_current_version: PoolVersion::INITIAL,
           idempotency_key: key(&format!("delete-guarded-{offset}")),
           deleted_at: time(20),
-        })
+        }))
         .await
         .unwrap_err(),
       StoreError::Conflict {

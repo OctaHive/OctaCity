@@ -6,10 +6,13 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, PipelineId, PipelineName, PipelineVersion, ProjectId};
 
-use crate::testing::{MutationEvidenceCounts, MutationEvidenceProbe};
+use crate::testing::{
+  ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
+  recorded_management_audit,
+};
 use crate::{
-  CreatePipeline, MutationDisposition, PipelineMutationOutcome, PipelineStore, PublishPipelineVersion,
-  PublishedPipeline, StoreError, StoreInputError, StoreOperation,
+  CreatePipeline, ManagementMutation, MutationAuditContext, MutationDisposition, PipelineMutationOutcome,
+  PipelineStore, PublishPipelineVersion, PublishedPipeline, StoreError, StoreInputError, StoreOperation,
 };
 
 /// Deterministic process-local Pipeline-store adapter for application tests.
@@ -44,6 +47,7 @@ struct PipelineMemoryState {
   versions: BTreeMap<(PipelineId, PipelineVersion), PublishedPipeline>,
   mutations: BTreeMap<(&'static str, String), StoredMutation>,
   evidence: BTreeSet<String>,
+  audit: BTreeSet<RecordedManagementAuditFact>,
 }
 
 #[derive(Clone)]
@@ -80,15 +84,32 @@ impl MutationEvidenceProbe for InMemoryPipelineStore {
     let count = state.evidence.len();
     MutationEvidenceCounts {
       idempotency: count,
-      audit: count,
+      audit: state.audit.len(),
       outbox: count,
     }
   }
 }
 
 #[async_trait]
+impl ManagementAuditProbe for InMemoryPipelineStore {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    self
+      .lock()
+      .expect("in-memory Pipeline store must remain available")
+      .audit
+      .iter()
+      .cloned()
+      .collect()
+  }
+}
+
+#[async_trait]
 impl PipelineStore for InMemoryPipelineStore {
-  async fn create_pipeline(&self, request: CreatePipeline) -> Result<PipelineMutationOutcome, StoreError> {
+  async fn create_pipeline(
+    &self,
+    request: ManagementMutation<CreatePipeline>,
+  ) -> Result<PipelineMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     validate_dag(&request.dag, StoreOperation::CreatePipeline)?;
     let scope = "create-pipeline";
     let fingerprint = MutationFingerprint::Create {
@@ -136,6 +157,8 @@ impl PipelineStore for InMemoryPipelineStore {
       request.idempotency_key.as_str(),
       fingerprint,
       &pipeline,
+      &audit,
+      StoreOperation::CreatePipeline,
     );
     Ok(PipelineMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -145,8 +168,9 @@ impl PipelineStore for InMemoryPipelineStore {
 
   async fn publish_pipeline_version(
     &self,
-    request: PublishPipelineVersion,
+    request: ManagementMutation<PublishPipelineVersion>,
   ) -> Result<PipelineMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     validate_dag(&request.dag, StoreOperation::PublishPipelineVersion)?;
     let scope = "publish-pipeline-version";
     let fingerprint = MutationFingerprint::Publish {
@@ -195,6 +219,8 @@ impl PipelineStore for InMemoryPipelineStore {
       request.idempotency_key.as_str(),
       fingerprint,
       &pipeline,
+      &audit,
+      StoreOperation::PublishPipelineVersion,
     );
     Ok(PipelineMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -252,6 +278,8 @@ fn record(
   key: &str,
   fingerprint: MutationFingerprint,
   pipeline: &PublishedPipeline,
+  audit: &MutationAuditContext,
+  operation: StoreOperation,
 ) {
   state.mutations.insert(
     (scope, key.to_owned()),
@@ -261,6 +289,12 @@ fn record(
     },
   );
   state.evidence.insert(format!("{scope}:{key}"));
+  state.audit.insert(recorded_management_audit(
+    audit,
+    operation,
+    EntityKind::Pipeline,
+    pipeline.id,
+  ));
 }
 
 fn conflict() -> StoreError {

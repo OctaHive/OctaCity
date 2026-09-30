@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::{
-  BuildResultRetentionState, GetBuildResultRetention, PlaceBuildResultHold, ReleaseBuildResultHold,
+  BuildResultRetentionState, GetBuildResultRetention, ManagementMutation, PlaceBuildResultHold, ReleaseBuildResultHold,
   ReleaseBuildResultHoldError, RetentionHoldMutationOutcome, StoreError,
 };
 
@@ -17,12 +17,12 @@ pub trait BuildResultRetentionHoldStore: Send + Sync {
   /// Places a permanent or time-bounded hold before any component is hidden.
   async fn place_build_result_hold(
     &self,
-    request: PlaceBuildResultHold,
+    request: ManagementMutation<PlaceBuildResultHold>,
   ) -> Result<RetentionHoldMutationOutcome, StoreError>;
 
   /// Releases the active hold without changing any original deadline.
   async fn release_build_result_hold(
     &self,
-    request: ReleaseBuildResultHold,
+    request: ManagementMutation<ReleaseBuildResultHold>,
   ) -> Result<RetentionHoldMutationOutcome, ReleaseBuildResultHoldError>;
 }

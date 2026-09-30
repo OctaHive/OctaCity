@@ -27,7 +27,8 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertEqual(
             ARCHITECTURE.check(graph)
             + ARCHITECTURE.check_shared_sources(graph)
-            + ARCHITECTURE.check_management_route_sources(REPOSITORY),
+            + ARCHITECTURE.check_management_route_sources(REPOSITORY)
+            + ARCHITECTURE.check_postgres_management_actor_sources(REPOSITORY),
             [],
         )
 
@@ -119,6 +120,39 @@ class ArchitecturePolicyTests(unittest.TestCase):
                     {violation.code for violation in violations},
                     {"ARCH013_UNTYPED_MANAGEMENT_ROUTE"},
                 )
+
+    def test_postgres_mutations_cannot_select_management_actors(self):
+        invalid_sources = {
+            "literal": 'let actor_kind = "unauthenticated_management";',
+            "enum": "let actor = AuditActorKind::AuthenticatedManagement;",
+        }
+        for label, source in invalid_sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary_directory:
+                workspace = Path(temporary_directory)
+                source_path = workspace / ARCHITECTURE.POSTGRES_STORE_SOURCE / "mutation.rs"
+                source_path.parent.mkdir(parents=True)
+                source_path.write_text(source, encoding="utf-8")
+
+                violations = ARCHITECTURE.check_postgres_management_actor_sources(workspace)
+
+                self.assertEqual(
+                    [violation.code for violation in violations],
+                    ["ARCH014_STORE_SELECTED_MANAGEMENT_ACTOR"],
+                )
+
+    def test_postgres_adapters_cannot_construct_untyped_mutation_facts(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            source_path = workspace / ARCHITECTURE.POSTGRES_STORE_SOURCE / "adapter.rs"
+            source_path.parent.mkdir(parents=True)
+            source_path.write_text("let facts = MutationFacts { actor_kind };", encoding="utf-8")
+
+            violations = ARCHITECTURE.check_postgres_management_actor_sources(workspace)
+
+            self.assertEqual(
+                [violation.code for violation in violations],
+                ["ARCH014_STORE_SELECTED_MANAGEMENT_ACTOR"],
+            )
 
     def test_only_named_infrastructure_support_packages_may_be_shared_by_adapters(self):
         def package(name: str) -> ARCHITECTURE.Package:

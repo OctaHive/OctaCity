@@ -387,6 +387,7 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     document["components"]["schemas"]["AuditActorKind"]["enum"],
     serde_json::json!([
       "unauthenticated_management",
+      "authenticated_management",
       "agent",
       "trigger",
       "orchestrator",

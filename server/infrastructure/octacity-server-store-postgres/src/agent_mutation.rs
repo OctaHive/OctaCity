@@ -1,8 +1,9 @@
 use octacity_server_domain::{AgentId, EntityKind, PoolId};
 use octacity_server_scheduler::PoolDrainState;
 use octacity_server_store::{
-  AgentDrainMode, AgentPlatform, AgentPoolDefinition, DrainAgent, DrainAgentOutcome, MutationDisposition,
-  PoolAdmissionPolicy, PoolFairnessPolicy, ReassignAgentPool, ReassignAgentPoolOutcome, StoreError,
+  AgentDrainMode, AgentPlatform, AgentPoolDefinition, DrainAgent, DrainAgentOutcome, MutationAuditContext,
+  MutationDisposition, PoolAdmissionPolicy, PoolFairnessPolicy, ReassignAgentPool, ReassignAgentPoolOutcome,
+  StoreError,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -28,7 +29,11 @@ struct DrainFingerprint {
   mode: AgentDrainMode,
 }
 
-pub(crate) async fn drain(pool: &sqlx::PgPool, request: DrainAgent) -> Result<DrainAgentOutcome, StoreError> {
+pub(crate) async fn drain(
+  pool: &sqlx::PgPool,
+  request: DrainAgent,
+  audit: &MutationAuditContext,
+) -> Result<DrainAgentOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::DrainAgent,
     request.idempotency_key.to_string(),
@@ -105,13 +110,12 @@ pub(crate) async fn drain(pool: &sqlx::PgPool, request: DrainAgent) -> Result<Dr
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.agent_id.to_string(),
-      safe_metadata: json!({"mode": request.mode}),
-      outbox_payload: json!({"agent_id": request.agent_id, "mode": request.mode}),
-    },
+    MutationFacts::management(
+      audit,
+      request.agent_id.to_string(),
+      json!({"mode": request.mode}),
+      json!({"agent_id": request.agent_id, "mode": request.mode}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -121,6 +125,7 @@ pub(crate) async fn drain(pool: &sqlx::PgPool, request: DrainAgent) -> Result<Dr
 pub(crate) async fn reassign(
   pool: &sqlx::PgPool,
   request: ReassignAgentPool,
+  audit: &MutationAuditContext,
 ) -> Result<ReassignAgentPoolOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::ReassignAgentPool,
@@ -209,13 +214,12 @@ pub(crate) async fn reassign(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.agent_id.to_string(),
-      safe_metadata: json!({"source_pool_id": source_pool_id, "target_pool_id": request.target_pool_id}),
-      outbox_payload: json!({"agent_id": request.agent_id, "pool_id": request.target_pool_id, "pool_version": target.version}),
-    },
+    MutationFacts::management(
+      audit,
+      request.agent_id.to_string(),
+      json!({"source_pool_id": source_pool_id, "target_pool_id": request.target_pool_id}),
+      json!({"agent_id": request.agent_id, "pool_id": request.target_pool_id, "pool_version": target.version}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;

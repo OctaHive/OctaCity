@@ -21,9 +21,9 @@
 
 ## 5. Actor-faithful Mutation Evidence
 
-- [ ] 5.1 Introduce validated `MutationAuditContext` on authoritative management mutation inputs and translate it from the accepted application context; verify store contract fakes reject absent or invalid actor evidence before mutating state.
-- [ ] 5.2 Propagate audit context through every management mutation handler and in-memory store operation; verify application and authoritative-store contracts record the supplied actor kind, optional identity, operation, target, and request identity exactly once.
-- [ ] 5.3 Update PostgreSQL mutation operations to persist supplied audit context and remove infrastructure-selected management actors; verify source checks find no hard-coded management actor in mutation adapters and PostgreSQL contracts preserve equal mutation, idempotency, audit, and outbox evidence counts.
+- [x] 5.1 Introduce validated `MutationAuditContext` on authoritative management mutation inputs and translate it from the accepted application context; verify store contract fakes reject absent or invalid actor evidence before mutating state.
+- [x] 5.2 Propagate audit context through every management mutation handler and in-memory store operation; verify application and authoritative-store contracts record the supplied actor kind, optional identity, operation, target, and request identity exactly once.
+- [x] 5.3 Update PostgreSQL mutation operations to persist supplied audit context and remove infrastructure-selected management actors; verify source checks find no hard-coded management actor in mutation adapters and PostgreSQL contracts preserve equal mutation, idempotency, audit, and outbox evidence counts.
 
 ## 6. Security-scoped Idempotency
 

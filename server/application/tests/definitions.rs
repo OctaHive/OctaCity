@@ -13,8 +13,8 @@ use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, ProjectId, Timestamp, TriggerId, TriggerVersion,
 };
 use octacity_server_store::{
-  CreateTriggerDefinition, DefinitionStore, IdempotencyKey, MutationDisposition, ProjectPolicyMutationOutcome,
-  PublishProjectPolicy, StoreError, TriggerDefinitionMutationOutcome,
+  CreateTriggerDefinition, DefinitionStore, IdempotencyKey, ManagementMutation, MutationDisposition,
+  ProjectPolicyMutationOutcome, PublishProjectPolicy, StoreError, TriggerDefinitionMutationOutcome,
 };
 use octacity_server_trigger::TriggerKind;
 use serde_json::{Value, json};
@@ -33,8 +33,9 @@ struct RecordingDefinitionStore {
 impl DefinitionStore for RecordingDefinitionStore {
   async fn publish_project_policy(
     &self,
-    request: PublishProjectPolicy,
+    request: ManagementMutation<PublishProjectPolicy>,
   ) -> Result<ProjectPolicyMutationOutcome, StoreError> {
+    let (request, _audit) = request.into_parts();
     *self.policy.lock().unwrap() = Some(request.policy);
     Ok(ProjectPolicyMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -45,8 +46,9 @@ impl DefinitionStore for RecordingDefinitionStore {
 
   async fn create_trigger_definition(
     &self,
-    request: CreateTriggerDefinition,
+    request: ManagementMutation<CreateTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    let (request, _audit) = request.into_parts();
     *self.trigger.lock().unwrap() = Some(request.definition);
     Ok(TriggerDefinitionMutationOutcome {
       disposition: MutationDisposition::Applied,

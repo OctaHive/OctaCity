@@ -9,7 +9,10 @@ use octacity_protocol::{PlatformArchitecture, PlatformOs};
 use octacity_server_application::{
   ApplicationError, BuildConfigurationHandlers, CreateBuildConfigurationCommand, CreatePipelineCommand,
   CreateProjectCommand, CreateRepositoryCommand, GetBuildConfigurationQuery, GetPipelineQuery, GetProjectQuery,
-  GetRepositoryQuery, ListProjectsQuery, MutationDisposition, PipelineHandlers, ProjectHandlers,
+  GetRepositoryQuery, ListProjectsQuery, ManagementActor, ManagementAuthorizationGrant, ManagementClientKind,
+  ManagementCommandUseCase, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext,
+  ManagementRequestId, ManagementSecurityScope, ManagementVisibility, MutationDisposition, PipelineHandlers,
+  ProjectHandlers,
 };
 use octacity_server_domain::{
   ArtifactPolicy, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, EntityKind, IntegrationId,
@@ -20,12 +23,13 @@ use octacity_server_pipeline::{
   CapabilityCatalog, DependencyPolicy, ExecutionCapability, PipelineNode, PublishablePipelineDag,
 };
 use octacity_server_store::{
-  BuildConfigurationDefinition, ConfigurationAgentRequirements, ConfigurationCachePolicy, ConfigurationNetworkPolicy,
-  ConfigurationRetryPolicy, ConfigurationRuntimePolicy, ConfigurationTriggerPolicy, IdempotencyKey, ParameterSchema,
-  RepositoryDefinition, RepositorySelectionPolicy, RetryClass, StoreError, TriggerKind,
+  AuditActorKind, BuildConfigurationDefinition, ConfigurationAgentRequirements, ConfigurationCachePolicy,
+  ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy, ConfigurationTriggerPolicy,
+  IdempotencyKey, ParameterSchema, RepositoryDefinition, RepositorySelectionPolicy, RetryClass, StoreError,
+  StoreOperation, TriggerKind,
   testing::{
-    InMemoryConfigurationStore, InMemoryPipelineStore, InMemoryProjectStore, MutationEvidenceCounts,
-    MutationEvidenceProbe, MutationFailurePoint,
+    InMemoryConfigurationStore, InMemoryPipelineStore, InMemoryProjectStore, ManagementAuditProbe,
+    MutationEvidenceCounts, MutationEvidenceProbe, MutationFailurePoint, RecordedManagementAuditFact,
   },
 };
 use serde_json::json;
@@ -87,6 +91,62 @@ fn project_commands_and_queries_dispatch_through_the_in_memory_port() {
 
     assert_eq!(project.ancestors[0].id, root_id);
     assert_eq!(page.projects[0].id, child_id);
+  });
+}
+
+#[test]
+fn project_command_persists_the_exact_authorized_actor_once() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let handlers = ProjectHandlers::new(Arc::clone(&store));
+    let project_id = id::<ProjectId>(3);
+    let request_id = ManagementRequestId::new(uuid::Uuid::from_u128(3)).unwrap();
+    let context = ManagementRequestContext::new(
+      ManagementActor::authenticated("operator-3").unwrap(),
+      ManagementSecurityScope::new("operator:3").unwrap(),
+      request_id,
+      ManagementRequestAttributes::new(
+        ManagementIngress::VerifiedIdentity,
+        Some(ManagementClientKind::Interactive),
+      ),
+    )
+    .unwrap();
+    let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
+    let command = CreateProjectCommand {
+      id: project_id,
+      parent_id: None,
+      name: ProjectName::new("Actor faithful").unwrap(),
+      idempotency_key: key("actor-faithful"),
+      created_at: time(3),
+    };
+
+    assert_eq!(
+      handlers
+        .execute_management_command(&context, &grant, command.clone())
+        .await
+        .unwrap()
+        .disposition,
+      MutationDisposition::Applied
+    );
+    assert_eq!(
+      handlers
+        .execute_management_command(&context, &grant, command)
+        .await
+        .unwrap()
+        .disposition,
+      MutationDisposition::Replayed
+    );
+    assert_eq!(
+      store.management_audit_facts().await,
+      vec![RecordedManagementAuditFact {
+        actor_kind: AuditActorKind::AuthenticatedManagement,
+        actor_identity: Some("operator-3".to_owned()),
+        operation: StoreOperation::CreateProject,
+        target_kind: EntityKind::Project,
+        target_identity: project_id.to_string(),
+        request_identity: request_id.to_string(),
+      }]
+    );
   });
 }
 

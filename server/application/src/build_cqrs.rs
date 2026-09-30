@@ -14,7 +14,8 @@ use crate::{
   ApplicationError, AttemptProjection, BuildProjection, Command, DagCausalityProjection, JobAssignmentProjection,
   JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, Query, TriggerHistoryProjection, management_security::instance_resource,
+  MutationDisposition, Query, TriggerHistoryProjection,
+  management_security::{audited_mutation, instance_resource},
 };
 
 const RETRY_ATTEMPT_NAMESPACE: Uuid = Uuid::from_u128(0xe0de_164d_8f62_5f1e_9e0c_02bd_619a_3861);
@@ -269,17 +270,20 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CancelBuildCommand,
   ) -> Result<CancelBuildCommandOutcome, Self::Error> {
     let outcome = self
       .store
-      .cancel_build(CancelBuild {
-        build_id: command.build_id,
-        idempotency_key: command.idempotency_key,
-        requested_at: command.requested_at,
-      })
+      .cancel_build(audited_mutation(
+        context,
+        CancelBuild {
+          build_id: command.build_id,
+          idempotency_key: command.idempotency_key,
+          requested_at: command.requested_at,
+        },
+      )?)
       .await?;
     Ok(CancelBuildCommandOutcome {
       disposition: mutation_disposition(outcome.disposition),
@@ -300,7 +304,7 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: RetryBuildCommand,
   ) -> Result<RetryBuildCommandOutcome, Self::Error> {
@@ -322,13 +326,16 @@ where
     };
     let outcome = self
       .store
-      .retry_build(RetryBuild::new(
-        command.build_id,
-        attempt_id,
-        attempt_number,
-        jobs,
-        command.idempotency_key,
-        command.requested_at,
+      .retry_build(audited_mutation(
+        context,
+        RetryBuild::new(
+          command.build_id,
+          attempt_id,
+          attempt_number,
+          jobs,
+          command.idempotency_key,
+          command.requested_at,
+        )?,
       )?)
       .await?;
     Ok(RetryBuildCommandOutcome {

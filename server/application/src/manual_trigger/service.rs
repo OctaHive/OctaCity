@@ -1,11 +1,11 @@
 use std::{future::Future, sync::Arc};
 
-use async_trait::async_trait;
 use octacity_observability::{ErrorClass, Outcome, TriggerKind as TelemetryTriggerKind, record_trigger_decision};
 use octacity_server_domain::{AttemptNumber, BuildId, Timestamp};
 use octacity_server_store::{
-  AcceptTrigger, ImmutableBuildInput, SuppressTrigger, TriggerAcceptanceProbe, TriggerAcceptanceStore,
-  TriggerCausality, TriggerCause, TriggerEvaluationOutcome, TriggerEventKind, TriggerIntentDigest, TriggerMetadata,
+  AcceptTrigger, ImmutableBuildInput, ManagementMutation, MutationAuditContext, SuppressTrigger,
+  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCausality, TriggerCause, TriggerEvaluationOutcome,
+  TriggerEventKind, TriggerIntentDigest, TriggerMetadata,
 };
 use serde::Serialize;
 
@@ -14,14 +14,10 @@ use super::{
     ManualBuildIdentities, classify_error, effective_policy_snapshot, input_snapshot, materialize_jobs,
     retention_deadlines,
   },
-  model::{
-    AcceptManualTriggerCommand, ManualTriggerCommand, ManualTriggerError, ManualTriggerOutcome,
-    RevisionResolutionRequest,
-  },
+  model::{ManualTriggerCommand, ManualTriggerError, ManualTriggerOutcome, RevisionResolutionRequest},
   ports::{ManualTriggerContextProvider, RevisionResolver},
   preparation::{prepare_validated, validate_context, validate_context_for},
 };
-use crate::{CommandHandler, CommandTransaction};
 
 /// Application service that resolves source state and commits one complete initial Build graph.
 pub struct ManualTriggerService {
@@ -44,15 +40,21 @@ impl ManualTriggerService {
     }
   }
 
-  /// Accepts one manual Trigger and commits its complete first Attempt atomically.
-  pub async fn accept(
+  /// Accepts one authorized manual Trigger with its validated management attribution.
+  pub async fn accept_management(
     &self,
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
+    audit: MutationAuditContext,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     observe_trigger(
       TelemetryTriggerKind::Manual,
-      self.accept_root(command, accepted_at, octacity_server_store::TriggerKind::Manual),
+      self.accept_root(
+        command,
+        accepted_at,
+        octacity_server_store::TriggerKind::Manual,
+        Some(audit),
+      ),
     )
     .await
   }
@@ -91,6 +93,7 @@ impl ManualTriggerService {
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
     resolved_revision: Option<octacity_server_domain::ImmutableRevision>,
+    audit: MutationAuditContext,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     observe_trigger(
       TelemetryTriggerKind::Manual,
@@ -99,6 +102,7 @@ impl ManualTriggerService {
         accepted_at,
         octacity_server_store::TriggerKind::Manual,
         RevisionMode::Resolved(resolved_revision),
+        Some(audit),
       ),
     )
     .await
@@ -112,7 +116,12 @@ impl ManualTriggerService {
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     observe_trigger(
       TelemetryTriggerKind::Schedule,
-      self.accept_root(command, accepted_at, octacity_server_store::TriggerKind::Scheduled),
+      self.accept_root(
+        command,
+        accepted_at,
+        octacity_server_store::TriggerKind::Scheduled,
+        None,
+      ),
     )
     .await
   }
@@ -146,10 +155,13 @@ impl ManualTriggerService {
         .evaluate_occurrence(
           command,
           accepted_at,
-          octacity_server_store::TriggerKind::Internal,
-          trigger,
-          intent_digest,
-          RevisionMode::Resolve,
+          OccurrenceEvaluation {
+            kind: octacity_server_store::TriggerKind::Internal,
+            trigger,
+            intent_digest,
+            revision_mode: RevisionMode::Resolve,
+            audit: None,
+          },
         )
         .await
     })
@@ -186,10 +198,13 @@ impl ManualTriggerService {
         .evaluate_occurrence(
           command,
           accepted_at,
-          octacity_server_store::TriggerKind::External,
-          trigger,
-          intent_digest,
-          RevisionMode::Resolve,
+          OccurrenceEvaluation {
+            kind: octacity_server_store::TriggerKind::External,
+            trigger,
+            intent_digest,
+            revision_mode: RevisionMode::Resolve,
+            audit: None,
+          },
         )
         .await
     })
@@ -201,9 +216,10 @@ impl ManualTriggerService {
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
     kind: octacity_server_store::TriggerKind,
+    audit: Option<MutationAuditContext>,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     self
-      .accept_root_with_revision(command, accepted_at, kind, RevisionMode::Resolve)
+      .accept_root_with_revision(command, accepted_at, kind, RevisionMode::Resolve, audit)
       .await
   }
 
@@ -213,6 +229,7 @@ impl ManualTriggerService {
     accepted_at: Timestamp,
     kind: octacity_server_store::TriggerKind,
     revision_mode: RevisionMode,
+    audit: Option<MutationAuditContext>,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     let occurrence_id = match kind {
       octacity_server_store::TriggerKind::Manual => ManualBuildIdentities::occurrence_id(&command),
@@ -240,7 +257,17 @@ impl ManualTriggerService {
     .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::ContextMismatch))?;
     let intent_digest = trigger_intent_digest(&command, kind)?;
     self
-      .evaluate_occurrence(command, accepted_at, kind, trigger, intent_digest, revision_mode)
+      .evaluate_occurrence(
+        command,
+        accepted_at,
+        OccurrenceEvaluation {
+          kind,
+          trigger,
+          intent_digest,
+          revision_mode,
+          audit,
+        },
+      )
       .await
   }
 
@@ -248,11 +275,15 @@ impl ManualTriggerService {
     &self,
     command: ManualTriggerCommand,
     accepted_at: Timestamp,
-    kind: octacity_server_store::TriggerKind,
-    trigger: octacity_server_store::NormalizedTriggerOccurrence,
-    intent_digest: TriggerIntentDigest,
-    revision_mode: RevisionMode,
+    evaluation: OccurrenceEvaluation,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
+    let OccurrenceEvaluation {
+      kind,
+      trigger,
+      intent_digest,
+      revision_mode,
+      audit,
+    } = evaluation;
     let occurrence_id = trigger.id;
     if let Some(outcome) = self
       .store
@@ -276,10 +307,17 @@ impl ManualTriggerService {
       validate_context_for(&command, &context, kind).map_err(ManualTriggerError::Invalid)?;
     }
     if !context.configuration.definition.enabled {
-      return self
-        .store
-        .suppress_trigger(SuppressTrigger::new(trigger, intent_digest, accepted_at).map_err(classify_error)?)
-        .await
+      let request = SuppressTrigger::new(trigger, intent_digest, accepted_at).map_err(classify_error)?;
+      let result = match audit {
+        Some(audit) => {
+          self
+            .store
+            .suppress_management_trigger(ManagementMutation::new(request, audit))
+            .await
+        }
+        None => self.store.suppress_trigger(request).await,
+      };
+      return result
         .map(TriggerEvaluationOutcome::Suppressed)
         .map(Into::into)
         .map_err(ManualTriggerError::Store);
@@ -329,10 +367,16 @@ impl ManualTriggerService {
       accepted_at,
     )
     .map_err(classify_error)?;
-    self
-      .store
-      .accept_trigger(request)
-      .await
+    let result = match audit {
+      Some(audit) => {
+        self
+          .store
+          .accept_management_trigger(ManagementMutation::new(request, audit))
+          .await
+      }
+      None => self.store.accept_trigger(request).await,
+    };
+    result
       .map(TriggerEvaluationOutcome::Accepted)
       .map(Into::into)
       .map_err(ManualTriggerError::Store)
@@ -366,6 +410,14 @@ enum RevisionMode {
   Resolved(Option<octacity_server_domain::ImmutableRevision>),
 }
 
+struct OccurrenceEvaluation {
+  kind: octacity_server_store::TriggerKind,
+  trigger: octacity_server_store::NormalizedTriggerOccurrence,
+  intent_digest: TriggerIntentDigest,
+  revision_mode: RevisionMode,
+  audit: Option<MutationAuditContext>,
+}
+
 pub(crate) fn manual_trigger_identity(
   command: &ManualTriggerCommand,
 ) -> Result<(octacity_server_domain::TriggerOccurrenceId, TriggerIntentDigest), ManualTriggerError> {
@@ -373,24 +425,6 @@ pub(crate) fn manual_trigger_identity(
     ManualBuildIdentities::occurrence_id(command),
     trigger_intent_digest(command, octacity_server_store::TriggerKind::Manual)?,
   ))
-}
-
-#[async_trait]
-impl CommandTransaction<AcceptManualTriggerCommand> for ManualTriggerService {
-  type Error = ManualTriggerError;
-
-  async fn commit_command(&self, command: AcceptManualTriggerCommand) -> Result<ManualTriggerOutcome, Self::Error> {
-    self.accept(command.trigger, command.accepted_at).await
-  }
-}
-
-#[async_trait]
-impl CommandHandler<AcceptManualTriggerCommand> for ManualTriggerService {
-  type Error = ManualTriggerError;
-
-  async fn handle_command(&self, command: AcceptManualTriggerCommand) -> Result<ManualTriggerOutcome, Self::Error> {
-    self.commit_command(command).await
-  }
 }
 
 #[derive(Serialize)]

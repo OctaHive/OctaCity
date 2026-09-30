@@ -2,7 +2,7 @@ use octacity_server_domain::{EntityKind, JobId, LeaseId};
 use thiserror::Error;
 
 /// Atomic store operation associated with a classified failure.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
   /// Create one Project below an optional parent.
   CreateProject,
@@ -106,6 +106,8 @@ pub enum StoreOperation {
   CompleteInternalTriggerEvent,
   /// Deduplicate a Trigger and persist its complete initial Build graph.
   AcceptTrigger,
+  /// Persist a deduplicated Trigger decision that intentionally creates no Build.
+  SuppressTrigger,
   /// Persist and initially claim one manual Trigger evaluation.
   ReserveTriggerEvaluation,
   /// Claim due manual Trigger evaluations.
@@ -219,6 +221,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Management mutation actor evidence or request correlation is missing or invalid.
+  #[error("a management mutation audit context is invalid")]
+  InvalidMutationAuditContext,
   /// An idempotency key is empty, malformed, or exceeds its byte bound.
   #[error("an idempotency key is invalid")]
   InvalidIdempotencyKey,

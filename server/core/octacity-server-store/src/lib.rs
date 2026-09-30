@@ -33,6 +33,7 @@ mod lease_recovery;
 mod lease_recovery_port;
 mod log_search;
 mod log_search_port;
+mod management_mutation;
 mod model;
 mod pipeline_model;
 mod pipeline_port;
@@ -204,6 +205,7 @@ pub use log_search::{
   MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument, bounded_log_search_snippet,
 };
 pub use log_search_port::{LogIndexWorkQueue, LogIndexWorkStore, LogSearchIndex};
+pub use management_mutation::{ManagementMutation, MutationAuditContext};
 pub use model::{
   AcceptTrigger, AcceptTriggerOutcome, BuildRetentionDeadlines, EventDigest, EventSequence, ImmutableBuildInput,
   JobEventKind, LeaseFence, MAX_ACCEPT_TRIGGER_BYTES, MAX_ALLOWED_POOLS_PER_JOB, MAX_JOB_DEPENDENCIES,
@@ -261,10 +263,9 @@ pub use restore::{
   RestoreInventoryStore, RestoreLogChunkPage,
 };
 pub use retention_hold_model::{
-  BuildResultRetentionState, BuildResultVisibility, GetBuildResultRetention, MAX_RETENTION_ACTOR_IDENTITY_BYTES,
-  MAX_RETENTION_HOLD_REASON_BYTES, MAX_RETENTION_REQUEST_IDENTITY_BYTES, PlaceBuildResultHold, ReleaseBuildResultHold,
-  ReleaseBuildResultHoldError, RetentionActorIdentity, RetentionAuditIdentity, RetentionHold,
-  RetentionHoldMutationOutcome, RetentionHoldReason, RetentionHoldState, RetentionRequestIdentity,
+  BuildResultRetentionState, BuildResultVisibility, GetBuildResultRetention, MAX_RETENTION_HOLD_REASON_BYTES,
+  PlaceBuildResultHold, ReleaseBuildResultHold, ReleaseBuildResultHoldError, RetentionAuditIdentity, RetentionHold,
+  RetentionHoldMutationOutcome, RetentionHoldReason, RetentionHoldState,
 };
 pub use retention_hold_port::BuildResultRetentionHoldStore;
 pub use retention_model::{

@@ -1,7 +1,7 @@
 use octacity_server_domain::{EntityKind, PoolId, PoolName, PoolVersion};
 use octacity_server_store::{
   AgentPoolDefinition, AgentPoolMutationOutcome, CreateAgentPool, DeleteAgentPool, DeleteAgentPoolOutcome,
-  MutationDisposition, PublishAgentPoolVersion, PublishedAgentPool, StoreError, StoreOperation,
+  MutationAuditContext, MutationDisposition, PublishAgentPoolVersion, PublishedAgentPool, StoreError, StoreOperation,
   validate_pool_drain_transition,
 };
 use serde::Serialize;
@@ -36,6 +36,7 @@ struct DeleteFingerprint {
 pub(crate) async fn create(
   pool: &sqlx::PgPool,
   request: CreateAgentPool,
+  audit: &MutationAuditContext,
 ) -> Result<AgentPoolMutationOutcome, StoreError> {
   request
     .definition
@@ -89,7 +90,7 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    pool_facts(&outcome.pool),
+    pool_facts(audit, &outcome.pool),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -99,6 +100,7 @@ pub(crate) async fn create(
 pub(crate) async fn publish(
   pool: &sqlx::PgPool,
   request: PublishAgentPoolVersion,
+  audit: &MutationAuditContext,
 ) -> Result<AgentPoolMutationOutcome, StoreError> {
   request
     .definition
@@ -163,7 +165,7 @@ pub(crate) async fn publish(
   crate::mutation::commit(
     transaction,
     &identity,
-    pool_facts(&outcome.pool),
+    pool_facts(audit, &outcome.pool),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -197,6 +199,7 @@ async fn apply_lease_directive(
 pub(crate) async fn delete(
   pool: &sqlx::PgPool,
   request: DeleteAgentPool,
+  audit: &MutationAuditContext,
 ) -> Result<DeleteAgentPoolOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::DeleteAgentPool,
@@ -251,13 +254,12 @@ pub(crate) async fn delete(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.id.to_string(),
-      safe_metadata: json!({"version": request.expected_current_version.get()}),
-      outbox_payload: json!({"pool_id": request.id}),
-    },
+    MutationFacts::management(
+      audit,
+      request.id.to_string(),
+      json!({"version": request.expected_current_version.get()}),
+      json!({"pool_id": request.id}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -341,14 +343,13 @@ fn drain_state(state: octacity_server_scheduler::PoolDrainState) -> &'static str
   }
 }
 
-fn pool_facts(pool: &PublishedAgentPool) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: pool.id.to_string(),
-    safe_metadata: json!({"version": pool.version.get(), "enabled": pool.definition.enabled, "drain_state": pool.definition.drain_state}),
-    outbox_payload: json!({"pool_id": pool.id, "version": pool.version.get()}),
-  }
+fn pool_facts(audit: &MutationAuditContext, pool: &PublishedAgentPool) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    pool.id.to_string(),
+    json!({"version": pool.version.get(), "enabled": pool.definition.enabled, "drain_state": pool.definition.drain_state}),
+    json!({"pool_id": pool.id, "version": pool.version.get()}),
+  )
 }
 
 fn replay_pool(outcome: serde_json::Value) -> Result<AgentPoolMutationOutcome, StoreError> {

@@ -1,6 +1,6 @@
 use octacity_server_domain::{EntityKind, ProjectId, ProjectVersion, Timestamp};
 use octacity_server_store::{
-  CreateProject, DeleteProject, DeleteProjectOutcome, MoveProject, MutationDisposition, Project,
+  CreateProject, DeleteProject, DeleteProjectOutcome, MoveProject, MutationAuditContext, MutationDisposition, Project,
   ProjectMutationOutcome, RenameProject, StoreError, StoreOperation, validate_project_ancestry,
 };
 use serde::Serialize;
@@ -39,7 +39,11 @@ struct DeleteFingerprint {
   expected_version: ProjectVersion,
 }
 
-pub(crate) async fn create(pool: &sqlx::PgPool, request: CreateProject) -> Result<ProjectMutationOutcome, StoreError> {
+pub(crate) async fn create(
+  pool: &sqlx::PgPool,
+  request: CreateProject,
+  audit: &MutationAuditContext,
+) -> Result<ProjectMutationOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::CreateProject,
     request.idempotency_key.to_string(),
@@ -78,14 +82,18 @@ pub(crate) async fn create(pool: &sqlx::PgPool, request: CreateProject) -> Resul
   crate::mutation::commit(
     transaction,
     &identity,
-    project_facts(MutationKind::CreateProject, &outcome.project),
+    project_facts(audit, MutationKind::CreateProject, &outcome.project),
     encode_outcome(&outcome)?,
   )
   .await?;
   Ok(outcome)
 }
 
-pub(crate) async fn rename(pool: &sqlx::PgPool, request: RenameProject) -> Result<ProjectMutationOutcome, StoreError> {
+pub(crate) async fn rename(
+  pool: &sqlx::PgPool,
+  request: RenameProject,
+  audit: &MutationAuditContext,
+) -> Result<ProjectMutationOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::RenameProject,
     request.idempotency_key.to_string(),
@@ -132,7 +140,7 @@ pub(crate) async fn rename(pool: &sqlx::PgPool, request: RenameProject) -> Resul
   crate::mutation::commit(
     transaction,
     &identity,
-    project_facts(MutationKind::RenameProject, &outcome.project),
+    project_facts(audit, MutationKind::RenameProject, &outcome.project),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -142,6 +150,7 @@ pub(crate) async fn rename(pool: &sqlx::PgPool, request: RenameProject) -> Resul
 pub(crate) async fn move_project(
   pool: &sqlx::PgPool,
   request: MoveProject,
+  audit: &MutationAuditContext,
 ) -> Result<ProjectMutationOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::MoveProject,
@@ -199,14 +208,18 @@ pub(crate) async fn move_project(
   crate::mutation::commit(
     transaction,
     &identity,
-    project_facts(MutationKind::MoveProject, &outcome.project),
+    project_facts(audit, MutationKind::MoveProject, &outcome.project),
     encode_outcome(&outcome)?,
   )
   .await?;
   Ok(outcome)
 }
 
-pub(crate) async fn delete(pool: &sqlx::PgPool, request: DeleteProject) -> Result<DeleteProjectOutcome, StoreError> {
+pub(crate) async fn delete(
+  pool: &sqlx::PgPool,
+  request: DeleteProject,
+  audit: &MutationAuditContext,
+) -> Result<DeleteProjectOutcome, StoreError> {
   let identity = MutationIdentity::new(
     MutationKind::DeleteProject,
     request.idempotency_key.to_string(),
@@ -235,13 +248,12 @@ pub(crate) async fn delete(pool: &sqlx::PgPool, request: DeleteProject) -> Resul
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.id.to_string(),
-      safe_metadata: json!({"version": request.expected_version.get()}),
-      outbox_payload: json!({"project_id": request.id}),
-    },
+    MutationFacts::management(
+      audit,
+      request.id.to_string(),
+      json!({"version": request.expected_version.get()}),
+      json!({"project_id": request.id}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -334,21 +346,20 @@ fn require_mutation_time(project: &Project, timestamp: Timestamp) -> Result<(), 
   Ok(())
 }
 
-fn project_facts(kind: MutationKind, project: &Project) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: project.id.to_string(),
-    safe_metadata: json!({
+fn project_facts(audit: &MutationAuditContext, kind: MutationKind, project: &Project) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    project.id.to_string(),
+    json!({
       "version": project.version.get(),
       "parent_id": project.parent_id,
     }),
-    outbox_payload: json!({
+    json!({
       "event": kind.outbox_topic(),
       "project_id": project.id,
       "version": project.version.get(),
     }),
-  }
+  )
 }
 
 fn replay_project(value: serde_json::Value) -> Result<ProjectMutationOutcome, StoreError> {

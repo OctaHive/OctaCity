@@ -36,6 +36,7 @@ pub(crate) struct MemoryState {
   pub(super) retries: BTreeMap<IdempotencyKey, RetryRecord>,
   pub(super) idempotency_outcomes: BTreeSet<String>,
   pub(super) audit_facts: BTreeSet<String>,
+  pub(crate) management_audit_facts: BTreeSet<RecordedManagementAuditFact>,
   pub(super) outbox_entries: BTreeSet<String>,
   pub(super) committed_log_index_positions: BTreeMap<ProjectId, LogIndexPosition>,
 }

@@ -1,7 +1,7 @@
 use octacity_server_domain::{EntityKind, ProjectPolicyVersion};
 use octacity_server_store::{
-  CreateTriggerDefinition, MutationDisposition, ProjectPolicyMutationOutcome, PublishProjectPolicy, StoreError,
-  StoreOperation, TriggerDefinitionMutationOutcome,
+  CreateTriggerDefinition, MutationAuditContext, MutationDisposition, ProjectPolicyMutationOutcome,
+  PublishProjectPolicy, StoreError, StoreOperation, TriggerDefinitionMutationOutcome,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -32,6 +32,7 @@ struct TriggerFingerprint<'a> {
 pub(crate) async fn publish_policy(
   pool: &sqlx::PgPool,
   request: PublishProjectPolicy,
+  audit: &MutationAuditContext,
 ) -> Result<ProjectPolicyMutationOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::new(
@@ -104,13 +105,12 @@ pub(crate) async fn publish_policy(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.project_id.to_string(),
-      safe_metadata: json!({"version": version.get()}),
-      outbox_payload: json!({"project_id": request.project_id, "version": version}),
-    },
+    MutationFacts::management(
+      audit,
+      request.project_id.to_string(),
+      json!({"version": version.get()}),
+      json!({"project_id": request.project_id, "version": version}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -120,6 +120,7 @@ pub(crate) async fn publish_policy(
 pub(crate) async fn create_trigger(
   pool: &sqlx::PgPool,
   request: CreateTriggerDefinition,
+  audit: &MutationAuditContext,
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::new(
@@ -167,17 +168,16 @@ pub(crate) async fn create_trigger(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: request.id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::management(
+      audit,
+      request.id.to_string(),
+      json!({
         "version": request.version.get(),
         "kind": request.kind.as_str(),
         "enabled": request.enabled,
       }),
-      outbox_payload: json!({"trigger_id": request.id, "version": request.version}),
-    },
+      json!({"trigger_id": request.id, "version": request.version}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;

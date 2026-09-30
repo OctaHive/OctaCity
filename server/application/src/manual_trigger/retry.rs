@@ -3,10 +3,11 @@ use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, Timestamp};
 use octacity_server_store::{
-  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, RecordTriggerEvaluationRevision,
-  ReserveTriggerEvaluation, StoreError, TriggerEvaluationClaim, TriggerEvaluationReservation,
-  TriggerEvaluationWorkStore, WorkerOwner,
+  AuditActor, AuditActorKind, ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation,
+  ManagementMutation, MutationAuditContext, RecordTriggerEvaluationRevision, ReserveTriggerEvaluation, StoreError,
+  TriggerEvaluationClaim, TriggerEvaluationReservation, TriggerEvaluationWorkStore, WorkerOwner,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use super::{AcceptManualTriggerCommand, ManualTriggerError, ManualTriggerOutcome, ManualTriggerService};
@@ -14,6 +15,8 @@ use crate::{
   ApplicationFailure, DurableRetryPolicy, diagnostic::bounded_diagnostic,
   manual_trigger::service::manual_trigger_identity,
 };
+
+const PERSISTED_MANUAL_TRIGGER_SCHEMA_VERSION: u16 = 1;
 
 /// Command handler that persists manual Trigger intent before mutable VCS resolution.
 pub struct DurableManualTriggerService {
@@ -43,6 +46,7 @@ impl DurableManualTriggerService {
   async fn evaluate_claim(
     &self,
     command: AcceptManualTriggerCommand,
+    audit: MutationAuditContext,
     claim: TriggerEvaluationClaim,
     observed_at: Timestamp,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
@@ -51,6 +55,7 @@ impl DurableManualTriggerService {
       &self.work,
       self.retry_policy,
       command,
+      audit,
       claim,
       observed_at,
     )
@@ -69,12 +74,14 @@ impl crate::ManagementCommandUseCase<AcceptManualTriggerCommand> for DurableManu
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: AcceptManualTriggerCommand,
   ) -> Result<ManualTriggerOutcome, Self::Error> {
     let (occurrence_id, intent_digest) = manual_trigger_identity(&command.trigger)?;
-    let payload = serde_json::to_value(&command).map_err(|_| ManualTriggerError::SnapshotEncoding)?;
+    let audit = MutationAuditContext::try_from(context).map_err(|_| ManualTriggerError::SnapshotEncoding)?;
+    let payload = serde_json::to_value(PersistedManualTriggerRequest::from_parts(command.clone(), &audit))
+      .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
     let owner = WorkerOwner::new(format!("manual-trigger:{}", uuid::Uuid::new_v4()))
       .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
     let lifetime = i64::try_from(self.claim_lifetime.as_millis()).map_err(|_| ManualTriggerError::SnapshotEncoding)?;
@@ -88,23 +95,32 @@ impl crate::ManagementCommandUseCase<AcceptManualTriggerCommand> for DurableManu
     .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
     match self
       .work
-      .reserve_trigger_evaluation(ReserveTriggerEvaluation {
-        occurrence_id,
-        intent_digest: intent_digest.as_bytes(),
-        payload,
-        owner,
-        requested_at: command.accepted_at,
-        claim_expires_at,
-      })
+      .reserve_trigger_evaluation(ManagementMutation::new(
+        ReserveTriggerEvaluation {
+          occurrence_id,
+          intent_digest: intent_digest.as_bytes(),
+          payload,
+          owner,
+          requested_at: command.accepted_at,
+          claim_expires_at,
+        },
+        audit.clone(),
+      ))
       .await
       .map_err(ManualTriggerError::Store)?
     {
       TriggerEvaluationReservation::Claimed(claim) => {
-        let persisted =
-          serde_json::from_value(claim.payload.clone()).map_err(|_| ManualTriggerError::SnapshotEncoding)?;
-        self.evaluate_claim(persisted, claim, command.accepted_at).await
+        let (persisted, persisted_audit) = persisted_request(&claim)?;
+        self
+          .evaluate_claim(persisted, persisted_audit, claim, command.accepted_at)
+          .await
       }
-      TriggerEvaluationReservation::Completed => self.evaluator.accept(command.trigger, command.accepted_at).await,
+      TriggerEvaluationReservation::Completed => {
+        self
+          .evaluator
+          .accept_management(command.trigger, command.accepted_at, audit)
+          .await
+      }
       TriggerEvaluationReservation::Pending => Err(ManualTriggerError::unavailable()),
       TriggerEvaluationReservation::DeadLetter => Err(ManualTriggerError::Store(StoreError::Conflict {
         entity: EntityKind::Trigger,
@@ -170,8 +186,8 @@ impl ManualTriggerRetryWorker {
       ..ManualTriggerRetryBatchOutcome::default()
     };
     for claim in claims {
-      let command: AcceptManualTriggerCommand = match serde_json::from_value(claim.payload.clone()) {
-        Ok(command) => command,
+      let (command, audit) = match persisted_request(&claim) {
+        Ok(request) => request,
         Err(_) => {
           self
             .work
@@ -192,6 +208,7 @@ impl ManualTriggerRetryWorker {
         &self.work,
         self.retry_policy,
         command,
+        audit,
         claim,
         observed_at,
       )
@@ -220,6 +237,7 @@ async fn evaluate_durable_claim(
   work: &Arc<dyn TriggerEvaluationWorkStore>,
   retry_policy: DurableRetryPolicy,
   command: AcceptManualTriggerCommand,
+  audit: MutationAuditContext,
   claim: TriggerEvaluationClaim,
   observed_at: Timestamp,
 ) -> Result<ManualTriggerOutcome, DurableClaimError> {
@@ -242,7 +260,7 @@ async fn evaluate_durable_claim(
     },
   };
   match evaluator
-    .accept_with_resolved_revision(command.trigger, command.accepted_at, resolved_revision)
+    .accept_with_resolved_revision(command.trigger, command.accepted_at, resolved_revision, audit)
     .await
   {
     Ok(outcome) => {
@@ -257,6 +275,113 @@ async fn evaluate_durable_claim(
     }
     Err(error) => fail_claim(work, retry_policy, claim, observed_at, error).await,
   }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedManualTriggerRequest {
+  schema_version: u16,
+  command: AcceptManualTriggerCommand,
+  actor_kind: PersistedManagementActorKind,
+  actor_identity: Option<String>,
+  request_identity: String,
+}
+
+impl PersistedManualTriggerRequest {
+  fn from_parts(command: AcceptManualTriggerCommand, audit: &MutationAuditContext) -> Self {
+    Self {
+      schema_version: PERSISTED_MANUAL_TRIGGER_SCHEMA_VERSION,
+      command,
+      actor_kind: PersistedManagementActorKind::from(audit.actor().kind),
+      actor_identity: audit.actor().identity.clone(),
+      request_identity: audit.request_identity().to_owned(),
+    }
+  }
+
+  fn into_parts(self) -> Result<(AcceptManualTriggerCommand, MutationAuditContext), ManualTriggerError> {
+    if self.schema_version != PERSISTED_MANUAL_TRIGGER_SCHEMA_VERSION {
+      return Err(ManualTriggerError::SnapshotEncoding);
+    }
+    let audit = MutationAuditContext::try_new(
+      AuditActor {
+        kind: self.actor_kind.into(),
+        identity: self.actor_identity,
+      },
+      self.request_identity,
+    )
+    .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
+    Ok((self.command, audit))
+  }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PersistedManualTriggerPayload {
+  Versioned(PersistedManualTriggerRequest),
+  Legacy(AcceptManualTriggerCommand),
+}
+
+impl PersistedManualTriggerPayload {
+  fn into_parts(
+    self,
+    occurrence_id: octacity_server_domain::TriggerOccurrenceId,
+  ) -> Result<(AcceptManualTriggerCommand, MutationAuditContext), ManualTriggerError> {
+    match self {
+      Self::Versioned(request) => request.into_parts(),
+      Self::Legacy(command) => Ok((command, legacy_management_audit(occurrence_id)?)),
+    }
+  }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PersistedManagementActorKind {
+  UnauthenticatedManagement,
+  AuthenticatedManagement,
+}
+
+impl From<AuditActorKind> for PersistedManagementActorKind {
+  fn from(value: AuditActorKind) -> Self {
+    match value {
+      AuditActorKind::UnauthenticatedManagement => Self::UnauthenticatedManagement,
+      AuditActorKind::AuthenticatedManagement => Self::AuthenticatedManagement,
+      AuditActorKind::Agent
+      | AuditActorKind::Trigger
+      | AuditActorKind::Orchestrator
+      | AuditActorKind::Adapter
+      | AuditActorKind::Worker => unreachable!("validated management audit context contains a non-management actor"),
+    }
+  }
+}
+
+impl From<PersistedManagementActorKind> for AuditActorKind {
+  fn from(value: PersistedManagementActorKind) -> Self {
+    match value {
+      PersistedManagementActorKind::UnauthenticatedManagement => Self::UnauthenticatedManagement,
+      PersistedManagementActorKind::AuthenticatedManagement => Self::AuthenticatedManagement,
+    }
+  }
+}
+
+fn persisted_request(
+  claim: &TriggerEvaluationClaim,
+) -> Result<(AcceptManualTriggerCommand, MutationAuditContext), ManualTriggerError> {
+  serde_json::from_value::<PersistedManualTriggerPayload>(claim.payload.clone())
+    .map_err(|_| ManualTriggerError::SnapshotEncoding)?
+    .into_parts(claim.occurrence_id)
+}
+
+fn legacy_management_audit(
+  occurrence_id: octacity_server_domain::TriggerOccurrenceId,
+) -> Result<MutationAuditContext, ManualTriggerError> {
+  MutationAuditContext::try_new(
+    AuditActor {
+      kind: AuditActorKind::UnauthenticatedManagement,
+      identity: None,
+    },
+    format!("legacy-trigger-evaluation:{occurrence_id}"),
+  )
+  .map_err(|_| ManualTriggerError::SnapshotEncoding)
 }
 
 async fn fail_claim(

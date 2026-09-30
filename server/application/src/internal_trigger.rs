@@ -260,9 +260,23 @@ mod tests {
       panic!("cycle protection must run before Trigger evaluation")
     }
 
+    async fn accept_management_trigger(
+      &self,
+      _request: octacity_server_store::ManagementMutation<octacity_server_store::AcceptTrigger>,
+    ) -> Result<octacity_server_store::AcceptTriggerOutcome, StoreError> {
+      panic!("cycle protection must run before Trigger evaluation")
+    }
+
     async fn suppress_trigger(
       &self,
       _request: octacity_server_store::SuppressTrigger,
+    ) -> Result<octacity_server_store::SuppressTriggerOutcome, StoreError> {
+      panic!("cycle protection must run before Trigger evaluation")
+    }
+
+    async fn suppress_management_trigger(
+      &self,
+      _request: octacity_server_store::ManagementMutation<octacity_server_store::SuppressTrigger>,
     ) -> Result<octacity_server_store::SuppressTriggerOutcome, StoreError> {
       panic!("cycle protection must run before Trigger evaluation")
     }

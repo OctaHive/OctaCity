@@ -11,7 +11,7 @@ use crate::{
   ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
   PipelineProjection, ProjectionError, Query,
-  management_security::{instance_resource, owned_collection_resource},
+  management_security::{audited_mutation, instance_resource, owned_collection_resource},
 };
 
 /// Creates one Pipeline identity and immutable initial version.
@@ -129,17 +129,24 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: CreatePipelineCommand) -> Result<PipelineCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: CreatePipelineCommand,
+  ) -> Result<PipelineCommandOutcome, Self::Error> {
     validate_execution_templates(&command.dag)?;
     let outcome = self
-      .create_pipeline(CreatePipeline {
-        id: command.id,
-        project_id: command.project_id,
-        name: command.name,
-        dag: command.dag,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .create_pipeline(audited_mutation(
+        context,
+        CreatePipeline {
+          id: command.id,
+          project_id: command.project_id,
+          name: command.name,
+          dag: command.dag,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(PipelineCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -157,11 +164,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreatePipelineCommand,
   ) -> Result<PipelineCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -174,17 +181,21 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: PublishPipelineVersionCommand,
   ) -> Result<PipelineCommandOutcome, Self::Error> {
     validate_execution_templates(&command.dag)?;
     let outcome = self
-      .publish_pipeline_version(PublishPipelineVersion {
-        id: command.id,
-        expected_current_version: command.expected_current_version,
-        dag: command.dag,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .publish_pipeline_version(audited_mutation(
+        context,
+        PublishPipelineVersion {
+          id: command.id,
+          expected_current_version: command.expected_current_version,
+          dag: command.dag,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(PipelineCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -202,11 +213,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: PublishPipelineVersionCommand,
   ) -> Result<PipelineCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 

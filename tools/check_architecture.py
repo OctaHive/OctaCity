@@ -213,6 +213,7 @@ SHARED_SOURCE_RULES = (
 )
 
 REST_API_SOURCE = Path("server/api/octacity-server-api-rest/src")
+POSTGRES_STORE_SOURCE = Path("server/infrastructure/octacity-server-store-postgres/src")
 TYPED_MANAGEMENT_ROUTE_REGISTRY = Path("v1/adapter/routes.rs")
 MANAGEMENT_PATH_DECLARATIONS = Path("v1/openapi/operations")
 MANAGEMENT_PREFIX_OWNERS = frozenset({
@@ -222,6 +223,13 @@ MANAGEMENT_PREFIX_OWNERS = frozenset({
 })
 OPERATIONAL_ROUTE_PATHS = frozenset({"/health/live", "/health/ready", "/metrics"})
 ROUTE_LITERAL = re.compile(r"\.\s*route\s*\(\s*\"([^\"]+)\"")
+STORE_SELECTED_MANAGEMENT_ACTOR = re.compile(
+    r'"(?:un)?authenticated_management"|AuditActorKind::(?:Authenticated|Unauthenticated)Management'
+)
+UNTYPED_MUTATION_FACTS = re.compile(
+    r"\bMutationFacts\s*\{[^}]*\bactor_kind\s*(?::|[,}])",
+    re.DOTALL,
+)
 
 SHARED_FORBIDDEN_SOURCE_DIRECTORIES = frozenset({
     "database",
@@ -677,6 +685,38 @@ def check_management_route_sources(workspace: Path) -> list[Violation]:
     return sorted(set(violations), key=lambda violation: (violation.code, violation.message))
 
 
+def check_postgres_management_actor_sources(workspace: Path) -> list[Violation]:
+    """Reject PostgreSQL adapters that select a management actor themselves."""
+
+    source_root = workspace / POSTGRES_STORE_SOURCE
+    if not source_root.is_dir():
+        return []
+
+    violations: list[Violation] = []
+    for source_path in sorted(source_root.rglob("*.rs")):
+        try:
+            source = source_path.read_text(encoding="utf-8")
+        except OSError as error:
+            raise MetadataError(f"cannot read PostgreSQL store source {source_path}: {error}") from error
+        if STORE_SELECTED_MANAGEMENT_ACTOR.search(source):
+            violations.append(
+                Violation(
+                    "ARCH014_STORE_SELECTED_MANAGEMENT_ACTOR",
+                    "PostgreSQL mutation adapters must persist the supplied management actor: "
+                    f"{source_path.relative_to(source_root)}",
+                )
+            )
+        if source_path.name != "mutation.rs" and UNTYPED_MUTATION_FACTS.search(source):
+            violations.append(
+                Violation(
+                    "ARCH014_STORE_SELECTED_MANAGEMENT_ACTOR",
+                    "PostgreSQL adapters must construct typed mutation evidence: "
+                    f"{source_path.relative_to(source_root)}",
+                )
+            )
+    return violations
+
+
 def cargo_metadata(workspace: Path) -> dict[str, Any]:
     """Read locked workspace-only Cargo metadata without building packages."""
 
@@ -732,6 +772,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             check(graph)
             + check_shared_sources(graph)
             + check_management_route_sources(options.workspace)
+            + check_postgres_management_actor_sources(options.workspace)
         )
         violations.sort(key=lambda violation: (violation.code, violation.message))
     except MetadataError as error:

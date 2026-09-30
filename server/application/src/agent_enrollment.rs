@@ -11,7 +11,7 @@ use octacity_server_store::{
 use crate::{
   ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
   ManagementResourceKind, ManagementResourceResult, MutationDisposition,
-  management_security::owned_collection_resource,
+  management_security::{audited_mutation, owned_collection_resource},
 };
 
 /// Issues one replay-safe single-use Agent enrollment credential.
@@ -87,7 +87,7 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: IssueAgentEnrollmentCommand,
   ) -> Result<IssueAgentEnrollmentCommandOutcome, Self::Error> {
@@ -101,14 +101,17 @@ where
       .map_err(|_| ApplicationError::invalid())?;
     let outcome = self
       .store
-      .issue_agent_enrollment(IssueAgentEnrollment::new(
-        credential_id,
-        CredentialSecret::from_bytes(*command.credential.secret()),
-        command.pool_id,
-        command.pool_version,
-        command.expected_platform,
-        command.issued_at,
-        command.expires_at,
+      .issue_agent_enrollment(audited_mutation(
+        context,
+        IssueAgentEnrollment::new(
+          credential_id,
+          CredentialSecret::from_bytes(*command.credential.secret()),
+          command.pool_id,
+          command.pool_version,
+          command.expected_platform,
+          command.issued_at,
+          command.expires_at,
+        )?,
       )?)
       .await?;
     Ok(IssueAgentEnrollmentCommandOutcome {

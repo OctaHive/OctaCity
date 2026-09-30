@@ -12,7 +12,9 @@ use uuid::Uuid;
 use crate::{
   database::{classify, number, unavailable},
   lease::fence_hash,
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
 };
 
 pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaimOutcome, StoreError> {
@@ -384,21 +386,20 @@ fn grant(request: &JobClaim, job_id: JobId, attempt: AttemptNumber, signed_job_s
 }
 
 fn facts(request: &JobClaim, grant: &LeaseGrant) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "agent",
-    actor_identity: Some(request.agent_id.to_string()),
-    target_identity: grant.job_id.to_string(),
-    safe_metadata: json!({
+  MutationFacts::non_management(
+    NonManagementActor::Agent(request.agent_id.to_string()),
+    grant.job_id.to_string(),
+    json!({
       "lease_id": request.lease_id,
       "pool_id": request.pool_id,
       "registration_epoch": request.registration_epoch.get(),
     }),
-    outbox_payload: json!({
+    json!({
       "agent_id": request.agent_id,
       "job_id": grant.job_id,
       "lease_id": request.lease_id,
       "pool_id": request.pool_id,
       "schema_version": 1,
     }),
-  }
+  )
 }

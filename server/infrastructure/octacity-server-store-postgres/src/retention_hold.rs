@@ -1,7 +1,7 @@
 use octacity_server_domain::{BuildId, EntityKind, RetentionHoldVersion, Timestamp};
 use octacity_server_store::{
   BuildResultRetentionState, BuildResultVisibility, BuildRetentionDeadlines, GetBuildResultRetention,
-  MutationDisposition, PlaceBuildResultHold, ReleaseBuildResultHold, ReleaseBuildResultHoldError,
+  MutationAuditContext, MutationDisposition, PlaceBuildResultHold, ReleaseBuildResultHold, ReleaseBuildResultHoldError,
   RetentionAuditIdentity, RetentionHold, RetentionHoldMutationOutcome, RetentionHoldState, StoreError,
 };
 use serde::Serialize;
@@ -14,21 +14,17 @@ use crate::{
   mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
 };
 
-const MANAGEMENT_ACTOR: &str = "unauthenticated_management";
-
 #[derive(Serialize)]
 struct PlaceFingerprint<'a> {
   build_id: BuildId,
   reason: &'a str,
   expires_at: Option<Timestamp>,
-  actor_identity: Option<&'a str>,
 }
 
 #[derive(Serialize)]
-struct ReleaseFingerprint<'a> {
+struct ReleaseFingerprint {
   build_id: BuildId,
   expected_version: RetentionHoldVersion,
-  actor_identity: Option<&'a str>,
 }
 
 #[derive(FromRow)]
@@ -91,18 +87,18 @@ pub(crate) async fn read(
 pub(crate) async fn place(
   pool: &PgPool,
   request: PlaceBuildResultHold,
+  audit: &MutationAuditContext,
 ) -> Result<RetentionHoldMutationOutcome, StoreError> {
   let identity = MutationIdentity::new_with_request_identity(
     MutationKind::PlaceBuildResultHold,
     request.idempotency_key.to_string(),
-    request.request_identity.as_str().to_owned(),
+    audit.request_identity().to_owned(),
     request.placed_at,
     EntityKind::RetentionHold,
     &PlaceFingerprint {
       build_id: request.build_id,
       reason: request.reason.as_str(),
       expires_at: request.expires_at,
-      actor_identity: request.actor_identity.as_ref().map(|identity| identity.as_str()),
     },
   )?;
   let mut transaction = match crate::mutation::begin(pool, &identity).await? {
@@ -152,9 +148,9 @@ pub(crate) async fn place(
   .bind(request.reason.as_str())
   .bind(request.placed_at.unix_millis())
   .bind(request.expires_at.map(Timestamp::unix_millis))
-  .bind(MANAGEMENT_ACTOR)
-  .bind(request.actor_identity.as_ref().map(|identity| identity.as_str()))
-  .bind(request.request_identity.as_str())
+  .bind(audit.actor().kind.as_str())
+  .bind(audit.actor().identity.as_deref())
+  .bind(audit.request_identity())
   .execute(&mut *transaction)
   .await
   .map_err(unavailable)?;
@@ -166,9 +162,9 @@ pub(crate) async fn place(
     expires_at_millis: request.expires_at.map(Timestamp::unix_millis),
     expired_at_millis: None,
     released_at_millis: None,
-    actor_kind: MANAGEMENT_ACTOR.to_owned(),
-    actor_identity: request.actor_identity.map(|identity| identity.into_string()),
-    request_identity: request.request_identity.into_string(),
+    actor_kind: audit.actor().kind.as_str().to_owned(),
+    actor_identity: audit.actor().identity.clone(),
+    request_identity: audit.request_identity().to_owned(),
     release_actor_kind: None,
     release_actor_identity: None,
     release_request_identity: None,
@@ -177,34 +173,24 @@ pub(crate) async fn place(
     disposition: MutationDisposition::Applied,
     retention: project_state(build, Some(hold), request.placed_at)?,
   };
-  commit(
-    transaction,
-    &identity,
-    &outcome,
-    outcome
-      .retention
-      .hold
-      .as_ref()
-      .and_then(|hold| hold.creation_audit.actor_identity.clone()),
-  )
-  .await?;
+  commit(transaction, &identity, &outcome, audit).await?;
   Ok(outcome)
 }
 
 pub(crate) async fn release(
   pool: &PgPool,
   request: ReleaseBuildResultHold,
+  audit: &MutationAuditContext,
 ) -> Result<RetentionHoldMutationOutcome, ReleaseBuildResultHoldError> {
   let identity = MutationIdentity::new_with_request_identity(
     MutationKind::ReleaseBuildResultHold,
     request.idempotency_key.to_string(),
-    request.request_identity.as_str().to_owned(),
+    audit.request_identity().to_owned(),
     request.released_at,
     EntityKind::RetentionHold,
     &ReleaseFingerprint {
       build_id: request.build_id,
       expected_version: request.expected_version,
-      actor_identity: request.actor_identity.as_ref().map(|identity| identity.as_str()),
     },
   )?;
   let mut transaction = match crate::mutation::begin(pool, &identity).await? {
@@ -249,34 +235,25 @@ pub(crate) async fn release(
   .bind(&latest.actor_kind)
   .bind(&latest.actor_identity)
   .bind(&latest.request_identity)
-  .bind(MANAGEMENT_ACTOR)
-  .bind(request.actor_identity.as_ref().map(|identity| identity.as_str()))
-  .bind(request.request_identity.as_str())
+  .bind(audit.actor().kind.as_str())
+  .bind(audit.actor().identity.as_deref())
+  .bind(audit.request_identity())
   .execute(&mut *transaction)
   .await
   .map_err(unavailable)?;
   let hold = HoldRow {
     version: to_i64(version.get())?,
     released_at_millis: Some(request.released_at.unix_millis()),
-    release_actor_kind: Some(MANAGEMENT_ACTOR.to_owned()),
-    release_actor_identity: request
-      .actor_identity
-      .as_ref()
-      .map(|identity| identity.as_str().to_owned()),
-    release_request_identity: Some(request.request_identity.as_str().to_owned()),
+    release_actor_kind: Some(audit.actor().kind.as_str().to_owned()),
+    release_actor_identity: audit.actor().identity.clone(),
+    release_request_identity: Some(audit.request_identity().to_owned()),
     ..latest
   };
   let outcome = RetentionHoldMutationOutcome {
     disposition: MutationDisposition::Applied,
     retention: project_state(build, Some(hold), request.released_at)?,
   };
-  commit(
-    transaction,
-    &identity,
-    &outcome,
-    request.actor_identity.map(|identity| identity.into_string()),
-  )
-  .await?;
+  commit(transaction, &identity, &outcome, audit).await?;
   Ok(outcome)
 }
 
@@ -284,27 +261,26 @@ async fn commit(
   transaction: Transaction<'_, Postgres>,
   identity: &MutationIdentity,
   outcome: &RetentionHoldMutationOutcome,
-  actor_identity: Option<String>,
+  audit: &MutationAuditContext,
 ) -> Result<(), StoreError> {
   let hold = outcome.retention.hold.as_ref().ok_or(StoreError::Unavailable)?;
   crate::mutation::commit(
     transaction,
     identity,
-    MutationFacts {
-      actor_kind: MANAGEMENT_ACTOR,
-      actor_identity,
-      target_identity: outcome.retention.build_id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::management(
+      audit,
+      outcome.retention.build_id.to_string(),
+      json!({
         "version": hold.version.get(),
         "state": hold.state,
         "expires_at": hold.expires_at.map(Timestamp::unix_millis),
       }),
-      outbox_payload: json!({
+      json!({
         "build_id": outcome.retention.build_id,
         "version": hold.version.get(),
         "state": hold.state,
       }),
-    },
+    ),
     encode_outcome(outcome)?,
   )
   .await

@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use crate::{
   database::unavailable,
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
   state::{attempt_state, build_state},
 };
 
@@ -271,13 +273,12 @@ pub(crate) async fn recover(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "worker",
-      actor_identity: Some(request.claim.owner.as_str().to_owned()),
-      target_identity: request.claim.lease_id.to_string(),
-      safe_metadata: json!({"action": format!("{action:?}"), "job_id": request.claim.job_id, "requeues": requeues}),
-      outbox_payload: json!({"action": format!("{action:?}"), "job_id": request.claim.job_id, "lease_id": request.claim.lease_id}),
-    },
+    MutationFacts::non_management(
+      NonManagementActor::Worker(request.claim.owner.as_str().to_owned()),
+      request.claim.lease_id.to_string(),
+      json!({"action": format!("{action:?}"), "job_id": request.claim.job_id, "requeues": requeues}),
+      json!({"action": format!("{action:?}"), "job_id": request.claim.job_id, "lease_id": request.claim.lease_id}),
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;

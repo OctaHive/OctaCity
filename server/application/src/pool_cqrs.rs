@@ -13,7 +13,8 @@ use crate::{
   ApplicationError, Command, CommandTransaction, ExecutionGuaranteeProjection, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind,
   ManagementResourceResult, MutationDisposition, PlatformArchitectureProjection, PlatformOsProjection,
-  PlatformProjection, Query, management_security::instance_resource,
+  PlatformProjection, Query,
+  management_security::{audited_mutation, instance_resource},
 };
 
 /// Creates one static Agent Pool and its initial version.
@@ -281,15 +282,22 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: CreateAgentPoolCommand) -> Result<AgentPoolCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: CreateAgentPoolCommand,
+  ) -> Result<AgentPoolCommandOutcome, Self::Error> {
     let outcome = self
-      .create_agent_pool(CreateAgentPool {
-        id: command.id,
-        name: command.name,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .create_agent_pool(audited_mutation(
+        context,
+        CreateAgentPool {
+          id: command.id,
+          name: command.name,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(AgentPoolCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -307,11 +315,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateAgentPoolCommand,
   ) -> Result<AgentPoolCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -324,16 +332,20 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: PublishAgentPoolVersionCommand,
   ) -> Result<AgentPoolCommandOutcome, Self::Error> {
     let outcome = self
-      .publish_agent_pool_version(PublishAgentPoolVersion {
-        id: command.id,
-        expected_current_version: command.expected_current_version,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .publish_agent_pool_version(audited_mutation(
+        context,
+        PublishAgentPoolVersion {
+          id: command.id,
+          expected_current_version: command.expected_current_version,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(AgentPoolCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -351,11 +363,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: PublishAgentPoolVersionCommand,
   ) -> Result<AgentPoolCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -368,15 +380,19 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: DeleteAgentPoolCommand,
   ) -> Result<DeleteAgentPoolCommandOutcome, Self::Error> {
     let outcome = self
-      .delete_agent_pool(DeleteAgentPool {
-        id: command.id,
-        expected_current_version: command.expected_current_version,
-        idempotency_key: command.idempotency_key,
-        deleted_at: command.deleted_at,
-      })
+      .delete_agent_pool(audited_mutation(
+        context,
+        DeleteAgentPool {
+          id: command.id,
+          expected_current_version: command.expected_current_version,
+          idempotency_key: command.idempotency_key,
+          deleted_at: command.deleted_at,
+        },
+      )?)
       .await?;
     Ok(DeleteAgentPoolCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -394,11 +410,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: DeleteAgentPoolCommand,
   ) -> Result<DeleteAgentPoolCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 

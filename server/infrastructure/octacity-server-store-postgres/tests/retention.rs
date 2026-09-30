@@ -13,9 +13,11 @@ use octacity_server_store::{
   LeaseFence, LeaseGrant, LeaseWindow, LogChunkManifest, LogSearchDocument, LogSearchIndex as _,
   LogSearchMutationDisposition, MutationDisposition, PlaceBuildResultHold, PrepareRetentionWork, ReadJobEvents,
   ReleaseBuildResultHold, ReleaseBuildResultHoldError, RetentionHoldReason, RetentionHoldState, RetentionObject,
-  RetentionObjectIdentity, RetentionPassOutcome, RetentionRequestIdentity, StoreError, TriggerAcceptanceStore as _,
-  WorkerOwner, WriteLogSearchDocument,
-  testing::{authoritative_store_contract_fixture, compatible_snapshot},
+  RetentionObjectIdentity, RetentionPassOutcome, StoreError, TriggerAcceptanceStore as _, WorkerOwner,
+  WriteLogSearchDocument,
+  testing::{
+    authoritative_store_contract_fixture, compatible_snapshot, management_mutation, management_mutation_with_request,
+  },
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use support::TestDatabase;
@@ -233,7 +235,13 @@ async fn permanent_hold_replays_and_overdue_release_preserves_deadlines_and_quot
     "hold-permanent",
     time(1_400),
   );
-  let applied = store.place_build_result_hold(placed.clone()).await.unwrap();
+  let applied = store
+    .place_build_result_hold(management_mutation_with_request(
+      placed.clone(),
+      "request:hold-permanent",
+    ))
+    .await
+    .unwrap();
   assert_eq!(applied.disposition, MutationDisposition::Applied);
   assert_eq!(
     applied.retention.hold.as_ref().unwrap().version,
@@ -253,21 +261,24 @@ async fn permanent_hold_replays_and_overdue_release_preserves_deadlines_and_quot
 
   let mut replay = placed;
   replay.placed_at = time(1_900);
-  replay.request_identity = RetentionRequestIdentity::new("request:replay").unwrap();
-  let replayed = store.place_build_result_hold(replay).await.unwrap();
+  let replayed = store
+    .place_build_result_hold(management_mutation_with_request(replay, "request:replay"))
+    .await
+    .unwrap();
   assert_eq!(replayed.disposition, MutationDisposition::Replayed);
   assert_eq!(replayed.retention, applied.retention);
 
   assert!(matches!(
     store
-      .release_build_result_hold(ReleaseBuildResultHold {
-        build_id: fixture.request.build.id,
-        expected_version: RetentionHoldVersion::INITIAL,
-        actor_identity: None,
-        request_identity: RetentionRequestIdentity::new("request:clock-regression").unwrap(),
-        idempotency_key: key("release-before-creation"),
-        released_at: time(1_399),
-      })
+      .release_build_result_hold(management_mutation_with_request(
+        ReleaseBuildResultHold {
+          build_id: fixture.request.build.id,
+          expected_version: RetentionHoldVersion::INITIAL,
+          idempotency_key: key("release-before-creation"),
+          released_at: time(1_399),
+        },
+        "request:clock-regression",
+      ))
       .await,
     Err(ReleaseBuildResultHoldError::Store(StoreError::Conflict {
       entity: EntityKind::RetentionHold
@@ -277,12 +288,13 @@ async fn permanent_hold_replays_and_overdue_release_preserves_deadlines_and_quot
   let release = ReleaseBuildResultHold {
     build_id: fixture.request.build.id,
     expected_version: RetentionHoldVersion::INITIAL,
-    actor_identity: None,
-    request_identity: RetentionRequestIdentity::new("request:release").unwrap(),
     idempotency_key: key("release-permanent"),
     released_at: time(2_000),
   };
-  let released = store.release_build_result_hold(release.clone()).await.unwrap();
+  let released = store
+    .release_build_result_hold(management_mutation_with_request(release.clone(), "request:release"))
+    .await
+    .unwrap();
   assert_eq!(released.disposition, MutationDisposition::Applied);
   assert_eq!(released.retention.deadlines, deadlines(1_500));
   assert_eq!(
@@ -302,31 +314,35 @@ async fn permanent_hold_replays_and_overdue_release_preserves_deadlines_and_quot
       .request_identity,
     "request:release"
   );
-  let release_replay = store.release_build_result_hold(release).await.unwrap();
+  let release_replay = store
+    .release_build_result_hold(management_mutation_with_request(release, "request:release"))
+    .await
+    .unwrap();
   assert_eq!(release_replay.disposition, MutationDisposition::Replayed);
   assert_eq!(release_replay.retention, released.retention);
   assert!(matches!(
     store
-      .release_build_result_hold(ReleaseBuildResultHold {
-        build_id: fixture.request.build.id,
-        expected_version: RetentionHoldVersion::INITIAL,
-        actor_identity: None,
-        request_identity: RetentionRequestIdentity::new("request:stale").unwrap(),
-        idempotency_key: key("release-stale"),
-        released_at: time(2_001),
-      })
+      .release_build_result_hold(management_mutation_with_request(
+        ReleaseBuildResultHold {
+          build_id: fixture.request.build.id,
+          expected_version: RetentionHoldVersion::INITIAL,
+          idempotency_key: key("release-stale"),
+          released_at: time(2_001),
+        },
+        "request:stale",
+      ))
       .await,
     Err(ReleaseBuildResultHoldError::PreconditionFailed)
   ));
   assert!(matches!(
     store
-      .place_build_result_hold(place_request(
+      .place_build_result_hold(management_mutation(place_request(
         fixture.request.build.id,
         "clock moved backwards",
         None,
         "place-before-release",
         time(1_999),
-      ))
+      )))
       .await,
     Err(StoreError::Conflict {
       entity: EntityKind::RetentionHold
@@ -394,11 +410,16 @@ async fn time_bounded_hold_expires_at_the_boundary_and_cannot_revive_hidden_data
     "hold-temporary",
     time(1_400),
   );
-  let applied = store.place_build_result_hold(placement.clone()).await.unwrap();
+  let applied = store
+    .place_build_result_hold(management_mutation(placement.clone()))
+    .await
+    .unwrap();
   let mut replay = placement;
   replay.placed_at = time(1_700);
-  replay.request_identity = RetentionRequestIdentity::new("request:timed-replay").unwrap();
-  let replayed = store.place_build_result_hold(replay).await.unwrap();
+  let replayed = store
+    .place_build_result_hold(management_mutation_with_request(replay, "request:timed-replay"))
+    .await
+    .unwrap();
   assert_eq!(replayed.disposition, MutationDisposition::Replayed);
   assert_eq!(replayed.retention, applied.retention);
   assert!(
@@ -459,13 +480,13 @@ async fn time_bounded_hold_expires_at_the_boundary_and_cannot_revive_hidden_data
   assert_eq!(state.hold.as_ref().unwrap().version.get(), 2);
   assert!(matches!(
     store
-      .place_build_result_hold(place_request(
+      .place_build_result_hold(management_mutation(place_request(
         fixture.request.build.id,
         "too late",
         None,
         "hold-after-delete",
         time(1_602),
-      ))
+      )))
       .await,
     Err(StoreError::Conflict {
       entity: EntityKind::RetentionHold
@@ -500,13 +521,13 @@ async fn hold_and_first_visibility_transition_serialize_as_one_decision() {
   let retention_store = PostgresStore::new(independent_pool(&database.pool).await);
   let build_id = fixture.request.build.id;
   let (hold, preparation) = tokio::join!(
-    hold_store.place_build_result_hold(place_request(
+    hold_store.place_build_result_hold(management_mutation(place_request(
       build_id,
       "race protection",
       None,
       "hold-race",
       time(1_501),
-    )),
+    ))),
     retention_store
       .prepare_retention_work(PrepareRetentionWork::new(metadata.work_id, metadata.owner, time(1_501), 1).unwrap(),)
   );
@@ -584,8 +605,6 @@ fn place_request(
     build_id,
     reason: RetentionHoldReason::new(reason).unwrap(),
     expires_at,
-    actor_identity: None,
-    request_identity: RetentionRequestIdentity::new(format!("request:{idempotency_key}")).unwrap(),
     idempotency_key: key(idempotency_key),
     placed_at,
   }

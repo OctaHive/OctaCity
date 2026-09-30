@@ -3,7 +3,8 @@ use octacity_server_job::JobSpecSigner;
 use octacity_server_orchestrator::{RetryDecisionError, decide_retry};
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
-  MaterializedJob, MutationDisposition, RetryBuild, RetryDisposition, StoreError, retry_graph_is_equivalent,
+  MaterializedJob, MutationAuditContext, MutationDisposition, RetryBuild, RetryDisposition, StoreError,
+  retry_graph_is_equivalent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -20,6 +21,7 @@ pub(crate) async fn execute(
   pool: &PgPool,
   signer: &JobSpecSigner,
   request: RetryBuild,
+  audit: &MutationAuditContext,
 ) -> Result<RetryDisposition, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::new(
@@ -127,7 +129,7 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(&outcome),
+    facts(audit, &outcome),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
@@ -265,23 +267,22 @@ fn replay(value: Value) -> Result<RetryDisposition, StoreError> {
   })
 }
 
-fn facts(outcome: &RetryDisposition) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: outcome.build_id.to_string(),
-    safe_metadata: json!({
+fn facts(audit: &MutationAuditContext, outcome: &RetryDisposition) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    outcome.build_id.to_string(),
+    json!({
       "attempt_id": outcome.attempt_id,
       "attempt_number": outcome.attempt_number,
       "ready_job_count": outcome.ready_jobs.len(),
       "source_attempt_id": outcome.source_attempt_id,
     }),
-    outbox_payload: json!({
+    json!({
       "attempt_id": outcome.attempt_id,
       "attempt_number": outcome.attempt_number,
       "build_id": outcome.build_id,
       "schema_version": 1,
       "source_attempt_id": outcome.source_attempt_id,
     }),
-  }
+  )
 }

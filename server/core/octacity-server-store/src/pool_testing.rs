@@ -6,11 +6,14 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, PoolId, PoolVersion};
 
-use crate::testing::{MutationEvidenceCounts, MutationEvidenceProbe};
+use crate::testing::{
+  ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
+  recorded_management_audit,
+};
 use crate::{
   AgentPoolDefinition, AgentPoolMutationOutcome, AgentPoolPage, AgentPoolStore, CreateAgentPool, DeleteAgentPool,
-  DeleteAgentPoolOutcome, ListAgentPools, MutationDisposition, PublishAgentPoolVersion, PublishedAgentPool, StoreError,
-  StoreOperation, validate_pool_drain_transition,
+  DeleteAgentPoolOutcome, ListAgentPools, ManagementMutation, MutationDisposition, PublishAgentPoolVersion,
+  PublishedAgentPool, StoreError, StoreOperation, validate_pool_drain_transition,
 };
 
 /// Protected resource kinds that make Pool deletion unsafe.
@@ -69,7 +72,7 @@ struct PoolMemoryState {
   names: BTreeMap<octacity_server_domain::PoolName, PoolId>,
   mutations: BTreeMap<(&'static str, String), StoredMutation>,
   references: BTreeSet<(PoolId, PoolReferenceKind)>,
-  audit: BTreeSet<String>,
+  audit: BTreeSet<RecordedManagementAuditFact>,
   outbox: BTreeSet<String>,
 }
 
@@ -115,8 +118,25 @@ impl MutationEvidenceProbe for InMemoryAgentPoolStore {
 }
 
 #[async_trait]
+impl ManagementAuditProbe for InMemoryAgentPoolStore {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    self
+      .lock()
+      .expect("in-memory Agent Pool store must remain available")
+      .audit
+      .iter()
+      .cloned()
+      .collect()
+  }
+}
+
+#[async_trait]
 impl AgentPoolStore for InMemoryAgentPoolStore {
-  async fn create_agent_pool(&self, request: CreateAgentPool) -> Result<AgentPoolMutationOutcome, StoreError> {
+  async fn create_agent_pool(
+    &self,
+    request: ManagementMutation<CreateAgentPool>,
+  ) -> Result<AgentPoolMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request
       .definition
       .validate()
@@ -156,6 +176,7 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Pool(pool.clone()),
+      recorded_management_audit(&audit, StoreOperation::CreateAgentPool, EntityKind::Pool, request.id),
     );
     Ok(AgentPoolMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -165,8 +186,9 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
 
   async fn publish_agent_pool_version(
     &self,
-    request: PublishAgentPoolVersion,
+    request: ManagementMutation<PublishAgentPoolVersion>,
   ) -> Result<AgentPoolMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request
       .definition
       .validate()
@@ -220,6 +242,12 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Pool(pool.clone()),
+      recorded_management_audit(
+        &audit,
+        StoreOperation::PublishAgentPoolVersion,
+        EntityKind::Pool,
+        request.id,
+      ),
     );
     Ok(AgentPoolMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -260,7 +288,11 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
     Ok(AgentPoolPage { pools, next_cursor })
   }
 
-  async fn delete_agent_pool(&self, request: DeleteAgentPool) -> Result<DeleteAgentPoolOutcome, StoreError> {
+  async fn delete_agent_pool(
+    &self,
+    request: ManagementMutation<DeleteAgentPool>,
+  ) -> Result<DeleteAgentPoolOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let scope = "delete-agent-pool";
     let fingerprint = Fingerprint::Delete {
       id: request.id,
@@ -296,6 +328,7 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Deleted(request.id),
+      recorded_management_audit(&audit, StoreOperation::DeleteAgentPool, EntityKind::Pool, request.id),
     );
     Ok(DeleteAgentPoolOutcome {
       disposition: MutationDisposition::Applied,
@@ -356,10 +389,11 @@ fn record(
   key: &str,
   fingerprint: Fingerprint,
   outcome: StoredOutcome,
+  audit_fact: RecordedManagementAuditFact,
 ) {
   state
     .mutations
     .insert((scope, key.to_owned()), StoredMutation { fingerprint, outcome });
-  state.audit.insert(format!("{scope}:{key}"));
+  state.audit.insert(audit_fact);
   state.outbox.insert(format!("{scope}:{key}"));
 }

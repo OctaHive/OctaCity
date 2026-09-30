@@ -3,13 +3,18 @@ use octacity_server_domain::{EntityKind, TriggerId, TriggerVersion};
 
 use super::{InMemoryStore, ScheduleMemoryRecord};
 use crate::{
-  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MutationDisposition, ScheduleRecord,
-  ScheduleStore, StoreError, TriggerDefinitionMutationOutcome,
+  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, ManagementMutation, MutationDisposition,
+  ScheduleRecord, ScheduleStore, StoreError, StoreOperation, TriggerDefinitionMutationOutcome,
+  testing::recorded_management_audit,
 };
 
 #[async_trait]
 impl ScheduleStore for InMemoryStore {
-  async fn create_schedule(&self, request: CreateSchedule) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+  async fn create_schedule(
+    &self,
+    request: ManagementMutation<CreateSchedule>,
+  ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request.validate()?;
     let mut state = self.lock()?;
     let trigger_ref = crate::TriggerDefinitionRef {
@@ -62,6 +67,12 @@ impl ScheduleStore for InMemoryStore {
     );
     state.idempotency_outcomes.insert(format!("schedule:{trigger_ref:?}"));
     state.audit_facts.insert(format!("schedule:{trigger_ref:?}"));
+    state.management_audit_facts.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::CreateSchedule,
+      EntityKind::Trigger,
+      request.trigger.id,
+    ));
     state.outbox_entries.insert(format!("schedule:{trigger_ref:?}"));
     Ok(TriggerDefinitionMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -137,5 +148,75 @@ impl ScheduleStore for InMemoryStore {
     stored.record.next_occurrence_at = request.next_occurrence_at;
     stored.claim = None;
     Ok(MutationDisposition::Applied)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, TriggerVersion};
+  use octacity_server_trigger::{MissedRunPolicy, ScheduleDefinition};
+  use serde_json::json;
+
+  use super::*;
+  use crate::test_support::{id, run_ready, time};
+  use crate::testing::{assert_management_audit_facts, expected_management_audit, management_mutation};
+  use crate::{CreateTriggerDefinition, IdempotencyKey, TriggerKind};
+
+  #[test]
+  fn schedule_creation_records_the_exact_management_fact_once() {
+    let store = InMemoryStore::new();
+    let trigger_id = id::<TriggerId>(700);
+    let schedule = ScheduleDefinition {
+      expression: "* * * * * * *".to_owned(),
+      timezone: "UTC".to_owned(),
+      missed_run_policy: MissedRunPolicy::RunOnce,
+    };
+    let created_at = time(0);
+    let request = CreateSchedule {
+      trigger: CreateTriggerDefinition {
+        id: trigger_id,
+        version: TriggerVersion::INITIAL,
+        configuration_id: id::<BuildConfigurationId>(701),
+        configuration_version: BuildConfigurationVersion::INITIAL,
+        kind: TriggerKind::Scheduled,
+        enabled: true,
+        definition: json!({}),
+        idempotency_key: IdempotencyKey::new("schedule-audit").unwrap(),
+        created_at,
+      },
+      next_occurrence_at: schedule.next_after(created_at).unwrap(),
+      schedule,
+    };
+
+    run_ready(
+      async {
+        assert_eq!(
+          store
+            .create_schedule(management_mutation(request.clone()))
+            .await
+            .unwrap()
+            .disposition,
+          MutationDisposition::Applied
+        );
+        assert_eq!(
+          store
+            .create_schedule(management_mutation(request))
+            .await
+            .unwrap()
+            .disposition,
+          MutationDisposition::Replayed
+        );
+        assert_management_audit_facts(
+          &store,
+          [expected_management_audit(
+            StoreOperation::CreateSchedule,
+            EntityKind::Trigger,
+            trigger_id,
+          )],
+        )
+        .await;
+      },
+      "in-memory schedule audit contract unexpectedly yielded",
+    );
   }
 }

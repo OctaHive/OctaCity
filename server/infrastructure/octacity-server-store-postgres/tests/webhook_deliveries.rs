@@ -15,7 +15,8 @@ use octacity_server_store::{
   RecordWebhookEventOutcome, SuppressWebhookDelivery, TriggerEventKind, TriggerKind, UnmanagedWebhookDefinition,
   WebhookConfigurationStore as _, WebhookDeliveryAdmissionStore as _, WebhookDeliveryId,
   WebhookDeliveryQueryStore as _, WebhookDeliveryState, WebhookDeliveryWork, WebhookDeliveryWorkStore as _,
-  WebhookFailureCode, WorkerOwner, testing::authoritative_store_contract_fixture,
+  WebhookFailureCode, WorkerOwner,
+  testing::{authoritative_store_contract_fixture, management_mutation},
 };
 use octacity_server_store_postgres::PostgresStore;
 use support::TestDatabase;
@@ -32,7 +33,7 @@ async fn normalized_identity_and_retry_state_survive_store_replacement() {
   let integration_id = IntegrationId::from_uuid(uuid::Uuid::from_u128(9_001)).unwrap();
   let trigger_id = TriggerId::from_uuid(uuid::Uuid::from_u128(9_002)).unwrap();
   store
-    .create_unmanaged_webhook(CreateUnmanagedWebhook {
+    .create_unmanaged_webhook(management_mutation(CreateUnmanagedWebhook {
       integration_id,
       trigger: CreateTriggerDefinition {
         id: trigger_id,
@@ -57,7 +58,7 @@ async fn normalized_identity_and_retry_state_survive_store_replacement() {
       },
       idempotency_key: IdempotencyKey::new("webhook-delivery-integration").unwrap(),
       created_at: time(10),
-    })
+    }))
     .await
     .unwrap();
 
@@ -241,7 +242,7 @@ async fn managed_registration_retry_survives_store_replacement() {
   let trigger_id = TriggerId::from_uuid(uuid::Uuid::from_u128(9_102)).unwrap();
   let idempotency_key = IdempotencyKey::new("managed-registration-create").unwrap();
   store
-    .create_managed_webhook(CreateManagedWebhook {
+    .create_managed_webhook(management_mutation(CreateManagedWebhook {
       integration_id,
       trigger: CreateTriggerDefinition {
         id: trigger_id,
@@ -269,7 +270,7 @@ async fn managed_registration_retry_survives_store_replacement() {
       },
       idempotency_key: idempotency_key.clone(),
       created_at: time(10),
-    })
+    }))
     .await
     .unwrap();
 

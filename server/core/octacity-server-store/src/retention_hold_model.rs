@@ -8,10 +8,6 @@ use crate::{
 
 /// Maximum UTF-8 bytes in an operator-supplied Build Result hold reason.
 pub const MAX_RETENTION_HOLD_REASON_BYTES: usize = 512;
-/// Maximum UTF-8 bytes in an available management actor identity.
-pub const MAX_RETENTION_ACTOR_IDENTITY_BYTES: usize = 128;
-/// Maximum UTF-8 bytes in the transport-independent request identity retained for audit.
-pub const MAX_RETENTION_REQUEST_IDENTITY_BYTES: usize = 128;
 
 macro_rules! bounded_retention_text {
   ($name:ident, $maximum:ident, $description:literal) => {
@@ -48,16 +44,6 @@ bounded_retention_text!(
   RetentionHoldReason,
   MAX_RETENTION_HOLD_REASON_BYTES,
   "Validated bounded operator reason for a Build Result retention hold."
-);
-bounded_retention_text!(
-  RetentionActorIdentity,
-  MAX_RETENTION_ACTOR_IDENTITY_BYTES,
-  "Validated available management actor identity for a retention mutation."
-);
-bounded_retention_text!(
-  RetentionRequestIdentity,
-  MAX_RETENTION_REQUEST_IDENTITY_BYTES,
-  "Validated transport-independent request identity for retention audit."
 );
 
 /// Logical visibility of all components covered by one Build Result hold.
@@ -158,10 +144,6 @@ pub struct PlaceBuildResultHold {
   pub reason: RetentionHoldReason,
   /// Optional expiry; `None` creates a permanent hold.
   pub expires_at: Option<Timestamp>,
-  /// Available authenticated actor identity; absent in trusted-network v1.
-  pub actor_identity: Option<RetentionActorIdentity>,
-  /// Transport-independent request identity retained for audit.
-  pub request_identity: RetentionRequestIdentity,
   /// Stable replay identity.
   pub idempotency_key: IdempotencyKey,
   /// Authoritative placement time.
@@ -185,10 +167,6 @@ pub struct ReleaseBuildResultHold {
   pub build_id: BuildId,
   /// Hold version that must still be current.
   pub expected_version: RetentionHoldVersion,
-  /// Available authenticated actor identity; absent in trusted-network v1.
-  pub actor_identity: Option<RetentionActorIdentity>,
-  /// Transport-independent request identity retained for audit.
-  pub request_identity: RetentionRequestIdentity,
   /// Stable replay identity.
   pub idempotency_key: IdempotencyKey,
   /// Authoritative release time.
@@ -228,7 +206,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn hold_input_bounds_reason_identity_and_expiry() {
+  fn hold_input_bounds_reason_and_expiry() {
     let request = fixture();
     request.validate().unwrap();
 
@@ -240,11 +218,6 @@ mod tests {
     let mut request = fixture();
     request.expires_at = Some(request.placed_at);
     assert!(request.validate().is_err());
-
-    assert_eq!(
-      RetentionRequestIdentity::new("request\nidentity"),
-      Err(StoreInputError::InvalidRetentionHold)
-    );
   }
 
   fn fixture() -> PlaceBuildResultHold {
@@ -252,8 +225,6 @@ mod tests {
       build_id: BuildId::from_uuid(uuid::Uuid::from_u128(1)).unwrap(),
       reason: RetentionHoldReason::new("incident investigation").unwrap(),
       expires_at: None,
-      actor_identity: None,
-      request_identity: RetentionRequestIdentity::new("request:1").unwrap(),
       idempotency_key: IdempotencyKey::new("hold:1").unwrap(),
       placed_at: Timestamp::from_unix_millis(1_000).unwrap(),
     }

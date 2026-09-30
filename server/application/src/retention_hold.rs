@@ -4,13 +4,14 @@ use async_trait::async_trait;
 use octacity_server_domain::{BuildId, RetentionHoldVersion, Timestamp};
 use octacity_server_store::{
   BuildResultRetentionHoldStore, GetBuildResultRetention, IdempotencyKey, PlaceBuildResultHold, ReleaseBuildResultHold,
-  RetentionActorIdentity, RetentionHoldReason, RetentionRequestIdentity,
+  RetentionHoldReason,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
   ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
-  ManagementResourceKind, ManagementResourceResult, MutationDisposition, Query, management_security::instance_resource,
+  ManagementResourceKind, ManagementResourceResult, MutationDisposition, Query,
+  management_security::{audited_mutation, instance_resource},
 };
 
 /// Maximum UTF-8 bytes accepted in a Build Result hold reason.
@@ -234,18 +235,18 @@ where
     _grant: &crate::ManagementAuthorizationGrant,
     command: PlaceBuildResultHoldCommand,
   ) -> Result<BuildResultRetentionCommandOutcome, Self::Error> {
-    let (actor_identity, request_identity) = retention_audit_identity(context)?;
     let outcome = self
       .store
-      .place_build_result_hold(PlaceBuildResultHold {
-        build_id: command.build_id,
-        reason: command.reason,
-        expires_at: command.expires_at,
-        actor_identity,
-        request_identity,
-        idempotency_key: command.idempotency_key,
-        placed_at: command.placed_at,
-      })
+      .place_build_result_hold(audited_mutation(
+        context,
+        PlaceBuildResultHold {
+          build_id: command.build_id,
+          reason: command.reason,
+          expires_at: command.expires_at,
+          idempotency_key: command.idempotency_key,
+          placed_at: command.placed_at,
+        },
+      )?)
       .await?;
     Ok(BuildResultRetentionCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -267,37 +268,23 @@ where
     _grant: &crate::ManagementAuthorizationGrant,
     command: ReleaseBuildResultHoldCommand,
   ) -> Result<BuildResultRetentionCommandOutcome, Self::Error> {
-    let (actor_identity, request_identity) = retention_audit_identity(context)?;
     let outcome = self
       .store
-      .release_build_result_hold(ReleaseBuildResultHold {
-        build_id: command.build_id,
-        expected_version: command.expected_version,
-        actor_identity,
-        request_identity,
-        idempotency_key: command.idempotency_key,
-        released_at: command.released_at,
-      })
+      .release_build_result_hold(audited_mutation(
+        context,
+        ReleaseBuildResultHold {
+          build_id: command.build_id,
+          expected_version: command.expected_version,
+          idempotency_key: command.idempotency_key,
+          released_at: command.released_at,
+        },
+      )?)
       .await?;
     Ok(BuildResultRetentionCommandOutcome {
       disposition: outcome.disposition.into(),
       retention: project(outcome.retention),
     })
   }
-}
-
-fn retention_audit_identity(
-  context: &crate::ManagementRequestContext,
-) -> Result<(Option<RetentionActorIdentity>, RetentionRequestIdentity), ApplicationError> {
-  let actor_identity = context
-    .actor()
-    .identity()
-    .map(|identity| RetentionActorIdentity::new(identity.to_owned()))
-    .transpose()
-    .map_err(|_| ApplicationError::InvalidInput)?;
-  let request_identity =
-    RetentionRequestIdentity::new(context.request_id().to_string()).map_err(|_| ApplicationError::InvalidInput)?;
-  Ok((actor_identity, request_identity))
 }
 
 fn project(value: octacity_server_store::BuildResultRetentionState) -> BuildResultRetentionProjection {

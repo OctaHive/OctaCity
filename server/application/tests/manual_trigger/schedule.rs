@@ -110,15 +110,15 @@ fn schedule_creation_replays_the_original_server_generated_identity() {
     let fixture = fixture();
     let schedules = InMemoryStore::new();
     let first = schedules
-      .create_schedule(test_schedule_request(
-        &fixture.command,
-        fixture.command.trigger.id,
-        time(0),
+      .create_schedule(octacity_server_store::testing::management_mutation(
+        test_schedule_request(&fixture.command, fixture.command.trigger.id, time(0)),
       ))
       .await
       .unwrap();
     let replay = schedules
-      .create_schedule(test_schedule_request(&fixture.command, id::<TriggerId>(99), time(500)))
+      .create_schedule(octacity_server_store::testing::management_mutation(
+        test_schedule_request(&fixture.command, id::<TriggerId>(99), time(500)),
+      ))
       .await
       .unwrap();
 
@@ -130,7 +130,9 @@ fn schedule_creation_replays_the_original_server_generated_identity() {
 
 async fn create_test_schedule(store: &InMemoryStore, command: &ManualTriggerCommand) {
   store
-    .create_schedule(test_schedule_request(command, command.trigger.id, time(0)))
+    .create_schedule(octacity_server_store::testing::management_mutation(
+      test_schedule_request(command, command.trigger.id, time(0)),
+    ))
     .await
     .unwrap();
 }

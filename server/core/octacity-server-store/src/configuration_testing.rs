@@ -9,11 +9,14 @@ use octacity_server_domain::{
   PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion,
 };
 
-use crate::testing::{MutationEvidenceCounts, MutationEvidenceProbe};
+use crate::testing::{
+  ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
+  recorded_management_audit,
+};
 use crate::{
   BuildConfigurationMutationOutcome, ConfigurationStore, CreateBuildConfiguration, CreateRepository,
-  MutationDisposition, PublishBuildConfigurationVersion, PublishRepositoryVersion, PublishedBuildConfiguration,
-  PublishedRepository, RepositoryMutationOutcome, StoreError, StoreOperation,
+  ManagementMutation, MutationDisposition, PublishBuildConfigurationVersion, PublishRepositoryVersion,
+  PublishedBuildConfiguration, PublishedRepository, RepositoryMutationOutcome, StoreError, StoreOperation,
 };
 
 /// Deterministic process-local adapter for configuration application tests.
@@ -70,6 +73,7 @@ struct ConfigurationMemoryState {
   configuration_versions: BTreeMap<(BuildConfigurationId, BuildConfigurationVersion), PublishedBuildConfiguration>,
   mutations: BTreeMap<(&'static str, String), StoredMutation>,
   evidence: BTreeSet<String>,
+  audit: BTreeSet<RecordedManagementAuditFact>,
 }
 
 #[derive(Clone)]
@@ -143,15 +147,32 @@ impl MutationEvidenceProbe for InMemoryConfigurationStore {
     let count = state.evidence.len();
     MutationEvidenceCounts {
       idempotency: count,
-      audit: count,
+      audit: state.audit.len(),
       outbox: count,
     }
   }
 }
 
 #[async_trait]
+impl ManagementAuditProbe for InMemoryConfigurationStore {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    self
+      .lock()
+      .expect("in-memory Configuration store must remain available")
+      .audit
+      .iter()
+      .cloned()
+      .collect()
+  }
+}
+
+#[async_trait]
 impl ConfigurationStore for InMemoryConfigurationStore {
-  async fn create_repository(&self, request: CreateRepository) -> Result<RepositoryMutationOutcome, StoreError> {
+  async fn create_repository(
+    &self,
+    request: ManagementMutation<CreateRepository>,
+  ) -> Result<RepositoryMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request
       .definition
       .validate()
@@ -204,6 +225,12 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Repository(repository.clone()),
+      recorded_management_audit(
+        &audit,
+        StoreOperation::CreateRepository,
+        EntityKind::Repository,
+        request.id,
+      ),
     );
     Ok(RepositoryMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -213,8 +240,9 @@ impl ConfigurationStore for InMemoryConfigurationStore {
 
   async fn publish_repository_version(
     &self,
-    request: PublishRepositoryVersion,
+    request: ManagementMutation<PublishRepositoryVersion>,
   ) -> Result<RepositoryMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request
       .definition
       .validate()
@@ -270,6 +298,12 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Repository(repository.clone()),
+      recorded_management_audit(
+        &audit,
+        StoreOperation::PublishRepositoryVersion,
+        EntityKind::Repository,
+        request.id,
+      ),
     );
     Ok(RepositoryMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -292,8 +326,9 @@ impl ConfigurationStore for InMemoryConfigurationStore {
 
   async fn create_build_configuration(
     &self,
-    request: CreateBuildConfiguration,
+    request: ManagementMutation<CreateBuildConfiguration>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request
       .definition
       .validate()
@@ -347,6 +382,12 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Configuration(Box::new(configuration.clone())),
+      recorded_management_audit(
+        &audit,
+        StoreOperation::CreateBuildConfiguration,
+        EntityKind::Configuration,
+        request.id,
+      ),
     );
     Ok(BuildConfigurationMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -356,8 +397,9 @@ impl ConfigurationStore for InMemoryConfigurationStore {
 
   async fn publish_build_configuration_version(
     &self,
-    request: PublishBuildConfigurationVersion,
+    request: ManagementMutation<PublishBuildConfigurationVersion>,
   ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     request
       .definition
       .validate()
@@ -414,6 +456,12 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       request.idempotency_key.as_str(),
       fingerprint,
       StoredOutcome::Configuration(Box::new(configuration.clone())),
+      recorded_management_audit(
+        &audit,
+        StoreOperation::PublishBuildConfigurationVersion,
+        EntityKind::Configuration,
+        request.id,
+      ),
     );
     Ok(BuildConfigurationMutationOutcome {
       disposition: MutationDisposition::Applied,
@@ -507,11 +555,13 @@ fn record(
   key: &str,
   fingerprint: MutationFingerprint,
   outcome: StoredOutcome,
+  audit_fact: RecordedManagementAuditFact,
 ) {
   state
     .mutations
     .insert((scope, key.to_owned()), StoredMutation { fingerprint, outcome });
   state.evidence.insert(format!("{scope}:{key}"));
+  state.audit.insert(audit_fact);
 }
 
 const fn not_found(entity: EntityKind) -> StoreError {

@@ -1,8 +1,8 @@
 use octacity_server_domain::{EntityKind, Timestamp, TriggerId, TriggerVersion};
 use octacity_server_store::{
-  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MissedRunPolicy, MutationDisposition,
-  ScheduleDefinition, ScheduleRecord, StoreError, StoreOperation, TriggerDefinitionMutationOutcome,
-  TriggerDefinitionRef, TriggerTarget,
+  ClaimDueSchedules, CompleteScheduleClaim, CreateSchedule, DueScheduleClaim, MissedRunPolicy, MutationAuditContext,
+  MutationDisposition, ScheduleDefinition, ScheduleRecord, StoreError, StoreOperation,
+  TriggerDefinitionMutationOutcome, TriggerDefinitionRef, TriggerTarget,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -40,6 +40,7 @@ struct ScheduleRow {
 pub(crate) async fn create(
   pool: &PgPool,
   request: CreateSchedule,
+  audit: &MutationAuditContext,
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
   let trigger = &request.trigger;
@@ -108,17 +109,16 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: trigger.id.to_string(),
-      safe_metadata: json!({"version": trigger.version.get(), "kind": "scheduled"}),
-      outbox_payload: json!({
+    MutationFacts::management(
+      audit,
+      trigger.id.to_string(),
+      json!({"version": trigger.version.get(), "kind": "scheduled"}),
+      json!({
         "trigger_id": trigger.id,
         "version": trigger.version,
         "next_occurrence_at": request.next_occurrence_at,
       }),
-    },
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;

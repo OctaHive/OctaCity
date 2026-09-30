@@ -5,10 +5,12 @@ use octacity_server_domain::{AuditFactId, Timestamp};
 use crate::AuditMetadata;
 
 /// Stable actor classifications recorded by authoritative mutations.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AuditActorKind {
   /// A request accepted on the unauthenticated trusted-network listener.
   UnauthenticatedManagement,
+  /// A management subject verified before entering the application layer.
+  AuthenticatedManagement,
   /// An authenticated Agent process.
   Agent,
   /// A normalized Trigger decision.
@@ -27,6 +29,7 @@ impl AuditActorKind {
   pub const fn as_str(self) -> &'static str {
     match self {
       Self::UnauthenticatedManagement => "unauthenticated_management",
+      Self::AuthenticatedManagement => "authenticated_management",
       Self::Agent => "agent",
       Self::Trigger => "trigger",
       Self::Orchestrator => "orchestrator",
@@ -48,6 +51,7 @@ impl FromStr for AuditActorKind {
   fn from_str(value: &str) -> Result<Self, Self::Err> {
     match value {
       "unauthenticated_management" => Ok(Self::UnauthenticatedManagement),
+      "authenticated_management" => Ok(Self::AuthenticatedManagement),
       "agent" => Ok(Self::Agent),
       "trigger" => Ok(Self::Trigger),
       "orchestrator" => Ok(Self::Orchestrator),
@@ -118,4 +122,18 @@ pub struct AuditFact {
   pub metadata: AuditMetadata,
   /// Authoritative commit time.
   pub occurred_at: Timestamp,
+}
+
+#[cfg(test)]
+mod tests {
+  use std::str::FromStr as _;
+
+  use super::AuditActorKind;
+
+  #[test]
+  fn authenticated_management_actor_has_one_stable_representation() {
+    let kind = AuditActorKind::AuthenticatedManagement;
+    assert_eq!(kind.as_str(), "authenticated_management");
+    assert_eq!(AuditActorKind::from_str(kind.as_str()), Ok(kind));
+  }
 }

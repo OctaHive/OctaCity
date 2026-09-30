@@ -19,7 +19,8 @@ use octacity_server_store::{
   CreateSchedule, CreateTriggerDefinition, DueScheduleClaim, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim,
   JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence,
   LeaseWindow, MaterializedJob, MissedRunPolicy, MutationDisposition, ScheduleDefinition, ScheduleStore as _,
-  TriggerAcceptanceStore as _, TriggerKind, WorkerOwner, testing::authoritative_store_contract_fixture,
+  TriggerAcceptanceStore as _, TriggerKind, WorkerOwner,
+  testing::{authoritative_store_contract_fixture, management_mutation},
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
 use serde_json::json;
@@ -409,7 +410,7 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
     missed_run_policy: MissedRunPolicy::RunOnce,
   };
   PostgresStore::new(database.pool.clone())
-    .create_schedule(CreateSchedule {
+    .create_schedule(management_mutation(CreateSchedule {
       trigger: CreateTriggerDefinition {
         id: schedule_trigger_id,
         version: TriggerVersion::INITIAL,
@@ -423,7 +424,7 @@ async fn concurrent_schema_primitives_have_one_visible_winner() {
       },
       next_occurrence_at: Timestamp::from_unix_millis(1_000).unwrap(),
       schedule,
-    })
+    }))
     .await
     .unwrap();
   let left_pool = independent_pool(&database.pool).await;

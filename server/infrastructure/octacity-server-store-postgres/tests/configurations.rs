@@ -20,7 +20,7 @@ use octacity_server_store::{
   ConfigurationTriggerPolicy, CreateBuildConfiguration, CreatePipeline, CreateRepository, IdempotencyKey,
   ParameterDefinition, ParameterSchema, ParameterType, PipelineStore as _, PublishBuildConfigurationVersion,
   PublishPipelineVersion, RepositoryDefinition, RepositorySelectionPolicy, RetryClass, RuntimeClass, SourceReference,
-  StoreError, TriggerKind,
+  StoreError, TriggerKind, testing::management_mutation,
 };
 use octacity_server_store_postgres::PostgresStore;
 use serde_json::{Value, json};
@@ -37,40 +37,40 @@ async fn concurrent_publication_preserves_build_configuration_and_pipeline_snaps
   let store = PostgresStore::new(database.pool.clone());
   let repository_id = id::<RepositoryId>(3);
   store
-    .create_repository(CreateRepository {
+    .create_repository(management_mutation(CreateRepository {
       id: repository_id,
       project_id,
       name: RepositoryName::new("source").unwrap(),
       definition: repository_definition(),
       idempotency_key: key("create-repository"),
       published_at: time(10),
-    })
+    }))
     .await
     .unwrap();
   let pipeline_id = id::<PipelineId>(4);
   let pipeline_v1 = dag("build-v1");
   store
-    .create_pipeline(CreatePipeline {
+    .create_pipeline(management_mutation(CreatePipeline {
       id: pipeline_id,
       project_id,
       name: PipelineName::new("main").unwrap(),
       dag: pipeline_v1.clone(),
       idempotency_key: key("create-pipeline"),
       published_at: time(10),
-    })
+    }))
     .await
     .unwrap();
   let configuration_id = id::<BuildConfigurationId>(5);
   let configuration_v1 = configuration(repository_id, pipeline_id, PipelineVersion::INITIAL, pool_id, "debug");
   store
-    .create_build_configuration(CreateBuildConfiguration {
+    .create_build_configuration(management_mutation(CreateBuildConfiguration {
       id: configuration_id,
       project_id,
       name: BuildConfigurationName::new("main").unwrap(),
       definition: configuration_v1.clone(),
       idempotency_key: key("create-configuration"),
       published_at: time(20),
-    })
+    }))
     .await
     .unwrap();
   let build_id = id::<BuildId>(6);
@@ -85,13 +85,13 @@ async fn concurrent_publication_preserves_build_configuration_and_pipeline_snaps
   .await;
 
   store
-    .publish_pipeline_version(PublishPipelineVersion {
+    .publish_pipeline_version(management_mutation(PublishPipelineVersion {
       id: pipeline_id,
       expected_current_version: PipelineVersion::INITIAL,
       dag: dag("build-v2"),
       idempotency_key: key("publish-pipeline-v2"),
       published_at: time(30),
-    })
+    }))
     .await
     .unwrap();
   let barrier = Arc::new(Barrier::new(2));
@@ -157,7 +157,9 @@ async fn publish_after_barrier(
   barrier: Arc<Barrier>,
 ) -> Result<octacity_server_store::BuildConfigurationMutationOutcome, StoreError> {
   barrier.wait().await;
-  store.publish_build_configuration_version(request).await
+  store
+    .publish_build_configuration_version(management_mutation(request))
+    .await
 }
 
 fn publication(

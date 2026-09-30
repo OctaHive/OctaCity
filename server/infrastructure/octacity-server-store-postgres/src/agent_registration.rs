@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 use crate::{
   database::{classify, number, unavailable},
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
 };
 
 pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<AgentRegistrationOutcome, StoreError> {
@@ -150,11 +152,10 @@ pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<Age
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "agent",
-      actor_identity: Some(request.agent_id.to_string()),
-      target_identity: request.credential_id.to_string(),
-      safe_metadata: json!({
+    MutationFacts::non_management(
+      NonManagementActor::Agent(request.agent_id.to_string()),
+      request.credential_id.to_string(),
+      json!({
         "agent_id": request.agent_id,
         "registration_epoch": authority.epoch,
         "execution_contract_version": request.execution_contract_version,
@@ -162,13 +163,13 @@ pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<Age
         "pool_version": authority.pool_version,
         "expires_at": request.expires_at,
       }),
-      outbox_payload: json!({
+      json!({
         "agent_id": request.agent_id,
         "registration_id": request.credential_id,
         "registration_epoch": authority.epoch,
         "pool_id": authority.pool_id,
       }),
-    },
+    ),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;

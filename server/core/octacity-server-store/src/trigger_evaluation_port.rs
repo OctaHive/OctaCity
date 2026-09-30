@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 
 use crate::{
-  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, RecordTriggerEvaluationRevision,
-  ReserveTriggerEvaluation, StoreError, TriggerEvaluationClaim, TriggerEvaluationReservation,
+  ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation, ManagementMutation,
+  RecordTriggerEvaluationRevision, ReserveTriggerEvaluation, StoreError, TriggerEvaluationClaim,
+  TriggerEvaluationReservation,
 };
 
 /// Durable leased work used to recover manual Trigger evaluation across process failure.
@@ -11,7 +12,7 @@ pub trait TriggerEvaluationWorkStore: Send + Sync {
   /// Persists caller intent before VCS access and grants at most one initial claim.
   async fn reserve_trigger_evaluation(
     &self,
-    request: ReserveTriggerEvaluation,
+    request: ManagementMutation<ReserveTriggerEvaluation>,
   ) -> Result<TriggerEvaluationReservation, StoreError>;
 
   /// Claims a bounded batch of due or abandoned evaluations.

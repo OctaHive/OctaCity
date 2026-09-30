@@ -37,27 +37,38 @@ use octacity_server_pipeline::{
 };
 use octacity_server_store::testing::InMemoryStore;
 use octacity_server_store::{
-  AcceptTrigger, AcceptTriggerOutcome, BuildConfigurationDefinition, ClaimDueSchedules, ClaimTriggerEvaluations,
-  CompleteTriggerEvaluation, ConfigurationAgentRequirements, ConfigurationCachePolicy, ConfigurationNetworkPolicy,
-  ConfigurationRetryPolicy, ConfigurationRuntimePolicy, ConfigurationTriggerPolicy, CreateManagedWebhook,
-  CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook, EnqueueManagedWebhookOperation,
-  FailManagedWebhookOperation, FailTriggerEvaluation, IdempotencyKey, ManagedWebhookMutationOutcome,
-  ManagedWebhookOperation, ManagedWebhookOperationClaim, ManagedWebhookOperationStore, ManagedWebhookRecord,
-  ManagedWebhookRegistrationStore, MissedRunPolicy, MutationDisposition as StoreDisposition, ParameterDefinition,
-  ParameterSchema, ParameterType, PublishedBuildConfiguration, PublishedPipeline, PublishedRepository,
-  RecordManagedWebhookRegistration, RepositoryDefinition, RepositorySelectionPolicy, ReserveTriggerEvaluation,
-  RetryClass, ScheduleDefinition, ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome,
-  TriggerAcceptanceProbe, TriggerCausality, TriggerDefinitionRef, TriggerEvaluationClaim, TriggerEvaluationOutcome,
-  TriggerEvaluationReservation, TriggerEvaluationWorkStore, TriggerEventKind, TriggerKind, TriggerTarget,
-  UnmanagedWebhookDefinition, UnmanagedWebhookMutationOutcome, WebhookConfigurationStore,
-  WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
-  WebhookIntegrationRecord, WorkerOwner,
+  AcceptTrigger, AcceptTriggerOutcome, AuditActor, AuditActorKind, BuildConfigurationDefinition, ClaimDueSchedules,
+  ClaimTriggerEvaluations, CompleteTriggerEvaluation, ConfigurationAgentRequirements, ConfigurationCachePolicy,
+  ConfigurationNetworkPolicy, ConfigurationRetryPolicy, ConfigurationRuntimePolicy, ConfigurationTriggerPolicy,
+  CreateManagedWebhook, CreateSchedule, CreateTriggerDefinition, CreateUnmanagedWebhook,
+  EnqueueManagedWebhookOperation, FailManagedWebhookOperation, FailTriggerEvaluation, IdempotencyKey,
+  ManagedWebhookMutationOutcome, ManagedWebhookOperation, ManagedWebhookOperationClaim, ManagedWebhookOperationStore,
+  ManagedWebhookRecord, ManagedWebhookRegistrationStore, ManagementMutation, MissedRunPolicy, MutationAuditContext,
+  MutationDisposition as StoreDisposition, ParameterDefinition, ParameterSchema, ParameterType,
+  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, RecordManagedWebhookRegistration,
+  RepositoryDefinition, RepositorySelectionPolicy, ReserveTriggerEvaluation, RetryClass, ScheduleDefinition,
+  ScheduleStore, StoreError, SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerCausality,
+  TriggerDefinitionRef, TriggerEvaluationClaim, TriggerEvaluationOutcome, TriggerEvaluationReservation,
+  TriggerEvaluationWorkStore, TriggerEventKind, TriggerKind, TriggerTarget, UnmanagedWebhookDefinition,
+  UnmanagedWebhookMutationOutcome, WebhookConfigurationStore, WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore,
+  WebhookDeliveryWorkStore, WebhookIntegrationReader, WebhookIntegrationRecord, WorkerOwner,
 };
 use serde_json::json;
 
 #[path = "support/management_command.rs"]
 mod management_command_support;
 use management_command_support::management_command;
+
+fn management_audit() -> MutationAuditContext {
+  MutationAuditContext::try_new(
+    AuditActor {
+      kind: AuditActorKind::UnauthenticatedManagement,
+      identity: None,
+    },
+    "application-contract-request",
+  )
+  .unwrap()
+}
 
 #[test]
 fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
@@ -72,10 +83,7 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
     );
 
     let outcome = service
-      .handle_command(AcceptManualTriggerCommand {
-        trigger: fixture.command.clone(),
-        accepted_at: time(200),
-      })
+      .accept_management(fixture.command.clone(), time(200), management_audit())
       .await
       .unwrap();
     let ManualTriggerOutcome::Accepted {
@@ -185,7 +193,10 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
     let mut replay = fixture.command;
     replay.observed_at = time(999);
     let replay_service = ManualTriggerService::new(store.clone(), Arc::new(UnreachableContext), resolver.clone());
-    let replayed = replay_service.accept(replay, time(300)).await.unwrap();
+    let replayed = replay_service
+      .accept_management(replay, time(300), management_audit())
+      .await
+      .unwrap();
     let ManualTriggerOutcome::Accepted {
       disposition,
       build_id,
@@ -224,7 +235,9 @@ fn invalid_source_is_rejected_before_vcs_or_store_side_effects() {
     );
 
     assert!(matches!(
-      service.accept(fixture.command, time(200)).await,
+      service
+        .accept_management(fixture.command, time(200), management_audit())
+        .await,
       Err(ManualTriggerError::Invalid(
         ManualTriggerInputError::ReferenceNotAllowed
       ))
@@ -248,7 +261,9 @@ fn secret_profile_outside_effective_policy_is_rejected_before_side_effects() {
     );
 
     assert!(matches!(
-      service.accept(fixture.command, time(200)).await,
+      service
+        .accept_management(fixture.command, time(200), management_audit())
+        .await,
       Err(ManualTriggerError::Invalid(
         ManualTriggerInputError::SecretProfileNotAllowed
       ))
@@ -283,7 +298,7 @@ fn provider_neutral_runtime_requires_an_exact_project_execution_target() {
       Arc::new(StaticContext(fixture.context.clone())),
       resolver.clone(),
     )
-    .accept(fixture.command.clone(), time(200))
+    .accept_management(fixture.command.clone(), time(200), management_audit())
     .await;
     assert!(matches!(
       rejected,
@@ -303,7 +318,7 @@ fn provider_neutral_runtime_requires_an_exact_project_execution_target() {
         required_guarantees: guarantees_for(ExecutionMode::Host),
       });
     let accepted = ManualTriggerService::new(store.clone(), Arc::new(StaticContext(fixture.context)), resolver)
-      .accept(fixture.command, time(200))
+      .accept_management(fixture.command, time(200), management_audit())
       .await;
     assert!(matches!(accepted, Ok(ManualTriggerOutcome::Accepted { .. })));
     assert_eq!(store.requests.lock().unwrap().len(), 1);
@@ -323,7 +338,10 @@ fn disabled_configuration_is_durably_suppressed_and_replayed_without_vcs() {
       resolver.clone(),
     );
 
-    let outcome = service.accept(fixture.command.clone(), time(200)).await.unwrap();
+    let outcome = service
+      .accept_management(fixture.command.clone(), time(200), management_audit())
+      .await
+      .unwrap();
     let ManualTriggerOutcome::Suppressed {
       disposition,
       trigger_occurrence_id,
@@ -337,7 +355,10 @@ fn disabled_configuration_is_durably_suppressed_and_replayed_without_vcs() {
     assert!(resolver.requests.lock().unwrap().is_empty());
 
     let replay_service = ManualTriggerService::new(store.clone(), Arc::new(UnreachableContext), resolver.clone());
-    let replayed = replay_service.accept(fixture.command, time(300)).await.unwrap();
+    let replayed = replay_service
+      .accept_management(fixture.command, time(300), management_audit())
+      .await
+      .unwrap();
     let ManualTriggerOutcome::Suppressed {
       disposition,
       trigger_occurrence_id: replayed_occurrence_id,
@@ -446,7 +467,9 @@ fn open_schema_rejects_non_primitive_parameters_before_vcs_resolution() {
     );
 
     assert!(matches!(
-      service.accept(fixture.command, time(200)).await,
+      service
+        .accept_management(fixture.command, time(200), management_audit())
+        .await,
       Err(ManualTriggerError::Invalid(
         ManualTriggerInputError::InvalidParameterValue(name)
       )) if name == "nested"
@@ -469,7 +492,9 @@ fn one_failed_atomic_store_call_cannot_be_reported_as_success() {
     );
 
     assert!(matches!(
-      service.accept(fixture.command, time(200)).await,
+      service
+        .accept_management(fixture.command, time(200), management_audit())
+        .await,
       Err(ManualTriggerError::Store(StoreError::Unavailable))
     ));
     assert_eq!(store.calls(), 1);
@@ -486,7 +511,9 @@ fn unknown_manual_trigger_is_rejected_before_vcs_resolution() {
     let service = ManualTriggerService::new(store, Arc::new(RejectingContext), resolver.clone());
 
     assert!(matches!(
-      service.accept(fixture.command, time(200)).await,
+      service
+        .accept_management(fixture.command, time(200), management_audit())
+        .await,
       Err(ManualTriggerError::Context(ManualTriggerContextError::Store(
         StoreError::NotFound {
           entity: octacity_server_domain::EntityKind::Trigger
@@ -783,6 +810,7 @@ impl RevisionResolver for RecordingResolver {
 struct RecordingStore {
   requests: Mutex<Vec<AcceptTrigger>>,
   suppressions: Mutex<Vec<SuppressTrigger>>,
+  management_audits: Mutex<Vec<MutationAuditContext>>,
   fail: bool,
   calls: Mutex<usize>,
 }
@@ -872,6 +900,18 @@ impl octacity_server_store::TriggerAcceptanceStore for RecordingStore {
     Ok(outcome)
   }
 
+  async fn accept_management_trigger(
+    &self,
+    request: ManagementMutation<AcceptTrigger>,
+  ) -> Result<AcceptTriggerOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    let outcome = self.accept_trigger(request).await?;
+    if outcome.disposition == StoreDisposition::Applied {
+      self.management_audits.lock().unwrap().push(audit);
+    }
+    Ok(outcome)
+  }
+
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
     *self.calls.lock().unwrap() += 1;
     if self.fail {
@@ -882,6 +922,18 @@ impl octacity_server_store::TriggerAcceptanceStore for RecordingStore {
       trigger_occurrence_id: request.trigger.id,
     };
     self.suppressions.lock().unwrap().push(request);
+    Ok(outcome)
+  }
+
+  async fn suppress_management_trigger(
+    &self,
+    request: ManagementMutation<SuppressTrigger>,
+  ) -> Result<SuppressTriggerOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    let outcome = self.suppress_trigger(request).await?;
+    if outcome.disposition == StoreDisposition::Applied {
+      self.management_audits.lock().unwrap().push(audit);
+    }
     Ok(outcome)
   }
 }

@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
   ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, Query, management_security::instance_resource,
+  MutationDisposition, Query,
+  management_security::{audited_mutation, instance_resource},
 };
 
 /// Reads one enrolled Agent.
@@ -222,15 +223,22 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: ReassignAgentPoolCommand) -> Result<AgentCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: ReassignAgentPoolCommand,
+  ) -> Result<AgentCommandOutcome, Self::Error> {
     let outcome = self
-      .reassign_agent_pool(ReassignAgentPool {
-        agent_id: command.agent_id,
-        expected_version: command.expected_version,
-        target_pool_id: command.target_pool_id,
-        idempotency_key: command.idempotency_key,
-        reassigned_at: command.reassigned_at,
-      })
+      .reassign_agent_pool(audited_mutation(
+        context,
+        ReassignAgentPool {
+          agent_id: command.agent_id,
+          expected_version: command.expected_version,
+          target_pool_id: command.target_pool_id,
+          idempotency_key: command.idempotency_key,
+          reassigned_at: command.reassigned_at,
+        },
+      )?)
       .await?;
     Ok(AgentCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -245,11 +253,11 @@ impl<S: AgentStore + 'static> crate::ManagementCommandUseCase<ReassignAgentPoolC
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: ReassignAgentPoolCommand,
   ) -> Result<AgentCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -260,15 +268,22 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: DrainAgentCommand) -> Result<AgentCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: DrainAgentCommand,
+  ) -> Result<AgentCommandOutcome, Self::Error> {
     let outcome = self
-      .drain_agent(DrainAgent {
-        agent_id: command.agent_id,
-        expected_version: command.expected_version,
-        mode: command.mode,
-        idempotency_key: command.idempotency_key,
-        requested_at: command.requested_at,
-      })
+      .drain_agent(audited_mutation(
+        context,
+        DrainAgent {
+          agent_id: command.agent_id,
+          expected_version: command.expected_version,
+          mode: command.mode,
+          idempotency_key: command.idempotency_key,
+          requested_at: command.requested_at,
+        },
+      )?)
       .await?;
     Ok(AgentCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -283,11 +298,11 @@ impl<S: AgentStore + 'static> crate::ManagementCommandUseCase<DrainAgentCommand>
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: DrainAgentCommand,
   ) -> Result<AgentCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 

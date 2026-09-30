@@ -6,19 +6,23 @@ use std::{fmt::Debug, str::FromStr, sync::Arc};
 
 use async_trait::async_trait;
 use authoritative_fixture::seed_authoritative_prerequisites;
-use octacity_server_domain::{AgentVersion, EntityKind, PipelineId, PoolId, ProjectId, Timestamp, TriggerId};
+use octacity_server_domain::{
+  AgentVersion, EntityKind, PipelineId, PoolId, ProjectId, ProjectName, Timestamp, TriggerId,
+};
 use octacity_server_job::{JobFailureClass, JobState};
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
-  AgentCredentialStore as _, AgentRegistrationProof, AgentStore as _, AppendJobEvents, BuildControlStore as _,
-  BuildQueryStore as _, CredentialSecret, DurableJobEvent, EventSequence, FreshRegistrationCredential, IdempotencyKey,
-  JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobEventReadStore as _,
-  JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, MutationDisposition, ReadJobEvents, ReassignAgentPool,
-  RegisterAgent, RegistrationValidity, StoreError, TriggerAcceptanceStore as _,
+  AgentCredentialStore as _, AgentRegistrationProof, AgentStore as _, AppendJobEvents, AuditActor, AuditActorKind,
+  BuildControlStore as _, BuildQueryStore as _, CreateProject, CredentialSecret, DurableJobEvent, EventSequence,
+  FreshRegistrationCredential, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind,
+  JobEventKind, JobEventReadStore as _, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow,
+  ManagementMutation, MutationAuditContext, MutationDisposition, ProjectStore as _, ReadJobEvents, ReassignAgentPool,
+  RegisterAgent, RegistrationValidity, StoreError, StoreOperation, TriggerAcceptanceStore as _,
   testing::{
-    MutationEvidenceCounts, MutationEvidenceProbe, agent_credential_store_contract_fixture,
-    authoritative_store_contract_fixture, compatible_snapshot, retry_request, verify_agent_credential_store_contract,
-    verify_agent_pool_store_contract, verify_authoritative_store_contract, verify_configuration_store_contract,
+    ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
+    agent_credential_store_contract_fixture, authoritative_store_contract_fixture, compatible_snapshot,
+    management_mutation, retry_request, verify_agent_credential_store_contract, verify_agent_pool_store_contract,
+    verify_authoritative_store_contract, verify_configuration_store_contract, verify_management_trigger_audit_contract,
     verify_pipeline_store_contract, verify_project_store_contract,
   },
 };
@@ -46,6 +50,173 @@ impl MutationEvidenceProbe for PostgresEvidenceProbe {
       outbox: usize::try_from(outbox).unwrap(),
     }
   }
+}
+
+#[async_trait]
+impl ManagementAuditProbe for PostgresEvidenceProbe {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    let rows: Vec<(String, Option<String>, String, String, String, String)> = sqlx::query_as(
+      "SELECT actor_kind, actor_identity, operation, target_kind, target_identity, request_identity \
+       FROM audit_facts \
+       WHERE actor_kind IN ('unauthenticated_management', 'authenticated_management') \
+       ORDER BY actor_kind, actor_identity, operation, target_kind, target_identity, request_identity",
+    )
+    .fetch_all(&self.0)
+    .await
+    .expect("management audit evidence must remain queryable");
+    let mut facts = rows
+      .into_iter()
+      .map(
+        |(actor_kind, actor_identity, operation, target_kind, target_identity, request_identity)| {
+          RecordedManagementAuditFact {
+            actor_kind: AuditActorKind::from_str(&actor_kind).expect("stored actor kind is canonical"),
+            actor_identity,
+            operation: management_store_operation(&operation),
+            target_kind: management_entity_kind(&target_kind),
+            target_identity,
+            request_identity,
+          }
+        },
+      )
+      .collect::<Vec<_>>();
+    facts.sort_unstable();
+    facts
+  }
+}
+
+fn management_store_operation(operation: &str) -> StoreOperation {
+  match operation {
+    "create-project" => StoreOperation::CreateProject,
+    "rename-project" => StoreOperation::RenameProject,
+    "move-project" => StoreOperation::MoveProject,
+    "delete-project" => StoreOperation::DeleteProject,
+    "create-agent-pool" => StoreOperation::CreateAgentPool,
+    "publish-agent-pool-version" => StoreOperation::PublishAgentPoolVersion,
+    "delete-agent-pool" => StoreOperation::DeleteAgentPool,
+    "create-pipeline" => StoreOperation::CreatePipeline,
+    "publish-pipeline-version" => StoreOperation::PublishPipelineVersion,
+    "create-repository" => StoreOperation::CreateRepository,
+    "publish-repository-version" => StoreOperation::PublishRepositoryVersion,
+    "create-build-configuration" => StoreOperation::CreateBuildConfiguration,
+    "publish-build-configuration-version" => StoreOperation::PublishBuildConfigurationVersion,
+    "issue-agent-enrollment" => StoreOperation::IssueAgentEnrollment,
+    "revoke-agent-enrollment" | "revoke-agent-registration" => StoreOperation::RevokeAgentCredential,
+    "accept-trigger" => StoreOperation::AcceptTrigger,
+    "suppress-trigger" => StoreOperation::SuppressTrigger,
+    "cancel-build" => StoreOperation::CancelBuild,
+    "retry-build" => StoreOperation::RetryBuild,
+    _ => panic!("unexpected management audit operation: {operation}"),
+  }
+}
+
+fn management_entity_kind(target_kind: &str) -> EntityKind {
+  match target_kind {
+    "project" => EntityKind::Project,
+    "pool" => EntityKind::Pool,
+    "pipeline" => EntityKind::Pipeline,
+    "repository" => EntityKind::Repository,
+    "build_configuration" => EntityKind::Configuration,
+    "agent_enrollment_credential" => EntityKind::AgentEnrollmentCredential,
+    "agent_registration" => EntityKind::AgentRegistration,
+    "build" => EntityKind::Build,
+    "trigger" => EntityKind::Trigger,
+    _ => panic!("unexpected management audit target kind: {target_kind}"),
+  }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_persists_the_supplied_management_actor_once() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let request = CreateProject {
+    id: id::<ProjectId>(991),
+    parent_id: None,
+    name: ProjectName::new("authenticated-actor").unwrap(),
+    idempotency_key: IdempotencyKey::new("authenticated-actor").unwrap(),
+    created_at: time(991),
+  };
+  let audit = MutationAuditContext::try_new(
+    AuditActor {
+      kind: AuditActorKind::AuthenticatedManagement,
+      identity: Some("operator-42".to_owned()),
+    },
+    "request-42",
+  )
+  .unwrap();
+
+  assert_eq!(
+    store
+      .create_project(ManagementMutation::new(request.clone(), audit.clone()))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Applied
+  );
+  assert_eq!(
+    store
+      .create_project(ManagementMutation::new(request, audit))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Replayed
+  );
+
+  let counts = PostgresEvidenceProbe(database.pool.clone())
+    .mutation_evidence_counts()
+    .await;
+  let fact: (String, Option<String>, String, String, String, String) = sqlx::query_as(
+    "SELECT actor_kind, actor_identity, operation, target_kind, target_identity, request_identity \
+     FROM audit_facts",
+  )
+  .fetch_one(&database.pool)
+  .await
+  .unwrap();
+  database.cleanup().await;
+
+  assert_eq!(
+    counts,
+    MutationEvidenceCounts {
+      idempotency: 1,
+      audit: 1,
+      outbox: 1
+    }
+  );
+  assert_eq!(
+    fact,
+    (
+      "authenticated_management".to_owned(),
+      Some("operator-42".to_owned()),
+      "create-project".to_owned(),
+      "project".to_owned(),
+      id::<ProjectId>(991).to_string(),
+      "request-42".to_owned(),
+    )
+  );
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_preserves_management_trigger_actor_operation_and_target() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = Arc::new(PostgresAuthoritativeStore::new(
+    database.pool.clone(),
+    support::test_signer(),
+  ));
+  let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
+
+  let result = tokio::spawn(verify_management_trigger_audit_contract(
+    store,
+    evidence,
+    fixture.allowed_pool,
+  ))
+  .await;
+  database.cleanup().await;
+  result.expect("PostgreSQL management Trigger audit contract failed");
 }
 
 #[tokio::test]
@@ -117,13 +288,13 @@ async fn active_lease_prevents_postgres_agent_pool_reassignment() {
 
   let management = PostgresStore::new(database.pool.clone());
   let result = management
-    .reassign_agent_pool(ReassignAgentPool {
+    .reassign_agent_pool(management_mutation(ReassignAgentPool {
       agent_id: fixture.agent_id,
       expected_version: AgentVersion::INITIAL,
       target_pool_id: fixture.other_pool,
       idempotency_key: IdempotencyKey::new("active-lease-reassignment").unwrap(),
       reassigned_at: time(2_000),
-    })
+    }))
     .await;
   assert_eq!(
     result.unwrap_err(),
@@ -215,7 +386,10 @@ async fn concurrent_retry_has_one_winner_and_preserves_prior_history() {
 
   let left = retry_request(&request, 910, "concurrent-retry-left", time(2_100));
   let right = retry_request(&request, 920, "concurrent-retry-right", time(2_100));
-  let (left_result, right_result) = tokio::join!(store.retry_build(left), store.retry_build(right));
+  let (left_result, right_result) = tokio::join!(
+    store.retry_build(management_mutation(left)),
+    store.retry_build(management_mutation(right))
+  );
   let outcomes = [left_result, right_result];
   assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
   assert_eq!(
@@ -370,7 +544,7 @@ async fn agent_credentials_are_hashed_at_rest_and_replay_survives_adapter_restar
   seed_credential_pool(&database.pool, &fixture.enrollment).await;
   let first_store = PostgresStore::new(database.pool.clone());
   first_store
-    .issue_agent_enrollment(fixture.enrollment.clone())
+    .issue_agent_enrollment(management_mutation(fixture.enrollment.clone()))
     .await
     .unwrap();
 
@@ -386,7 +560,7 @@ async fn agent_credentials_are_hashed_at_rest_and_replay_survives_adapter_restar
   let restarted_store = PostgresStore::new(database.pool.clone());
   assert_eq!(
     restarted_store
-      .issue_agent_enrollment(fixture.enrollment.clone())
+      .issue_agent_enrollment(management_mutation(fixture.enrollment.clone()))
       .await
       .unwrap()
       .disposition,
@@ -442,7 +616,10 @@ async fn concurrent_enrollment_consumption_creates_exactly_one_agent() {
   let fixture = agent_credential_store_contract_fixture();
   seed_credential_pool(&database.pool, &fixture.enrollment).await;
   let store = PostgresStore::new(database.pool.clone());
-  store.issue_agent_enrollment(fixture.enrollment.clone()).await.unwrap();
+  store
+    .issue_agent_enrollment(management_mutation(fixture.enrollment.clone()))
+    .await
+    .unwrap();
 
   let request = |registration: u64, agent: u64, secret: u8| {
     RegisterAgent::new(

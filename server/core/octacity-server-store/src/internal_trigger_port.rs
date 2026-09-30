@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
   InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim,
-  ListInternalTriggerDefinitions, MutationDisposition, PublishInternalTriggerVersion, StoreError,
+  ListInternalTriggerDefinitions, ManagementMutation, MutationDisposition, PublishInternalTriggerVersion, StoreError,
   TriggerDefinitionMutationOutcome,
 };
 use octacity_server_domain::{TriggerId, TriggerVersion};
@@ -14,13 +14,13 @@ pub trait InternalTriggerDefinitionStore: Send + Sync {
   /// Creates version one of an internal Trigger.
   async fn create_internal_trigger_definition(
     &self,
-    request: CreateInternalTriggerDefinition,
+    request: ManagementMutation<CreateInternalTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
 
   /// Publishes exactly the next immutable version.
   async fn publish_internal_trigger_version(
     &self,
-    request: PublishInternalTriggerVersion,
+    request: ManagementMutation<PublishInternalTriggerVersion>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
 
   /// Reads one exact immutable internal Trigger version.

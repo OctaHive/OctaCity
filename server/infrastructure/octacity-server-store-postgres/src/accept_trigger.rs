@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId, TriggerOccurrenceId};
 use octacity_server_job::JobSpecSigner;
 use octacity_server_store::{
-  AcceptTrigger, AcceptTriggerOutcome, MutationDisposition, StoreError, StoreOperation, SuppressTrigger,
-  SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
+  AcceptTrigger, AcceptTriggerOutcome, MutationAuditContext, MutationDisposition, StoreError, StoreOperation,
+  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -13,13 +13,16 @@ use uuid::Uuid;
 
 use crate::{
   database::{classify, number, unavailable},
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
 };
 
 pub(crate) async fn execute(
   pool: &PgPool,
   signer: &JobSpecSigner,
   request: AcceptTrigger,
+  management_audit: Option<&MutationAuditContext>,
 ) -> Result<AcceptTriggerOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::with_digest(
@@ -48,7 +51,7 @@ pub(crate) async fn execute(
       crate::mutation::commit(
         transaction,
         &identity,
-        accepted_facts(&request, &outcome),
+        accepted_facts(management_audit, &request, &outcome),
         encode_outcome(&StoredOutcome::from(&outcome))?,
       )
       .await?;
@@ -110,7 +113,7 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    accepted_facts(&request, &outcome),
+    accepted_facts(management_audit, &request, &outcome),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
@@ -169,7 +172,11 @@ pub(crate) async fn replay_evaluation(
   .map(Some)
 }
 
-pub(crate) async fn suppress(pool: &PgPool, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
+pub(crate) async fn suppress(
+  pool: &PgPool,
+  request: SuppressTrigger,
+  management_audit: Option<&MutationAuditContext>,
+) -> Result<SuppressTriggerOutcome, StoreError> {
   request.validate()?;
   let identity = MutationIdentity::with_digest(
     MutationKind::SuppressTrigger,
@@ -178,10 +185,10 @@ pub(crate) async fn suppress(pool: &PgPool, request: SuppressTrigger) -> Result<
     EntityKind::Trigger,
     request.intent_digest.as_bytes(),
   );
-  let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
+  let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::SuppressTrigger)?;
   let configuration_version = number(
     request.trigger.target.configuration_version.get(),
-    StoreOperation::AcceptTrigger,
+    StoreOperation::SuppressTrigger,
   )?;
   let mut transaction = match crate::mutation::begin(pool, &identity).await? {
     MutationStart::Fresh(transaction) => transaction,
@@ -196,7 +203,7 @@ pub(crate) async fn suppress(pool: &PgPool, request: SuppressTrigger) -> Result<
       crate::mutation::commit(
         transaction,
         &identity,
-        suppressed_facts(&request, outcome.trigger_occurrence_id),
+        suppressed_facts(management_audit, &request, outcome.trigger_occurrence_id),
         encode_outcome(&StoredSuppressedOutcome::from(outcome))?,
       )
       .await?;
@@ -222,7 +229,7 @@ pub(crate) async fn suppress(pool: &PgPool, request: SuppressTrigger) -> Result<
   crate::mutation::commit(
     transaction,
     &identity,
-    suppressed_facts(&request, request.trigger.id),
+    suppressed_facts(management_audit, &request, request.trigger.id),
     encode_outcome(&StoredSuppressedOutcome::from(outcome))?,
   )
   .await?;
@@ -615,49 +622,60 @@ fn replay_suppressed(value: Value) -> Result<SuppressTriggerOutcome, StoreError>
   })
 }
 
-fn accepted_facts(request: &AcceptTrigger, outcome: &AcceptTriggerOutcome) -> MutationFacts {
-  let (actor_kind, actor_identity) = trigger_actor(&request.trigger);
-  MutationFacts {
-    actor_kind,
-    actor_identity,
-    target_identity: outcome.build_id.to_string(),
-    safe_metadata: json!({
-      "attempt_id": outcome.attempt_id,
-      "ready_job_count": outcome.ready_jobs.len(),
-      "trigger_occurrence_id": outcome.trigger_occurrence_id,
-    }),
-    outbox_payload: json!({
-      "attempt_id": outcome.attempt_id,
-      "build_id": outcome.build_id,
-      "schema_version": 1,
-      "trigger_occurrence_id": outcome.trigger_occurrence_id,
-    }),
+fn accepted_facts(
+  management_audit: Option<&MutationAuditContext>,
+  request: &AcceptTrigger,
+  outcome: &AcceptTriggerOutcome,
+) -> MutationFacts {
+  let safe_metadata = json!({
+    "attempt_id": outcome.attempt_id,
+    "ready_job_count": outcome.ready_jobs.len(),
+    "trigger_occurrence_id": outcome.trigger_occurrence_id,
+  });
+  let outbox_payload = json!({
+    "attempt_id": outcome.attempt_id,
+    "build_id": outcome.build_id,
+    "schema_version": 1,
+    "trigger_occurrence_id": outcome.trigger_occurrence_id,
+  });
+  if let Some(audit) = management_audit {
+    return MutationFacts::management(audit, outcome.build_id.to_string(), safe_metadata, outbox_payload);
   }
+  MutationFacts::non_management(
+    trigger_actor(&request.trigger),
+    outcome.build_id.to_string(),
+    safe_metadata,
+    outbox_payload,
+  )
 }
 
-fn suppressed_facts(request: &SuppressTrigger, occurrence_id: TriggerOccurrenceId) -> MutationFacts {
-  let (actor_kind, actor_identity) = trigger_actor(&request.trigger);
-  MutationFacts {
-    actor_kind,
-    actor_identity,
-    target_identity: occurrence_id.to_string(),
-    safe_metadata: json!({
-      "reason": "configuration_disabled",
-      "trigger_occurrence_id": occurrence_id,
-    }),
-    outbox_payload: json!({
-      "reason": "configuration_disabled",
-      "schema_version": 1,
-      "trigger_occurrence_id": occurrence_id,
-    }),
+fn suppressed_facts(
+  management_audit: Option<&MutationAuditContext>,
+  request: &SuppressTrigger,
+  occurrence_id: TriggerOccurrenceId,
+) -> MutationFacts {
+  let safe_metadata = json!({
+    "reason": "configuration_disabled",
+    "trigger_occurrence_id": occurrence_id,
+  });
+  let outbox_payload = json!({
+    "reason": "configuration_disabled",
+    "schema_version": 1,
+    "trigger_occurrence_id": occurrence_id,
+  });
+  if let Some(audit) = management_audit {
+    return MutationFacts::management(audit, occurrence_id.to_string(), safe_metadata, outbox_payload);
   }
+  MutationFacts::non_management(
+    trigger_actor(&request.trigger),
+    occurrence_id.to_string(),
+    safe_metadata,
+    outbox_payload,
+  )
 }
 
-fn trigger_actor(trigger: &octacity_server_store::NormalizedTriggerOccurrence) -> (&'static str, Option<String>) {
-  match &trigger.cause {
-    octacity_server_store::TriggerCause::Manual {} => ("unauthenticated_management", None),
-    _ => ("trigger", Some(trigger.trigger.id.to_string())),
-  }
+fn trigger_actor(trigger: &octacity_server_store::NormalizedTriggerOccurrence) -> NonManagementActor {
+  NonManagementActor::Trigger(trigger.trigger.id.to_string())
 }
 
 #[cfg(test)]
@@ -669,10 +687,12 @@ mod tests {
     NormalizedTriggerOccurrence, TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerTarget,
   };
 
+  use crate::mutation::NonManagementActor;
+
   use super::trigger_actor;
 
   #[test]
-  fn manual_trigger_is_audited_as_the_unauthenticated_management_actor() {
+  fn raw_manual_trigger_is_audited_as_a_trigger() {
     let trigger = NormalizedTriggerOccurrence::root(
       TriggerOccurrenceId::from_uuid(uuid::Uuid::from_u128(1)).unwrap(),
       TriggerDefinitionRef {
@@ -690,6 +710,9 @@ mod tests {
     )
     .unwrap();
 
-    assert_eq!(trigger_actor(&trigger), ("unauthenticated_management", None));
+    assert_eq!(
+      trigger_actor(&trigger),
+      NonManagementActor::Trigger(trigger.trigger.id.to_string())
+    );
   }
 }

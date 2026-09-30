@@ -9,14 +9,16 @@ use serde_json::json;
 
 use crate::test_support::{id, run_ready, time};
 use crate::testing::{
-  InMemoryStore, MutationEvidenceCounts, MutationEvidenceProbe, authoritative_store_contract_fixture,
-  compatible_snapshot, retry_request, trigger_request,
+  InMemoryStore, ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
+  assert_management_audit_facts, authoritative_store_contract_fixture, compatible_snapshot, expected_management_audit,
+  management_mutation, retry_request, trigger_request,
 };
 use crate::{
-  AcceptTrigger, AppendJobEvents, AuthoritativeStore, CancelBuild, DurableJobEvent, EventSequence, IdempotencyKey,
-  JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, LeaseAccess, LeaseFence, LeaseWindow,
-  MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation, SuppressTrigger,
-  TriggerAcceptanceProbe, TriggerCausality, TriggerCause, TriggerEvaluationOutcome, TriggerIntentDigest,
+  AcceptTrigger, AppendJobEvents, AuditActor, AuditActorKind, AuthoritativeStore, CancelBuild, DurableJobEvent,
+  EventSequence, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind,
+  LeaseAccess, LeaseFence, LeaseWindow, ManagementMutation, MutationAuditContext, MutationDisposition,
+  RegistrationEpoch, StoreError, StoreInputError, StoreOperation, SuppressTrigger, TriggerAcceptanceProbe,
+  TriggerAcceptanceStore, TriggerCausality, TriggerCause, TriggerEvaluationOutcome, TriggerIntentDigest,
 };
 
 const CONTRACT_LEASE_EXPIRY_MILLIS: i64 = 253_402_300_799_000;
@@ -25,8 +27,9 @@ const CONTRACT_LEASE_EXPIRY_MILLIS: i64 = 253_402_300_799_000;
 pub async fn verify_authoritative_store_contract<S, P>(store: Arc<S>, evidence: Arc<P>)
 where
   S: AuthoritativeStore + 'static,
-  P: MutationEvidenceProbe + 'static,
+  P: ManagementAuditProbe + MutationEvidenceProbe + 'static,
 {
+  let mut expected_audit = Vec::new();
   let fixture = authoritative_store_contract_fixture();
   let allowed_pool = fixture.allowed_pool;
   let request = fixture.request;
@@ -430,16 +433,24 @@ where
     idempotency_key: IdempotencyKey::new("cancel-main-build").unwrap(),
     requested_at: time(3_500),
   };
-  let cancelled = store.cancel_build(cancellation.clone()).await.unwrap();
+  let cancelled = store
+    .cancel_build(management_mutation(cancellation.clone()))
+    .await
+    .unwrap();
   assert!(cancelled.cancelled_jobs.is_empty());
   assert_eq!(cancelled.cancelling_jobs, [child_job]);
   assert_eq!(cancelled.attempt_state, AttemptState::Running);
   assert_eq!(cancelled.build_state, BuildState::Running);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CancelBuild,
+    EntityKind::Build,
+    request.build.id,
+  ));
   let replayed_cancellation = store
-    .cancel_build(CancelBuild {
+    .cancel_build(management_mutation(CancelBuild {
       requested_at: time(3_501),
       ..cancellation
-    })
+    }))
     .await
     .unwrap();
   let mut expected_cancellation_replay = cancelled;
@@ -568,7 +579,10 @@ where
   immutable_mismatch.idempotency_key = IdempotencyKey::new("retry-with-mutated-requirements").unwrap();
   immutable_mismatch.jobs[0].requirements.minimum_cpu_millis += 1;
   assert_eq!(
-    store.retry_build(immutable_mismatch).await.unwrap_err(),
+    store
+      .retry_build(management_mutation(immutable_mismatch))
+      .await
+      .unwrap_err(),
     StoreError::Conflict {
       entity: EntityKind::Attempt
     },
@@ -578,7 +592,10 @@ where
   policy_mismatch.idempotency_key = IdempotencyKey::new("retry-with-mutated-root-policy").unwrap();
   policy_mismatch.jobs[0].dependency_policy = octacity_server_pipeline::DependencyPolicy::AnySucceeded;
   assert_eq!(
-    store.retry_build(policy_mismatch).await.unwrap_err(),
+    store
+      .retry_build(management_mutation(policy_mismatch))
+      .await
+      .unwrap_err(),
     StoreError::Conflict {
       entity: EntityKind::Attempt
     },
@@ -590,27 +607,38 @@ where
   intent["repository_locator"] = json!("https://example.test/other-repository.git");
   intent_mismatch.jobs[0].job_spec_template = serde_json::from_value(intent).unwrap();
   assert_eq!(
-    store.retry_build(intent_mismatch).await.unwrap_err(),
+    store
+      .retry_build(management_mutation(intent_mismatch))
+      .await
+      .unwrap_err(),
     StoreError::Conflict {
       entity: EntityKind::Attempt
     },
     "retry must preserve the complete server-derived execution intent"
   );
-  let retried = store.retry_build(retry.clone()).await.unwrap();
+  let retried = store.retry_build(management_mutation(retry.clone())).await.unwrap();
   assert_eq!(retried.disposition, MutationDisposition::Applied);
   assert_eq!(retried.source_attempt_id, independent.attempt_id);
   assert_eq!(retried.attempt_number.get(), 2);
   assert_eq!(retried.ready_jobs, [retry_root]);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::RetryBuild,
+    EntityKind::Build,
+    independent.build.id,
+  ));
   let mut retry_replay = retry.clone();
   retry_replay.requested_at = time(4_201);
   let mut expected_retry_replay = retried.clone();
   expected_retry_replay.disposition = MutationDisposition::Replayed;
-  assert_eq!(store.retry_build(retry_replay).await.unwrap(), expected_retry_replay);
+  assert_eq!(
+    store.retry_build(management_mutation(retry_replay)).await.unwrap(),
+    expected_retry_replay
+  );
 
   let mut changed_retry = retry;
   changed_retry.jobs[0].requirements.minimum_cpu_millis += 1;
   assert_eq!(
-    store.retry_build(changed_retry).await.unwrap_err(),
+    store.retry_build(management_mutation(changed_retry)).await.unwrap_err(),
     StoreError::Conflict {
       entity: EntityKind::Build
     },
@@ -632,17 +660,22 @@ where
   let cancellable_jobs: Vec<_> = cancellable.jobs.iter().map(|job| job.id).collect();
   store.accept_trigger(cancellable.clone()).await.unwrap();
   let cancelled_without_owner = store
-    .cancel_build(CancelBuild {
+    .cancel_build(management_mutation(CancelBuild {
       build_id: cancellable.build.id,
       idempotency_key: IdempotencyKey::new("cancel-unowned-build").unwrap(),
       requested_at: time(4_300),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(cancelled_without_owner.cancelled_jobs, cancellable_jobs);
   assert!(cancelled_without_owner.cancelling_jobs.is_empty());
   assert_eq!(cancelled_without_owner.attempt_state, AttemptState::Cancelled);
   assert_eq!(cancelled_without_owner.build_state, BuildState::Cancelled);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CancelBuild,
+    EntityKind::Build,
+    cancellable.build.id,
+  ));
   assert_eq!(
     evidence.mutation_evidence_counts().await,
     MutationEvidenceCounts {
@@ -651,6 +684,80 @@ where
       outbox: 17,
     },
     "accepted mutations must atomically persist primary evidence and each Job completion must also audit Orchestrator reconciliation"
+  );
+  assert_management_audit_facts(evidence.as_ref(), expected_audit).await;
+}
+
+/// Verifies exact actor and target fidelity for both management Trigger outcomes.
+pub async fn verify_management_trigger_audit_contract<S, P>(store: Arc<S>, evidence: Arc<P>, allowed_pool: PoolId)
+where
+  S: TriggerAcceptanceStore + 'static,
+  P: ManagementAuditProbe + 'static,
+{
+  let accepted = trigger_request(90, 900, allowed_pool);
+  let suppressed_source = trigger_request(91, 901, allowed_pool);
+  let suppressed = SuppressTrigger::new(
+    suppressed_source.trigger,
+    suppressed_source.intent_digest,
+    suppressed_source.accepted_at,
+  )
+  .unwrap();
+  let accepted_audit = authenticated_audit("accept-request");
+  let suppressed_audit = authenticated_audit("suppress-request");
+
+  assert_eq!(
+    store
+      .accept_management_trigger(ManagementMutation::new(accepted.clone(), accepted_audit.clone()))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Applied
+  );
+  assert_eq!(
+    store
+      .accept_management_trigger(ManagementMutation::new(accepted.clone(), accepted_audit))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Replayed
+  );
+  assert_eq!(
+    store
+      .suppress_management_trigger(ManagementMutation::new(suppressed.clone(), suppressed_audit.clone()))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Applied
+  );
+  assert_eq!(
+    store
+      .suppress_management_trigger(ManagementMutation::new(suppressed.clone(), suppressed_audit))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Replayed
+  );
+
+  assert_eq!(
+    evidence.management_audit_facts().await,
+    vec![
+      RecordedManagementAuditFact {
+        actor_kind: AuditActorKind::AuthenticatedManagement,
+        actor_identity: Some("operator-42".to_owned()),
+        operation: StoreOperation::AcceptTrigger,
+        target_kind: EntityKind::Build,
+        target_identity: accepted.build.id.to_string(),
+        request_identity: "accept-request".to_owned(),
+      },
+      RecordedManagementAuditFact {
+        actor_kind: AuditActorKind::AuthenticatedManagement,
+        actor_identity: Some("operator-42".to_owned()),
+        operation: StoreOperation::SuppressTrigger,
+        target_kind: EntityKind::Trigger,
+        target_identity: suppressed.trigger.id.to_string(),
+        request_identity: "suppress-request".to_owned(),
+      },
+    ]
   );
 }
 
@@ -661,9 +768,28 @@ pub fn verify_in_memory_store_contract() {
     .seed_authoritative_contract_prerequisites(&authoritative_store_contract_fixture())
     .unwrap();
   run_ready(
-    verify_authoritative_store_contract(store.clone(), store.clone()),
+    async move {
+      verify_authoritative_store_contract(store.clone(), store.clone()).await;
+      let audit_store = Arc::new(InMemoryStore::new());
+      let audit_fixture = authoritative_store_contract_fixture();
+      audit_store
+        .seed_authoritative_contract_prerequisites(&audit_fixture)
+        .unwrap();
+      verify_management_trigger_audit_contract(audit_store.clone(), audit_store, audit_fixture.allowed_pool).await;
+    },
     "the in-memory adapter unexpectedly yielded to an external runtime",
   );
+}
+
+fn authenticated_audit(request_identity: &str) -> MutationAuditContext {
+  MutationAuditContext::try_new(
+    AuditActor {
+      kind: AuditActorKind::AuthenticatedManagement,
+      identity: Some("operator-42".to_owned()),
+    },
+    request_identity,
+  )
+  .unwrap()
 }
 
 fn claim(

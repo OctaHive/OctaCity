@@ -29,6 +29,7 @@ impl WebhookManagementService {
 
   async fn create(
     &self,
+    context: &crate::ManagementRequestContext,
     command: CreateUnmanagedWebhookCommand,
   ) -> Result<UnmanagedWebhookProjection, ApplicationError> {
     let Some(callback_origin) = &self.callback_origin else {
@@ -57,23 +58,26 @@ impl WebhookManagementService {
       })?;
     let outcome = self
       .configuration_store
-      .create_unmanaged_webhook(CreateUnmanagedWebhook {
-        integration_id: command.integration_id,
-        trigger: CreateTriggerDefinition {
-          id: command.trigger_id,
-          version: TriggerVersion::INITIAL,
-          configuration_id: command.configuration_id,
-          configuration_version: command.configuration_version,
-          kind: TriggerKind::External,
-          enabled: command.enabled,
-          definition: json!({}),
-          idempotency_key: command.idempotency_key.clone(),
+      .create_unmanaged_webhook(crate::management_security::audited_mutation(
+        context,
+        CreateUnmanagedWebhook {
+          integration_id: command.integration_id,
+          trigger: CreateTriggerDefinition {
+            id: command.trigger_id,
+            version: TriggerVersion::INITIAL,
+            configuration_id: command.configuration_id,
+            configuration_version: command.configuration_version,
+            kind: TriggerKind::External,
+            enabled: command.enabled,
+            definition: json!({}),
+            idempotency_key: command.idempotency_key.clone(),
+            created_at: command.created_at,
+          },
+          definition,
+          idempotency_key: command.idempotency_key,
           created_at: command.created_at,
         },
-        definition,
-        idempotency_key: command.idempotency_key,
-        created_at: command.created_at,
-      })
+      )?)
       .await?;
     Ok(UnmanagedWebhookProjection {
       disposition: outcome.disposition.into(),
@@ -91,6 +95,7 @@ impl WebhookManagementService {
 
   async fn create_managed(
     &self,
+    context: &crate::ManagementRequestContext,
     command: CreateManagedWebhookCommand,
   ) -> Result<ManagedWebhookProjection, ApplicationError> {
     let callback_origin = self
@@ -123,23 +128,26 @@ impl WebhookManagementService {
       .map_err(managed_provider_error)?;
     let reservation = self
       .configuration_store
-      .create_managed_webhook(CreateManagedWebhook {
-        integration_id: command.integration_id,
-        trigger: CreateTriggerDefinition {
-          id: command.trigger_id,
-          version: TriggerVersion::INITIAL,
-          configuration_id: command.configuration_id,
-          configuration_version: command.configuration_version,
-          kind: TriggerKind::External,
-          enabled: command.enabled,
-          definition: json!({}),
+      .create_managed_webhook(crate::management_security::audited_mutation(
+        context,
+        CreateManagedWebhook {
+          integration_id: command.integration_id,
+          trigger: CreateTriggerDefinition {
+            id: command.trigger_id,
+            version: TriggerVersion::INITIAL,
+            configuration_id: command.configuration_id,
+            configuration_version: command.configuration_version,
+            kind: TriggerKind::External,
+            enabled: command.enabled,
+            definition: json!({}),
+            idempotency_key: command.idempotency_key.clone(),
+            created_at: command.created_at,
+          },
+          definition,
           idempotency_key: command.idempotency_key.clone(),
           created_at: command.created_at,
         },
-        definition,
-        idempotency_key: command.idempotency_key.clone(),
-        created_at: command.created_at,
-      })
+      )?)
       .await?;
     let callback_url = callback_origin.callback_url(reservation.integration_id);
     if let Some(registration) = &reservation.registration {
@@ -156,6 +164,7 @@ impl WebhookManagementService {
 
   async fn manage(
     &self,
+    context: &crate::ManagementRequestContext,
     command: ManageWebhookRegistrationCommand,
   ) -> Result<ManagedWebhookProjection, ApplicationError> {
     if command.operation == ManagedWebhookOperation::Create {
@@ -178,12 +187,15 @@ impl WebhookManagementService {
     let callback_url = callback_origin.callback_url(integration.integration_id);
     let disposition = self
       .operations
-      .enqueue_managed_webhook_operation(EnqueueManagedWebhookOperation {
-        integration_id: command.integration_id,
-        operation: command.operation,
-        idempotency_key: command.idempotency_key.clone(),
-        requested_at: command.observed_at,
-      })
+      .enqueue_managed_webhook_operation(crate::management_security::audited_mutation(
+        context,
+        EnqueueManagedWebhookOperation {
+          integration_id: command.integration_id,
+          operation: command.operation,
+          idempotency_key: command.idempotency_key.clone(),
+          requested_at: command.observed_at,
+        },
+      )?)
       .await?;
     if let Some(registration) = &integration.registration {
       ensure_callback(&registration.callback_url, &callback_url)?;
@@ -204,11 +216,11 @@ impl crate::ManagementCommandUseCase<CreateUnmanagedWebhookCommand> for WebhookM
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateUnmanagedWebhookCommand,
   ) -> Result<UnmanagedWebhookProjection, Self::Error> {
-    self.create(command).await
+    self.create(context, command).await
   }
 }
 
@@ -218,11 +230,11 @@ impl crate::ManagementCommandUseCase<CreateManagedWebhookCommand> for WebhookMan
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateManagedWebhookCommand,
   ) -> Result<ManagedWebhookProjection, Self::Error> {
-    self.create_managed(command).await
+    self.create_managed(context, command).await
   }
 }
 
@@ -234,11 +246,11 @@ macro_rules! managed_webhook_registration_use_case {
 
       async fn execute_management_command(
         &self,
-        _context: &crate::ManagementRequestContext,
+        context: &crate::ManagementRequestContext,
         _grant: &crate::ManagementAuthorizationGrant,
         command: $command,
       ) -> Result<ManagedWebhookProjection, Self::Error> {
-        self.manage(command.into()).await
+        self.manage(context, command.into()).await
       }
     }
   };

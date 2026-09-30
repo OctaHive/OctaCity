@@ -15,7 +15,7 @@ use crate::{
   ApplicationError, BuildConfigurationProjection, Command, CommandTransaction, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
   MutationDisposition, Query, RepositoryProjection,
-  management_security::{instance_resource, owned_collection_resource},
+  management_security::{audited_mutation, instance_resource, owned_collection_resource},
   projections::validate_configuration_projection,
 };
 
@@ -230,16 +230,23 @@ where
 {
   type Error = ApplicationError;
 
-  async fn commit_command(&self, command: CreateRepositoryCommand) -> Result<RepositoryCommandOutcome, Self::Error> {
+  async fn commit_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: CreateRepositoryCommand,
+  ) -> Result<RepositoryCommandOutcome, Self::Error> {
     let outcome = self
-      .create_repository(CreateRepository {
-        id: command.id,
-        project_id: command.project_id,
-        name: command.name,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .create_repository(audited_mutation(
+        context,
+        CreateRepository {
+          id: command.id,
+          project_id: command.project_id,
+          name: command.name,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(RepositoryCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -257,11 +264,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateRepositoryCommand,
   ) -> Result<RepositoryCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -274,16 +281,20 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: PublishRepositoryVersionCommand,
   ) -> Result<RepositoryCommandOutcome, Self::Error> {
     let outcome = self
-      .publish_repository_version(PublishRepositoryVersion {
-        id: command.id,
-        expected_current_version: command.expected_current_version,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .publish_repository_version(audited_mutation(
+        context,
+        PublishRepositoryVersion {
+          id: command.id,
+          expected_current_version: command.expected_current_version,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(RepositoryCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -301,11 +312,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: PublishRepositoryVersionCommand,
   ) -> Result<RepositoryCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -318,18 +329,22 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: CreateBuildConfigurationCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
     validate_configuration_input(&command.definition)?;
     let outcome = self
-      .create_build_configuration(CreateBuildConfiguration {
-        id: command.id,
-        project_id: command.project_id,
-        name: command.name,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .create_build_configuration(audited_mutation(
+        context,
+        CreateBuildConfiguration {
+          id: command.id,
+          project_id: command.project_id,
+          name: command.name,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(BuildConfigurationCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -369,11 +384,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: CreateBuildConfigurationCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 
@@ -386,17 +401,21 @@ where
 
   async fn commit_command(
     &self,
+    context: &crate::ManagementRequestContext,
     command: PublishBuildConfigurationVersionCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
     validate_configuration_input(&command.definition)?;
     let outcome = self
-      .publish_build_configuration_version(PublishBuildConfigurationVersion {
-        id: command.id,
-        expected_current_version: command.expected_current_version,
-        definition: command.definition,
-        idempotency_key: command.idempotency_key,
-        published_at: command.published_at,
-      })
+      .publish_build_configuration_version(audited_mutation(
+        context,
+        PublishBuildConfigurationVersion {
+          id: command.id,
+          expected_current_version: command.expected_current_version,
+          definition: command.definition,
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )?)
       .await?;
     Ok(BuildConfigurationCommandOutcome {
       disposition: outcome.disposition.into(),
@@ -418,11 +437,11 @@ where
 
   async fn execute_management_command(
     &self,
-    _context: &crate::ManagementRequestContext,
+    context: &crate::ManagementRequestContext,
     _grant: &crate::ManagementAuthorizationGrant,
     command: PublishBuildConfigurationVersionCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
-    self.store.commit_command(command).await
+    self.store.commit_command(context, command).await
   }
 }
 

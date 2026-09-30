@@ -1,7 +1,7 @@
 use octacity_server_domain::{EntityKind, ProjectId, RepositoryId, RepositoryName, RepositoryVersion};
 use octacity_server_store::{
-  CreateRepository, MutationDisposition, PublishRepositoryVersion, PublishedRepository, RepositoryDefinition,
-  RepositoryMutationOutcome, StoreError, StoreOperation,
+  CreateRepository, MutationAuditContext, MutationDisposition, PublishRepositoryVersion, PublishedRepository,
+  RepositoryDefinition, RepositoryMutationOutcome, StoreError, StoreOperation,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -29,6 +29,7 @@ struct PublishFingerprint<'a> {
 pub(crate) async fn create(
   pool: &sqlx::PgPool,
   request: CreateRepository,
+  audit: &MutationAuditContext,
 ) -> Result<RepositoryMutationOutcome, StoreError> {
   validate(&request.definition, StoreOperation::CreateRepository)?;
   let identity = MutationIdentity::new(
@@ -82,7 +83,7 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(MutationKind::CreateRepository, &outcome.repository),
+    facts(audit, MutationKind::CreateRepository, &outcome.repository),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -92,6 +93,7 @@ pub(crate) async fn create(
 pub(crate) async fn publish(
   pool: &sqlx::PgPool,
   request: PublishRepositoryVersion,
+  audit: &MutationAuditContext,
 ) -> Result<RepositoryMutationOutcome, StoreError> {
   validate(&request.definition, StoreOperation::PublishRepositoryVersion)?;
   let identity = MutationIdentity::new(
@@ -153,7 +155,7 @@ pub(crate) async fn publish(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(MutationKind::PublishRepositoryVersion, &outcome.repository),
+    facts(audit, MutationKind::PublishRepositoryVersion, &outcome.repository),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -228,22 +230,21 @@ fn validate(definition: &RepositoryDefinition, operation: StoreOperation) -> Res
     .map_err(|source| StoreError::InvalidInput { operation, source })
 }
 
-fn facts(kind: MutationKind, repository: &PublishedRepository) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: repository.id.to_string(),
-    safe_metadata: json!({
+fn facts(audit: &MutationAuditContext, kind: MutationKind, repository: &PublishedRepository) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    repository.id.to_string(),
+    json!({
       "project_id": repository.project_id,
       "version": repository.version.get(),
     }),
-    outbox_payload: json!({
+    json!({
       "event": kind.outbox_topic(),
       "project_id": repository.project_id,
       "repository_id": repository.id,
       "version": repository.version.get(),
     }),
-  }
+  )
 }
 
 fn replay(value: Value) -> Result<RepositoryMutationOutcome, StoreError> {

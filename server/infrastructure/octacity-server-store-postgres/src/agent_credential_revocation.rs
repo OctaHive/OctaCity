@@ -1,5 +1,7 @@
 use octacity_server_domain::EntityKind;
-use octacity_server_store::{AgentCredentialTarget, MutationDisposition, RevokeAgentCredential, StoreError};
+use octacity_server_store::{
+  AgentCredentialTarget, MutationAuditContext, MutationDisposition, RevokeAgentCredential, StoreError,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
@@ -9,7 +11,11 @@ use crate::{
   mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
 };
 
-pub(crate) async fn execute(pool: &PgPool, request: RevokeAgentCredential) -> Result<MutationDisposition, StoreError> {
+pub(crate) async fn execute(
+  pool: &PgPool,
+  request: RevokeAgentCredential,
+  audit: &MutationAuditContext,
+) -> Result<MutationDisposition, StoreError> {
   let (kind, key, entity, target_identity) = match request.target {
     AgentCredentialTarget::Enrollment(credential_id) => (
       MutationKind::RevokeAgentEnrollment,
@@ -70,13 +76,12 @@ pub(crate) async fn execute(pool: &PgPool, request: RevokeAgentCredential) -> Re
   crate::mutation::commit(
     transaction,
     &identity,
-    MutationFacts {
-      actor_kind: "unauthenticated_management",
-      actor_identity: None,
-      target_identity: target_identity.clone(),
-      safe_metadata: json!({"credential_identity": target_identity}),
-      outbox_payload: json!({"credential_identity": target_identity}),
-    },
+    MutationFacts::management(
+      audit,
+      target_identity.clone(),
+      json!({"credential_identity": target_identity}),
+      json!({"credential_identity": target_identity}),
+    ),
     encode_outcome(&StoredOutcome {})?,
   )
   .await?;

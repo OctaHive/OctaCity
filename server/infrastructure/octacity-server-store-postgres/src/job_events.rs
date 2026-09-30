@@ -12,7 +12,9 @@ use sqlx::{FromRow, PgPool, Postgres, QueryBuilder, types::Json};
 use crate::{
   database::{classify, number, unavailable},
   lease,
-  mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  mutation::{
+    MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+  },
   state::{job_state, parse_job_state},
 };
 
@@ -376,21 +378,20 @@ fn replay(value: Value) -> Result<AppendJobEventsOutcome, StoreError> {
 }
 
 fn facts(request: &AppendJobEvents, job_id: JobId, outcome: &AppendJobEventsOutcome) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "agent",
-    actor_identity: Some(request.lease.agent_id.to_string()),
-    target_identity: job_id.to_string(),
-    safe_metadata: json!({
+  MutationFacts::non_management(
+    NonManagementActor::Agent(request.lease.agent_id.to_string()),
+    job_id.to_string(),
+    json!({
       "acknowledged_through": outcome.acknowledged_through.get(),
       "batch_size": request.events.len(),
       "inserted": outcome.inserted,
       "lease_id": request.lease.lease_id,
     }),
-    outbox_payload: json!({
+    json!({
       "acknowledged_through": outcome.acknowledged_through.get(),
       "job_id": job_id,
       "lease_id": request.lease.lease_id,
       "schema_version": 1,
     }),
-  }
+  )
 }

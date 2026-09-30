@@ -1,9 +1,12 @@
 //! Transport-independent, credential-free management security vocabulary.
 
+mod audit;
 mod authorization;
 mod context;
 mod dispatch;
 mod policy;
+
+pub(crate) use audit::audited_mutation;
 
 #[cfg(test)]
 mod tests;

@@ -100,13 +100,13 @@ async fn verify_drain_directives(pool: &PgPool) -> Result<(), Box<dyn std::error
     registration_epoch: grant.registration_epoch,
   };
   management
-    .drain_agent(DrainAgent {
+    .drain_agent(octacity_server_store::testing::management_mutation(DrainAgent {
       agent_id: fixture.agent_id,
       expected_version: octacity_server_domain::AgentVersion::INITIAL,
       mode: AgentDrainMode::Graceful,
       idempotency_key: IdempotencyKey::new("drain-agent-integration")?,
       requested_at: add_millis(observed_at, 1_000)?,
-    })
+    }))
     .await?;
   let agent_drain_outcome = authoritative
     .renew_lease(heartbeat(
@@ -120,20 +120,22 @@ async fn verify_drain_directives(pool: &PgPool) -> Result<(), Box<dyn std::error
   assert!(matches!(agent_drain_outcome, LeaseHeartbeatOutcome::Drain { .. }));
 
   management
-    .publish_agent_pool_version(PublishAgentPoolVersion {
-      id: fixture.allowed_pool,
-      expected_current_version: octacity_server_domain::PoolVersion::INITIAL,
-      definition: AgentPoolDefinition {
-        enabled: true,
-        drain_state: PoolDrainState::ForcedDrain,
-        admission_policy: PoolAdmissionPolicy::Any,
-        concurrency_limit: 4,
-        fairness_policy: octacity_server_store::PoolFairnessPolicy::PriorityFifo,
-        static_capacity_limit: 4,
+    .publish_agent_pool_version(octacity_server_store::testing::management_mutation(
+      PublishAgentPoolVersion {
+        id: fixture.allowed_pool,
+        expected_current_version: octacity_server_domain::PoolVersion::INITIAL,
+        definition: AgentPoolDefinition {
+          enabled: true,
+          drain_state: PoolDrainState::ForcedDrain,
+          admission_policy: PoolAdmissionPolicy::Any,
+          concurrency_limit: 4,
+          fairness_policy: octacity_server_store::PoolFairnessPolicy::PriorityFifo,
+          static_capacity_limit: 4,
+        },
+        idempotency_key: IdempotencyKey::new("force-drain-pool-integration")?,
+        published_at: add_millis(observed_at, 3_000)?,
       },
-      idempotency_key: IdempotencyKey::new("force-drain-pool-integration")?,
-      published_at: add_millis(observed_at, 3_000)?,
-    })
+    ))
     .await?;
   assert_eq!(
     authoritative

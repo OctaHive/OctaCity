@@ -29,16 +29,16 @@ use serde_json::json;
 
 use crate::test_support::{id, time};
 use crate::{
-  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, BuildControlStore, CancelBuild,
-  CancellationDisposition, CompletionDisposition, EventDigest, EventSequence, IdempotencyKey, ImmutableBuildInput,
-  JobClaim, JobClaimOutcome, JobCompletion, JobEventAppendPreparation, JobExecutionStore, LeaseAccess, LeaseGrant,
-  LeaseHeartbeatOutcome, LeaseHeartbeatStore, LogChunkManifest, LogChunkManifestStore, LogIndexPosition,
-  LogIndexWorkStore, MaterializedJob, MaterializedJobPayload, MutationDisposition, NormalizedTriggerOccurrence,
-  RegistrationEpoch, RenewLease, RetryBuild, RetryDisposition, ScheduleRecord, StoreError, StoreOperation,
-  SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause,
-  TriggerDeduplicationKey, TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind,
-  TriggerMetadata, TriggerTarget, WorkerOwner, complete_job_state, retry_graph_is_equivalent, start_job_execution,
-  validate_new_log_chunks,
+  AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, AuditActorKind, BuildControlStore,
+  CancelBuild, CancellationDisposition, CompletionDisposition, EventDigest, EventSequence, IdempotencyKey,
+  ImmutableBuildInput, JobClaim, JobClaimOutcome, JobCompletion, JobEventAppendPreparation, JobExecutionStore,
+  LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LogChunkManifest, LogChunkManifestStore,
+  LogIndexPosition, LogIndexWorkStore, ManagementMutation, MaterializedJob, MaterializedJobPayload,
+  MutationAuditContext, MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, RenewLease, RetryBuild,
+  RetryDisposition, ScheduleRecord, StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome,
+  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
+  TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget, WorkerOwner,
+  complete_job_state, retry_graph_is_equivalent, start_job_execution, validate_new_log_chunks,
 };
 
 mod build_control;
@@ -60,7 +60,9 @@ pub use crate::artifact_contract_testing::{
   verify_artifact_upload_store_contract,
 };
 pub use crate::artifact_testing::{ArtifactLeaseFixture, InMemoryArtifactRecordStore};
-pub use crate::authoritative_contract_testing::{verify_authoritative_store_contract, verify_in_memory_store_contract};
+pub use crate::authoritative_contract_testing::{
+  verify_authoritative_store_contract, verify_in_memory_store_contract, verify_management_trigger_audit_contract,
+};
 pub use crate::cache_contract_testing::{CacheSessionStoreContractFixture, verify_cache_session_store_contract};
 pub use crate::cache_testing::{CacheLeaseFixture, InMemoryCacheSessionStore};
 pub use crate::configuration_contract_testing::{
@@ -115,6 +117,98 @@ pub enum MutationFailurePoint {
 pub trait MutationEvidenceProbe: Send + Sync {
   /// Returns evidence counts after the adapter has committed a contract run.
   async fn mutation_evidence_counts(&self) -> MutationEvidenceCounts;
+}
+
+/// Actor-faithful audit evidence observed from one in-memory management mutation.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct RecordedManagementAuditFact {
+  /// Accepted management actor classification.
+  pub actor_kind: AuditActorKind,
+  /// Verified actor identity when the accepted context carried one.
+  pub actor_identity: Option<String>,
+  /// Typed authoritative operation that committed.
+  pub operation: StoreOperation,
+  /// Typed entity targeted by the operation.
+  pub target_kind: EntityKind,
+  /// Stable logical target identity.
+  pub target_identity: String,
+  /// Safe request correlation identity accepted at ingress.
+  pub request_identity: String,
+}
+
+/// Test-only observation seam for actor-faithful management audit evidence.
+#[async_trait]
+pub trait ManagementAuditProbe: Send + Sync {
+  /// Returns immutable management facts in deterministic order.
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact>;
+}
+
+/// Builds the canonical fact expected from the deterministic contract actor.
+#[must_use]
+pub fn expected_management_audit(
+  operation: StoreOperation,
+  target_kind: EntityKind,
+  target_identity: impl ToString,
+) -> RecordedManagementAuditFact {
+  RecordedManagementAuditFact {
+    actor_kind: AuditActorKind::UnauthenticatedManagement,
+    actor_identity: None,
+    operation,
+    target_kind,
+    target_identity: target_identity.to_string(),
+    request_identity: "contract-request".to_owned(),
+  }
+}
+
+/// Requires one exact, duplicate-free management fact for every accepted
+/// mutation described by a reusable store contract.
+pub async fn assert_management_audit_facts<P>(
+  probe: &P,
+  expected: impl IntoIterator<Item = RecordedManagementAuditFact>,
+) where
+  P: ManagementAuditProbe + ?Sized,
+{
+  let mut expected = expected.into_iter().collect::<Vec<_>>();
+  expected.sort_unstable();
+  assert_eq!(probe.management_audit_facts().await, expected);
+}
+
+pub(crate) fn recorded_management_audit(
+  context: &MutationAuditContext,
+  operation: StoreOperation,
+  target_kind: EntityKind,
+  target_identity: impl ToString,
+) -> RecordedManagementAuditFact {
+  RecordedManagementAuditFact {
+    actor_kind: context.actor().kind,
+    actor_identity: context.actor().identity.clone(),
+    operation,
+    target_kind,
+    target_identity: target_identity.to_string(),
+    request_identity: context.request_identity().to_owned(),
+  }
+}
+
+/// Binds a contract-test mutation to a deterministic anonymous management request.
+#[must_use]
+pub fn management_mutation<T>(mutation: T) -> ManagementMutation<T> {
+  management_mutation_with_request(mutation, "contract-request")
+}
+
+/// Binds a contract-test mutation to a deterministic anonymous management request identity.
+#[must_use]
+pub fn management_mutation_with_request<T>(mutation: T, request_identity: impl Into<String>) -> ManagementMutation<T> {
+  ManagementMutation::new(
+    mutation,
+    MutationAuditContext::try_new(
+      crate::AuditActor {
+        kind: AuditActorKind::UnauthenticatedManagement,
+        identity: None,
+      },
+      request_identity,
+    )
+    .expect("contract management audit context is valid"),
+  )
 }
 
 /// Deterministic process-local adapter for application and contract tests.
@@ -216,6 +310,19 @@ impl InMemoryStore {
 }
 
 #[async_trait]
+impl ManagementAuditProbe for InMemoryStore {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    self
+      .lock()
+      .expect("in-memory authoritative store must remain available")
+      .management_audit_facts
+      .iter()
+      .cloned()
+      .collect()
+  }
+}
+
+#[async_trait]
 impl MutationEvidenceProbe for InMemoryStore {
   async fn mutation_evidence_counts(&self) -> MutationEvidenceCounts {
     let state = self.lock().expect("in-memory contract state must remain available");
@@ -293,11 +400,27 @@ impl TriggerAcceptanceStore for InMemoryStore {
   }
 
   async fn accept_trigger(&self, request: AcceptTrigger) -> Result<AcceptTriggerOutcome, StoreError> {
-    trigger::accept(self, request).await
+    trigger::accept(self, request, None).await
+  }
+
+  async fn accept_management_trigger(
+    &self,
+    request: ManagementMutation<AcceptTrigger>,
+  ) -> Result<AcceptTriggerOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    trigger::accept(self, request, Some(audit)).await
   }
 
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
-    trigger::suppress(self, request).await
+    trigger::suppress(self, request, None).await
+  }
+
+  async fn suppress_management_trigger(
+    &self,
+    request: ManagementMutation<SuppressTrigger>,
+  ) -> Result<SuppressTriggerOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    trigger::suppress(self, request, Some(audit)).await
   }
 }
 
@@ -340,12 +463,17 @@ impl LeaseHeartbeatStore for InMemoryStore {
 
 #[async_trait]
 impl BuildControlStore for InMemoryStore {
-  async fn cancel_build(&self, request: CancelBuild) -> Result<CancellationDisposition, StoreError> {
-    build_control::cancel(self, request).await
+  async fn cancel_build(
+    &self,
+    request: ManagementMutation<CancelBuild>,
+  ) -> Result<CancellationDisposition, StoreError> {
+    let (request, audit) = request.into_parts();
+    build_control::cancel(self, request, &audit).await
   }
 
-  async fn retry_build(&self, request: RetryBuild) -> Result<RetryDisposition, StoreError> {
-    build_control::retry(self, request).await
+  async fn retry_build(&self, request: ManagementMutation<RetryBuild>) -> Result<RetryDisposition, StoreError> {
+    let (request, audit) = request.into_parts();
+    build_control::retry(self, request, &audit).await
   }
 }
 

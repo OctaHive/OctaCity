@@ -4,18 +4,22 @@ use octacity_server_domain::{EntityKind, PoolId, PoolName, PoolVersion};
 use octacity_server_scheduler::PoolDrainState;
 
 use crate::test_support::{id, run_ready, time};
-use crate::testing::{InMemoryAgentPoolStore, MutationEvidenceProbe, PoolReferenceKind};
+use crate::testing::{
+  InMemoryAgentPoolStore, ManagementAuditProbe, MutationEvidenceProbe, PoolReferenceKind,
+  assert_management_audit_facts, expected_management_audit, management_mutation,
+};
 use crate::{
   AgentPlatform, AgentPoolDefinition, AgentPoolStore, CreateAgentPool, DeleteAgentPool, IdempotencyKey, ListAgentPools,
-  MutationDisposition, PoolAdmissionPolicy, PublishAgentPoolVersion, StoreError,
+  ManagementMutation, MutationDisposition, PoolAdmissionPolicy, PublishAgentPoolVersion, StoreError, StoreOperation,
 };
 
 /// Runs the reusable versioned Agent Pool contract against one empty adapter.
 pub async fn verify_agent_pool_store_contract<S, P>(store: Arc<S>, evidence: Arc<P>)
 where
   S: AgentPoolStore + 'static,
-  P: MutationEvidenceProbe + 'static,
+  P: ManagementAuditProbe + MutationEvidenceProbe + 'static,
 {
+  let mut expected_audit = Vec::new();
   let pool_id = id::<PoolId>(1);
   let created = store
     .create_agent_pool(create(
@@ -29,6 +33,11 @@ where
     .unwrap();
   assert_eq!(created.disposition, MutationDisposition::Applied);
   assert_eq!(created.pool.version, PoolVersion::INITIAL);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CreateAgentPool,
+    EntityKind::Pool,
+    pool_id,
+  ));
 
   let replay = store
     .create_agent_pool(create(
@@ -57,26 +66,31 @@ where
   );
 
   let draining = store
-    .publish_agent_pool_version(PublishAgentPoolVersion {
+    .publish_agent_pool_version(management_mutation(PublishAgentPoolVersion {
       id: pool_id,
       expected_current_version: PoolVersion::INITIAL,
       definition: definition(PoolDrainState::GracefulDrain),
       idempotency_key: key("drain-linux"),
       published_at: time(20),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(draining.pool.version.get(), 2);
   assert_eq!(draining.pool.definition.drain_state, PoolDrainState::GracefulDrain);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::PublishAgentPoolVersion,
+    EntityKind::Pool,
+    pool_id,
+  ));
   assert_eq!(
     store
-      .publish_agent_pool_version(PublishAgentPoolVersion {
+      .publish_agent_pool_version(management_mutation(PublishAgentPoolVersion {
         id: pool_id,
         expected_current_version: PoolVersion::INITIAL,
         definition: definition(PoolDrainState::ForcedDrain),
         idempotency_key: key("stale-pool-version"),
         published_at: time(21),
-      })
+      }))
       .await
       .unwrap_err(),
     conflict()
@@ -102,24 +116,34 @@ where
     .await
     .unwrap()
     .pool;
+  expected_audit.push(expected_management_audit(
+    StoreOperation::CreateAgentPool,
+    EntityKind::Pool,
+    disposable_id,
+  ));
   let deleted = store
-    .delete_agent_pool(DeleteAgentPool {
+    .delete_agent_pool(management_mutation(DeleteAgentPool {
       id: disposable_id,
       expected_current_version: disposable.version,
       idempotency_key: key("delete-disposable-pool"),
       deleted_at: time(31),
-    })
+    }))
     .await
     .unwrap();
   assert_eq!(deleted.disposition, MutationDisposition::Applied);
+  expected_audit.push(expected_management_audit(
+    StoreOperation::DeleteAgentPool,
+    EntityKind::Pool,
+    disposable_id,
+  ));
   assert_eq!(
     store
-      .delete_agent_pool(DeleteAgentPool {
+      .delete_agent_pool(management_mutation(DeleteAgentPool {
         id: disposable_id,
         expected_current_version: disposable.version,
         idempotency_key: key("delete-disposable-pool"),
         deleted_at: time(99),
-      })
+      }))
       .await
       .unwrap()
       .disposition,
@@ -138,6 +162,7 @@ where
   let counts = evidence.mutation_evidence_counts().await;
   assert_eq!(counts.idempotency, counts.audit);
   assert_eq!(counts.audit, counts.outbox);
+  assert_management_audit_facts(evidence.as_ref(), expected_audit).await;
 }
 
 /// Runs the Pool contract and guarded-reference cases against the in-memory adapter.
@@ -171,12 +196,12 @@ pub fn verify_in_memory_agent_pool_store_contract() {
         store.seed_reference(pool_id, kind).unwrap();
         assert_eq!(
           store
-            .delete_agent_pool(DeleteAgentPool {
+            .delete_agent_pool(management_mutation(DeleteAgentPool {
               id: pool_id,
               expected_current_version: pool.version,
               idempotency_key: key(&format!("delete-guarded-{offset}")),
               deleted_at: time(200 + i64::try_from(offset).unwrap()),
-            })
+            }))
             .await
             .unwrap_err(),
           conflict(),
@@ -188,14 +213,20 @@ pub fn verify_in_memory_agent_pool_store_contract() {
   );
 }
 
-fn create(id: PoolId, name: &str, idempotency_key: &str, definition: AgentPoolDefinition, at: i64) -> CreateAgentPool {
-  CreateAgentPool {
+fn create(
+  id: PoolId,
+  name: &str,
+  idempotency_key: &str,
+  definition: AgentPoolDefinition,
+  at: i64,
+) -> ManagementMutation<CreateAgentPool> {
+  management_mutation(CreateAgentPool {
     id,
     name: PoolName::new(name).unwrap(),
     definition,
     idempotency_key: key(idempotency_key),
     published_at: time(at),
-  }
+  })
 }
 
 fn definition(drain_state: PoolDrainState) -> AgentPoolDefinition {

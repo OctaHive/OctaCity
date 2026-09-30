@@ -2,8 +2,9 @@ use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, EntityKind, ProjectId,
 };
 use octacity_server_store::{
-  BuildConfigurationDefinition, BuildConfigurationMutationOutcome, CreateBuildConfiguration, MutationDisposition,
-  PublishBuildConfigurationVersion, PublishedBuildConfiguration, RetryClass, StoreError, StoreOperation,
+  BuildConfigurationDefinition, BuildConfigurationMutationOutcome, CreateBuildConfiguration, MutationAuditContext,
+  MutationDisposition, PublishBuildConfigurationVersion, PublishedBuildConfiguration, RetryClass, StoreError,
+  StoreOperation,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -31,6 +32,7 @@ struct PublishFingerprint<'a> {
 pub(crate) async fn create(
   pool: &sqlx::PgPool,
   request: CreateBuildConfiguration,
+  audit: &MutationAuditContext,
 ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
   validate(&request.definition, StoreOperation::CreateBuildConfiguration)?;
   let identity = MutationIdentity::new(
@@ -91,7 +93,7 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(MutationKind::CreateBuildConfiguration, &outcome.configuration),
+    facts(audit, MutationKind::CreateBuildConfiguration, &outcome.configuration),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -101,6 +103,7 @@ pub(crate) async fn create(
 pub(crate) async fn publish(
   pool: &sqlx::PgPool,
   request: PublishBuildConfigurationVersion,
+  audit: &MutationAuditContext,
 ) -> Result<BuildConfigurationMutationOutcome, StoreError> {
   validate(&request.definition, StoreOperation::PublishBuildConfigurationVersion)?;
   let identity = MutationIdentity::new(
@@ -169,7 +172,11 @@ pub(crate) async fn publish(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(MutationKind::PublishBuildConfigurationVersion, &outcome.configuration),
+    facts(
+      audit,
+      MutationKind::PublishBuildConfigurationVersion,
+      &outcome.configuration,
+    ),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -311,12 +318,15 @@ fn validate(definition: &BuildConfigurationDefinition, operation: StoreOperation
     .map_err(|source| StoreError::InvalidInput { operation, source })
 }
 
-fn facts(kind: MutationKind, configuration: &PublishedBuildConfiguration) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "unauthenticated_management",
-    actor_identity: None,
-    target_identity: configuration.id.to_string(),
-    safe_metadata: json!({
+fn facts(
+  audit: &MutationAuditContext,
+  kind: MutationKind,
+  configuration: &PublishedBuildConfiguration,
+) -> MutationFacts {
+  MutationFacts::management(
+    audit,
+    configuration.id.to_string(),
+    json!({
       "enabled": configuration.definition.enabled,
       "pipeline_id": configuration.definition.pipeline_id,
       "pipeline_version": configuration.definition.pipeline_version.get(),
@@ -325,13 +335,13 @@ fn facts(kind: MutationKind, configuration: &PublishedBuildConfiguration) -> Mut
       "repository_version": configuration.definition.repository_version.get(),
       "version": configuration.version.get(),
     }),
-    outbox_payload: json!({
+    json!({
       "build_configuration_id": configuration.id,
       "event": kind.outbox_topic(),
       "project_id": configuration.project_id,
       "version": configuration.version.get(),
     }),
-  }
+  )
 }
 
 fn replay(value: Value) -> Result<BuildConfigurationMutationOutcome, StoreError> {

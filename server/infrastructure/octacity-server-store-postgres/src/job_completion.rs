@@ -5,8 +5,8 @@ use octacity_server_domain::{EntityKind, JobId, PoolId};
 use octacity_server_job::{JobFailureClass, JobRuntimePolicy, JobSpecSigner, JobSpecTemplate};
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
-  CompletionDisposition, EventSequence, JobCompletion, JobCompletionKind, MutationDisposition, StoreError,
-  StoreInputError, StoreOperation, complete_job_state,
+  AuditActorKind, CompletionDisposition, EventSequence, JobCompletion, JobCompletionKind, MutationDisposition,
+  StoreError, StoreInputError, StoreOperation, complete_job_state,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -17,8 +17,8 @@ use crate::{
   database::{classify, job_ids, number, unavailable},
   lease,
   mutation::{
-    AdditionalAuditFact, MutationFacts, MutationIdentity, MutationKind, MutationStart, append_additional_audit_fact,
-    decode_outcome, encode_outcome,
+    AdditionalAuditFact, MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor,
+    append_additional_audit_fact, decode_outcome, encode_outcome,
   },
   state::{attempt_state, build_state, job_state, parse_attempt_state, parse_build_state, parse_job_state},
 };
@@ -224,7 +224,7 @@ async fn append_orchestrator_fact(
     transaction,
     identity,
     AdditionalAuditFact {
-      actor_kind: "orchestrator",
+      actor_kind: AuditActorKind::Orchestrator,
       actor_identity: None,
       operation: "reconcile-job-completion",
       target_kind: "attempt",
@@ -467,11 +467,10 @@ async fn ready_pools(
 }
 
 fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFacts {
-  MutationFacts {
-    actor_kind: "agent",
-    actor_identity: Some(request.lease.agent_id.to_string()),
-    target_identity: outcome.job_id.to_string(),
-    safe_metadata: json!({
+  MutationFacts::non_management(
+    NonManagementActor::Agent(request.lease.agent_id.to_string()),
+    outcome.job_id.to_string(),
+    json!({
       "final_sequence": request.final_sequence.map(EventSequence::get),
       "kind": completion_kind(request.kind),
       "failure_class": failure_class(request.kind),
@@ -483,7 +482,7 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
       "attempt_state": attempt_state(outcome.attempt_state),
       "build_state": build_state(outcome.build_state),
     }),
-    outbox_payload: json!({
+    json!({
       "job_id": outcome.job_id,
       "kind": completion_kind(request.kind),
       "failure_class": failure_class(request.kind),
@@ -494,7 +493,7 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
       "build_state": build_state(outcome.build_state),
       "schema_version": 2,
     }),
-  }
+  )
 }
 
 const fn completion_kind(kind: JobCompletionKind) -> &'static str {

@@ -6,10 +6,11 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{AgentId, EntityKind, PoolId, PoolVersion};
 
+use crate::testing::{ManagementAuditProbe, RecordedManagementAuditFact, recorded_management_audit};
 use crate::{
   AgentDrainMode, AgentPage, AgentPlatform, AgentPoolDefinition, AgentStore, DrainAgent, DrainAgentOutcome,
-  EnrolledAgent, ListAgents, MutationDisposition, PoolAdmissionPolicy, ReassignAgentPool, ReassignAgentPoolOutcome,
-  StoreError,
+  EnrolledAgent, ListAgents, ManagementMutation, MutationDisposition, PoolAdmissionPolicy, ReassignAgentPool,
+  ReassignAgentPoolOutcome, StoreError, StoreOperation,
 };
 
 /// Deterministic process-local Agent management adapter.
@@ -26,6 +27,20 @@ struct State {
   active_leases: BTreeSet<AgentId>,
   mutations: BTreeMap<String, (Fingerprint, ReassignAgentPoolOutcome)>,
   drain_mutations: BTreeMap<String, (DrainFingerprint, DrainAgentOutcome)>,
+  audit: BTreeSet<RecordedManagementAuditFact>,
+}
+
+#[async_trait]
+impl ManagementAuditProbe for InMemoryAgentStore {
+  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
+    self
+      .lock()
+      .expect("in-memory Agent store must remain available")
+      .audit
+      .iter()
+      .cloned()
+      .collect()
+  }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -120,7 +135,11 @@ impl AgentStore for InMemoryAgentStore {
     Ok(AgentPage { agents, next_cursor })
   }
 
-  async fn reassign_agent_pool(&self, request: ReassignAgentPool) -> Result<ReassignAgentPoolOutcome, StoreError> {
+  async fn reassign_agent_pool(
+    &self,
+    request: ManagementMutation<ReassignAgentPool>,
+  ) -> Result<ReassignAgentPoolOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let fingerprint = Fingerprint {
       agent_id: request.agent_id,
       expected_version: request.expected_version,
@@ -200,10 +219,17 @@ impl AgentStore for InMemoryAgentStore {
     state
       .mutations
       .insert(request.idempotency_key.to_string(), (fingerprint, outcome.clone()));
+    state.audit.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::ReassignAgentPool,
+      EntityKind::Agent,
+      request.agent_id,
+    ));
     Ok(outcome)
   }
 
-  async fn drain_agent(&self, request: DrainAgent) -> Result<DrainAgentOutcome, StoreError> {
+  async fn drain_agent(&self, request: ManagementMutation<DrainAgent>) -> Result<DrainAgentOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
     let fingerprint = DrainFingerprint {
       agent_id: request.agent_id,
       expected_version: request.expected_version,
@@ -243,6 +269,12 @@ impl AgentStore for InMemoryAgentStore {
     state
       .drain_mutations
       .insert(request.idempotency_key.to_string(), (fingerprint, outcome.clone()));
+    state.audit.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::DrainAgent,
+      EntityKind::Agent,
+      request.agent_id,
+    ));
     Ok(outcome)
   }
 }
@@ -260,6 +292,7 @@ mod tests {
 
   use super::*;
   use crate::test_support::{id, run_ready, time};
+  use crate::testing::{assert_management_audit_facts, expected_management_audit};
 
   #[test]
   fn reassignment_is_atomic_paginated_and_rejected_during_an_active_lease() {
@@ -286,7 +319,11 @@ mod tests {
         store.set_active_lease(agent_id, true).unwrap();
         assert_eq!(
           store
-            .reassign_agent_pool(reassign(agent_id, target, "move-agent"))
+            .reassign_agent_pool(crate::testing::management_mutation(reassign(
+              agent_id,
+              target,
+              "move-agent"
+            )))
             .await
             .unwrap_err(),
           StoreError::Conflict {
@@ -297,7 +334,11 @@ mod tests {
 
         store.set_active_lease(agent_id, false).unwrap();
         let moved = store
-          .reassign_agent_pool(reassign(agent_id, target, "move-agent"))
+          .reassign_agent_pool(crate::testing::management_mutation(reassign(
+            agent_id,
+            target,
+            "move-agent",
+          )))
           .await
           .unwrap();
         assert_eq!(moved.disposition, MutationDisposition::Applied);
@@ -309,7 +350,11 @@ mod tests {
           "management mutation must not forge contact time"
         );
         let replay = store
-          .reassign_agent_pool(reassign(agent_id, target, "move-agent"))
+          .reassign_agent_pool(crate::testing::management_mutation(reassign(
+            agent_id,
+            target,
+            "move-agent",
+          )))
           .await
           .unwrap();
         assert_eq!(replay.disposition, MutationDisposition::Replayed);
@@ -317,17 +362,25 @@ mod tests {
 
         store.set_active_lease(agent_id, true).unwrap();
         let drained = store
-          .drain_agent(DrainAgent {
+          .drain_agent(crate::testing::management_mutation(DrainAgent {
             agent_id,
             expected_version: moved.agent.version,
             mode: AgentDrainMode::Graceful,
             idempotency_key: crate::IdempotencyKey::new("drain-agent").unwrap(),
             requested_at: time(30),
-          })
+          }))
           .await
           .unwrap();
         assert_eq!(drained.agent.status, crate::AgentStatus::Draining);
         assert_eq!(drained.agent.last_seen_at, time(10));
+        assert_management_audit_facts(
+          store.as_ref(),
+          [
+            expected_management_audit(StoreOperation::ReassignAgentPool, EntityKind::Agent, agent_id),
+            expected_management_audit(StoreOperation::DrainAgent, EntityKind::Agent, agent_id),
+          ],
+        )
+        .await;
       },
       "in-memory Agent management futures must be immediately ready",
     );

@@ -43,6 +43,7 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
       Err(error) if error.classification() == ApplicationFailure::Unavailable
     ));
     assert_eq!(resolver.calls(), 1);
+    assert_eq!(work.payload()["schema_version"], 1);
 
     let worker = ManualTriggerRetryWorker::new(evaluator, work.clone(), policy);
     let outcome = worker
@@ -53,7 +54,70 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
     assert_eq!(outcome.completed, 1);
     assert_eq!(resolver.calls(), 2);
     assert_eq!(builds.requests.lock().unwrap().len(), 1);
+    let reservation_audits = work.management_audits.lock().unwrap();
+    let trigger_audits = builds.management_audits.lock().unwrap();
+    assert_eq!(reservation_audits.len(), 1);
+    assert_eq!(trigger_audits.len(), 1);
+    for audit in [&reservation_audits[0], &trigger_audits[0]] {
+      assert_eq!(
+        audit.actor().kind,
+        octacity_server_store::AuditActorKind::UnauthenticatedManagement
+      );
+      assert_eq!(audit.actor().identity, None);
+      assert_eq!(audit.request_identity(), "74eb362d-4264-4d3a-88b8-556974a3b017");
+    }
+    drop(trigger_audits);
+    drop(reservation_audits);
     assert_eq!(work.snapshot(), WorkSnapshot::Completed { attempts: 2 });
+  });
+}
+
+#[test]
+fn pending_legacy_payload_is_retried_with_stable_trusted_network_attribution() {
+  run(async {
+    let fixture = fixture();
+    let builds = Arc::new(RecordingStore::default());
+    let work = Arc::new(RecordingEvaluationWork::default());
+    let resolver = Arc::new(SequencedResolver::new([
+      Err(RevisionResolutionError::Unavailable),
+      Ok(ImmutableRevision::new("0123456789abcdef").unwrap()),
+    ]));
+    let evaluator = Arc::new(ManualTriggerService::new(
+      builds.clone(),
+      Arc::new(StaticContext(fixture.context)),
+      resolver,
+    ));
+    let policy = DurableRetryPolicy::new(3, 10, 100).unwrap();
+    let service = DurableManualTriggerService::new(evaluator.clone(), work.clone(), policy, Duration::from_millis(100));
+    let command = AcceptManualTriggerCommand {
+      trigger: fixture.command,
+      accepted_at: time(200),
+    };
+
+    assert!(management_command(&service, command.clone()).await.is_err());
+    work.replace_payload(serde_json::to_value(&command).unwrap());
+
+    let outcome = ManualTriggerRetryWorker::new(evaluator, work.clone(), policy)
+      .run_once(owner("retry-worker"), time(210), time(400), 4)
+      .await
+      .unwrap();
+
+    assert_eq!(outcome.completed, 1);
+    assert_eq!(work.snapshot(), WorkSnapshot::Completed { attempts: 2 });
+    let requests = builds.requests.lock().unwrap();
+    let occurrence_id = requests[0].trigger.id;
+    drop(requests);
+    let audits = builds.management_audits.lock().unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(
+      audits[0].actor().kind,
+      octacity_server_store::AuditActorKind::UnauthenticatedManagement
+    );
+    assert_eq!(audits[0].actor().identity, None);
+    assert_eq!(
+      audits[0].request_identity(),
+      format!("legacy-trigger-evaluation:{occurrence_id}")
+    );
   });
 }
 
@@ -176,8 +240,26 @@ impl octacity_server_store::TriggerAcceptanceStore for FailOnceStore {
     }
   }
 
+  async fn accept_management_trigger(
+    &self,
+    request: ManagementMutation<AcceptTrigger>,
+  ) -> Result<AcceptTriggerOutcome, StoreError> {
+    if self.accept_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+      Err(StoreError::Unavailable)
+    } else {
+      self.inner.accept_management_trigger(request).await
+    }
+  }
+
   async fn suppress_trigger(&self, request: SuppressTrigger) -> Result<SuppressTriggerOutcome, StoreError> {
     self.inner.suppress_trigger(request).await
+  }
+
+  async fn suppress_management_trigger(
+    &self,
+    request: ManagementMutation<SuppressTrigger>,
+  ) -> Result<SuppressTriggerOutcome, StoreError> {
+    self.inner.suppress_management_trigger(request).await
   }
 }
 
@@ -213,6 +295,7 @@ enum WorkSnapshot {
 #[derive(Default)]
 struct RecordingEvaluationWork {
   entry: Mutex<Option<WorkEntry>>,
+  management_audits: Mutex<Vec<MutationAuditContext>>,
 }
 
 struct WorkEntry {
@@ -261,17 +344,27 @@ impl RecordingEvaluationWork {
       .as_ref()
       .and_then(|entry| entry.resolved_revision.clone())
   }
+
+  fn payload(&self) -> serde_json::Value {
+    self.entry.lock().unwrap().as_ref().unwrap().payload.clone()
+  }
+
+  fn replace_payload(&self, payload: serde_json::Value) {
+    self.entry.lock().unwrap().as_mut().unwrap().payload = payload;
+  }
 }
 
 #[async_trait]
 impl TriggerEvaluationWorkStore for RecordingEvaluationWork {
   async fn reserve_trigger_evaluation(
     &self,
-    request: ReserveTriggerEvaluation,
+    request: ManagementMutation<ReserveTriggerEvaluation>,
   ) -> Result<TriggerEvaluationReservation, StoreError> {
+    let (request, audit) = request.into_parts();
     request.validate()?;
     let mut slot = self.entry.lock().unwrap();
     if slot.is_none() {
+      self.management_audits.lock().unwrap().push(audit);
       *slot = Some(WorkEntry {
         occurrence_id: request.occurrence_id,
         digest: request.intent_digest,

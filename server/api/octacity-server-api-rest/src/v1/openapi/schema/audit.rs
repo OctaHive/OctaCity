@@ -7,6 +7,7 @@ pub(super) fn insert_audit_schemas(schemas: &mut Map<String, Value>) {
     "AuditActorKind".to_owned(),
     string_enum(&[
       "unauthenticated_management",
+      "authenticated_management",
       "agent",
       "trigger",
       "orchestrator",
