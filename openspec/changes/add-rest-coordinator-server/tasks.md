@@ -119,5 +119,5 @@
 ## 11. Deferred Extension Contracts
 
 - [x] 11.1 Implement the versioned agent-provisioning protocol types and deterministic conformance fixture for provision, observe, terminate, cancellation, idempotency, bootstrap, and classified failures; verify no dynamic infrastructure-provider-specific type reaches JobSpec, Agent, Pool, Orchestrator, or Placement Scheduler interfaces.
-- [ ] 11.2 Keep dynamic agent provisioning disabled when no production adapter is installed and exclude vSphere, Proxmox, and provisioning reconciliation from the first release; verify readiness and static placement are unaffected and management reports the capability unavailable.
+- [x] 11.2 Keep dynamic agent provisioning disabled when no production adapter is installed and exclude vSphere, Proxmox, and provisioning reconciliation from the first release; verify readiness and static placement are unaffected and management reports the capability unavailable.
 - [ ] 11.3 Document later adapter seams for operator authentication, LDAP/TOTP, GraphQL, Kafka/NATS, managed GitHub/Gerrit integrations, secret stores, additional execution providers, and dynamic infrastructure provisioning without creating empty production crates; verify the v1 dependency graph contains none of their SDKs.

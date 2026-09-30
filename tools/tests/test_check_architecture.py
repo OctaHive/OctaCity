@@ -147,5 +147,32 @@ class ArchitecturePolicyTests(unittest.TestCase):
             "dynamic capacity protocol types must not enter JobSpec, Agent, Pool, Orchestrator, or Placement interfaces",
         )
 
+    def test_first_release_has_no_dynamic_provisioning_runtime(self):
+        graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
+        provisioning = "octacity-agent-provisioning-protocol"
+        consumers = [
+            edge.source.name for edge in graph.edges if edge.target.name == provisioning
+        ]
+        provider_packages = [
+            package.name
+            for package in graph.packages
+            if package.name != provisioning
+            and any(
+                marker in package.name
+                for marker in ("agent-provision", "proxmox", "vsphere")
+            )
+        ]
+
+        self.assertEqual(
+            consumers,
+            [],
+            "the v1 runtime must not load an agent-provisioning host or reconciliation loop",
+        )
+        self.assertEqual(
+            provider_packages,
+            [],
+            "the v1 workspace must not ship a production dynamic-provisioning adapter",
+        )
+
 if __name__ == "__main__":
     unittest.main()

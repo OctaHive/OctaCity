@@ -34,6 +34,15 @@ enrollment_key_file = "agent-enrollment-key"
 "#;
   assert!(ServerConfig::parse_toml(unknown).is_err());
 
+  let unsupported_dynamic_provisioner = valid_configuration().replace(
+    "supported_pipeline_capabilities = [\"native\"]",
+    "supported_pipeline_capabilities = [\"native\"]\nagent_provisioning_adapter_registry = \"provisioning-adapters\"",
+  );
+  assert!(matches!(
+    ServerConfig::parse_toml(&unsupported_dynamic_provisioner),
+    Err(octacity_server::ServerConfigError::Parse { .. })
+  ));
+
   let zero_grace = r#"
 management_bind = "127.0.0.1:0"
 shutdown_grace_milliseconds = 0

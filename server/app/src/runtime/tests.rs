@@ -117,6 +117,15 @@ async fn startup_separates_ingress_and_exposes_operational_metadata() {
   assert_eq!(metadata["ingress"]["agent_enabled"], true);
   assert_eq!(metadata["ingress"]["webhook_enabled"], false);
   assert_eq!(metadata["ingress"]["listeners_separate"], true);
+  assert_eq!(
+    metadata["capabilities"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|capability| capability["name"] == "dynamic_agent_provisioning")
+      .unwrap()["status"],
+    "unavailable"
+  );
 
   let response = client
     .get(format!("http://{}/health/live", runtime.agent_addr().unwrap()))

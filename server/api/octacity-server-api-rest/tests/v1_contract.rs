@@ -1,7 +1,7 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
   AcceptManualTriggerRequest, AgentPoolAdmissionPolicy, AgentPoolResource, AgentResource, ArtifactDownload,
-  ArtifactOutputType, ArtifactResource, BuildLogSearchPage, CacheSessionResource, CacheSessionState,
+  ArtifactOutputType, ArtifactResource, BuildLogSearchPage, CacheSessionResource, CacheSessionState, CapabilityStatus,
   ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest, CreateManagedWebhookRequest,
   CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage,
   DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
@@ -244,6 +244,21 @@ fn operational_metadata_is_strict_and_keeps_ingress_security_independent() {
   let mut invalid = value;
   invalid["security"]["management"]["operator_token"] = json!("must-never-exist");
   assert!(serde_json::from_value::<OperationalMetadata>(invalid).is_err());
+}
+
+#[test]
+fn first_release_reports_dynamic_agent_provisioning_unavailable() {
+  for agent_ingress_enabled in [false, true] {
+    let metadata = OperationalMetadata::trusted_network(false, false, agent_ingress_enabled, false);
+    let provisioning = metadata
+      .capabilities
+      .iter()
+      .filter(|capability| capability.name == "dynamic_agent_provisioning")
+      .collect::<Vec<_>>();
+
+    assert_eq!(provisioning.len(), 1);
+    assert_eq!(provisioning[0].status, CapabilityStatus::Unavailable);
+  }
 }
 
 #[test]
