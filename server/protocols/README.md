@@ -4,7 +4,7 @@ These crates contain strict, versioned, provider-neutral process contracts.
 They do not start processes, load credentials, or depend on provider SDKs.
 Infrastructure hosts select and supervise adapters that implement them.
 Their relationship to core ports and application interfaces is documented in
-the [server ownership and seams guide](../../docs/server-architecture.md).
+the [server ownership and seams guide](../../docs/architecture/server.md).
 
 Every protocol provides explicit version negotiation, bounded values,
 cooperative cancellation, stable failure classes, and language-neutral JSON

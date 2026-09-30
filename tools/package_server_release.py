@@ -37,7 +37,7 @@ def stage_release(
     copy_file(server, executable, executable=True)
     copy_file(contract_path, root / "release-contract.json")
     copy_file(require_file("management REST guide", repository / "docs/management-rest-v1.md"), root / "share/management-rest-v1.md")
-    copy_file(require_file("server architecture guide", repository / "docs/server-architecture.md"), root / "share/server-architecture.md")
+    copy_file(require_file("server architecture guide", repository / "docs/architecture/server.md"), root / "share/server-architecture.md")
     copy_file(require_file("license", repository / "LICENSE"), root / "LICENSE")
     manifest = {
         "format_version": 1,

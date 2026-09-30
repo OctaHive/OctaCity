@@ -1,6 +1,6 @@
 # Server vocabulary, ownership, and seams
 
-This document maps the canonical [OctaCity coordination language](../CONTEXT.md)
+This document maps the canonical [OctaCity coordination language](../../CONTEXT.md)
 to crate ownership and public interfaces. It describes the modular-monolith
 shape; it is not a database schema or a REST contract.
 
@@ -243,12 +243,12 @@ wire compatibility promise.
 | Cache immutable bytes | `octacity-server-cache::CacheBlobStore` | Configured S3 adapter | Scope and validated descriptor cross the port; bucket, physical key, ETag, and credentials remain private |
 
 Language-neutral wire documents and golden fixtures are indexed in
-[the protocol catalogue](protocols/README.md). The server-side adapter protocol
+[the protocol catalogue](../protocols/README.md). The server-side adapter protocol
 crates are additionally mapped in
-[the server protocol README](../server/protocols/README.md). The ownership,
+[the server protocol README](../../server/protocols/README.md). The ownership,
 type-isolation, activation, and crate-creation rules for integrations that are
 deliberately absent from v1 are defined in
-[deferred server extension seams](server-extension-seams.md).
+[deferred server extension seams](extension-seams.md).
 
 ## Agent credential lifecycle
 
@@ -598,12 +598,12 @@ visible manifest owns the identity.
 The initial pure transition interfaces live with the modules that own their
 invariants:
 
-- [Build, Attempt, and orchestration](../server/core/octacity-server-orchestrator/src/lib.rs);
-- [DAG Job](../server/core/octacity-server-job/src/lib.rs);
-- [Lease and Pool drain](../server/core/octacity-server-scheduler/src/lib.rs);
-- [Artifact publication](../server/core/octacity-server-artifacts/src/lib.rs);
-- [cache session](../server/core/octacity-server-cache/src/lib.rs);
-- [Trigger Occurrence](../server/core/octacity-server-trigger/src/lib.rs).
+- [Build, Attempt, and orchestration](../../server/core/octacity-server-orchestrator/src/lib.rs);
+- [DAG Job](../../server/core/octacity-server-job/src/lib.rs);
+- [Lease and Pool drain](../../server/core/octacity-server-scheduler/src/lib.rs);
+- [Artifact publication](../../server/core/octacity-server-artifacts/src/lib.rs);
+- [cache session](../../server/core/octacity-server-cache/src/lib.rs);
+- [Trigger Occurrence](../../server/core/octacity-server-trigger/src/lib.rs).
 
 Each transition is a pure `state + event -> new state` decision. Persistence,
 audit, outbox publication, and wakeups are coordinated outside these modules so

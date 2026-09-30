@@ -7,7 +7,7 @@
 //! Crate ownership, dependency direction, and public protocol seams are mapped
 //! in the [server architecture guide].
 //!
-//! [server architecture guide]: https://github.com/OctaHive/OctaCity/blob/main/docs/server-architecture.md
+//! [server architecture guide]: https://github.com/OctaHive/OctaCity/blob/main/docs/architecture/server.md
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

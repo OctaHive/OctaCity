@@ -11,7 +11,7 @@
 //! See the [canonical glossary] and [server ownership guide].
 //!
 //! [canonical glossary]: https://github.com/OctaHive/OctaCity/blob/main/CONTEXT.md
-//! [server ownership guide]: https://github.com/OctaHive/OctaCity/blob/main/docs/server-architecture.md
+//! [server ownership guide]: https://github.com/OctaHive/OctaCity/blob/main/docs/architecture/server.md
 
 #![warn(missing_docs)]
 

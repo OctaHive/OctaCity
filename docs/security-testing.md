@@ -4,7 +4,7 @@ The scheduled `security` workflow keeps slow, network-dependent checks out of
 the portable commit loop while still making them reproducible. The release
 workflow calls it with fuzzing enabled and cannot package before it succeeds.
 The complete trust analysis and remaining deployment assumptions are recorded
-in [the server and Agent threat model](server-threat-model.md).
+in [the server and Agent threat model](architecture/threat-model.md).
 
 ## Dependencies, licenses, and sources
 

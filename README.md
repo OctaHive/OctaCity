@@ -140,14 +140,14 @@ Manager, runtime privileges, upgrades, rollback, and removal are covered in the
 ### Understand and extend it
 
 - [Domain vocabulary](CONTEXT.md)
-- [Server architecture and ownership](docs/server-architecture.md)
+- [Server architecture and ownership](docs/architecture/server.md)
 - [Agent architecture and implementation plan](docs/agent-implementation-plan.md)
-- [Public extension seams](docs/server-extension-seams.md)
+- [Public extension seams](docs/architecture/extension-seams.md)
 - [Wire protocol index](docs/protocols/README.md)
 
 ### Security and release evidence
 
-- [Server threat model](docs/server-threat-model.md)
+- [Server threat model](docs/architecture/threat-model.md)
 - [Security release gates](docs/security-testing.md)
 - [Real execution-backend contracts](docs/backend-contract-tests.md)
 
