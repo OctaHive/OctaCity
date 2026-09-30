@@ -1,4 +1,8 @@
-use std::str::FromStr;
+use std::{
+  future::Future,
+  str::FromStr,
+  task::{Context, Poll, Waker},
+};
 
 use uuid::Uuid;
 
@@ -170,4 +174,66 @@ fn grant_and_denial_expose_no_policy_internals() {
   let denial = ManagementAuthorizationDenial::forbidden();
   assert_eq!(denial.to_string(), "management request is forbidden");
   assert_eq!(format!("{denial:?}"), "ManagementAuthorizationDenial");
+}
+
+#[test]
+fn trusted_network_policy_covers_every_declared_action_and_resource_kind() {
+  let policy = TrustedNetworkManagementPolicy;
+  let context = ManagementRequestContext::trusted_network(request_id());
+
+  for action in ManagementAction::ALL {
+    for resource_kind in ManagementResourceKind::ALL {
+      let grant = run_ready(policy.authorize(&context, action, &ManagementResource::collection(resource_kind)))
+        .expect("canonical trusted-network context must retain current behavior");
+      assert_eq!(grant.visibility().kind(), ManagementVisibilityKind::All);
+    }
+  }
+}
+
+#[test]
+fn trusted_network_policy_fails_closed_for_every_other_valid_actor_shape() {
+  let policy = TrustedNetworkManagementPolicy;
+  let resource = ManagementResource::collection(ManagementResourceKind::Project);
+
+  for client_kind in [
+    None,
+    Some(ManagementClientKind::Interactive),
+    Some(ManagementClientKind::Automation),
+  ] {
+    let authenticated = ManagementRequestContext::new(
+      ManagementActor::authenticated("operator-1").unwrap(),
+      ManagementSecurityScope::new("operator:1").unwrap(),
+      request_id(),
+      ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, client_kind),
+    )
+    .unwrap();
+    assert_eq!(
+      run_ready(policy.authorize(&authenticated, ManagementAction::View, &resource)),
+      Err(ManagementAuthorizationDenial::forbidden())
+    );
+  }
+
+  let augmented_anonymous = ManagementRequestContext::new(
+    ManagementActor::unauthenticated_management(),
+    ManagementSecurityScope::trusted_network(),
+    request_id(),
+    ManagementRequestAttributes::new(
+      ManagementIngress::TrustedNetwork,
+      Some(ManagementClientKind::Interactive),
+    ),
+  )
+  .unwrap();
+  assert_eq!(
+    run_ready(policy.authorize(&augmented_anonymous, ManagementAction::View, &resource)),
+    Err(ManagementAuthorizationDenial::forbidden())
+  );
+}
+
+fn run_ready<T>(future: impl Future<Output = T>) -> T {
+  let mut future = std::pin::pin!(future);
+  let mut context = Context::from_waker(Waker::noop());
+  match future.as_mut().poll(&mut context) {
+    Poll::Ready(value) => value,
+    Poll::Pending => panic!("in-memory management policy unexpectedly awaited external I/O"),
+  }
 }

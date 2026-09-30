@@ -149,10 +149,10 @@ pub use management_input::{
 pub use management_security::{
   MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES,
   MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction, ManagementActor, ManagementActorKind,
-  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementClientKind, ManagementIngress,
-  ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementResource,
+  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy, ManagementClientKind,
+  ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementResource,
   ManagementResourceIdentity, ManagementResourceKind, ManagementSecurityError, ManagementSecurityScope,
-  ManagementVisibility, ManagementVisibilityKind,
+  ManagementVisibility, ManagementVisibilityKind, TrustedNetworkManagementPolicy,
 };
 pub use manual_trigger::{
   AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,

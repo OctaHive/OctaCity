@@ -2,6 +2,7 @@
 
 mod authorization;
 mod context;
+mod policy;
 
 #[cfg(test)]
 mod tests;
@@ -16,6 +17,7 @@ pub use context::{
   ManagementClientKind, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId,
   ManagementSecurityScope,
 };
+pub use policy::{ManagementAuthorizationPolicy, TrustedNetworkManagementPolicy};
 
 use thiserror::Error;
 

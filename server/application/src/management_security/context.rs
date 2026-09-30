@@ -310,6 +310,12 @@ impl ManagementRequestContext {
   pub const fn attributes(&self) -> ManagementRequestAttributes {
     self.attributes
   }
+
+  pub(super) fn is_canonical_trusted_network(&self) -> bool {
+    self.actor == ManagementActor::unauthenticated_management()
+      && self.security_scope.is_trusted_network()
+      && self.attributes == ManagementRequestAttributes::trusted_network()
+  }
 }
 
 impl fmt::Debug for ManagementRequestContext {

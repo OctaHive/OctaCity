@@ -96,6 +96,32 @@ pub enum ManagementResourceKind {
   AuditFact,
 }
 
+impl ManagementResourceKind {
+  /// Complete closed resource-kind vocabulary used by coverage and policy tests.
+  pub const ALL: [Self; 20] = [
+    Self::Project,
+    Self::ProjectPolicy,
+    Self::Pipeline,
+    Self::Repository,
+    Self::BuildConfiguration,
+    Self::Trigger,
+    Self::Schedule,
+    Self::Build,
+    Self::Attempt,
+    Self::Job,
+    Self::JobEvent,
+    Self::BuildLog,
+    Self::Artifact,
+    Self::CacheSession,
+    Self::AgentPool,
+    Self::Agent,
+    Self::AgentEnrollment,
+    Self::WebhookIntegration,
+    Self::Retention,
+    Self::AuditFact,
+  ];
+}
+
 /// Bounded opaque identity retained with a typed management resource kind.
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ManagementResourceIdentity(String);
