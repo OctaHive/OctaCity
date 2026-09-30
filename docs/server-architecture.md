@@ -245,7 +245,10 @@ wire compatibility promise.
 Language-neutral wire documents and golden fixtures are indexed in
 [the protocol catalogue](protocols/README.md). The server-side adapter protocol
 crates are additionally mapped in
-[the server protocol README](../server/protocols/README.md).
+[the server protocol README](../server/protocols/README.md). The ownership,
+type-isolation, activation, and crate-creation rules for integrations that are
+deliberately absent from v1 are defined in
+[deferred server extension seams](server-extension-seams.md).
 
 ## Agent credential lifecycle
 

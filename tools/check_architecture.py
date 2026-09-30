@@ -104,6 +104,90 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     "octacity-server-trigger": frozenset({"chrono", "chrono-tz", "cron"}),
 }
 
+# Composition, infrastructure, Agent, CLI, and test packages intentionally
+# select concrete implementations, so they cannot use the narrow layer
+# allowlists above. Freeze their v1 external package vocabulary here instead:
+# a new SDK requires an explicit architecture-policy review rather than being
+# admitted by virtue of living near the composition root.
+V1_APPROVED_EXTERNAL_DEPENDENCIES = frozenset({
+    "async-trait",
+    "aws-sdk-s3",
+    "axum",
+    "base64",
+    "blake3",
+    "chrono",
+    "chrono-tz",
+    "clap",
+    "containerd-client",
+    "cron",
+    "ed25519-dalek",
+    "fs4",
+    "futures-util",
+    "hmac",
+    "http",
+    "libc",
+    "memchr",
+    "metrics",
+    "metrics-exporter-prometheus",
+    "microsandbox",
+    "octa-cache-protocol",
+    "octa-plugin-lock",
+    "octa-runner-protocol",
+    "processkit",
+    "prost",
+    "prost-types",
+    "rcgen",
+    "reqwest",
+    "rustix",
+    "rustls",
+    "seccompiler",
+    "serde",
+    "serde_json",
+    "serde_yaml_ng",
+    "sha2",
+    "sqlx",
+    "sysinfo",
+    "tar",
+    "tempfile",
+    "thiserror",
+    "tokio",
+    "tokio-rustls",
+    "tokio-util",
+    "toml",
+    "tower",
+    "tracing",
+    "tracing-layer-win-eventlog",
+    "tracing-subscriber",
+    "url",
+    "uuid",
+    "windows-service",
+    "windows-sys",
+    "zeroize",
+    "zstd",
+})
+
+# These SDK families belong to explicitly deferred extension work. The broad
+# v1 inventory above catches unknown package names in implementation-owning
+# layers; these rules additionally keep named deferred families out of every
+# layer even if somebody tries to add them to another allowlist.
+DEFERRED_EXTENSION_SDK_RULES = (
+    ("operator authentication", re.compile(r"(?:openidconnect|oauth2|jsonwebtoken)")),
+    ("LDAP/TOTP", re.compile(r"(?:ldap3|oath|totp-rs)")),
+    ("GraphQL", re.compile(r"(?:async-graphql(?:-.+)?|juniper(?:-.+)?)")),
+    ("Kafka/NATS", re.compile(r"(?:rdkafka(?:-.+)?|kafka(?:-.+)?|async-nats|nats)")),
+    ("managed GitHub/Gerrit", re.compile(r"(?:octocrab|hubcaps|github-api|github-rs|gerrit(?:-.+)?)")),
+    (
+        "secret stores",
+        re.compile(
+            r"(?:vaultrs|hashicorp-vault|aws-sdk-secretsmanager|azure-security-keyvault|google-cloud-secretmanager)"
+        ),
+    ),
+    (
+        "additional execution or infrastructure providers",
+        re.compile(r"(?:proxmox(?:-.+)?|vsphere(?:-.+)?|vmware-vsphere|firecracker-sdk)"),
+    ),
+)
+
 # Shared infrastructure modules contain reusable mechanics rather than a
 # concrete adapter selection. Keep this exception package-specific so ordinary
 # infrastructure crates cannot couple to one another.
@@ -397,6 +481,42 @@ def check(graph: Graph) -> list[Violation]:
                 )
         allowed_for_role = ROLE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.role)
         allowed_for_package = PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.name, frozenset())
+        deferred_dependencies: dict[str, list[str]] = {}
+        for dependency in package.external_dependencies:
+            for extension, pattern in DEFERRED_EXTENSION_SDK_RULES:
+                if pattern.fullmatch(dependency):
+                    deferred_dependencies.setdefault(extension, []).append(dependency)
+                    break
+        for extension, dependencies in sorted(deferred_dependencies.items()):
+            violations.append(
+                Violation(
+                    "ARCH011_DEFERRED_EXTENSION_SDK",
+                    f"{package.name} depends on deferred {extension} SDKs: "
+                    f"{', '.join(sorted(dependencies))}",
+                )
+            )
+
+        # Roles without a narrow implementation allowlist own concrete wiring.
+        # Keep their complete external vocabulary frozen for v1 so an unknown
+        # provider SDK cannot bypass the layer checks merely by moving here.
+        if allowed_for_role is None:
+            unreviewed_dependencies = sorted(
+                set(package.external_dependencies)
+                - V1_APPROVED_EXTERNAL_DEPENDENCIES
+                - {
+                    dependency
+                    for dependencies in deferred_dependencies.values()
+                    for dependency in dependencies
+                }
+            )
+            if unreviewed_dependencies:
+                violations.append(
+                    Violation(
+                        "ARCH012_UNREVIEWED_EXTERNAL_DEPENDENCY",
+                        f"{package.name} ({package.role}) uses external dependencies outside the "
+                        f"reviewed v1 inventory: {', '.join(unreviewed_dependencies)}",
+                    )
+                )
         unapproved_dependencies = (
             sorted(set(package.external_dependencies) - allowed_for_role - allowed_for_package)
             if allowed_for_role is not None

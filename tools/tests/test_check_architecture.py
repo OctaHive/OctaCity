@@ -174,5 +174,54 @@ class ArchitecturePolicyTests(unittest.TestCase):
             "the v1 workspace must not ship a production dynamic-provisioning adapter",
         )
 
+    def test_deferred_extension_sdks_are_rejected_in_implementation_layers(self):
+        package = ARCHITECTURE.Package(
+            name="octacity-server",
+            manifest_path=REPOSITORY / "server/app/Cargo.toml",
+            role="composition",
+            dependencies=("async-graphql", "octocrab"),
+            external_dependencies=("async-graphql", "octocrab"),
+            shared_contract=None,
+            shared_consumers=(),
+            shared_scaffold=False,
+            shared_policy_valid=True,
+        )
+
+        violations = ARCHITECTURE.check(
+            ARCHITECTURE.Graph(packages=(package,), edges=())
+        )
+
+        self.assertEqual(
+            [violation.code for violation in violations],
+            [
+                "ARCH011_DEFERRED_EXTENSION_SDK",
+                "ARCH011_DEFERRED_EXTENSION_SDK",
+            ],
+        )
+        self.assertIn("GraphQL", violations[0].message)
+        self.assertIn("managed GitHub/Gerrit", violations[1].message)
+
+    def test_unknown_sdk_is_rejected_where_concrete_implementations_are_selected(self):
+        package = ARCHITECTURE.Package(
+            name="fixture-adapter",
+            manifest_path=REPOSITORY / "server/infrastructure/fixture-adapter/Cargo.toml",
+            role="infrastructure",
+            dependencies=("future-provider-sdk",),
+            external_dependencies=("future-provider-sdk",),
+            shared_contract=None,
+            shared_consumers=(),
+            shared_scaffold=False,
+            shared_policy_valid=True,
+        )
+
+        violations = ARCHITECTURE.check(
+            ARCHITECTURE.Graph(packages=(package,), edges=())
+        )
+
+        self.assertEqual(
+            [violation.code for violation in violations],
+            ["ARCH012_UNREVIEWED_EXTERNAL_DEPENDENCY"],
+        )
+
 if __name__ == "__main__":
     unittest.main()
