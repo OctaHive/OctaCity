@@ -12,10 +12,8 @@ description = "Verified webhook-provider adapter registry and bounded process ho
 octacity-observability = { path = "../../../shared/octacity-observability" }
 octacity-server-adapter-host = { path = "../octacity-server-adapter-host" }
 octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }
-serde.workspace = true
 serde_json.workspace = true
 tokio-util.workspace = true
-toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

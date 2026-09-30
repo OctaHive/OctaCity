@@ -4514,11 +4514,13 @@ version = "0.1.0"
 dependencies = [
  "octacity-observability",
  "processkit",
+ "serde",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "toml",
  "tracing",
 ]
 
@@ -4791,13 +4793,11 @@ dependencies = [
  "octacity-observability",
  "octacity-server-adapter-host",
  "octacity-vcs-protocol",
- "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-util",
- "toml",
  "tracing",
 ]
 
@@ -4809,13 +4809,11 @@ dependencies = [
  "octacity-observability",
  "octacity-server-adapter-host",
  "octacity-webhook-provider-protocol",
- "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "tokio",
  "tokio-util",
- "toml",
  "tracing",
 ]
 

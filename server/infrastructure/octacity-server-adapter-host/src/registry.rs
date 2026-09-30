@@ -5,9 +5,11 @@ use std::{
   path::{Path, PathBuf},
 };
 
+use serde::{Deserialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
+const ADAPTER_MANIFEST_VERSION: u16 = 1;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 /// Maximum verified adapter executable size.
 pub const MAX_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
@@ -171,6 +173,56 @@ pub enum RegistryError {
   },
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InstallManifest<Protocol, Capabilities> {
+  manifest_version: u16,
+  adapter_id: String,
+  executable: String,
+  executable_sha256: String,
+  protocol: Protocol,
+  capabilities: Capabilities,
+}
+
+/// Loads the shared install envelope, delegates protocol validation, and
+/// verifies the executable selected by that envelope.
+///
+/// The callback owns only protocol-specific meaning. Filesystem confinement,
+/// manifest versioning, strict TOML parsing, executable permissions, and the
+/// pinned digest remain identical for every hosted adapter.
+pub fn load_verified_adapter<Protocol, Capabilities, Manifest>(
+  directory: &Path,
+  validate_protocol: impl FnOnce(&str, &str, Protocol, Capabilities) -> Result<Manifest, String>,
+) -> Result<(Manifest, VerifiedExecutable), RegistryError>
+where
+  Protocol: DeserializeOwned,
+  Capabilities: DeserializeOwned,
+{
+  let (manifest_path, contents) = read_manifest(directory)?;
+  let installed: InstallManifest<Protocol, Capabilities> =
+    toml::from_str(&contents).map_err(|error| RegistryError::ParseManifest {
+      path: manifest_path,
+      message: error.to_string(),
+    })?;
+  if installed.manifest_version != ADAPTER_MANIFEST_VERSION {
+    return Err(invalid_entry(directory, "unsupported adapter manifest version"));
+  }
+  let manifest = validate_protocol(
+    &installed.adapter_id,
+    &installed.executable_sha256,
+    installed.protocol,
+    installed.capabilities,
+  )
+  .map_err(|message| invalid_entry(directory, message))?;
+  let executable = verify_executable(
+    directory,
+    installed.adapter_id,
+    &installed.executable,
+    installed.executable_sha256,
+  )?;
+  Ok((manifest, executable))
+}
+
 fn discover_adapters<T, Load>(root: &Path, load: Load) -> Result<BTreeMap<String, T>, RegistryError>
 where
   Load: Fn(&Path) -> Result<(String, T), RegistryError>,
@@ -211,7 +263,7 @@ where
 }
 
 /// Reads one bounded regular `adapter.toml` file.
-pub fn read_manifest(directory: &Path) -> Result<(PathBuf, String), RegistryError> {
+fn read_manifest(directory: &Path) -> Result<(PathBuf, String), RegistryError> {
   let path = directory.join("adapter.toml");
   validate_regular_file(&path, false)?;
   let metadata = fs::metadata(&path).map_err(|source| RegistryError::ReadManifest {
@@ -232,7 +284,7 @@ pub fn read_manifest(directory: &Path) -> Result<(PathBuf, String), RegistryErro
 }
 
 /// Verifies one normalized relative executable path, confinement, size, and digest.
-pub fn verify_executable(
+fn verify_executable(
   directory: &Path,
   adapter_id: String,
   relative_path: &str,

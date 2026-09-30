@@ -14,6 +14,5 @@ pub use process::{
   HostError, HostFailureClass, ProcessRequest, cancel_request_id, classify_host_telemetry, execute_process,
 };
 pub use registry::{
-  AdapterRegistry, MAX_EXECUTABLE_BYTES, RegistryAdapter, RegistryError, VerifiedExecutable, read_manifest,
-  verify_executable,
+  AdapterRegistry, MAX_EXECUTABLE_BYTES, RegistryAdapter, RegistryError, VerifiedExecutable, load_verified_adapter,
 };
