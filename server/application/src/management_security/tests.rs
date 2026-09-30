@@ -1,9 +1,14 @@
 use std::{
   future::Future,
   str::FromStr,
+  sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+  },
   task::{Context, Poll, Waker},
 };
 
+use async_trait::async_trait;
 use uuid::Uuid;
 
 use super::*;
@@ -227,6 +232,174 @@ fn trusted_network_policy_fails_closed_for_every_other_valid_actor_shape() {
     run_ready(policy.authorize(&augmented_anonymous, ManagementAction::View, &resource)),
     Err(ManagementAuthorizationDenial::forbidden())
   );
+}
+
+#[derive(Clone, Copy)]
+struct FixtureCommand;
+
+impl crate::Command for FixtureCommand {
+  type Outcome = &'static str;
+}
+
+impl ManagementAuthorizationTarget for FixtureCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    resource(7)
+  }
+}
+
+#[derive(Clone, Copy)]
+struct FixtureQuery;
+
+impl crate::Query for FixtureQuery {
+  type Outcome = &'static str;
+}
+
+impl ManagementAuthorizationTarget for FixtureQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    resource(8)
+  }
+}
+
+struct RecordingPolicy {
+  decision: Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial>,
+  calls: Mutex<Vec<(ManagementAction, ManagementResource)>>,
+}
+
+impl RecordingPolicy {
+  fn allow(grant: ManagementAuthorizationGrant) -> Self {
+    Self {
+      decision: Ok(grant),
+      calls: Mutex::new(Vec::new()),
+    }
+  }
+
+  fn deny() -> Self {
+    Self {
+      decision: Err(ManagementAuthorizationDenial::forbidden()),
+      calls: Mutex::new(Vec::new()),
+    }
+  }
+}
+
+#[async_trait]
+impl ManagementAuthorizationPolicy for RecordingPolicy {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    action: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    self.calls.lock().unwrap().push((action, resource.clone()));
+    self.decision.clone()
+  }
+}
+
+#[derive(Default)]
+struct CommandSpy {
+  calls: AtomicUsize,
+  observed: Mutex<Option<(ManagementRequestContext, ManagementAuthorizationGrant)>>,
+}
+
+#[async_trait]
+impl ManagementCommandUseCase<FixtureCommand> for CommandSpy {
+  type Error = std::convert::Infallible;
+
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    _command: FixtureCommand,
+  ) -> Result<&'static str, Self::Error> {
+    self.calls.fetch_add(1, Ordering::SeqCst);
+    *self.observed.lock().unwrap() = Some((context.clone(), grant.clone()));
+    Ok("command")
+  }
+}
+
+#[derive(Default)]
+struct QuerySpy {
+  calls: AtomicUsize,
+  observed: Mutex<Option<(ManagementRequestContext, ManagementAuthorizationGrant)>>,
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<FixtureQuery> for QuerySpy {
+  type Error = std::convert::Infallible;
+
+  async fn execute_management_query(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    _query: FixtureQuery,
+  ) -> Result<&'static str, Self::Error> {
+    self.calls.fetch_add(1, Ordering::SeqCst);
+    *self.observed.lock().unwrap() = Some((context.clone(), grant.clone()));
+    Ok("query")
+  }
+}
+
+#[test]
+fn decorators_pass_the_exact_context_and_policy_grant_to_allowed_use_cases() {
+  let context = ManagementRequestContext::trusted_network(request_id());
+  let visibility = ManagementVisibility::restricted([resource(9)]).unwrap();
+  let grant = ManagementAuthorizationGrant::new(visibility);
+  let policy = Arc::new(RecordingPolicy::allow(grant.clone()));
+  let command_spy = Arc::new(CommandSpy::default());
+  let query_spy = Arc::new(QuerySpy::default());
+  let command_handler = AuthorizedCommandHandler::new(policy.clone(), command_spy.clone());
+  let query_handler = AuthorizedQueryHandler::new(policy.clone(), query_spy.clone());
+
+  assert_eq!(
+    run_ready(command_handler.handle_command(&context, FixtureCommand)).unwrap(),
+    "command"
+  );
+  assert_eq!(
+    run_ready(query_handler.handle_query(&context, FixtureQuery)).unwrap(),
+    "query"
+  );
+  assert_eq!(command_spy.calls.load(Ordering::SeqCst), 1);
+  assert_eq!(query_spy.calls.load(Ordering::SeqCst), 1);
+  assert_eq!(
+    *command_spy.observed.lock().unwrap(),
+    Some((context.clone(), grant.clone()))
+  );
+  assert_eq!(*query_spy.observed.lock().unwrap(), Some((context, grant)));
+  assert_eq!(
+    *policy.calls.lock().unwrap(),
+    vec![
+      (ManagementAction::Create, resource(7)),
+      (ManagementAction::View, resource(8))
+    ]
+  );
+}
+
+#[test]
+fn decorators_do_not_dispatch_denied_operations_and_preserve_request_correlation() {
+  let context = ManagementRequestContext::trusted_network(request_id());
+  let policy = Arc::new(RecordingPolicy::deny());
+  let command_spy = Arc::new(CommandSpy::default());
+  let query_spy = Arc::new(QuerySpy::default());
+  let command_handler = AuthorizedCommandHandler::new(policy.clone(), command_spy.clone());
+  let query_handler = AuthorizedQueryHandler::new(policy, query_spy.clone());
+
+  let command_error = run_ready(command_handler.handle_command(&context, FixtureCommand)).unwrap_err();
+  let query_error = run_ready(query_handler.handle_query(&context, FixtureQuery)).unwrap_err();
+
+  assert_eq!(command_spy.calls.load(Ordering::SeqCst), 0);
+  assert_eq!(query_spy.calls.load(Ordering::SeqCst), 0);
+  assert_eq!(command_error.forbidden().unwrap().request_id(), context.request_id());
+  assert_eq!(query_error.forbidden().unwrap().request_id(), context.request_id());
+  assert!(command_error.application().is_none());
+  assert!(query_error.application().is_none());
+  assert!(!format!("{command_error:?} {query_error:?}").contains("project-"));
 }
 
 fn run_ready<T>(future: impl Future<Output = T>) -> T {

@@ -147,12 +147,14 @@ pub use management_input::{
   ManualTriggerDefinitionInput, ManualTriggerInput, ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
 };
 pub use management_security::{
-  MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES,
-  MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction, ManagementActor, ManagementActorKind,
-  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy, ManagementClientKind,
-  ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementResource,
-  ManagementResourceIdentity, ManagementResourceKind, ManagementSecurityError, ManagementSecurityScope,
-  ManagementVisibility, ManagementVisibilityKind, TrustedNetworkManagementPolicy,
+  AuthorizedCommandHandler, AuthorizedQueryHandler, MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES,
+  MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES,
+  ManagementAction, ManagementActor, ManagementActorKind, ManagementAuthorizationDenial,
+  ManagementAuthorizationFailure, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
+  ManagementAuthorizationTarget, ManagementClientKind, ManagementCommandUseCase, ManagementHandlerError,
+  ManagementIngress, ManagementQueryUseCase, ManagementRequestAttributes, ManagementRequestContext,
+  ManagementRequestId, ManagementResource, ManagementResourceIdentity, ManagementResourceKind, ManagementSecurityError,
+  ManagementSecurityScope, ManagementVisibility, ManagementVisibilityKind, TrustedNetworkManagementPolicy,
 };
 pub use manual_trigger::{
   AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,

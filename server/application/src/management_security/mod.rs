@@ -2,6 +2,7 @@
 
 mod authorization;
 mod context;
+mod dispatch;
 mod policy;
 
 #[cfg(test)]
@@ -16,6 +17,10 @@ pub use context::{
   MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementActor, ManagementActorKind,
   ManagementClientKind, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId,
   ManagementSecurityScope,
+};
+pub use dispatch::{
+  AuthorizedCommandHandler, AuthorizedQueryHandler, ManagementAuthorizationFailure, ManagementAuthorizationTarget,
+  ManagementCommandUseCase, ManagementHandlerError, ManagementQueryUseCase,
 };
 pub use policy::{ManagementAuthorizationPolicy, TrustedNetworkManagementPolicy};
 

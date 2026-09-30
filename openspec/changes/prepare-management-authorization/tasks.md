@@ -5,7 +5,7 @@
 
 ## 2. Mandatory Application Authorization
 
-- [ ] 2.1 Add authorized command and query decorators that decide before inner-handler dispatch and preserve safe request correlation on denial; verify spy-handler tests prove denied requests perform zero inner calls and allowed requests receive the exact grant and context.
+- [x] 2.1 Add authorized command and query decorators that decide before inner-handler dispatch and preserve safe request correlation on denial; verify spy-handler tests prove denied requests perform zero inner calls and allowed requests receive the exact grant and context.
 - [ ] 2.2 Migrate management command handlers and their callers to accept the separate management request context in coherent feature families; after each family, verify its application tests compile and pass without adding actor fields to business commands.
 - [ ] 2.3 Migrate management query handlers and their callers to the context-aware interface and expose only authorized management bundles from the composition root; verify no management handler can be obtained from server assembly without the policy decorator.
 
