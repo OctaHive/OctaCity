@@ -368,7 +368,7 @@ without requiring a stateful WebSocket connection.
 ### Signed JobSpec
 
 The implemented signed payload contract is specified independently in
-[`docs/reference/protocols/signed-job-spec-v1.md`](../reference/protocols/signed-job-spec-v1.md).
+[`docs/reference/protocols/signed-job-spec-v1.md`](../../reference/protocols/signed-job-spec-v1.md).
 
 Avoid JSON canonicalization. The server signs the exact serialized payload
 bytes and sends an envelope:
@@ -616,7 +616,7 @@ There is no duplicate execution recovery path in v1.
 
 The canonical source-plugin v1 process specification, message examples, and
 implementation checklist live in
-[`agent/octacity-source-plugin/README.md`](../../agent/octacity-source-plugin/README.md).
+[`agent/octacity-source-plugin/README.md`](../../../agent/octacity-source-plugin/README.md).
 
 Primary workspace acquisition happens before an Octafile can be loaded, so it
 uses an OctaCity source-plugin protocol rather than the Octa task-plugin
@@ -786,4 +786,4 @@ wall-clock timeout, immutable OCI image reference, and DNS/network policy. A
 backend must never pretend that cgroups alone enforce filesystem or network
 policy, or that a process container provides hypervisor isolation.
 
-[Back to the implementation-plan index](../agent-implementation-plan.md)
+[Back to the implementation-plan index](README.md)

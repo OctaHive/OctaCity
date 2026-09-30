@@ -329,4 +329,4 @@ Initial metrics:
 A local diagnostic command may print configuration validation and inventory,
 but the production daemon exposes no unauthenticated network listener.
 
-[Back to the implementation-plan index](../agent-implementation-plan.md)
+[Back to the implementation-plan index](README.md)

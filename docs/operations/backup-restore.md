@@ -115,5 +115,5 @@ recovery interval. Evidence must show:
 - honest search freshness from projection reset through durable catch-up.
 
 The PostgreSQL and MinIO contracts referenced in
-[`backend-contract-tests.md`](../backend-contract-tests.md) exercise the bounded
+[`backend-contracts.md`](../testing/backend-contracts.md) exercise the bounded
 inventory, byte-integrity, and projection-watermark pieces of this procedure.

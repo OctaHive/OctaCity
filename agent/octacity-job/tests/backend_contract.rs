@@ -97,7 +97,7 @@ impl SourceMaterializer for FixtureSource {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a delegated cgroup v2 root and quota-mounted work root; see docs/backend-contract-tests.md"]
+#[ignore = "requires a delegated cgroup v2 root and quota-mounted work root; see docs/testing/backend-contracts.md"]
 async fn native_backend_satisfies_the_real_runner_contract() {
   let work_root = required_path("OCTACITY_CONTRACT_NATIVE_WORK_ROOT");
   let cgroup_root = required_path("OCTACITY_CONTRACT_NATIVE_CGROUP_ROOT");
@@ -190,7 +190,7 @@ async fn host_backend_satisfies_the_real_runner_contract() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires Linux/KVM, Apple Silicon macOS, or Windows/WHP and a provisioned Microsandbox image; see docs/backend-contract-tests.md"]
+#[ignore = "requires Linux/KVM, Apple Silicon macOS, or Windows/WHP and a provisioned Microsandbox image; see docs/testing/backend-contracts.md"]
 async fn microsandbox_backend_satisfies_the_real_runner_contract() {
   let work_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT");
   let state_root = required_path("OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT");
@@ -228,7 +228,7 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires Linux containerd, runc/crun, cgroup v2, and a quota-mounted work root; see docs/backend-contract-tests.md"]
+#[ignore = "requires Linux containerd, runc/crun, cgroup v2, and a quota-mounted work root; see docs/testing/backend-contracts.md"]
 async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
   let work_root = required_path("OCTACITY_CONTRACT_CONTAINERD_WORK_ROOT");
   let state_root = required_path("OCTACITY_CONTRACT_CONTAINERD_STATE_ROOT");

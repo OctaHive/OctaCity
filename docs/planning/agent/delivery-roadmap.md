@@ -107,7 +107,7 @@ release harness, cancellation, accounting, image-integrity, and cleanup checks.
 Containerd can run on disposable GitHub-hosted Linux; Apple VF still requires a
 green self-hosted Apple Silicon run before task 9.5 may be marked complete.
 Exact provisioning and combined coverage commands are documented in
-[`backend-contract-tests.md`](../backend-contract-tests.md).
+[`backend-contracts.md`](../../testing/backend-contracts.md).
 
 Additional Windows isolation providers remain future matrix extensions. They
 must pass the same contract on a real supported worker before being advertised.
@@ -481,4 +481,4 @@ contract suite and an unavailable OCI mode or isolation tier never selects a
 weaker alternative. Then add the real long-poll lease loop, durable delivery,
 S3-compatible uploads, and operational packaging around the same path.
 
-[Back to the implementation-plan index](../agent-implementation-plan.md)
+[Back to the implementation-plan index](README.md)

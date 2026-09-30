@@ -60,7 +60,7 @@ contract.
 Linux Native remains available as a legacy execution backend. Privileged
 providers require host-specific provisioning; compiling one is not treated as
 evidence that its isolation boundary works. See
-[real backend contract tests](docs/backend-contract-tests.md) for the qualified
+[real backend contract tests](docs/testing/backend-contracts.md) for the qualified
 platform matrix and its test cadence.
 
 ## Getting started
@@ -129,6 +129,9 @@ Manager, runtime privileges, upgrades, rollback, and removal are covered in the
 
 ## Documentation
 
+The [documentation index](docs/README.md) is the complete map of guides,
+references, protocols, and planning material.
+
 ### Use and operate OctaCity
 
 - [Management REST v1 workflow](docs/reference/management-rest-v1.md)
@@ -141,15 +144,15 @@ Manager, runtime privileges, upgrades, rollback, and removal are covered in the
 
 - [Domain vocabulary](CONTEXT.md)
 - [Server architecture and ownership](docs/architecture/server.md)
-- [Agent architecture and implementation plan](docs/agent-implementation-plan.md)
+- [Agent architecture and implementation plan](docs/planning/agent/README.md)
 - [Public extension seams](docs/architecture/extension-seams.md)
 - [Wire protocol index](docs/reference/protocols/README.md)
 
 ### Security and release evidence
 
 - [Server threat model](docs/architecture/threat-model.md)
-- [Security release gates](docs/security-testing.md)
-- [Real execution-backend contracts](docs/backend-contract-tests.md)
+- [Security release gates](docs/testing/security.md)
+- [Real execution-backend contracts](docs/testing/backend-contracts.md)
 
 ## Development
 
@@ -167,8 +170,8 @@ cargo test --workspace --all-features
 Coverage, security, failure, lifecycle, performance, and privileged backend
 gates have different infrastructure requirements and cadences. Their canonical
 commands and GitHub Actions triggers are documented in
-[backend contract tests](docs/backend-contract-tests.md) and
-[security testing](docs/security-testing.md).
+[backend contract tests](docs/testing/backend-contracts.md) and
+[security testing](docs/testing/security.md).
 
 The repository is organized by responsibility:
 
