@@ -19,7 +19,7 @@ tasks:
         format: junit
     shell: >-
       sleep 2 && mkdir -p dist reports && cp input/message.txt dist/message.txt &&
-      head -c 1048576 /dev/zero > dist/performance.bin &&
+      head -c 1048576 /dev/urandom > dist/performance.bin &&
       printf '<testsuite name="release" tests="1" failures="0"/>\n' > reports/junit.xml &&
       echo 'release cache source ready at dist/message.txt'
 

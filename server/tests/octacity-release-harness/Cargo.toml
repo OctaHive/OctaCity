@@ -41,6 +41,7 @@ tokio-rustls.workspace = true
 tokio-util.workspace = true
 url.workspace = true
 uuid.workspace = true
+zstd.workspace = true
 
 [target.'cfg(unix)'.dev-dependencies]
 rustix = { workspace = true, features = ["fs"] }

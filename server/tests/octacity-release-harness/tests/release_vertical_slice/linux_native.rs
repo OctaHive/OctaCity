@@ -809,7 +809,7 @@ fn matrix_policy_body(repository_id: &str, pool_id: &str, backend: &ReleaseBacke
 
 #[cfg(test)]
 mod tests {
-  use std::path::PathBuf;
+  use std::path::{Path, PathBuf};
 
   use super::*;
 
@@ -870,6 +870,44 @@ mod tests {
       json!([execution_target])
     );
     assert_eq!(cache_proxy_advertised_host(&backend), "host.microsandbox.internal");
+  }
+
+  #[test]
+  fn release_cache_fixture_stays_within_blob_compression_ratio() {
+    const CACHE_PUBLICATION_COMPRESSION_RATIO_LIMIT: usize = 1_000;
+
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let fixture = repository.join(FIXTURE_OCTAFILE);
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fs::read_to_string(fixture).unwrap()).unwrap();
+    let shell = document["tasks"]["cacheable"]["shell"].as_str().unwrap();
+    let shell = shell.strip_prefix("sleep 2 && ").unwrap();
+    let temporary = tempfile::tempdir().unwrap();
+    let workspace = temporary.path().join("fixtures/release/linux-native");
+    fs::create_dir_all(workspace.join("input")).unwrap();
+    fs::copy(
+      repository.join("fixtures/release/linux-native/input/message.txt"),
+      workspace.join("input/message.txt"),
+    )
+    .unwrap();
+
+    let output = std::process::Command::new("sh")
+      .args(["-eu", "-c", shell])
+      .current_dir(&workspace)
+      .output()
+      .unwrap();
+    assert!(
+      output.status.success(),
+      "release cache fixture failed: {}",
+      String::from_utf8_lossy(&output.stderr)
+    );
+
+    let payload = fs::read(workspace.join("dist/performance.bin")).unwrap();
+    let encoded = zstd::stream::encode_all(payload.as_slice(), 3).unwrap();
+    assert!(
+      payload.len() <= encoded.len().saturating_mul(CACHE_PUBLICATION_COMPRESSION_RATIO_LIMIT),
+      "release cache fixture expands {}:1, above the cache publication limit",
+      payload.len() / encoded.len().max(1)
+    );
   }
 }
 
