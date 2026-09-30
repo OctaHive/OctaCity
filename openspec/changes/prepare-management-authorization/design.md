@@ -76,6 +76,8 @@ Only wrapped management handlers are exposed by the composition root. The initia
 
 Authorization happens before resource lookup where the request already carries an opaque target identity. Denial therefore does not reveal whether that target exists and cannot open a mutation transaction, produce an audit fact, reserve an idempotency key, or obtain a transfer capability.
 
+The migration follows the dependencies of this seam rather than the historical package order. Every command and query receives its typed action/resource mapping first. REST then constructs the canonical context and learns to map decorator failures before any production route switches handler interfaces. Each feature family moves atomically from legacy dispatch to the decorated interface; a route never synthesizes a fallback context and a handler family never exposes both authorized and undecorated management entry points after its migration slice commits. The composition root becomes decorator-only after the final family moves.
+
 Alternative considered: call the policy manually inside each handler. Repetition would make omissions likely and architecture checks unable to prove universal coverage.
 
 ### 5. Authorization grants carry typed read visibility
@@ -124,11 +126,12 @@ The trusted-network listener remains explicitly unauthenticated and still requir
 ## Migration Plan
 
 1. Add the bounded management context, action/resource vocabulary, policy port, trusted-network policy, and decorator tests without changing externally visible behavior.
-2. Convert management command and query handler families to the context-aware interface and expose only decorated bundles from the composition root.
-3. Propagate audit context through authoritative management mutations and remove infrastructure-selected management actors.
-4. Migrate idempotency persistence to the management security scope and run fresh-schema, upgrade, replay, rollback-safety, and concurrency contracts.
-5. Add typed visibility to every collection, search, and event query and prove filtering occurs before pagination in memory and PostgreSQL.
-6. Add REST denial mapping, OpenAPI responses, route/action coverage checks, and end-to-end allow/deny contracts.
-7. Run the complete workspace, architecture, migration, PostgreSQL, OpenAPI, coverage, and released-server suites before enabling the seam for Web UI work.
+2. Declare and mechanically inventory every typed action/resource mapping before decorators are connected to production handlers.
+3. Construct the canonical context at REST ingress and install stable denial mapping without changing successful dispatch.
+4. Convert management command and query families atomically to the context-aware interface, then expose only decorated bundles from the composition root.
+5. Propagate audit context through authoritative management mutations and remove infrastructure-selected management actors.
+6. Migrate idempotency persistence to the management security scope and run fresh-schema, upgrade, replay, rollback-safety, and concurrency contracts.
+7. Add typed visibility to every collection, search, and event query and prove filtering occurs before pagination in memory and PostgreSQL.
+8. Add OpenAPI responses, end-to-end allow/deny contracts, and the complete workspace, architecture, migration, PostgreSQL, coverage, and released-server regression gates before enabling the seam for Web UI work.
 
 No feature flag or data-plane protocol transition is required. Successful trusted-network requests retain their current v1 representations throughout the migration.
