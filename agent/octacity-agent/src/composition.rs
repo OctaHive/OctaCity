@@ -167,6 +167,178 @@ impl BackendAssembly {
     self.executions.push(capability);
     Ok(())
   }
+
+  async fn add_legacy_oci(
+    &mut self,
+    validated: &ValidatedConfig,
+    runner: &RunnerInstallation,
+    configured: &[OciEngineConfig],
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut engines: Vec<Arc<dyn OciEngine>> = Vec::new();
+    for engine_config in configured {
+      let (name, engine): (&str, Arc<dyn OciEngine>) = match engine_config {
+        OciEngineConfig::Microsandbox {
+          executable,
+          libkrunfw,
+          metrics_sample_interval_seconds,
+        } => (
+          MICROSANDBOX_ENGINE_NAME,
+          Arc::new(microsandbox_engine(
+            validated,
+            runner,
+            executable,
+            libkrunfw,
+            *metrics_sample_interval_seconds,
+          )?),
+        ),
+        OciEngineConfig::Containerd {
+          endpoint,
+          namespace,
+          snapshotter,
+          runtime,
+          registry_config_dir,
+          pids_limit,
+          open_files_limit,
+        } => {
+          let engine = containerd_engine(
+            validated,
+            ContainerdAssemblyConfig {
+              endpoint,
+              namespace,
+              snapshotter,
+              runtime,
+              registry_config_dir,
+              pids_limit: *pids_limit,
+              open_files_limit: *open_files_limit,
+            },
+          )?;
+          engine.validate_connection().await?;
+          (CONTAINERD_ENGINE_NAME, Arc::new(engine))
+        }
+      };
+      self.runtimes.extend(
+        engine
+          .capabilities()
+          .into_iter()
+          .map(|capability| advertised_oci_capability(name, capability)),
+      );
+      self.health.push(ready_backend(name));
+      engines.push(engine);
+    }
+    self
+      .legacy
+      .insert(RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?));
+    Ok(())
+  }
+
+  async fn add_isolation(
+    &mut self,
+    validated: &ValidatedConfig,
+    runner: &RunnerInstallation,
+    providers: &[IsolationProviderConfig],
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    for provider in providers {
+      let (provider_name, environment_identity, engine, isolation_error): (_, _, Arc<dyn OciEngine>, _) = match provider
+      {
+        IsolationProviderConfig::Containerd {
+          environment_identity,
+          endpoint,
+          namespace,
+          snapshotter,
+          runtime,
+          registry_config_dir,
+          pids_limit,
+          open_files_limit,
+        } => {
+          let engine = Arc::new(containerd_engine(
+            validated,
+            ContainerdAssemblyConfig {
+              endpoint,
+              namespace,
+              snapshotter,
+              runtime,
+              registry_config_dir,
+              pids_limit: *pids_limit,
+              open_files_limit: *open_files_limit,
+            },
+          )?);
+          engine.validate_connection().await?;
+          (
+            CONTAINERD_ENGINE_NAME,
+            environment_identity,
+            engine,
+            "containerd isolation provider must enforce process isolation",
+          )
+        }
+        IsolationProviderConfig::AppleVf {
+          environment_identity,
+          executable,
+          open_files_limit,
+        } => {
+          let engine = Arc::new(AppleVfEngine::new(AppleVfEngineConfig {
+            agent_id: validated.config.agent_id.clone(),
+            executable: executable.clone(),
+            state_root: validated.config.state_root.clone(),
+            work_root: validated.config.work_root.clone(),
+            runner_platform: runner.capabilities.platform.clone(),
+            max_workspace_bytes: validated.config.max_workspace_bytes,
+            cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
+            open_files_limit: *open_files_limit,
+          })?);
+          engine.validate_connection().await?;
+          (
+            APPLE_VF_PROVIDER_NAME,
+            environment_identity,
+            engine,
+            "Apple VF isolation provider must implement the isolation contract",
+          )
+        }
+      };
+      let engine_capability = exactly_one_capability(provider_name, engine.capabilities())?;
+      if engine_capability.isolation != OciIsolation::Process {
+        return Err(isolation_error.into());
+      }
+      let capability = execution_capability(provider_name, ExecutionMode::Isolation, engine_capability.platform)?;
+      let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
+      self.add_execution(capability, environment_identity.clone(), backend)?;
+    }
+    Ok(())
+  }
+
+  fn add_virtualization(
+    &mut self,
+    validated: &ValidatedConfig,
+    runner: &RunnerInstallation,
+    providers: &[VirtualizationProviderConfig],
+  ) -> Result<(), Box<dyn std::error::Error>> {
+    for provider in providers {
+      let VirtualizationProviderConfig::Microsandbox {
+        environment_identity,
+        executable,
+        libkrunfw,
+        metrics_sample_interval_seconds,
+      } = provider;
+      let engine = Arc::new(microsandbox_engine(
+        validated,
+        runner,
+        executable,
+        libkrunfw,
+        *metrics_sample_interval_seconds,
+      )?);
+      let engine_capability = exactly_one_capability(MICROSANDBOX_ENGINE_NAME, engine.capabilities())?;
+      if engine_capability.isolation != OciIsolation::Hypervisor {
+        return Err("Microsandbox virtualization provider must enforce hypervisor isolation".into());
+      }
+      let capability = execution_capability(
+        MICROSANDBOX_ENGINE_NAME,
+        ExecutionMode::Virtualization,
+        engine_capability.platform,
+      )?;
+      let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
+      self.add_execution(capability, environment_identity.clone(), backend)?;
+    }
+    Ok(())
+  }
 }
 
 async fn build_executor(
@@ -246,173 +418,12 @@ async fn build_executor(
           backend,
         );
       }
-      ValidatedRuntimeConfig::Oci { engines: configured } => {
-        let mut engines: Vec<Arc<dyn OciEngine>> = Vec::new();
-        for engine_config in configured {
-          let (name, engine): (&str, Arc<dyn OciEngine>) = match engine_config {
-            OciEngineConfig::Microsandbox {
-              executable,
-              libkrunfw,
-              metrics_sample_interval_seconds,
-            } => (
-              MICROSANDBOX_ENGINE_NAME,
-              Arc::new(microsandbox_engine(
-                validated,
-                &runner,
-                executable,
-                libkrunfw,
-                *metrics_sample_interval_seconds,
-              )?),
-            ),
-            OciEngineConfig::Containerd {
-              endpoint,
-              namespace,
-              snapshotter,
-              runtime,
-              registry_config_dir,
-              pids_limit,
-              open_files_limit,
-            } => {
-              let engine = containerd_engine(
-                validated,
-                ContainerdAssemblyConfig {
-                  endpoint,
-                  namespace,
-                  snapshotter,
-                  runtime,
-                  registry_config_dir,
-                  pids_limit: *pids_limit,
-                  open_files_limit: *open_files_limit,
-                },
-              )?;
-              engine.validate_connection().await?;
-              (CONTAINERD_ENGINE_NAME, Arc::new(engine))
-            }
-          };
-          assembly.runtimes.extend(
-            engine
-              .capabilities()
-              .into_iter()
-              .map(|capability| advertised_oci_capability(name, capability)),
-          );
-          assembly.health.push(ready_backend(name));
-          engines.push(engine);
-        }
-        assembly
-          .legacy
-          .insert(RuntimeMode::Oci, Arc::new(OciBackend::new(engines)?));
-      }
+      ValidatedRuntimeConfig::Oci { engines } => assembly.add_legacy_oci(validated, &runner, engines).await?,
       ValidatedRuntimeConfig::Isolation { providers } => {
-        for provider in providers {
-          match provider {
-            IsolationProviderConfig::Containerd {
-              environment_identity,
-              endpoint,
-              namespace,
-              snapshotter,
-              runtime,
-              registry_config_dir,
-              pids_limit,
-              open_files_limit,
-            } => {
-              let engine = Arc::new(containerd_engine(
-                validated,
-                ContainerdAssemblyConfig {
-                  endpoint,
-                  namespace,
-                  snapshotter,
-                  runtime,
-                  registry_config_dir,
-                  pids_limit: *pids_limit,
-                  open_files_limit: *open_files_limit,
-                },
-              )?);
-              engine.validate_connection().await?;
-              let engine_capability = exactly_one_capability(CONTAINERD_ENGINE_NAME, engine.capabilities())?;
-              if engine_capability.isolation != octacity_execution::OciIsolation::Process {
-                return Err("containerd isolation provider must enforce process isolation".into());
-              }
-              let capability = ExecutionCapabilityV2 {
-                provider: ExecutionProviderId::new(CONTAINERD_ENGINE_NAME)
-                  .map_err(octacity_execution::ExecutionError::Invalid)?,
-                mode: ExecutionMode::Isolation,
-                host_platform: host_platform()?,
-                target_platform: protocol_platform(engine_capability.platform),
-                guarantees: guarantees_for(ExecutionMode::Isolation),
-                immutable_images: true,
-              };
-              let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
-              assembly.add_execution(capability, environment_identity.clone(), backend)?;
-            }
-            IsolationProviderConfig::AppleVf {
-              environment_identity,
-              executable,
-              open_files_limit,
-            } => {
-              let engine = Arc::new(AppleVfEngine::new(AppleVfEngineConfig {
-                agent_id: validated.config.agent_id.clone(),
-                executable: executable.clone(),
-                state_root: validated.config.state_root.clone(),
-                work_root: validated.config.work_root.clone(),
-                runner_platform: runner.capabilities.platform.clone(),
-                max_workspace_bytes: validated.config.max_workspace_bytes,
-                cleanup_timeout: Duration::from_secs(validated.config.cleanup_timeout_seconds),
-                open_files_limit: *open_files_limit,
-              })?);
-              engine.validate_connection().await?;
-              let engine_capability = exactly_one_capability(APPLE_VF_PROVIDER_NAME, engine.capabilities())?;
-              if engine_capability.isolation != octacity_execution::OciIsolation::Process {
-                return Err("Apple VF isolation provider must implement the isolation contract".into());
-              }
-              let capability = ExecutionCapabilityV2 {
-                provider: ExecutionProviderId::new(APPLE_VF_PROVIDER_NAME)
-                  .map_err(octacity_execution::ExecutionError::Invalid)?,
-                mode: ExecutionMode::Isolation,
-                host_platform: host_platform()?,
-                target_platform: protocol_platform(engine_capability.platform),
-                guarantees: guarantees_for(ExecutionMode::Isolation),
-                immutable_images: true,
-              };
-              let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
-              assembly.add_execution(capability, environment_identity.clone(), backend)?;
-            }
-          }
-        }
+        assembly.add_isolation(validated, &runner, providers).await?;
       }
       ValidatedRuntimeConfig::Virtualization { providers } => {
-        for provider in providers {
-          match provider {
-            VirtualizationProviderConfig::Microsandbox {
-              environment_identity,
-              executable,
-              libkrunfw,
-              metrics_sample_interval_seconds,
-            } => {
-              let engine = Arc::new(microsandbox_engine(
-                validated,
-                &runner,
-                executable,
-                libkrunfw,
-                *metrics_sample_interval_seconds,
-              )?);
-              let engine_capability = exactly_one_capability(MICROSANDBOX_ENGINE_NAME, engine.capabilities())?;
-              if engine_capability.isolation != OciIsolation::Hypervisor {
-                return Err("Microsandbox virtualization provider must enforce hypervisor isolation".into());
-              }
-              let capability = ExecutionCapabilityV2 {
-                provider: ExecutionProviderId::new(MICROSANDBOX_ENGINE_NAME)
-                  .map_err(octacity_execution::ExecutionError::Invalid)?,
-                mode: ExecutionMode::Virtualization,
-                host_platform: host_platform()?,
-                target_platform: protocol_platform(engine_capability.platform),
-                guarantees: guarantees_for(ExecutionMode::Virtualization),
-                immutable_images: true,
-              };
-              let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
-              assembly.add_execution(capability, environment_identity.clone(), backend)?;
-            }
-          }
-        }
+        assembly.add_virtualization(validated, &runner, providers)?;
       }
     }
   }
@@ -523,6 +534,21 @@ fn exactly_one_capability(
     ))
   })?;
   Ok(capability)
+}
+
+fn execution_capability(
+  provider: &str,
+  mode: ExecutionMode,
+  target_platform: ExecutionPlatform,
+) -> Result<ExecutionCapabilityV2, Box<dyn std::error::Error>> {
+  Ok(ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new(provider).map_err(octacity_execution::ExecutionError::Invalid)?,
+    mode,
+    host_platform: host_platform()?,
+    target_platform: protocol_platform(target_platform),
+    guarantees: guarantees_for(mode),
+    immutable_images: true,
+  })
 }
 
 fn advertised_oci_capability(backend: &str, capability: OciCapability) -> RuntimeCapability {
