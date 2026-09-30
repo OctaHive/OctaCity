@@ -42,6 +42,7 @@ mod log_search;
 mod management_input;
 mod management_security;
 mod manual_trigger;
+mod operational_metadata;
 mod pipeline_cqrs;
 mod pool_cqrs;
 mod project_cqrs;
@@ -176,6 +177,7 @@ pub use octacity_server_secrets::AgentEnrollmentSecretKey;
 pub use octacity_server_store::RegistrationEpoch;
 pub use octacity_server_store::{AgentDrainMode, TerminalBuildEvent};
 pub use octacity_server_store::{LeaseGrant, LeaseHeartbeatOutcome};
+pub use operational_metadata::{GetOperationalMetadataQuery, ManagementOperationalMetadataProjection};
 pub use pipeline_cqrs::{
   CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
 };

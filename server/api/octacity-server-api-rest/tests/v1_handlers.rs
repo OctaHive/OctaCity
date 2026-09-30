@@ -10,7 +10,7 @@ use axum::{
 };
 use octacity_server_api_rest::{
   management_router_with_application,
-  v1::{ErrorCode, MANAGEMENT_OPERATIONS},
+  v1::{ErrorCode, MANAGEMENT_AUTHORIZATION_OPERATIONS, MANAGEMENT_OPERATIONS},
 };
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuditActorKind, AuditActorProjection, AuditFactPageProjection,

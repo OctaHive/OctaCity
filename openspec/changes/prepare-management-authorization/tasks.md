@@ -10,7 +10,7 @@
 ## 3. Complete Action and Resource Mapping
 
 - [x] 3.1 Declare one typed action/resource mapping beside every registered management command and query, including collection resources whose concrete entity does not yet exist; verify mapping unit tests reject missing identities, unsupported resource shapes, and stringly typed fallbacks.
-- [ ] 3.2 Add a contract check comparing registered management routes, OpenAPI operation inventory, and typed action/resource mappings; verify the check fails on a fixture with a missing or duplicate mapping and passes for the production registry.
+- [x] 3.2 Add a contract check comparing registered management routes, OpenAPI operation inventory, and typed action/resource mappings; verify the check fails on a fixture with a missing or duplicate mapping and passes for the production registry.
 
 ## 4. Authorized Transport and Handler Migration
 

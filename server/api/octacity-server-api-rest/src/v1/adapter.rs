@@ -87,8 +87,9 @@ pub use application::{
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-  JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  JobEventManagementApplication, MANAGEMENT_AUTHORIZATION_OPERATIONS, ManagementApplicationHandlers,
+  ManagementAuthorizationOperation, ManualTriggerManagementApplication, PipelineManagementApplication,
+  ProjectManagementApplication, ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use audit::list_audit_facts;

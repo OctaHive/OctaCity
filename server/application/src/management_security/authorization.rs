@@ -54,6 +54,8 @@ impl ManagementAction {
 /// Stable kind of resource protected by management authorization.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ManagementResourceKind {
+  /// Running management control plane and its safe deployment metadata.
+  ControlPlane,
   /// Hierarchical Project.
   Project,
   /// Versioned Project policy.
@@ -98,7 +100,8 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 20] = [
+  pub const ALL: [Self; 21] = [
+    Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
     Self::Pipeline,

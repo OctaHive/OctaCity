@@ -1,5 +1,58 @@
 use super::*;
 
+#[derive(Debug, Eq, PartialEq)]
+struct AuthorizationInventoryError {
+  duplicates: Vec<&'static str>,
+  missing: Vec<&'static str>,
+  unexpected: Vec<&'static str>,
+}
+
+fn validate_authorization_inventory(
+  registered: impl IntoIterator<Item = &'static str>,
+  mapped: impl IntoIterator<Item = &'static str>,
+) -> Result<(), AuthorizationInventoryError> {
+  let registered = registered.into_iter().collect::<BTreeSet<_>>();
+  let mut mappings = BTreeSet::new();
+  let mut duplicates = Vec::new();
+  for operation_id in mapped {
+    if !mappings.insert(operation_id) {
+      duplicates.push(operation_id);
+    }
+  }
+
+  let missing = registered.difference(&mappings).copied().collect::<Vec<_>>();
+  let unexpected = mappings.difference(&registered).copied().collect::<Vec<_>>();
+  if duplicates.is_empty() && missing.is_empty() && unexpected.is_empty() {
+    Ok(())
+  } else {
+    Err(AuthorizationInventoryError {
+      duplicates,
+      missing,
+      unexpected,
+    })
+  }
+}
+
+#[test]
+fn authorization_inventory_rejects_missing_and_duplicate_mappings() {
+  assert_eq!(
+    validate_authorization_inventory(["first", "second"], ["first"]),
+    Err(AuthorizationInventoryError {
+      duplicates: Vec::new(),
+      missing: vec!["second"],
+      unexpected: Vec::new(),
+    })
+  );
+  assert_eq!(
+    validate_authorization_inventory(["first", "second"], ["first", "second", "second"]),
+    Err(AuthorizationInventoryError {
+      duplicates: vec!["second"],
+      missing: Vec::new(),
+      unexpected: Vec::new(),
+    })
+  );
+}
+
 #[tokio::test]
 async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
   let application = Arc::new(RecordingApplication::default());
@@ -58,6 +111,13 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     })
     .collect::<BTreeSet<_>>();
   assert_eq!(documented, registered);
+  validate_authorization_inventory(
+    MANAGEMENT_OPERATIONS.iter().map(|operation| operation.operation_id),
+    MANAGEMENT_AUTHORIZATION_OPERATIONS
+      .iter()
+      .map(|operation| operation.operation_id),
+  )
+  .expect("every registered management operation must have exactly one typed authorization mapping");
 
   for operation in MANAGEMENT_OPERATIONS {
     let method = operation.method.to_ascii_lowercase();

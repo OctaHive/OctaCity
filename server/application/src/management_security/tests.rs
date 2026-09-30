@@ -147,6 +147,7 @@ fn every_registered_management_request_has_a_typed_mapping() {
     crate::GetCacheSessionQuery,
     crate::ListBuildCacheSessionsQuery,
     crate::SearchBuildLogsQuery,
+    crate::GetOperationalMetadataQuery,
     crate::GetBuildResultRetentionQuery,
     crate::PlaceBuildResultHoldCommand,
     crate::ReleaseBuildResultHoldCommand,

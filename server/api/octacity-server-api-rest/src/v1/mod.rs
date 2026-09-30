@@ -27,9 +27,10 @@ pub use adapter::{
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-  JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-  ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ScheduleManagementApplication, router as management_routes,
+  JobEventManagementApplication, MANAGEMENT_AUTHORIZATION_OPERATIONS, ManagementApplication,
+  ManagementApplicationHandlers, ManagementAuthorizationOperation, ManualTriggerManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;
