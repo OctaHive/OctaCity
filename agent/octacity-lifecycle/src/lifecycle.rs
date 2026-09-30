@@ -18,8 +18,8 @@ use octacity_job::{ExecuteJobRequest, JobCompletion, JobError, JobExecutor, JobF
 use octacity_output::{FreezeOutputs, OutputError, OutputPublisher, PublishOutputs};
 use octacity_protocol::{
   ActiveJob, AgentLifecycleEvent, AttemptEventKind, BeginCacheSessionRequest, COORDINATOR_PROTOCOL_VERSION,
-  CompleteLeaseRequest, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState, LeaseFence,
-  ResourceUsageSnapshot, RevokeCacheSessionRequest, RunnerEventPayload,
+  CompleteLeaseRequest, ExecutionEvidenceV2, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState,
+  LeaseAssignment, LeaseFence, ResourceUsageSnapshot, RevokeCacheSessionRequest, RunnerEventPayload,
 };
 use octacity_runner::{RunStatus, RunnerStreamItem};
 use sha2::{Digest as _, Sha256};
@@ -113,6 +113,181 @@ impl ActiveExecution {
         self.error = Some(error);
       }
     }
+  }
+}
+
+struct FinalizedJob {
+  status: JobCompletionStatus,
+  usage: Option<ResourceUsageSnapshot>,
+  execution: Option<ExecutionEvidenceV2>,
+  results: Vec<serde_json::Value>,
+}
+
+struct FinishingAttempt<'a> {
+  lifecycle: &'a JobLifecycle,
+  lease: &'a LeaseAssignment,
+  attempt_root: &'a std::path::Path,
+  events: &'a mut AttemptEventState,
+  delivery_stop: &'a CancellationToken,
+  active: &'a mut ActiveExecution,
+}
+
+impl FinishingAttempt<'_> {
+  async fn finish(
+    &mut self,
+    job_result: Option<Result<JobCompletion, JobFailure>>,
+    panic_cleanup: Result<(), String>,
+  ) -> FinalizedJob {
+    let (status, usage, execution, results, cleanup) = match job_result {
+      Some(Ok(completion)) => self.finish_success(completion).await,
+      Some(Err(failure)) => self.finish_failure(failure).await,
+      None => (
+        JobCompletionStatus::InfrastructureFailed,
+        None,
+        None,
+        Vec::new(),
+        panic_cleanup,
+      ),
+    };
+    if let Err(error) = cleanup {
+      self.active.error = Some(JobLifecycleError::Cleanup(error));
+    }
+    FinalizedJob {
+      status,
+      usage,
+      execution,
+      results,
+    }
+  }
+
+  async fn finish_success(
+    &mut self,
+    completion: JobCompletion,
+  ) -> (
+    JobCompletionStatus,
+    Option<ResourceUsageSnapshot>,
+    Option<ExecutionEvidenceV2>,
+    Vec<serde_json::Value>,
+    Result<(), String>,
+  ) {
+    if !self.events.running {
+      let result = self
+        .events
+        .transition(JobLifecycleState::Running, self.delivery_stop)
+        .await;
+      if let Err(error) = result {
+        self.active.error.get_or_insert(error);
+      }
+    }
+    if self.active.error.is_none()
+      && let Err(error) = self
+        .events
+        .transition(JobLifecycleState::Freezing, self.delivery_stop)
+        .await
+    {
+      self.active.error = Some(error);
+    }
+    let mut status = runner_status(completion.runner().status);
+    let usage = Some(resource_snapshot(&completion.runner().final_usage));
+    let execution = completion.execution().cloned();
+    let mut results = completion.runner().results.clone();
+    let mut frozen = None;
+    if self.active.error.is_none() {
+      let staging_root = self.attempt_root.join("outputs");
+      let cancellation = CancellationToken::new();
+      let freeze = self.lifecycle.outputs.freeze(
+        FreezeOutputs {
+          workspace: completion.workspace(),
+          results: &results,
+          limits: completion.output_limits(),
+          staging_root: &staging_root,
+        },
+        cancellation.clone(),
+      );
+      frozen = accept_output_result(
+        run_output_while_owned(
+          freeze,
+          cancellation,
+          &mut self.active.monitor,
+          &mut self.active.lease_outcome,
+        )
+        .await,
+        &mut status,
+        &mut results,
+        &mut self.active.error,
+      );
+    }
+    if self.active.error.is_none()
+      && frozen.is_some()
+      && let Err(error) = self
+        .events
+        .transition(JobLifecycleState::Uploading, self.delivery_stop)
+        .await
+    {
+      self.active.error = Some(error);
+    }
+    if self.active.error.is_none()
+      && let Some(frozen) = frozen
+    {
+      let cancellation = CancellationToken::new();
+      let publish = self.lifecycle.outputs.publish(
+        PublishOutputs {
+          registration: &self.lifecycle.registration,
+          lease: self.lease,
+          frozen,
+        },
+        cancellation.clone(),
+      );
+      accept_output_result(
+        run_output_while_owned(
+          publish,
+          cancellation,
+          &mut self.active.monitor,
+          &mut self.active.lease_outcome,
+        )
+        .await,
+        &mut status,
+        &mut results,
+        &mut self.active.error,
+      );
+    }
+    // The journal is synced before deleting job state. If persistence fails,
+    // retain the workspace so startup recovery can inspect the last durable
+    // phase instead of making an unrecorded destructive change.
+    let cleaning_recorded = record_cleaning(self.events, self.delivery_stop, &mut self.active.error).await;
+    let cleanup = if cleaning_recorded {
+      completion.cleanup().await.map_err(|error| error.to_string())
+    } else {
+      Ok(())
+    };
+    (status, usage, execution, results, cleanup)
+  }
+
+  async fn finish_failure(
+    &mut self,
+    failure: JobFailure,
+  ) -> (
+    JobCompletionStatus,
+    Option<ResourceUsageSnapshot>,
+    Option<ExecutionEvidenceV2>,
+    Vec<serde_json::Value>,
+    Result<(), String>,
+  ) {
+    let status = job_error_status(failure.error());
+    warn!(
+      job_id = %self.lease.job_id,
+      attempt = self.lease.attempt,
+      error = %failure,
+      ?status,
+      "job execution failed"
+    );
+    let cleaning_recorded = record_cleaning(self.events, self.delivery_stop, &mut self.active.error).await;
+    let cleanup = if cleaning_recorded {
+      failure.cleanup().await.map_err(|error| error.to_string())
+    } else {
+      Ok(())
+    };
+    (status, None, None, Vec::new(), cleanup)
   }
 }
 
@@ -375,113 +550,16 @@ impl JobLifecycle {
     }
     active.drain_events(&mut attempt_events).await;
 
-    let (status, final_usage, execution, results, cleanup) = match job_result {
-      Some(Ok(completion)) => {
-        if !attempt_events.running {
-          let result = attempt_events
-            .transition(JobLifecycleState::Running, &delivery_stop)
-            .await;
-          if let Err(error) = result {
-            active.error.get_or_insert(error);
-          }
-        }
-        if active.error.is_none()
-          && let Err(error) = attempt_events
-            .transition(JobLifecycleState::Freezing, &delivery_stop)
-            .await
-        {
-          active.error = Some(error);
-        }
-        let mut status = runner_status(completion.runner().status);
-        let usage = Some(resource_snapshot(&completion.runner().final_usage));
-        let execution = completion.execution().cloned();
-        let mut results = completion.runner().results.clone();
-        let mut frozen = None;
-        if active.error.is_none() {
-          let staging_root = attempt_root.join("outputs");
-          let cancellation = CancellationToken::new();
-          let freeze = self.outputs.freeze(
-            FreezeOutputs {
-              workspace: completion.workspace(),
-              results: &results,
-              limits: completion.output_limits(),
-              staging_root: &staging_root,
-            },
-            cancellation.clone(),
-          );
-          frozen = accept_output_result(
-            run_output_while_owned(freeze, cancellation, &mut active.monitor, &mut active.lease_outcome).await,
-            &mut status,
-            &mut results,
-            &mut active.error,
-          );
-        }
-        if active.error.is_none()
-          && frozen.is_some()
-          && let Err(error) = attempt_events
-            .transition(JobLifecycleState::Uploading, &delivery_stop)
-            .await
-        {
-          active.error = Some(error);
-        }
-        if active.error.is_none()
-          && let Some(frozen) = frozen
-        {
-          let cancellation = CancellationToken::new();
-          let publish = self.outputs.publish(
-            PublishOutputs {
-              registration: &self.registration,
-              lease: &lease,
-              frozen,
-            },
-            cancellation.clone(),
-          );
-          accept_output_result(
-            run_output_while_owned(publish, cancellation, &mut active.monitor, &mut active.lease_outcome).await,
-            &mut status,
-            &mut results,
-            &mut active.error,
-          );
-        }
-        // The journal is synced before deleting job state. If persistence
-        // fails, retain the workspace so startup recovery can inspect the last
-        // durable phase instead of making an unrecorded destructive change.
-        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut active.error).await;
-        let cleanup = if cleaning_recorded {
-          completion.cleanup().await.map_err(|error| error.to_string())
-        } else {
-          Ok(())
-        };
-        (status, usage, execution, results, cleanup)
-      }
-      Some(Err(failure)) => {
-        let status = job_error_status(failure.error());
-        warn!(
-          job_id = %lease.job_id,
-          attempt = lease.attempt,
-          error = %failure,
-          ?status,
-          "job execution failed"
-        );
-        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut active.error).await;
-        let cleanup = if cleaning_recorded {
-          failure.cleanup().await.map_err(|error| error.to_string())
-        } else {
-          Ok(())
-        };
-        (status, None, None, Vec::new(), cleanup)
-      }
-      None => (
-        JobCompletionStatus::InfrastructureFailed,
-        None,
-        None,
-        Vec::new(),
-        panic_cleanup,
-      ),
-    };
-    if let Err(error) = cleanup {
-      active.error = Some(JobLifecycleError::Cleanup(error));
+    let finalized = FinishingAttempt {
+      lifecycle: self,
+      lease: &lease,
+      attempt_root: &attempt_root,
+      events: &mut attempt_events,
+      delivery_stop: &delivery_stop,
+      active: &mut active,
     }
+    .finish(job_result, panic_cleanup)
+    .await;
 
     if let Some(error) = active.error {
       let _ = stop_delivery(
@@ -508,7 +586,12 @@ impl JobLifecycle {
       lease_outcome: active.lease_outcome,
       draining,
     }
-    .complete(status, final_usage, execution, results)
+    .complete(
+      finalized.status,
+      finalized.usage,
+      finalized.execution,
+      finalized.results,
+    )
     .await
   }
 }
