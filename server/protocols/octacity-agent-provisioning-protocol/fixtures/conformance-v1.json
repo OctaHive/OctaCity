@@ -1,0 +1,244 @@
+{
+  "protocol_version": 1,
+  "manifest": {
+    "adapter_id": "fixture-provisioner",
+    "executable_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "protocol": {
+      "min": 1,
+      "max": 1
+    },
+    "capabilities": {
+      "provision": true,
+      "observe": true,
+      "terminate": true
+    }
+  },
+  "exchanges": [
+    {
+      "name": "provision",
+      "request": {
+        "protocol_version": 1,
+        "request_id": "request-provision-01",
+        "command": {
+          "operation": "provision",
+          "payload": {
+            "operation_id": "operation-provision-01",
+            "idempotency_key": "capacity-linux-x86-0042",
+            "pool": {
+              "pool_id": "pool-linux-x86",
+              "expected_platform": {
+                "os": "linux",
+                "architecture": "x86_64"
+              },
+              "logical_cpu_count": 4,
+              "memory_bytes": 8589934592,
+              "work_disk_bytes": 107374182400
+            },
+            "bootstrap": {
+              "enrollment_credential_handle": "enrollment-handle-0042",
+              "expires_at_unix_ms": 1735689600000
+            }
+          }
+        }
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "request-provision-01",
+        "outcome": {
+          "status": "machine",
+          "payload": {
+            "machine_id": "machine-0042",
+            "pool_id": "pool-linux-x86",
+            "lifecycle": "provisioning",
+            "platform": null,
+            "observed_at_unix_ms": 1735686000000
+          }
+        }
+      }
+    },
+    {
+      "name": "provision_replay",
+      "request": {
+        "protocol_version": 1,
+        "request_id": "request-provision-replay-01",
+        "command": {
+          "operation": "provision",
+          "payload": {
+            "operation_id": "operation-provision-01",
+            "idempotency_key": "capacity-linux-x86-0042",
+            "pool": {
+              "pool_id": "pool-linux-x86",
+              "expected_platform": {
+                "os": "linux",
+                "architecture": "x86_64"
+              },
+              "logical_cpu_count": 4,
+              "memory_bytes": 8589934592,
+              "work_disk_bytes": 107374182400
+            },
+            "bootstrap": {
+              "enrollment_credential_handle": "enrollment-handle-0042",
+              "expires_at_unix_ms": 1735689600000
+            }
+          }
+        }
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "request-provision-replay-01",
+        "outcome": {
+          "status": "machine",
+          "payload": {
+            "machine_id": "machine-0042",
+            "pool_id": "pool-linux-x86",
+            "lifecycle": "provisioning",
+            "platform": null,
+            "observed_at_unix_ms": 1735686000000
+          }
+        }
+      }
+    },
+    {
+      "name": "observe",
+      "request": {
+        "protocol_version": 1,
+        "request_id": "request-observe-01",
+        "command": {
+          "operation": "observe",
+          "payload": {
+            "operation_id": "operation-observe-01",
+            "machine_id": "machine-0042"
+          }
+        }
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "request-observe-01",
+        "outcome": {
+          "status": "machine",
+          "payload": {
+            "machine_id": "machine-0042",
+            "pool_id": "pool-linux-x86",
+            "lifecycle": "running",
+            "platform": {
+              "os": "linux",
+              "architecture": "x86_64"
+            },
+            "observed_at_unix_ms": 1735686060000
+          }
+        }
+      }
+    },
+    {
+      "name": "cancel",
+      "request": {
+        "protocol_version": 1,
+        "request_id": "request-cancel-01",
+        "command": {
+          "operation": "cancel",
+          "payload": {
+            "target_operation_id": "operation-observe-01"
+          }
+        }
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "request-cancel-01",
+        "outcome": {
+          "status": "acknowledged",
+          "payload": {
+            "operation_id": "operation-observe-01"
+          }
+        }
+      }
+    },
+    {
+      "name": "terminate",
+      "request": {
+        "protocol_version": 1,
+        "request_id": "request-terminate-01",
+        "command": {
+          "operation": "terminate",
+          "payload": {
+            "operation_id": "operation-terminate-01",
+            "idempotency_key": "terminate-machine-0042",
+            "machine_id": "machine-0042"
+          }
+        }
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "request-terminate-01",
+        "outcome": {
+          "status": "terminated",
+          "payload": {
+            "machine_id": "machine-0042"
+          }
+        }
+      }
+    },
+    {
+      "name": "terminate_replay",
+      "request": {
+        "protocol_version": 1,
+        "request_id": "request-terminate-replay-01",
+        "command": {
+          "operation": "terminate",
+          "payload": {
+            "operation_id": "operation-terminate-01",
+            "idempotency_key": "terminate-machine-0042",
+            "machine_id": "machine-0042"
+          }
+        }
+      },
+      "response": {
+        "protocol_version": 1,
+        "request_id": "request-terminate-replay-01",
+        "outcome": {
+          "status": "terminated",
+          "payload": {
+            "machine_id": "machine-0042"
+          }
+        }
+      }
+    }
+  ],
+  "failures": [
+    {
+      "class": "invalid_request",
+      "code": "invalid_capacity",
+      "diagnostic": "requested capacity is invalid",
+      "retry_after_ms": null
+    },
+    {
+      "class": "unsupported",
+      "code": "platform_unsupported",
+      "diagnostic": "requested platform is unsupported",
+      "retry_after_ms": null
+    },
+    {
+      "class": "permanent",
+      "code": "capacity_denied",
+      "diagnostic": "capacity request cannot be satisfied",
+      "retry_after_ms": null
+    },
+    {
+      "class": "transient",
+      "code": "provider_unavailable",
+      "diagnostic": "provider is temporarily unavailable",
+      "retry_after_ms": 1000
+    },
+    {
+      "class": "cancelled",
+      "code": "operation_cancelled",
+      "diagnostic": "operation was cancelled",
+      "retry_after_ms": null
+    },
+    {
+      "class": "protocol_fault",
+      "code": "invalid_provider_response",
+      "diagnostic": "provider returned an invalid response",
+      "retry_after_ms": null
+    }
+  ]
+}

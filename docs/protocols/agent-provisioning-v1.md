@@ -39,8 +39,12 @@ strict schema checks, and semantic validation form one decode operation.
 Responses are accepted only when version and request identity match the
 outstanding request.
 
-The deterministic v1 request fixture is
-[`provision-v1.json`](../../server/protocols/octacity-agent-provisioning-protocol/fixtures/provision-v1.json).
+The deterministic v1 lifecycle fixture is
+[`conformance-v1.json`](../../server/protocols/octacity-agent-provisioning-protocol/fixtures/conformance-v1.json).
+It contains one validated manifest, correlated provision, replay, observe,
+cancel, terminate, and replay exchanges, plus every classified failure. The
+standalone [`provision-v1.json`](../../server/protocols/octacity-agent-provisioning-protocol/fixtures/provision-v1.json)
+request remains the minimal encoding example.
 
 ## Provider-neutral intent
 
@@ -101,6 +105,12 @@ observed platform, Unix-millisecond observation time, and one state:
 Successful outcomes are `machine`, `terminated`, or `acknowledged`. They never
 contain bootstrap secrets, provider credentials, template names, networks,
 clusters, or datastores.
+
+The outcome must also match the request: provision returns a machine in the
+requested pool and, when known, on the expected platform; observe returns the
+requested machine; terminate confirms absence of the requested machine; and a
+cancel acknowledgement names the operation being cancelled. A correlated but
+semantically unrelated outcome is a protocol fault.
 
 ## Failure classification and retry
 

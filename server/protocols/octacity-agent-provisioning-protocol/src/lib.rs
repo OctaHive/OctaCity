@@ -129,7 +129,35 @@ impl Response {
       request.protocol_version,
       &request.request_id,
     )
-    .map_err(|_| ProtocolError::CorrelationMismatch)
+    .map_err(|_| ProtocolError::CorrelationMismatch)?;
+    self.validate_outcome_for(&request.command)
+  }
+
+  fn validate_outcome_for(&self, command: &Command) -> Result<(), ProtocolError> {
+    match (command, &self.outcome) {
+      (_, Outcome::Failure(_)) => Ok(()),
+      (Command::Provision(provision), Outcome::Machine(machine)) => {
+        if machine.pool_id != provision.pool.pool_id {
+          return Err(ProtocolError::OutcomeMismatch);
+        }
+        if let Some(platform) = &machine.platform
+          && platform != &provision.pool.expected_platform
+        {
+          return Err(ProtocolError::OutcomeMismatch);
+        }
+        Ok(())
+      }
+      (Command::Observe(observe), Outcome::Machine(machine)) if machine.machine_id == observe.machine_id => Ok(()),
+      (Command::Terminate(terminate), Outcome::Terminated { machine_id }) if machine_id == &terminate.machine_id => {
+        Ok(())
+      }
+      (Command::Cancel(cancel), Outcome::Acknowledged { operation_id })
+        if operation_id == &cancel.target_operation_id =>
+      {
+        Ok(())
+      }
+      _ => Err(ProtocolError::OutcomeMismatch),
+    }
   }
 }
 
@@ -282,13 +310,23 @@ impl PoolIntent {
 }
 
 /// Host-owned short-lived single-use enrollment bootstrap.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnrollmentBootstrap {
   /// Handle resolved only inside the selected adapter host.
   pub enrollment_credential_handle: String,
   /// Absolute Unix millisecond after which enrollment must fail.
   pub expires_at_unix_ms: u64,
+}
+
+impl std::fmt::Debug for EnrollmentBootstrap {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("EnrollmentBootstrap")
+      .field("enrollment_credential_handle", &"<redacted>")
+      .field("expires_at_unix_ms", &self.expires_at_unix_ms)
+      .finish()
+  }
 }
 
 /// Idempotent provision request.
@@ -471,6 +509,9 @@ pub enum ProtocolError {
   /// A response does not match the request version or identifier.
   #[error("agent-provisioning response does not correlate to its request")]
   CorrelationMismatch,
+  /// A response outcome does not match the requested operation or identity.
+  #[error("agent-provisioning response outcome does not match its request")]
+  OutcomeMismatch,
 }
 
 fn bounded_message(message: &[u8]) -> Result<(), ProtocolError> {

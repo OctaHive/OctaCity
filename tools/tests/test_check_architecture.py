@@ -118,5 +118,34 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertEqual([violation.code for violation in violations], ["ARCH003_ADAPTER_SELECTION"])
         self.assertIn(concrete.name, violations[0].message)
 
+    def test_agent_provisioning_protocol_is_isolated_from_capacity_interfaces(self):
+        graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
+        provisioning = "octacity-agent-provisioning-protocol"
+        capacity_interfaces = {
+            "octacity-protocol",
+            "octacity-server-domain",
+            "octacity-server-job",
+            "octacity-server-orchestrator",
+            "octacity-server-scheduler",
+        }
+        leaking_edges = [
+            edge
+            for edge in graph.edges
+            if (
+                edge.source.name == provisioning
+                and edge.target.name in capacity_interfaces
+            )
+            or (
+                edge.target.name == provisioning
+                and edge.source.name in capacity_interfaces
+            )
+        ]
+
+        self.assertEqual(
+            leaking_edges,
+            [],
+            "dynamic capacity protocol types must not enter JobSpec, Agent, Pool, Orchestrator, or Placement interfaces",
+        )
+
 if __name__ == "__main__":
     unittest.main()

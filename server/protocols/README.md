@@ -15,7 +15,7 @@ normalized protocol types.
 | --- | --- | --- |
 | Webhook provider v1 | [`docs/protocols/webhook-provider-v1.md`](../../docs/protocols/webhook-provider-v1.md) | [`verify-delivery-v1.json`](octacity-webhook-provider-protocol/fixtures/verify-delivery-v1.json) |
 | VCS provider v1 | [`docs/protocols/vcs-provider-v1.md`](../../docs/protocols/vcs-provider-v1.md) | [`fixtures`](octacity-vcs-protocol/fixtures/) for refs, commits, trees, file content, and revision resolution |
-| Agent provisioning v1 | [`docs/protocols/agent-provisioning-v1.md`](../../docs/protocols/agent-provisioning-v1.md) | [`provision-v1.json`](octacity-agent-provisioning-protocol/fixtures/provision-v1.json) |
+| Agent provisioning v1 | [`docs/protocols/agent-provisioning-v1.md`](../../docs/protocols/agent-provisioning-v1.md) | [`conformance-v1.json`](octacity-agent-provisioning-protocol/fixtures/conformance-v1.json) |
 
 The shared artifact transfer contract is documented in
 [`docs/protocols/artifact-transfer-v1.md`](../../docs/protocols/artifact-transfer-v1.md)

@@ -1,6 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use octacity_agent_provisioning_protocol as provisioning;
 use octacity_protocol::{
   ARTIFACT_PROTOCOL_VERSION, ArtifactCommand, ArtifactProtocolRequest, CancelArtifactOperation,
   decode_artifact_request, decode_artifact_response,
@@ -38,4 +39,14 @@ fuzz_target!(|data: &[u8]| {
   };
   let _ = webhook::decode_request(data);
   let _ = webhook::decode_response(data, &webhook_request);
+
+  let provisioning_request = provisioning::Request {
+    protocol_version: provisioning::AGENT_PROVISIONING_PROTOCOL_VERSION,
+    request_id: "fuzz".to_owned(),
+    command: provisioning::Command::Cancel(provisioning::CancelOperation {
+      target_operation_id: "operation".to_owned(),
+    }),
+  };
+  let _ = provisioning::decode_request(data);
+  let _ = provisioning::decode_response(data, &provisioning_request);
 });

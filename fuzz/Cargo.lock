@@ -396,6 +396,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-agent-provisioning-protocol"
+version = "0.1.0"
+dependencies = [
+ "octacity-adapter-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "octacity-execution"
 version = "0.1.0"
 dependencies = [
@@ -415,6 +425,7 @@ dependencies = [
  "ed25519-dalek",
  "libfuzzer-sys",
  "octa-runner-protocol",
+ "octacity-agent-provisioning-protocol",
  "octacity-protocol",
  "octacity-runner",
  "octacity-source-plugin",

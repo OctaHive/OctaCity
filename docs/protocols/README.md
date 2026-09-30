@@ -17,7 +17,7 @@ semantics independently of a particular implementation language.
 | Webhook provider v1 | Wire contract, bounded host, public ingress, and unmanaged and managed lifecycles implemented; production provider adapters intentionally absent | [webhook-provider-v1.md](webhook-provider-v1.md) | `octacity-webhook-provider-protocol`, `octacity-server-webhook`, `octacity-server-api-webhook` |
 | VCS provider v1 | Wire contract implemented; host and Git adapter pending | [vcs-provider-v1.md](vcs-provider-v1.md) | `octacity-vcs-protocol` |
 | Artifact transfer v1 | Wire contract implemented | [artifact-transfer-v1.md](artifact-transfer-v1.md) | `octacity-protocol` |
-| Agent provisioning v1 | Conformance contract only; no production adapter | [agent-provisioning-v1.md](agent-provisioning-v1.md) | `octacity-agent-provisioning-protocol` |
+| Agent provisioning v1 | Deterministic lifecycle conformance contract; no production adapter | [agent-provisioning-v1.md](agent-provisioning-v1.md) | `octacity-agent-provisioning-protocol` |
 
 “Implemented” means the wire types and validation exist. A health-only
 `octacity-server` composition shell is available, but it intentionally exposes

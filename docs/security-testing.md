@@ -75,7 +75,8 @@ wire DTO, and signed JobSpec decoder,
 decoder used by the supervisor. `source-plugin` covers the shared bounded JSONL
 decoder in both directions plus the operator TOML manifest. `server-protocols`
 covers the exact bounded request and correlated-response decoders for artifact
-transfer, VCS, and webhook-provider processes. The server-Agent target also
+transfer, VCS, webhook-provider, and agent-provisioning processes. The
+server-Agent target also
 constructs correctly signed arbitrary payloads so signature verification,
 payload decoding, and JobSpec validation are reached. Asynchronous I/O and
 lifecycle behavior retain ordinary unit and contract tests; fuzzing complements
