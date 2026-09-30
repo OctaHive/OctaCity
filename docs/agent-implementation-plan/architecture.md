@@ -368,7 +368,7 @@ without requiring a stateful WebSocket connection.
 ### Signed JobSpec
 
 The implemented signed payload contract is specified independently in
-[`docs/protocols/signed-job-spec-v1.md`](../protocols/signed-job-spec-v1.md).
+[`docs/reference/protocols/signed-job-spec-v1.md`](../reference/protocols/signed-job-spec-v1.md).
 
 Avoid JSON canonicalization. The server signs the exact serialized payload
 bytes and sends an envelope:

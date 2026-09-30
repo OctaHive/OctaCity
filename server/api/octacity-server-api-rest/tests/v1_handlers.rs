@@ -51,7 +51,7 @@ use support::{
   send_documented_request,
 };
 
-const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/management-rest-v1.md");
+const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/reference/management-rest-v1.md");
 
 #[derive(Default)]
 struct RecordingApplication {

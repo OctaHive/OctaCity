@@ -1,6 +1,6 @@
 //! Backend-neutral artifact transfer messages shared by server and agent.
 //!
-//! See the [language-neutral v1 specification](https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/artifact-transfer-v1.md).
+//! See the [language-neutral v1 specification](https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/artifact-transfer-v1.md).
 
 use std::collections::BTreeMap;
 

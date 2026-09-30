@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use octacity_server::ServerConfig;
 
-const REVERSE_PROXY: &str = include_str!("../../../docs/server.reverse-proxy.example.toml");
-const TRUSTED_NETWORK: &str = include_str!("../../../docs/server.trusted-network.example.toml");
+const REVERSE_PROXY: &str = include_str!("../../../docs/reference/examples/server.reverse-proxy.example.toml");
+const TRUSTED_NETWORK: &str = include_str!("../../../docs/reference/examples/server.trusted-network.example.toml");
 
 #[test]
 fn documented_server_configurations_satisfy_the_production_topology_contract() {

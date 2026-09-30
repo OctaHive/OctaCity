@@ -266,7 +266,7 @@ the selected plugin authoritatively validates `revision`, `reference`, and
 
 Source materialization must return the exact requested `revision`. A branch or
 tag in `reference` can narrow the fetch but cannot replace this equality check.
-See the [source-plugin v1 specification](../../agent/octacity-source-plugin/README.md)
+See the [source-plugin v1 specification](../../../agent/octacity-source-plugin/README.md)
 for the process lifecycle.
 
 ## Octa release requirement

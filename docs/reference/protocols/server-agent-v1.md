@@ -17,7 +17,7 @@ All bodies are strict JSON objects. Unknown fields, unsupported
 `protocol_version` values, oversized request or response bodies, and a response whose
 `request_id` does not echo the request are rejected before they affect lease
 state. Golden v1 documents live in
-[`shared/protocol-fixtures/coordinator`](../../shared/protocol-fixtures/coordinator).
+[`shared/protocol-fixtures/coordinator`](../../../shared/protocol-fixtures/coordinator).
 
 ## Idempotency and retries
 

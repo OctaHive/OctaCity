@@ -91,8 +91,8 @@ enrollment keys, and a strict TOML configuration. Start from one of the
 CI-validated deployment examples and replace every sample address, path, and
 credential reference:
 
-- [trusted reverse proxy](docs/server.reverse-proxy.example.toml) — recommended;
-- [direct trusted network](docs/server.trusted-network.example.toml).
+- [trusted reverse proxy](docs/reference/examples/server.reverse-proxy.example.toml) — recommended;
+- [direct trusted network](docs/reference/examples/server.trusted-network.example.toml).
 
 Then validate the configuration before opening listeners:
 
@@ -113,10 +113,10 @@ dedicated service account. Choose the platform example, configure only the
 execution providers the host is prepared to offer, and validate the complete
 installation before starting the service:
 
-- [Linux example](docs/agent.example.toml);
-- [Linux ARM64 example](docs/agent.linux-arm64.example.toml);
-- [macOS example](docs/agent.macos.example.toml);
-- [Windows example](docs/agent.windows.example.toml).
+- [Linux example](docs/reference/examples/agent.example.toml);
+- [Linux ARM64 example](docs/reference/examples/agent.linux-arm64.example.toml);
+- [macOS example](docs/reference/examples/agent.macos.example.toml);
+- [Windows example](docs/reference/examples/agent.windows.example.toml).
 
 ```shell
 octacity-agent validate /etc/octacity/agent.toml
@@ -131,7 +131,7 @@ Manager, runtime privileges, upgrades, rollback, and removal are covered in the
 
 ### Use and operate OctaCity
 
-- [Management REST v1 workflow](docs/management-rest-v1.md)
+- [Management REST v1 workflow](docs/reference/management-rest-v1.md)
 - [Server operations](docs/operations/server.md)
 - [Agent operations](docs/operations/agent.md)
 - [Backup and restore](docs/operations/backup-restore.md)
@@ -143,7 +143,7 @@ Manager, runtime privileges, upgrades, rollback, and removal are covered in the
 - [Server architecture and ownership](docs/architecture/server.md)
 - [Agent architecture and implementation plan](docs/agent-implementation-plan.md)
 - [Public extension seams](docs/architecture/extension-seams.md)
-- [Wire protocol index](docs/protocols/README.md)
+- [Wire protocol index](docs/reference/protocols/README.md)
 
 ### Security and release evidence
 

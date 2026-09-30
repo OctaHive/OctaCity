@@ -1,6 +1,6 @@
 //! Strict provider-neutral VCS adapter process protocol.
 //!
-//! See the [language-neutral v1 specification](https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/vcs-provider-v1.md).
+//! See the [language-neutral v1 specification](https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/vcs-provider-v1.md).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

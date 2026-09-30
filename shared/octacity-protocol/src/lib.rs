@@ -7,8 +7,8 @@
 //! The language-neutral wire specification is documented in
 //! [Signed JobSpec protocol v1] and its negotiated [execution contract v2].
 //!
-//! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/signed-job-spec-v1.md
-//! [execution contract v2]: https://github.com/OctaHive/OctaCity/blob/main/docs/protocols/signed-job-spec-v2.md
+//! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v1.md
+//! [execution contract v2]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v2.md
 
 #![warn(missing_docs)]
 

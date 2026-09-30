@@ -57,7 +57,7 @@ the expiry using `agent_enrollment_lifetime_milliseconds`, persists only the
 secret digest, and returns the full bearer only in this response. Repeating an
 identical request with the same `Idempotency-Key` recovers the same bearer;
 reusing that key for different input is rejected. See the complete example in
-[Management REST v1](../management-rest-v1.md#6-issue-a-one-time-enrollment-credential).
+[Management REST v1](../reference/management-rest-v1.md#6-issue-a-one-time-enrollment-credential).
 
 ### Linux systemd
 
@@ -157,7 +157,8 @@ different: install Apple `container` 0.6 or newer, start its API service for
 the same service identity that launches the Agent, install a `linux-aarch64`
 Octa runner bundle, and put `work_root` plus `cache.root` on separate bounded
 APFS volumes before enabling the commented `apple_vf` provider in
-`agent.macos.example.toml`. The Agent fails startup rather than advertising the
+the [macOS configuration example](../reference/examples/agent.macos.example.toml).
+The Agent fails startup rather than advertising the
 route when the executable, service, guest release, or filesystem boundary is
 unavailable.
 

@@ -40,10 +40,10 @@ Responses are accepted only when version and request identity match the
 outstanding request.
 
 The deterministic v1 lifecycle fixture is
-[`conformance-v1.json`](../../server/protocols/octacity-agent-provisioning-protocol/fixtures/conformance-v1.json).
+[`conformance-v1.json`](../../../server/protocols/octacity-agent-provisioning-protocol/fixtures/conformance-v1.json).
 It contains one validated manifest, correlated provision, replay, observe,
 cancel, terminate, and replay exchanges, plus every classified failure. The
-standalone [`provision-v1.json`](../../server/protocols/octacity-agent-provisioning-protocol/fixtures/provision-v1.json)
+standalone [`provision-v1.json`](../../../server/protocols/octacity-agent-provisioning-protocol/fixtures/provision-v1.json)
 request remains the minimal encoding example.
 
 ## Provider-neutral intent

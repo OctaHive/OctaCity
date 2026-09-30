@@ -31,7 +31,7 @@ form one decode operation. Responses are accepted only when version and
 request identity match the outstanding request.
 
 The golden v1 request is
-[`begin-upload-v1.json`](../../shared/protocol-fixtures/artifact/begin-upload-v1.json).
+[`begin-upload-v1.json`](../../../shared/protocol-fixtures/artifact/begin-upload-v1.json).
 
 ## Immutable content identity
 

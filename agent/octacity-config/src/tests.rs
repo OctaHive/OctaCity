@@ -968,10 +968,10 @@ fn rejects_unknown_configuration_fields() {
 #[test]
 fn example_configuration_stays_parseable() {
   let examples = [
-    include_str!("../../../docs/agent.example.toml"),
-    include_str!("../../../docs/agent.linux-arm64.example.toml"),
-    include_str!("../../../docs/agent.macos.example.toml"),
-    include_str!("../../../docs/agent.windows.example.toml"),
+    include_str!("../../../docs/reference/examples/agent.example.toml"),
+    include_str!("../../../docs/reference/examples/agent.linux-arm64.example.toml"),
+    include_str!("../../../docs/reference/examples/agent.macos.example.toml"),
+    include_str!("../../../docs/reference/examples/agent.windows.example.toml"),
   ];
   let configs = examples
     .into_iter()

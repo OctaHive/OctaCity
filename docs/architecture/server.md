@@ -243,7 +243,7 @@ wire compatibility promise.
 | Cache immutable bytes | `octacity-server-cache::CacheBlobStore` | Configured S3 adapter | Scope and validated descriptor cross the port; bucket, physical key, ETag, and credentials remain private |
 
 Language-neutral wire documents and golden fixtures are indexed in
-[the protocol catalogue](../protocols/README.md). The server-side adapter protocol
+[the protocol catalogue](../reference/protocols/README.md). The server-side adapter protocol
 crates are additionally mapped in
 [the server protocol README](../../server/protocols/README.md). The ownership,
 type-isolation, activation, and crate-creation rules for integrations that are

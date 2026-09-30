@@ -9,7 +9,7 @@ semantics independently of a particular implementation language.
 | --- | --- | --- | --- |
 | Signed JobSpec v1 | Implemented | [signed-job-spec-v1.md](signed-job-spec-v1.md) | `octacity-protocol` |
 | Signed JobSpec execution contract v2 | Contract plus Host, isolation, and virtualization provider routes implemented; Windows/WHP virtualization remains preview evidence | [signed-job-spec-v2.md](signed-job-spec-v2.md) | `octacity-protocol`, `octacity-server-application`, `octacity-server-scheduler`, `octacity-coordinator`, Agent execution providers |
-| Source-plugin v1 | Implemented | [source-plugin README](../../agent/octacity-source-plugin/README.md) | `octacity-source-plugin`, `octacity-source`, `octacity-source-git` |
+| Source-plugin v1 | Implemented | [source-plugin README](../../../agent/octacity-source-plugin/README.md) | `octacity-source-plugin`, `octacity-source`, `octacity-source-git` |
 | Octa runner v3 | Implemented in Octa | Published by the `octa-runner-protocol` crate | `octa-runner-protocol`, `octacity-runner` |
 | Server-agent transport v1 | Phases 5–7 implemented | [server-agent-v1.md](server-agent-v1.md) | `octacity-protocol`, `octacity-coordinator`, `octacity-lifecycle` |
 | Cache session v1 | Implemented | [cache-session-v1.md](cache-session-v1.md) | `octacity-cache-session`, `octacity-runner` |

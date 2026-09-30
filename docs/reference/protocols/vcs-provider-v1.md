@@ -54,11 +54,11 @@ audit records, or core types. Debug formatting redacts both the locator and the
 credential handle.
 
 The language-neutral v1 requests are
-[`list-references-v1.json`](../../server/protocols/octacity-vcs-protocol/fixtures/list-references-v1.json),
-[`read-commit-v1.json`](../../server/protocols/octacity-vcs-protocol/fixtures/read-commit-v1.json),
-[`list-tree-v1.json`](../../server/protocols/octacity-vcs-protocol/fixtures/list-tree-v1.json),
-[`read-file-v1.json`](../../server/protocols/octacity-vcs-protocol/fixtures/read-file-v1.json),
-and [`resolve-revision-v1.json`](../../server/protocols/octacity-vcs-protocol/fixtures/resolve-revision-v1.json).
+[`list-references-v1.json`](../../../server/protocols/octacity-vcs-protocol/fixtures/list-references-v1.json),
+[`read-commit-v1.json`](../../../server/protocols/octacity-vcs-protocol/fixtures/read-commit-v1.json),
+[`list-tree-v1.json`](../../../server/protocols/octacity-vcs-protocol/fixtures/list-tree-v1.json),
+[`read-file-v1.json`](../../../server/protocols/octacity-vcs-protocol/fixtures/read-file-v1.json),
+and [`resolve-revision-v1.json`](../../../server/protocols/octacity-vcs-protocol/fixtures/resolve-revision-v1.json).
 
 ## Operations
 

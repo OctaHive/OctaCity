@@ -145,7 +145,7 @@ response cannot be applied to another request merely because its operation
 type matches.
 
 The golden v1 delivery request is
-[`verify-delivery-v1.json`](../../server/protocols/octacity-webhook-provider-protocol/fixtures/verify-delivery-v1.json).
+[`verify-delivery-v1.json`](../../../server/protocols/octacity-webhook-provider-protocol/fixtures/verify-delivery-v1.json).
 The same fixture directory contains strict create, observe, rotate, and delete
 registration requests used by adapters as the managed-registration conformance
 set.
