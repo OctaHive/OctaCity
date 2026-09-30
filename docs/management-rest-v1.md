@@ -458,7 +458,7 @@ registration credential.
 
 Validate the installed release with the same service identity and cgroup used
 at runtime, then start it through the platform service manager. The complete
-Linux Native installation procedure is in [Agent operations](operations.md).
+Linux Native installation procedure is in [Agent operations](operations/agent.md).
 The protocol sequence is retained in
 [the static-Agent transcript](protocols/static-agent-transcript-v1.md).
 
@@ -605,7 +605,7 @@ The hold protects metadata, logs, artifacts, and reports together but does not
 change their original deadlines. Releasing or expiring an overdue hold makes
 the Result eligible for the next retention pass. A hold cannot revive a Result
 after deletion has begun, and retained bytes continue to consume their normal
-quota. See [Server production operations](server-operations.md) for capacity,
+quota. See [Server production operations](operations/server.md) for capacity,
 rotation, alerting, and incident procedures.
 
 Use `/api/v1/openapi.json` as the authoritative schema inventory. Mutable VCS

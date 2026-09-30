@@ -320,7 +320,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("Remove-EventLog -Source $ServiceName", uninstall)
         self.assertNotIn("FromSeconds(90)", uninstall)
 
-        operations = (REPOSITORY / "docs/operations.md").read_text(encoding="utf-8")
+        operations = (REPOSITORY / "docs/operations/agent.md").read_text(encoding="utf-8")
         self.assertIn("mv -Tf", operations)
         self.assertIn("mv -hf", operations)
         self.assertIn("Get-WinEvent", operations)

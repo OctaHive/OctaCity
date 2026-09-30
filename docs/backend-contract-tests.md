@@ -110,7 +110,7 @@ snapshot. Separate restores prove the forward migration, atomic failure and
 retry path, and previous-binary rollback path. Additional mutations of the
 migration ledger prove that a future version, checksum mismatch, or history gap
 keeps readiness incompatible. The operational rule and local command are in
-[`server-schema-migrations.md`](server-schema-migrations.md).
+[`schema-migrations.md`](operations/schema-migrations.md).
 
 ### Coordinated backup and restore rehearsal
 
@@ -123,7 +123,7 @@ rebuild keeps the committed watermark authoritative while the indexed watermark
 starts behind it, so search remains honestly stale until durable replay catches
 up. The capture, protected recovery set, restore ordering, and evidence rules
 are documented in
-[`server-backup-restore.md`](server-backup-restore.md).
+[`backup-restore.md`](operations/backup-restore.md).
 
 Nightly and release invocations also require the hosted `security-matrix` job.
 Its trust boundaries are every place where an untrusted caller, repository,

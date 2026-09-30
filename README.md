@@ -104,7 +104,7 @@ cargo run -p octacity-server -- run /etc/octacity/server.toml
 The management API in v1 has no operator authentication and must remain on a
 trusted operator network. The server does not terminate TLS itself; use a
 trusted reverse proxy or an encrypted service network. Read the
-[server operations guide](docs/server-operations.md) before deployment.
+[server operations guide](docs/operations/server.md) before deployment.
 
 ### Install an agent
 
@@ -125,17 +125,17 @@ octacity-agent run /etc/octacity/agent.toml
 
 Enrollment, release verification, systemd, launchd, Windows Service Control
 Manager, runtime privileges, upgrades, rollback, and removal are covered in the
-[agent operations guide](docs/operations.md).
+[agent operations guide](docs/operations/agent.md).
 
 ## Documentation
 
 ### Use and operate OctaCity
 
 - [Management REST v1 workflow](docs/management-rest-v1.md)
-- [Server operations](docs/server-operations.md)
-- [Agent operations](docs/operations.md)
-- [Backup and restore](docs/server-backup-restore.md)
-- [Schema migrations and rollback](docs/server-schema-migrations.md)
+- [Server operations](docs/operations/server.md)
+- [Agent operations](docs/operations/agent.md)
+- [Backup and restore](docs/operations/backup-restore.md)
+- [Schema migrations and rollback](docs/operations/schema-migrations.md)
 
 ### Understand and extend it
 

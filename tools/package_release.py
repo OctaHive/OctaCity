@@ -152,7 +152,7 @@ def stage_release(
         copy_file(uninstall, root / "share/windows/uninstall-service.ps1", executable=True)
     config_source = require_file("example configuration", repository / "docs" / layout.config_asset)
     copy_file(config_source, root / "share/agent.example.toml")
-    copy_file(require_file("operations guide", repository / "docs/operations.md"), root / "share/operations.md")
+    copy_file(require_file("operations guide", repository / "docs/operations/agent.md"), root / "share/operations.md")
     copy_file(require_file("license", repository / "LICENSE"), root / "LICENSE")
     copy_file(contract_path, root / "release-contract.json")
     manifest = {

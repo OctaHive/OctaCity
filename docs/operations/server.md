@@ -24,8 +24,8 @@ the application process rather than a proxy or encrypted service network, do
 not deploy this release until native TLS is implemented and qualified.
 
 The corresponding CI-validated configurations are
-[`server.reverse-proxy.example.toml`](server.reverse-proxy.example.toml) and
-[`server.trusted-network.example.toml`](server.trusted-network.example.toml).
+[`server.reverse-proxy.example.toml`](../server.reverse-proxy.example.toml) and
+[`server.trusted-network.example.toml`](../server.trusted-network.example.toml).
 Replace sample hosts, paths, bucket, region, and key identifiers before use,
 then run:
 
@@ -226,7 +226,7 @@ private paths, webhook bodies, or repository content.
    the procedures above; cancel and retry Builds whose signed intent cannot be
    trusted.
 4. For database or object-store loss, keep every listener offline and follow
-   [`server-backup-restore.md`](server-backup-restore.md). PostgreSQL and the
+   [`backup-restore.md`](backup-restore.md). PostgreSQL and the
    configured object prefix are one recovery unit.
 5. Run `octacity-server reconcile-restore` before startup, start one replica,
    wait for readiness, verify retention and search freshness, then restore
