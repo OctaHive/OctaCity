@@ -1,16 +1,16 @@
 [package]
-name = "octacity-phase6-contract-tests"
+name = "octacity-service-contract-tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "Opt-in end-to-end contracts for OctaCity phase six"
+description = "Opt-in end-to-end service contracts for OctaCity"
 
 [[test]]
-name = "protocol_minio"
-path = "tests/protocol_minio.rs"
+name = "vault_artifact"
+path = "tests/vault_artifact.rs"
 
 [[test]]
 name = "webhook_contract"

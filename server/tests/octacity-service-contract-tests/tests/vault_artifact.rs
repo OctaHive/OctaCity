@@ -66,8 +66,8 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use uuid::Uuid;
 
-const TOKEN: &str = "phase6-coordinator-token";
-const SECRET: &str = "phase6-vault-secret-value";
+const TOKEN: &str = "service-contract-coordinator-token";
+const SECRET: &str = "service-contract-vault-secret-value";
 
 #[tokio::test]
 #[ignore = "requires explicitly configured Vault, MinIO, and built Octa runner/plugins"]
@@ -91,7 +91,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
       endpoint: endpoint.clone(),
       region,
       bucket: bucket.clone(),
-      prefix: "phase6-protocol".to_owned(),
+      prefix: "service-contract-protocol".to_owned(),
       access_key: access_key.into(),
       secret_key: secret_key.into(),
       force_path_style: true,
@@ -105,8 +105,8 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
   let state_root = temporary.path().join("state");
   fs::create_dir(&work_root).unwrap();
   fs::create_dir(&state_root).unwrap();
-  let installation = phase6_installation(temporary.path());
-  let spec = phase6_spec(&installation, &vault_host);
+  let installation = service_contract_installation(temporary.path());
+  let spec = service_contract_spec(&installation, &vault_host);
   let lease = lease(&spec);
   let registration = registration();
   let state = UploadServerState {
@@ -156,7 +156,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
     )
     .unwrap(),
   );
-  let lifecycle_coordinator = Arc::new(Phase6Coordinator::default());
+  let lifecycle_coordinator = Arc::new(ServiceContractCoordinator::default());
   let inspected = Arc::new(AtomicBool::new(false));
   let runner_output = Arc::new(Mutex::new(Vec::new()));
   let outputs: Arc<dyn OutputPublisher> = Arc::new(InspectingPublisher {
@@ -169,7 +169,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
   let executor = Arc::new(
     JobExecutor::new(
       installation,
-      Arc::new(Phase6Source {
+      Arc::new(ServiceContractSource {
         vault_endpoint: vault_endpoint.clone(),
       }),
       Arc::new(FileWorkloadIdentityProvider::new(BTreeMap::from([(
@@ -198,7 +198,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
     )
     .unwrap(),
   );
-  let capacity = phase6_capacity();
+  let capacity = service_contract_capacity();
   let lifecycle = JobLifecycle::new(
     lifecycle_coordinator.clone(),
     lifecycle_coordinator.clone(),
@@ -229,7 +229,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
         lease: lease.clone(),
         spec: spec.into(),
       },
-      phase6_snapshot(&capacity),
+      service_contract_snapshot(&capacity),
       CancellationToken::new(),
     )
     .await
@@ -291,12 +291,12 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
   administration.delete_bucket().bucket(bucket).send().await.unwrap();
 }
 
-#[path = "protocol_minio/runtime_fixture.rs"]
+#[path = "vault_artifact/runtime_fixture.rs"]
 mod runtime_fixture;
 
 use runtime_fixture::{
-  HostRunnerBackend, InspectingPublisher, Phase6Coordinator, Phase6Source, phase6_capacity, phase6_installation,
-  phase6_snapshot, phase6_spec,
+  HostRunnerBackend, InspectingPublisher, ServiceContractCoordinator, ServiceContractSource, service_contract_capacity,
+  service_contract_installation, service_contract_snapshot, service_contract_spec,
 };
 async fn configure_vault(endpoint: &str, root_token: &str) -> String {
   let client = reqwest::Client::new();
@@ -323,7 +323,7 @@ async fn configure_vault(endpoint: &str, root_token: &str) -> String {
     "auth/octacity-jwt/config",
     serde_json::json!({
       "jwt_validation_pubkeys": [ed25519_public_key_pem(&signing)],
-      "bound_issuer": "octacity-phase6",
+      "bound_issuer": "octacity-service-contract",
       "jwt_supported_algs": ["EdDSA"]
     }),
   )
@@ -332,8 +332,8 @@ async fn configure_vault(endpoint: &str, root_token: &str) -> String {
     &client,
     endpoint,
     root_token,
-    "sys/policies/acl/octacity-phase6",
-    serde_json::json!({"policy": "path \"secret/data/phase6\" { capabilities = [\"read\"] }"}),
+    "sys/policies/acl/octacity-service-contract",
+    serde_json::json!({"policy": "path \"secret/data/service-contract\" { capabilities = [\"read\"] }"}),
   )
   .await;
   vault_write(
@@ -346,7 +346,7 @@ async fn configure_vault(endpoint: &str, root_token: &str) -> String {
       "bound_audiences": ["octacity"],
       "bound_subject": "agent-1",
       "user_claim": "sub",
-      "token_policies": ["octacity-phase6"],
+      "token_policies": ["octacity-service-contract"],
       "token_ttl": "60s",
       "token_max_ttl": "120s"
     }),
@@ -356,7 +356,7 @@ async fn configure_vault(endpoint: &str, root_token: &str) -> String {
     &client,
     endpoint,
     root_token,
-    "secret/data/phase6",
+    "secret/data/service-contract",
     serde_json::json!({"data": {"token": SECRET}}),
   )
   .await;
@@ -365,7 +365,7 @@ async fn configure_vault(endpoint: &str, root_token: &str) -> String {
   let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"EdDSA","typ":"JWT"}"#);
   let claims = URL_SAFE_NO_PAD.encode(
     serde_json::to_vec(&serde_json::json!({
-      "iss": "octacity-phase6",
+      "iss": "octacity-service-contract",
       "sub": "agent-1",
       "aud": "octacity",
       "iat": now,
@@ -445,7 +445,7 @@ fn install_log_capture() -> Arc<Mutex<Vec<u8>>> {
     .with_writer(CapturedLogs(bytes.clone()))
     .finish()
     .try_init()
-    .expect("the isolated phase-six contract must own the tracing subscriber");
+    .expect("the isolated service contract contract must own the tracing subscriber");
   bytes
 }
 
@@ -468,7 +468,7 @@ fn assert_tree_excludes(root: &FilePath, forbidden: &[&str]) {
   }
 }
 
-#[path = "protocol_minio/upload_server.rs"]
+#[path = "vault_artifact/upload_server.rs"]
 mod upload_server;
 
 use upload_server::{UploadRecords, UploadServerState, lease, registration, start_server};

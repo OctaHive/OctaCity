@@ -57,9 +57,9 @@ is excluded from `all` and is not accepted as release evidence.
 
 ### Vault and artifact service contract
 
-The opt-in `phase6` suite crosses service boundaries that unit fakes cannot
-validate together. A signed lease runs through the production `JobLifecycle`,
-`JobExecutor`, and real Octa runner. An operator-owned JWT is copied into a
+The opt-in `vault-artifact` suite crosses service boundaries that unit fakes
+cannot validate together. A signed lease runs through the production
+`JobLifecycle`, `JobExecutor`, and real Octa runner. An operator-owned JWT is copied into a
 private workload-identity lease, used to authenticate to Vault KV v2, and
 revoked after runtime destruction. Before completion, the contract scans
 events, results, the durable spool, workspace, and upload metadata to prove
@@ -74,18 +74,18 @@ in-process coordinator validates the HTTP and idempotency contract but does not
 claim PostgreSQL durability, which is covered by the authoritative-store
 contracts.
 
-Run the complete workflow from `backend contracts` with suite `phase6`. To
-reproduce it locally, build `octa-runner`, `octa_plugin_shell`, and
+Run the complete workflow from `backend contracts` with suite
+`vault-artifact`. To reproduce it locally, build `octa-runner`, `octa_plugin_shell`, and
 `octa_plugin_tpl`, then start the pinned services:
 
 ```shell
-docker run --detach --rm --name octacity-phase6-vault --cap-add=IPC_LOCK \
+docker run --detach --rm --name octacity-vault-contract --cap-add=IPC_LOCK \
   -p 127.0.0.1:18200:8200 \
   -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
   -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
   hashicorp/vault:1.20.4@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
 
-docker run --detach --rm --name octacity-phase6-minio \
+docker run --detach --rm --name octacity-minio-contract \
   -p 127.0.0.1:19000:9000 \
   -e MINIO_ROOT_USER=octacity \
   -e MINIO_ROOT_PASSWORD=octacity-secret \
@@ -101,9 +101,9 @@ OCTACITY_MINIO_ACCESS_KEY=octacity \
 OCTACITY_MINIO_SECRET_KEY=octacity-secret \
 OCTACITY_VAULT_ENDPOINT=http://127.0.0.1:18200 \
 OCTACITY_VAULT_ROOT_TOKEN=octacity-root \
-OCTACITY_PHASE6_OCTA_RUNNER=/absolute/path/to/octa/target/debug/octa-runner \
-OCTACITY_PHASE6_OCTA_PLUGINS_DIR=/absolute/path/to/octa/target/debug \
-cargo test -p octacity-phase6-contract-tests --test protocol_minio \
+OCTACITY_SERVICE_CONTRACT_OCTA_RUNNER=/absolute/path/to/octa/target/debug/octa-runner \
+OCTACITY_SERVICE_CONTRACT_OCTA_PLUGINS_DIR=/absolute/path/to/octa/target/debug \
+cargo test -p octacity-service-contract-tests --test vault_artifact \
   real_octa_vault_job_publishes_outputs_without_leaking_secrets \
   -- --ignored --exact --nocapture
 ```

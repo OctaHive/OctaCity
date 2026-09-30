@@ -232,7 +232,7 @@ octacity/
 |  |- infrastructure/
 |  |  `- octacity-artifact-s3/ # S3-compatible storage adapter
 |  `- tests/
-|     `- octacity-phase6-contract-tests/ # cross-product integration contract
+|     `- octacity-service-contract-tests/ # cross-product integration contract
 |- shared/
 |  |- octacity-protocol/    # versioned server-agent DTOs and signatures
 |  `- protocol-fixtures/

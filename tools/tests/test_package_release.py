@@ -409,7 +409,7 @@ class PackageReleaseTests(unittest.TestCase):
 
     def test_released_host_gate_covers_every_supported_host_without_self_hosting(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
-        host = workflow.split("  released-host:\n", 1)[1].split("  phase6-vault-minio:\n", 1)[0]
+        host = workflow.split("  released-host:\n", 1)[1].split("  vault-artifact-contract:\n", 1)[0]
         for runner in ("ubuntu-24.04", "macos-14", "windows-2025"):
             self.assertIn(f"runner: {runner}", host)
         self.assertIn("name: released host\n", host)

@@ -50,7 +50,7 @@ members = [
   "server/protocols/octacity-agent-provisioning-protocol",
   "server/protocols/octacity-vcs-protocol",
   "server/protocols/octacity-webhook-provider-protocol",
-  "server/tests/octacity-phase6-contract-tests",
+  "server/tests/octacity-service-contract-tests",
   "server/tests/octacity-release-harness",
   "shared/octacity-observability",
   "shared/octacity-protocol",

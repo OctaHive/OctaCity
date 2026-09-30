@@ -207,12 +207,12 @@ agent. The narrow server-side `ArtifactStore` boundary has an S3-compatible
 implementation that keeps credentials, buckets, and physical keys private,
 verifies uploaded bytes instead of trusting ETags, and publishes them under
 immutable keys. Unit, lifecycle, protocol-golden, and loopback transport tests
-cover local boundaries. The phase-six contract test additionally runs the
+cover local boundaries. The Vault and artifact service contract additionally runs the
 real Octa runner against Vault and the real HTTP begin/PUT/complete flow
 against MinIO, then checks retained job state and uploaded metadata for
 protected bytes.
 
-The Phase 6 HTTP server is deliberately a contract fixture, not a production
+The service-contract HTTP server is deliberately a contract fixture, not a production
 server or durability claim. The server roadmap must persist begin/complete
 upload records and their idempotency keys in PostgreSQL before the server is
 considered real; the S3 adapter remains unchanged behind `ArtifactStore`.

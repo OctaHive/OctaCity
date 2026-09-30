@@ -1,4 +1,4 @@
-//! Real Octa runner and lifecycle fixtures for the Phase 6 service contract.
+//! Real Octa runner and lifecycle fixtures for the Vault and artifact service contract.
 //!
 //! The host backend is intentionally test-only: it exercises the production
 //! runner protocol while the separate privileged contract covers actual
@@ -6,12 +6,12 @@
 
 use super::*;
 
-pub(super) struct Phase6Source {
+pub(super) struct ServiceContractSource {
   pub(super) vault_endpoint: String,
 }
 
 #[async_trait]
-impl SourceMaterializer for Phase6Source {
+impl SourceMaterializer for ServiceContractSource {
   async fn materialize(
     &self,
     requirement: &SourceSpec,
@@ -52,7 +52,7 @@ vars:
   VAULT_SECRET:
     secret:
       provider: application
-      key: phase6
+      key: service-contract
       field: token
 tasks:
   build:
@@ -109,7 +109,7 @@ impl ExecutionBackend for HostRunnerBackend {
     }
     if !matches!(request.root, ExecutionTarget::Native { .. }) {
       return Err(ExecutionError::Invalid(
-        "phase-six host backend requires Native execution".to_owned(),
+        "service contract host backend requires Native execution".to_owned(),
       ));
     }
     if !matches!(
@@ -118,7 +118,7 @@ impl ExecutionBackend for HostRunnerBackend {
         if allowed_hosts == std::slice::from_ref(&self.allowed_network_host)
     ) {
       return Err(ExecutionError::Invalid(
-        "phase-six contract requires a restricted single-host Vault policy".to_owned(),
+        "service contract contract requires a restricted single-host Vault policy".to_owned(),
       ));
     }
     let mut child = Command::new(&runner.executable)
@@ -228,13 +228,13 @@ impl RunningExecution for HostRunnerExecution {
 }
 
 #[derive(Default)]
-pub(super) struct Phase6Coordinator {
+pub(super) struct ServiceContractCoordinator {
   pub(super) events: Mutex<Vec<AttemptEventEnvelope>>,
   pub(super) completions: Mutex<Vec<CompleteLeaseRequest>>,
 }
 
 #[async_trait]
-impl CoordinatorClient for Phase6Coordinator {
+impl CoordinatorClient for ServiceContractCoordinator {
   async fn register(
     &self,
     _inventory: &AgentInventory,
@@ -279,7 +279,7 @@ impl CoordinatorClient for Phase6Coordinator {
     self.events.lock().unwrap().extend_from_slice(events);
     Ok(AppendEventsResponse {
       protocol_version: COORDINATOR_PROTOCOL_VERSION,
-      request_id: "phase6-events".to_owned(),
+      request_id: "service-contract-events".to_owned(),
       acknowledged_sequence: events.last().expect("event batches are non-empty").stream_sequence,
     })
   }
@@ -297,7 +297,7 @@ impl CoordinatorClient for Phase6Coordinator {
 }
 
 #[async_trait]
-impl octacity_coordinator::CacheSessionCoordinator for Phase6Coordinator {
+impl octacity_coordinator::CacheSessionCoordinator for ServiceContractCoordinator {
   async fn begin_cache_session(
     &self,
     _registration: &Registration,
@@ -305,7 +305,7 @@ impl octacity_coordinator::CacheSessionCoordinator for Phase6Coordinator {
     _request: &octacity_protocol::BeginCacheSessionRequest,
     _cancellation: CancellationToken,
   ) -> Result<octacity_protocol::BeginCacheSessionResponse, CoordinatorError> {
-    unreachable!("phase-six fixture does not enable caching")
+    unreachable!("service contract fixture does not enable caching")
   }
 
   async fn revoke_cache_session(
@@ -315,7 +315,7 @@ impl octacity_coordinator::CacheSessionCoordinator for Phase6Coordinator {
     _request: &octacity_protocol::RevokeCacheSessionRequest,
     _cancellation: CancellationToken,
   ) -> Result<(), CoordinatorError> {
-    unreachable!("phase-six fixture does not enable caching")
+    unreachable!("service contract fixture does not enable caching")
   }
 }
 
@@ -367,9 +367,9 @@ impl OutputPublisher for InspectingPublisher {
   }
 }
 
-pub(super) fn phase6_installation(root: &FilePath) -> RunnerInstallation {
-  let source_runner = required_path("OCTACITY_PHASE6_OCTA_RUNNER");
-  let source_plugins = required_path("OCTACITY_PHASE6_OCTA_PLUGINS_DIR");
+pub(super) fn service_contract_installation(root: &FilePath) -> RunnerInstallation {
+  let source_runner = required_path("OCTACITY_SERVICE_CONTRACT_OCTA_RUNNER");
+  let source_plugins = required_path("OCTACITY_SERVICE_CONTRACT_OCTA_PLUGINS_DIR");
   let source_shell = required_plugin(&source_plugins, "shell");
   let source_tpl = required_plugin(&source_plugins, "tpl");
   let release = root.join("release");
@@ -392,7 +392,7 @@ pub(super) fn phase6_installation(root: &FilePath) -> RunnerInstallation {
   fs::write(
     &lock,
     format!(
-      "version: 1\nplugins:\n  shell:\n    version: '{}'\n    protocol: {plugin_protocol}\n    platforms: [{platform}]\n    entrypoint: {}\n    sha256: {shell_digest}\n    capabilities: [shell]\n    source: phase6\n  tpl:\n    version: '{}'\n    protocol: {plugin_protocol}\n    platforms: [{platform}]\n    entrypoint: {}\n    sha256: {tpl_digest}\n    capabilities: []\n    source: phase6\n",
+      "version: 1\nplugins:\n  shell:\n    version: '{}'\n    protocol: {plugin_protocol}\n    platforms: [{platform}]\n    entrypoint: {}\n    sha256: {shell_digest}\n    capabilities: [shell]\n    source: service-contract\n  tpl:\n    version: '{}'\n    protocol: {plugin_protocol}\n    platforms: [{platform}]\n    entrypoint: {}\n    sha256: {tpl_digest}\n    capabilities: []\n    source: service-contract\n",
       capabilities.octa_version,
       shell.file_name().unwrap().to_string_lossy(),
       capabilities.octa_version,
@@ -445,7 +445,9 @@ fn required_plugin(directory: &FilePath, name: &str) -> PathBuf {
   .into_iter()
   .map(|candidate| directory.join(candidate))
   .find(|path| path.is_file())
-  .unwrap_or_else(|| panic!("the phase-six {name} plugin must exist in OCTACITY_PHASE6_OCTA_PLUGINS_DIR"))
+  .unwrap_or_else(|| {
+    panic!("the service contract {name} plugin must exist in OCTACITY_SERVICE_CONTRACT_OCTA_PLUGINS_DIR")
+  })
 }
 
 fn runner_capabilities(runner: &FilePath, platform: &str) -> RunnerCapabilities {
@@ -490,7 +492,7 @@ fn file_sha256(path: &FilePath) -> String {
   }
 }
 
-pub(super) fn phase6_spec(installation: &RunnerInstallation, vault_host: &str) -> JobSpecV1 {
+pub(super) fn service_contract_spec(installation: &RunnerInstallation, vault_host: &str) -> JobSpecV1 {
   let now = unix_now();
   let digest = "0".repeat(64);
   let runner_protocol = installation.capabilities.runner_protocols[0];
@@ -503,10 +505,10 @@ pub(super) fn phase6_spec(installation: &RunnerInstallation, vault_host: &str) -
     issued_at: now.saturating_sub(1),
     expires_at: now + 300,
     source: SourceSpec {
-      provider: "phase6".to_owned(),
+      provider: "service-contract".to_owned(),
       plugin_version: "1.0.0".to_owned(),
       plugin_sha256: digest,
-      revision: "phase6-revision".to_owned(),
+      revision: "service-contract-revision".to_owned(),
       reference: None,
       parameters: BTreeMap::new(),
     },
@@ -562,17 +564,17 @@ fn host_platform() -> PlatformSpec {
       "linux" => PlatformOs::Linux,
       "windows" => PlatformOs::Windows,
       "macos" => PlatformOs::Macos,
-      other => panic!("unsupported phase-six host OS {other}"),
+      other => panic!("unsupported service contract host OS {other}"),
     },
     architecture: match std::env::consts::ARCH {
       "x86_64" => PlatformArchitecture::Amd64,
       "aarch64" => PlatformArchitecture::Arm64,
-      other => panic!("unsupported phase-six host architecture {other}"),
+      other => panic!("unsupported service contract host architecture {other}"),
     },
   }
 }
 
-pub(super) fn phase6_capacity() -> HostCapacity {
+pub(super) fn service_contract_capacity() -> HostCapacity {
   HostCapacity {
     logical_cpu_count: 2,
     total_memory_bytes: 1024 * 1024 * 1024,
@@ -582,7 +584,7 @@ pub(super) fn phase6_capacity() -> HostCapacity {
   }
 }
 
-pub(super) fn phase6_snapshot(capacity: &HostCapacity) -> HostSnapshot {
+pub(super) fn service_contract_snapshot(capacity: &HostCapacity) -> HostSnapshot {
   HostSnapshot {
     available_cpu_millis: 2000,
     available_memory_bytes: capacity.total_memory_bytes,

@@ -94,6 +94,12 @@ class BackendMatrixTests(unittest.TestCase):
             frozenset({"windows-microsandbox-preview"}),
         )
 
+    def test_vault_artifact_suite_selects_only_its_service_contract(self):
+        self.assertEqual(
+            BACKEND_MATRIX.expected_jobs("workflow_dispatch", "vault-artifact", ""),
+            frozenset({"vault-artifact-contract"}),
+        )
+
     def test_manual_lifecycle_suite_requires_every_qualified_provider(self):
         self.assertEqual(
             BACKEND_MATRIX.expected_jobs("workflow_dispatch", "lifecycle", ""),

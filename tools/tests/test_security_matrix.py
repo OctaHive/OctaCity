@@ -75,7 +75,7 @@ class SecurityMatrixTests(unittest.TestCase):
             REPOSITORY / ".github/workflows/backend-contracts.yml"
         ).read_text(encoding="utf-8")
         security_job = workflow.split("\n  security-matrix:\n", 1)[1].split(
-            "\n  phase6-vault-minio:\n", 1
+            "\n  vault-artifact-contract:\n", 1
         )[0]
 
         self.assertIn(

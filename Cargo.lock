@@ -4350,38 +4350,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "octacity-phase6-contract-tests"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "aws-sdk-s3",
- "axum",
- "base64 0.22.1",
- "ed25519-dalek",
- "octacity-artifact-s3",
- "octacity-artifact-store",
- "octacity-coordinator",
- "octacity-execution",
- "octacity-identity",
- "octacity-job",
- "octacity-lifecycle",
- "octacity-output",
- "octacity-protocol",
- "octacity-runner",
- "octacity-server-api-webhook",
- "octacity-source",
- "octacity-webhook-provider-protocol",
- "reqwest",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "tokio",
- "tokio-util",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "octacity-private-fs"
 version = "0.1.0"
 dependencies = [
@@ -4815,6 +4783,38 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "octacity-service-contract-tests"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-sdk-s3",
+ "axum",
+ "base64 0.22.1",
+ "ed25519-dalek",
+ "octacity-artifact-s3",
+ "octacity-artifact-store",
+ "octacity-coordinator",
+ "octacity-execution",
+ "octacity-identity",
+ "octacity-job",
+ "octacity-lifecycle",
+ "octacity-output",
+ "octacity-protocol",
+ "octacity-runner",
+ "octacity-server-api-webhook",
+ "octacity-source",
+ "octacity-webhook-provider-protocol",
+ "reqwest",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

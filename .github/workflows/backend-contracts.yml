@@ -32,7 +32,7 @@ on:
           - lifecycle
           - performance
           - host
-          - phase6
+          - vault-artifact
           - linux-native
           - linux-containerd
           - linux-microsandbox
@@ -53,7 +53,7 @@ jobs:
       run_failure_matrix: ${{ steps.plan.outputs.run_failure_matrix }}
       run_security_matrix: ${{ steps.plan.outputs.run_security_matrix }}
       run_lifecycle_matrix: ${{ steps.plan.outputs.run_lifecycle_matrix }}
-      run_phase6_vault_minio: ${{ steps.plan.outputs.run_phase6_vault_minio }}
+      run_vault_artifact_contract: ${{ steps.plan.outputs.run_vault_artifact_contract }}
       run_linux_native: ${{ steps.plan.outputs.run_linux_native }}
       run_linux_containerd: ${{ steps.plan.outputs.run_linux_containerd }}
       run_linux_microsandbox: ${{ steps.plan.outputs.run_linux_microsandbox }}
@@ -337,9 +337,9 @@ jobs:
           path: ${{ runner.temp }}/octacity-lifecycle-matrix
           if-no-files-found: error
 
-  phase6-vault-minio:
+  vault-artifact-contract:
     needs: matrix-plan
-    if: ${{ needs.matrix-plan.outputs.run_phase6_vault_minio == 'true' }}
+    if: ${{ needs.matrix-plan.outputs.run_vault_artifact_contract == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -356,12 +356,12 @@ jobs:
         working-directory: octa
       - name: Start pinned Vault and MinIO services
         run: |
-          docker run --detach --rm --name octacity-phase6-vault --cap-add=IPC_LOCK \
+          docker run --detach --rm --name octacity-vault-contract --cap-add=IPC_LOCK \
             -p 127.0.0.1:18200:8200 \
             -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
             -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
             hashicorp/vault:1.20.4@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
-          docker run --detach --rm --name octacity-phase6-minio \
+          docker run --detach --rm --name octacity-minio-contract \
             -p 127.0.0.1:19000:9000 \
             -e MINIO_ROOT_USER=octacity \
             -e MINIO_ROOT_PASSWORD=octacity-secret \
@@ -374,26 +374,26 @@ jobs:
             fi
             sleep 1
           done
-          docker logs octacity-phase6-vault
-          docker logs octacity-phase6-minio
+          docker logs octacity-vault-contract
+          docker logs octacity-minio-contract
           exit 1
-      - name: Run the phase-six Vault and S3 completion gate
+      - name: Run the Vault and artifact service contract
         env:
           OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
           OCTACITY_MINIO_ACCESS_KEY: octacity
           OCTACITY_MINIO_SECRET_KEY: octacity-secret
           OCTACITY_VAULT_ENDPOINT: http://127.0.0.1:18200
           OCTACITY_VAULT_ROOT_TOKEN: octacity-root
-          OCTACITY_PHASE6_OCTA_RUNNER: ${{ github.workspace }}/octa/target/debug/octa-runner
-          OCTACITY_PHASE6_OCTA_PLUGINS_DIR: ${{ github.workspace }}/octa/target/debug
+          OCTACITY_SERVICE_CONTRACT_OCTA_RUNNER: ${{ github.workspace }}/octa/target/debug/octa-runner
+          OCTACITY_SERVICE_CONTRACT_OCTA_PLUGINS_DIR: ${{ github.workspace }}/octa/target/debug
         run: >-
-          cargo test -p octacity-phase6-contract-tests --test protocol_minio
+          cargo test -p octacity-service-contract-tests --test vault_artifact
           real_octa_vault_job_publishes_outputs_without_leaking_secrets
           -- --ignored --exact --nocapture
         working-directory: octacity
       - name: Stop test services
         if: always()
-        run: docker rm --force octacity-phase6-vault octacity-phase6-minio || true
+        run: docker rm --force octacity-vault-contract octacity-minio-contract || true
 
   linux-native:
     needs: matrix-plan
@@ -747,7 +747,7 @@ jobs:
       - security-matrix
       - lifecycle-matrix
       - released-host
-      - phase6-vault-minio
+      - vault-artifact-contract
       - linux-native
       - linux-containerd
       - linux-microsandbox

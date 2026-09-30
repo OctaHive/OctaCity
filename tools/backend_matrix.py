@@ -29,7 +29,7 @@ LIFECYCLE_JOBS = (
 )
 RELEASE_JOBS = HOSTED_NIGHTLY_JOBS | SELF_HOSTED_PROVIDER_JOBS
 MANUAL_SUITES = {
-    "all": RELEASE_JOBS | {"phase6-vault-minio"},
+    "all": RELEASE_JOBS | {"vault-artifact-contract"},
     "hosted": HOSTED_NIGHTLY_JOBS,
     "release-qualified": RELEASE_JOBS,
     "failure": frozenset({"failure-matrix"}),
@@ -37,7 +37,7 @@ MANUAL_SUITES = {
     "lifecycle": LIFECYCLE_JOBS | {"lifecycle-matrix"},
     "performance": frozenset({"linux-native"}),
     "host": frozenset({"released-host"}),
-    "phase6": frozenset({"phase6-vault-minio"}),
+    "vault-artifact": frozenset({"vault-artifact-contract"}),
     "linux-native": frozenset({"linux-native"}),
     "linux-containerd": frozenset({"linux-containerd"}),
     "linux-microsandbox": frozenset({"linux-microsandbox"}),

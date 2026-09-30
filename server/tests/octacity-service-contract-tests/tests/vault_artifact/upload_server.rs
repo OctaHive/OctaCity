@@ -1,4 +1,4 @@
-//! In-process coordinator endpoints used by the Phase 6 service contract.
+//! In-process coordinator endpoints used by the Vault and artifact service contract.
 //!
 //! This fixture deliberately models only the fenced, idempotent upload
 //! protocol. S3 behavior stays behind the production `ArtifactStore` adapter;
@@ -257,7 +257,7 @@ pub(super) fn lease(spec: &JobSpecV1) -> LeaseAssignment {
     issued_at: unix_now().saturating_sub(1),
     expires_at: unix_now() + 300,
     signed_job_spec: SignedEnvelope {
-      key_id: "phase6-key".to_owned(),
+      key_id: "service-contract-key".to_owned(),
       algorithm: SIGNATURE_ALGORITHM.to_owned(),
       payload: STANDARD.encode(&payload),
       signature: STANDARD.encode(signing.sign(&payload).to_bytes()),
