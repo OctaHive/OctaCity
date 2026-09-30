@@ -13,8 +13,10 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManualSourceSelection, ManualTriggerCommand, ManualTriggerError,
-  ManualTriggerService, MutationDisposition, Query, QueryHandler,
+  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
+  ManagementResourceKind, ManualSourceSelection, ManualTriggerCommand, ManualTriggerError, ManualTriggerService,
+  MutationDisposition, Query, QueryHandler,
+  management_security::{instance_resource, owned_collection_resource},
 };
 
 /// Immutable Build input evaluated for every occurrence of one schedule.
@@ -93,8 +95,32 @@ impl Command for CreateScheduleCommand {
   type Outcome = ScheduleCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for CreateScheduleCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::Schedule,
+      ManagementResourceKind::BuildConfiguration,
+      self.configuration_id,
+    )
+  }
+}
+
 impl Query for GetScheduleQuery {
   type Outcome = ScheduleProjection;
+}
+
+impl ManagementAuthorizationTarget for GetScheduleQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Schedule, self.trigger_id)
+  }
 }
 
 /// Typed schedule management handlers backed by one narrow store port.

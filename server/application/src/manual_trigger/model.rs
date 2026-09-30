@@ -13,8 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::EffectiveProjectPolicy;
-use crate::{ApplicationFailure, Command, MutationDisposition};
+use crate::{
+  ApplicationFailure, Command, EffectiveProjectPolicy, ManagementAction, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, MutationDisposition, management_security::instance_resource,
+};
 
 /// Source expression supplied by a trusted-network manual Build command.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -60,6 +62,16 @@ pub struct AcceptManualTriggerCommand {
 
 impl Command for AcceptManualTriggerCommand {
   type Outcome = ManualTriggerOutcome;
+}
+
+impl ManagementAuthorizationTarget for AcceptManualTriggerCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Execute
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Trigger, self.trigger.trigger.id)
+  }
 }
 
 /// Transport-independent result of evaluating one manual Trigger command.

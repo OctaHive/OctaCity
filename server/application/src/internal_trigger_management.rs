@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManualSourceSelection, MutationDisposition, ProjectionError, Query,
-  QueryHandler,
+  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
+  ManagementResourceKind, ManualSourceSelection, MutationDisposition, ProjectionError, Query, QueryHandler,
+  management_security::{instance_resource, owned_collection_resource},
 };
 
 /// Explicit source strategy for a downstream Build created by an internal Trigger.
@@ -133,16 +134,60 @@ impl Command for CreateInternalTriggerCommand {
   type Outcome = InternalTriggerCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for CreateInternalTriggerCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::Trigger,
+      ManagementResourceKind::BuildConfiguration,
+      self.target.configuration_id,
+    )
+  }
+}
+
 impl Command for PublishInternalTriggerVersionCommand {
   type Outcome = InternalTriggerCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for PublishInternalTriggerVersionCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Publish
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Trigger, self.id)
+  }
 }
 
 impl Query for GetInternalTriggerQuery {
   type Outcome = InternalTriggerProjection;
 }
 
+impl ManagementAuthorizationTarget for GetInternalTriggerQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Trigger, self.trigger_id)
+  }
+}
+
 impl Query for ListInternalTriggersQuery {
   type Outcome = InternalTriggerPageProjection;
+}
+
+impl ManagementAuthorizationTarget for ListInternalTriggersQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    ManagementResource::collection(ManagementResourceKind::Trigger)
+  }
 }
 
 /// Typed internal Trigger management handlers backed by narrow store ports.

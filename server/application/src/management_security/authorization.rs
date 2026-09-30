@@ -186,7 +186,6 @@ impl ManagementResource {
   }
 
   /// Describes a collection owned by another typed resource.
-  #[must_use]
   pub fn owned_collection(
     kind: ManagementResourceKind,
     owner_kind: ManagementResourceKind,

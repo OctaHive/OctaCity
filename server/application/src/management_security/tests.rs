@@ -88,6 +88,73 @@ fn resource_construction_rejects_missing_identities_and_unsupported_ownership() 
 }
 
 #[test]
+fn every_registered_management_request_has_a_typed_mapping() {
+  fn assert_mapping<T: ManagementAuthorizationTarget>() {}
+
+  macro_rules! assert_mappings {
+    ($($request:ty),+ $(,)?) => {
+      $(assert_mapping::<$request>();)+
+    };
+  }
+
+  assert_mappings!(
+    crate::CreateProjectCommand,
+    crate::RenameProjectCommand,
+    crate::MoveProjectCommand,
+    crate::DeleteProjectCommand,
+    crate::GetProjectQuery,
+    crate::ListProjectsQuery,
+    crate::CreatePipelineCommand,
+    crate::PublishPipelineVersionCommand,
+    crate::GetPipelineQuery,
+    crate::CreateRepositoryCommand,
+    crate::PublishRepositoryVersionCommand,
+    crate::GetRepositoryQuery,
+    crate::CreateBuildConfigurationCommand,
+    crate::PublishBuildConfigurationVersionCommand,
+    crate::GetBuildConfigurationQuery,
+    crate::CreateAgentPoolCommand,
+    crate::PublishAgentPoolVersionCommand,
+    crate::DeleteAgentPoolCommand,
+    crate::GetAgentPoolQuery,
+    crate::ListAgentPoolsQuery,
+    crate::GetAgentQuery,
+    crate::ListAgentsQuery,
+    crate::ReassignAgentPoolCommand,
+    crate::DrainAgentCommand,
+    crate::IssueAgentEnrollmentCommand,
+    crate::GetBuildQuery,
+    crate::GetAttemptQuery,
+    crate::GetJobQuery,
+    crate::CancelBuildCommand,
+    crate::RetryBuildCommand,
+    crate::PublishProjectPolicyCommand,
+    crate::CreateTriggerDefinitionCommand,
+    crate::CreateUnmanagedWebhookCommand,
+    crate::CreateManagedWebhookCommand,
+    crate::ManageWebhookRegistrationCommand,
+    crate::AcceptManualTriggerCommand,
+    crate::ReadJobEventsQuery,
+    crate::CreateScheduleCommand,
+    crate::GetScheduleQuery,
+    crate::CreateInternalTriggerCommand,
+    crate::PublishInternalTriggerVersionCommand,
+    crate::GetInternalTriggerQuery,
+    crate::ListInternalTriggersQuery,
+    crate::GetArtifactQuery,
+    crate::ListBuildArtifactsQuery,
+    crate::AuthorizeArtifactDownloadQuery,
+    crate::GetCacheSessionQuery,
+    crate::ListBuildCacheSessionsQuery,
+    crate::SearchBuildLogsQuery,
+    crate::GetBuildResultRetentionQuery,
+    crate::PlaceBuildResultHoldCommand,
+    crate::ReleaseBuildResultHoldCommand,
+    crate::ListAuditFactsQuery,
+  );
+}
+
+#[test]
 fn security_scopes_and_request_ids_require_canonical_values() {
   assert!(ManagementSecurityScope::new("tenant:operator-1").is_ok());
   for value in ["", "Uppercase", " leading", "trailing ", "slash/value", "line\nbreak"] {

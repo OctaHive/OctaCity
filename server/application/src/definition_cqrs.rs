@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, MutationDisposition, ProjectPolicyDefinition,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, MutationDisposition, ProjectPolicyDefinition,
+  management_security::owned_collection_resource,
 };
 
 /// Publishes exactly the next immutable policy version for one Project.
@@ -78,8 +80,36 @@ impl Command for PublishProjectPolicyCommand {
   type Outcome = ProjectPolicyCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for PublishProjectPolicyCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Publish
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::ProjectPolicy,
+      ManagementResourceKind::Project,
+      self.project_id,
+    )
+  }
+}
+
 impl Command for CreateTriggerDefinitionCommand {
   type Outcome = TriggerDefinitionCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for CreateTriggerDefinitionCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::Trigger,
+      ManagementResourceKind::BuildConfiguration,
+      self.configuration_id,
+    )
+  }
 }
 
 /// Typed policy and Trigger-definition command handlers backed by one narrow port.

@@ -17,7 +17,11 @@ use octacity_server_store::{
 use serde_json::{Value, json};
 use thiserror::Error;
 
-use crate::{ApplicationError, ApplicationFailure, Command, CommandHandler, MutationDisposition};
+use crate::{
+  ApplicationError, ApplicationFailure, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, MutationDisposition,
+  management_security::{instance_resource, owned_collection_resource},
+};
 
 mod ingress;
 mod management;
@@ -65,6 +69,20 @@ pub struct CreateUnmanagedWebhookCommand {
 
 impl Command for CreateUnmanagedWebhookCommand {
   type Outcome = UnmanagedWebhookProjection;
+}
+
+impl ManagementAuthorizationTarget for CreateUnmanagedWebhookCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::WebhookIntegration,
+      ManagementResourceKind::Repository,
+      self.repository_id,
+    )
+  }
 }
 
 /// Secret-free instructions needed to configure the remote webhook manually.
@@ -160,6 +178,20 @@ impl Command for CreateManagedWebhookCommand {
   type Outcome = ManagedWebhookProjection;
 }
 
+impl ManagementAuthorizationTarget for CreateManagedWebhookCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::WebhookIntegration,
+      ManagementResourceKind::Repository,
+      self.repository_id,
+    )
+  }
+}
+
 /// Typed command that synchronizes one existing managed registration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ManageWebhookRegistrationCommand {
@@ -175,6 +207,16 @@ pub struct ManageWebhookRegistrationCommand {
 
 impl Command for ManageWebhookRegistrationCommand {
   type Outcome = ManagedWebhookProjection;
+}
+
+impl ManagementAuthorizationTarget for ManageWebhookRegistrationCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Administer
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::WebhookIntegration, self.integration_id)
+  }
 }
 
 /// Secret-free managed registration status exposed by the application layer.
