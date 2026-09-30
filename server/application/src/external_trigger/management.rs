@@ -199,11 +199,13 @@ impl WebhookManagementService {
 }
 
 #[async_trait]
-impl CommandHandler<CreateUnmanagedWebhookCommand> for WebhookManagementService {
+impl crate::ManagementCommandUseCase<CreateUnmanagedWebhookCommand> for WebhookManagementService {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: CreateUnmanagedWebhookCommand,
   ) -> Result<UnmanagedWebhookProjection, Self::Error> {
     self.create(command).await
@@ -211,25 +213,37 @@ impl CommandHandler<CreateUnmanagedWebhookCommand> for WebhookManagementService 
 }
 
 #[async_trait]
-impl CommandHandler<CreateManagedWebhookCommand> for WebhookManagementService {
+impl crate::ManagementCommandUseCase<CreateManagedWebhookCommand> for WebhookManagementService {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: CreateManagedWebhookCommand,
   ) -> Result<ManagedWebhookProjection, Self::Error> {
     self.create_managed(command).await
   }
 }
 
-#[async_trait]
-impl CommandHandler<ManageWebhookRegistrationCommand> for WebhookManagementService {
-  type Error = ApplicationError;
+macro_rules! managed_webhook_registration_use_case {
+  ($command:ty) => {
+    #[async_trait]
+    impl crate::ManagementCommandUseCase<$command> for WebhookManagementService {
+      type Error = ApplicationError;
 
-  async fn handle_command(
-    &self,
-    command: ManageWebhookRegistrationCommand,
-  ) -> Result<ManagedWebhookProjection, Self::Error> {
-    self.manage(command).await
-  }
+      async fn execute_management_command(
+        &self,
+        _context: &crate::ManagementRequestContext,
+        _grant: &crate::ManagementAuthorizationGrant,
+        command: $command,
+      ) -> Result<ManagedWebhookProjection, Self::Error> {
+        self.manage(command.into()).await
+      }
+    }
+  };
 }
+
+managed_webhook_registration_use_case!(ObserveManagedWebhookRegistrationCommand);
+managed_webhook_registration_use_case!(RotateManagedWebhookRegistrationCommand);
+managed_webhook_registration_use_case!(DeleteManagedWebhookRegistrationCommand);

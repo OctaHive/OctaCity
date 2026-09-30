@@ -14,10 +14,10 @@
 
 ## 4. Authorized Transport and Handler Migration
 
-- [ ] 4.1 Normalize the canonical trusted-network context once at REST ingress and expose it to management route adapters without copying headers, credentials, or DTO fields; verify every registered management request receives the canonical bounded context while health and non-management ingress remain unchanged.
-- [ ] 4.2 Add type-erased authorized handler seams and map decorator denial to the stable `403 forbidden` envelope before switching production routes; verify the response preserves safe request correlation, reveals no policy or resource details, and an allowed fixture retains its existing response.
-- [ ] 4.3 Migrate management command handlers, type-erased bundles, routes, and tests in coherent feature families to the separate context-aware interface; after each family, verify it compiles and passes without actor fields in business commands or an undecorated management entry point.
-- [ ] 4.4 Migrate management query handlers, type-erased bundles, routes, and tests in coherent feature families, then expose only policy-decorated management bundles from the composition root; verify no registered management handler can be obtained or invoked without context and authorization.
+- [x] 4.1 Normalize the canonical trusted-network context once at REST ingress and expose it to management route adapters without copying headers, credentials, or DTO fields; verify every registered management request receives the canonical bounded context while health and non-management ingress remain unchanged.
+- [x] 4.2 Add type-erased authorized handler seams and map decorator denial to the stable `403 forbidden` envelope before switching production routes; verify the response preserves safe request correlation, reveals no policy or resource details, and an allowed fixture retains its existing response.
+- [x] 4.3 Migrate management command handlers, type-erased bundles, routes, and tests in coherent feature families to the separate context-aware interface; after each family, verify it compiles and passes without actor fields in business commands or an undecorated management entry point.
+- [x] 4.4 Migrate management query handlers, type-erased bundles, routes, and tests in coherent feature families, then expose only policy-decorated management bundles from the composition root; verify no registered management handler can be obtained or invoked without context and authorization.
 
 ## 5. Actor-faithful Mutation Evidence
 

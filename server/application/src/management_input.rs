@@ -2,13 +2,13 @@ use std::{collections::BTreeMap, str::FromStr, time::Duration};
 
 use octacity_protocol::AgentCredentialToken;
 use octacity_server_domain::{
-  BuildConfigurationId, BuildConfigurationVersion, EnrollmentCredentialId, Timestamp, TriggerId, TriggerIdentity,
-  TriggerVersion,
+  BuildConfigurationId, BuildConfigurationVersion, EnrollmentCredentialId, IntegrationId, Timestamp, TriggerId,
+  TriggerIdentity, TriggerVersion,
 };
 use octacity_server_pipeline::{CapabilityCatalog, ExecutionCapability, PipelineDag};
 use octacity_server_secrets::AgentEnrollmentSecretKey;
 use octacity_server_store::{
-  AgentPlatform, ExpectedAgentPlatform, ManagedWebhookOperation, TriggerDefinitionRef, TriggerTarget,
+  AgentPlatform, ExpectedAgentPlatform, IdempotencyKey, TriggerDefinitionRef, TriggerTarget,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -19,15 +19,16 @@ use crate::{
   AcceptManualTriggerCommand, AgentDrainMode, CancelBuildCommand, CreateAgentPoolCommand,
   CreateBuildConfigurationCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand,
   CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand,
-  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
-  GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetInternalTriggerQuery, GetJobQuery,
-  GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery, InternalTriggerDefinition,
-  InternalTriggerSourceStrategy, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery,
-  ListInternalTriggersQuery, ListProjectsQuery, MAX_JOB_EVENT_WAIT, ManageWebhookRegistrationCommand,
-  ManualSourceSelection, ManualTriggerCommand, MoveProjectCommand, ProjectPolicyDefinition,
+  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand,
+  DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery,
+  GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
+  InternalTriggerDefinition, InternalTriggerSourceStrategy, IssueAgentEnrollmentCommand, ListAgentPoolsQuery,
+  ListAgentsQuery, ListInternalTriggersQuery, ListProjectsQuery, MAX_JOB_EVENT_WAIT, ManualSourceSelection,
+  ManualTriggerCommand, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, ProjectPolicyDefinition,
   PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
   PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand, ScheduledBuildDefinition,
+  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
+  ScheduledBuildDefinition,
 };
 
 mod agent;

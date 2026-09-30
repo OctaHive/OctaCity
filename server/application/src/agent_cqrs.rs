@@ -11,9 +11,9 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, Query, QueryHandler, management_security::instance_resource,
+  MutationDisposition, Query, management_security::instance_resource,
 };
 
 /// Reads one enrolled Agent.
@@ -240,10 +240,15 @@ where
 }
 
 #[async_trait]
-impl<S: AgentStore + 'static> CommandHandler<ReassignAgentPoolCommand> for AgentHandlers<S> {
+impl<S: AgentStore + 'static> crate::ManagementCommandUseCase<ReassignAgentPoolCommand> for AgentHandlers<S> {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: ReassignAgentPoolCommand) -> Result<AgentCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: ReassignAgentPoolCommand,
+  ) -> Result<AgentCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -273,28 +278,43 @@ where
 }
 
 #[async_trait]
-impl<S: AgentStore + 'static> CommandHandler<DrainAgentCommand> for AgentHandlers<S> {
+impl<S: AgentStore + 'static> crate::ManagementCommandUseCase<DrainAgentCommand> for AgentHandlers<S> {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: DrainAgentCommand) -> Result<AgentCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: DrainAgentCommand,
+  ) -> Result<AgentCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
 
 #[async_trait]
-impl<S: AgentStore + 'static> QueryHandler<GetAgentQuery> for AgentHandlers<S> {
+impl<S: AgentStore + 'static> crate::ManagementQueryUseCase<GetAgentQuery> for AgentHandlers<S> {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetAgentQuery) -> Result<AgentProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetAgentQuery,
+  ) -> Result<AgentProjection, Self::Error> {
     Ok(self.store.agent(query.agent_id).await?.into())
   }
 }
 
 #[async_trait]
-impl<S: AgentStore + 'static> QueryHandler<ListAgentsQuery> for AgentHandlers<S> {
+impl<S: AgentStore + 'static> crate::ManagementQueryUseCase<ListAgentsQuery> for AgentHandlers<S> {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListAgentsQuery) -> Result<AgentPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListAgentsQuery,
+  ) -> Result<AgentPageProjection, Self::Error> {
     let page = self
       .store
       .list_agents(ListAgents::new(query.after, query.limit)?)

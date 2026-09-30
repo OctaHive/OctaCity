@@ -260,9 +260,14 @@ fn restricted_visibility_is_non_empty_unique_and_bounded() {
 
   let visibility = ManagementVisibility::restricted([resource(1), resource(2)]).unwrap();
   assert_eq!(visibility.kind(), ManagementVisibilityKind::Restricted);
-  assert_eq!(visibility.resources().unwrap().len(), 2);
+  assert!(matches!(
+    visibility.view(),
+    ManagementVisibilityView::Restricted(resources) if resources.len() == 2
+  ));
   assert_eq!(ManagementVisibility::all().kind(), ManagementVisibilityKind::All);
+  assert_eq!(ManagementVisibility::all().view(), ManagementVisibilityView::All);
   assert_eq!(ManagementVisibility::none().kind(), ManagementVisibilityKind::None);
+  assert_eq!(ManagementVisibility::none().view(), ManagementVisibilityView::None);
 }
 
 #[test]
@@ -519,6 +524,32 @@ fn decorators_do_not_dispatch_denied_operations_and_preserve_request_correlation
   assert!(command_error.application().is_none());
   assert!(query_error.application().is_none());
   assert!(!format!("{command_error:?} {query_error:?}").contains("project-"));
+}
+
+#[test]
+fn authorized_handlers_remain_mandatory_after_type_erasure() {
+  type ErasedCommand = dyn AuthorizedManagementCommandHandler<FixtureCommand, Error = std::convert::Infallible>;
+  type ErasedQuery = dyn AuthorizedManagementQueryHandler<FixtureQuery, Error = std::convert::Infallible>;
+
+  let context = ManagementRequestContext::trusted_network(request_id());
+  let command_spy = Arc::new(CommandSpy::default());
+  let query_spy = Arc::new(QuerySpy::default());
+  let command: Arc<ErasedCommand> = Arc::new(AuthorizedCommandHandler::new(
+    Arc::new(RecordingPolicy::deny()),
+    command_spy.clone(),
+  ));
+  let query: Arc<ErasedQuery> = Arc::new(AuthorizedQueryHandler::new(
+    Arc::new(RecordingPolicy::deny()),
+    query_spy.clone(),
+  ));
+
+  let command_error = run_ready(command.handle_authorized_command(&context, FixtureCommand)).unwrap_err();
+  let query_error = run_ready(query.handle_authorized_query(&context, FixtureQuery)).unwrap_err();
+
+  assert_eq!(command_spy.calls.load(Ordering::SeqCst), 0);
+  assert_eq!(query_spy.calls.load(Ordering::SeqCst), 0);
+  assert_eq!(command_error.forbidden().unwrap().request_id(), context.request_id());
+  assert_eq!(query_error.forbidden().unwrap().request_id(), context.request_id());
 }
 
 fn run_ready<T>(future: impl Future<Output = T>) -> T {

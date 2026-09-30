@@ -16,19 +16,22 @@ use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuditActorKind, AuditActorProjection, AuditFactPageProjection,
   AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery, BuildLogSearchCursorProjection,
   BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection,
-  BuildLogStream, CancelBuildCommand, Command, CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
+  BuildLogStream, CancelBuildCommand, Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
   CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
   CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
-  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
-  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
-  GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
+  DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand, DrainAgentCommand,
+  GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery,
+  GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
+  GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError,
-  ManageWebhookRegistrationCommand, ManagementAuthorizationTarget, ManualTriggerError, MoveProjectCommand,
-  PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
-  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
-  PublishRepositoryVersionCommand, Query, QueryHandler, ReadJobEventsQuery, ReassignAgentPoolCommand,
-  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, SearchBuildLogsQuery,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError, ManagementAction,
+  ManagementAuthorizationGrant, ManagementAuthorizationTarget, ManagementCommandUseCase,
+  ManagementOperationalMetadataProjection, ManagementQueryUseCase, ManagementRequestContext, ManualTriggerError,
+  MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand,
+  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
+  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query,
+  ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
+  RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
 };
 use tokio::net::TcpListener;
 use tower::ServiceExt as _;
@@ -42,6 +45,8 @@ mod openapi_drift;
 #[path = "v1_handlers/retention.rs"]
 mod retention;
 mod support;
+#[path = "v1_handlers/webhook.rs"]
+mod webhook;
 
 use support::{
   JobEventApplication, agent_pool_create_body, agent_pool_publish_body, assert_component_exists,
@@ -79,10 +84,15 @@ impl RecordingApplication {
 macro_rules! unavailable_command {
   ($command:ty, $operation:literal) => {
     #[async_trait]
-    impl CommandHandler<$command> for RecordingApplication {
+    impl ManagementCommandUseCase<$command> for RecordingApplication {
       type Error = ApplicationError;
 
-      async fn handle_command(&self, _command: $command) -> Result<<$command as Command>::Outcome, Self::Error> {
+      async fn execute_management_command(
+        &self,
+        _context: &ManagementRequestContext,
+        _grant: &ManagementAuthorizationGrant,
+        _command: $command,
+      ) -> Result<<$command as Command>::Outcome, Self::Error> {
         self.record($operation);
         Err(ApplicationError::unavailable())
       }
@@ -93,15 +103,39 @@ macro_rules! unavailable_command {
 macro_rules! unavailable_query {
   ($query:ty, $operation:literal) => {
     #[async_trait]
-    impl QueryHandler<$query> for RecordingApplication {
+    impl ManagementQueryUseCase<$query> for RecordingApplication {
       type Error = ApplicationError;
 
-      async fn handle_query(&self, _query: $query) -> Result<<$query as Query>::Outcome, Self::Error> {
+      async fn execute_management_query(
+        &self,
+        _context: &ManagementRequestContext,
+        _grant: &ManagementAuthorizationGrant,
+        _query: $query,
+      ) -> Result<<$query as Query>::Outcome, Self::Error> {
         self.record($operation);
         Err(ApplicationError::unavailable())
       }
     }
   };
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    _query: GetOperationalMetadataQuery,
+  ) -> Result<ManagementOperationalMetadataProjection, Self::Error> {
+    Ok(ManagementOperationalMetadataProjection {
+      management_externally_reachable: false,
+      external_access_acknowledged: false,
+      agent_ingress_enabled: true,
+      webhook_ingress_enabled: false,
+    })
+  }
 }
 
 unavailable_command!(RenameProjectCommand, "rename_project");
@@ -150,11 +184,13 @@ unavailable_command!(PlaceBuildResultHoldCommand, "place_build_result_hold");
 unavailable_command!(ReleaseBuildResultHoldCommand, "release_build_result_hold");
 
 #[async_trait]
-impl QueryHandler<SearchBuildLogsQuery> for RecordingApplication {
+impl ManagementQueryUseCase<SearchBuildLogsQuery> for RecordingApplication {
   type Error = BuildLogSearchError;
 
-  async fn handle_query(
+  async fn execute_management_query(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     query: SearchBuildLogsQuery,
   ) -> Result<<SearchBuildLogsQuery as Query>::Outcome, Self::Error> {
     self.record("search_build_logs");
@@ -193,11 +229,13 @@ impl QueryHandler<SearchBuildLogsQuery> for RecordingApplication {
 }
 
 #[async_trait]
-impl QueryHandler<ListAuditFactsQuery> for RecordingApplication {
+impl ManagementQueryUseCase<ListAuditFactsQuery> for RecordingApplication {
   type Error = ApplicationError;
 
-  async fn handle_query(
+  async fn execute_management_query(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     _query: ListAuditFactsQuery,
   ) -> Result<<ListAuditFactsQuery as Query>::Outcome, Self::Error> {
     self.record("list_audit_facts");
@@ -226,45 +264,13 @@ impl QueryHandler<ListAuditFactsQuery> for RecordingApplication {
 }
 
 #[async_trait]
-impl CommandHandler<CreateManagedWebhookCommand> for RecordingApplication {
+impl ManagementCommandUseCase<CreateProjectCommand> for RecordingApplication {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
-    _command: CreateManagedWebhookCommand,
-  ) -> Result<<CreateManagedWebhookCommand as Command>::Outcome, Self::Error> {
-    self.record("create_managed_webhook");
-    if self.capability_unavailable_for_managed {
-      Err(ApplicationError::capability_unavailable())
-    } else {
-      Err(ApplicationError::unavailable())
-    }
-  }
-}
-
-#[async_trait]
-impl CommandHandler<ManageWebhookRegistrationCommand> for RecordingApplication {
-  type Error = ApplicationError;
-
-  async fn handle_command(
-    &self,
-    _command: ManageWebhookRegistrationCommand,
-  ) -> Result<<ManageWebhookRegistrationCommand as Command>::Outcome, Self::Error> {
-    self.record("manage_webhook_registration");
-    if self.capability_unavailable_for_managed {
-      Err(ApplicationError::capability_unavailable())
-    } else {
-      Err(ApplicationError::unavailable())
-    }
-  }
-}
-
-#[async_trait]
-impl CommandHandler<CreateProjectCommand> for RecordingApplication {
-  type Error = ApplicationError;
-
-  async fn handle_command(
-    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     command: CreateProjectCommand,
   ) -> Result<<CreateProjectCommand as Command>::Outcome, Self::Error> {
     self.record("create_project");
@@ -289,11 +295,13 @@ impl CommandHandler<CreateProjectCommand> for RecordingApplication {
 }
 
 #[async_trait]
-impl CommandHandler<CreatePipelineCommand> for RecordingApplication {
+impl ManagementCommandUseCase<CreatePipelineCommand> for RecordingApplication {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     command: CreatePipelineCommand,
   ) -> Result<<CreatePipelineCommand as Command>::Outcome, Self::Error> {
     self.record("create_pipeline");
@@ -332,11 +340,13 @@ impl CommandHandler<CreatePipelineCommand> for RecordingApplication {
 }
 
 #[async_trait]
-impl CommandHandler<CreateRepositoryCommand> for RecordingApplication {
+impl ManagementCommandUseCase<CreateRepositoryCommand> for RecordingApplication {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     command: CreateRepositoryCommand,
   ) -> Result<<CreateRepositoryCommand as Command>::Outcome, Self::Error> {
     self.record("create_repository");
@@ -364,11 +374,13 @@ impl CommandHandler<CreateRepositoryCommand> for RecordingApplication {
 }
 
 #[async_trait]
-impl CommandHandler<CreateBuildConfigurationCommand> for RecordingApplication {
+impl ManagementCommandUseCase<CreateBuildConfigurationCommand> for RecordingApplication {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     command: CreateBuildConfigurationCommand,
   ) -> Result<<CreateBuildConfigurationCommand as Command>::Outcome, Self::Error> {
     self.record("create_configuration");
@@ -408,11 +420,13 @@ impl CommandHandler<CreateBuildConfigurationCommand> for RecordingApplication {
 }
 
 #[async_trait]
-impl CommandHandler<AcceptManualTriggerCommand> for RecordingApplication {
+impl ManagementCommandUseCase<AcceptManualTriggerCommand> for RecordingApplication {
   type Error = ManualTriggerError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     _command: AcceptManualTriggerCommand,
   ) -> Result<<AcceptManualTriggerCommand as Command>::Outcome, Self::Error> {
     self.record("accept_manual_trigger");
@@ -719,9 +733,9 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "create_schedule",
       "create_unmanaged_webhook",
       "create_managed_webhook",
-      "manage_webhook_registration",
-      "manage_webhook_registration",
-      "manage_webhook_registration",
+      "observe_managed_webhook",
+      "rotate_managed_webhook",
+      "delete_managed_webhook",
       "get_schedule",
       "accept_manual_trigger",
       "get_build",

@@ -8,9 +8,9 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, ProjectProjection, ProjectSummaryProjection, Query, QueryHandler,
+  MutationDisposition, ProjectProjection, ProjectSummaryProjection, Query,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -236,13 +236,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateProjectCommand> for ProjectHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateProjectCommand> for ProjectHandlers<S>
 where
   S: ProjectStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: CreateProjectCommand) -> Result<ProjectCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: CreateProjectCommand,
+  ) -> Result<ProjectCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -272,13 +277,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<RenameProjectCommand> for ProjectHandlers<S>
+impl<S> crate::ManagementCommandUseCase<RenameProjectCommand> for ProjectHandlers<S>
 where
   S: ProjectStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: RenameProjectCommand) -> Result<ProjectCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: RenameProjectCommand,
+  ) -> Result<ProjectCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -308,13 +318,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<MoveProjectCommand> for ProjectHandlers<S>
+impl<S> crate::ManagementCommandUseCase<MoveProjectCommand> for ProjectHandlers<S>
 where
   S: ProjectStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: MoveProjectCommand) -> Result<ProjectCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: MoveProjectCommand,
+  ) -> Result<ProjectCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -343,25 +358,35 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<DeleteProjectCommand> for ProjectHandlers<S>
+impl<S> crate::ManagementCommandUseCase<DeleteProjectCommand> for ProjectHandlers<S>
 where
   S: ProjectStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: DeleteProjectCommand) -> Result<DeleteProjectCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: DeleteProjectCommand,
+  ) -> Result<DeleteProjectCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetProjectQuery> for ProjectHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetProjectQuery> for ProjectHandlers<S>
 where
   S: ProjectStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetProjectQuery) -> Result<ProjectProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetProjectQuery,
+  ) -> Result<ProjectProjection, Self::Error> {
     self
       .store
       .project(query.project_id)
@@ -372,13 +397,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<ListProjectsQuery> for ProjectHandlers<S>
+impl<S> crate::ManagementQueryUseCase<ListProjectsQuery> for ProjectHandlers<S>
 where
   S: ProjectStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListProjectsQuery) -> Result<ProjectPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListProjectsQuery,
+  ) -> Result<ProjectPageProjection, Self::Error> {
     let page = self
       .store
       .list_projects(ListProjects::new(query.parent_id, query.after, query.limit)?)

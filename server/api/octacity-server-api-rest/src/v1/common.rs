@@ -33,6 +33,8 @@ pub enum ErrorCode {
   PreconditionRequired,
   /// The supplied optimistic version is no longer current.
   PreconditionFailed,
+  /// The caller is not authorized to perform the management operation.
+  Forbidden,
   /// The addressed resource does not exist or is not visible.
   NotFound,
   /// Current durable state conflicts with the requested operation.

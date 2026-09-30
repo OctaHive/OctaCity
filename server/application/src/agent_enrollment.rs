@@ -9,8 +9,8 @@ use octacity_server_store::{
 };
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationMapping,
-  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
+  ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
+  ManagementResourceKind, ManagementResourceResult, MutationDisposition,
   management_security::owned_collection_resource,
 };
 
@@ -79,14 +79,16 @@ impl<S> AgentEnrollmentHandler<S> {
 }
 
 #[async_trait]
-impl<S> CommandHandler<IssueAgentEnrollmentCommand> for AgentEnrollmentHandler<S>
+impl<S> crate::ManagementCommandUseCase<IssueAgentEnrollmentCommand> for AgentEnrollmentHandler<S>
 where
   S: AgentCredentialStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: IssueAgentEnrollmentCommand,
   ) -> Result<IssueAgentEnrollmentCommandOutcome, Self::Error> {
     if command.credential.kind() != AgentCredentialKind::Enrollment {

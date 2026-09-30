@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::{
   ApplicationError, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
-  ManagementResource, ManagementResourceKind, ManagementResourceResult, Query, QueryHandler,
+  ManagementResource, ManagementResourceKind, ManagementResourceResult, Query,
 };
 
 /// Transport-independent input for a bounded immutable audit read.
@@ -166,13 +166,18 @@ impl<S> AuditQueries<S> {
 }
 
 #[async_trait]
-impl<S> QueryHandler<ListAuditFactsQuery> for AuditQueries<S>
+impl<S> crate::ManagementQueryUseCase<ListAuditFactsQuery> for AuditQueries<S>
 where
   S: AuditFactStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListAuditFactsQuery) -> Result<AuditFactPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListAuditFactsQuery,
+  ) -> Result<AuditFactPageProjection, Self::Error> {
     self
       .store
       .list_audit_facts(query.query)

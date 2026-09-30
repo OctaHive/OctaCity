@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn create_scheduled_trigger_definition(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateScheduledTriggerDefinitionRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -26,9 +26,9 @@ pub(super) async fn create_scheduled_trigger_definition(
   let outcome = application
     .schedules
     .create
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((
     StatusCode::CREATED,
     Json(MutationResponse {
@@ -43,7 +43,7 @@ pub(super) async fn create_scheduled_trigger_definition(
 
 pub(super) async fn get_schedule(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path((trigger_id, version)): Path<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -53,8 +53,8 @@ pub(super) async fn get_schedule(
   let projection = application
     .schedules
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(schedule_resource(projection, &request_id)?)))
 }

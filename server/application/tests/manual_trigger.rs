@@ -13,16 +13,16 @@ use octacity_protocol::{ExecutionMode, OctaSpec, PlatformArchitecture, PlatformO
 use octacity_server_application::{
   AcceptManualTriggerCommand, AcceptWebhookDeliveryCommand, ApplicationFailure, ArtifactPolicy,
   AuthenticatedWebhookEvent, CachePolicy, CommandHandler, ConcurrencyPolicy, CreateManagedWebhookCommand,
-  DurableManualTriggerService, DurableRetryPolicy, EffectiveProjectPolicy, IdentityProfileName,
-  JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobSpecToolchainPolicy,
-  JobTerminalOutcomeProjection, ManageWebhookRegistrationCommand, ManagedWebhookRegistration,
-  ManagedWebhookRegistrationRequest, ManagedWebhookRegistrationStatus, ManagedWebhookRegistrationWorker,
-  ManualSourceSelection, ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError,
-  ManualTriggerContextProvider, ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome,
-  ManualTriggerRetryWorker, ManualTriggerService, MutationDisposition as ApplicationDisposition, PolicySource,
+  DeleteManagedWebhookRegistrationCommand, DurableManualTriggerService, DurableRetryPolicy, EffectiveProjectPolicy,
+  IdentityProfileName, JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
+  JobSpecToolchainPolicy, JobTerminalOutcomeProjection, ManagedWebhookRegistration, ManagedWebhookRegistrationRequest,
+  ManagedWebhookRegistrationStatus, ManagedWebhookRegistrationWorker, ManualSourceSelection, ManualTriggerCommand,
+  ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider, ManualTriggerError,
+  ManualTriggerInputError, ManualTriggerOutcome, ManualTriggerRetryWorker, ManualTriggerService,
+  MutationDisposition as ApplicationDisposition, ObserveManagedWebhookRegistrationCommand, PolicySource,
   ProjectExecutionTarget, RetentionPolicy, RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
-  RuntimeClass, ScheduleWorker, ScheduledBuildDefinition, SecretProfileName, VerifyWebhookDelivery,
-  WebhookCallbackOrigin, WebhookDeliveryVerifier, WebhookDeliveryWorker, WebhookIngressService,
+  RotateManagedWebhookRegistrationCommand, RuntimeClass, ScheduleWorker, ScheduledBuildDefinition, SecretProfileName,
+  VerifyWebhookDelivery, WebhookCallbackOrigin, WebhookDeliveryVerifier, WebhookDeliveryWorker, WebhookIngressService,
   WebhookManagementProvider, WebhookManagementService, WebhookVerificationError,
 };
 use octacity_server_domain::{
@@ -54,6 +54,10 @@ use octacity_server_store::{
   WebhookIntegrationRecord, WorkerOwner,
 };
 use serde_json::json;
+
+#[path = "support/management_command.rs"]
+mod management_command_support;
+use management_command_support::management_command;
 
 #[test]
 fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {

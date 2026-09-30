@@ -7,8 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use octacity_server_application::{
-  CommandHandler as _, CreateTriggerDefinitionCommand, DefinitionHandlers, ProjectPolicyDefinition,
-  PublishProjectPolicyCommand,
+  CreateTriggerDefinitionCommand, DefinitionHandlers, ProjectPolicyDefinition, PublishProjectPolicyCommand,
 };
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, ProjectId, Timestamp, TriggerId, TriggerVersion,
@@ -19,6 +18,10 @@ use octacity_server_store::{
 };
 use octacity_server_trigger::TriggerKind;
 use serde_json::{Value, json};
+
+#[path = "support/management_command.rs"]
+mod management_command_support;
+use management_command_support::management_command;
 
 #[derive(Default)]
 struct RecordingDefinitionStore {
@@ -60,23 +63,26 @@ fn definition_handlers_keep_policy_and_trigger_persistence_transport_independent
     let handlers = DefinitionHandlers::new(store.clone());
     let project_id = ProjectId::from_str("11111111-1111-4111-8111-111111111111").unwrap();
     let policy: ProjectPolicyDefinition = serde_json::from_value(policy_document()).unwrap();
-    let policy_outcome = handlers
-      .handle_command(PublishProjectPolicyCommand {
+    let policy_outcome = management_command(
+      &handlers,
+      PublishProjectPolicyCommand {
         project_id,
         expected_current_version: None,
         policy,
         idempotency_key: IdempotencyKey::new("policy-v1").unwrap(),
         published_at: Timestamp::from_unix_millis(1).unwrap(),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(policy_outcome.project_id, project_id);
     assert_eq!(store.policy.lock().unwrap().as_ref(), Some(&policy_document()));
 
     let trigger_id = TriggerId::from_str("22222222-2222-4222-8222-222222222222").unwrap();
     let definition = json!({"reason": "manual"});
-    let trigger_outcome = handlers
-      .handle_command(CreateTriggerDefinitionCommand {
+    let trigger_outcome = management_command(
+      &handlers,
+      CreateTriggerDefinitionCommand {
         id: trigger_id,
         version: TriggerVersion::INITIAL,
         configuration_id: BuildConfigurationId::from_str("33333333-3333-4333-8333-333333333333").unwrap(),
@@ -86,9 +92,10 @@ fn definition_handlers_keep_policy_and_trigger_persistence_transport_independent
         definition: definition.clone(),
         idempotency_key: IdempotencyKey::new("trigger-v1").unwrap(),
         created_at: Timestamp::from_unix_millis(2).unwrap(),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(trigger_outcome.trigger_id, trigger_id);
     assert_eq!(store.trigger.lock().unwrap().as_ref(), Some(&definition));
   });

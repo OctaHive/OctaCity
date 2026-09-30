@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn create_repository(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateRepositoryRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -22,15 +22,15 @@ pub(super) async fn create_repository(
   let outcome = application
     .configurations
     .create_repository
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(repository_mutation(outcome))))
 }
 
 pub(super) async fn publish_repository(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(repository_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<PublishRepositoryVersionRequest>, JsonRejection>,
@@ -51,15 +51,15 @@ pub(super) async fn publish_repository(
   let outcome = application
     .configurations
     .publish_repository
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(repository_mutation(outcome))))
 }
 
 pub(super) async fn get_repository(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path((repository_id, version)): Path<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -69,15 +69,15 @@ pub(super) async fn get_repository(
   let projection = application
     .configurations
     .get_repository
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(repository_resource(projection))))
 }
 
 pub(super) async fn create_build_configuration(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateBuildConfigurationRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -97,15 +97,15 @@ pub(super) async fn create_build_configuration(
   let outcome = application
     .configurations
     .create_configuration
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(configuration_mutation(outcome))))
 }
 
 pub(super) async fn publish_build_configuration(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(configuration_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<PublishBuildConfigurationVersionRequest>, JsonRejection>,
@@ -126,15 +126,15 @@ pub(super) async fn publish_build_configuration(
   let outcome = application
     .configurations
     .publish_configuration
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(configuration_mutation(outcome))))
 }
 
 pub(super) async fn get_build_configuration(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path((configuration_id, version)): Path<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -144,8 +144,8 @@ pub(super) async fn get_build_configuration(
   let projection = application
     .configurations
     .get_configuration
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(configuration_resource(projection))))
 }

@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn get_build(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -12,15 +12,15 @@ pub(super) async fn get_build(
   let projection = application
     .builds
     .get_build
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(build_resource(projection, &request_id)?)))
 }
 
 pub(super) async fn get_attempt(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(attempt_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -30,15 +30,15 @@ pub(super) async fn get_attempt(
   let projection = application
     .builds
     .get_attempt
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(attempt_resource(projection, &request_id)?)))
 }
 
 pub(super) async fn get_job(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(job_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -48,15 +48,15 @@ pub(super) async fn get_job(
   let projection = application
     .builds
     .get_job
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(job_resource(projection, &request_id)?)))
 }
 
 pub(super) async fn cancel_build(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -68,15 +68,15 @@ pub(super) async fn cancel_build(
   let outcome = application
     .builds
     .cancel
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(cancel_build_response(outcome))))
 }
 
 pub(super) async fn retry_build(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -88,9 +88,9 @@ pub(super) async fn retry_build(
   let outcome = application
     .builds
     .retry
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(retry_build_response(outcome))))
 }
 

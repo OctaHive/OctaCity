@@ -7,9 +7,9 @@ use std::{
 
 use octacity_protocol::{PlatformArchitecture, PlatformOs};
 use octacity_server_application::{
-  ApplicationError, BuildConfigurationHandlers, CommandHandler, CreateBuildConfigurationCommand, CreatePipelineCommand,
+  ApplicationError, BuildConfigurationHandlers, CreateBuildConfigurationCommand, CreatePipelineCommand,
   CreateProjectCommand, CreateRepositoryCommand, GetBuildConfigurationQuery, GetPipelineQuery, GetProjectQuery,
-  GetRepositoryQuery, ListProjectsQuery, MutationDisposition, PipelineHandlers, ProjectHandlers, QueryHandler,
+  GetRepositoryQuery, ListProjectsQuery, MutationDisposition, PipelineHandlers, ProjectHandlers,
 };
 use octacity_server_domain::{
   ArtifactPolicy, BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, EntityKind, IntegrationId,
@@ -30,6 +30,13 @@ use octacity_server_store::{
 };
 use serde_json::json;
 
+#[path = "support/management_command.rs"]
+mod management_command_support;
+#[path = "support/management_query.rs"]
+mod management_query_support;
+use management_command_support::management_command;
+use management_query_support::management_query;
+
 #[test]
 fn project_commands_and_queries_dispatch_through_the_in_memory_port() {
   run_ready(async {
@@ -38,40 +45,45 @@ fn project_commands_and_queries_dispatch_through_the_in_memory_port() {
     let root_id = id::<ProjectId>(1);
     let child_id = id::<ProjectId>(2);
 
-    let created = handlers
-      .handle_command(CreateProjectCommand {
+    let created = management_command(
+      &handlers,
+      CreateProjectCommand {
         id: root_id,
         parent_id: None,
         name: ProjectName::new("Root").unwrap(),
         idempotency_key: key("root"),
         created_at: time(1),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(created.disposition, MutationDisposition::Applied);
 
-    handlers
-      .handle_command(CreateProjectCommand {
+    management_command(
+      &handlers,
+      CreateProjectCommand {
         id: child_id,
         parent_id: Some(root_id),
         name: ProjectName::new("Child").unwrap(),
         idempotency_key: key("child"),
         created_at: time(2),
-      })
+      },
+    )
+    .await
+    .unwrap();
+    let project = management_query(&handlers, GetProjectQuery { project_id: child_id })
       .await
       .unwrap();
-    let project = handlers
-      .handle_query(GetProjectQuery { project_id: child_id })
-      .await
-      .unwrap();
-    let page = handlers
-      .handle_query(ListProjectsQuery {
+    let page = management_query(
+      &handlers,
+      ListProjectsQuery {
         parent_id: Some(root_id),
         after: None,
         limit: 10,
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(project.ancestors[0].id, root_id);
     assert_eq!(page.projects[0].id, child_id);
@@ -101,11 +113,11 @@ fn every_injected_transaction_failure_rolls_back_the_complete_command() {
       };
 
       assert!(matches!(
-        handlers.handle_command(command.clone()).await,
+        management_command(&handlers, command.clone()).await,
         Err(ApplicationError::Store(StoreError::Unavailable))
       ));
       assert!(matches!(
-        handlers.handle_query(GetProjectQuery { project_id }).await,
+        management_query(&handlers, GetProjectQuery { project_id }).await,
         Err(ApplicationError::Store(StoreError::NotFound {
           entity: EntityKind::Project
         }))
@@ -121,7 +133,7 @@ fn every_injected_transaction_failure_rolls_back_the_complete_command() {
       );
 
       assert_eq!(
-        handlers.handle_command(command).await.unwrap().disposition,
+        management_command(&handlers, command).await.unwrap().disposition,
         MutationDisposition::Applied,
         "{failure:?} prevented a clean retry"
       );
@@ -147,24 +159,28 @@ fn pipeline_commands_and_queries_return_application_projections() {
     store.seed_project(project_id).unwrap();
     let handlers = PipelineHandlers::new(store);
 
-    let outcome = handlers
-      .handle_command(CreatePipelineCommand {
+    let outcome = management_command(
+      &handlers,
+      CreatePipelineCommand {
         id: pipeline_id,
         project_id,
         name: PipelineName::new("Build").unwrap(),
         dag: pipeline(),
         idempotency_key: key("pipeline"),
         published_at: time(10),
-      })
-      .await
-      .unwrap();
-    let queried = handlers
-      .handle_query(GetPipelineQuery {
+      },
+    )
+    .await
+    .unwrap();
+    let queried = management_query(
+      &handlers,
+      GetPipelineQuery {
         pipeline_id,
         version: PipelineVersion::INITIAL,
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome.pipeline, queried);
     assert_eq!(queried.nodes[0].execution.commands, ["build"]);
@@ -186,43 +202,51 @@ fn configuration_commands_and_queries_use_only_backend_neutral_ports() {
       .unwrap();
     store.seed_pool(pool_id).unwrap();
     let handlers = BuildConfigurationHandlers::new(store);
-    handlers
-      .handle_command(CreateRepositoryCommand {
+    management_command(
+      &handlers,
+      CreateRepositoryCommand {
         id: repository_id,
         project_id,
         name: RepositoryName::new("Source").unwrap(),
         definition: repository_definition(),
         idempotency_key: key("repository"),
         published_at: time(20),
-      })
-      .await
-      .unwrap();
-    let repository = handlers
-      .handle_query(GetRepositoryQuery {
+      },
+    )
+    .await
+    .unwrap();
+    let repository = management_query(
+      &handlers,
+      GetRepositoryQuery {
         repository_id,
         version: RepositoryVersion::INITIAL,
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
 
-    let outcome = handlers
-      .handle_command(CreateBuildConfigurationCommand {
+    let outcome = management_command(
+      &handlers,
+      CreateBuildConfigurationCommand {
         id: configuration_id,
         project_id,
         name: BuildConfigurationName::new("Release").unwrap(),
         definition: configuration_definition(repository_id, pipeline_id, pool_id),
         idempotency_key: key("configuration"),
         published_at: time(21),
-      })
-      .await
-      .unwrap();
-    let queried = handlers
-      .handle_query(GetBuildConfigurationQuery {
+      },
+    )
+    .await
+    .unwrap();
+    let queried = management_query(
+      &handlers,
+      GetBuildConfigurationQuery {
         configuration_id,
         version: BuildConfigurationVersion::INITIAL,
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(outcome.configuration, queried);
     assert_eq!(queried.repository_id, repository_id);
@@ -239,26 +263,30 @@ fn create_replays_ignore_server_generated_identifiers() {
     let project_store = Arc::new(InMemoryProjectStore::new());
     let project_handlers = ProjectHandlers::new(Arc::clone(&project_store));
     let first_project_id = id::<ProjectId>(40);
-    let project = project_handlers
-      .handle_command(CreateProjectCommand {
+    let project = management_command(
+      &project_handlers,
+      CreateProjectCommand {
         id: first_project_id,
         parent_id: None,
         name: ProjectName::new("Replay project").unwrap(),
         idempotency_key: key("replay-project"),
         created_at: time(40),
-      })
-      .await
-      .unwrap();
-    let replayed_project = project_handlers
-      .handle_command(CreateProjectCommand {
+      },
+    )
+    .await
+    .unwrap();
+    let replayed_project = management_command(
+      &project_handlers,
+      CreateProjectCommand {
         id: id::<ProjectId>(41),
         parent_id: None,
         name: ProjectName::new("Replay project").unwrap(),
         idempotency_key: key("replay-project"),
         created_at: time(41),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(replayed_project.disposition, MutationDisposition::Replayed);
     assert_eq!(replayed_project.project.id, project.project.id);
 
@@ -266,28 +294,32 @@ fn create_replays_ignore_server_generated_identifiers() {
     pipeline_store.seed_project(first_project_id).unwrap();
     let pipeline_handlers = PipelineHandlers::new(pipeline_store);
     let first_pipeline_id = id::<PipelineId>(42);
-    let created_pipeline = pipeline_handlers
-      .handle_command(CreatePipelineCommand {
+    let created_pipeline = management_command(
+      &pipeline_handlers,
+      CreatePipelineCommand {
         id: first_pipeline_id,
         project_id: first_project_id,
         name: PipelineName::new("Replay pipeline").unwrap(),
         dag: pipeline(),
         idempotency_key: key("replay-pipeline"),
         published_at: time(42),
-      })
-      .await
-      .unwrap();
-    let replayed_pipeline = pipeline_handlers
-      .handle_command(CreatePipelineCommand {
+      },
+    )
+    .await
+    .unwrap();
+    let replayed_pipeline = management_command(
+      &pipeline_handlers,
+      CreatePipelineCommand {
         id: id::<PipelineId>(43),
         project_id: first_project_id,
         name: PipelineName::new("Replay pipeline").unwrap(),
         dag: pipeline(),
         idempotency_key: key("replay-pipeline"),
         published_at: time(43),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(replayed_pipeline.disposition, MutationDisposition::Replayed);
     assert_eq!(replayed_pipeline.pipeline.id, created_pipeline.pipeline.id);
 
@@ -300,53 +332,61 @@ fn create_replays_ignore_server_generated_identifiers() {
     configuration_store.seed_pool(pool_id).unwrap();
     let configuration_handlers = BuildConfigurationHandlers::new(configuration_store);
     let first_repository_id = id::<RepositoryId>(45);
-    let created_repository = configuration_handlers
-      .handle_command(CreateRepositoryCommand {
+    let created_repository = management_command(
+      &configuration_handlers,
+      CreateRepositoryCommand {
         id: first_repository_id,
         project_id: first_project_id,
         name: RepositoryName::new("Replay repository").unwrap(),
         definition: repository_definition(),
         idempotency_key: key("replay-repository"),
         published_at: time(45),
-      })
-      .await
-      .unwrap();
-    let replayed_repository = configuration_handlers
-      .handle_command(CreateRepositoryCommand {
+      },
+    )
+    .await
+    .unwrap();
+    let replayed_repository = management_command(
+      &configuration_handlers,
+      CreateRepositoryCommand {
         id: id::<RepositoryId>(46),
         project_id: first_project_id,
         name: RepositoryName::new("Replay repository").unwrap(),
         definition: repository_definition(),
         idempotency_key: key("replay-repository"),
         published_at: time(46),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(replayed_repository.disposition, MutationDisposition::Replayed);
     assert_eq!(replayed_repository.repository.id, created_repository.repository.id);
 
-    let created_configuration = configuration_handlers
-      .handle_command(CreateBuildConfigurationCommand {
+    let created_configuration = management_command(
+      &configuration_handlers,
+      CreateBuildConfigurationCommand {
         id: id::<BuildConfigurationId>(47),
         project_id: first_project_id,
         name: BuildConfigurationName::new("Replay configuration").unwrap(),
         definition: configuration_definition(first_repository_id, first_pipeline_id, pool_id),
         idempotency_key: key("replay-configuration"),
         published_at: time(47),
-      })
-      .await
-      .unwrap();
-    let replayed_configuration = configuration_handlers
-      .handle_command(CreateBuildConfigurationCommand {
+      },
+    )
+    .await
+    .unwrap();
+    let replayed_configuration = management_command(
+      &configuration_handlers,
+      CreateBuildConfigurationCommand {
         id: id::<BuildConfigurationId>(48),
         project_id: first_project_id,
         name: BuildConfigurationName::new("Replay configuration").unwrap(),
         definition: configuration_definition(first_repository_id, first_pipeline_id, pool_id),
         idempotency_key: key("replay-configuration"),
         published_at: time(48),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(replayed_configuration.disposition, MutationDisposition::Replayed);
     assert_eq!(
       replayed_configuration.configuration.id,

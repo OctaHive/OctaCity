@@ -10,7 +10,7 @@ use octacity_server_application::{
 use serde::Deserialize;
 
 use super::{
-  ApiError, DEFAULT_CACHE_SESSION_LIMIT, ManagementApplication, application_error, now_unix_ms, query_error,
+  ApiError, DEFAULT_CACHE_SESSION_LIMIT, ManagementApplication, authorized_handler_error, now_unix_ms, query_error,
 };
 use crate::{
   RequestId,
@@ -30,26 +30,29 @@ const fn default_limit() -> u16 {
 
 pub(super) async fn get_cache_session(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(session_id): Path<String>,
 ) -> Result<Json<CacheSessionResource>, ApiError> {
   let session_id = session_id.parse().map_err(|_| invalid(&request_id))?;
   application
     .cache
     .get
-    .handle_query(GetCacheSessionQuery {
-      session_id,
-      observed_at_unix_ms: now_unix_ms(&request_id)?,
-    })
+    .handle_authorized_query(
+      &context,
+      GetCacheSessionQuery {
+        session_id,
+        observed_at_unix_ms: now_unix_ms(&request_id)?,
+      },
+    )
     .await
     .map(resource)
     .map(Json)
-    .map_err(|error| application_error(error.classification(), &request_id))
+    .map_err(|error| authorized_handler_error(error, &request_id))
 }
 
 pub(super) async fn list_build_cache_sessions(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
   query: Result<Query<CacheSessionListQuery>, QueryRejection>,
 ) -> Result<Json<CacheSessionPage>, ApiError> {
@@ -58,17 +61,20 @@ pub(super) async fn list_build_cache_sessions(
   application
     .cache
     .list
-    .handle_query(ListBuildCacheSessionsQuery {
-      build_id,
-      limit: query.limit,
-      observed_at_unix_ms: now_unix_ms(&request_id)?,
-    })
+    .handle_authorized_query(
+      &context,
+      ListBuildCacheSessionsQuery {
+        build_id,
+        limit: query.limit,
+        observed_at_unix_ms: now_unix_ms(&request_id)?,
+      },
+    )
     .await
     .map(|items| CacheSessionPage {
       items: items.into_iter().map(resource).collect(),
     })
     .map(Json)
-    .map_err(|error| application_error(error.classification(), &request_id))
+    .map_err(|error| authorized_handler_error(error, &request_id))
 }
 
 fn resource(value: CacheSessionProjection) -> CacheSessionResource {

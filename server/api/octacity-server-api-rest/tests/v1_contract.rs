@@ -272,6 +272,7 @@ fn stable_error_codes_have_exact_v1_wire_names() {
     (ErrorCode::IdempotencyConflict, "idempotency_conflict"),
     (ErrorCode::PreconditionRequired, "precondition_required"),
     (ErrorCode::PreconditionFailed, "precondition_failed"),
+    (ErrorCode::Forbidden, "forbidden"),
     (ErrorCode::NotFound, "not_found"),
     (ErrorCode::Conflict, "conflict"),
     (ErrorCode::CapabilityUnavailable, "capability_unavailable"),

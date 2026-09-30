@@ -498,6 +498,17 @@ pub enum ManagementVisibilityKind {
   Restricted,
 }
 
+/// Exhaustive borrowed view of an authorization-derived read visibility scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ManagementVisibilityView<'a> {
+  /// Every resource matching the application query is visible.
+  All,
+  /// No resource is visible, producing a valid empty result.
+  None,
+  /// Only the explicitly bounded resource set is visible.
+  Restricted(&'a BTreeSet<ManagementResource>),
+}
+
 /// Authorization-derived visibility applied by read adapters before pagination.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ManagementVisibility(Visibility);
@@ -542,11 +553,13 @@ impl ManagementVisibility {
     }
   }
 
-  /// Iterates the restricted resources, or returns `None` for `All` and `None` visibility.
-  pub fn resources(&self) -> Option<impl ExactSizeIterator<Item = &ManagementResource>> {
+  /// Borrows an exhaustive view that preserves the distinction between unrestricted and empty visibility.
+  #[must_use]
+  pub const fn view(&self) -> ManagementVisibilityView<'_> {
     match &self.0 {
-      Visibility::Restricted(resources) => Some(resources.iter()),
-      Visibility::All | Visibility::None => None,
+      Visibility::All => ManagementVisibilityView::All,
+      Visibility::None => ManagementVisibilityView::None,
+      Visibility::Restricted(resources) => ManagementVisibilityView::Restricted(resources),
     }
   }
 }

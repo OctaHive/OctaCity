@@ -1,6 +1,6 @@
 use super::*;
 use crate::{GetBuildResultRetentionQuery, PlaceBuildResultHoldCommand, ReleaseBuildResultHoldCommand};
-use octacity_server_store::{RetentionHoldReason, RetentionRequestIdentity};
+use octacity_server_store::RetentionHoldReason;
 
 impl ManagementInputFactory {
   /// Creates a typed Build Result retention query.
@@ -21,7 +21,6 @@ impl ManagementInputFactory {
     build_id: &str,
     reason: String,
     expires_at_unix_ms: Option<i64>,
-    request_identity: String,
     idempotency_key: &str,
     placed_at_unix_ms: i64,
   ) -> Result<PlaceBuildResultHoldCommand, ManagementInputError> {
@@ -32,9 +31,6 @@ impl ManagementInputFactory {
       reason: RetentionHoldReason::new(reason)
         .map_err(|_| ManagementInputError::Invalid("Build Result retention hold"))?,
       expires_at,
-      actor_identity: None,
-      request_identity: RetentionRequestIdentity::new(request_identity)
-        .map_err(|_| ManagementInputError::Invalid("Build Result retention hold"))?,
       idempotency_key: parse(idempotency_key, "idempotency key")?,
       placed_at,
     })
@@ -45,16 +41,12 @@ impl ManagementInputFactory {
     &self,
     build_id: &str,
     expected_version: u64,
-    request_identity: String,
     idempotency_key: &str,
     released_at_unix_ms: i64,
   ) -> Result<ReleaseBuildResultHoldCommand, ManagementInputError> {
     Ok(ReleaseBuildResultHoldCommand {
       build_id: parse(build_id, "build id")?,
       expected_version: version(expected_version, "retention hold version")?,
-      actor_identity: None,
-      request_identity: RetentionRequestIdentity::new(request_identity)
-        .map_err(|_| ManagementInputError::Invalid("Build Result retention release"))?,
       idempotency_key: parse(idempotency_key, "idempotency key")?,
       released_at: timestamp(released_at_unix_ms)?,
     })

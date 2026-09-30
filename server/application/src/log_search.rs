@@ -241,14 +241,19 @@ where
 }
 
 #[async_trait::async_trait]
-impl<W, I> QueryHandler<SearchBuildLogsQuery> for BuildLogSearch<W, I>
+impl<W, I> crate::ManagementQueryUseCase<SearchBuildLogsQuery> for BuildLogSearch<W, I>
 where
   W: LogIndexWorkStore + 'static,
   I: LogSearchIndex + 'static,
 {
   type Error = BuildLogSearchError;
 
-  async fn handle_query(&self, query: SearchBuildLogsQuery) -> Result<BuildLogSearchPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: SearchBuildLogsQuery,
+  ) -> Result<BuildLogSearchPageProjection, Self::Error> {
     self.search(query.search).await
   }
 }

@@ -115,30 +115,17 @@ impl ServerRuntime {
       .as_ref()
       .map(|handle| spawn_metrics_upkeep(handle.clone(), cancellation.child_token()));
     let router_readiness = readiness.clone();
-    let metadata = octacity_server_api_rest::v1::OperationalMetadata::trusted_network(
-      config.management_externally_reachable(),
-      config.unauthenticated_management_acknowledged(),
-      agent_addr.is_some(),
-      webhook_addr.is_some(),
-    );
     let admission = IngressAdmission::new(config.admission());
     let management_router = match (management_application, metrics) {
-      (Some(application), Some(metrics)) => {
-        octacity_server_api_rest::management_router_with_application_metadata_and_metrics(
-          move || router_readiness.is_ready(),
-          application,
-          metadata,
-          move || metrics.render(),
-        )
-      }
-      (Some(application), None) => octacity_server_api_rest::management_router_with_application_and_metadata(
+      (Some(application), Some(metrics)) => octacity_server_api_rest::management_router_with_application_and_metrics(
         move || router_readiness.is_ready(),
         application,
-        metadata,
+        move || metrics.render(),
       ),
-      (None, _) => {
-        octacity_server_api_rest::management_router_with_metadata(move || router_readiness.is_ready(), metadata)
+      (Some(application), None) => {
+        octacity_server_api_rest::management_router_with_application(move || router_readiness.is_ready(), application)
       }
+      (None, _) => octacity_server_api_rest::management_router(move || router_readiness.is_ready()),
     };
     let management_router = admission.protect_management(management_router);
     let agent_router = admission.protect_agent(agent_router);

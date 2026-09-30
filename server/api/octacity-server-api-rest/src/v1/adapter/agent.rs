@@ -10,7 +10,7 @@ pub(super) struct AgentListParameters {
 
 pub(super) async fn issue_agent_enrollment(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<IssueAgentEnrollmentRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -38,9 +38,9 @@ pub(super) async fn issue_agent_enrollment(
   let outcome = application
     .agents
     .issue_enrollment
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   let credential = outcome.credential.encode().to_string();
   Ok((
     StatusCode::CREATED,
@@ -56,7 +56,7 @@ pub(super) async fn issue_agent_enrollment(
 
 pub(super) async fn get_agent(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(agent_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -66,15 +66,15 @@ pub(super) async fn get_agent(
   let projection = application
     .agents
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_resource(projection, &request_id)?)))
 }
 
 pub(super) async fn list_agents(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   parameters: Result<Query<AgentListParameters>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
@@ -85,15 +85,15 @@ pub(super) async fn list_agents(
   let page = application
     .agents
     .list
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_page(page, &request_id)?)))
 }
 
 pub(super) async fn reassign_agent_pool(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(agent_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<ReassignAgentPoolRequest>, JsonRejection>,
@@ -114,15 +114,15 @@ pub(super) async fn reassign_agent_pool(
   let outcome = application
     .agents
     .reassign
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_mutation(outcome, &request_id)?)))
 }
 
 pub(super) async fn drain_agent(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(agent_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<DrainAgentRequest>, JsonRejection>,
@@ -143,8 +143,8 @@ pub(super) async fn drain_agent(
   let outcome = application
     .agents
     .drain
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_mutation(outcome, &request_id)?)))
 }

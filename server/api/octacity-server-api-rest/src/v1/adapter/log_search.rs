@@ -10,7 +10,7 @@ use octacity_server_application::{
 };
 use serde::Deserialize;
 
-use super::{ApiError, ManagementApplication, application_error, query_error};
+use super::{ApiError, ManagementApplication, application_error, authorized_handler_error, query_error};
 use crate::{
   RequestId,
   v1::{
@@ -43,7 +43,7 @@ const fn default_limit() -> u16 {
 
 pub(super) async fn search_build_logs(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(project_id): Path<String>,
   parameters: Result<Query<BuildLogSearchParameters>, QueryRejection>,
 ) -> Result<Json<BuildLogSearchPage>, ApiError> {
@@ -74,9 +74,9 @@ pub(super) async fn search_build_logs(
   let page = application
     .log_search
     .0
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   project_page(page, &request_id).map(Json)
 }
 

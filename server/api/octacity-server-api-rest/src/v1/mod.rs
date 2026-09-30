@@ -22,16 +22,15 @@ mod project;
 mod retention;
 mod trigger;
 
-pub(crate) use adapter::register_management_get;
 pub use adapter::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
   JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-  ManagementAuthorizationOperation, ManualTriggerManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ScheduleManagementApplication, management_authorization_operations,
-  router as management_routes,
+  ManagementAuthorizationOperation, ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  management_authorization_operations, router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;

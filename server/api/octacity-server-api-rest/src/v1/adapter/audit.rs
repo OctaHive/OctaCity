@@ -10,7 +10,7 @@ use octacity_server_application::{
 };
 use serde::Deserialize;
 
-use super::{ApiError, ManagementApplication, application_error, query_error};
+use super::{ApiError, ManagementApplication, application_error, authorized_handler_error, query_error};
 use crate::{
   RequestId,
   v1::{AuditActor, AuditActorKind, AuditFactPage, AuditFactResource, AuditOutcome, Cursor, ErrorCode},
@@ -40,7 +40,7 @@ const fn default_limit() -> u16 {
 
 pub(super) async fn list_audit_facts(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   parameters: Result<Query<AuditFactParameters>, QueryRejection>,
 ) -> Result<Json<AuditFactPage>, ApiError> {
   let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
@@ -63,9 +63,9 @@ pub(super) async fn list_audit_facts(
   let page = application
     .audit
     .0
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   project_page(page, &request_id).map(Json)
 }
 

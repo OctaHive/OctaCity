@@ -8,17 +8,19 @@ use octacity_server_api_rest::{
     CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
     DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
     JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-    ManualTriggerManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-    ScheduleManagementApplication,
+    ManualTriggerManagementApplication, OperationalMetadataManagementApplication, PipelineManagementApplication,
+    ProjectManagementApplication, ScheduleManagementApplication,
   },
 };
 use octacity_server_application::{
-  AgentEnrollmentHandler, AgentHandlers, AgentPoolHandlers, ArtifactHandlers, AuditQueries, BuildConfigurationHandlers,
-  BuildHandlers, BuildLogSearch, BuildResultRetentionHandlers, CacheSessionHandlers, DefinitionHandlers,
-  DurableManualTriggerService, DurableRetryPolicy, InternalTriggerHandlers, JobEventLongPoll, JobSpecToolchainPolicy,
-  ManualTriggerRetryWorker, ManualTriggerService, PipelineHandlers, ProjectHandlers, RevisionResolver,
-  ScheduleHandlers, StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, WebhookDeliveryVerifier,
-  WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
+  AgentEnrollmentHandler, AgentHandlers, AgentPoolHandlers, ArtifactHandlers, AuditQueries, AuthorizedCommandHandler,
+  AuthorizedQueryHandler, BuildConfigurationHandlers, BuildHandlers, BuildLogSearch, BuildResultRetentionHandlers,
+  CacheSessionHandlers, DefinitionHandlers, DurableManualTriggerService, DurableRetryPolicy, InternalTriggerHandlers,
+  JobEventLongPoll, JobSpecToolchainPolicy, ManagementAuthorizationPolicy, ManagementOperationalMetadataProjection,
+  ManualTriggerRetryWorker, ManualTriggerService, OperationalMetadataQueries, PipelineHandlers, ProjectHandlers,
+  RevisionResolver, ScheduleHandlers, StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,
+  TrustedNetworkManagementPolicy, WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider,
+  WebhookManagementService,
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use octacity_server_webhook::WebhookAdapterRegistry;
@@ -60,6 +62,7 @@ pub(super) struct ApplicationAssembly {
   pub(super) artifacts: Arc<ArtifactHandlers<PostgresStore, octacity_artifact_s3::S3ArtifactStore>>,
   pub(super) cache: Arc<CacheSessionHandlers<PostgresStore>>,
   pub(super) log_search_index: Arc<PostgresLogSearchIndex>,
+  pub(super) operational_metadata: ManagementOperationalMetadataProjection,
 }
 
 pub(super) fn management_application(
@@ -80,6 +83,7 @@ pub(super) fn management_application(
     artifacts,
     cache,
     log_search_index,
+    operational_metadata,
   } = assembly;
   let projects = Arc::new(ProjectHandlers::new(store.clone()));
   let pipelines = Arc::new(PipelineHandlers::new(store.clone()));
@@ -143,30 +147,67 @@ pub(super) fn management_application(
   let retention = Arc::new(BuildResultRetentionHandlers::new(store.clone()));
   let audit = Arc::new(AuditQueries::new(store.clone()));
   let log_search = Arc::new(BuildLogSearch::new(store, log_search_index));
+  let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
+  let management_policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
+  let project_commands = authorized_commands(&management_policy, projects.clone());
+  let pipeline_commands = authorized_commands(&management_policy, pipelines.clone());
+  let configuration_commands = authorized_commands(&management_policy, configurations.clone());
+  let pool_commands = authorized_commands(&management_policy, pools.clone());
+  let agent_commands = authorized_commands(&management_policy, agents.clone());
+  let enrollment_commands = authorized_commands(&management_policy, enrollments);
+  let build_commands = authorized_commands(&management_policy, builds.clone());
+  let definition_commands = authorized_commands(&management_policy, definitions);
+  let schedule_commands = authorized_commands(&management_policy, schedules.clone());
+  let internal_trigger_commands = authorized_commands(&management_policy, internal_triggers.clone());
+  let webhook_commands = authorized_commands(&management_policy, webhook_management);
+  let manual_trigger_commands = authorized_commands(&management_policy, durable_manual_triggers);
+  let retention_commands = authorized_commands(&management_policy, retention.clone());
+  let project_queries = authorized_queries(&management_policy, projects);
+  let pipeline_queries = authorized_queries(&management_policy, pipelines);
+  let configuration_queries = authorized_queries(&management_policy, configurations);
+  let pool_queries = authorized_queries(&management_policy, pools);
+  let agent_queries = authorized_queries(&management_policy, agents);
+  let build_queries = authorized_queries(&management_policy, builds);
+  let schedule_queries = authorized_queries(&management_policy, schedules);
+  let internal_trigger_queries = authorized_queries(&management_policy, internal_triggers);
+  let job_event_queries = authorized_queries(&management_policy, job_events);
+  let artifact_queries = authorized_queries(&management_policy, artifacts);
+  let cache_queries = authorized_queries(&management_policy, cache);
+  let log_search_queries = authorized_queries(&management_policy, log_search);
+  let retention_queries = authorized_queries(&management_policy, retention);
+  let audit_queries = authorized_queries(&management_policy, audit);
+  let operational_queries = authorized_queries(&management_policy, operational_metadata);
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
     agent_enrollment_secret_key,
     ManagementApplicationHandlers::new(
+      OperationalMetadataManagementApplication::new(operational_queries),
       CatalogManagementApplication::new(
-        ProjectManagementApplication::new(projects),
-        PipelineManagementApplication::new(pipelines),
-        ConfigurationManagementApplication::new(configurations),
-        DefinitionManagementApplication::new(definitions, webhook_management),
-        ScheduleManagementApplication::new(schedules),
-        InternalTriggerManagementApplication::new(internal_triggers),
+        ProjectManagementApplication::new(project_commands, project_queries),
+        PipelineManagementApplication::new(pipeline_commands, pipeline_queries),
+        ConfigurationManagementApplication::new(configuration_commands, configuration_queries),
+        DefinitionManagementApplication::new(definition_commands, webhook_commands),
+        ScheduleManagementApplication::new(schedule_commands, schedule_queries),
+        InternalTriggerManagementApplication::new(internal_trigger_commands, internal_trigger_queries),
       ),
-      AgentManagementApplication::new(pools, agents, enrollments),
+      AgentManagementApplication::new(
+        pool_commands,
+        pool_queries,
+        agent_commands,
+        agent_queries,
+        enrollment_commands,
+      ),
       ExecutionManagementApplication::new(
-        BuildManagementApplication::new(builds),
-        ManualTriggerManagementApplication::new(durable_manual_triggers),
-        JobEventManagementApplication::new(job_events),
-        ArtifactManagementApplication::new(artifacts),
-        CacheManagementApplication::new(cache),
-        BuildLogSearchManagementApplication::new(log_search),
-        BuildResultRetentionManagementApplication::new(retention),
+        BuildManagementApplication::new(build_commands, build_queries),
+        ManualTriggerManagementApplication::new(manual_trigger_commands),
+        JobEventManagementApplication::new(job_event_queries),
+        ArtifactManagementApplication::new(artifact_queries),
+        CacheManagementApplication::new(cache_queries),
+        BuildLogSearchManagementApplication::new(log_search_queries),
+        BuildResultRetentionManagementApplication::new(retention_commands, retention_queries),
       ),
-      AuditManagementApplication::new(audit),
+      AuditManagementApplication::new(audit_queries),
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
@@ -178,4 +219,18 @@ pub(super) fn management_application(
     webhook_verifier: verifier,
     webhook_provider: provider,
   })
+}
+
+fn authorized_commands<H>(
+  policy: &Arc<dyn ManagementAuthorizationPolicy>,
+  handler: Arc<H>,
+) -> Arc<AuthorizedCommandHandler<H>> {
+  Arc::new(AuthorizedCommandHandler::new(policy.clone(), handler))
+}
+
+fn authorized_queries<H>(
+  policy: &Arc<dyn ManagementAuthorizationPolicy>,
+  handler: Arc<H>,
+) -> Arc<AuthorizedQueryHandler<H>> {
+  Arc::new(AuthorizedQueryHandler::new(policy.clone(), handler))
 }

@@ -10,7 +10,7 @@ pub(super) struct AgentPoolListParameters {
 
 pub(super) async fn create_agent_pool(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateAgentPoolRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -29,15 +29,15 @@ pub(super) async fn create_agent_pool(
   let outcome = application
     .agent_pools
     .create
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(agent_pool_mutation(outcome))))
 }
 
 pub(super) async fn publish_agent_pool(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(pool_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<PublishAgentPoolVersionRequest>, JsonRejection>,
@@ -58,15 +58,15 @@ pub(super) async fn publish_agent_pool(
   let outcome = application
     .agent_pools
     .publish
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_pool_mutation(outcome))))
 }
 
 pub(super) async fn get_agent_pool(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path((pool_id, version)): Path<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -76,15 +76,15 @@ pub(super) async fn get_agent_pool(
   let projection = application
     .agent_pools
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_pool_resource(projection))))
 }
 
 pub(super) async fn list_agent_pools(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   parameters: Result<Query<AgentPoolListParameters>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
@@ -95,15 +95,15 @@ pub(super) async fn list_agent_pools(
   let page = application
     .agent_pools
     .list
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_pool_page(page, &request_id)?)))
 }
 
 pub(super) async fn delete_agent_pool(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(pool_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -116,8 +116,8 @@ pub(super) async fn delete_agent_pool(
   let outcome = application
     .agent_pools
     .delete
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(delete_agent_pool_response(outcome))))
 }

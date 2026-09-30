@@ -19,7 +19,7 @@ use thiserror::Error;
 use crate::{
   AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  Query, QueryHandler, agent_lease,
+  Query, agent_lease,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -399,14 +399,19 @@ async fn observe_artifact<T>(
 }
 
 #[async_trait]
-impl<S, B> QueryHandler<GetArtifactQuery> for ArtifactHandlers<S, B>
+impl<S, B> crate::ManagementQueryUseCase<GetArtifactQuery> for ArtifactHandlers<S, B>
 where
   S: ArtifactRecordStore + 'static,
   B: ArtifactStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetArtifactQuery) -> Result<ArtifactProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetArtifactQuery,
+  ) -> Result<ArtifactProjection, Self::Error> {
     let upload = self.store.published_artifact(query.artifact_id).await?;
     let object = artifact_object(&upload).map_err(map_artifact_error)?;
     self.bytes.verify_published(&object).await.map_err(map_storage_error)?;
@@ -415,14 +420,19 @@ where
 }
 
 #[async_trait]
-impl<S, B> QueryHandler<ListBuildArtifactsQuery> for ArtifactHandlers<S, B>
+impl<S, B> crate::ManagementQueryUseCase<ListBuildArtifactsQuery> for ArtifactHandlers<S, B>
 where
   S: ArtifactRecordStore + 'static,
   B: ArtifactStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListBuildArtifactsQuery) -> Result<Vec<ArtifactProjection>, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListBuildArtifactsQuery,
+  ) -> Result<Vec<ArtifactProjection>, Self::Error> {
     let uploads = self
       .store
       .list_published_artifacts(ListPublishedArtifacts {
@@ -441,15 +451,17 @@ where
 }
 
 #[async_trait]
-impl<S, B> QueryHandler<AuthorizeArtifactDownloadQuery> for ArtifactHandlers<S, B>
+impl<S, B> crate::ManagementQueryUseCase<AuthorizeArtifactDownloadQuery> for ArtifactHandlers<S, B>
 where
   S: ArtifactRecordStore + 'static,
   B: ArtifactStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(
+  async fn execute_management_query(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     query: AuthorizeArtifactDownloadQuery,
   ) -> Result<ArtifactDownloadProjection, Self::Error> {
     let upload = self.store.published_artifact(query.artifact_id).await?;

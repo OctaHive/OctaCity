@@ -10,12 +10,16 @@ use std::{
 };
 
 use async_trait::async_trait;
-use octacity_server_application::{JobEventLongPoll, JobEventWaiter, QueryHandler, ReadJobEventsQuery};
+use octacity_server_application::{JobEventLongPoll, JobEventWaiter, ReadJobEventsQuery};
 use octacity_server_domain::{JobId, Timestamp};
 use octacity_server_store::{
   DurableJobEvent, EventSequence, JobEventKind, JobEventPage, JobEventReadStore, ReadJobEvents, StoreError,
 };
 use serde_json::json;
+
+#[path = "support/management_query.rs"]
+mod management_query_support;
+use management_query_support::management_query;
 
 struct ScriptedStore {
   pages: Mutex<VecDeque<JobEventPage>>,
@@ -66,7 +70,7 @@ fn returns_ordered_durable_replay_without_waiting() {
   });
   let service = JobEventLongPoll::new(Arc::clone(&store), Arc::clone(&waiter));
 
-  let result = run_ready(service.handle_query(query(Duration::from_secs(10)))).unwrap();
+  let result = run_ready(management_query(&service, query(Duration::from_secs(10)))).unwrap();
 
   assert_eq!(
     result.events.iter().map(|event| event.sequence).collect::<Vec<_>>(),
@@ -86,7 +90,7 @@ fn empty_timeout_releases_store_and_requeries_durable_state() {
   });
   let service = JobEventLongPoll::new(Arc::clone(&store), Arc::clone(&waiter));
 
-  let result = run_ready(service.handle_query(query(Duration::from_secs(10)))).unwrap();
+  let result = run_ready(management_query(&service, query(Duration::from_secs(10)))).unwrap();
 
   assert!(result.events.is_empty());
   assert_eq!(result.cursor, 7);
@@ -103,7 +107,7 @@ fn notification_loss_cannot_hide_an_event_committed_during_wait() {
   });
   let service = JobEventLongPoll::new(store, waiter);
 
-  let result = run_ready(service.handle_query(query(Duration::from_secs(10)))).unwrap();
+  let result = run_ready(management_query(&service, query(Duration::from_secs(10)))).unwrap();
 
   assert_eq!(result.events[0].sequence, 1);
   assert_eq!(result.cursor, 1);
@@ -118,7 +122,7 @@ fn a_fresh_service_after_restart_reads_events_without_process_notifications() {
   });
 
   let restarted_service = JobEventLongPoll::new(store, Arc::clone(&waiter));
-  let result = run_ready(restarted_service.handle_query(query(Duration::from_secs(10)))).unwrap();
+  let result = run_ready(management_query(&restarted_service, query(Duration::from_secs(10)))).unwrap();
 
   assert_eq!(
     result.events.iter().map(|event| event.sequence).collect::<Vec<_>>(),
@@ -136,7 +140,7 @@ fn rejects_an_unbounded_wait_before_reading_the_store() {
   });
   let service = JobEventLongPoll::new(Arc::clone(&store), waiter);
 
-  assert!(run_ready(service.handle_query(query(Duration::from_secs(31)))).is_err());
+  assert!(run_ready(management_query(&service, query(Duration::from_secs(31)))).is_err());
   assert_eq!(store.reads.load(Ordering::SeqCst), 0);
 }
 

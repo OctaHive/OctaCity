@@ -11,7 +11,7 @@ pub(super) struct ProjectListParameters {
 
 pub(super) async fn create_project(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateProjectRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -30,15 +30,15 @@ pub(super) async fn create_project(
   let outcome = application
     .projects
     .create
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(project_mutation(outcome))))
 }
 
 pub(super) async fn rename_project(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(project_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<RenameProjectRequest>, JsonRejection>,
@@ -59,15 +59,15 @@ pub(super) async fn rename_project(
   let outcome = application
     .projects
     .rename
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(project_mutation(outcome))))
 }
 
 pub(super) async fn move_project(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(project_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<MoveProjectRequest>, JsonRejection>,
@@ -88,15 +88,15 @@ pub(super) async fn move_project(
   let outcome = application
     .projects
     .move_project
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(project_mutation(outcome))))
 }
 
 pub(super) async fn delete_project(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(project_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -109,15 +109,15 @@ pub(super) async fn delete_project(
   let outcome = application
     .projects
     .delete
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(delete_project_response(outcome))))
 }
 
 pub(super) async fn publish_project_policy(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(project_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<PublishProjectPolicyRequest>, JsonRejection>,
@@ -138,9 +138,9 @@ pub(super) async fn publish_project_policy(
   let outcome = application
     .definitions
     .publish_project_policy
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((
     StatusCode::CREATED,
     Json(MutationResponse {
@@ -155,7 +155,7 @@ pub(super) async fn publish_project_policy(
 
 pub(super) async fn get_project(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(project_id): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -165,15 +165,15 @@ pub(super) async fn get_project(
   let projection = application
     .projects
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(project_details(projection))))
 }
 
 pub(super) async fn list_projects(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   parameters: Result<Query<ProjectListParameters>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
@@ -188,8 +188,8 @@ pub(super) async fn list_projects(
   let page = application
     .projects
     .list
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(project_page(page, &request_id)?)))
 }

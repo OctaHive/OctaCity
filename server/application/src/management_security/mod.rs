@@ -12,7 +12,7 @@ pub use authorization::{
   MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction,
   ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationMapping, ManagementResource,
   ManagementResourceIdentity, ManagementResourceKind, ManagementResourcePattern, ManagementResourceResult,
-  ManagementVisibility, ManagementVisibilityKind,
+  ManagementVisibility, ManagementVisibilityKind, ManagementVisibilityView,
 };
 pub(crate) use authorization::{instance_resource, owned_collection_resource};
 pub use context::{
@@ -21,8 +21,9 @@ pub use context::{
   ManagementSecurityScope,
 };
 pub use dispatch::{
-  AuthorizedCommandHandler, AuthorizedQueryHandler, ManagementAuthorizationFailure, ManagementAuthorizationTarget,
-  ManagementCommandUseCase, ManagementHandlerError, ManagementQueryUseCase,
+  AuthorizedCommandHandler, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler,
+  AuthorizedQueryHandler, ManagementAuthorizationFailure, ManagementAuthorizationTarget, ManagementCommandUseCase,
+  ManagementHandlerError, ManagementQueryUseCase,
 };
 pub use policy::{ManagementAuthorizationPolicy, TrustedNetworkManagementPolicy};
 

@@ -9,7 +9,7 @@ use octacity_server_application::{
 
 pub(super) async fn get_build_result_retention(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
 ) -> Result<Json<BuildResultRetentionResource>, ApiError> {
   let query = application
@@ -19,16 +19,16 @@ pub(super) async fn get_build_result_retention(
   application
     .retention
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
     .map(resource)
     .map(Json)
-    .map_err(|error| application_error(error.classification(), &request_id))
+    .map_err(|error| authorized_handler_error(error, &request_id))
 }
 
 pub(super) async fn place_build_result_hold(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<PlaceBuildResultHoldRequest>, axum::extract::rejection::JsonRejection>,
@@ -41,7 +41,6 @@ pub(super) async fn place_build_result_hold(
       &build_id,
       body.reason,
       body.expires_at_unix_ms,
-      request_id.0.clone(),
       key.as_str(),
       now_unix_ms(&request_id)?,
     )
@@ -49,15 +48,15 @@ pub(super) async fn place_build_result_hold(
   let outcome = application
     .retention
     .place
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(mutation_response(outcome))))
 }
 
 pub(super) async fn release_build_result_hold(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(build_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<Json<BuildResultRetentionMutationResponse>, ApiError> {
@@ -65,22 +64,16 @@ pub(super) async fn release_build_result_hold(
   let expected = precondition(&headers, &request_id)?;
   let command = application
     .inputs
-    .release_build_result_hold(
-      &build_id,
-      expected.version(),
-      request_id.0.clone(),
-      key.as_str(),
-      now_unix_ms(&request_id)?,
-    )
+    .release_build_result_hold(&build_id, expected.version(), key.as_str(), now_unix_ms(&request_id)?)
     .map_err(|error| invalid_input(error, &request_id))?;
   application
     .retention
     .release
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
     .map(mutation_response)
     .map(Json)
-    .map_err(|error| application_error(error.classification(), &request_id))
+    .map_err(|error| authorized_handler_error(error, &request_id))
 }
 
 fn mutation_response(outcome: BuildResultRetentionCommandOutcome) -> BuildResultRetentionMutationResponse {

@@ -25,7 +25,7 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
     };
 
     assert!(matches!(
-      service.handle_command(command.clone()).await,
+      management_command(&service, command.clone()).await,
       Err(ManualTriggerError::Revision(RevisionResolutionError::Unavailable))
     ));
     assert_eq!(
@@ -39,7 +39,7 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
     let mut replay = command;
     replay.accepted_at = time(205);
     assert!(matches!(
-      service.handle_command(replay).await,
+      management_command(&service, replay).await,
       Err(error) if error.classification() == ApplicationFailure::Unavailable
     ));
     assert_eq!(resolver.calls(), 1);
@@ -75,13 +75,15 @@ fn exhausted_vcs_retries_become_a_dead_letter() {
     let service = DurableManualTriggerService::new(evaluator.clone(), work.clone(), policy, Duration::from_millis(100));
 
     assert!(
-      service
-        .handle_command(AcceptManualTriggerCommand {
+      management_command(
+        &service,
+        AcceptManualTriggerCommand {
           trigger: fixture.command,
           accepted_at: time(200),
-        })
-        .await
-        .is_err()
+        }
+      )
+      .await
+      .is_err()
     );
     let worker = ManualTriggerRetryWorker::new(evaluator, work.clone(), policy);
     let outcome = worker
@@ -120,12 +122,14 @@ fn checkpointed_revision_is_reused_after_the_build_transaction_fails() {
     let service = DurableManualTriggerService::new(evaluator.clone(), work.clone(), policy, Duration::from_millis(100));
 
     assert!(matches!(
-      service
-        .handle_command(AcceptManualTriggerCommand {
+      management_command(
+        &service,
+        AcceptManualTriggerCommand {
           trigger: fixture.command,
           accepted_at: time(200),
-        })
-        .await,
+        }
+      )
+      .await,
       Err(ManualTriggerError::Store(StoreError::Unavailable))
     ));
     assert_eq!(work.resolved_revision().unwrap().as_str(), "0123456789abcdef");

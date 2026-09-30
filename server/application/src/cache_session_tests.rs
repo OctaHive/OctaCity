@@ -18,10 +18,11 @@ use octacity_server_store::{
   testing::{CacheLeaseFixture, InMemoryCacheSessionStore},
 };
 
+use crate::test_support::management_query;
 use crate::{
   AgentCacheSessionUseCases, AgentOperation, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationOutcome,
   AgentRegistrationUseCases, AuthorizeAgentInput, AuthorizedAgent, BeginAgentCacheSessionInput, CacheSessionHandlers,
-  GetCacheSessionQuery, QueryHandler, RevokeAgentCacheSessionInput,
+  GetCacheSessionQuery, RevokeAgentCacheSessionInput,
 };
 
 struct RegistrationStub;
@@ -92,7 +93,7 @@ fn session_authority_is_replay_safe_isolated_and_immediately_revocable() {
   .unwrap();
   assert_eq!(isolated, CacheAuthorizationOutcome::Rejected);
 
-  let projection = run_ready(QueryHandler::handle_query(
+  let projection = run_ready(management_query(
     &service,
     GetCacheSessionQuery {
       session_id,

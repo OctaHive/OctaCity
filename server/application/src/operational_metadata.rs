@@ -1,5 +1,8 @@
+use async_trait::async_trait;
+
 use crate::{
-  ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResource,
+  ApplicationError, ManagementAction, ManagementAuthorizationGrant, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementQueryUseCase, ManagementRequestContext, ManagementResource,
   ManagementResourceKind, ManagementResourceResult, Query,
 };
 
@@ -34,4 +37,31 @@ pub struct ManagementOperationalMetadataProjection {
   pub agent_ingress_enabled: bool,
   /// Whether independently verified webhook ingress is enabled.
   pub webhook_ingress_enabled: bool,
+}
+
+/// Immutable application query service for safe deployment metadata.
+pub struct OperationalMetadataQueries {
+  metadata: ManagementOperationalMetadataProjection,
+}
+
+impl OperationalMetadataQueries {
+  /// Creates a query service from composition-owned deployment facts.
+  #[must_use]
+  pub const fn new(metadata: ManagementOperationalMetadataProjection) -> Self {
+    Self { metadata }
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<GetOperationalMetadataQuery> for OperationalMetadataQueries {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    _query: GetOperationalMetadataQuery,
+  ) -> Result<ManagementOperationalMetadataProjection, Self::Error> {
+    Ok(self.metadata)
+  }
 }

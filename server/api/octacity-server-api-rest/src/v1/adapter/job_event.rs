@@ -13,7 +13,7 @@ pub(super) struct JobEventReadParameters {
 
 pub(super) async fn read_job_events(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(job_id): Path<String>,
   parameters: Result<Query<JobEventReadParameters>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -30,8 +30,8 @@ pub(super) async fn read_job_events(
   let page = application
     .job_events
     .0
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(job_event_page(page))))
 }

@@ -11,11 +11,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-  ApplicationError, AttemptProjection, BuildProjection, Command, CommandHandler, DagCausalityProjection,
-  JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection,
-  ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind,
-  ManagementResourceResult, MutationDisposition, Query, QueryHandler, TriggerHistoryProjection,
-  management_security::instance_resource,
+  ApplicationError, AttemptProjection, BuildProjection, Command, DagCausalityProjection, JobAssignmentProjection,
+  JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, ManagementAction,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
+  MutationDisposition, Query, TriggerHistoryProjection, management_security::instance_resource,
 };
 
 const RETRY_ATTEMPT_NAMESPACE: Uuid = Uuid::from_u128(0xe0de_164d_8f62_5f1e_9e0c_02bd_619a_3861);
@@ -193,13 +192,18 @@ impl<S> BuildHandlers<S> {
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetBuildQuery> for BuildHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetBuildQuery> for BuildHandlers<S>
 where
   S: BuildQueryStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetBuildQuery) -> Result<BuildDetailsProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetBuildQuery,
+  ) -> Result<BuildDetailsProjection, Self::Error> {
     let build = self.store.build(query.build_id).await?;
     let current_attempt = self.store.latest_attempt(query.build_id).await?;
     Ok(BuildDetailsProjection {
@@ -223,37 +227,52 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetAttemptQuery> for BuildHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetAttemptQuery> for BuildHandlers<S>
 where
   S: BuildQueryStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetAttemptQuery) -> Result<AttemptDetailsProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetAttemptQuery,
+  ) -> Result<AttemptDetailsProjection, Self::Error> {
     project_attempt(self.store.attempt(query.attempt_id).await?)
   }
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetJobQuery> for BuildHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetJobQuery> for BuildHandlers<S>
 where
   S: BuildQueryStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetJobQuery) -> Result<JobProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetJobQuery,
+  ) -> Result<JobProjection, Self::Error> {
     project_job(self.store.job(query.job_id).await?)
   }
 }
 
 #[async_trait]
-impl<S> CommandHandler<CancelBuildCommand> for BuildHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CancelBuildCommand> for BuildHandlers<S>
 where
   S: BuildControlStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: CancelBuildCommand) -> Result<CancelBuildCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: CancelBuildCommand,
+  ) -> Result<CancelBuildCommandOutcome, Self::Error> {
     let outcome = self
       .store
       .cancel_build(CancelBuild {
@@ -273,13 +292,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<RetryBuildCommand> for BuildHandlers<S>
+impl<S> crate::ManagementCommandUseCase<RetryBuildCommand> for BuildHandlers<S>
 where
   S: BuildQueryStore + BuildControlStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: RetryBuildCommand) -> Result<RetryBuildCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: RetryBuildCommand,
+  ) -> Result<RetryBuildCommandOutcome, Self::Error> {
     let attempt_id = retry_attempt_id(command.build_id, &command.idempotency_key)?;
     let (attempt_number, jobs) = match self.store.attempt(attempt_id).await {
       Ok(replay) if replay.build_id == command.build_id => (

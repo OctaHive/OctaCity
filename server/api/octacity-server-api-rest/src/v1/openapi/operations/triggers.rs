@@ -1,7 +1,8 @@
 use octacity_server_application::{
   AcceptManualTriggerCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreateScheduleCommand,
-  CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, GetInternalTriggerQuery, GetScheduleQuery,
-  ListInternalTriggersQuery, ManageWebhookRegistrationCommand, PublishInternalTriggerVersionCommand,
+  CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteManagedWebhookRegistrationCommand,
+  GetInternalTriggerQuery, GetScheduleQuery, ListInternalTriggersQuery, ObserveManagedWebhookRegistrationCommand,
+  PublishInternalTriggerVersionCommand, RotateManagedWebhookRegistrationCommand,
 };
 
 use super::{ManagementOperation, ParameterProfile};
@@ -114,7 +115,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
-    ManageWebhookRegistrationCommand,
+    ObserveManagedWebhookRegistrationCommand,
     "POST",
     "/api/v1/webhook-integrations/managed/{integration_id}/observe",
     "observeManagedWebhookIntegration",
@@ -128,7 +129,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
-    ManageWebhookRegistrationCommand,
+    RotateManagedWebhookRegistrationCommand,
     "POST",
     "/api/v1/webhook-integrations/managed/{integration_id}/rotate",
     "rotateManagedWebhookIntegration",
@@ -142,7 +143,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_capability_unavailable_response(),
   operation!(
-    ManageWebhookRegistrationCommand,
+    DeleteManagedWebhookRegistrationCommand,
     "DELETE",
     "/api/v1/webhook-integrations/managed/{integration_id}",
     "deleteManagedWebhookIntegration",

@@ -81,7 +81,7 @@ policy_file = "job-spec-policy.json"
 }
 
 #[tokio::test]
-async fn startup_separates_ingress_and_exposes_operational_metadata() {
+async fn startup_separates_ingress_and_exposes_health_checks() {
   let _listener_guard = LISTENER_TEST_LOCK.lock().await;
   let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
     .await
@@ -98,34 +98,6 @@ async fn startup_separates_ingress_and_exposes_operational_metadata() {
     assert!(response.headers().contains_key("x-request-id"));
     assert_eq!(response.text().await.unwrap(), expected_body);
   }
-
-  let metadata: serde_json::Value = client
-    .get(format!("{origin}/api/v1/operations/metadata"))
-    .send()
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-  assert_eq!(
-    metadata["security"]["management"]["mode"],
-    "trusted_network_unauthenticated"
-  );
-  assert_eq!(metadata["security"]["management"]["operator_authentication"], false);
-  assert_eq!(metadata["security"]["agent"]["authentication_required"], true);
-  assert_eq!(metadata["security"]["webhook"]["authentication_required"], true);
-  assert_eq!(metadata["ingress"]["agent_enabled"], true);
-  assert_eq!(metadata["ingress"]["webhook_enabled"], false);
-  assert_eq!(metadata["ingress"]["listeners_separate"], true);
-  assert_eq!(
-    metadata["capabilities"]
-      .as_array()
-      .unwrap()
-      .iter()
-      .find(|capability| capability["name"] == "dynamic_agent_provisioning")
-      .unwrap()["status"],
-    "unavailable"
-  );
 
   let response = client
     .get(format!("http://{}/health/live", runtime.agent_addr().unwrap()))

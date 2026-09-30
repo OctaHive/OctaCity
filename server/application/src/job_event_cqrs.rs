@@ -7,8 +7,7 @@ use serde_json::Value;
 
 use crate::{
   ApplicationError, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
-  ManagementResourceKind, ManagementResourceResult, Query, QueryHandler,
-  management_security::owned_collection_resource,
+  ManagementResourceKind, ManagementResourceResult, Query, management_security::owned_collection_resource,
 };
 
 /// Greatest bounded wait accepted by the management Job-event query.
@@ -129,14 +128,19 @@ where
 }
 
 #[async_trait]
-impl<S, W> QueryHandler<ReadJobEventsQuery> for JobEventLongPoll<S, W>
+impl<S, W> crate::ManagementQueryUseCase<ReadJobEventsQuery> for JobEventLongPoll<S, W>
 where
   S: JobEventReadStore + 'static,
   W: JobEventWaiter + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ReadJobEventsQuery) -> Result<JobEventPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ReadJobEventsQuery,
+  ) -> Result<JobEventPageProjection, Self::Error> {
     self.read(query).await
   }
 }

@@ -18,7 +18,7 @@ use url::Url;
 use crate::{
   AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  Query, QueryHandler, agent_lease,
+  Query, agent_lease,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -302,13 +302,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetCacheSessionQuery> for CacheSessionHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetCacheSessionQuery> for CacheSessionHandlers<S>
 where
   S: CacheSessionStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetCacheSessionQuery) -> Result<CacheSessionProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetCacheSessionQuery,
+  ) -> Result<CacheSessionProjection, Self::Error> {
     project(
       self.store.cache_session(query.session_id).await?,
       query_timestamp(query.observed_at_unix_ms)?,
@@ -317,13 +322,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<ListBuildCacheSessionsQuery> for CacheSessionHandlers<S>
+impl<S> crate::ManagementQueryUseCase<ListBuildCacheSessionsQuery> for CacheSessionHandlers<S>
 where
   S: CacheSessionStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListBuildCacheSessionsQuery) -> Result<Vec<CacheSessionProjection>, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListBuildCacheSessionsQuery,
+  ) -> Result<Vec<CacheSessionProjection>, Self::Error> {
     let observed_at = query_timestamp(query.observed_at_unix_ms)?;
     self
       .store

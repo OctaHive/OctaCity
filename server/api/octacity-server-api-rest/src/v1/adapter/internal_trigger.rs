@@ -10,7 +10,7 @@ pub(super) struct InternalTriggerListParameters {
 
 pub(super) async fn create_internal_trigger(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<InternalTriggerDefinitionRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -28,9 +28,9 @@ pub(super) async fn create_internal_trigger(
   let outcome = application
     .internal_triggers
     .create
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((
     StatusCode::CREATED,
     Json(MutationResponse {
@@ -42,7 +42,7 @@ pub(super) async fn create_internal_trigger(
 
 pub(super) async fn publish_internal_trigger(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(trigger_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<InternalTriggerDefinitionRequest>, JsonRejection>,
@@ -63,9 +63,9 @@ pub(super) async fn publish_internal_trigger(
   let outcome = application
     .internal_triggers
     .publish
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((
     StatusCode::OK,
     Json(MutationResponse {
@@ -77,7 +77,7 @@ pub(super) async fn publish_internal_trigger(
 
 pub(super) async fn get_internal_trigger(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path((trigger_id, version)): Path<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -87,15 +87,15 @@ pub(super) async fn get_internal_trigger(
   let projection = application
     .internal_triggers
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(internal_trigger_resource(projection))))
 }
 
 pub(super) async fn list_internal_triggers(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   parameters: Result<Query<InternalTriggerListParameters>, QueryRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
   let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
@@ -106,9 +106,9 @@ pub(super) async fn list_internal_triggers(
   let page = application
     .internal_triggers
     .list
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(internal_trigger_page(page, &request_id)?)))
 }
 

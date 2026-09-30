@@ -10,10 +10,10 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ExecutionGuaranteeProjection, ManagementAction,
+  ApplicationError, Command, CommandTransaction, ExecutionGuaranteeProjection, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind,
   ManagementResourceResult, MutationDisposition, PlatformArchitectureProjection, PlatformOsProjection,
-  PlatformProjection, Query, QueryHandler, management_security::instance_resource,
+  PlatformProjection, Query, management_security::instance_resource,
 };
 
 /// Creates one static Agent Pool and its initial version.
@@ -299,13 +299,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateAgentPoolCommand> for AgentPoolHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateAgentPoolCommand> for AgentPoolHandlers<S>
 where
   S: AgentPoolStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: CreateAgentPoolCommand) -> Result<AgentPoolCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: CreateAgentPoolCommand,
+  ) -> Result<AgentPoolCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -338,14 +343,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<PublishAgentPoolVersionCommand> for AgentPoolHandlers<S>
+impl<S> crate::ManagementCommandUseCase<PublishAgentPoolVersionCommand> for AgentPoolHandlers<S>
 where
   S: AgentPoolStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: PublishAgentPoolVersionCommand,
   ) -> Result<AgentPoolCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -379,14 +386,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<DeleteAgentPoolCommand> for AgentPoolHandlers<S>
+impl<S> crate::ManagementCommandUseCase<DeleteAgentPoolCommand> for AgentPoolHandlers<S>
 where
   S: AgentPoolStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: DeleteAgentPoolCommand,
   ) -> Result<DeleteAgentPoolCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -394,13 +403,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetAgentPoolQuery> for AgentPoolHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetAgentPoolQuery> for AgentPoolHandlers<S>
 where
   S: AgentPoolStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetAgentPoolQuery) -> Result<AgentPoolProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetAgentPoolQuery,
+  ) -> Result<AgentPoolProjection, Self::Error> {
     Ok(
       self
         .store
@@ -412,13 +426,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<ListAgentPoolsQuery> for AgentPoolHandlers<S>
+impl<S> crate::ManagementQueryUseCase<ListAgentPoolsQuery> for AgentPoolHandlers<S>
 where
   S: AgentPoolStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListAgentPoolsQuery) -> Result<AgentPoolPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListAgentPoolsQuery,
+  ) -> Result<AgentPoolPageProjection, Self::Error> {
     let page = self
       .store
       .list_agent_pools(ListAgentPools::new(query.after, query.limit)?)

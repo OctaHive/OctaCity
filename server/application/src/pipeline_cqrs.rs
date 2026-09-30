@@ -8,9 +8,9 @@ use octacity_server_store::{CreatePipeline, IdempotencyKey, PipelineStore, Publi
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
-  PipelineProjection, ProjectionError, Query, QueryHandler,
+  PipelineProjection, ProjectionError, Query,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -149,13 +149,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreatePipelineCommand> for PipelineHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreatePipelineCommand> for PipelineHandlers<S>
 where
   S: PipelineStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: CreatePipelineCommand) -> Result<PipelineCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: CreatePipelineCommand,
+  ) -> Result<PipelineCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -189,14 +194,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<PublishPipelineVersionCommand> for PipelineHandlers<S>
+impl<S> crate::ManagementCommandUseCase<PublishPipelineVersionCommand> for PipelineHandlers<S>
 where
   S: PipelineStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: PublishPipelineVersionCommand,
   ) -> Result<PipelineCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -204,13 +211,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetPipelineQuery> for PipelineHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetPipelineQuery> for PipelineHandlers<S>
 where
   S: PipelineStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetPipelineQuery) -> Result<PipelineProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetPipelineQuery,
+  ) -> Result<PipelineProjection, Self::Error> {
     self
       .store
       .pipeline_version(query.pipeline_id, query.version)

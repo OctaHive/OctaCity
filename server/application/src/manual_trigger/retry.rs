@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use super::{AcceptManualTriggerCommand, ManualTriggerError, ManualTriggerOutcome, ManualTriggerService};
 use crate::{
-  ApplicationFailure, CommandHandler, DurableRetryPolicy, diagnostic::bounded_diagnostic,
+  ApplicationFailure, DurableRetryPolicy, diagnostic::bounded_diagnostic,
   manual_trigger::service::manual_trigger_identity,
 };
 
@@ -64,10 +64,15 @@ impl DurableManualTriggerService {
 }
 
 #[async_trait]
-impl CommandHandler<AcceptManualTriggerCommand> for DurableManualTriggerService {
+impl crate::ManagementCommandUseCase<AcceptManualTriggerCommand> for DurableManualTriggerService {
   type Error = ManualTriggerError;
 
-  async fn handle_command(&self, command: AcceptManualTriggerCommand) -> Result<ManualTriggerOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: AcceptManualTriggerCommand,
+  ) -> Result<ManualTriggerOutcome, Self::Error> {
     let (occurrence_id, intent_digest) = manual_trigger_identity(&command.trigger)?;
     let payload = serde_json::to_value(&command).map_err(|_| ManualTriggerError::SnapshotEncoding)?;
     let owner = WorkerOwner::new(format!("manual-trigger:{}", uuid::Uuid::new_v4()))

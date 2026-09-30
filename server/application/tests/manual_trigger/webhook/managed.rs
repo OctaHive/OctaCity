@@ -14,7 +14,7 @@ fn managed_webhook_lifecycle_converges_after_lost_responses_and_reports_unsuppor
     assert!(!debug.contains(&protected.verification_material_handle));
     assert!(!debug.contains(&protected.administration_credential_handle));
 
-    let pending = service.handle_command(protected).await.unwrap();
+    let pending = management_command(&service, protected).await.unwrap();
     assert_eq!(pending.integration_id, first_integration);
     assert_eq!(pending.registration, None);
     assert!(provider.calls().is_empty(), "commands must not race the durable worker");
@@ -47,15 +47,12 @@ fn managed_webhook_lifecycle_converges_after_lost_responses_and_reports_unsuppor
       .unwrap();
     assert_eq!(retried.completed, 1);
 
-    let created = service
-      .handle_command(managed_create_command(
-        &fixture,
-        id::<IntegrationId>(93),
-        id::<TriggerId>(94),
-        time(200),
-      ))
-      .await
-      .unwrap();
+    let created = management_command(
+      &service,
+      managed_create_command(&fixture, id::<IntegrationId>(93), id::<TriggerId>(94), time(200)),
+    )
+    .await
+    .unwrap();
     assert_eq!(created.integration_id, first_integration);
     assert_eq!(created.trigger.id, first_trigger);
     assert_eq!(
@@ -66,15 +63,12 @@ fn managed_webhook_lifecycle_converges_after_lost_responses_and_reports_unsuppor
     assert_eq!(provider.calls().len(), 2);
     assert!(provider.calls().iter().all(|call| call.1 == first_integration));
 
-    let replayed = service
-      .handle_command(managed_create_command(
-        &fixture,
-        id::<IntegrationId>(95),
-        id::<TriggerId>(96),
-        time(300),
-      ))
-      .await
-      .unwrap();
+    let replayed = management_command(
+      &service,
+      managed_create_command(&fixture, id::<IntegrationId>(95), id::<TriggerId>(96), time(300)),
+    )
+    .await
+    .unwrap();
     assert_eq!(replayed.integration_id, first_integration);
     assert_eq!(replayed.disposition, ApplicationDisposition::Replayed);
     assert_eq!(
@@ -83,78 +77,78 @@ fn managed_webhook_lifecycle_converges_after_lost_responses_and_reports_unsuppor
       "a lost REST response must replay local state"
     );
 
-    for (operation, key, expected) in [
-      (
-        ManagedWebhookOperation::Observe,
-        "observe-managed",
-        ManagedWebhookRegistrationStatus::Active,
-      ),
-      (
-        ManagedWebhookOperation::Rotate,
-        "rotate-managed",
-        ManagedWebhookRegistrationStatus::Active,
-      ),
-      (
-        ManagedWebhookOperation::Delete,
-        "delete-managed",
-        ManagedWebhookRegistrationStatus::Missing,
-      ),
-    ] {
-      let outcome = service
-        .handle_command(ManageWebhookRegistrationCommand {
-          integration_id: first_integration,
-          operation,
-          idempotency_key: key.parse().unwrap(),
-          observed_at: time(400),
-        })
-        .await
-        .unwrap();
-      assert_eq!(
-        outcome.registration.unwrap().status,
-        ManagedWebhookRegistrationStatus::Active
-      );
-      assert_eq!(outcome.integration_id, first_integration);
-      let completed = worker
-        .run_once(
-          WorkerOwner::new(format!("webhook:managed-{key}")).unwrap(),
-          time(410),
-          time(500),
-          1,
+    macro_rules! exercise_operation {
+      ($command:ident, $key:literal, $expected:expr) => {{
+        let outcome = management_command(
+          &service,
+          $command {
+            integration_id: first_integration,
+            idempotency_key: $key.parse().unwrap(),
+            observed_at: time(400),
+          },
         )
         .await
         .unwrap();
-      assert_eq!(completed.completed, 1);
-      assert_eq!(
-        store
-          .state
-          .lock()
-          .unwrap()
-          .record
-          .as_ref()
-          .unwrap()
-          .registration
-          .as_ref()
-          .unwrap()
-          .status,
-        expected.into()
-      );
+        assert_eq!(
+          outcome.registration.unwrap().status,
+          ManagedWebhookRegistrationStatus::Active
+        );
+        assert_eq!(outcome.integration_id, first_integration);
+        let completed = worker
+          .run_once(
+            WorkerOwner::new(format!("webhook:managed-{}", $key)).unwrap(),
+            time(410),
+            time(500),
+            1,
+          )
+          .await
+          .unwrap();
+        assert_eq!(completed.completed, 1);
+        assert_eq!(
+          store
+            .state
+            .lock()
+            .unwrap()
+            .record
+            .as_ref()
+            .unwrap()
+            .registration
+            .as_ref()
+            .unwrap()
+            .status,
+          $expected.into()
+        );
+      }};
     }
+    exercise_operation!(
+      ObserveManagedWebhookRegistrationCommand,
+      "observe-managed",
+      ManagedWebhookRegistrationStatus::Active
+    );
+    exercise_operation!(
+      RotateManagedWebhookRegistrationCommand,
+      "rotate-managed",
+      ManagedWebhookRegistrationStatus::Active
+    );
+    exercise_operation!(
+      DeleteManagedWebhookRegistrationCommand,
+      "delete-managed",
+      ManagedWebhookRegistrationStatus::Missing
+    );
     assert!(!store.state.lock().unwrap().record.as_ref().unwrap().enabled);
 
     let unsupported_store = Arc::new(ManagedExternalStore::default());
-    let unsupported = managed_service(
+    let unsupported_service = managed_service(
       unsupported_store.clone(),
       Arc::new(ManagedProviderFixture::new(
         Some(ManagedWebhookOperation::Create),
         false,
       )),
+    );
+    let unsupported = management_command(
+      &unsupported_service,
+      managed_create_command(&fixture, id::<IntegrationId>(97), id::<TriggerId>(98), time(500)),
     )
-    .handle_command(managed_create_command(
-      &fixture,
-      id::<IntegrationId>(97),
-      id::<TriggerId>(98),
-      time(500),
-    ))
     .await
     .unwrap_err();
     assert_eq!(unsupported.classification(), ApplicationFailure::CapabilityUnavailable);

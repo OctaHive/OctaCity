@@ -60,6 +60,7 @@ mod agent_pool;
 mod application;
 mod artifact;
 mod audit;
+mod authorization;
 mod cache;
 mod configuration;
 mod error;
@@ -68,6 +69,7 @@ mod internal_trigger;
 mod job_event;
 mod log_search;
 mod manual_trigger;
+mod operational;
 mod pipeline;
 mod project;
 mod representations;
@@ -75,6 +77,8 @@ mod retention;
 mod routes;
 mod schedule;
 mod webhook;
+
+use authorization::authorized_handler_error;
 
 pub(crate) use artifact::DEFAULT_ARTIFACT_LIMIT;
 pub(crate) use audit::DEFAULT_AUDIT_LIMIT;
@@ -88,7 +92,8 @@ pub use application::{
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
   JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
+  OperationalMetadataManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use audit::list_audit_facts;
@@ -106,13 +111,13 @@ use job_event::read_job_events;
 pub(crate) use log_search::DEFAULT_LOG_SEARCH_LIMIT;
 use log_search::search_build_logs;
 use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition};
+use operational::get_operational_metadata;
 use pipeline::{create_pipeline, get_pipeline, publish_pipeline};
 use project::{
   create_project, delete_project, get_project, list_projects, move_project, publish_project_policy, rename_project,
 };
 use representations::*;
 use retention::{get_build_result_retention, place_build_result_hold, release_build_result_hold};
-pub(crate) use routes::register_management_get;
 pub use routes::{ManagementAuthorizationOperation, management_authorization_operations, router};
 use schedule::{create_scheduled_trigger_definition, get_schedule};
 use webhook::{
@@ -147,6 +152,7 @@ pub struct ManagementApplication {
   log_search: BuildLogSearchManagementApplication,
   retention: BuildResultRetentionManagementApplication,
   audit: AuditManagementApplication,
+  operational: OperationalMetadataManagementApplication,
 }
 
 impl ManagementApplication {
@@ -158,6 +164,7 @@ impl ManagementApplication {
     handlers: ManagementApplicationHandlers,
   ) -> Result<Self, ManagementInputError> {
     let ManagementApplicationHandlers {
+      operational,
       catalog,
       agents: agent_management,
       execution,
@@ -206,6 +213,7 @@ impl ManagementApplication {
       log_search,
       retention,
       audit,
+      operational,
     })
   }
 }

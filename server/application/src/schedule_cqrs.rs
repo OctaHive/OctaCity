@@ -13,9 +13,9 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationMapping,
-  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, ManualSourceSelection,
-  ManualTriggerCommand, ManualTriggerError, ManualTriggerService, MutationDisposition, Query, QueryHandler,
+  ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
+  ManagementResourceKind, ManagementResourceResult, ManualSourceSelection, ManualTriggerCommand, ManualTriggerError,
+  ManualTriggerService, MutationDisposition, Query,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -137,13 +137,18 @@ impl<S> ScheduleHandlers<S> {
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateScheduleCommand> for ScheduleHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateScheduleCommand> for ScheduleHandlers<S>
 where
   S: ScheduleStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: CreateScheduleCommand) -> Result<ScheduleCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: CreateScheduleCommand,
+  ) -> Result<ScheduleCommandOutcome, Self::Error> {
     command.schedule.validate().map_err(|_| ApplicationError::invalid())?;
     let next_occurrence_at = command
       .schedule
@@ -181,13 +186,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetScheduleQuery> for ScheduleHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetScheduleQuery> for ScheduleHandlers<S>
 where
   S: ScheduleStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetScheduleQuery) -> Result<ScheduleProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetScheduleQuery,
+  ) -> Result<ScheduleProjection, Self::Error> {
     let record = self.store.schedule(query.trigger_id, query.version).await?;
     let build =
       serde_json::from_value(record.definition).map_err(|_| crate::ProjectionError::InvalidScheduleSnapshot)?;
@@ -311,29 +321,37 @@ mod tests {
   use uuid::Uuid;
 
   use super::*;
+  use crate::ManagementCommandUseCase as _;
 
   #[test]
   fn rejects_a_schedule_without_a_durable_successor() {
     let handlers = ScheduleHandlers::new(Arc::new(InMemoryStore::new()));
-    let result = run_ready(handlers.handle_command(CreateScheduleCommand {
-      id: TriggerId::from_uuid(Uuid::from_u128(1)).unwrap(),
-      version: TriggerVersion::INITIAL,
-      configuration_id: BuildConfigurationId::from_uuid(Uuid::from_u128(2)).unwrap(),
-      configuration_version: BuildConfigurationVersion::INITIAL,
-      enabled: true,
-      schedule: ScheduleDefinition {
-        expression: "0 0 0 2 1 * 2026".to_owned(),
-        timezone: "UTC".to_owned(),
-        missed_run_policy: MissedRunPolicy::RunOnce,
+    let context =
+      crate::ManagementRequestContext::trusted_network(crate::ManagementRequestId::new(Uuid::from_u128(3)).unwrap());
+    let grant = crate::ManagementAuthorizationGrant::new(crate::ManagementVisibility::all());
+    let result = run_ready(handlers.execute_management_command(
+      &context,
+      &grant,
+      CreateScheduleCommand {
+        id: TriggerId::from_uuid(Uuid::from_u128(1)).unwrap(),
+        version: TriggerVersion::INITIAL,
+        configuration_id: BuildConfigurationId::from_uuid(Uuid::from_u128(2)).unwrap(),
+        configuration_version: BuildConfigurationVersion::INITIAL,
+        enabled: true,
+        schedule: ScheduleDefinition {
+          expression: "0 0 0 2 1 * 2026".to_owned(),
+          timezone: "UTC".to_owned(),
+          missed_run_policy: MissedRunPolicy::RunOnce,
+        },
+        build: ScheduledBuildDefinition {
+          source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("0123456789abcdef").unwrap()),
+          parameters: BTreeMap::new(),
+          priority: 50,
+        },
+        idempotency_key: IdempotencyKey::new("finite-schedule").unwrap(),
+        created_at: Timestamp::from_unix_millis(1_767_225_600_000).unwrap(),
       },
-      build: ScheduledBuildDefinition {
-        source: ManualSourceSelection::ExactRevision(ImmutableRevision::new("0123456789abcdef").unwrap()),
-        parameters: BTreeMap::new(),
-        priority: 50,
-      },
-      idempotency_key: IdempotencyKey::new("finite-schedule").unwrap(),
-      created_at: Timestamp::from_unix_millis(1_767_225_600_000).unwrap(),
-    }));
+    ));
 
     assert!(matches!(result, Err(ApplicationError::InvalidInput)));
   }

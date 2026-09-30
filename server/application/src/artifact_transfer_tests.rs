@@ -9,11 +9,12 @@ use std::{
   time::Duration,
 };
 
+use crate::test_support::management_query;
 use crate::{
   AgentArtifactError, AgentArtifactTransferUseCases, AgentOperation, AgentRegistrationError, AgentRegistrationInput,
   AgentRegistrationOutcome, AgentRegistrationUseCases, ArtifactHandlers, AuthorizeAgentInput,
   AuthorizeArtifactDownloadQuery, AuthorizedAgent, BeginAgentArtifactUploadInput, CompleteAgentArtifactUploadInput,
-  GetArtifactQuery, ListBuildArtifactsQuery, QueryHandler,
+  GetArtifactQuery, ListBuildArtifactsQuery,
 };
 use async_trait::async_trait;
 use octacity_artifact_store::{
@@ -127,10 +128,10 @@ fn upload_service_replays_reservations_and_publishes_only_verified_bytes() {
   let upload = run_ready(store.artifact_upload(first.upload_id.parse().unwrap())).unwrap();
   assert!(upload.artifact.state().is_visible());
   let artifact_id = upload.artifact.identity().artifact_id;
-  let projection = run_ready(QueryHandler::handle_query(&service, GetArtifactQuery { artifact_id })).unwrap();
+  let projection = run_ready(management_query(&service, GetArtifactQuery { artifact_id })).unwrap();
   assert_eq!(projection.name, "results.xml");
   assert_eq!(projection.media_type, "application/xml");
-  let listed = run_ready(QueryHandler::handle_query(
+  let listed = run_ready(management_query(
     &service,
     ListBuildArtifactsQuery {
       build_id: id(2),
@@ -139,7 +140,7 @@ fn upload_service_replays_reservations_and_publishes_only_verified_bytes() {
   ))
   .unwrap();
   assert_eq!(listed, vec![projection.clone()]);
-  let download = run_ready(QueryHandler::handle_query(
+  let download = run_ready(management_query(
     &service,
     AuthorizeArtifactDownloadQuery {
       artifact_id,
@@ -174,9 +175,9 @@ fn published_metadata_is_not_returned_after_its_object_fails_verification() {
   let artifact_id = upload.artifact.identity().artifact_id;
   reject_integrity.store(true, Ordering::Relaxed);
 
-  let get = run_ready(QueryHandler::handle_query(&service, GetArtifactQuery { artifact_id })).unwrap_err();
+  let get = run_ready(management_query(&service, GetArtifactQuery { artifact_id })).unwrap_err();
   assert_eq!(get.classification(), crate::ApplicationFailure::Unavailable);
-  let list = run_ready(QueryHandler::handle_query(
+  let list = run_ready(management_query(
     &service,
     ListBuildArtifactsQuery {
       build_id: id(2),

@@ -5,8 +5,9 @@ use axum::{body::to_bytes, http::StatusCode};
 use octacity_server_application::{
   ApplicationError, BuildResultHoldProjection, BuildResultHoldStateProjection, BuildResultRetentionCommandOutcome,
   BuildResultRetentionDeadlinesProjection, BuildResultRetentionProjection, BuildResultVisibilityProjection,
-  CommandHandler, GetBuildResultRetentionQuery, MutationDisposition, PlaceBuildResultHoldCommand, QueryHandler,
-  ReleaseBuildResultHoldCommand, RetentionAuditIdentityProjection, RetentionHoldVersion, Timestamp,
+  GetBuildResultRetentionQuery, ManagementAuthorizationGrant, ManagementCommandUseCase, ManagementQueryUseCase,
+  ManagementRequestContext, MutationDisposition, PlaceBuildResultHoldCommand, ReleaseBuildResultHoldCommand,
+  RetentionAuditIdentityProjection, RetentionHoldVersion, Timestamp,
 };
 use tower::ServiceExt as _;
 
@@ -57,11 +58,13 @@ struct RetentionApplication {
 }
 
 #[async_trait]
-impl QueryHandler<GetBuildResultRetentionQuery> for RetentionApplication {
+impl ManagementQueryUseCase<GetBuildResultRetentionQuery> for RetentionApplication {
   type Error = ApplicationError;
 
-  async fn handle_query(
+  async fn execute_management_query(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     query: GetBuildResultRetentionQuery,
   ) -> Result<BuildResultRetentionProjection, Self::Error> {
     Ok(retention_projection!(
@@ -75,11 +78,13 @@ impl QueryHandler<GetBuildResultRetentionQuery> for RetentionApplication {
 }
 
 #[async_trait]
-impl CommandHandler<PlaceBuildResultHoldCommand> for RetentionApplication {
+impl ManagementCommandUseCase<PlaceBuildResultHoldCommand> for RetentionApplication {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     command: PlaceBuildResultHoldCommand,
   ) -> Result<BuildResultRetentionCommandOutcome, Self::Error> {
     let mut count = self.placement_count.lock().unwrap();
@@ -103,11 +108,13 @@ impl CommandHandler<PlaceBuildResultHoldCommand> for RetentionApplication {
 }
 
 #[async_trait]
-impl CommandHandler<ReleaseBuildResultHoldCommand> for RetentionApplication {
+impl ManagementCommandUseCase<ReleaseBuildResultHoldCommand> for RetentionApplication {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
     command: ReleaseBuildResultHoldCommand,
   ) -> Result<BuildResultRetentionCommandOutcome, Self::Error> {
     if command.expected_version.get() != 1 {

@@ -12,9 +12,9 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, BuildConfigurationProjection, Command, CommandHandler, CommandTransaction, ManagementAction,
+  ApplicationError, BuildConfigurationProjection, Command, CommandTransaction, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, Query, QueryHandler, RepositoryProjection,
+  MutationDisposition, Query, RepositoryProjection,
   management_security::{instance_resource, owned_collection_resource},
   projections::validate_configuration_projection,
 };
@@ -249,13 +249,18 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateRepositoryCommand> for BuildConfigurationHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateRepositoryCommand> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(&self, command: CreateRepositoryCommand) -> Result<RepositoryCommandOutcome, Self::Error> {
+  async fn execute_management_command(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: CreateRepositoryCommand,
+  ) -> Result<RepositoryCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
   }
 }
@@ -288,14 +293,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<PublishRepositoryVersionCommand> for BuildConfigurationHandlers<S>
+impl<S> crate::ManagementCommandUseCase<PublishRepositoryVersionCommand> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: PublishRepositoryVersionCommand,
   ) -> Result<RepositoryCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -332,13 +339,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetRepositoryQuery> for BuildConfigurationHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetRepositoryQuery> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetRepositoryQuery) -> Result<RepositoryProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetRepositoryQuery,
+  ) -> Result<RepositoryProjection, Self::Error> {
     self
       .store
       .repository_version(query.repository_id, query.version)
@@ -349,14 +361,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateBuildConfigurationCommand> for BuildConfigurationHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateBuildConfigurationCommand> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: CreateBuildConfigurationCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -396,14 +410,16 @@ fn validate_configuration_input(definition: &BuildConfigurationDefinition) -> Re
 }
 
 #[async_trait]
-impl<S> CommandHandler<PublishBuildConfigurationVersionCommand> for BuildConfigurationHandlers<S>
+impl<S> crate::ManagementCommandUseCase<PublishBuildConfigurationVersionCommand> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: PublishBuildConfigurationVersionCommand,
   ) -> Result<BuildConfigurationCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -411,13 +427,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetBuildConfigurationQuery> for BuildConfigurationHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetBuildConfigurationQuery> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetBuildConfigurationQuery) -> Result<BuildConfigurationProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetBuildConfigurationQuery,
+  ) -> Result<BuildConfigurationProjection, Self::Error> {
     self
       .store
       .build_configuration_version(query.configuration_id, query.version)

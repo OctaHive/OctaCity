@@ -9,8 +9,8 @@ use octacity_server_api_webhook::{WebhookApplication, webhook_router};
 use octacity_server_application::{
   AgentExecutionService, AgentHeartbeatService, AgentLeaseService, AgentRegistrationService, AgentTelemetryService,
   ArtifactHandlers, BuildRetentionWorker, CacheDataPlaneService, CacheSessionHandlers, DurableRetryPolicy,
-  InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker, RevisionResolver,
-  ScheduleWorker, WebhookDeliveryWorker,
+  InternalTriggerWorker, LeaseExpiryWorker, LogIndexingWorker, ManagedWebhookRegistrationWorker,
+  ManagementOperationalMetadataProjection, RevisionResolver, ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_store::WorkerOwner;
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
@@ -154,6 +154,12 @@ impl ServerRuntime {
       artifacts: artifact_service.clone(),
       cache: cache_service.clone(),
       log_search_index: log_search_index.clone(),
+      operational_metadata: ManagementOperationalMetadataProjection {
+        management_externally_reachable: config.management_externally_reachable(),
+        external_access_acknowledged: config.unauthenticated_management_acknowledged(),
+        agent_ingress_enabled: config.agent_bind().is_some(),
+        webhook_ingress_enabled: config.webhook_bind().is_some(),
+      },
     })?;
     let worker_health = Arc::new(WorkerHealth::new(
       EXPIRY_WORKER_NAME,

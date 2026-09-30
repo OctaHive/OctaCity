@@ -100,7 +100,8 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
         })
     })
     .collect::<BTreeSet<_>>();
-  let registered = MANAGEMENT_OPERATIONS
+  let registered = management_authorization_operations();
+  let registered_contract = registered
     .iter()
     .map(|operation| {
       (
@@ -110,15 +111,14 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       )
     })
     .collect::<BTreeSet<_>>();
-  assert_eq!(documented, registered);
-  let authorized = management_authorization_operations();
+  assert_eq!(documented, registered_contract);
   validate_authorization_inventory(
     MANAGEMENT_OPERATIONS.iter().map(|operation| operation.operation_id),
-    authorized.iter().map(|operation| operation.operation_id),
+    registered.iter().map(|operation| operation.operation_id),
   )
   .expect("every registered management operation must have exactly one typed authorization mapping");
   assert_eq!(
-    authorized
+    registered
       .iter()
       .map(|operation| (operation.method, operation.path, operation.operation_id))
       .collect::<BTreeSet<_>>(),
@@ -127,11 +127,11 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       .map(|operation| (operation.method, operation.path, operation.operation_id))
       .collect::<BTreeSet<_>>()
   );
-  for operation in &authorized {
+  for operation in &registered {
     assert!(!operation.request_type.is_empty());
     assert!(operation.authorization.is_supported());
   }
-  let create_project = authorized
+  let create_project = registered
     .iter()
     .find(|operation| operation.operation_id == "createProject")
     .unwrap();
@@ -143,6 +143,31 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     create_project.authorization,
     <CreateProjectCommand as ManagementAuthorizationTarget>::AUTHORIZATION
   );
+  for (operation_id, expected, action) in [
+    (
+      "observeManagedWebhookIntegration",
+      <ObserveManagedWebhookRegistrationCommand as ManagementAuthorizationTarget>::AUTHORIZATION,
+      ManagementAction::View,
+    ),
+    (
+      "rotateManagedWebhookIntegration",
+      <RotateManagedWebhookRegistrationCommand as ManagementAuthorizationTarget>::AUTHORIZATION,
+      ManagementAction::Update,
+    ),
+    (
+      "deleteManagedWebhookIntegration",
+      <DeleteManagedWebhookRegistrationCommand as ManagementAuthorizationTarget>::AUTHORIZATION,
+      ManagementAction::Delete,
+    ),
+  ] {
+    let authorization = registered
+      .iter()
+      .find(|operation| operation.operation_id == operation_id)
+      .unwrap()
+      .authorization;
+    assert_eq!(authorization, expected);
+    assert_eq!(authorization.action(), action);
+  }
 
   for operation in MANAGEMENT_OPERATIONS {
     let method = operation.method.to_ascii_lowercase();
@@ -264,6 +289,7 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     ErrorCode::IdempotencyConflict,
     ErrorCode::PreconditionRequired,
     ErrorCode::PreconditionFailed,
+    ErrorCode::Forbidden,
     ErrorCode::NotFound,
     ErrorCode::Conflict,
     ErrorCode::CapabilityUnavailable,

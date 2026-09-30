@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn accept_manual_trigger(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<AcceptManualTriggerRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -35,15 +35,15 @@ pub(super) async fn accept_manual_trigger(
   let outcome = application
     .manual_triggers
     .0
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(trigger_response(outcome))))
 }
 
 pub(super) async fn create_manual_trigger_definition(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateManualTriggerDefinitionRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -66,9 +66,9 @@ pub(super) async fn create_manual_trigger_definition(
   let outcome = application
     .definitions
     .create_trigger
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((
     StatusCode::CREATED,
     Json(MutationResponse {

@@ -1,75 +1,110 @@
 use std::sync::Arc;
 
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, BuildLogSearchError,
-  CancelBuildCommand, CommandHandler, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
-  CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
-  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
-  DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery,
-  GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery,
-  GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
+  AcceptManualTriggerCommand, ApplicationError, AuthorizeArtifactDownloadQuery, AuthorizedManagementCommandHandler,
+  AuthorizedManagementQueryHandler, BuildLogSearchError, CancelBuildCommand, CreateAgentPoolCommand,
+  CreateBuildConfigurationCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand,
+  CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand,
+  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand,
+  DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery,
+  GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
+  GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand,
-  ManualTriggerError, MoveProjectCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManualTriggerError, MoveProjectCommand,
+  ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
-  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, QueryHandler, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
   SearchBuildLogsQuery,
 };
 
-type ProjectCreate = dyn CommandHandler<CreateProjectCommand, Error = ApplicationError>;
-type ProjectRename = dyn CommandHandler<RenameProjectCommand, Error = ApplicationError>;
-type ProjectMove = dyn CommandHandler<MoveProjectCommand, Error = ApplicationError>;
-type ProjectDelete = dyn CommandHandler<DeleteProjectCommand, Error = ApplicationError>;
-type ProjectGet = dyn QueryHandler<GetProjectQuery, Error = ApplicationError>;
-type ProjectList = dyn QueryHandler<ListProjectsQuery, Error = ApplicationError>;
-type PipelineCreate = dyn CommandHandler<CreatePipelineCommand, Error = ApplicationError>;
-type PipelinePublish = dyn CommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>;
-type PipelineGet = dyn QueryHandler<GetPipelineQuery, Error = ApplicationError>;
-type RepositoryCreate = dyn CommandHandler<CreateRepositoryCommand, Error = ApplicationError>;
-type RepositoryPublish = dyn CommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>;
-type RepositoryGet = dyn QueryHandler<GetRepositoryQuery, Error = ApplicationError>;
-type ConfigurationCreate = dyn CommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>;
-type ConfigurationPublish = dyn CommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>;
-type ConfigurationGet = dyn QueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>;
-type AgentPoolCreate = dyn CommandHandler<CreateAgentPoolCommand, Error = ApplicationError>;
-type AgentPoolPublish = dyn CommandHandler<PublishAgentPoolVersionCommand, Error = ApplicationError>;
-type AgentPoolDelete = dyn CommandHandler<DeleteAgentPoolCommand, Error = ApplicationError>;
-type AgentPoolGet = dyn QueryHandler<GetAgentPoolQuery, Error = ApplicationError>;
-type AgentPoolList = dyn QueryHandler<ListAgentPoolsQuery, Error = ApplicationError>;
-type AgentGet = dyn QueryHandler<GetAgentQuery, Error = ApplicationError>;
-type AgentList = dyn QueryHandler<ListAgentsQuery, Error = ApplicationError>;
-type AgentReassign = dyn CommandHandler<ReassignAgentPoolCommand, Error = ApplicationError>;
-type AgentDrain = dyn CommandHandler<DrainAgentCommand, Error = ApplicationError>;
-type AgentEnrollmentIssue = dyn CommandHandler<IssueAgentEnrollmentCommand, Error = ApplicationError>;
-type BuildGet = dyn QueryHandler<GetBuildQuery, Error = ApplicationError>;
-type AttemptGet = dyn QueryHandler<GetAttemptQuery, Error = ApplicationError>;
-type JobGet = dyn QueryHandler<GetJobQuery, Error = ApplicationError>;
-type BuildCancel = dyn CommandHandler<CancelBuildCommand, Error = ApplicationError>;
-type BuildRetry = dyn CommandHandler<RetryBuildCommand, Error = ApplicationError>;
-type ProjectPolicyPublish = dyn CommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>;
-type TriggerDefinitionCreate = dyn CommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>;
-type UnmanagedWebhookCreate = dyn CommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>;
-type ManagedWebhookCreate = dyn CommandHandler<CreateManagedWebhookCommand, Error = ApplicationError>;
-type ManagedWebhookManage = dyn CommandHandler<ManageWebhookRegistrationCommand, Error = ApplicationError>;
-type ManualTriggerAccept = dyn CommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError>;
-type JobEventsRead = dyn QueryHandler<ReadJobEventsQuery, Error = ApplicationError>;
-type ScheduleCreate = dyn CommandHandler<CreateScheduleCommand, Error = ApplicationError>;
-type ScheduleGet = dyn QueryHandler<GetScheduleQuery, Error = ApplicationError>;
-type InternalTriggerCreate = dyn CommandHandler<CreateInternalTriggerCommand, Error = ApplicationError>;
-type InternalTriggerPublish = dyn CommandHandler<PublishInternalTriggerVersionCommand, Error = ApplicationError>;
-type InternalTriggerGet = dyn QueryHandler<GetInternalTriggerQuery, Error = ApplicationError>;
-type InternalTriggerList = dyn QueryHandler<ListInternalTriggersQuery, Error = ApplicationError>;
-type ArtifactGet = dyn QueryHandler<GetArtifactQuery, Error = ApplicationError>;
-type ArtifactList = dyn QueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>;
-type ArtifactDownload = dyn QueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>;
-type CacheSessionGet = dyn QueryHandler<GetCacheSessionQuery, Error = ApplicationError>;
-type CacheSessionList = dyn QueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>;
-type BuildLogsSearch = dyn QueryHandler<SearchBuildLogsQuery, Error = BuildLogSearchError>;
-type BuildRetentionGet = dyn QueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>;
-type BuildRetentionPlace = dyn CommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>;
-type BuildRetentionRelease = dyn CommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>;
-type AuditFactList = dyn QueryHandler<ListAuditFactsQuery, Error = ApplicationError>;
+type ProjectCreate = dyn AuthorizedManagementCommandHandler<CreateProjectCommand, Error = ApplicationError>;
+type ProjectRename = dyn AuthorizedManagementCommandHandler<RenameProjectCommand, Error = ApplicationError>;
+type ProjectMove = dyn AuthorizedManagementCommandHandler<MoveProjectCommand, Error = ApplicationError>;
+type ProjectDelete = dyn AuthorizedManagementCommandHandler<DeleteProjectCommand, Error = ApplicationError>;
+type ProjectGet = dyn AuthorizedManagementQueryHandler<GetProjectQuery, Error = ApplicationError>;
+type ProjectList = dyn AuthorizedManagementQueryHandler<ListProjectsQuery, Error = ApplicationError>;
+type PipelineCreate = dyn AuthorizedManagementCommandHandler<CreatePipelineCommand, Error = ApplicationError>;
+type PipelinePublish = dyn AuthorizedManagementCommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>;
+type PipelineGet = dyn AuthorizedManagementQueryHandler<GetPipelineQuery, Error = ApplicationError>;
+type RepositoryCreate = dyn AuthorizedManagementCommandHandler<CreateRepositoryCommand, Error = ApplicationError>;
+type RepositoryPublish =
+  dyn AuthorizedManagementCommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>;
+type RepositoryGet = dyn AuthorizedManagementQueryHandler<GetRepositoryQuery, Error = ApplicationError>;
+type ConfigurationCreate =
+  dyn AuthorizedManagementCommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>;
+type ConfigurationPublish =
+  dyn AuthorizedManagementCommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>;
+type ConfigurationGet = dyn AuthorizedManagementQueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>;
+type AgentPoolCreate = dyn AuthorizedManagementCommandHandler<CreateAgentPoolCommand, Error = ApplicationError>;
+type AgentPoolPublish =
+  dyn AuthorizedManagementCommandHandler<PublishAgentPoolVersionCommand, Error = ApplicationError>;
+type AgentPoolDelete = dyn AuthorizedManagementCommandHandler<DeleteAgentPoolCommand, Error = ApplicationError>;
+type AgentPoolGet = dyn AuthorizedManagementQueryHandler<GetAgentPoolQuery, Error = ApplicationError>;
+type AgentPoolList = dyn AuthorizedManagementQueryHandler<ListAgentPoolsQuery, Error = ApplicationError>;
+type AgentGet = dyn AuthorizedManagementQueryHandler<GetAgentQuery, Error = ApplicationError>;
+type AgentList = dyn AuthorizedManagementQueryHandler<ListAgentsQuery, Error = ApplicationError>;
+type AgentReassign = dyn AuthorizedManagementCommandHandler<ReassignAgentPoolCommand, Error = ApplicationError>;
+type AgentDrain = dyn AuthorizedManagementCommandHandler<DrainAgentCommand, Error = ApplicationError>;
+type AgentEnrollmentIssue =
+  dyn AuthorizedManagementCommandHandler<IssueAgentEnrollmentCommand, Error = ApplicationError>;
+type BuildGet = dyn AuthorizedManagementQueryHandler<GetBuildQuery, Error = ApplicationError>;
+type AttemptGet = dyn AuthorizedManagementQueryHandler<GetAttemptQuery, Error = ApplicationError>;
+type JobGet = dyn AuthorizedManagementQueryHandler<GetJobQuery, Error = ApplicationError>;
+type BuildCancel = dyn AuthorizedManagementCommandHandler<CancelBuildCommand, Error = ApplicationError>;
+type BuildRetry = dyn AuthorizedManagementCommandHandler<RetryBuildCommand, Error = ApplicationError>;
+type ProjectPolicyPublish =
+  dyn AuthorizedManagementCommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>;
+type TriggerDefinitionCreate =
+  dyn AuthorizedManagementCommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>;
+type UnmanagedWebhookCreate =
+  dyn AuthorizedManagementCommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>;
+type ManagedWebhookCreate =
+  dyn AuthorizedManagementCommandHandler<CreateManagedWebhookCommand, Error = ApplicationError>;
+type ManagedWebhookObserve =
+  dyn AuthorizedManagementCommandHandler<ObserveManagedWebhookRegistrationCommand, Error = ApplicationError>;
+type ManagedWebhookRotate =
+  dyn AuthorizedManagementCommandHandler<RotateManagedWebhookRegistrationCommand, Error = ApplicationError>;
+type ManagedWebhookDelete =
+  dyn AuthorizedManagementCommandHandler<DeleteManagedWebhookRegistrationCommand, Error = ApplicationError>;
+type ManualTriggerAccept =
+  dyn AuthorizedManagementCommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError>;
+type JobEventsRead = dyn AuthorizedManagementQueryHandler<ReadJobEventsQuery, Error = ApplicationError>;
+type ScheduleCreate = dyn AuthorizedManagementCommandHandler<CreateScheduleCommand, Error = ApplicationError>;
+type ScheduleGet = dyn AuthorizedManagementQueryHandler<GetScheduleQuery, Error = ApplicationError>;
+type InternalTriggerCreate =
+  dyn AuthorizedManagementCommandHandler<CreateInternalTriggerCommand, Error = ApplicationError>;
+type InternalTriggerPublish =
+  dyn AuthorizedManagementCommandHandler<PublishInternalTriggerVersionCommand, Error = ApplicationError>;
+type InternalTriggerGet = dyn AuthorizedManagementQueryHandler<GetInternalTriggerQuery, Error = ApplicationError>;
+type InternalTriggerList = dyn AuthorizedManagementQueryHandler<ListInternalTriggersQuery, Error = ApplicationError>;
+type ArtifactGet = dyn AuthorizedManagementQueryHandler<GetArtifactQuery, Error = ApplicationError>;
+type ArtifactList = dyn AuthorizedManagementQueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>;
+type ArtifactDownload = dyn AuthorizedManagementQueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>;
+type CacheSessionGet = dyn AuthorizedManagementQueryHandler<GetCacheSessionQuery, Error = ApplicationError>;
+type CacheSessionList = dyn AuthorizedManagementQueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>;
+type BuildLogsSearch = dyn AuthorizedManagementQueryHandler<SearchBuildLogsQuery, Error = BuildLogSearchError>;
+type BuildRetentionGet = dyn AuthorizedManagementQueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>;
+type BuildRetentionPlace =
+  dyn AuthorizedManagementCommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>;
+type BuildRetentionRelease =
+  dyn AuthorizedManagementCommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>;
+type AuditFactList = dyn AuthorizedManagementQueryHandler<ListAuditFactsQuery, Error = ApplicationError>;
+type OperationalMetadataGet =
+  dyn AuthorizedManagementQueryHandler<GetOperationalMetadataQuery, Error = ApplicationError>;
+
+/// Type-erased operational metadata query consumed by REST.
+pub struct OperationalMetadataManagementApplication(pub(super) Arc<OperationalMetadataGet>);
+
+impl OperationalMetadataManagementApplication {
+  /// Erases the composition-owned operational metadata query service.
+  pub fn new<Q>(queries: Arc<Q>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<GetOperationalMetadataQuery, Error = ApplicationError> + 'static,
+  {
+    Self(queries)
+  }
+}
 
 /// Type-erased Project handlers consumed by REST.
 pub struct ProjectManagementApplication {
@@ -83,23 +118,24 @@ pub struct ProjectManagementApplication {
 
 impl ProjectManagementApplication {
   /// Erases one Project service behind its endpoint capabilities.
-  pub fn new<P>(service: Arc<P>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    P: CommandHandler<CreateProjectCommand, Error = ApplicationError>
-      + CommandHandler<RenameProjectCommand, Error = ApplicationError>
-      + CommandHandler<MoveProjectCommand, Error = ApplicationError>
-      + CommandHandler<DeleteProjectCommand, Error = ApplicationError>
-      + QueryHandler<GetProjectQuery, Error = ApplicationError>
-      + QueryHandler<ListProjectsQuery, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<CreateProjectCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<RenameProjectCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<MoveProjectCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<DeleteProjectCommand, Error = ApplicationError>
+      + 'static,
+    Q: AuthorizedManagementQueryHandler<GetProjectQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListProjectsQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
-      create: service.clone(),
-      rename: service.clone(),
-      move_project: service.clone(),
-      delete: service.clone(),
-      get: service.clone(),
-      list: service,
+      create: commands.clone(),
+      rename: commands.clone(),
+      move_project: commands.clone(),
+      delete: commands,
+      get: queries.clone(),
+      list: queries,
     }
   }
 }
@@ -113,17 +149,17 @@ pub struct PipelineManagementApplication {
 
 impl PipelineManagementApplication {
   /// Erases one Pipeline service behind its endpoint capabilities.
-  pub fn new<P>(service: Arc<P>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    P: CommandHandler<CreatePipelineCommand, Error = ApplicationError>
-      + CommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetPipelineQuery, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<CreatePipelineCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>
       + 'static,
+    Q: AuthorizedManagementQueryHandler<GetPipelineQuery, Error = ApplicationError> + 'static,
   {
     Self {
-      create: service.clone(),
-      publish: service.clone(),
-      get: service,
+      create: commands.clone(),
+      publish: commands,
+      get: queries,
     }
   }
 }
@@ -140,23 +176,24 @@ pub struct ConfigurationManagementApplication {
 
 impl ConfigurationManagementApplication {
   /// Erases one configuration service behind its endpoint capabilities.
-  pub fn new<C>(service: Arc<C>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    C: CommandHandler<CreateRepositoryCommand, Error = ApplicationError>
-      + CommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetRepositoryQuery, Error = ApplicationError>
-      + CommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>
-      + CommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<CreateRepositoryCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>
+      + 'static,
+    Q: AuthorizedManagementQueryHandler<GetRepositoryQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
-      create_repository: service.clone(),
-      publish_repository: service.clone(),
-      get_repository: service.clone(),
-      create_configuration: service.clone(),
-      publish_configuration: service.clone(),
-      get_configuration: service,
+      create_repository: commands.clone(),
+      publish_repository: commands.clone(),
+      get_repository: queries.clone(),
+      create_configuration: commands.clone(),
+      publish_configuration: commands,
+      get_configuration: queries,
     }
   }
 }
@@ -185,35 +222,43 @@ pub(super) struct AgentEndpoints {
 
 impl AgentManagementApplication {
   /// Erases Agent feature services behind their endpoint capabilities.
-  pub fn new<P, A, E>(pools: Arc<P>, agents: Arc<A>, enrollments: Arc<E>) -> Self
+  pub fn new<PC, PQ, AC, AQ, E>(
+    pool_commands: Arc<PC>,
+    pool_queries: Arc<PQ>,
+    agent_commands: Arc<AC>,
+    agent_queries: Arc<AQ>,
+    enrollments: Arc<E>,
+  ) -> Self
   where
-    P: CommandHandler<CreateAgentPoolCommand, Error = ApplicationError>
-      + CommandHandler<PublishAgentPoolVersionCommand, Error = ApplicationError>
-      + CommandHandler<DeleteAgentPoolCommand, Error = ApplicationError>
-      + QueryHandler<GetAgentPoolQuery, Error = ApplicationError>
-      + QueryHandler<ListAgentPoolsQuery, Error = ApplicationError>
+    PC: AuthorizedManagementCommandHandler<CreateAgentPoolCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<PublishAgentPoolVersionCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<DeleteAgentPoolCommand, Error = ApplicationError>
       + 'static,
-    A: CommandHandler<ReassignAgentPoolCommand, Error = ApplicationError>
-      + CommandHandler<DrainAgentCommand, Error = ApplicationError>
-      + QueryHandler<GetAgentQuery, Error = ApplicationError>
-      + QueryHandler<ListAgentsQuery, Error = ApplicationError>
+    PQ: AuthorizedManagementQueryHandler<GetAgentPoolQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListAgentPoolsQuery, Error = ApplicationError>
       + 'static,
-    E: CommandHandler<IssueAgentEnrollmentCommand, Error = ApplicationError> + 'static,
+    AC: AuthorizedManagementCommandHandler<ReassignAgentPoolCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<DrainAgentCommand, Error = ApplicationError>
+      + 'static,
+    AQ: AuthorizedManagementQueryHandler<GetAgentQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListAgentsQuery, Error = ApplicationError>
+      + 'static,
+    E: AuthorizedManagementCommandHandler<IssueAgentEnrollmentCommand, Error = ApplicationError> + 'static,
   {
     Self {
       pools: AgentPoolManagementApplication {
-        create: pools.clone(),
-        publish: pools.clone(),
-        delete: pools.clone(),
-        get: pools.clone(),
-        list: pools,
+        create: pool_commands.clone(),
+        publish: pool_commands.clone(),
+        delete: pool_commands,
+        get: pool_queries.clone(),
+        list: pool_queries,
       },
       agents: AgentEndpoints {
         issue_enrollment: enrollments,
-        get: agents.clone(),
-        list: agents.clone(),
-        reassign: agents.clone(),
-        drain: agents,
+        get: agent_queries.clone(),
+        list: agent_queries,
+        reassign: agent_commands.clone(),
+        drain: agent_commands,
       },
     }
   }
@@ -230,21 +275,22 @@ pub struct BuildManagementApplication {
 
 impl BuildManagementApplication {
   /// Erases one Build service behind its endpoint capabilities.
-  pub fn new<B>(service: Arc<B>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    B: QueryHandler<GetBuildQuery, Error = ApplicationError>
-      + QueryHandler<GetAttemptQuery, Error = ApplicationError>
-      + QueryHandler<GetJobQuery, Error = ApplicationError>
-      + CommandHandler<CancelBuildCommand, Error = ApplicationError>
-      + CommandHandler<RetryBuildCommand, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<CancelBuildCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<RetryBuildCommand, Error = ApplicationError>
+      + 'static,
+    Q: AuthorizedManagementQueryHandler<GetBuildQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetAttemptQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetJobQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
-      get_build: service.clone(),
-      get_attempt: service.clone(),
-      get_job: service.clone(),
-      cancel: service.clone(),
-      retry: service,
+      get_build: queries.clone(),
+      get_attempt: queries.clone(),
+      get_job: queries,
+      cancel: commands.clone(),
+      retry: commands,
     }
   }
 }
@@ -255,7 +301,9 @@ pub struct DefinitionManagementApplication {
   pub(super) create_trigger: Arc<TriggerDefinitionCreate>,
   pub(super) create_unmanaged_webhook: Arc<UnmanagedWebhookCreate>,
   pub(super) create_managed_webhook: Arc<ManagedWebhookCreate>,
-  pub(super) manage_webhook_registration: Arc<ManagedWebhookManage>,
+  pub(super) observe_managed_webhook: Arc<ManagedWebhookObserve>,
+  pub(super) rotate_managed_webhook: Arc<ManagedWebhookRotate>,
+  pub(super) delete_managed_webhook: Arc<ManagedWebhookDelete>,
 }
 
 /// Type-erased durable schedule management handlers consumed by REST.
@@ -274,56 +322,60 @@ pub struct InternalTriggerManagementApplication {
 
 impl InternalTriggerManagementApplication {
   /// Erases one internal Trigger service behind its command and query capabilities.
-  pub fn new<S>(service: Arc<S>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    S: CommandHandler<CreateInternalTriggerCommand, Error = ApplicationError>
-      + CommandHandler<PublishInternalTriggerVersionCommand, Error = ApplicationError>
-      + QueryHandler<GetInternalTriggerQuery, Error = ApplicationError>
-      + QueryHandler<ListInternalTriggersQuery, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<CreateInternalTriggerCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<PublishInternalTriggerVersionCommand, Error = ApplicationError>
+      + 'static,
+    Q: AuthorizedManagementQueryHandler<GetInternalTriggerQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListInternalTriggersQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
-      create: service.clone(),
-      publish: service.clone(),
-      get: service.clone(),
-      list: service,
+      create: commands.clone(),
+      publish: commands,
+      get: queries.clone(),
+      list: queries,
     }
   }
 }
 
 impl ScheduleManagementApplication {
   /// Erases one schedule service behind its command and query capabilities.
-  pub fn new<S>(service: Arc<S>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    S: CommandHandler<CreateScheduleCommand, Error = ApplicationError>
-      + QueryHandler<GetScheduleQuery, Error = ApplicationError>
-      + 'static,
+    C: AuthorizedManagementCommandHandler<CreateScheduleCommand, Error = ApplicationError> + 'static,
+    Q: AuthorizedManagementQueryHandler<GetScheduleQuery, Error = ApplicationError> + 'static,
   {
     Self {
-      create: service.clone(),
-      get: service,
+      create: commands,
+      get: queries,
     }
   }
 }
 
 impl DefinitionManagementApplication {
   /// Erases one definition service behind its endpoint capabilities.
-  pub fn new<D, W>(service: Arc<D>, webhooks: Arc<W>) -> Self
+  pub fn new<D, W>(definitions: Arc<D>, webhooks: Arc<W>) -> Self
   where
-    D: CommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>
-      + CommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>
+    D: AuthorizedManagementCommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>
       + 'static,
-    W: CommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>
-      + CommandHandler<CreateManagedWebhookCommand, Error = ApplicationError>
-      + CommandHandler<ManageWebhookRegistrationCommand, Error = ApplicationError>
+    W: AuthorizedManagementCommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<CreateManagedWebhookCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<ObserveManagedWebhookRegistrationCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<RotateManagedWebhookRegistrationCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<DeleteManagedWebhookRegistrationCommand, Error = ApplicationError>
       + 'static,
   {
     Self {
-      publish_project_policy: service.clone(),
-      create_trigger: service,
+      publish_project_policy: definitions.clone(),
+      create_trigger: definitions,
       create_unmanaged_webhook: webhooks.clone(),
       create_managed_webhook: webhooks.clone(),
-      manage_webhook_registration: webhooks,
+      observe_managed_webhook: webhooks.clone(),
+      rotate_managed_webhook: webhooks.clone(),
+      delete_managed_webhook: webhooks,
     }
   }
 }
@@ -335,7 +387,7 @@ impl ManualTriggerManagementApplication {
   /// Erases one manual Trigger service behind its command capability.
   pub fn new<T>(service: Arc<T>) -> Self
   where
-    T: CommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError> + 'static,
+    T: AuthorizedManagementCommandHandler<AcceptManualTriggerCommand, Error = ManualTriggerError> + 'static,
   {
     Self(service)
   }
@@ -348,7 +400,7 @@ impl JobEventManagementApplication {
   /// Erases one Job-event query service behind its query capability.
   pub fn new<E>(service: Arc<E>) -> Self
   where
-    E: QueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
+    E: AuthorizedManagementQueryHandler<ReadJobEventsQuery, Error = ApplicationError> + 'static,
   {
     Self(service)
   }
@@ -365,9 +417,9 @@ impl ArtifactManagementApplication {
   /// Erases one Artifact service behind its management query capabilities.
   pub fn new<A>(service: Arc<A>) -> Self
   where
-    A: QueryHandler<GetArtifactQuery, Error = ApplicationError>
-      + QueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>
-      + QueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>
+    A: AuthorizedManagementQueryHandler<GetArtifactQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListBuildArtifactsQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<AuthorizeArtifactDownloadQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
@@ -391,7 +443,7 @@ impl BuildLogSearchManagementApplication {
   /// Erases one backend-neutral Build-log search service behind its query capability.
   pub fn new<S>(service: Arc<S>) -> Self
   where
-    S: QueryHandler<SearchBuildLogsQuery, Error = BuildLogSearchError> + 'static,
+    S: AuthorizedManagementQueryHandler<SearchBuildLogsQuery, Error = BuildLogSearchError> + 'static,
   {
     Self(service)
   }
@@ -404,7 +456,7 @@ impl AuditManagementApplication {
   /// Erases one audit service behind its read-only query capability.
   pub fn new<A>(service: Arc<A>) -> Self
   where
-    A: QueryHandler<ListAuditFactsQuery, Error = ApplicationError> + 'static,
+    A: AuthorizedManagementQueryHandler<ListAuditFactsQuery, Error = ApplicationError> + 'static,
   {
     Self(service)
   }
@@ -419,17 +471,17 @@ pub struct BuildResultRetentionManagementApplication {
 
 impl BuildResultRetentionManagementApplication {
   /// Erases one retention-hold service behind its complete management capabilities.
-  pub fn new<R>(service: Arc<R>) -> Self
+  pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    R: QueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError>
-      + CommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>
-      + CommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<PlaceBuildResultHoldCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<ReleaseBuildResultHoldCommand, Error = ApplicationError>
       + 'static,
+    Q: AuthorizedManagementQueryHandler<GetBuildResultRetentionQuery, Error = ApplicationError> + 'static,
   {
     Self {
-      get: service.clone(),
-      place: service.clone(),
-      release: service,
+      get: queries,
+      place: commands.clone(),
+      release: commands,
     }
   }
 }
@@ -438,8 +490,8 @@ impl CacheManagementApplication {
   /// Erases one cache-session service behind management query capabilities.
   pub fn new<C>(service: Arc<C>) -> Self
   where
-    C: QueryHandler<GetCacheSessionQuery, Error = ApplicationError>
-      + QueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>
+    C: AuthorizedManagementQueryHandler<GetCacheSessionQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListBuildCacheSessionsQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
@@ -516,6 +568,7 @@ impl ExecutionManagementApplication {
 
 /// Complete non-generic handler groups consumed by the management transport.
 pub struct ManagementApplicationHandlers {
+  pub(super) operational: OperationalMetadataManagementApplication,
   pub(super) catalog: CatalogManagementApplication,
   pub(super) agents: AgentManagementApplication,
   pub(super) execution: ExecutionManagementApplication,
@@ -525,12 +578,14 @@ pub struct ManagementApplicationHandlers {
 impl ManagementApplicationHandlers {
   /// Groups independently type-erased feature boundaries.
   pub fn new(
+    operational: OperationalMetadataManagementApplication,
     catalog: CatalogManagementApplication,
     agents: AgentManagementApplication,
     execution: ExecutionManagementApplication,
     audit: AuditManagementApplication,
   ) -> Self {
     Self {
+      operational,
       catalog,
       agents,
       execution,

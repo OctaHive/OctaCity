@@ -13,21 +13,18 @@ use octacity_server_application::{
 use uuid::Uuid;
 
 use super::{
-  ApiError, ManagementApplication, application_error, body, idempotency_key, invalid_input, mutation_disposition,
-  now_unix_ms,
+  ApiError, ManagementApplication, authorized_handler_error, body, idempotency_key, invalid_input,
+  mutation_disposition, now_unix_ms,
 };
-use crate::{
-  RequestId,
-  v1::{
-    CreateManagedWebhookRequest, CreateUnmanagedWebhookRequest, ManagedWebhookRegistrationResource,
-    ManagedWebhookRegistrationStatus, ManagedWebhookResource, TriggerDefinitionResource, UnmanagedWebhookResource,
-    WebhookVerificationRequirements,
-  },
+use crate::v1::{
+  CreateManagedWebhookRequest, CreateUnmanagedWebhookRequest, ManagedWebhookRegistrationResource,
+  ManagedWebhookRegistrationStatus, ManagedWebhookResource, TriggerDefinitionResource, UnmanagedWebhookResource,
+  WebhookVerificationRequirements,
 };
 
 pub(super) async fn create_unmanaged_webhook(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateUnmanagedWebhookRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -58,9 +55,9 @@ pub(super) async fn create_unmanaged_webhook(
   let outcome = application
     .definitions
     .create_unmanaged_webhook
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((
     StatusCode::CREATED,
     Json(UnmanagedWebhookResource {
@@ -83,7 +80,7 @@ pub(super) async fn create_unmanaged_webhook(
 
 pub(super) async fn create_managed_webhook(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreateManagedWebhookRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -117,94 +114,72 @@ pub(super) async fn create_managed_webhook(
   let outcome = application
     .definitions
     .create_managed_webhook
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(managed_webhook_resource(outcome))))
 }
 
 pub(super) async fn observe_managed_webhook(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(integration_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-  manage_webhook_registration(
-    application,
-    request_id,
-    headers,
-    integration_id,
-    ManagedRouteOperation::Observe,
-  )
-  .await
+  let key = idempotency_key(&headers, &request_id)?;
+  let now = now_unix_ms(&request_id)?;
+  let command = application
+    .inputs
+    .observe_managed_webhook(&integration_id, key.as_str(), now)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .definitions
+    .observe_managed_webhook
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  Ok((StatusCode::OK, Json(managed_webhook_resource(outcome))))
 }
 
 pub(super) async fn rotate_managed_webhook(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(integration_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-  manage_webhook_registration(
-    application,
-    request_id,
-    headers,
-    integration_id,
-    ManagedRouteOperation::Rotate,
-  )
-  .await
+  let key = idempotency_key(&headers, &request_id)?;
+  let now = now_unix_ms(&request_id)?;
+  let command = application
+    .inputs
+    .rotate_managed_webhook(&integration_id, key.as_str(), now)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .definitions
+    .rotate_managed_webhook
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  Ok((StatusCode::OK, Json(managed_webhook_resource(outcome))))
 }
 
 pub(super) async fn delete_managed_webhook(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(integration_id): Path<String>,
   headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-  manage_webhook_registration(
-    application,
-    request_id,
-    headers,
-    integration_id,
-    ManagedRouteOperation::Delete,
-  )
-  .await
-}
-
-#[derive(Clone, Copy)]
-enum ManagedRouteOperation {
-  Observe,
-  Rotate,
-  Delete,
-}
-
-async fn manage_webhook_registration(
-  application: Arc<ManagementApplication>,
-  request_id: RequestId,
-  headers: HeaderMap,
-  integration_id: String,
-  operation: ManagedRouteOperation,
-) -> Result<impl IntoResponse, ApiError> {
   let key = idempotency_key(&headers, &request_id)?;
   let now = now_unix_ms(&request_id)?;
-  let command = match operation {
-    ManagedRouteOperation::Observe => application
-      .inputs
-      .observe_managed_webhook(&integration_id, key.as_str(), now),
-    ManagedRouteOperation::Rotate => application
-      .inputs
-      .rotate_managed_webhook(&integration_id, key.as_str(), now),
-    ManagedRouteOperation::Delete => application
-      .inputs
-      .delete_managed_webhook(&integration_id, key.as_str(), now),
-  }
-  .map_err(|error| invalid_input(error, &request_id))?;
+  let command = application
+    .inputs
+    .delete_managed_webhook(&integration_id, key.as_str(), now)
+    .map_err(|error| invalid_input(error, &request_id))?;
   let outcome = application
     .definitions
-    .manage_webhook_registration
-    .handle_command(command)
+    .delete_managed_webhook
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(managed_webhook_resource(outcome))))
 }
 

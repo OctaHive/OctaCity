@@ -4,7 +4,7 @@ use std::{
   task::{Context, Poll, Waker},
 };
 
-use octacity_server_application::{BuildLogSearch, QueryHandler, SearchBuildLogsQuery};
+use octacity_server_application::{BuildLogSearch, SearchBuildLogsQuery};
 use octacity_server_domain::{AttemptId, BuildId, JobId, LogChunkId, LogIndexingWorkId, ProjectId, Timestamp};
 use octacity_server_store::{
   BuildLogStream, LogIndexPosition, LogSearchDocument, LogSearchIndex as _, LogSearchMode, LogSearchQuery,
@@ -13,6 +13,10 @@ use octacity_server_store::{
     InMemoryLogSearchIndex, InMemoryStore, verify_in_memory_log_search_index_contract, verify_in_memory_store_contract,
   },
 };
+
+#[path = "support/management_query.rs"]
+mod management_query_support;
+use management_query_support::management_query;
 
 #[test]
 fn application_tests_use_the_store_port_without_external_services() {
@@ -53,8 +57,9 @@ fn log_search_freshness_uses_the_authoritative_watermark() {
       .await
       .unwrap();
     let service = BuildLogSearch::new(work, index);
-    let page = service
-      .handle_query(SearchBuildLogsQuery {
+    let page = management_query(
+      &service,
+      SearchBuildLogsQuery {
         search: LogSearchQuery {
           project_id,
           text: "later".to_owned(),
@@ -68,9 +73,10 @@ fn log_search_freshness_uses_the_authoritative_watermark() {
           after: None,
           limit: 10,
         },
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(page.freshness.indexed_through, None);
     assert_eq!(page.freshness.committed_through, Some(2));

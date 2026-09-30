@@ -20,6 +20,8 @@ use serde::Serialize;
 use tracing::Instrument as _;
 use uuid::Uuid;
 
+use octacity_server_application::{ManagementRequestContext, ManagementRequestId};
+
 mod long_poll;
 mod telemetry;
 pub mod v1;
@@ -33,23 +35,15 @@ type ReadinessProbe = Arc<dyn Fn() -> bool + Send + Sync>;
 #[derive(Clone)]
 struct RequestId(String);
 
+#[derive(Clone)]
+struct ManagementRequest(RequestId, ManagementRequestContext);
+
 /// Builds the management HTTP router owned by the REST adapter.
 ///
 /// The composition root supplies process readiness as a small callback; HTTP
 /// paths, response DTOs, status codes, headers, and tracing remain here.
 pub fn management_router(readiness: impl Fn() -> bool + Send + Sync + 'static) -> Router {
-  management_router_with_metadata(
-    readiness,
-    v1::OperationalMetadata::trusted_network(false, false, false, false),
-  )
-}
-
-/// Builds management health and operational routes with deployment metadata.
-pub fn management_router_with_metadata(
-  readiness: impl Fn() -> bool + Send + Sync + 'static,
-  metadata: v1::OperationalMetadata,
-) -> Router {
-  health_routes(readiness, metadata).layer(middleware::from_fn(request_context))
+  health_routes(readiness).layer(middleware::from_fn(request_context))
 }
 
 /// Builds the management HTTP router with all section-4 application routes.
@@ -57,30 +51,16 @@ pub fn management_router_with_application(
   readiness: impl Fn() -> bool + Send + Sync + 'static,
   application: v1::ManagementApplication,
 ) -> Router {
-  management_router_with_application_and_metadata(
-    readiness,
-    application,
-    v1::OperationalMetadata::trusted_network(false, false, false, false),
-  )
-}
-
-/// Builds the complete management router with deployment operational metadata.
-pub fn management_router_with_application_and_metadata(
-  readiness: impl Fn() -> bool + Send + Sync + 'static,
-  application: v1::ManagementApplication,
-  metadata: v1::OperationalMetadata,
-) -> Router {
-  application_routes(readiness, application, metadata).layer(middleware::from_fn(request_context))
+  application_routes(readiness, application).layer(middleware::from_fn(request_context))
 }
 
 /// Builds the complete management router with a Prometheus operational endpoint.
-pub fn management_router_with_application_metadata_and_metrics(
+pub fn management_router_with_application_and_metrics(
   readiness: impl Fn() -> bool + Send + Sync + 'static,
   application: v1::ManagementApplication,
-  metadata: v1::OperationalMetadata,
   metrics: impl Fn() -> String + Clone + Send + Sync + 'static,
 ) -> Router {
-  application_routes(readiness, application, metadata)
+  application_routes(readiness, application)
     .merge(metrics_route(metrics))
     .layer(middleware::from_fn(request_context))
 }
@@ -88,9 +68,8 @@ pub fn management_router_with_application_metadata_and_metrics(
 fn application_routes(
   readiness: impl Fn() -> bool + Send + Sync + 'static,
   application: v1::ManagementApplication,
-  metadata: v1::OperationalMetadata,
 ) -> Router {
-  health_routes(readiness, metadata).merge(v1::management_routes(application))
+  health_routes(readiness).merge(v1::management_routes(application))
 }
 
 fn metrics_route(metrics: impl Fn() -> String + Clone + Send + Sync + 'static) -> Router {
@@ -111,22 +90,15 @@ fn metrics_route(metrics: impl Fn() -> String + Clone + Send + Sync + 'static) -
 #[derive(Clone)]
 struct ManagementState {
   readiness: ReadinessProbe,
-  metadata: Arc<v1::OperationalMetadata>,
 }
 
-fn health_routes(readiness: impl Fn() -> bool + Send + Sync + 'static, metadata: v1::OperationalMetadata) -> Router {
-  let router = Router::new()
+fn health_routes(readiness: impl Fn() -> bool + Send + Sync + 'static) -> Router {
+  Router::new()
     .route("/health/live", get(liveness))
-    .route("/health/ready", get(readiness_handler));
-  let router = v1::register_management_get::<octacity_server_application::GetOperationalMetadataQuery, _, _, _>(
-    router,
-    "getOperationalMetadata",
-    operational_metadata,
-  );
-  router.with_state(ManagementState {
-    readiness: Arc::new(readiness) as ReadinessProbe,
-    metadata: Arc::new(metadata),
-  })
+    .route("/health/ready", get(readiness_handler))
+    .with_state(ManagementState {
+      readiness: Arc::new(readiness) as ReadinessProbe,
+    })
 }
 
 #[derive(Serialize)]
@@ -149,18 +121,26 @@ async fn readiness_handler(State(state): State<ManagementState>) -> (StatusCode,
   }
 }
 
-async fn operational_metadata(State(state): State<ManagementState>) -> Json<v1::OperationalMetadata> {
-  Json((*state.metadata).clone())
-}
-
 async fn request_context(mut request: Request, next: Next) -> Response {
-  let request_id = Uuid::new_v4().to_string();
+  let request_uuid = Uuid::new_v4();
+  let management_request_id =
+    ManagementRequestId::new(request_uuid).expect("a generated UUID is a valid management request ID");
+  let request_id = request_uuid.to_string();
   let request_id_header = HeaderValue::from_str(&request_id).expect("UUID is always a valid header value");
   let method = request.method().clone();
-  let matched_route = request.extensions().get::<MatchedPath>().map(MatchedPath::as_str);
-  let route_group = telemetry::route_group(matched_route);
-  let span = telemetry::request_span(&request_id, method.as_str(), matched_route);
+  let matched_route = request
+    .extensions()
+    .get::<MatchedPath>()
+    .map(|matched_path| matched_path.as_str().to_owned());
+  let route_group = telemetry::route_group(matched_route.as_deref());
+  let span = telemetry::request_span(&request_id, method.as_str(), matched_route.as_deref());
   request.extensions_mut().insert(RequestId(request_id.clone()));
+  if is_management_operation(&method, matched_route.as_deref()) {
+    request.extensions_mut().insert(ManagementRequest(
+      RequestId(request_id.clone()),
+      ManagementRequestContext::trusted_network(management_request_id),
+    ));
+  }
   async move {
     let started = Instant::now();
     let mut response = next.run(request).await;
@@ -179,9 +159,33 @@ async fn request_context(mut request: Request, next: Next) -> Response {
   .await
 }
 
+fn is_management_operation(method: &axum::http::Method, matched_route: Option<&str>) -> bool {
+  let Some(path) = matched_route else {
+    return false;
+  };
+  let method = if method == axum::http::Method::HEAD {
+    "GET"
+  } else {
+    method.as_str()
+  };
+  v1::MANAGEMENT_OPERATIONS
+    .iter()
+    .any(|operation| operation.method == method && operation.path == path)
+}
+
 #[cfg(test)]
 mod tests {
-  use axum::{body::Body, http::Request};
+  use std::str::FromStr as _;
+
+  use axum::{
+    Router,
+    body::Body,
+    extract::{Extension, Request as AxumRequest},
+    http::{Method, Request as HttpRequest},
+    middleware,
+    routing::{delete, get, post},
+  };
+  use octacity_server_application::{ManagementActorKind, ManagementIngress};
   use tower::ServiceExt as _;
 
   use super::*;
@@ -192,7 +196,7 @@ mod tests {
 
     let readiness = router
       .clone()
-      .oneshot(Request::builder().uri("/health/ready").body(Body::empty()).unwrap())
+      .oneshot(HttpRequest::builder().uri("/health/ready").body(Body::empty()).unwrap())
       .await
       .unwrap();
     assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -202,7 +206,7 @@ mod tests {
     assert_eq!(body.as_ref(), br#"{"status":"unavailable"}"#);
 
     let liveness = router
-      .oneshot(Request::builder().uri("/health/live").body(Body::empty()).unwrap())
+      .oneshot(HttpRequest::builder().uri("/health/live").body(Body::empty()).unwrap())
       .await
       .unwrap();
     assert_eq!(liveness.status(), StatusCode::OK);
@@ -211,7 +215,7 @@ mod tests {
   #[tokio::test]
   async fn metrics_route_returns_prometheus_text_without_application_state() {
     let response = metrics_route(|| "octacity_fixture_total 1\n".to_owned())
-      .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+      .oneshot(HttpRequest::builder().uri("/metrics").body(Body::empty()).unwrap())
       .await
       .unwrap();
 
@@ -222,5 +226,98 @@ mod tests {
     );
     let body = axum::body::to_bytes(response.into_body(), 1_024).await.unwrap();
     assert_eq!(body.as_ref(), b"octacity_fixture_total 1\n");
+  }
+
+  #[tokio::test]
+  async fn every_management_operation_receives_the_canonical_trusted_network_context() {
+    for operation in v1::MANAGEMENT_OPERATIONS {
+      let method_router = match operation.method {
+        "GET" => get(management_context_probe),
+        "POST" => post(management_context_probe),
+        "DELETE" => delete(management_context_probe),
+        other => panic!("unsupported management fixture method {other}"),
+      };
+      let router = Router::new()
+        .route(operation.path, method_router)
+        .layer(middleware::from_fn(request_context));
+      let response = router
+        .clone()
+        .oneshot(
+          HttpRequest::builder()
+            .method(Method::from_str(operation.method).unwrap())
+            .uri(concrete_path(operation.path))
+            .header(header::AUTHORIZATION, "Bearer untrusted")
+            .header(header::COOKIE, "session=untrusted")
+            .header("x-octacity-client-kind", "automation")
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+      assert_eq!(response.status(), StatusCode::NO_CONTENT, "{}", operation.operation_id);
+      assert!(Uuid::parse_str(response.headers()[&REQUEST_ID_HEADER].to_str().unwrap()).is_ok());
+      if operation.method == "GET" {
+        let response = router
+          .oneshot(
+            HttpRequest::builder()
+              .method(Method::HEAD)
+              .uri(concrete_path(operation.path))
+              .body(Body::empty())
+              .unwrap(),
+          )
+          .await
+          .unwrap();
+        assert_eq!(
+          response.status(),
+          StatusCode::NO_CONTENT,
+          "HEAD {}",
+          operation.operation_id
+        );
+      }
+    }
+  }
+
+  #[tokio::test]
+  async fn health_and_non_management_routes_do_not_receive_management_context() {
+    for path in ["/health/live", "/metrics", "/api/v1/openapi.json", "/agent/v1/leases"] {
+      let router = Router::new()
+        .route(path, get(non_management_context_probe))
+        .layer(middleware::from_fn(request_context));
+      let response = router
+        .oneshot(HttpRequest::builder().uri(path).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+      assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+      assert!(response.headers().contains_key(&REQUEST_ID_HEADER));
+    }
+  }
+
+  async fn management_context_probe(
+    Extension(ManagementRequest(request_id, context)): Extension<ManagementRequest>,
+  ) -> StatusCode {
+    assert_eq!(context.actor().kind(), ManagementActorKind::UnauthenticatedManagement);
+    assert_eq!(context.actor().identity(), None);
+    assert_eq!(context.security_scope().as_str(), "trusted-network");
+    assert_eq!(context.request_id().to_string(), request_id.0);
+    assert_eq!(context.attributes().ingress(), ManagementIngress::TrustedNetwork);
+    assert_eq!(context.attributes().client_kind(), None);
+    StatusCode::NO_CONTENT
+  }
+
+  async fn non_management_context_probe(request: AxumRequest) -> StatusCode {
+    assert!(request.extensions().get::<RequestId>().is_some());
+    assert!(request.extensions().get::<ManagementRequest>().is_none());
+    StatusCode::NO_CONTENT
+  }
+
+  fn concrete_path(template: &str) -> String {
+    let mut path = template.to_owned();
+    while let Some(start) = path.find('{') {
+      let end = path[start..].find('}').expect("route parameter must close") + start;
+      path.replace_range(start..=end, "fixture");
+    }
+    path
   }
 }

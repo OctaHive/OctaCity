@@ -186,13 +186,14 @@ impl ManagementInputFactory {
     integration_id: &str,
     idempotency_key: &str,
     now_unix_ms: i64,
-  ) -> Result<ManageWebhookRegistrationCommand, ManagementInputError> {
-    self.manage_webhook_registration(
+  ) -> Result<ObserveManagedWebhookRegistrationCommand, ManagementInputError> {
+    let (integration_id, idempotency_key, observed_at) =
+      managed_webhook_registration_fields(integration_id, idempotency_key, now_unix_ms)?;
+    Ok(ObserveManagedWebhookRegistrationCommand {
       integration_id,
-      ManagedWebhookOperation::Observe,
       idempotency_key,
-      now_unix_ms,
-    )
+      observed_at,
+    })
   }
 
   /// Creates a typed remote-registration rotation command.
@@ -201,13 +202,14 @@ impl ManagementInputFactory {
     integration_id: &str,
     idempotency_key: &str,
     now_unix_ms: i64,
-  ) -> Result<ManageWebhookRegistrationCommand, ManagementInputError> {
-    self.manage_webhook_registration(
+  ) -> Result<RotateManagedWebhookRegistrationCommand, ManagementInputError> {
+    let (integration_id, idempotency_key, observed_at) =
+      managed_webhook_registration_fields(integration_id, idempotency_key, now_unix_ms)?;
+    Ok(RotateManagedWebhookRegistrationCommand {
       integration_id,
-      ManagedWebhookOperation::Rotate,
       idempotency_key,
-      now_unix_ms,
-    )
+      observed_at,
+    })
   }
 
   /// Creates a typed remote-registration deletion command.
@@ -216,27 +218,13 @@ impl ManagementInputFactory {
     integration_id: &str,
     idempotency_key: &str,
     now_unix_ms: i64,
-  ) -> Result<ManageWebhookRegistrationCommand, ManagementInputError> {
-    self.manage_webhook_registration(
+  ) -> Result<DeleteManagedWebhookRegistrationCommand, ManagementInputError> {
+    let (integration_id, idempotency_key, observed_at) =
+      managed_webhook_registration_fields(integration_id, idempotency_key, now_unix_ms)?;
+    Ok(DeleteManagedWebhookRegistrationCommand {
       integration_id,
-      ManagedWebhookOperation::Delete,
       idempotency_key,
-      now_unix_ms,
-    )
-  }
-
-  fn manage_webhook_registration(
-    &self,
-    integration_id: &str,
-    operation: ManagedWebhookOperation,
-    idempotency_key: &str,
-    now_unix_ms: i64,
-  ) -> Result<ManageWebhookRegistrationCommand, ManagementInputError> {
-    Ok(ManageWebhookRegistrationCommand {
-      integration_id: parse(integration_id, "integration id")?,
-      operation,
-      idempotency_key: parse(idempotency_key, "idempotency key")?,
-      observed_at: timestamp(now_unix_ms)?,
+      observed_at,
     })
   }
 
@@ -277,6 +265,18 @@ impl ManagementInputFactory {
       accepted_at: now,
     })
   }
+}
+
+fn managed_webhook_registration_fields(
+  integration_id: &str,
+  idempotency_key: &str,
+  now_unix_ms: i64,
+) -> Result<(IntegrationId, IdempotencyKey, Timestamp), ManagementInputError> {
+  Ok((
+    parse(integration_id, "integration id")?,
+    parse(idempotency_key, "idempotency key")?,
+    timestamp(now_unix_ms)?,
+  ))
 }
 
 struct InternalTriggerFields {

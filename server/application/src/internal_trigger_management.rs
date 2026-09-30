@@ -12,9 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationMapping,
-  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, ManagementResourceResult,
-  ManualSourceSelection, MutationDisposition, ProjectionError, Query, QueryHandler,
+  ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, ManagementResourceResult, ManualSourceSelection, MutationDisposition,
+  ProjectionError, Query,
   management_security::{instance_resource, owned_collection_resource},
 };
 
@@ -203,14 +203,16 @@ impl<S> InternalTriggerHandlers<S> {
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateInternalTriggerCommand> for InternalTriggerHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateInternalTriggerCommand> for InternalTriggerHandlers<S>
 where
   S: InternalTriggerDefinitionStore + ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: CreateInternalTriggerCommand,
   ) -> Result<InternalTriggerCommandOutcome, Self::Error> {
     let definition = command.definition.clone();
@@ -246,14 +248,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<PublishInternalTriggerVersionCommand> for InternalTriggerHandlers<S>
+impl<S> crate::ManagementCommandUseCase<PublishInternalTriggerVersionCommand> for InternalTriggerHandlers<S>
 where
   S: InternalTriggerDefinitionStore + ConfigurationStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: PublishInternalTriggerVersionCommand,
   ) -> Result<InternalTriggerCommandOutcome, Self::Error> {
     let definition = command.definition.clone();
@@ -285,13 +289,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<GetInternalTriggerQuery> for InternalTriggerHandlers<S>
+impl<S> crate::ManagementQueryUseCase<GetInternalTriggerQuery> for InternalTriggerHandlers<S>
 where
   S: InternalTriggerDefinitionStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: GetInternalTriggerQuery) -> Result<InternalTriggerProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetInternalTriggerQuery,
+  ) -> Result<InternalTriggerProjection, Self::Error> {
     project(
       self
         .store
@@ -302,13 +311,18 @@ where
 }
 
 #[async_trait]
-impl<S> QueryHandler<ListInternalTriggersQuery> for InternalTriggerHandlers<S>
+impl<S> crate::ManagementQueryUseCase<ListInternalTriggersQuery> for InternalTriggerHandlers<S>
 where
   S: InternalTriggerDefinitionStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_query(&self, query: ListInternalTriggersQuery) -> Result<InternalTriggerPageProjection, Self::Error> {
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ListInternalTriggersQuery,
+  ) -> Result<InternalTriggerPageProjection, Self::Error> {
     let page = self
       .store
       .list_internal_trigger_definitions(ListInternalTriggerDefinitions::new(query.after, query.limit)?)

@@ -8,8 +8,8 @@ use std::{
 };
 
 use octacity_server_application::{
-  AgentPoolDrainStateProjection, AgentPoolHandlers, CommandHandler as _, CreateAgentPoolCommand,
-  DeleteAgentPoolCommand, GetAgentPoolQuery, ListAgentPoolsQuery, PublishAgentPoolVersionCommand, QueryHandler as _,
+  AgentPoolDrainStateProjection, AgentPoolHandlers, CreateAgentPoolCommand, DeleteAgentPoolCommand, GetAgentPoolQuery,
+  ListAgentPoolsQuery, PublishAgentPoolVersionCommand,
 };
 use octacity_server_domain::{PoolId, PoolName, PoolVersion, Timestamp};
 use octacity_server_scheduler::PoolDrainState;
@@ -18,47 +18,59 @@ use octacity_server_store::{
   testing::{InMemoryAgentPoolStore, PoolReferenceKind},
 };
 
+#[path = "support/management_command.rs"]
+mod management_command_support;
+#[path = "support/management_query.rs"]
+mod management_query_support;
+use management_command_support::management_command;
+use management_query_support::management_query;
+
 #[test]
 fn typed_agent_pool_handlers_preserve_versions_and_guard_references() {
   run_ready(async {
     let store = Arc::new(InMemoryAgentPoolStore::new());
     let handlers = AgentPoolHandlers::new(Arc::clone(&store));
     let pool_id = id(1);
-    let created = handlers
-      .handle_command(CreateAgentPoolCommand {
+    let created = management_command(
+      &handlers,
+      CreateAgentPoolCommand {
         id: pool_id,
         name: PoolName::new("linux-native").unwrap(),
         definition: definition(PoolDrainState::Accepting),
         idempotency_key: key("create-pool"),
         published_at: time(10),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(created.pool.drain_state, AgentPoolDrainStateProjection::Accepting);
 
-    let published = handlers
-      .handle_command(PublishAgentPoolVersionCommand {
+    let published = management_command(
+      &handlers,
+      PublishAgentPoolVersionCommand {
         id: pool_id,
         expected_current_version: PoolVersion::INITIAL,
         definition: definition(PoolDrainState::GracefulDrain),
         idempotency_key: key("drain-pool"),
         published_at: time(20),
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(published.pool.version.get(), 2);
     assert_eq!(published.pool.drain_state, AgentPoolDrainStateProjection::GracefulDrain);
 
-    let original = handlers
-      .handle_query(GetAgentPoolQuery {
+    let original = management_query(
+      &handlers,
+      GetAgentPoolQuery {
         pool_id,
         version: PoolVersion::INITIAL,
-      })
-      .await
-      .unwrap();
+      },
+    )
+    .await
+    .unwrap();
     assert_eq!(original.drain_state, AgentPoolDrainStateProjection::Accepting);
-    let current = handlers
-      .handle_query(ListAgentPoolsQuery { after: None, limit: 10 })
+    let current = management_query(&handlers, ListAgentPoolsQuery { after: None, limit: 10 })
       .await
       .unwrap();
     assert_eq!(current.pools.as_slice(), std::slice::from_ref(&published.pool));
@@ -67,15 +79,17 @@ fn typed_agent_pool_handlers_preserve_versions_and_guard_references() {
       .seed_reference(pool_id, PoolReferenceKind::BuildConfiguration)
       .unwrap();
     assert!(
-      handlers
-        .handle_command(DeleteAgentPoolCommand {
+      management_command(
+        &handlers,
+        DeleteAgentPoolCommand {
           id: pool_id,
           expected_current_version: published.pool.version,
           idempotency_key: key("delete-referenced-pool"),
           deleted_at: time(30),
-        })
-        .await
-        .is_err()
+        }
+      )
+      .await
+      .is_err()
     );
   });
 }

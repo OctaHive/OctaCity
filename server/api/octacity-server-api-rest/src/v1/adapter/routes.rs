@@ -9,17 +9,17 @@ use octacity_server_application::{
   AcceptManualTriggerCommand, AuthorizeArtifactDownloadQuery, CancelBuildCommand, CreateAgentPoolCommand,
   CreateBuildConfigurationCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand,
   CreateProjectCommand, CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand,
-  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery,
-  GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery,
-  GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
+  CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand,
+  DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery,
+  GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
   GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManageWebhookRegistrationCommand,
-  ManagementAuthorizationMapping, ManagementAuthorizationTarget, MoveProjectCommand, PlaceBuildResultHoldCommand,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
-  SearchBuildLogsQuery,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand,
+  PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
+  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
+  PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand,
+  RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
 };
 
 use super::{
@@ -28,13 +28,13 @@ use super::{
   create_manual_trigger_definition, create_pipeline, create_project, create_repository,
   create_scheduled_trigger_definition, create_unmanaged_webhook, delete_agent_pool, delete_managed_webhook,
   delete_project, drain_agent, get_agent, get_agent_pool, get_artifact, get_attempt, get_build,
-  get_build_configuration, get_build_result_retention, get_cache_session, get_internal_trigger, get_job, get_pipeline,
-  get_project, get_repository, get_schedule, issue_agent_enrollment, list_agent_pools, list_agents, list_audit_facts,
-  list_build_artifacts, list_build_cache_sessions, list_internal_triggers, list_projects, move_project,
-  observe_managed_webhook, openapi, place_build_result_hold, publish_agent_pool, publish_build_configuration,
-  publish_internal_trigger, publish_pipeline, publish_project_policy, publish_repository, read_job_events,
-  reassign_agent_pool, release_build_result_hold, rename_project, retry_build, rotate_managed_webhook,
-  search_build_logs,
+  get_build_configuration, get_build_result_retention, get_cache_session, get_internal_trigger, get_job,
+  get_operational_metadata, get_pipeline, get_project, get_repository, get_schedule, issue_agent_enrollment,
+  list_agent_pools, list_agents, list_audit_facts, list_build_artifacts, list_build_cache_sessions,
+  list_internal_triggers, list_projects, move_project, observe_managed_webhook, openapi, place_build_result_hold,
+  publish_agent_pool, publish_build_configuration, publish_internal_trigger, publish_pipeline, publish_project_policy,
+  publish_repository, read_job_events, reassign_agent_pool, release_build_result_hold, rename_project, retry_build,
+  rotate_managed_webhook, search_build_logs,
 };
 use crate::v1::{API_PREFIX, MANAGEMENT_OPERATIONS, ManagementOperation};
 
@@ -111,7 +111,6 @@ impl ManagementRoutes {
   fn finish(self, application: ManagementApplication) -> Router {
     let expected = MANAGEMENT_OPERATIONS
       .iter()
-      .filter(|operation| operation.operation_id != "getOperationalMetadata")
       .map(|operation| operation.operation_id)
       .collect::<BTreeSet<_>>();
     let registered = self
@@ -177,33 +176,15 @@ fn authorization_operation(operation: &'static ManagementOperation) -> Managemen
   }
 }
 
-pub(crate) fn register_management_get<Request, State, HandlerType, HandlerArgs>(
-  router: Router<State>,
-  operation_id: &'static str,
-  handler: HandlerType,
-) -> Router<State>
-where
-  State: Clone + Send + Sync + 'static,
-  Request: ManagementAuthorizationTarget + 'static,
-  HandlerType: Handler<HandlerArgs, State>,
-  HandlerArgs: 'static,
-{
-  let operation = validated_operation::<Request>("GET", operation_id);
-  router.route(operation.path, get(handler))
-}
-
 /// Returns authorization metadata from the same declarations that build the router.
 #[must_use]
 pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOperation> {
-  let mut operations = registered_routes().operations;
-  operations.push(authorization_operation(validated_operation::<
-    GetOperationalMetadataQuery,
-  >("GET", "getOperationalMetadata")));
-  operations
+  registered_routes().operations
 }
 
 fn registered_routes() -> ManagementRoutes {
   ManagementRoutes::new()
+    .get::<GetOperationalMetadataQuery, _, _>("getOperationalMetadata", get_operational_metadata)
     .post::<CreateProjectCommand, _, _>("createProject", create_project)
     .get::<ListProjectsQuery, _, _>("listProjects", list_projects)
     .get::<GetProjectQuery, _, _>("getProject", get_project)
@@ -234,9 +215,9 @@ fn registered_routes() -> ManagementRoutes {
     .get::<GetInternalTriggerQuery, _, _>("getInternalTriggerDefinitionVersion", get_internal_trigger)
     .post::<CreateUnmanagedWebhookCommand, _, _>("createUnmanagedWebhookIntegration", create_unmanaged_webhook)
     .post::<CreateManagedWebhookCommand, _, _>("createManagedWebhookIntegration", create_managed_webhook)
-    .post::<ManageWebhookRegistrationCommand, _, _>("observeManagedWebhookIntegration", observe_managed_webhook)
-    .post::<ManageWebhookRegistrationCommand, _, _>("rotateManagedWebhookIntegration", rotate_managed_webhook)
-    .delete::<ManageWebhookRegistrationCommand, _, _>("deleteManagedWebhookIntegration", delete_managed_webhook)
+    .post::<ObserveManagedWebhookRegistrationCommand, _, _>("observeManagedWebhookIntegration", observe_managed_webhook)
+    .post::<RotateManagedWebhookRegistrationCommand, _, _>("rotateManagedWebhookIntegration", rotate_managed_webhook)
+    .delete::<DeleteManagedWebhookRegistrationCommand, _, _>("deleteManagedWebhookIntegration", delete_managed_webhook)
     .get::<GetScheduleQuery, _, _>("getSchedule", get_schedule)
     .post::<AcceptManualTriggerCommand, _, _>("acceptManualTrigger", accept_manual_trigger)
     .get::<GetBuildQuery, _, _>("getBuild", get_build)

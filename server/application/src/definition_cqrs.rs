@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
+  ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
   ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
   ProjectPolicyDefinition, management_security::owned_collection_resource,
 };
@@ -158,14 +158,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<PublishProjectPolicyCommand> for DefinitionHandlers<S>
+impl<S> crate::ManagementCommandUseCase<PublishProjectPolicyCommand> for DefinitionHandlers<S>
 where
   S: DefinitionStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: PublishProjectPolicyCommand,
   ) -> Result<ProjectPolicyCommandOutcome, Self::Error> {
     self.store.commit_command(command).await
@@ -209,14 +211,16 @@ where
 }
 
 #[async_trait]
-impl<S> CommandHandler<CreateTriggerDefinitionCommand> for DefinitionHandlers<S>
+impl<S> crate::ManagementCommandUseCase<CreateTriggerDefinitionCommand> for DefinitionHandlers<S>
 where
   S: DefinitionStore + 'static,
 {
   type Error = ApplicationError;
 
-  async fn handle_command(
+  async fn execute_management_command(
     &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
     command: CreateTriggerDefinitionCommand,
   ) -> Result<TriggerDefinitionCommandOutcome, Self::Error> {
     self.store.commit_command(command).await

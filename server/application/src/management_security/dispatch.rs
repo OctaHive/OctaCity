@@ -10,6 +10,11 @@ use super::{
   ManagementResourceResult, ManagementSecurityError,
 };
 
+mod sealed {
+  pub trait AuthorizedManagementCommandHandler {}
+  pub trait AuthorizedManagementQueryHandler {}
+}
+
 /// Typed action and resource mapping owned by a management command or query.
 pub trait ManagementAuthorizationTarget {
   /// Static action and resource contract used by route coverage checks.
@@ -63,6 +68,40 @@ where
     grant: &ManagementAuthorizationGrant,
     query: Q,
   ) -> Result<Q::Outcome, Self::Error>;
+}
+
+/// Object-safe authorized dispatch seam for one management command type.
+#[async_trait]
+pub trait AuthorizedManagementCommandHandler<C>: sealed::AuthorizedManagementCommandHandler + Send + Sync
+where
+  C: Command + 'static,
+{
+  /// Typed application failure preserved after authorization succeeds.
+  type Error: Send;
+
+  /// Authorizes and dispatches one command with its normalized request context.
+  async fn handle_authorized_command(
+    &self,
+    context: &ManagementRequestContext,
+    command: C,
+  ) -> Result<C::Outcome, ManagementHandlerError<Self::Error>>;
+}
+
+/// Object-safe authorized dispatch seam for one management query type.
+#[async_trait]
+pub trait AuthorizedManagementQueryHandler<Q>: sealed::AuthorizedManagementQueryHandler + Send + Sync
+where
+  Q: Query + 'static,
+{
+  /// Typed application failure preserved after authorization succeeds.
+  type Error: Send;
+
+  /// Authorizes and dispatches one query with its normalized request context.
+  async fn handle_authorized_query(
+    &self,
+    context: &ManagementRequestContext,
+    query: Q,
+  ) -> Result<Q::Outcome, ManagementHandlerError<Self::Error>>;
 }
 
 /// Stable forbidden failure carrying only safe request correlation.
@@ -172,6 +211,8 @@ pub struct AuthorizedCommandHandler<H> {
   inner: Arc<H>,
 }
 
+impl<H> sealed::AuthorizedManagementCommandHandler for AuthorizedCommandHandler<H> {}
+
 impl<H> AuthorizedCommandHandler<H> {
   /// Wraps a command use case with the selected application-layer policy.
   #[must_use]
@@ -211,11 +252,30 @@ impl<H> AuthorizedCommandHandler<H> {
   }
 }
 
+#[async_trait]
+impl<C, H> AuthorizedManagementCommandHandler<C> for AuthorizedCommandHandler<H>
+where
+  C: Command + ManagementAuthorizationTarget + 'static,
+  H: ManagementCommandUseCase<C>,
+{
+  type Error = H::Error;
+
+  async fn handle_authorized_command(
+    &self,
+    context: &ManagementRequestContext,
+    command: C,
+  ) -> Result<C::Outcome, ManagementHandlerError<Self::Error>> {
+    self.handle_command(context, command).await
+  }
+}
+
 /// Mandatory policy decorator for context-aware management query use cases.
 pub struct AuthorizedQueryHandler<H> {
   policy: Arc<dyn ManagementAuthorizationPolicy>,
   inner: Arc<H>,
 }
+
+impl<H> sealed::AuthorizedManagementQueryHandler for AuthorizedQueryHandler<H> {}
 
 impl<H> AuthorizedQueryHandler<H> {
   /// Wraps a query use case with the selected application-layer policy.
@@ -253,5 +313,22 @@ impl<H> AuthorizedQueryHandler<H> {
       .execute_management_query(context, &grant, query)
       .await
       .map_err(ManagementHandlerError::Application)
+  }
+}
+
+#[async_trait]
+impl<Q, H> AuthorizedManagementQueryHandler<Q> for AuthorizedQueryHandler<H>
+where
+  Q: Query + ManagementAuthorizationTarget + 'static,
+  H: ManagementQueryUseCase<Q>,
+{
+  type Error = H::Error;
+
+  async fn handle_authorized_query(
+    &self,
+    context: &ManagementRequestContext,
+    query: Q,
+  ) -> Result<Q::Outcome, ManagementHandlerError<Self::Error>> {
+    self.handle_query(context, query).await
   }
 }

@@ -196,31 +196,75 @@ impl ManagementAuthorizationTarget for CreateManagedWebhookCommand {
   }
 }
 
-/// Typed command that synchronizes one existing managed registration.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ManageWebhookRegistrationCommand {
-  /// Server-owned managed integration identity.
-  pub integration_id: IntegrationId,
-  /// Provider lifecycle operation to execute.
-  pub operation: ManagedWebhookOperation,
-  /// Stable operation replay identity.
-  pub idempotency_key: IdempotencyKey,
-  /// Server observation time.
-  pub observed_at: Timestamp,
+macro_rules! managed_webhook_registration_command {
+  ($name:ident, $action:ident, $description:literal) => {
+    #[doc = $description]
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct $name {
+      /// Server-owned managed integration identity.
+      pub integration_id: IntegrationId,
+      /// Stable operation replay identity.
+      pub idempotency_key: IdempotencyKey,
+      /// Server observation time.
+      pub observed_at: Timestamp,
+    }
+
+    impl Command for $name {
+      type Outcome = ManagedWebhookProjection;
+    }
+
+    impl ManagementAuthorizationTarget for $name {
+      const AUTHORIZATION: ManagementAuthorizationMapping =
+        ManagementAuthorizationMapping::instance(ManagementAction::$action, ManagementResourceKind::WebhookIntegration);
+
+      fn management_resource(&self) -> ManagementResourceResult {
+        instance_resource(ManagementResourceKind::WebhookIntegration, self.integration_id)
+      }
+    }
+  };
 }
 
-impl Command for ManageWebhookRegistrationCommand {
-  type Outcome = ManagedWebhookProjection;
+managed_webhook_registration_command!(
+  ObserveManagedWebhookRegistrationCommand,
+  View,
+  "Typed command that refreshes the observed state of one managed registration."
+);
+managed_webhook_registration_command!(
+  RotateManagedWebhookRegistrationCommand,
+  Update,
+  "Typed command that rotates one managed registration."
+);
+managed_webhook_registration_command!(
+  DeleteManagedWebhookRegistrationCommand,
+  Delete,
+  "Typed command that deletes one managed registration."
+);
+
+struct ManageWebhookRegistrationCommand {
+  integration_id: IntegrationId,
+  operation: ManagedWebhookOperation,
+  idempotency_key: IdempotencyKey,
+  observed_at: Timestamp,
 }
 
-impl ManagementAuthorizationTarget for ManageWebhookRegistrationCommand {
-  const AUTHORIZATION: ManagementAuthorizationMapping =
-    ManagementAuthorizationMapping::instance(ManagementAction::Administer, ManagementResourceKind::WebhookIntegration);
-
-  fn management_resource(&self) -> ManagementResourceResult {
-    instance_resource(ManagementResourceKind::WebhookIntegration, self.integration_id)
-  }
+macro_rules! into_managed_webhook_registration_command {
+  ($name:ident, $operation:ident) => {
+    impl From<$name> for ManageWebhookRegistrationCommand {
+      fn from(command: $name) -> Self {
+        Self {
+          integration_id: command.integration_id,
+          operation: ManagedWebhookOperation::$operation,
+          idempotency_key: command.idempotency_key,
+          observed_at: command.observed_at,
+        }
+      }
+    }
+  };
 }
+
+into_managed_webhook_registration_command!(ObserveManagedWebhookRegistrationCommand, Observe);
+into_managed_webhook_registration_command!(RotateManagedWebhookRegistrationCommand, Rotate);
+into_managed_webhook_registration_command!(DeleteManagedWebhookRegistrationCommand, Delete);
 
 /// Secret-free managed registration status exposed by the application layer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

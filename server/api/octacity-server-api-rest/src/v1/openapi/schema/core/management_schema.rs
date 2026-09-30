@@ -8,7 +8,7 @@ pub(super) fn insert_common_schemas(schemas: &mut Map<String, Value>) {
       "enum": [
         "invalid_request", "unsupported_media_type", "unsupported_api_version", "payload_too_large",
         "invalid_idempotency_key", "idempotency_conflict", "precondition_required", "precondition_failed",
-        "not_found", "conflict", "capability_unavailable", "unavailable", "rate_limited", "internal"
+        "forbidden", "not_found", "conflict", "capability_unavailable", "unavailable", "rate_limited", "internal"
       ]
     }),
   );

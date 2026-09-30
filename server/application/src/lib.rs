@@ -55,6 +55,8 @@ mod retry_policy;
 mod schedule_cqrs;
 mod snapshots;
 mod telemetry;
+#[cfg(test)]
+mod test_support;
 mod transaction;
 mod webhook_delivery;
 
@@ -120,11 +122,12 @@ pub use definition_cqrs::{
 pub use error::{ApplicationError, ApplicationFailure};
 pub use external_trigger::{
   AcceptWebhookDeliveryCommand, AuthenticatedWebhookEvent, CreateManagedWebhookCommand, CreateUnmanagedWebhookCommand,
-  ManageWebhookRegistrationCommand, ManagedWebhookProjection, ManagedWebhookRegistration,
-  ManagedWebhookRegistrationRequest, ManagedWebhookRegistrationStatus, UnmanagedWebhookProjection,
-  VerifyWebhookDelivery, WebhookCallbackOrigin, WebhookDeliveryAccepted, WebhookDeliveryError, WebhookDeliveryFailure,
-  WebhookDeliveryInputError, WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider,
-  WebhookManagementService, WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
+  DeleteManagedWebhookRegistrationCommand, ManagedWebhookProjection, ManagedWebhookRegistration,
+  ManagedWebhookRegistrationRequest, ManagedWebhookRegistrationStatus, ObserveManagedWebhookRegistrationCommand,
+  RotateManagedWebhookRegistrationCommand, UnmanagedWebhookProjection, VerifyWebhookDelivery, WebhookCallbackOrigin,
+  WebhookDeliveryAccepted, WebhookDeliveryError, WebhookDeliveryFailure, WebhookDeliveryInputError,
+  WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
+  WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
 };
 pub use internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
 pub use internal_trigger_management::{
@@ -148,15 +151,16 @@ pub use management_input::{
   ManualTriggerDefinitionInput, ManualTriggerInput, ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
 };
 pub use management_security::{
-  AuthorizedCommandHandler, AuthorizedQueryHandler, MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES,
-  MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES,
-  ManagementAction, ManagementActor, ManagementActorKind, ManagementAuthorizationDenial,
-  ManagementAuthorizationFailure, ManagementAuthorizationGrant, ManagementAuthorizationMapping,
-  ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementClientKind, ManagementCommandUseCase,
-  ManagementHandlerError, ManagementIngress, ManagementQueryUseCase, ManagementRequestAttributes,
-  ManagementRequestContext, ManagementRequestId, ManagementResource, ManagementResourceIdentity,
-  ManagementResourceKind, ManagementResourcePattern, ManagementResourceResult, ManagementSecurityError,
-  ManagementSecurityScope, ManagementVisibility, ManagementVisibilityKind, TrustedNetworkManagementPolicy,
+  AuthorizedCommandHandler, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler,
+  AuthorizedQueryHandler, MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES,
+  MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction, ManagementActor,
+  ManagementActorKind, ManagementAuthorizationDenial, ManagementAuthorizationFailure, ManagementAuthorizationGrant,
+  ManagementAuthorizationMapping, ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementClientKind,
+  ManagementCommandUseCase, ManagementHandlerError, ManagementIngress, ManagementQueryUseCase,
+  ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementResource,
+  ManagementResourceIdentity, ManagementResourceKind, ManagementResourcePattern, ManagementResourceResult,
+  ManagementSecurityError, ManagementSecurityScope, ManagementVisibility, ManagementVisibilityKind,
+  ManagementVisibilityView, TrustedNetworkManagementPolicy,
 };
 pub use manual_trigger::{
   AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,
@@ -178,7 +182,9 @@ pub use octacity_server_secrets::AgentEnrollmentSecretKey;
 pub use octacity_server_store::RegistrationEpoch;
 pub use octacity_server_store::{AgentDrainMode, TerminalBuildEvent};
 pub use octacity_server_store::{LeaseGrant, LeaseHeartbeatOutcome};
-pub use operational_metadata::{GetOperationalMetadataQuery, ManagementOperationalMetadataProjection};
+pub use operational_metadata::{
+  GetOperationalMetadataQuery, ManagementOperationalMetadataProjection, OperationalMetadataQueries,
+};
 pub use pipeline_cqrs::{
   CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
 };

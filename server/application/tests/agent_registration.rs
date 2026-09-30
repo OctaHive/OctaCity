@@ -8,7 +8,7 @@ use std::{
 use octacity_protocol::{AgentCredentialToken, RegisterAgentRequest};
 use octacity_server_application::{
   AgentEnrollmentHandler, AgentEnrollmentSecretKey, AgentOperation, AgentRegistrationError, AgentRegistrationInput,
-  AgentRegistrationService, AgentRegistrationUseCases, AuthorizeAgentInput, CommandHandler, ManagementInputFactory,
+  AgentRegistrationService, AgentRegistrationUseCases, AuthorizeAgentInput, ManagementInputFactory,
   MutationDisposition,
 };
 use octacity_server_domain::{EnrollmentCredentialId, PoolId, PoolVersion, Timestamp};
@@ -16,6 +16,10 @@ use octacity_server_store::{
   AgentCredentialStore, CredentialSecret, ExpectedAgentPlatform, IssueAgentEnrollment, testing::InMemoryStore,
 };
 use uuid::Uuid;
+
+#[path = "support/management_command.rs"]
+mod management_command_support;
+use management_command_support::management_command;
 
 #[test]
 fn management_enrollment_is_replay_safe_and_returns_the_unpersisted_secret() {
@@ -51,8 +55,8 @@ fn management_enrollment_is_replay_safe_and_returns_the_unpersisted_secret() {
       )
       .unwrap();
     let handler = AgentEnrollmentHandler::new(store);
-    let applied = handler.handle_command(command).await.unwrap();
-    let replayed = handler.handle_command(replay_command).await.unwrap();
+    let applied = management_command(&handler, command).await.unwrap();
+    let replayed = management_command(&handler, replay_command).await.unwrap();
 
     assert_eq!(applied.disposition, MutationDisposition::Applied);
     assert_eq!(replayed.disposition, MutationDisposition::Replayed);

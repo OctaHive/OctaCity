@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) async fn create_pipeline(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   headers: HeaderMap,
   payload: Result<Json<CreatePipelineRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -22,15 +22,15 @@ pub(super) async fn create_pipeline(
   let outcome = application
     .pipelines
     .create
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::CREATED, Json(pipeline_mutation(outcome))))
 }
 
 pub(super) async fn publish_pipeline(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path(pipeline_id): Path<String>,
   headers: HeaderMap,
   payload: Result<Json<PublishPipelineVersionRequest>, JsonRejection>,
@@ -51,15 +51,15 @@ pub(super) async fn publish_pipeline(
   let outcome = application
     .pipelines
     .publish
-    .handle_command(command)
+    .handle_authorized_command(&context, command)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(pipeline_mutation(outcome))))
 }
 
 pub(super) async fn get_pipeline(
   State(application): State<Arc<ManagementApplication>>,
-  Extension(request_id): Extension<RequestId>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
   Path((pipeline_id, version)): Path<(String, u64)>,
 ) -> Result<impl IntoResponse, ApiError> {
   let query = application
@@ -69,8 +69,8 @@ pub(super) async fn get_pipeline(
   let projection = application
     .pipelines
     .get
-    .handle_query(query)
+    .handle_authorized_query(&context, query)
     .await
-    .map_err(|error| application_error(error.classification(), &request_id))?;
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(pipeline_resource(projection))))
 }
