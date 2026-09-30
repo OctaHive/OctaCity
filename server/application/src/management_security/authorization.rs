@@ -1,0 +1,362 @@
+use std::{collections::BTreeSet, fmt};
+
+use super::{ManagementSecurityError, is_canonical_text};
+
+/// Maximum UTF-8 bytes in an opaque management resource identity.
+pub const MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES: usize = 256;
+/// Maximum resources in one restricted visibility grant.
+pub const MAX_MANAGEMENT_VISIBILITY_RESOURCES: usize = 256;
+
+/// Stable management capability independent of HTTP methods and route names.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ManagementAction {
+  /// Observe one resource or its current state.
+  View,
+  /// Search a bounded resource projection.
+  Search,
+  /// Create a new mutable or versioned resource.
+  Create,
+  /// Change mutable resource state or placement.
+  Update,
+  /// Publish a new immutable resource version.
+  Publish,
+  /// Delete a resource allowed to be removed.
+  Delete,
+  /// Start a Build or another bounded operation.
+  Execute,
+  /// Cancel active work.
+  Cancel,
+  /// Retry terminal or recoverable work.
+  Retry,
+  /// Download protected immutable bytes.
+  Download,
+  /// Perform a resource-specific administrative operation.
+  Administer,
+}
+
+impl ManagementAction {
+  /// Complete closed action vocabulary used by coverage and policy tests.
+  pub const ALL: [Self; 11] = [
+    Self::View,
+    Self::Search,
+    Self::Create,
+    Self::Update,
+    Self::Publish,
+    Self::Delete,
+    Self::Execute,
+    Self::Cancel,
+    Self::Retry,
+    Self::Download,
+    Self::Administer,
+  ];
+}
+
+/// Stable kind of resource protected by management authorization.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ManagementResourceKind {
+  /// Hierarchical Project.
+  Project,
+  /// Versioned Project policy.
+  ProjectPolicy,
+  /// Immutable Pipeline definition and versions.
+  Pipeline,
+  /// Versioned source Repository definition.
+  Repository,
+  /// Versioned Build Configuration.
+  BuildConfiguration,
+  /// Manual, scheduled, external, or internal Trigger definition.
+  Trigger,
+  /// Durable schedule definition.
+  Schedule,
+  /// Immutable Build request and state.
+  Build,
+  /// One Build execution Attempt.
+  Attempt,
+  /// One materialized Pipeline Job.
+  Job,
+  /// Ordered Job event stream.
+  JobEvent,
+  /// Indexed Build log projection.
+  BuildLog,
+  /// Logical Build Artifact or report.
+  Artifact,
+  /// Remote cache session diagnostic.
+  CacheSession,
+  /// Static Agent Pool.
+  AgentPool,
+  /// Registered Agent.
+  Agent,
+  /// Single-use Agent enrollment credential.
+  AgentEnrollment,
+  /// Provider-backed webhook integration.
+  WebhookIntegration,
+  /// Build Result retention state or hold.
+  Retention,
+  /// Immutable structured audit fact.
+  AuditFact,
+}
+
+/// Bounded opaque identity retained with a typed management resource kind.
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ManagementResourceIdentity(String);
+
+impl ManagementResourceIdentity {
+  /// Constructs a canonical non-empty resource identity.
+  pub fn new(value: impl Into<String>) -> Result<Self, ManagementSecurityError> {
+    let value = value.into();
+    if !is_canonical_text(&value, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES) {
+      return Err(ManagementSecurityError::InvalidResourceIdentity);
+    }
+    Ok(Self(value))
+  }
+
+  /// Borrows the opaque identity for typed adapter conversion.
+  #[must_use]
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+}
+
+impl fmt::Debug for ManagementResourceIdentity {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("ManagementResourceIdentity(<redacted>)")
+  }
+}
+
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum ManagementResourceScope {
+  Collection,
+  Instance(ManagementResourceIdentity),
+  OwnedCollection {
+    owner_kind: ManagementResourceKind,
+    owner_identity: ManagementResourceIdentity,
+  },
+}
+
+/// Typed resource description evaluated by management authorization policy.
+#[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ManagementResource {
+  kind: ManagementResourceKind,
+  scope: ManagementResourceScope,
+}
+
+impl ManagementResource {
+  /// Describes a top-level collection without fabricating a resource identity.
+  #[must_use]
+  pub const fn collection(kind: ManagementResourceKind) -> Self {
+    Self {
+      kind,
+      scope: ManagementResourceScope::Collection,
+    }
+  }
+
+  /// Describes one resource whose opaque identity is already known.
+  #[must_use]
+  pub const fn instance(kind: ManagementResourceKind, identity: ManagementResourceIdentity) -> Self {
+    Self {
+      kind,
+      scope: ManagementResourceScope::Instance(identity),
+    }
+  }
+
+  /// Describes a collection owned by another typed resource.
+  #[must_use]
+  pub const fn owned_collection(
+    kind: ManagementResourceKind,
+    owner_kind: ManagementResourceKind,
+    owner_identity: ManagementResourceIdentity,
+  ) -> Self {
+    Self {
+      kind,
+      scope: ManagementResourceScope::OwnedCollection {
+        owner_kind,
+        owner_identity,
+      },
+    }
+  }
+
+  /// Returns the protected resource kind.
+  #[must_use]
+  pub const fn kind(&self) -> ManagementResourceKind {
+    self.kind
+  }
+
+  /// Returns whether this description protects a top-level collection.
+  #[must_use]
+  pub const fn is_collection(&self) -> bool {
+    matches!(self.scope, ManagementResourceScope::Collection)
+  }
+
+  /// Borrows the resource identity for an instance description.
+  #[must_use]
+  pub fn identity(&self) -> Option<&ManagementResourceIdentity> {
+    match &self.scope {
+      ManagementResourceScope::Instance(identity) => Some(identity),
+      ManagementResourceScope::Collection | ManagementResourceScope::OwnedCollection { .. } => None,
+    }
+  }
+
+  /// Returns the owner kind and identity for an owned collection.
+  #[must_use]
+  pub fn owner(&self) -> Option<(ManagementResourceKind, &ManagementResourceIdentity)> {
+    match &self.scope {
+      ManagementResourceScope::OwnedCollection {
+        owner_kind,
+        owner_identity,
+      } => Some((*owner_kind, owner_identity)),
+      ManagementResourceScope::Collection | ManagementResourceScope::Instance(_) => None,
+    }
+  }
+}
+
+impl fmt::Debug for ManagementResource {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let scope = match self.scope {
+      ManagementResourceScope::Collection => "collection",
+      ManagementResourceScope::Instance(_) => "instance:<redacted>",
+      ManagementResourceScope::OwnedCollection { .. } => "owned_collection:<redacted>",
+    };
+    formatter
+      .debug_struct("ManagementResource")
+      .field("kind", &self.kind)
+      .field("scope", &scope)
+      .finish()
+  }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+enum Visibility {
+  All,
+  None,
+  Restricted(BTreeSet<ManagementResource>),
+}
+
+/// Stable classification of an authorization-derived read visibility scope.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ManagementVisibilityKind {
+  /// Every resource matching the application query is visible.
+  All,
+  /// No resource is visible, producing a valid empty result.
+  None,
+  /// Only the explicitly bounded resource set is visible.
+  Restricted,
+}
+
+/// Authorization-derived visibility applied by read adapters before pagination.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ManagementVisibility(Visibility);
+
+impl ManagementVisibility {
+  /// Constructs unrestricted visibility for the trusted-network policy.
+  #[must_use]
+  pub const fn all() -> Self {
+    Self(Visibility::All)
+  }
+
+  /// Constructs an explicit empty visibility scope.
+  #[must_use]
+  pub const fn none() -> Self {
+    Self(Visibility::None)
+  }
+
+  /// Constructs a bounded non-empty resource visibility set.
+  pub fn restricted(resources: impl IntoIterator<Item = ManagementResource>) -> Result<Self, ManagementSecurityError> {
+    let mut restricted = BTreeSet::new();
+    for resource in resources {
+      if restricted.len() >= MAX_MANAGEMENT_VISIBILITY_RESOURCES {
+        return Err(ManagementSecurityError::VisibilityTooLarge);
+      }
+      if !restricted.insert(resource) {
+        return Err(ManagementSecurityError::DuplicateVisibilityResource);
+      }
+    }
+    if restricted.is_empty() {
+      return Err(ManagementSecurityError::EmptyVisibility);
+    }
+    Ok(Self(Visibility::Restricted(restricted)))
+  }
+
+  /// Returns the stable visibility classification.
+  #[must_use]
+  pub const fn kind(&self) -> ManagementVisibilityKind {
+    match self.0 {
+      Visibility::All => ManagementVisibilityKind::All,
+      Visibility::None => ManagementVisibilityKind::None,
+      Visibility::Restricted(_) => ManagementVisibilityKind::Restricted,
+    }
+  }
+
+  /// Iterates the restricted resources, or returns `None` for `All` and `None` visibility.
+  pub fn resources(&self) -> Option<impl ExactSizeIterator<Item = &ManagementResource>> {
+    match &self.0 {
+      Visibility::Restricted(resources) => Some(resources.iter()),
+      Visibility::All | Visibility::None => None,
+    }
+  }
+}
+
+impl fmt::Debug for ManagementVisibility {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let mut debug = formatter.debug_struct("ManagementVisibility");
+    debug.field("kind", &self.kind());
+    if let Visibility::Restricted(resources) = &self.0 {
+      debug.field("resource_count", &resources.len());
+    }
+    debug.finish()
+  }
+}
+
+/// Successful policy decision passed to a management application handler.
+#[derive(Clone, Eq, PartialEq)]
+pub struct ManagementAuthorizationGrant {
+  visibility: ManagementVisibility,
+}
+
+impl ManagementAuthorizationGrant {
+  /// Constructs a grant carrying the policy-selected read visibility.
+  #[must_use]
+  pub const fn new(visibility: ManagementVisibility) -> Self {
+    Self { visibility }
+  }
+
+  /// Borrows the visibility that read adapters must apply before pagination.
+  #[must_use]
+  pub const fn visibility(&self) -> &ManagementVisibility {
+    &self.visibility
+  }
+}
+
+impl fmt::Debug for ManagementAuthorizationGrant {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter
+      .debug_struct("ManagementAuthorizationGrant")
+      .field("visibility", &self.visibility)
+      .finish()
+  }
+}
+
+/// Opaque policy denial that intentionally exposes no policy reason or resource details.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct ManagementAuthorizationDenial(());
+
+impl ManagementAuthorizationDenial {
+  /// Constructs the stable forbidden decision.
+  #[must_use]
+  pub const fn forbidden() -> Self {
+    Self(())
+  }
+}
+
+impl fmt::Debug for ManagementAuthorizationDenial {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("ManagementAuthorizationDenial")
+  }
+}
+
+impl fmt::Display for ManagementAuthorizationDenial {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str("management request is forbidden")
+  }
+}
+
+impl std::error::Error for ManagementAuthorizationDenial {}

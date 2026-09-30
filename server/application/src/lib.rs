@@ -40,6 +40,7 @@ mod log_archive;
 mod log_indexing;
 mod log_search;
 mod management_input;
+mod management_security;
 mod manual_trigger;
 mod pipeline_cqrs;
 mod pool_cqrs;
@@ -144,6 +145,14 @@ pub use log_search::{
 pub use management_input::{
   InternalTriggerDefinitionInput, ManagedWebhookInput, ManagementInputError, ManagementInputFactory,
   ManualTriggerDefinitionInput, ManualTriggerInput, ScheduledTriggerDefinitionInput, UnmanagedWebhookInput,
+};
+pub use management_security::{
+  MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES,
+  MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction, ManagementActor, ManagementActorKind,
+  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementClientKind, ManagementIngress,
+  ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementResource,
+  ManagementResourceIdentity, ManagementResourceKind, ManagementSecurityError, ManagementSecurityScope,
+  ManagementVisibility, ManagementVisibilityKind,
 };
 pub use manual_trigger::{
   AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,

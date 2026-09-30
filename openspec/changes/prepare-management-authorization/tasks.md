@@ -1,6 +1,6 @@
 ## 1. Management Security Vocabulary
 
-- [ ] 1.1 Add bounded `ManagementActor`, `ManagementSecurityScope`, safe request attributes, request context, typed action/resource, visibility, grant, and denial types to `octacity-server-application`; verify constructor boundary, redacted-debug, oversize, and invalid-combination unit tests pass.
+- [x] 1.1 Add bounded `ManagementActor`, `ManagementSecurityScope`, safe request attributes, request context, typed action/resource, visibility, grant, and denial types to `octacity-server-application`; verify constructor boundary, redacted-debug, oversize, and invalid-combination unit tests pass.
 - [ ] 1.2 Add the `ManagementAuthorizationPolicy` port and explicit trusted-network policy that authorizes only the canonical anonymous management actor; verify allow-all coverage for every declared management action and fail-closed behavior for all other actor shapes.
 
 ## 2. Mandatory Application Authorization
