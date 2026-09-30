@@ -36,7 +36,6 @@ Contracts that explain how production claims are verified:
 
 - [Execution-backend contracts](testing/backend-contracts.md)
 - [Security release gates](testing/security.md)
-- [Vault and artifact integration contract](testing/phase6-contract.md)
 
 ## Planning
 

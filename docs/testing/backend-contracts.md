@@ -47,13 +47,72 @@ The workflow uses the following fixed cadence:
 | Manual `hosted` | The same GitHub-hosted set as the nightly schedule |
 | Manual exact suite | Only the selected backend or hosted contract catalog |
 | Manual `release-qualified` | The complete release gate, including both self-hosted macOS providers |
-| Manual `all` | `release-qualified` plus the Phase 6 Vault and MinIO contract |
+| Manual `all` | `release-qualified` plus the Vault and artifact service contract |
 | Release workflow or `v*` tag | The complete release-qualified gate before packaging |
 
 The manual `lifecycle` suite is intentionally a complete lifecycle gate and
 therefore includes both self-hosted macOS providers. The Windows WHP
 Microsandbox preview remains available only through its exact manual suite; it
 is excluded from `all` and is not accepted as release evidence.
+
+### Vault and artifact service contract
+
+The opt-in `phase6` suite crosses service boundaries that unit fakes cannot
+validate together. A signed lease runs through the production `JobLifecycle`,
+`JobExecutor`, and real Octa runner. An operator-owned JWT is copied into a
+private workload-identity lease, used to authenticate to Vault KV v2, and
+revoked after runtime destruction. Before completion, the contract scans
+events, results, the durable spool, workspace, and upload metadata to prove
+that neither the JWT nor the resolved Vault secret escaped redaction.
+
+The same job freezes an artifact and report, obtains fenced presigned upload
+targets, and publishes them to MinIO without exposing S3 credentials to the
+Agent. The portable host adapter intentionally does not claim to enforce its
+documented Vault-only network allowlist; the Microsandbox contract separately
+proves the fixed read-only identity mount and restricted egress boundary. Its
+in-process coordinator validates the HTTP and idempotency contract but does not
+claim PostgreSQL durability, which is covered by the authoritative-store
+contracts.
+
+Run the complete workflow from `backend contracts` with suite `phase6`. To
+reproduce it locally, build `octa-runner`, `octa_plugin_shell`, and
+`octa_plugin_tpl`, then start the pinned services:
+
+```shell
+docker run --detach --rm --name octacity-phase6-vault --cap-add=IPC_LOCK \
+  -p 127.0.0.1:18200:8200 \
+  -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
+  -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
+  hashicorp/vault:1.20.4@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
+
+docker run --detach --rm --name octacity-phase6-minio \
+  -p 127.0.0.1:19000:9000 \
+  -e MINIO_ROOT_USER=octacity \
+  -e MINIO_ROOT_PASSWORD=octacity-secret \
+  docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
+  server /bitnami/minio/data
+```
+
+Run the lifecycle contract against those services:
+
+```shell
+OCTACITY_MINIO_ENDPOINT=http://127.0.0.1:19000 \
+OCTACITY_MINIO_ACCESS_KEY=octacity \
+OCTACITY_MINIO_SECRET_KEY=octacity-secret \
+OCTACITY_VAULT_ENDPOINT=http://127.0.0.1:18200 \
+OCTACITY_VAULT_ROOT_TOKEN=octacity-root \
+OCTACITY_PHASE6_OCTA_RUNNER=/absolute/path/to/octa/target/debug/octa-runner \
+OCTACITY_PHASE6_OCTA_PLUGINS_DIR=/absolute/path/to/octa/target/debug \
+cargo test -p octacity-phase6-contract-tests --test protocol_minio \
+  real_octa_vault_job_publishes_outputs_without_leaking_secrets \
+  -- --ignored --exact --nocapture
+```
+
+The separate `s3_store_satisfies_the_minio_contract` test verifies checksums,
+idempotent publication, expiring capabilities, deletion, storage outage, and
+recovery against the same MinIO service. It is part of the failure matrix, so
+an object-store contract cannot silently disappear from retained release
+evidence.
 
 Nightly and release invocations also require the hosted `failure-matrix` job.
 It starts disposable pinned PostgreSQL and MinIO services and executes the
@@ -563,8 +622,8 @@ and a final orphan-cleanup pass. Release vertical slices retain structured raw
 performance samples instead of treating a complete test's wall-clock duration
 as operation latency. The Microsandbox variant additionally verifies the fixed
 workload-identity mount and allows/denies real network probes according to its
-restricted egress policy; the service-backed Phase 6 contract proves the actual
-Vault login and secret-redaction path.
+restricted egress policy; the service-backed Vault and artifact contract proves
+the actual Vault login and secret-redaction path.
 
 ## Including a real backend in Linux coverage
 
