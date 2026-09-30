@@ -74,6 +74,11 @@ jobs:
   fuzz-protocols:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || inputs.run_fuzz == true
     runs-on: ubuntu-24.04
+    env:
+      # The workspace pins stable Rust, while cargo-fuzz requires nightly for
+      # sanitizer and coverage instrumentation. A job-level rustup override is
+      # inherited by cargo-fuzz and the cargo/rustc processes it starts.
+      RUSTUP_TOOLCHAIN: nightly-2026-09-01
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

@@ -689,6 +689,12 @@ class PackageReleaseTests(unittest.TestCase):
         for target in ("server-agent-json", "runner-json", "source-plugin", "server-protocols"):
             self.assertIn(f"cargo fuzz run {target} -- -max_total_time=30", fuzz)
 
+    def test_fuzz_job_overrides_the_workspace_stable_toolchain(self):
+        workflow = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
+        fuzz = workflow.split("  fuzz-protocols:\n", 1)[1]
+
+        self.assertIn("    RUSTUP_TOOLCHAIN: nightly-2026-09-01\n", fuzz)
+
     def test_release_requires_every_quality_and_security_gate(self):
         ci = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         security = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
