@@ -14,7 +14,7 @@ use octacity_coordinator::{
   Registration, VerifiedLease,
 };
 use octacity_execution::ResourceUsage;
-use octacity_job::{ExecuteJobRequest, JobError, JobExecutor};
+use octacity_job::{ExecuteJobRequest, JobCompletion, JobError, JobExecutor, JobFailure};
 use octacity_output::{FreezeOutputs, OutputError, OutputPublisher, PublishOutputs};
 use octacity_protocol::{
   ActiveJob, AgentLifecycleEvent, AttemptEventKind, BeginCacheSessionRequest, COORDINATOR_PROTOCOL_VERSION,
@@ -43,6 +43,78 @@ use crate::{
 };
 use attempt_events::AttemptEventState;
 use terminal::TerminalAttempt;
+
+struct ActiveExecution {
+  snapshots: watch::Sender<HostSnapshot>,
+  cancellation: CancellationToken,
+  events: mpsc::Receiver<RunnerStreamItem>,
+  job: tokio::task::JoinHandle<Result<JobCompletion, JobFailure>>,
+  monitor: tokio::task::JoinHandle<Result<LeaseMonitorOutcome, CoordinatorError>>,
+  delivery: tokio::task::JoinHandle<Result<(), JobLifecycleError>>,
+  delivery_finished: bool,
+  lease_outcome: Option<LeaseMonitorOutcome>,
+  error: Option<JobLifecycleError>,
+}
+
+impl ActiveExecution {
+  async fn drive(
+    &mut self,
+    attempt_events: &mut AttemptEventState,
+  ) -> Result<Option<Result<JobCompletion, JobFailure>>, JobLifecycleError> {
+    let job_result = loop {
+      tokio::select! {
+        item = self.events.recv() => {
+          if let Some(item) = item
+            && self.error.is_none()
+            && let Err(error) = attempt_events
+              .record_runner_item(item, &self.snapshots, &self.cancellation)
+              .await
+          {
+            self.cancellation.cancel();
+            self.error = Some(error);
+          }
+        }
+        result = &mut self.job => match result {
+          Ok(result) => break Some(result),
+          Err(error) => {
+            self.error = Some(JobLifecycleError::Join(error));
+            break None;
+          }
+        },
+        outcome = &mut self.monitor, if self.lease_outcome.is_none() => {
+          self.lease_outcome = Some(outcome.map_err(JobLifecycleError::Join)??);
+        }
+        result = &mut self.delivery, if !self.delivery_finished => {
+          self.delivery_finished = true;
+          self.error = Some(delivery_failure(result));
+          self.cancellation.cancel();
+        }
+      }
+    };
+    // A runner result and a delivery failure can become ready in the same
+    // scheduler turn. Observe the delivery handle once more before entering
+    // terminalization so a permanent server rejection keeps its real cause.
+    if !self.delivery_finished && self.delivery.is_finished() {
+      self.delivery_finished = true;
+      let error = delivery_failure((&mut self.delivery).await);
+      self.error.get_or_insert(error);
+    }
+    Ok(job_result)
+  }
+
+  async fn drain_events(&mut self, attempt_events: &mut AttemptEventState) {
+    while self.error.is_none()
+      && let Ok(item) = self.events.try_recv()
+    {
+      if let Err(error) = attempt_events
+        .record_runner_item(item, &self.snapshots, &self.cancellation)
+        .await
+      {
+        self.error = Some(error);
+      }
+    }
+  }
+}
 
 /// Durable-delivery and heartbeat policy for one leased attempt.
 #[derive(Clone, Debug)]
@@ -197,7 +269,7 @@ impl JobLifecycle {
     )?;
     let cancellation = monitor.job_cancellation();
     let draining = monitor.draining();
-    let mut monitor_task = tokio::spawn(monitor.wait());
+    let monitor_task = tokio::spawn(monitor.wait());
     let cache_grant = match verified.spec.cache() {
       Some(cache) => {
         let result = self
@@ -241,14 +313,12 @@ impl JobLifecycle {
       stop: delivery_stop.clone(),
     }
     .spawn();
-    let mut delivery = delivery;
-    let mut delivery_finished = false;
     attempt_events.work_available.notify_one();
-    let (event_sender, mut events) = mpsc::channel(self.config.event_channel_capacity);
+    let (event_sender, events) = mpsc::channel(self.config.event_channel_capacity);
     let executor = self.executor.clone();
     let spec = verified.spec;
     let job_cancellation = cancellation.clone();
-    let mut job_task = tokio::spawn(async move {
+    let job = tokio::spawn(async move {
       executor
         .execute(
           ExecuteJobRequest {
@@ -261,52 +331,24 @@ impl JobLifecycle {
         )
         .await
     });
-    let mut lease_outcome = None;
-    let mut lifecycle_error = None;
-    let job_result = loop {
-      tokio::select! {
-        item = events.recv() => {
-          if let Some(item) = item
-            && lifecycle_error.is_none()
-            && let Err(error) = attempt_events.record_runner_item(item, &snapshot_sender, &cancellation).await
-          {
-            cancellation.cancel();
-            lifecycle_error = Some(error);
-          }
-        }
-        result = &mut job_task => match result {
-          Ok(result) => break Some(result),
-          Err(error) => {
-            lifecycle_error = Some(JobLifecycleError::Join(error));
-            break None;
-          }
-        },
-        outcome = &mut monitor_task, if lease_outcome.is_none() => {
-          let outcome = outcome.map_err(JobLifecycleError::Join)??;
-          lease_outcome = Some(outcome);
-        }
-        result = &mut delivery, if !delivery_finished => {
-          delivery_finished = true;
-          let error = delivery_failure(result);
-          cancellation.cancel();
-          lifecycle_error = Some(error);
-        }
-      }
+    let mut active = ActiveExecution {
+      snapshots: snapshot_sender,
+      cancellation,
+      events,
+      job,
+      monitor: monitor_task,
+      delivery,
+      delivery_finished: false,
+      lease_outcome: None,
+      error: None,
     };
-    // A runner result and a delivery failure can become ready in the same
-    // scheduler turn. Observe the delivery handle once more before entering
-    // terminalization so a permanent server rejection keeps its real cause.
-    if !delivery_finished && delivery.is_finished() {
-      delivery_finished = true;
-      let error = delivery_failure((&mut delivery).await);
-      lifecycle_error.get_or_insert(error);
-    }
+    let job_result = active.drive(&mut attempt_events).await?;
     // A panicked job task cannot revoke its private bearer. Stop backend
     // resources and delete the owned workspace before revoking server access.
     // Recording Cleaning first preserves the recovery contract even on this
     // exceptional path.
     let panic_cleanup = if job_result.is_none() {
-      let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+      let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut active.error).await;
       if cleaning_recorded {
         self.executor.cleanup_orphans().await.map_err(|error| error.to_string())
       } else {
@@ -328,19 +370,10 @@ impl JobLifecycle {
         .revoke_cache_session(&self.registration, &lease, &revocation, CancellationToken::new())
         .await
       {
-        lifecycle_error.get_or_insert(JobLifecycleError::Coordinator(error));
+        active.error.get_or_insert(JobLifecycleError::Coordinator(error));
       }
     }
-    while lifecycle_error.is_none()
-      && let Ok(item) = events.try_recv()
-    {
-      if let Err(error) = attempt_events
-        .record_runner_item(item, &snapshot_sender, &cancellation)
-        .await
-      {
-        lifecycle_error = Some(error);
-      }
-    }
+    active.drain_events(&mut attempt_events).await;
 
     let (status, final_usage, execution, results, cleanup) = match job_result {
       Some(Ok(completion)) => {
@@ -349,22 +382,22 @@ impl JobLifecycle {
             .transition(JobLifecycleState::Running, &delivery_stop)
             .await;
           if let Err(error) = result {
-            lifecycle_error.get_or_insert(error);
+            active.error.get_or_insert(error);
           }
         }
-        if lifecycle_error.is_none()
+        if active.error.is_none()
           && let Err(error) = attempt_events
             .transition(JobLifecycleState::Freezing, &delivery_stop)
             .await
         {
-          lifecycle_error = Some(error);
+          active.error = Some(error);
         }
         let mut status = runner_status(completion.runner().status);
         let usage = Some(resource_snapshot(&completion.runner().final_usage));
         let execution = completion.execution().cloned();
         let mut results = completion.runner().results.clone();
         let mut frozen = None;
-        if lifecycle_error.is_none() {
+        if active.error.is_none() {
           let staging_root = attempt_root.join("outputs");
           let cancellation = CancellationToken::new();
           let freeze = self.outputs.freeze(
@@ -377,21 +410,21 @@ impl JobLifecycle {
             cancellation.clone(),
           );
           frozen = accept_output_result(
-            run_output_while_owned(freeze, cancellation, &mut monitor_task, &mut lease_outcome).await,
+            run_output_while_owned(freeze, cancellation, &mut active.monitor, &mut active.lease_outcome).await,
             &mut status,
             &mut results,
-            &mut lifecycle_error,
+            &mut active.error,
           );
         }
-        if lifecycle_error.is_none()
+        if active.error.is_none()
           && frozen.is_some()
           && let Err(error) = attempt_events
             .transition(JobLifecycleState::Uploading, &delivery_stop)
             .await
         {
-          lifecycle_error = Some(error);
+          active.error = Some(error);
         }
-        if lifecycle_error.is_none()
+        if active.error.is_none()
           && let Some(frozen) = frozen
         {
           let cancellation = CancellationToken::new();
@@ -404,16 +437,16 @@ impl JobLifecycle {
             cancellation.clone(),
           );
           accept_output_result(
-            run_output_while_owned(publish, cancellation, &mut monitor_task, &mut lease_outcome).await,
+            run_output_while_owned(publish, cancellation, &mut active.monitor, &mut active.lease_outcome).await,
             &mut status,
             &mut results,
-            &mut lifecycle_error,
+            &mut active.error,
           );
         }
         // The journal is synced before deleting job state. If persistence
         // fails, retain the workspace so startup recovery can inspect the last
         // durable phase instead of making an unrecorded destructive change.
-        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut active.error).await;
         let cleanup = if cleaning_recorded {
           completion.cleanup().await.map_err(|error| error.to_string())
         } else {
@@ -430,7 +463,7 @@ impl JobLifecycle {
           ?status,
           "job execution failed"
         );
-        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut lifecycle_error).await;
+        let cleaning_recorded = record_cleaning(&mut attempt_events, &delivery_stop, &mut active.error).await;
         let cleanup = if cleaning_recorded {
           failure.cleanup().await.map_err(|error| error.to_string())
         } else {
@@ -447,18 +480,18 @@ impl JobLifecycle {
       ),
     };
     if let Err(error) = cleanup {
-      lifecycle_error = Some(JobLifecycleError::Cleanup(error));
+      active.error = Some(JobLifecycleError::Cleanup(error));
     }
 
-    if let Some(error) = lifecycle_error {
+    if let Some(error) = active.error {
       let _ = stop_delivery(
         &delivery_stop,
         &attempt_events.work_available,
-        &mut delivery,
-        &mut delivery_finished,
+        &mut active.delivery,
+        &mut active.delivery_finished,
       )
       .await;
-      monitor_task.abort();
+      active.monitor.abort();
       return Err(error);
     }
 
@@ -469,10 +502,10 @@ impl JobLifecycle {
       attempt_root,
       events: attempt_events,
       delivery_stop,
-      delivery,
-      delivery_finished,
-      monitor: monitor_task,
-      lease_outcome,
+      delivery: active.delivery,
+      delivery_finished: active.delivery_finished,
+      monitor: active.monitor,
+      lease_outcome: active.lease_outcome,
       draining,
     }
     .complete(status, final_usage, execution, results)
