@@ -8,8 +8,10 @@ use octacity_server_store::{CreatePipeline, IdempotencyKey, PipelineStore, Publi
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, MutationDisposition, PipelineProjection,
-  ProjectionError, Query, QueryHandler,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, MutationDisposition, PipelineProjection, ProjectionError, Query,
+  QueryHandler,
+  management_security::{instance_resource, owned_collection_resource},
 };
 
 /// Creates one Pipeline identity and immutable initial version.
@@ -33,6 +35,20 @@ impl Command for CreatePipelineCommand {
   type Outcome = PipelineCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for CreatePipelineCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::Pipeline,
+      ManagementResourceKind::Project,
+      self.project_id,
+    )
+  }
+}
+
 /// Appends the next immutable version of one Pipeline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublishPipelineVersionCommand {
@@ -50,6 +66,16 @@ pub struct PublishPipelineVersionCommand {
 
 impl Command for PublishPipelineVersionCommand {
   type Outcome = PipelineCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for PublishPipelineVersionCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Publish
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Pipeline, self.id)
+  }
 }
 
 /// Result of creating or publishing one Pipeline version.
@@ -72,6 +98,16 @@ pub struct GetPipelineQuery {
 
 impl Query for GetPipelineQuery {
   type Outcome = PipelineProjection;
+}
+
+impl ManagementAuthorizationTarget for GetPipelineQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Pipeline, self.pipeline_id)
+  }
 }
 
 /// Typed Pipeline command and query handlers backed by one narrow port.

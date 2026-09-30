@@ -13,6 +13,7 @@ pub use authorization::{
   ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementResource, ManagementResourceIdentity,
   ManagementResourceKind, ManagementVisibility, ManagementVisibilityKind,
 };
+pub(crate) use authorization::{instance_resource, owned_collection_resource};
 pub use context::{
   MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementActor, ManagementActorKind,
   ManagementClientKind, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId,
@@ -59,6 +60,9 @@ pub enum ManagementSecurityError {
   /// A resource identity was empty, oversized, or not canonical safe text.
   #[error("management resource identity is invalid")]
   InvalidResourceIdentity,
+  /// A collection was assigned to an unsupported owner resource kind.
+  #[error("management resource ownership shape is unsupported")]
+  UnsupportedResourceShape,
   /// A restricted visibility set was empty; callers must use explicit `None` visibility.
   #[error("restricted management visibility must contain at least one resource")]
   EmptyVisibility,

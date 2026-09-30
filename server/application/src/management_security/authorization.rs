@@ -187,18 +187,21 @@ impl ManagementResource {
 
   /// Describes a collection owned by another typed resource.
   #[must_use]
-  pub const fn owned_collection(
+  pub fn owned_collection(
     kind: ManagementResourceKind,
     owner_kind: ManagementResourceKind,
     owner_identity: ManagementResourceIdentity,
-  ) -> Self {
-    Self {
+  ) -> Result<Self, ManagementSecurityError> {
+    if !supports_owned_collection(kind, owner_kind) {
+      return Err(ManagementSecurityError::UnsupportedResourceShape);
+    }
+    Ok(Self {
       kind,
       scope: ManagementResourceScope::OwnedCollection {
         owner_kind,
         owner_identity,
       },
-    }
+    })
   }
 
   /// Returns the protected resource kind.
@@ -233,6 +236,60 @@ impl ManagementResource {
       ManagementResourceScope::Collection | ManagementResourceScope::Instance(_) => None,
     }
   }
+}
+
+const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: ManagementResourceKind) -> bool {
+  matches!(
+    (kind, owner_kind),
+    (ManagementResourceKind::Project, ManagementResourceKind::Project)
+      | (ManagementResourceKind::ProjectPolicy, ManagementResourceKind::Project)
+      | (ManagementResourceKind::Pipeline, ManagementResourceKind::Project)
+      | (ManagementResourceKind::Repository, ManagementResourceKind::Project)
+      | (
+        ManagementResourceKind::BuildConfiguration,
+        ManagementResourceKind::Project
+      )
+      | (
+        ManagementResourceKind::Trigger,
+        ManagementResourceKind::BuildConfiguration
+      )
+      | (
+        ManagementResourceKind::Schedule,
+        ManagementResourceKind::BuildConfiguration
+      )
+      | (ManagementResourceKind::JobEvent, ManagementResourceKind::Job)
+      | (ManagementResourceKind::BuildLog, ManagementResourceKind::Project)
+      | (ManagementResourceKind::Artifact, ManagementResourceKind::Build)
+      | (ManagementResourceKind::CacheSession, ManagementResourceKind::Build)
+      | (ManagementResourceKind::Agent, ManagementResourceKind::AgentPool)
+      | (
+        ManagementResourceKind::AgentEnrollment,
+        ManagementResourceKind::AgentPool
+      )
+      | (
+        ManagementResourceKind::WebhookIntegration,
+        ManagementResourceKind::Repository
+      )
+      | (ManagementResourceKind::Retention, ManagementResourceKind::Build)
+  )
+}
+
+pub(crate) fn resource_identity(value: impl fmt::Display) -> ManagementResourceIdentity {
+  ManagementResourceIdentity::new(value.to_string())
+    .expect("validated domain identity must fit the management resource boundary")
+}
+
+pub(crate) fn instance_resource(kind: ManagementResourceKind, identity: impl fmt::Display) -> ManagementResource {
+  ManagementResource::instance(kind, resource_identity(identity))
+}
+
+pub(crate) fn owned_collection_resource(
+  kind: ManagementResourceKind,
+  owner_kind: ManagementResourceKind,
+  owner_identity: impl fmt::Display,
+) -> ManagementResource {
+  ManagementResource::owned_collection(kind, owner_kind, resource_identity(owner_identity))
+    .expect("application mapping must declare a supported management resource shape")
 }
 
 impl fmt::Debug for ManagementResource {

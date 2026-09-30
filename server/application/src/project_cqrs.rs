@@ -8,8 +8,10 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, MutationDisposition, ProjectProjection,
-  ProjectSummaryProjection, Query, QueryHandler,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, MutationDisposition, ProjectProjection, ProjectSummaryProjection, Query,
+  QueryHandler,
+  management_security::{instance_resource, owned_collection_resource},
 };
 
 /// Creates one root or nested Project.
@@ -101,6 +103,43 @@ command_outcome!(RenameProjectCommand, ProjectCommandOutcome);
 command_outcome!(MoveProjectCommand, ProjectCommandOutcome);
 command_outcome!(DeleteProjectCommand, DeleteProjectCommandOutcome);
 
+impl ManagementAuthorizationTarget for CreateProjectCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    self.parent_id.map_or_else(
+      || ManagementResource::collection(ManagementResourceKind::Project),
+      |parent_id| {
+        owned_collection_resource(
+          ManagementResourceKind::Project,
+          ManagementResourceKind::Project,
+          parent_id,
+        )
+      },
+    )
+  }
+}
+
+macro_rules! project_instance_target {
+  ($request:ty, $action:expr, $field:ident) => {
+    impl ManagementAuthorizationTarget for $request {
+      fn management_action(&self) -> ManagementAction {
+        $action
+      }
+
+      fn management_resource(&self) -> ManagementResource {
+        instance_resource(ManagementResourceKind::Project, self.$field)
+      }
+    }
+  };
+}
+
+project_instance_target!(RenameProjectCommand, ManagementAction::Update, id);
+project_instance_target!(MoveProjectCommand, ManagementAction::Update, id);
+project_instance_target!(DeleteProjectCommand, ManagementAction::Delete, id);
+
 /// Reads one Project together with its root-to-parent ancestry.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GetProjectQuery {
@@ -111,6 +150,8 @@ pub struct GetProjectQuery {
 impl Query for GetProjectQuery {
   type Outcome = ProjectProjection;
 }
+
+project_instance_target!(GetProjectQuery, ManagementAction::View, project_id);
 
 /// Reads one bounded deterministic page of direct child Projects.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +166,25 @@ pub struct ListProjectsQuery {
 
 impl Query for ListProjectsQuery {
   type Outcome = ProjectPageProjection;
+}
+
+impl ManagementAuthorizationTarget for ListProjectsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    self.parent_id.map_or_else(
+      || ManagementResource::collection(ManagementResourceKind::Project),
+      |parent_id| {
+        owned_collection_resource(
+          ManagementResourceKind::Project,
+          ManagementResourceKind::Project,
+          parent_id,
+        )
+      },
+    )
+  }
 }
 
 /// One deterministic bounded page of safe Project summaries.

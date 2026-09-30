@@ -12,8 +12,11 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, BuildConfigurationProjection, Command, CommandHandler, CommandTransaction, MutationDisposition,
-  Query, QueryHandler, RepositoryProjection, projections::validate_configuration_projection,
+  ApplicationError, BuildConfigurationProjection, Command, CommandHandler, CommandTransaction, ManagementAction,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, MutationDisposition, Query, QueryHandler,
+  RepositoryProjection,
+  management_security::{instance_resource, owned_collection_resource},
+  projections::validate_configuration_projection,
 };
 
 /// Creates one Repository identity and immutable initial version.
@@ -37,6 +40,20 @@ impl Command for CreateRepositoryCommand {
   type Outcome = RepositoryCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for CreateRepositoryCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::Repository,
+      ManagementResourceKind::Project,
+      self.project_id,
+    )
+  }
+}
+
 /// Appends the next immutable version of one Repository.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublishRepositoryVersionCommand {
@@ -54,6 +71,16 @@ pub struct PublishRepositoryVersionCommand {
 
 impl Command for PublishRepositoryVersionCommand {
   type Outcome = RepositoryCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for PublishRepositoryVersionCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Publish
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Repository, self.id)
+  }
 }
 
 /// Result of creating or publishing one Repository version.
@@ -78,6 +105,16 @@ impl Query for GetRepositoryQuery {
   type Outcome = RepositoryProjection;
 }
 
+impl ManagementAuthorizationTarget for GetRepositoryQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Repository, self.repository_id)
+  }
+}
+
 /// Creates one Build Configuration identity and immutable initial version.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateBuildConfigurationCommand {
@@ -99,6 +136,20 @@ impl Command for CreateBuildConfigurationCommand {
   type Outcome = BuildConfigurationCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for CreateBuildConfigurationCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::BuildConfiguration,
+      ManagementResourceKind::Project,
+      self.project_id,
+    )
+  }
+}
+
 /// Appends the next immutable version of one Build Configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublishBuildConfigurationVersionCommand {
@@ -116,6 +167,16 @@ pub struct PublishBuildConfigurationVersionCommand {
 
 impl Command for PublishBuildConfigurationVersionCommand {
   type Outcome = BuildConfigurationCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for PublishBuildConfigurationVersionCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Publish
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::BuildConfiguration, self.id)
+  }
 }
 
 /// Result of creating or publishing one Build Configuration version.
@@ -138,6 +199,16 @@ pub struct GetBuildConfigurationQuery {
 
 impl Query for GetBuildConfigurationQuery {
   type Outcome = BuildConfigurationProjection;
+}
+
+impl ManagementAuthorizationTarget for GetBuildConfigurationQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::BuildConfiguration, self.configuration_id)
+  }
 }
 
 /// Typed Build Configuration command and query handlers backed by one narrow port.

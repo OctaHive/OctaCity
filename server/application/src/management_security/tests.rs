@@ -60,6 +60,34 @@ fn bounded_identity_constructors_reject_oversized_values() {
 }
 
 #[test]
+fn resource_construction_rejects_missing_identities_and_unsupported_ownership() {
+  assert_eq!(
+    ManagementResourceIdentity::new(""),
+    Err(ManagementSecurityError::InvalidResourceIdentity)
+  );
+  assert_eq!(
+    ManagementResource::owned_collection(
+      ManagementResourceKind::Artifact,
+      ManagementResourceKind::AgentPool,
+      ManagementResourceIdentity::new("pool-1").unwrap(),
+    ),
+    Err(ManagementSecurityError::UnsupportedResourceShape)
+  );
+
+  let artifacts = ManagementResource::owned_collection(
+    ManagementResourceKind::Artifact,
+    ManagementResourceKind::Build,
+    ManagementResourceIdentity::new("build-1").unwrap(),
+  )
+  .unwrap();
+  assert_eq!(artifacts.kind(), ManagementResourceKind::Artifact);
+  assert_eq!(
+    artifacts.owner().map(|(kind, identity)| (kind, identity.as_str())),
+    Some((ManagementResourceKind::Build, "build-1"))
+  );
+}
+
+#[test]
 fn security_scopes_and_request_ids_require_canonical_values() {
   assert!(ManagementSecurityScope::new("tenant:operator-1").is_ok());
   for value in ["", "Uppercase", " leading", "trailing ", "slash/value", "line\nbreak"] {
