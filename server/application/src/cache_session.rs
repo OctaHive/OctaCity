@@ -16,7 +16,9 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
-  AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, Query, QueryHandler, agent_lease,
+  AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, ManagementAction,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query, QueryHandler, agent_lease,
+  management_security::{instance_resource, owned_collection_resource},
 };
 
 /// Complete transport-independent input for one Agent cache-session begin.
@@ -125,6 +127,16 @@ impl Query for GetCacheSessionQuery {
   type Outcome = CacheSessionProjection;
 }
 
+impl ManagementAuthorizationTarget for GetCacheSessionQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::CacheSession, self.session_id)
+  }
+}
+
 /// Typed bounded management query for one Build's cache sessions.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ListBuildCacheSessionsQuery {
@@ -138,6 +150,20 @@ pub struct ListBuildCacheSessionsQuery {
 
 impl Query for ListBuildCacheSessionsQuery {
   type Outcome = Vec<CacheSessionProjection>;
+}
+
+impl ManagementAuthorizationTarget for ListBuildCacheSessionsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::CacheSession,
+      ManagementResourceKind::Build,
+      self.build_id,
+    )
+  }
 }
 
 /// Store-backed cache authority with a server-private credential derivation key.

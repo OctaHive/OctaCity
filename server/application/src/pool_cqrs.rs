@@ -10,8 +10,10 @@ use octacity_server_store::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandHandler, CommandTransaction, ExecutionGuaranteeProjection, MutationDisposition,
+  ApplicationError, Command, CommandHandler, CommandTransaction, ExecutionGuaranteeProjection, ManagementAction,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, MutationDisposition,
   PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, Query, QueryHandler,
+  management_security::instance_resource,
 };
 
 /// Creates one static Agent Pool and its initial version.
@@ -223,6 +225,44 @@ impl Command for PublishAgentPoolVersionCommand {
 
 impl Command for DeleteAgentPoolCommand {
   type Outcome = DeleteAgentPoolCommandOutcome;
+}
+
+macro_rules! pool_instance_target {
+  ($request:ty, $action:expr, $field:ident) => {
+    impl ManagementAuthorizationTarget for $request {
+      fn management_action(&self) -> ManagementAction {
+        $action
+      }
+
+      fn management_resource(&self) -> ManagementResource {
+        instance_resource(ManagementResourceKind::AgentPool, self.$field)
+      }
+    }
+  };
+}
+
+impl ManagementAuthorizationTarget for CreateAgentPoolCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    ManagementResource::collection(ManagementResourceKind::AgentPool)
+  }
+}
+
+pool_instance_target!(PublishAgentPoolVersionCommand, ManagementAction::Publish, id);
+pool_instance_target!(DeleteAgentPoolCommand, ManagementAction::Delete, id);
+pool_instance_target!(GetAgentPoolQuery, ManagementAction::View, pool_id);
+
+impl ManagementAuthorizationTarget for ListAgentPoolsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    ManagementResource::collection(ManagementResourceKind::AgentPool)
+  }
 }
 
 /// Typed Agent Pool command and query handlers backed by one narrow port.

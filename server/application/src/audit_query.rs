@@ -5,7 +5,10 @@ use octacity_server_domain::{AuditFactId, Timestamp};
 use octacity_server_store::{AuditActorKind, AuditCursor, AuditFactPage, AuditFactQuery, AuditFactStore, AuditOutcome};
 use serde_json::Value;
 
-use crate::{ApplicationError, Query, QueryHandler};
+use crate::{
+  ApplicationError, ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query,
+  QueryHandler,
+};
 
 /// Transport-independent input for a bounded immutable audit read.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,6 +90,16 @@ fn parse_time(value: Option<i64>) -> Result<Option<Timestamp>, ApplicationError>
 
 impl Query for ListAuditFactsQuery {
   type Outcome = AuditFactPageProjection;
+}
+
+impl ManagementAuthorizationTarget for ListAuditFactsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Search
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    ManagementResource::collection(ManagementResourceKind::AuditFact)
+  }
 }
 
 /// Honest actor data exposed by an audit read.

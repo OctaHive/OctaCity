@@ -13,7 +13,8 @@ use uuid::Uuid;
 use crate::{
   ApplicationError, AttemptProjection, BuildProjection, Command, CommandHandler, DagCausalityProjection,
   JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection,
-  MutationDisposition, Query, QueryHandler, TriggerHistoryProjection,
+  ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, MutationDisposition,
+  Query, QueryHandler, TriggerHistoryProjection, management_security::instance_resource,
 };
 
 const RETRY_ATTEMPT_NAMESPACE: Uuid = Uuid::from_u128(0xe0de_164d_8f62_5f1e_9e0c_02bd_619a_3861);
@@ -29,6 +30,16 @@ impl Query for GetBuildQuery {
   type Outcome = BuildDetailsProjection;
 }
 
+impl ManagementAuthorizationTarget for GetBuildQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Build, self.build_id)
+  }
+}
+
 /// Reads one Attempt and its complete diagnostic DAG.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GetAttemptQuery {
@@ -40,6 +51,16 @@ impl Query for GetAttemptQuery {
   type Outcome = AttemptDetailsProjection;
 }
 
+impl ManagementAuthorizationTarget for GetAttemptQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Attempt, self.attempt_id)
+  }
+}
+
 /// Reads one Job with execution diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GetJobQuery {
@@ -49,6 +70,16 @@ pub struct GetJobQuery {
 
 impl Query for GetJobQuery {
   type Outcome = JobProjection;
+}
+
+impl ManagementAuthorizationTarget for GetJobQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Job, self.job_id)
+  }
 }
 
 /// Persists cancellation intent for one active Build.
@@ -66,6 +97,16 @@ impl Command for CancelBuildCommand {
   type Outcome = CancelBuildCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for CancelBuildCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Cancel
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Build, self.build_id)
+  }
+}
+
 /// Creates the next Attempt from one failed Build's immutable snapshots.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetryBuildCommand {
@@ -79,6 +120,16 @@ pub struct RetryBuildCommand {
 
 impl Command for RetryBuildCommand {
   type Outcome = RetryBuildCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for RetryBuildCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Retry
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Build, self.build_id)
+  }
 }
 
 /// Safe Build read with a link to the latest Attempt.

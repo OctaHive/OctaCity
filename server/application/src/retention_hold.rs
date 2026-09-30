@@ -8,7 +8,10 @@ use octacity_server_store::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ApplicationError, Command, CommandHandler, MutationDisposition, Query, QueryHandler};
+use crate::{
+  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
+  ManagementResourceKind, MutationDisposition, Query, QueryHandler, management_security::instance_resource,
+};
 
 /// Maximum UTF-8 bytes accepted in a Build Result hold reason.
 pub const MAX_BUILD_RESULT_HOLD_REASON_BYTES: usize = octacity_server_store::MAX_RETENTION_HOLD_REASON_BYTES;
@@ -24,6 +27,16 @@ pub struct GetBuildResultRetentionQuery {
 
 impl Query for GetBuildResultRetentionQuery {
   type Outcome = BuildResultRetentionProjection;
+}
+
+impl ManagementAuthorizationTarget for GetBuildResultRetentionQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Retention, self.build_id)
+  }
 }
 
 /// Places a permanent or time-bounded hold on a complete Build Result.
@@ -49,6 +62,16 @@ impl Command for PlaceBuildResultHoldCommand {
   type Outcome = BuildResultRetentionCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for PlaceBuildResultHoldCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Administer
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Retention, self.build_id)
+  }
+}
+
 /// Releases the active hold without changing original automatic deadlines.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReleaseBuildResultHoldCommand {
@@ -68,6 +91,16 @@ pub struct ReleaseBuildResultHoldCommand {
 
 impl Command for ReleaseBuildResultHoldCommand {
   type Outcome = BuildResultRetentionCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for ReleaseBuildResultHoldCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Administer
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Retention, self.build_id)
+  }
 }
 
 /// Safe automatic-retention deadline projection.

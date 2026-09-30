@@ -17,7 +17,9 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
-  AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, Query, QueryHandler, agent_lease,
+  AgentOperation, AgentRegistrationError, AgentRegistrationUseCases, ApplicationError, ManagementAction,
+  ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query, QueryHandler, agent_lease,
+  management_security::{instance_resource, owned_collection_resource},
 };
 
 /// Complete transport-independent input for one output-upload reservation.
@@ -133,6 +135,16 @@ impl Query for GetArtifactQuery {
   type Outcome = ArtifactProjection;
 }
 
+impl ManagementAuthorizationTarget for GetArtifactQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Artifact, self.artifact_id)
+  }
+}
+
 /// Typed bounded query for published outputs of one Build.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ListBuildArtifactsQuery {
@@ -146,6 +158,20 @@ impl Query for ListBuildArtifactsQuery {
   type Outcome = Vec<ArtifactProjection>;
 }
 
+impl ManagementAuthorizationTarget for ListBuildArtifactsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::Artifact,
+      ManagementResourceKind::Build,
+      self.build_id,
+    )
+  }
+}
+
 /// Typed query that mints a short-lived download capability for published bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuthorizeArtifactDownloadQuery {
@@ -157,6 +183,16 @@ pub struct AuthorizeArtifactDownloadQuery {
 
 impl Query for AuthorizeArtifactDownloadQuery {
   type Outcome = ArtifactDownloadProjection;
+}
+
+impl ManagementAuthorizationTarget for AuthorizeArtifactDownloadQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Download
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Artifact, self.artifact_id)
+  }
 }
 
 /// Store-backed logical Artifact service coordinated with a replaceable byte store.

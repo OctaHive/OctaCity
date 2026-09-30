@@ -10,7 +10,11 @@ use octacity_server_store::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{ApplicationError, Command, CommandHandler, CommandTransaction, MutationDisposition, Query, QueryHandler};
+use crate::{
+  ApplicationError, Command, CommandHandler, CommandTransaction, ManagementAction, ManagementAuthorizationTarget,
+  ManagementResource, ManagementResourceKind, MutationDisposition, Query, QueryHandler,
+  management_security::instance_resource,
+};
 
 /// Reads one enrolled Agent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -21,6 +25,16 @@ pub struct GetAgentQuery {
 
 impl Query for GetAgentQuery {
   type Outcome = AgentProjection;
+}
+
+impl ManagementAuthorizationTarget for GetAgentQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Agent, self.agent_id)
+  }
 }
 
 /// Lists enrolled Agents using deterministic pagination.
@@ -34,6 +48,16 @@ pub struct ListAgentsQuery {
 
 impl Query for ListAgentsQuery {
   type Outcome = AgentPageProjection;
+}
+
+impl ManagementAuthorizationTarget for ListAgentsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    ManagementResource::collection(ManagementResourceKind::Agent)
+  }
 }
 
 /// Moves one idle Agent to another Pool.
@@ -55,6 +79,16 @@ impl Command for ReassignAgentPoolCommand {
   type Outcome = AgentCommandOutcome;
 }
 
+impl ManagementAuthorizationTarget for ReassignAgentPoolCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Update
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Agent, self.agent_id)
+  }
+}
+
 /// Prevents one Agent from receiving more Jobs and directs current work.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DrainAgentCommand {
@@ -72,6 +106,16 @@ pub struct DrainAgentCommand {
 
 impl Command for DrainAgentCommand {
   type Outcome = AgentCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for DrainAgentCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Administer
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    instance_resource(ManagementResourceKind::Agent, self.agent_id)
+  }
 }
 
 /// Safe normalized management projection of one Agent.

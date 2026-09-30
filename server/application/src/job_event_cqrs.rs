@@ -5,7 +5,10 @@ use octacity_server_domain::JobId;
 use octacity_server_store::{JobEventReadStore, ReadJobEvents, StoreError, StoreInputError, StoreOperation};
 use serde_json::Value;
 
-use crate::{ApplicationError, Query, QueryHandler};
+use crate::{
+  ApplicationError, ManagementAction, ManagementAuthorizationTarget, ManagementResource, ManagementResourceKind, Query,
+  QueryHandler, management_security::owned_collection_resource,
+};
 
 /// Greatest bounded wait accepted by the management Job-event query.
 pub const MAX_JOB_EVENT_WAIT: Duration = Duration::from_secs(30);
@@ -25,6 +28,20 @@ pub struct ReadJobEventsQuery {
 
 impl Query for ReadJobEventsQuery {
   type Outcome = JobEventPageProjection;
+}
+
+impl ManagementAuthorizationTarget for ReadJobEventsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::View
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::JobEvent,
+      ManagementResourceKind::Job,
+      self.job_id,
+    )
+  }
 }
 
 /// Transport-independent projection of one immutable Job event.

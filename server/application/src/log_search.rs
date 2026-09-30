@@ -7,7 +7,10 @@ use octacity_server_store::{
 };
 use thiserror::Error;
 
-use crate::{ApplicationError, ApplicationFailure, Query, QueryHandler};
+use crate::{
+  ApplicationError, ApplicationFailure, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
+  ManagementResourceKind, Query, QueryHandler, management_security::owned_collection_resource,
+};
 
 /// Typed application query for bounded redacted Build-log search.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,6 +102,20 @@ fn parse_optional_time(value: Option<i64>) -> Result<Option<Timestamp>, Applicat
 
 impl Query for SearchBuildLogsQuery {
   type Outcome = BuildLogSearchPageProjection;
+}
+
+impl ManagementAuthorizationTarget for SearchBuildLogsQuery {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Search
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::BuildLog,
+      ManagementResourceKind::Project,
+      self.search.project_id,
+    )
+  }
 }
 
 /// One backend-neutral redacted Build-log search result.

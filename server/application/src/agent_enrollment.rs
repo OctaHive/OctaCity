@@ -8,7 +8,10 @@ use octacity_server_store::{
   MutationDisposition as StoreMutationDisposition,
 };
 
-use crate::{ApplicationError, Command, CommandHandler, MutationDisposition};
+use crate::{
+  ApplicationError, Command, CommandHandler, ManagementAction, ManagementAuthorizationTarget, ManagementResource,
+  ManagementResourceKind, MutationDisposition, management_security::owned_collection_resource,
+};
 
 /// Issues one replay-safe single-use Agent enrollment credential.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,6 +32,20 @@ pub struct IssueAgentEnrollmentCommand {
 
 impl Command for IssueAgentEnrollmentCommand {
   type Outcome = IssueAgentEnrollmentCommandOutcome;
+}
+
+impl ManagementAuthorizationTarget for IssueAgentEnrollmentCommand {
+  fn management_action(&self) -> ManagementAction {
+    ManagementAction::Create
+  }
+
+  fn management_resource(&self) -> ManagementResource {
+    owned_collection_resource(
+      ManagementResourceKind::AgentEnrollment,
+      ManagementResourceKind::AgentPool,
+      self.pool_id,
+    )
+  }
 }
 
 /// One-time management response containing the credential an Agent can consume.
