@@ -35,7 +35,7 @@
               "work_disk_bytes": 107374182400
             },
             "bootstrap": {
-              "enrollment_credential_handle": "enrollment-handle-0042",
+              "enrollment_credential_handle": "fixture",
               "expires_at_unix_ms": 1735689600000
             }
           }
@@ -77,7 +77,7 @@
               "work_disk_bytes": 107374182400
             },
             "bootstrap": {
-              "enrollment_credential_handle": "enrollment-handle-0042",
+              "enrollment_credential_handle": "fixture",
               "expires_at_unix_ms": 1735689600000
             }
           }
