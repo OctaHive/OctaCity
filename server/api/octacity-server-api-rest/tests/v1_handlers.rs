@@ -1,6 +1,9 @@
 use std::{
   collections::BTreeSet,
-  sync::{Arc, Mutex},
+  sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+  },
 };
 
 use async_trait::async_trait;
@@ -25,15 +28,15 @@ use octacity_server_application::{
   GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
   ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError, ManagementAction,
-  ManagementAuthorizationGrant, ManagementAuthorizationTarget, ManagementCommandUseCase,
-  ManagementOperationalMetadataProjection, ManagementQueryUseCase, ManagementRequestContext, ManualTriggerError,
-  MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query,
-  ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
-  RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
+  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
+  ManagementAuthorizationTarget, ManagementCommandUseCase, ManagementOperationalMetadataProjection,
+  ManagementQueryUseCase, ManagementRequestContext, ManagementResource, ManualTriggerError, MoveProjectCommand,
+  ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
+  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
+  SearchBuildLogsQuery,
 };
-use tokio::net::TcpListener;
 use tower::ServiceExt as _;
 
 #[path = "v1_handlers/audit.rs"]
@@ -52,15 +55,26 @@ use support::{
   JobEventApplication, agent_pool_create_body, agent_pool_publish_body, assert_component_exists,
   assert_json_matches_component, assert_required_header, concrete_path, configuration_version_body,
   documented_http_requests, empty_request, json_request, recording_management_application,
-  recording_management_application_with_retention, repository_body, repository_version_body, request_examples,
-  send_documented_request,
+  recording_management_application_with_policy, recording_management_application_with_retention, repository_body,
+  repository_version_body, request_examples,
 };
 
 const DOCUMENTED_SECTION_FOUR_WORKFLOW: &str = include_str!("../../../../docs/reference/management-rest-v1.md");
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ProtectedSideEffectCounts {
+  handler: usize,
+  transaction: usize,
+  audit: usize,
+  outbox: usize,
+  idempotency: usize,
+  transfer_capability: usize,
+}
+
 #[derive(Default)]
 struct RecordingApplication {
   calls: Mutex<Vec<&'static str>>,
+  protected_side_effects: Mutex<ProtectedSideEffectCounts>,
   log_search_queries: Mutex<Vec<SearchBuildLogsQuery>>,
   successful_workflow: bool,
   capability_unavailable_for_managed: bool,
@@ -70,6 +84,7 @@ impl RecordingApplication {
   fn successful_workflow() -> Self {
     Self {
       calls: Mutex::default(),
+      protected_side_effects: Mutex::default(),
       log_search_queries: Mutex::default(),
       successful_workflow: true,
       capability_unavailable_for_managed: false,
@@ -78,6 +93,33 @@ impl RecordingApplication {
 
   fn record(&self, operation: &'static str) {
     self.calls.lock().unwrap().push(operation);
+    // Arm every protected downstream boundary so one accidental dispatch makes
+    // the deny contract fail for handlers and all forbidden side effects.
+    let mut effects = self.protected_side_effects.lock().unwrap();
+    effects.handler += 1;
+    effects.transaction += 1;
+    effects.audit += 1;
+    effects.outbox += 1;
+    effects.idempotency += 1;
+    effects.transfer_capability += 1;
+  }
+}
+
+#[derive(Default)]
+struct DenyAllManagementPolicy {
+  decisions: AtomicUsize,
+}
+
+#[async_trait]
+impl ManagementAuthorizationPolicy for DenyAllManagementPolicy {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _action: ManagementAction,
+    _resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    self.decisions.fetch_add(1, Ordering::SeqCst);
+    Err(ManagementAuthorizationDenial::forbidden())
   }
 }
 
@@ -129,6 +171,7 @@ impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplicatio
     _grant: &ManagementAuthorizationGrant,
     _query: GetOperationalMetadataQuery,
   ) -> Result<ManagementOperationalMetadataProjection, Self::Error> {
+    self.record("get_operational_metadata");
     Ok(ManagementOperationalMetadataProjection {
       management_externally_reachable: false,
       external_access_acknowledged: false,
@@ -447,13 +490,7 @@ impl ManagementCommandUseCase<AcceptManualTriggerCommand> for RecordingApplicati
   }
 }
 
-#[tokio::test]
-async fn every_registered_route_dispatches_only_through_application_handlers() {
-  let application = Arc::new(RecordingApplication::default());
-  let routes = management_router_with_application(
-    || true,
-    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
-  );
+fn management_contract_requests() -> Vec<Request<Body>> {
   let project_id = "11111111-1111-4111-8111-111111111111";
   let pipeline_id = "22222222-2222-4222-8222-222222222222";
   let repository_id = "33333333-3333-4333-8333-333333333333";
@@ -468,7 +505,9 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
   let artifact_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   let cache_session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
-  let requests = vec![
+  vec![
+    empty_request("GET", "/api/v1/operations/metadata", None),
+    empty_request("GET", "/api/v1/audit-facts?limit=10", None),
     json_request(
       "POST",
       "/api/v1/projects",
@@ -570,6 +609,26 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       &format!(
         r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"schedule":{{"expression":"0 * * * * * *","timezone":"UTC","missed_run_policy":{{"kind":"run_once"}}}},"build":{{"source":{{"kind":"exact_revision","value":"0123456789abcdef"}},"parameters":{{}},"priority":0}}}}"#
       ),
+    ),
+    json_request(
+      "POST",
+      "/api/v1/trigger-definitions/internal",
+      "create-internal-trigger",
+      None,
+      include_str!("../fixtures/v1/create-internal-trigger-request.json"),
+    ),
+    empty_request("GET", "/api/v1/trigger-definitions/internal?limit=10", None),
+    json_request(
+      "POST",
+      &format!("/api/v1/trigger-definitions/internal/{schedule_id}/versions"),
+      "publish-internal-trigger",
+      Some("\"1\""),
+      include_str!("../fixtures/v1/create-internal-trigger-request.json"),
+    ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/trigger-definitions/internal/{schedule_id}/versions/1"),
+      None,
     ),
     json_request(
       "POST",
@@ -703,16 +762,34 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       Some("\"1\""),
       r#"{"mode":"graceful"}"#,
     ),
-  ];
+  ]
+}
+
+#[tokio::test]
+async fn every_management_operation_is_allowed_before_application_dispatch() {
+  let application = Arc::new(RecordingApplication::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(Arc::clone(&application), Arc::clone(&application)),
+  );
+  let requests = management_contract_requests();
+  assert_eq!(requests.len(), MANAGEMENT_OPERATIONS.len());
 
   for (index, request) in requests.into_iter().enumerate() {
+    let expected = if request.uri().path() == "/api/v1/operations/metadata" {
+      StatusCode::OK
+    } else {
+      StatusCode::SERVICE_UNAVAILABLE
+    };
     let response = routes.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "request {index}");
+    assert_eq!(response.status(), expected, "request {index}");
   }
 
   assert_eq!(
     *application.calls.lock().unwrap(),
     [
+      "get_operational_metadata",
+      "list_audit_facts",
       "create_project",
       "rename_project",
       "move_project",
@@ -731,6 +808,10 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "get_configuration",
       "create_trigger_definition",
       "create_schedule",
+      "create_internal_trigger",
+      "list_internal_triggers",
+      "publish_internal_trigger",
+      "get_internal_trigger",
       "create_unmanaged_webhook",
       "create_managed_webhook",
       "observe_managed_webhook",
@@ -764,6 +845,43 @@ async fn every_registered_route_dispatches_only_through_application_handlers() {
       "reassign_agent_pool",
       "drain_agent",
     ]
+  );
+}
+
+#[tokio::test]
+async fn every_management_operation_denies_before_application_and_protected_side_effects() {
+  let application = Arc::new(RecordingApplication::default());
+  let policy = Arc::new(DenyAllManagementPolicy::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application_with_policy(Arc::clone(&application), Arc::clone(&application), policy.clone()),
+  );
+  let requests = management_contract_requests();
+  assert_eq!(requests.len(), MANAGEMENT_OPERATIONS.len());
+
+  for (index, request) in requests.into_iter().enumerate() {
+    let response = routes.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN, "request {index}");
+    let request_id = response.headers()["x-request-id"].to_str().unwrap().to_owned();
+    let body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+      body,
+      serde_json::json!({
+        "code": "forbidden",
+        "message": "management operation is forbidden",
+        "request_id": request_id,
+      }),
+      "request {index}"
+    );
+  }
+
+  assert_eq!(policy.decisions.load(Ordering::SeqCst), MANAGEMENT_OPERATIONS.len());
+  assert!(application.calls.lock().unwrap().is_empty());
+  assert_eq!(
+    *application.protected_side_effects.lock().unwrap(),
+    ProtectedSideEffectCounts::default(),
+    "denial must precede handlers, transactions, audit, outbox, idempotency, and transfer capabilities"
   );
 }
 
@@ -921,32 +1039,111 @@ async fn job_event_parameters_and_page_use_the_stable_rest_contract() {
   assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
 }
 
+fn normalize_documented_success_response(target: &str, body: &mut serde_json::Value) {
+  if target == "/api/v1/triggers/manual" {
+    return;
+  }
+  let resource = body["resource"].as_object_mut().unwrap();
+  let id = resource["id"].as_str().unwrap();
+  uuid::Uuid::parse_str(id).expect("created resource identity must remain a UUID");
+  resource.insert("id".to_owned(), serde_json::json!("<generated UUID>"));
+  let timestamp_fields: &[&str] = if target == "/api/v1/projects" {
+    &["created_at_unix_ms", "updated_at_unix_ms"]
+  } else {
+    &["published_at_unix_ms"]
+  };
+  for field in timestamp_fields {
+    assert!(resource[*field].as_i64().is_some_and(|value| value > 0));
+    resource.insert((*field).to_owned(), serde_json::json!("<generated timestamp>"));
+  }
+}
+
+fn documented_success_response(target: &str, request: &serde_json::Value) -> serde_json::Value {
+  match target {
+    "/api/v1/projects" => serde_json::json!({
+      "disposition": "applied",
+      "resource": {
+        "id": "<generated UUID>",
+        "parent_id": request["parent_id"],
+        "name": request["name"],
+        "version": 1,
+        "created_at_unix_ms": "<generated timestamp>",
+        "updated_at_unix_ms": "<generated timestamp>",
+      }
+    }),
+    "/api/v1/pipelines" => serde_json::json!({
+      "disposition": "applied",
+      "resource": {
+        "id": "<generated UUID>",
+        "project_id": request["project_id"],
+        "name": request["name"],
+        "version": 1,
+        "dag": request["dag"],
+        "published_at_unix_ms": "<generated timestamp>",
+      }
+    }),
+    "/api/v1/repositories" => serde_json::json!({
+      "disposition": "applied",
+      "resource": {
+        "id": "<generated UUID>",
+        "project_id": request["project_id"],
+        "name": request["name"],
+        "version": 1,
+        "definition": request["definition"],
+        "published_at_unix_ms": "<generated timestamp>",
+      }
+    }),
+    "/api/v1/build-configurations" => {
+      let mut definition = request["definition"].clone();
+      definition["secrets_profile"] = serde_json::Value::Null;
+      serde_json::json!({
+        "disposition": "applied",
+        "resource": {
+          "id": "<generated UUID>",
+          "project_id": request["project_id"],
+          "name": request["name"],
+          "version": 1,
+          "definition": definition,
+          "published_at_unix_ms": "<generated timestamp>",
+        }
+      })
+    }
+    "/api/v1/triggers/manual" => serde_json::json!({
+      "outcome": "accepted",
+      "disposition": "applied",
+      "trigger_occurrence_id": "88888888-8888-4888-8888-888888888888",
+      "build_id": "99999999-9999-4999-8999-999999999999",
+      "attempt_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "ready_job_ids": ["bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+    }),
+    _ => panic!("unexpected documented workflow target {target}"),
+  }
+}
+
 #[tokio::test]
-async fn every_documented_section_four_request_reaches_a_running_contract_server() {
+async fn documented_successful_requests_retain_their_status_codes_and_bodies() {
   let application = Arc::new(RecordingApplication::successful_workflow());
   let routes = management_router_with_application(
     || true,
     recording_management_application(Arc::clone(&application), Arc::clone(&application)),
   );
-  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-  let address = listener.local_addr().unwrap();
-  let server = tokio::spawn(async move {
-    axum::serve(listener, routes).await.unwrap();
-  });
-
   let requests = documented_http_requests(DOCUMENTED_SECTION_FOUR_WORKFLOW);
   assert_eq!(requests.len(), 5, "every workflow step must be executable HTTP");
   for (request, expected_status) in requests.iter().zip([201, 201, 201, 201, 200]) {
-    let status = send_documented_request(address, request).await;
+    let request_body = request.json_body();
+    let response = routes.clone().oneshot(request.to_request()).await.unwrap();
     assert_eq!(
-      status, expected_status,
+      response.status().as_u16(),
+      expected_status,
       "{} {} must return its documented success status",
-      request.method, request.target
+      request.method,
+      request.target
     );
+    let mut body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    normalize_documented_success_response(&request.target, &mut body);
+    assert_eq!(body, documented_success_response(&request.target, &request_body));
   }
-
-  server.abort();
-  let _ = server.await;
   assert_eq!(
     *application.calls.lock().unwrap(),
     [

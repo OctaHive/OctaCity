@@ -40,7 +40,7 @@
 
 ## 8. REST and OpenAPI Contracts
 
-- [ ] 8.1 Add end-to-end allow/deny contracts for every management operation; verify documented successful requests retain their existing status codes and bodies while denial creates no handler, transaction, audit, outbox, idempotency, or transfer-capability side effects.
+- [x] 8.1 Add end-to-end allow/deny contracts for every management operation; verify documented successful requests retain their existing status codes and bodies while denial creates no handler, transaction, audit, outbox, idempotency, or transfer-capability side effects.
 - [ ] 8.2 Document the forbidden response for every management OpenAPI operation and extend route/DTO drift checks; verify the generated document and registered routes remain identical on Linux, macOS, and Windows line endings.
 
 ## 9. Architecture, Documentation, and Regression Verification

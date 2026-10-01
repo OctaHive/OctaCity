@@ -1,6 +1,6 @@
-use tokio::{
-  io::{AsyncReadExt as _, AsyncWriteExt as _},
-  net::TcpStream,
+use axum::{
+  body::Body,
+  http::{Request, request::Builder},
 };
 
 #[derive(Debug)]
@@ -9,6 +9,20 @@ pub struct DocumentedHttpRequest {
   pub target: String,
   headers: Vec<(String, String)>,
   body: String,
+}
+
+impl DocumentedHttpRequest {
+  pub fn to_request(&self) -> Request<Body> {
+    let request = self.headers.iter().fold(
+      Request::builder().method(self.method.as_str()).uri(&self.target),
+      |request, (name, value)| header(request, name, value),
+    );
+    request.body(Body::from(self.body.clone())).unwrap()
+  }
+
+  pub fn json_body(&self) -> serde_json::Value {
+    serde_json::from_str(&self.body).expect("documented request body must be valid JSON")
+  }
 }
 
 pub fn documented_http_requests(document: &str) -> Vec<DocumentedHttpRequest> {
@@ -44,31 +58,10 @@ pub fn documented_http_requests(document: &str) -> Vec<DocumentedHttpRequest> {
     .collect()
 }
 
-pub async fn send_documented_request(address: std::net::SocketAddr, request: &DocumentedHttpRequest) -> u16 {
-  let mut stream = TcpStream::connect(address).await.unwrap();
-  let mut encoded = format!("{} {} HTTP/1.1\r\nHost: {address}\r\n", request.method, request.target);
-  for (name, value) in &request.headers {
-    if !name.eq_ignore_ascii_case("host") && !name.eq_ignore_ascii_case("content-length") {
-      encoded.push_str(&format!("{name}: {value}\r\n"));
-    }
+fn header(request: Builder, name: &str, value: &str) -> Builder {
+  if name.eq_ignore_ascii_case("host") || name.eq_ignore_ascii_case("content-length") {
+    request
+  } else {
+    request.header(name, value)
   }
-  encoded.push_str(&format!(
-    "Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-    request.body.len(),
-    request.body
-  ));
-  stream.write_all(encoded.as_bytes()).await.unwrap();
-
-  let mut response = Vec::new();
-  stream.read_to_end(&mut response).await.unwrap();
-  let response = String::from_utf8(response).unwrap();
-  response
-    .lines()
-    .next()
-    .expect("HTTP response must have a status line")
-    .split_whitespace()
-    .nth(1)
-    .expect("HTTP response status is required")
-    .parse()
-    .unwrap()
 }

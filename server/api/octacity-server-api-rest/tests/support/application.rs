@@ -53,7 +53,18 @@ pub fn recording_management_application<E>(
 where
   E: ManagementQueryUseCase<ReadJobEventsQuery, Error = ApplicationError> + 'static,
 {
-  recording_management_application_with_retention(application.clone(), job_events, application)
+  recording_management_application_with_policy(application, job_events, Arc::new(TrustedNetworkManagementPolicy))
+}
+
+pub fn recording_management_application_with_policy<E>(
+  application: Arc<RecordingApplication>,
+  job_events: Arc<E>,
+  policy: Arc<dyn ManagementAuthorizationPolicy>,
+) -> ManagementApplication
+where
+  E: ManagementQueryUseCase<ReadJobEventsQuery, Error = ApplicationError> + 'static,
+{
+  recording_management_application_with_retention_and_policy(application.clone(), job_events, application, policy)
 }
 
 pub fn recording_management_application_with_retention<E, R>(
@@ -68,7 +79,27 @@ where
     + ManagementCommandUseCase<ReleaseBuildResultHoldCommand, Error = ApplicationError>
     + 'static,
 {
-  let policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
+  recording_management_application_with_retention_and_policy(
+    application,
+    job_events,
+    retention,
+    Arc::new(TrustedNetworkManagementPolicy),
+  )
+}
+
+fn recording_management_application_with_retention_and_policy<E, R>(
+  application: Arc<RecordingApplication>,
+  job_events: Arc<E>,
+  retention: Arc<R>,
+  policy: Arc<dyn ManagementAuthorizationPolicy>,
+) -> ManagementApplication
+where
+  E: ManagementQueryUseCase<ReadJobEventsQuery, Error = ApplicationError> + 'static,
+  R: ManagementQueryUseCase<GetBuildResultRetentionQuery, Error = ApplicationError>
+    + ManagementCommandUseCase<PlaceBuildResultHoldCommand, Error = ApplicationError>
+    + ManagementCommandUseCase<ReleaseBuildResultHoldCommand, Error = ApplicationError>
+    + 'static,
+{
   let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), application.clone()));
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), application.clone()));
   let job_event_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), job_events));
