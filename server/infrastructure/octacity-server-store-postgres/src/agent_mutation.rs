@@ -34,7 +34,8 @@ pub(crate) async fn drain(
   request: DrainAgent,
   audit: &MutationAuditContext,
 ) -> Result<DrainAgentOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::DrainAgent,
     request.idempotency_key.to_string(),
     request.requested_at,
@@ -127,7 +128,8 @@ pub(crate) async fn reassign(
   request: ReassignAgentPool,
   audit: &MutationAuditContext,
 ) -> Result<ReassignAgentPoolOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::ReassignAgentPool,
     request.idempotency_key.to_string(),
     request.reassigned_at,

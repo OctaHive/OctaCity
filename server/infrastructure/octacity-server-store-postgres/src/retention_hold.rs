@@ -89,7 +89,8 @@ pub(crate) async fn place(
   request: PlaceBuildResultHold,
   audit: &MutationAuditContext,
 ) -> Result<RetentionHoldMutationOutcome, StoreError> {
-  let identity = MutationIdentity::new_with_request_identity(
+  let identity = MutationIdentity::new_management_with_request_identity(
+    audit,
     MutationKind::PlaceBuildResultHold,
     request.idempotency_key.to_string(),
     audit.request_identity().to_owned(),
@@ -182,7 +183,8 @@ pub(crate) async fn release(
   request: ReleaseBuildResultHold,
   audit: &MutationAuditContext,
 ) -> Result<RetentionHoldMutationOutcome, ReleaseBuildResultHoldError> {
-  let identity = MutationIdentity::new_with_request_identity(
+  let identity = MutationIdentity::new_management_with_request_identity(
+    audit,
     MutationKind::ReleaseBuildResultHold,
     request.idempotency_key.to_string(),
     audit.request_identity().to_owned(),

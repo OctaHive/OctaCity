@@ -177,7 +177,10 @@ pub use external_trigger_port::{
   ManagedWebhookOperationStore, ManagedWebhookRegistrationStore, WebhookConfigurationStore,
   WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
 };
-pub use idempotency::{IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES};
+pub use idempotency::{
+  IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementIdempotencyKey,
+  ManagementSecurityScope,
+};
 pub use internal_trigger_model::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
   InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim, InternalTriggerMatch,
@@ -213,7 +216,7 @@ pub use model::{
   MAX_JOB_EVENT_READ_PAGE_SIZE, MAX_MATERIALIZED_DEPENDENCY_EDGES, MAX_MATERIALIZED_JOBS,
   MAX_STRUCTURED_DOCUMENT_BYTES, MaterializedJob, MaterializedJobPayload, MutationDisposition, RegistrationEpoch,
   SuppressTrigger, SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerEvaluationOutcome, TriggerIntentDigest,
-  TriggerIntentDigestError,
+  TriggerIntentDigestError, TriggerReplayNamespace,
 };
 pub use octacity_server_artifacts::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRecordError,

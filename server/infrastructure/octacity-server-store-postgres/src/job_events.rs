@@ -58,7 +58,7 @@ pub(crate) async fn execute(pool: &PgPool, request: AppendJobEvents) -> Result<A
     "log_chunks": log_chunks,
     "registration_epoch": request.lease.registration_epoch.get(),
   });
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     MutationKind::AppendJobEvents,
     format!(
       "{}:{}-{}",

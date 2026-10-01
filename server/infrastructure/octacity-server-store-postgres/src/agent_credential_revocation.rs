@@ -30,7 +30,8 @@ pub(crate) async fn execute(
       credential_id.to_string(),
     ),
   };
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     kind,
     key,
     request.revoked_at,

@@ -8,7 +8,8 @@ pub(super) async fn cancel(
   audit: &MutationAuditContext,
 ) -> Result<CancellationDisposition, StoreError> {
   let mut state = MemoryTransaction::begin(store.lock()?);
-  if let Some(build_id) = state.cancellation_keys.get(&request.idempotency_key) {
+  let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
+  if let Some(build_id) = state.cancellation_keys.get(&idempotency) {
     if *build_id != request.build_id {
       return Err(StoreError::Conflict {
         entity: EntityKind::Build,
@@ -26,11 +27,9 @@ pub(super) async fn cancel(
   if let Some(existing) = state.cancellations.get(&request.build_id) {
     let mut outcome = existing.outcome.clone();
     outcome.disposition = MutationDisposition::Replayed;
-    let evidence_identity = format!("cancel-build:{}", request.idempotency_key);
+    let evidence_identity = management_evidence_identity("cancel-build", &idempotency);
     ensure_evidence_available(&state, &evidence_identity)?;
-    state
-      .cancellation_keys
-      .insert(request.idempotency_key, request.build_id);
+    state.cancellation_keys.insert(idempotency, request.build_id);
     record_evidence(&mut state, evidence_identity);
     state.management_audit_facts.insert(recorded_management_audit(
       audit,
@@ -84,7 +83,7 @@ pub(super) async fn cancel(
     attempt_state: decision.attempt_state(),
     build_state: decision.build_state(),
   };
-  let evidence_identity = format!("cancel-build:{}", request.idempotency_key);
+  let evidence_identity = management_evidence_identity("cancel-build", &idempotency);
   ensure_evidence_available(&state, &evidence_identity)?;
   for transition in decision.transitions() {
     state
@@ -110,9 +109,7 @@ pub(super) async fn cancel(
     .ok_or(StoreError::Unavailable)?
     .state = decision.attempt_state();
   *state.builds.get_mut(&request.build_id).ok_or(StoreError::Unavailable)? = decision.build_state();
-  state
-    .cancellation_keys
-    .insert(request.idempotency_key.clone(), request.build_id);
+  state.cancellation_keys.insert(idempotency, request.build_id);
   state.cancellations.insert(
     request.build_id,
     CancellationRecord {
@@ -138,7 +135,8 @@ pub(super) async fn retry(
   request.validate()?;
   let build_id = request.build_id;
   let mut state = MemoryTransaction::begin(store.lock()?);
-  if let Some(existing) = state.retries.get(&request.idempotency_key) {
+  let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
+  if let Some(existing) = state.retries.get(&idempotency) {
     if same_retry(&existing.request, &request) {
       let mut outcome = existing.outcome.clone();
       outcome.disposition = MutationDisposition::Replayed;
@@ -199,7 +197,7 @@ pub(super) async fn retry(
     attempt_number: next_number,
     ready_jobs: ready_jobs.clone(),
   };
-  let evidence_identity = format!("retry-build:{}", request.idempotency_key);
+  let evidence_identity = management_evidence_identity("retry-build", &idempotency);
   ensure_evidence_available(&state, &evidence_identity)?;
   ensure_enqueue_capacity(&state, ready_jobs.iter().copied())?;
   state.attempts.insert(
@@ -230,7 +228,7 @@ pub(super) async fn retry(
   }
   *state.builds.get_mut(&request.build_id).ok_or(StoreError::Unavailable)? = retry_decision.build_state();
   state.retries.insert(
-    request.idempotency_key.clone(),
+    idempotency,
     RetryRecord {
       request,
       outcome: outcome.clone(),

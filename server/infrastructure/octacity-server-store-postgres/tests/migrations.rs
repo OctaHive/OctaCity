@@ -15,6 +15,19 @@ use sqlx::{
 use support::TestDatabase;
 
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
+const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
+const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
+const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
+  ("create-project", "legacy-management", "trusted-network"),
+  ("claim-ready-job", "legacy-agent", "legacy-agent-data-plane"),
+  (
+    "complete-managed-webhook-create",
+    "legacy-adapter",
+    "legacy-adapter-data-plane",
+  ),
+  ("recover-expired-lease", "legacy-worker", "legacy-worker-data-plane"),
+  ("accept-trigger", "legacy-trigger", "legacy-trigger-data-plane"),
+];
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
@@ -38,6 +51,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   let mut previous = TestDatabase::empty().await;
   MIGRATOR.run_to(PREVIOUS_BINARY_SCHEMA_VERSION, &previous.pool).await?;
   seed_snapshot_marker(&previous.pool).await?;
+  seed_legacy_idempotency_record(&previous.pool).await?;
   assert_eq!(
     octacity_server_store_postgres::migration_status(&previous.pool).await?,
     MigrationStatus::Pending
@@ -50,6 +64,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     MigrationStatus::Current
   );
   assert!(authenticated_management_actor_is_allowed(&previous.pool).await?);
+  verify_security_scoped_idempotency(&previous.pool).await?;
   assert_snapshot_marker(&previous.pool).await?;
 
   let failed = snapshot.restore().await;
@@ -78,7 +93,9 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     maximum_applied_version(&rollback.pool).await?,
     PREVIOUS_BINARY_SCHEMA_VERSION
   );
-  assert!(!authenticated_management_actor_is_allowed(&rollback.pool).await?);
+  assert!(authenticated_management_actor_is_allowed(&rollback.pool).await?);
+  assert!(!column_exists(&rollback.pool, "idempotency_records", "security_scope").await?);
+  assert_legacy_idempotency_record(&rollback.pool).await?;
   assert_snapshot_marker(&rollback.pool).await?;
 
   rollback.cleanup().await;
@@ -195,6 +212,50 @@ async fn seed_snapshot_marker(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   Ok(())
 }
 
+async fn seed_legacy_idempotency_record(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  sqlx::query(
+    "INSERT INTO idempotency_records (scope, idempotency_key, request_digest, outcome, created_at) \
+     VALUES ($1, $2, $3, '{\"schema_version\": 1}', now())",
+  )
+  .bind(LEGACY_IDEMPOTENCY_SCOPE)
+  .bind(LEGACY_IDEMPOTENCY_KEY)
+  .bind(vec![7_u8; 32])
+  .execute(pool)
+  .await?;
+  for (scope, key, _) in LEGACY_OPERATION_SCOPES {
+    sqlx::query(
+      "INSERT INTO idempotency_records (scope, idempotency_key, request_digest, outcome, created_at) \
+       VALUES ($1, $2, $3, '{\"schema_version\": 1}', now())",
+    )
+    .bind(scope)
+    .bind(key)
+    .bind(vec![7_u8; 32])
+    .execute(pool)
+    .await?;
+  }
+  Ok(())
+}
+
+async fn assert_legacy_idempotency_record(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  let count: i64 =
+    sqlx::query_scalar("SELECT COUNT(*) FROM idempotency_records WHERE scope = $1 AND idempotency_key = $2")
+      .bind(LEGACY_IDEMPOTENCY_SCOPE)
+      .bind(LEGACY_IDEMPOTENCY_KEY)
+      .fetch_one(pool)
+      .await?;
+  assert_eq!(count, 1);
+  for (scope, key, _) in LEGACY_OPERATION_SCOPES {
+    let count: i64 =
+      sqlx::query_scalar("SELECT COUNT(*) FROM idempotency_records WHERE scope = $1 AND idempotency_key = $2")
+        .bind(scope)
+        .bind(key)
+        .fetch_one(pool)
+        .await?;
+    assert_eq!(count, 1);
+  }
+  Ok(())
+}
+
 async fn assert_snapshot_marker(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   let name = sqlx::query_scalar::<_, String>("SELECT name FROM projects WHERE id = $1::uuid")
     .bind(SNAPSHOT_PROJECT_ID)
@@ -228,6 +289,19 @@ async fn table_exists(pool: &sqlx::PgPool, table: &str) -> Result<bool, sqlx::Er
      )",
   )
   .bind(table)
+  .fetch_one(pool)
+  .await
+}
+
+async fn column_exists(pool: &sqlx::PgPool, table: &str, column: &str) -> Result<bool, sqlx::Error> {
+  sqlx::query_scalar(
+    "SELECT EXISTS (\
+       SELECT 1 FROM information_schema.columns \
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2\
+     )",
+  )
+  .bind(table)
+  .bind(column)
   .fetch_one(pool)
   .await
 }
@@ -337,5 +411,149 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     stored_business_routines, 0,
     "business behavior must not be implemented by stored PL/pgSQL routines"
   );
+  verify_security_scoped_idempotency(pool).await?;
   Ok(())
+}
+
+async fn verify_security_scoped_idempotency(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+  let primary_key_columns: Vec<String> = sqlx::query_scalar(
+    "SELECT key_column.column_name \
+     FROM information_schema.table_constraints AS table_constraint \
+     JOIN information_schema.key_column_usage AS key_column \
+       ON key_column.constraint_schema = table_constraint.constraint_schema \
+      AND key_column.constraint_name = table_constraint.constraint_name \
+     WHERE table_constraint.table_schema = 'public' \
+       AND table_constraint.table_name = 'idempotency_records' \
+       AND table_constraint.constraint_type = 'PRIMARY KEY' \
+     ORDER BY key_column.ordinal_position",
+  )
+  .fetch_all(pool)
+  .await?;
+  assert_eq!(primary_key_columns, ["scope", "security_scope", "idempotency_key"]);
+
+  let trigger_deduplication_columns: Vec<String> = sqlx::query_scalar(
+    "SELECT key_column.column_name \
+     FROM information_schema.table_constraints AS table_constraint \
+     JOIN information_schema.key_column_usage AS key_column \
+       ON key_column.constraint_schema = table_constraint.constraint_schema \
+      AND key_column.constraint_name = table_constraint.constraint_name \
+     WHERE table_constraint.table_schema = 'public' \
+       AND table_constraint.table_name = 'trigger_occurrences' \
+       AND table_constraint.constraint_name = 'trigger_occurrences_deduplication_key' \
+     ORDER BY key_column.ordinal_position",
+  )
+  .fetch_all(pool)
+  .await?;
+  assert_eq!(
+    trigger_deduplication_columns,
+    [
+      "security_scope",
+      "trigger_id",
+      "trigger_version",
+      "deduplication_identity"
+    ]
+  );
+
+  let (nullable, default): (String, Option<String>) = sqlx::query_as(
+    "SELECT is_nullable, column_default FROM information_schema.columns \
+     WHERE table_schema = 'public' AND table_name = 'idempotency_records' AND column_name = 'security_scope'",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(nullable, "NO");
+  assert!(default.is_some_and(|value| value.contains("trusted-network")));
+  assert!(table_exists(pool, "idempotency_records").await?);
+  assert!(
+    sqlx::query_scalar::<_, bool>("SELECT to_regclass('idempotency_records_legacy_lookup_idx') IS NOT NULL")
+      .fetch_one(pool)
+      .await?
+  );
+
+  if column_exists(pool, "idempotency_records", "security_scope").await? {
+    let legacy_scope: Option<String> =
+      sqlx::query_scalar("SELECT security_scope FROM idempotency_records WHERE scope = $1 AND idempotency_key = $2")
+        .bind(LEGACY_IDEMPOTENCY_SCOPE)
+        .bind(LEGACY_IDEMPOTENCY_KEY)
+        .fetch_optional(pool)
+        .await?;
+    if legacy_scope.is_some() {
+      assert_eq!(legacy_scope.as_deref(), Some("trusted-network"));
+    }
+  }
+  for (scope, key, expected_security_scope) in LEGACY_OPERATION_SCOPES {
+    let actual: Option<String> =
+      sqlx::query_scalar("SELECT security_scope FROM idempotency_records WHERE scope = $1 AND idempotency_key = $2")
+        .bind(scope)
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
+    if actual.is_some() {
+      assert_eq!(actual.as_deref(), Some(expected_security_scope));
+    }
+  }
+
+  let old_writer_key = format!("old-writer-{}", uuid::Uuid::new_v4().simple());
+  sqlx::query(
+    "INSERT INTO idempotency_records (scope, idempotency_key, request_digest, outcome, created_at) \
+     VALUES ('schema-contract', $1, $2, '{}', now())",
+  )
+  .bind(&old_writer_key)
+  .bind(vec![8_u8; 32])
+  .execute(pool)
+  .await?;
+  let default_scope: String = sqlx::query_scalar(
+    "SELECT security_scope FROM idempotency_records WHERE scope = 'schema-contract' AND idempotency_key = $1",
+  )
+  .bind(&old_writer_key)
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(default_scope, "trusted-network");
+  for invalid_scope in [String::new(), "UPPER".to_owned(), "x".repeat(129)] {
+    let error = sqlx::query(
+      "INSERT INTO idempotency_records \
+         (scope, security_scope, idempotency_key, request_digest, outcome, created_at) \
+       VALUES ('schema-contract', $1, $2, $3, '{}', now())",
+    )
+    .bind(invalid_scope)
+    .bind(format!("invalid-scope-{}", uuid::Uuid::new_v4().simple()))
+    .bind(vec![0_u8; 32])
+    .execute(pool)
+    .await
+    .unwrap_err();
+    assert_eq!(
+      error.as_database_error().and_then(|error| error.code()).as_deref(),
+      Some("23514")
+    );
+  }
+  assert!(idempotency_shape_can_be_restored_without_merging(pool).await?);
+
+  sqlx::query(
+    "INSERT INTO idempotency_records \
+       (scope, security_scope, idempotency_key, request_digest, outcome, created_at) \
+     VALUES ('schema-contract', 'operator:second', $1, $2, '{}', now())",
+  )
+  .bind(&old_writer_key)
+  .bind(vec![9_u8; 32])
+  .execute(pool)
+  .await?;
+  assert!(!idempotency_shape_can_be_restored_without_merging(pool).await?);
+  sqlx::query(
+    "DELETE FROM idempotency_records \
+     WHERE scope = 'schema-contract' AND idempotency_key = $1 AND security_scope = 'operator:second'",
+  )
+  .bind(&old_writer_key)
+  .execute(pool)
+  .await?;
+  Ok(())
+}
+
+async fn idempotency_shape_can_be_restored_without_merging(pool: &sqlx::PgPool) -> Result<bool, sqlx::Error> {
+  sqlx::query_scalar(
+    "SELECT NOT EXISTS (\
+       SELECT 1 FROM idempotency_records \
+       GROUP BY scope, idempotency_key HAVING COUNT(*) > 1\
+     )",
+  )
+  .fetch_one(pool)
+  .await
 }

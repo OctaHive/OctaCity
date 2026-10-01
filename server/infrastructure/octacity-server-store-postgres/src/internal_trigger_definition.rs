@@ -48,7 +48,8 @@ pub(crate) async fn publish(
   audit: &MutationAuditContext,
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::PublishInternalTriggerVersion,
     request.idempotency_key.to_string(),
     request.published_at,

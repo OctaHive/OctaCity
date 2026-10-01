@@ -33,7 +33,8 @@ pub(crate) async fn create(
   audit: &MutationAuditContext,
 ) -> Result<PipelineMutationOutcome, StoreError> {
   validate_dag(&request.dag, StoreOperation::CreatePipeline)?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreatePipeline,
     request.idempotency_key.to_string(),
     request.published_at,
@@ -99,7 +100,8 @@ pub(crate) async fn publish(
   audit: &MutationAuditContext,
 ) -> Result<PipelineMutationOutcome, StoreError> {
   validate_dag(&request.dag, StoreOperation::PublishPipelineVersion)?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::PublishPipelineVersion,
     request.idempotency_key.to_string(),
     request.published_at,

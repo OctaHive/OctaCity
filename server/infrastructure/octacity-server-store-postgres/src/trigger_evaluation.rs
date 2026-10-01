@@ -58,7 +58,8 @@ pub(crate) async fn reserve(
       owner: request.owner,
       claim_expires_at: request.claim_expires_at,
     });
-    let mut identity = MutationIdentity::with_digest(
+    let mut identity = MutationIdentity::with_management_digest(
+      audit,
       MutationKind::ReserveTriggerEvaluation,
       request.occurrence_id.to_string(),
       request.requested_at,

@@ -44,7 +44,8 @@ pub(crate) async fn create(
   request: CreateProject,
   audit: &MutationAuditContext,
 ) -> Result<ProjectMutationOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateProject,
     request.idempotency_key.to_string(),
     request.created_at,
@@ -94,7 +95,8 @@ pub(crate) async fn rename(
   request: RenameProject,
   audit: &MutationAuditContext,
 ) -> Result<ProjectMutationOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::RenameProject,
     request.idempotency_key.to_string(),
     request.renamed_at,
@@ -152,7 +154,8 @@ pub(crate) async fn move_project(
   request: MoveProject,
   audit: &MutationAuditContext,
 ) -> Result<ProjectMutationOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::MoveProject,
     request.idempotency_key.to_string(),
     request.moved_at,
@@ -220,7 +223,8 @@ pub(crate) async fn delete(
   request: DeleteProject,
   audit: &MutationAuditContext,
 ) -> Result<DeleteProjectOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::DeleteProject,
     request.idempotency_key.to_string(),
     request.deleted_at,

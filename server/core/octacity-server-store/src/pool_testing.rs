@@ -12,8 +12,8 @@ use crate::testing::{
 };
 use crate::{
   AgentPoolDefinition, AgentPoolMutationOutcome, AgentPoolPage, AgentPoolStore, CreateAgentPool, DeleteAgentPool,
-  DeleteAgentPoolOutcome, ListAgentPools, ManagementMutation, MutationDisposition, PublishAgentPoolVersion,
-  PublishedAgentPool, StoreError, StoreOperation, validate_pool_drain_transition,
+  DeleteAgentPoolOutcome, ListAgentPools, ManagementIdempotencyKey, ManagementMutation, MutationDisposition,
+  PublishAgentPoolVersion, PublishedAgentPool, StoreError, StoreOperation, validate_pool_drain_transition,
 };
 
 /// Protected resource kinds that make Pool deletion unsafe.
@@ -70,7 +70,7 @@ struct PoolMemoryState {
   versions: BTreeMap<(PoolId, PoolVersion), PublishedAgentPool>,
   current: BTreeMap<PoolId, PoolVersion>,
   names: BTreeMap<octacity_server_domain::PoolName, PoolId>,
-  mutations: BTreeMap<(&'static str, String), StoredMutation>,
+  mutations: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredMutation>,
   references: BTreeSet<(PoolId, PoolReferenceKind)>,
   audit: BTreeSet<RecordedManagementAuditFact>,
   outbox: BTreeSet<String>,
@@ -142,12 +142,13 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
       .validate()
       .map_err(|source| StoreError::invalid(StoreOperation::CreateAgentPool, source))?;
     let scope = "create-agent-pool";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = Fingerprint::Create {
       name: request.name.clone(),
       definition: request.definition.clone(),
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_pool(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_pool(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     if state.current.contains_key(&request.id) {
@@ -173,7 +174,7 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Pool(pool.clone()),
       recorded_management_audit(&audit, StoreOperation::CreateAgentPool, EntityKind::Pool, request.id),
@@ -194,13 +195,14 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
       .validate()
       .map_err(|source| StoreError::invalid(StoreOperation::PublishAgentPoolVersion, source))?;
     let scope = "publish-agent-pool-version";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = Fingerprint::Publish {
       id: request.id,
       expected: request.expected_current_version,
       definition: request.definition.clone(),
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_pool(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_pool(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let current_version = state.current.get(&request.id).copied().ok_or(StoreError::NotFound {
@@ -239,7 +241,7 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Pool(pool.clone()),
       recorded_management_audit(
@@ -294,12 +296,13 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
   ) -> Result<DeleteAgentPoolOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     let scope = "delete-agent-pool";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = Fingerprint::Delete {
       id: request.id,
       expected: request.expected_current_version,
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_delete(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_delete(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let current_version = state.current.get(&request.id).copied().ok_or(StoreError::NotFound {
@@ -325,7 +328,7 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Deleted(request.id),
       recorded_management_audit(&audit, StoreOperation::DeleteAgentPool, EntityKind::Pool, request.id),
@@ -340,10 +343,10 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
 fn replay_pool(
   state: &PoolMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &Fingerprint,
 ) -> Result<Option<AgentPoolMutationOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -363,10 +366,10 @@ fn replay_pool(
 fn replay_delete(
   state: &PoolMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &Fingerprint,
 ) -> Result<Option<DeleteAgentPoolOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -386,14 +389,16 @@ fn replay_delete(
 fn record(
   state: &mut PoolMemoryState,
   scope: &'static str,
-  key: &str,
+  key: ManagementIdempotencyKey,
   fingerprint: Fingerprint,
   outcome: StoredOutcome,
   audit_fact: RecordedManagementAuditFact,
 ) {
   state
     .mutations
-    .insert((scope, key.to_owned()), StoredMutation { fingerprint, outcome });
+    .insert((scope, key.clone()), StoredMutation { fingerprint, outcome });
   state.audit.insert(audit_fact);
-  state.outbox.insert(format!("{scope}:{key}"));
+  state
+    .outbox
+    .insert(crate::testing::management_evidence_identity(scope, &key));
 }

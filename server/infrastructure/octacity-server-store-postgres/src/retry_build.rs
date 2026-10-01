@@ -24,7 +24,8 @@ pub(crate) async fn execute(
   audit: &MutationAuditContext,
 ) -> Result<RetryDisposition, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::RetryBuild,
     request.idempotency_key.to_string(),
     request.requested_at,

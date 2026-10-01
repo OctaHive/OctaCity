@@ -27,18 +27,19 @@ use octacity_server_orchestrator::{
 use octacity_server_pipeline::DependencyPolicy;
 use serde_json::json;
 
+use crate::ManagementIdempotencyKey;
 use crate::test_support::{id, time};
 use crate::{
   AcceptTrigger, AcceptTriggerOutcome, AppendJobEvents, AppendJobEventsOutcome, AuditActorKind, BuildControlStore,
   CancelBuild, CancellationDisposition, CompletionDisposition, EventDigest, EventSequence, IdempotencyKey,
   ImmutableBuildInput, JobClaim, JobClaimOutcome, JobCompletion, JobEventAppendPreparation, JobExecutionStore,
   LeaseAccess, LeaseGrant, LeaseHeartbeatOutcome, LeaseHeartbeatStore, LogChunkManifest, LogChunkManifestStore,
-  LogIndexPosition, LogIndexWorkStore, ManagementMutation, MaterializedJob, MaterializedJobPayload,
-  MutationAuditContext, MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch, RenewLease, RetryBuild,
-  RetryDisposition, ScheduleRecord, StoreError, StoreOperation, SuppressTrigger, SuppressTriggerOutcome,
-  TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey, TriggerDefinitionRef,
-  TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget, WorkerOwner,
-  complete_job_state, retry_graph_is_equivalent, start_job_execution, validate_new_log_chunks,
+  LogIndexPosition, LogIndexWorkStore, ManagementMutation, ManagementSecurityScope, MaterializedJob,
+  MaterializedJobPayload, MutationAuditContext, MutationDisposition, NormalizedTriggerOccurrence, RegistrationEpoch,
+  RenewLease, RetryBuild, RetryDisposition, ScheduleRecord, StoreError, StoreOperation, SuppressTrigger,
+  SuppressTriggerOutcome, TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCause, TriggerDeduplicationKey,
+  TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerIntentDigest, TriggerKind, TriggerMetadata, TriggerTarget,
+  WorkerOwner, complete_job_state, retry_graph_is_equivalent, start_job_execution, validate_new_log_chunks,
 };
 
 mod build_control;
@@ -81,7 +82,9 @@ pub use crate::pipeline_contract_testing::{verify_in_memory_pipeline_store_contr
 pub use crate::pipeline_testing::InMemoryPipelineStore;
 pub use crate::pool_contract_testing::{verify_agent_pool_store_contract, verify_in_memory_agent_pool_store_contract};
 pub use crate::pool_testing::{InMemoryAgentPoolStore, PoolReferenceKind};
-pub use crate::project_contract_testing::{verify_in_memory_project_store_contract, verify_project_store_contract};
+pub use crate::project_contract_testing::{
+  verify_in_memory_project_store_contract, verify_project_store_contract, verify_security_scoped_project_replay,
+};
 pub use crate::project_testing::InMemoryProjectStore;
 
 /// Counts of transactional evidence produced by accepted mutations.
@@ -205,6 +208,7 @@ pub fn management_mutation_with_request<T>(mutation: T, request_identity: impl I
         kind: AuditActorKind::UnauthenticatedManagement,
         identity: None,
       },
+      crate::ManagementSecurityScope::trusted_network(),
       request_identity,
     )
     .expect("contract management audit context is valid"),
@@ -540,4 +544,56 @@ pub(crate) fn record_evidence(state: &mut MemoryState, identity: String) {
   let audit_inserted = state.audit_facts.insert(identity.clone());
   let outbox_inserted = state.outbox_entries.insert(identity);
   debug_assert!(idempotency_inserted && audit_inserted && outbox_inserted);
+}
+
+pub(crate) fn management_evidence_identity(operation: &str, key: &ManagementIdempotencyKey) -> String {
+  scoped_management_evidence_identity(operation, key.security_scope(), key.caller_key().as_str())
+}
+
+pub(crate) fn scoped_management_evidence_identity(
+  operation: &str,
+  security_scope: &ManagementSecurityScope,
+  caller_key: &str,
+) -> String {
+  ManagementEvidenceIdentity {
+    operation,
+    security_scope,
+    caller_key,
+  }
+  .encode()
+}
+
+struct ManagementEvidenceIdentity<'a> {
+  operation: &'a str,
+  security_scope: &'a ManagementSecurityScope,
+  caller_key: &'a str,
+}
+
+impl ManagementEvidenceIdentity<'_> {
+  fn encode(&self) -> String {
+    format!(
+      "{}:{}{}:{}{}:{}",
+      self.operation.len(),
+      self.operation,
+      self.security_scope.as_str().len(),
+      self.security_scope.as_str(),
+      self.caller_key.len(),
+      self.caller_key,
+    )
+  }
+}
+
+#[cfg(test)]
+mod evidence_identity_tests {
+  use super::*;
+
+  #[test]
+  fn management_evidence_components_cannot_collide_at_delimiters() {
+    let left_scope = ManagementSecurityScope::new("a:b").unwrap();
+    let right_scope = ManagementSecurityScope::new("a").unwrap();
+    assert_ne!(
+      scoped_management_evidence_identity("operation", &left_scope, "c"),
+      scoped_management_evidence_identity("operation", &right_scope, "b:c")
+    );
+  }
 }

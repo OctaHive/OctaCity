@@ -5,7 +5,7 @@ use octacity_server_domain::{AttemptNumber, BuildId, Timestamp};
 use octacity_server_store::{
   AcceptTrigger, ImmutableBuildInput, ManagementMutation, MutationAuditContext, SuppressTrigger,
   TriggerAcceptanceProbe, TriggerAcceptanceStore, TriggerCausality, TriggerCause, TriggerEvaluationOutcome,
-  TriggerEventKind, TriggerIntentDigest, TriggerMetadata,
+  TriggerEventKind, TriggerIntentDigest, TriggerMetadata, TriggerReplayNamespace,
 };
 use serde::Serialize;
 
@@ -232,7 +232,13 @@ impl ManualTriggerService {
     audit: Option<MutationAuditContext>,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     let occurrence_id = match kind {
-      octacity_server_store::TriggerKind::Manual => ManualBuildIdentities::occurrence_id(&command),
+      octacity_server_store::TriggerKind::Manual => ManualBuildIdentities::management_occurrence_id(
+        &command,
+        audit
+          .as_ref()
+          .ok_or(ManualTriggerError::SnapshotEncoding)?
+          .security_scope(),
+      ),
       octacity_server_store::TriggerKind::Scheduled => ManualBuildIdentities::occurrence_id_for("scheduled", &command),
       _ => {
         return Err(ManualTriggerError::Invalid(
@@ -290,6 +296,9 @@ impl ManualTriggerService {
       .replay_trigger_acceptance(TriggerAcceptanceProbe {
         trigger: trigger.clone(),
         intent_digest,
+        namespace: audit.as_ref().map_or(TriggerReplayNamespace::NonManagement, |audit| {
+          TriggerReplayNamespace::Management(audit.security_scope().clone())
+        }),
       })
       .await
       .map_err(ManualTriggerError::Store)?
@@ -420,9 +429,10 @@ struct OccurrenceEvaluation {
 
 pub(crate) fn manual_trigger_identity(
   command: &ManualTriggerCommand,
+  security_scope: &octacity_server_store::ManagementSecurityScope,
 ) -> Result<(octacity_server_domain::TriggerOccurrenceId, TriggerIntentDigest), ManualTriggerError> {
   Ok((
-    ManualBuildIdentities::occurrence_id(command),
+    ManualBuildIdentities::management_occurrence_id(command, security_scope),
     trigger_intent_digest(command, octacity_server_store::TriggerKind::Manual)?,
   ))
 }

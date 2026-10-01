@@ -28,7 +28,7 @@ pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaim
     "registration_epoch": request.registration_epoch.get(),
     "snapshot": request.snapshot,
   });
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     MutationKind::ClaimReadyJob,
     request.lease_id.to_string(),
     request.claimed_at,

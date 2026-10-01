@@ -21,7 +21,7 @@ use crate::{
 pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<AgentRegistrationOutcome, StoreError> {
   request.validate()?;
   let fingerprint = RequestFingerprint::from(&request);
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     MutationKind::RegisterAgent,
     request.credential_id.to_string(),
     request.registered_at,

@@ -23,7 +23,7 @@ use octacity_server_store::{
     agent_credential_store_contract_fixture, authoritative_store_contract_fixture, compatible_snapshot,
     management_mutation, retry_request, verify_agent_credential_store_contract, verify_agent_pool_store_contract,
     verify_authoritative_store_contract, verify_configuration_store_contract, verify_management_trigger_audit_contract,
-    verify_pipeline_store_contract, verify_project_store_contract,
+    verify_pipeline_store_contract, verify_project_store_contract, verify_security_scoped_project_replay,
   },
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
@@ -141,6 +141,7 @@ async fn postgres_persists_the_supplied_management_actor_once() {
       kind: AuditActorKind::AuthenticatedManagement,
       identity: Some("operator-42".to_owned()),
     },
+    octacity_server_store::ManagementSecurityScope::new("operator:42").unwrap(),
     "request-42",
   )
   .unwrap();
@@ -452,6 +453,17 @@ async fn postgres_satisfies_the_project_store_contract() {
   let result = tokio::spawn(verify_project_store_contract(store, evidence)).await;
   database.cleanup().await;
   result.expect("PostgreSQL Project-store contract failed");
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn postgres_isolates_management_replay_by_security_scope() {
+  let database = TestDatabase::migrated().await;
+  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let evidence = Arc::new(PostgresEvidenceProbe(database.pool.clone()));
+  let result = tokio::spawn(verify_security_scoped_project_replay(store, evidence)).await;
+  database.cleanup().await;
+  result.expect("PostgreSQL security-scoped Project replay contract failed");
 }
 
 #[tokio::test]

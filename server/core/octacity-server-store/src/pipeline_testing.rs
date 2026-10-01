@@ -11,8 +11,9 @@ use crate::testing::{
   recorded_management_audit,
 };
 use crate::{
-  CreatePipeline, ManagementMutation, MutationAuditContext, MutationDisposition, PipelineMutationOutcome,
-  PipelineStore, PublishPipelineVersion, PublishedPipeline, StoreError, StoreInputError, StoreOperation,
+  CreatePipeline, ManagementIdempotencyKey, ManagementMutation, MutationAuditContext, MutationDisposition,
+  PipelineMutationOutcome, PipelineStore, PublishPipelineVersion, PublishedPipeline, StoreError, StoreInputError,
+  StoreOperation,
 };
 
 /// Deterministic process-local Pipeline-store adapter for application tests.
@@ -45,7 +46,7 @@ struct PipelineMemoryState {
   pipelines: BTreeMap<PipelineId, PipelineMetadata>,
   names: BTreeMap<(ProjectId, PipelineName), PipelineId>,
   versions: BTreeMap<(PipelineId, PipelineVersion), PublishedPipeline>,
-  mutations: BTreeMap<(&'static str, String), StoredMutation>,
+  mutations: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredMutation>,
   evidence: BTreeSet<String>,
   audit: BTreeSet<RecordedManagementAuditFact>,
 }
@@ -112,13 +113,14 @@ impl PipelineStore for InMemoryPipelineStore {
     let (request, audit) = request.into_parts();
     validate_dag(&request.dag, StoreOperation::CreatePipeline)?;
     let scope = "create-pipeline";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::Create {
       project_id: request.project_id,
       name: request.name.clone(),
       dag: request.dag.clone(),
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     if !state.projects.contains(&request.project_id) {
@@ -154,7 +156,7 @@ impl PipelineStore for InMemoryPipelineStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       &pipeline,
       &audit,
@@ -173,13 +175,14 @@ impl PipelineStore for InMemoryPipelineStore {
     let (request, audit) = request.into_parts();
     validate_dag(&request.dag, StoreOperation::PublishPipelineVersion)?;
     let scope = "publish-pipeline-version";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::Publish {
       id: request.id,
       expected_current_version: request.expected_current_version,
       dag: request.dag.clone(),
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let metadata = state.pipelines.get(&request.id).cloned().ok_or(StoreError::NotFound {
@@ -216,7 +219,7 @@ impl PipelineStore for InMemoryPipelineStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       &pipeline,
       &audit,
@@ -257,10 +260,10 @@ fn validate_dag(
 fn replay(
   state: &PipelineMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &MutationFingerprint,
 ) -> Result<Option<PipelineMutationOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -275,20 +278,22 @@ fn replay(
 fn record(
   state: &mut PipelineMemoryState,
   scope: &'static str,
-  key: &str,
+  key: ManagementIdempotencyKey,
   fingerprint: MutationFingerprint,
   pipeline: &PublishedPipeline,
   audit: &MutationAuditContext,
   operation: StoreOperation,
 ) {
   state.mutations.insert(
-    (scope, key.to_owned()),
+    (scope, key.clone()),
     StoredMutation {
       fingerprint,
       pipeline: pipeline.clone(),
     },
   );
-  state.evidence.insert(format!("{scope}:{key}"));
+  state
+    .evidence
+    .insert(crate::testing::management_evidence_identity(scope, &key));
   state.audit.insert(recorded_management_audit(
     audit,
     operation,

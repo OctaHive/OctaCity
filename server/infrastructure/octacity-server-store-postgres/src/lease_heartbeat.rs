@@ -20,7 +20,7 @@ pub(crate) async fn execute(pool: &PgPool, request: RenewLease) -> Result<LeaseH
     "agent_id": request.lease.agent_id,
     "registration_epoch": request.lease.registration_epoch.get(),
   });
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     MutationKind::RenewLease,
     request.idempotency_key.to_string(),
     request.observed_at,

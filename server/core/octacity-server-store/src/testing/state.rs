@@ -4,6 +4,7 @@ use std::{
 };
 
 use super::*;
+use crate::{ManagementIdempotencyKey, TriggerReplayNamespace};
 
 #[derive(Clone, Default)]
 pub(crate) struct MemoryState {
@@ -11,7 +12,8 @@ pub(crate) struct MemoryState {
   pub(super) trigger_prerequisites: BTreeSet<TriggerPrerequisites>,
   pub(super) accepted: BTreeMap<TriggerOccurrenceId, AcceptedRecord>,
   pub(super) suppressed: BTreeMap<TriggerOccurrenceId, SuppressedRecord>,
-  pub(super) evaluated_by_deduplication: BTreeMap<TriggerDeduplicationKey, TriggerOccurrenceId>,
+  pub(super) evaluated_by_deduplication:
+    BTreeMap<(TriggerReplayNamespace, TriggerDeduplicationKey), TriggerOccurrenceId>,
   pub(super) schedules: BTreeMap<TriggerDefinitionRef, ScheduleMemoryRecord>,
   pub(super) builds: BTreeMap<BuildId, BuildState>,
   pub(super) attempts: BTreeMap<AttemptId, MemoryAttempt>,
@@ -32,8 +34,8 @@ pub(crate) struct MemoryState {
   pub(super) log_chunks: BTreeMap<LogChunkId, LogChunkManifest>,
   pub(super) completions: BTreeMap<JobId, CompletionRecord>,
   pub(super) cancellations: BTreeMap<BuildId, CancellationRecord>,
-  pub(super) cancellation_keys: BTreeMap<IdempotencyKey, BuildId>,
-  pub(super) retries: BTreeMap<IdempotencyKey, RetryRecord>,
+  pub(super) cancellation_keys: BTreeMap<ManagementIdempotencyKey, BuildId>,
+  pub(super) retries: BTreeMap<ManagementIdempotencyKey, RetryRecord>,
   pub(super) idempotency_outcomes: BTreeSet<String>,
   pub(super) audit_facts: BTreeSet<String>,
   pub(crate) management_audit_facts: BTreeSet<RecordedManagementAuditFact>,
@@ -108,12 +110,14 @@ pub(crate) struct RegistrationEligibility {
 
 #[derive(Clone)]
 pub(super) struct AcceptedRecord {
+  pub(super) namespace: TriggerReplayNamespace,
   pub(super) request: AcceptTrigger,
   pub(super) outcome: AcceptTriggerOutcome,
 }
 
 #[derive(Clone)]
 pub(super) struct SuppressedRecord {
+  pub(super) namespace: TriggerReplayNamespace,
   pub(super) request: SuppressTrigger,
   pub(super) outcome: SuppressTriggerOutcome,
 }
@@ -164,7 +168,7 @@ pub(super) struct RetryRecord {
 #[derive(Clone)]
 pub(super) struct ScheduleMemoryRecord {
   pub(super) record: ScheduleRecord,
-  pub(super) idempotency_key: IdempotencyKey,
+  pub(super) idempotency_key: ManagementIdempotencyKey,
   pub(super) claim: Option<(WorkerOwner, Timestamp)>,
 }
 

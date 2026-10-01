@@ -1,5 +1,9 @@
 use std::{fmt, str::FromStr};
 
+use octacity_server_store::{
+  MAX_MANAGEMENT_SECURITY_SCOPE_BYTES as STORE_MAX_MANAGEMENT_SECURITY_SCOPE_BYTES,
+  ManagementSecurityScope as StoreManagementSecurityScope,
+};
 use uuid::Uuid;
 
 use super::{ManagementSecurityError, is_canonical_text};
@@ -7,7 +11,7 @@ use super::{ManagementSecurityError, is_canonical_text};
 /// Maximum UTF-8 bytes in a verified management actor identity.
 pub const MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES: usize = 256;
 /// Maximum ASCII bytes in an opaque management security scope.
-pub const MAX_MANAGEMENT_SECURITY_SCOPE_BYTES: usize = 128;
+pub const MAX_MANAGEMENT_SECURITY_SCOPE_BYTES: usize = STORE_MAX_MANAGEMENT_SECURITY_SCOPE_BYTES;
 
 const TRUSTED_NETWORK_SECURITY_SCOPE: &str = "trusted-network";
 
@@ -94,40 +98,34 @@ fn validate_actor_identity(value: &str) -> Result<(), ManagementSecurityError> {
 
 /// Opaque stable partition used to isolate management idempotency outcomes.
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct ManagementSecurityScope(String);
+pub struct ManagementSecurityScope(StoreManagementSecurityScope);
 
 impl ManagementSecurityScope {
   /// Constructs a canonical scope using `[a-z0-9][a-z0-9._:-]*`.
   pub fn new(value: impl Into<String>) -> Result<Self, ManagementSecurityError> {
-    let value = value.into();
-    let mut characters = value.chars();
-    let valid = is_canonical_text(&value, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES)
-      && characters
-        .next()
-        .is_some_and(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
-      && characters.all(|character| {
-        character.is_ascii_lowercase() || character.is_ascii_digit() || matches!(character, '.' | '_' | ':' | '-')
-      });
-    if !valid {
-      return Err(ManagementSecurityError::InvalidSecurityScope);
-    }
-    Ok(Self(value))
+    StoreManagementSecurityScope::new(value)
+      .map(Self)
+      .map_err(|_| ManagementSecurityError::InvalidSecurityScope)
   }
 
   /// Constructs the one scope used by the trusted-network deployment.
   #[must_use]
   pub fn trusted_network() -> Self {
-    Self(TRUSTED_NETWORK_SECURITY_SCOPE.to_owned())
+    Self(StoreManagementSecurityScope::trusted_network())
   }
 
   /// Borrows the stable scope identity.
   #[must_use]
   pub fn as_str(&self) -> &str {
-    &self.0
+    self.0.as_str()
   }
 
   pub(super) fn is_trusted_network(&self) -> bool {
-    self.0 == TRUSTED_NETWORK_SECURITY_SCOPE
+    self.as_str() == TRUSTED_NETWORK_SECURITY_SCOPE
+  }
+
+  pub(crate) fn to_store(&self) -> StoreManagementSecurityScope {
+    self.0.clone()
   }
 }
 

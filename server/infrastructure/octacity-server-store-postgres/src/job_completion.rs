@@ -40,7 +40,7 @@ pub(crate) async fn execute(
     "lease_id": request.lease.lease_id,
     "registration_epoch": request.lease.registration_epoch.get(),
   });
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     MutationKind::CompleteJob,
     request.completion_id.to_string(),
     request.completed_at,

@@ -96,7 +96,7 @@ pub(crate) async fn recover(
   signer: &JobSpecSigner,
   request: RecoverExpiredLease,
 ) -> Result<RecoverExpiredLeaseOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     MutationKind::RecoverExpiredLease,
     request.claim.lease_id.to_string(),
     request.recovered_at,

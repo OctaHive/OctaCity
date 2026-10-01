@@ -45,7 +45,8 @@ pub(crate) async fn create(
       operation: StoreOperation::CreateAgentPool,
       source,
     })?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateAgentPool,
     request.idempotency_key.to_string(),
     request.published_at,
@@ -109,7 +110,8 @@ pub(crate) async fn publish(
       operation: StoreOperation::PublishAgentPoolVersion,
       source,
     })?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::PublishAgentPoolVersion,
     request.idempotency_key.to_string(),
     request.published_at,
@@ -201,7 +203,8 @@ pub(crate) async fn delete(
   request: DeleteAgentPool,
   audit: &MutationAuditContext,
 ) -> Result<DeleteAgentPoolOutcome, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::DeleteAgentPool,
     request.idempotency_key.to_string(),
     request.deleted_at,

@@ -27,9 +27,9 @@
 
 ## 6. Security-scoped Idempotency
 
-- [ ] 6.1 Extend the store idempotency key and APIs with `ManagementSecurityScope`; verify exact replay succeeds within one scope while the same caller key in a different scope neither collides with nor reveals the first outcome.
-- [ ] 6.2 Add the PostgreSQL migration, bounded column, uniqueness/index changes, and stable legacy backfill; verify fresh migration, previous-schema upgrade, reentrancy, old-writer default behavior, and rollback-safety checks against PostgreSQL.
-- [ ] 6.3 Update every management mutation to reserve and resolve idempotency in the accepted security scope; verify concurrent exact replay still commits one mutation/evidence set and cross-scope requests produce independent outcomes.
+- [x] 6.1 Extend the store idempotency key and APIs with `ManagementSecurityScope`; verify exact replay succeeds within one scope while the same caller key in a different scope neither collides with nor reveals the first outcome.
+- [x] 6.2 Add the PostgreSQL migration, bounded column, uniqueness/index changes, and stable legacy backfill; verify fresh migration, previous-schema upgrade, reentrancy, old-writer default behavior, and rollback-safety checks against PostgreSQL.
+- [x] 6.3 Update every management mutation to reserve and resolve idempotency in the accepted security scope; verify concurrent exact replay still commits one mutation/evidence set and cross-scope requests produce independent outcomes.
 
 ## 7. Authorization-safe Read Visibility
 

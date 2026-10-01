@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, Timestamp};
 use octacity_server_store::{
   AuditActor, AuditActorKind, ClaimTriggerEvaluations, CompleteTriggerEvaluation, FailTriggerEvaluation,
-  ManagementMutation, MutationAuditContext, RecordTriggerEvaluationRevision, ReserveTriggerEvaluation, StoreError,
-  TriggerEvaluationClaim, TriggerEvaluationReservation, TriggerEvaluationWorkStore, WorkerOwner,
+  ManagementMutation, ManagementSecurityScope, MutationAuditContext, RecordTriggerEvaluationRevision,
+  ReserveTriggerEvaluation, StoreError, TriggerEvaluationClaim, TriggerEvaluationReservation,
+  TriggerEvaluationWorkStore, WorkerOwner,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -16,7 +17,8 @@ use crate::{
   manual_trigger::service::manual_trigger_identity,
 };
 
-const PERSISTED_MANUAL_TRIGGER_SCHEMA_VERSION: u16 = 1;
+const PERSISTED_MANUAL_TRIGGER_SCHEMA_VERSION: u16 = 2;
+const LEGACY_AUDITED_MANUAL_TRIGGER_SCHEMA_VERSION: u16 = 1;
 
 /// Command handler that persists manual Trigger intent before mutable VCS resolution.
 pub struct DurableManualTriggerService {
@@ -78,8 +80,8 @@ impl crate::ManagementCommandUseCase<AcceptManualTriggerCommand> for DurableManu
     _grant: &crate::ManagementAuthorizationGrant,
     command: AcceptManualTriggerCommand,
   ) -> Result<ManualTriggerOutcome, Self::Error> {
-    let (occurrence_id, intent_digest) = manual_trigger_identity(&command.trigger)?;
     let audit = MutationAuditContext::try_from(context).map_err(|_| ManualTriggerError::SnapshotEncoding)?;
+    let (occurrence_id, intent_digest) = manual_trigger_identity(&command.trigger, audit.security_scope())?;
     let payload = serde_json::to_value(PersistedManualTriggerRequest::from_parts(command.clone(), &audit))
       .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
     let owner = WorkerOwner::new(format!("manual-trigger:{}", uuid::Uuid::new_v4()))
@@ -284,6 +286,7 @@ struct PersistedManualTriggerRequest {
   command: AcceptManualTriggerCommand,
   actor_kind: PersistedManagementActorKind,
   actor_identity: Option<String>,
+  security_scope: String,
   request_identity: String,
 }
 
@@ -294,6 +297,7 @@ impl PersistedManualTriggerRequest {
       command,
       actor_kind: PersistedManagementActorKind::from(audit.actor().kind),
       actor_identity: audit.actor().identity.clone(),
+      security_scope: audit.security_scope().as_str().to_owned(),
       request_identity: audit.request_identity().to_owned(),
     }
   }
@@ -307,6 +311,35 @@ impl PersistedManualTriggerRequest {
         kind: self.actor_kind.into(),
         identity: self.actor_identity,
       },
+      ManagementSecurityScope::new(self.security_scope).map_err(|_| ManualTriggerError::SnapshotEncoding)?,
+      self.request_identity,
+    )
+    .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
+    Ok((self.command, audit))
+  }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyAuditedManualTriggerRequest {
+  schema_version: u16,
+  command: AcceptManualTriggerCommand,
+  actor_kind: PersistedManagementActorKind,
+  actor_identity: Option<String>,
+  request_identity: String,
+}
+
+impl LegacyAuditedManualTriggerRequest {
+  fn into_parts(self) -> Result<(AcceptManualTriggerCommand, MutationAuditContext), ManualTriggerError> {
+    if self.schema_version != LEGACY_AUDITED_MANUAL_TRIGGER_SCHEMA_VERSION {
+      return Err(ManualTriggerError::SnapshotEncoding);
+    }
+    let audit = MutationAuditContext::try_new(
+      AuditActor {
+        kind: self.actor_kind.into(),
+        identity: self.actor_identity,
+      },
+      ManagementSecurityScope::trusted_network(),
       self.request_identity,
     )
     .map_err(|_| ManualTriggerError::SnapshotEncoding)?;
@@ -317,7 +350,8 @@ impl PersistedManualTriggerRequest {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum PersistedManualTriggerPayload {
-  Versioned(PersistedManualTriggerRequest),
+  Scoped(PersistedManualTriggerRequest),
+  LegacyAudited(LegacyAuditedManualTriggerRequest),
   Legacy(AcceptManualTriggerCommand),
 }
 
@@ -327,7 +361,8 @@ impl PersistedManualTriggerPayload {
     occurrence_id: octacity_server_domain::TriggerOccurrenceId,
   ) -> Result<(AcceptManualTriggerCommand, MutationAuditContext), ManualTriggerError> {
     match self {
-      Self::Versioned(request) => request.into_parts(),
+      Self::Scoped(request) => request.into_parts(),
+      Self::LegacyAudited(request) => request.into_parts(),
       Self::Legacy(command) => Ok((command, legacy_management_audit(occurrence_id)?)),
     }
   }
@@ -379,6 +414,7 @@ fn legacy_management_audit(
       kind: AuditActorKind::UnauthenticatedManagement,
       identity: None,
     },
+    ManagementSecurityScope::trusted_network(),
     format!("legacy-trigger-evaluation:{occurrence_id}"),
   )
   .map_err(|_| ManualTriggerError::SnapshotEncoding)

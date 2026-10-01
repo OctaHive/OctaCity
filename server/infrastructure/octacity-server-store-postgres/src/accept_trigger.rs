@@ -15,6 +15,7 @@ use crate::{
   database::{classify, number, unavailable},
   mutation::{
     MutationFacts, MutationIdentity, MutationKind, MutationStart, NonManagementActor, decode_outcome, encode_outcome,
+    trigger_replay_security_scope,
   },
 };
 
@@ -25,13 +26,23 @@ pub(crate) async fn execute(
   management_audit: Option<&MutationAuditContext>,
 ) -> Result<AcceptTriggerOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::with_digest(
-    MutationKind::AcceptTrigger,
-    request.trigger.id.to_string(),
-    request.accepted_at,
-    EntityKind::Trigger,
-    request.intent_digest.as_bytes(),
-  );
+  let identity = match management_audit {
+    Some(audit) => MutationIdentity::with_management_digest(
+      audit,
+      MutationKind::AcceptTrigger,
+      request.trigger.id.to_string(),
+      request.accepted_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+    None => MutationIdentity::with_non_management_digest(
+      MutationKind::AcceptTrigger,
+      request.trigger.id.to_string(),
+      request.accepted_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+  };
   let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
   let configuration_version = number(request.build.configuration_version.get(), StoreOperation::AcceptTrigger)?;
   let pipeline_version = number(request.build.pipeline_version.get(), StoreOperation::AcceptTrigger)?;
@@ -42,7 +53,14 @@ pub(crate) async fn execute(
     MutationStart::Replay(outcome) => return replay_accepted(outcome),
   };
 
-  if let Some(existing) = occurrence_replay(&mut transaction, &request.trigger, trigger_version).await? {
+  if let Some(existing) = occurrence_replay(
+    &mut transaction,
+    &request.trigger,
+    trigger_version,
+    identity.persisted_security_scope(),
+  )
+  .await?
+  {
     if existing.digest == identity.request_digest && existing.state == "accepted" {
       let outcome = replay_accepted(existing.outcome)?;
       if outcome.trigger_occurrence_id != existing.occurrence_id {
@@ -77,6 +95,7 @@ pub(crate) async fn execute(
     trigger_version,
     configuration_version,
     &identity.request_digest,
+    identity.persisted_security_scope(),
   )
   .await?;
   insert_build(
@@ -125,6 +144,7 @@ pub(crate) async fn replay_evaluation(
   request: TriggerAcceptanceProbe,
 ) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
   let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::AcceptTrigger)?;
+  let security_scope = trigger_replay_security_scope(&request.namespace);
   let record: Option<(Uuid, String, Vec<u8>, Json<Value>)> = sqlx::query_as(
     "SELECT occurrence.id, occurrence.state, record.request_digest, record.outcome \
      FROM trigger_occurrences AS occurrence \
@@ -132,14 +152,17 @@ pub(crate) async fn replay_evaluation(
        ON record.scope = CASE occurrence.state \
             WHEN 'accepted' THEN $1 WHEN 'suppressed' THEN $2 ELSE '' END \
       AND record.idempotency_key = occurrence.id::text \
-     WHERE occurrence.id = $3 \
-        OR (occurrence.trigger_id = $4 AND occurrence.trigger_version = $5 \
-            AND occurrence.deduplication_identity = $6) \
-     ORDER BY (occurrence.id = $3) DESC \
+      AND record.security_scope = occurrence.security_scope \
+     WHERE occurrence.security_scope = $3 \
+       AND (occurrence.id = $4 \
+        OR (occurrence.trigger_id = $5 AND occurrence.trigger_version = $6 \
+            AND occurrence.deduplication_identity = $7)) \
+     ORDER BY (occurrence.id = $4) DESC \
      LIMIT 1",
   )
   .bind(MutationKind::AcceptTrigger.scope())
   .bind(MutationKind::SuppressTrigger.scope())
+  .bind(security_scope)
   .bind(request.trigger.id.as_uuid())
   .bind(request.trigger.trigger.id.as_uuid())
   .bind(trigger_version)
@@ -178,13 +201,23 @@ pub(crate) async fn suppress(
   management_audit: Option<&MutationAuditContext>,
 ) -> Result<SuppressTriggerOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::with_digest(
-    MutationKind::SuppressTrigger,
-    request.trigger.id.to_string(),
-    request.suppressed_at,
-    EntityKind::Trigger,
-    request.intent_digest.as_bytes(),
-  );
+  let identity = match management_audit {
+    Some(audit) => MutationIdentity::with_management_digest(
+      audit,
+      MutationKind::SuppressTrigger,
+      request.trigger.id.to_string(),
+      request.suppressed_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+    None => MutationIdentity::with_non_management_digest(
+      MutationKind::SuppressTrigger,
+      request.trigger.id.to_string(),
+      request.suppressed_at,
+      EntityKind::Trigger,
+      request.intent_digest.as_bytes(),
+    ),
+  };
   let trigger_version = number(request.trigger.trigger.version.get(), StoreOperation::SuppressTrigger)?;
   let configuration_version = number(
     request.trigger.target.configuration_version.get(),
@@ -194,7 +227,14 @@ pub(crate) async fn suppress(
     MutationStart::Fresh(transaction) => transaction,
     MutationStart::Replay(outcome) => return replay_suppressed(outcome),
   };
-  if let Some(existing) = occurrence_replay(&mut transaction, &request.trigger, trigger_version).await? {
+  if let Some(existing) = occurrence_replay(
+    &mut transaction,
+    &request.trigger,
+    trigger_version,
+    identity.persisted_security_scope(),
+  )
+  .await?
+  {
     if existing.digest == identity.request_digest && existing.state == "suppressed" {
       let outcome = replay_suppressed(existing.outcome)?;
       if outcome.trigger_occurrence_id != existing.occurrence_id {
@@ -220,6 +260,7 @@ pub(crate) async fn suppress(
     trigger_version,
     configuration_version,
     &identity.request_digest,
+    identity.persisted_security_scope(),
   )
   .await?;
   let outcome = SuppressTriggerOutcome {
@@ -311,15 +352,16 @@ async fn insert_occurrence(
   trigger_version: i64,
   configuration_version: i64,
   request_digest: &[u8; 32],
+  security_scope: &str,
 ) -> Result<(), StoreError> {
   let inserted = sqlx::query(
     "INSERT INTO trigger_occurrences \
-       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
+       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, security_scope, \
         deduplication_identity, cause, causality, provider_metadata, source_time, state, build_id, request_digest, \
         created_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision / 1000.0), \
-             'accepted', NULL, $12, to_timestamp($13::double precision / 1000.0), \
-             to_timestamp($13::double precision / 1000.0)) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000.0), \
+             'accepted', NULL, $13, to_timestamp($14::double precision / 1000.0), \
+             to_timestamp($14::double precision / 1000.0)) \
      ON CONFLICT DO NOTHING",
   )
   .bind(request.trigger.id.as_uuid())
@@ -328,6 +370,7 @@ async fn insert_occurrence(
   .bind(request.trigger.target.configuration_id.as_uuid())
   .bind(configuration_version)
   .bind(request.trigger.cause.kind().as_str())
+  .bind(security_scope)
   .bind(request.trigger.deduplication_identity.as_str())
   .bind(Json(request.trigger.cause.clone()))
   .bind(Json(request.trigger.causality))
@@ -382,15 +425,16 @@ async fn insert_suppressed_occurrence(
   trigger_version: i64,
   configuration_version: i64,
   request_digest: &[u8; 32],
+  security_scope: &str,
 ) -> Result<(), StoreError> {
   let inserted = sqlx::query(
     "INSERT INTO trigger_occurrences \
-       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
+       (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, security_scope, \
         deduplication_identity, cause, causality, provider_metadata, source_time, state, build_id, request_digest, \
         created_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11::double precision / 1000.0), \
-             'suppressed', NULL, $12, to_timestamp($13::double precision / 1000.0), \
-             to_timestamp($13::double precision / 1000.0)) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision / 1000.0), \
+             'suppressed', NULL, $13, to_timestamp($14::double precision / 1000.0), \
+             to_timestamp($14::double precision / 1000.0)) \
      ON CONFLICT DO NOTHING",
   )
   .bind(request.trigger.id.as_uuid())
@@ -399,6 +443,7 @@ async fn insert_suppressed_occurrence(
   .bind(request.trigger.target.configuration_id.as_uuid())
   .bind(configuration_version)
   .bind(request.trigger.cause.kind().as_str())
+  .bind(security_scope)
   .bind(request.trigger.deduplication_identity.as_str())
   .bind(Json(request.trigger.cause.clone()))
   .bind(Json(request.trigger.causality))
@@ -520,6 +565,7 @@ async fn occurrence_replay(
   transaction: &mut Transaction<'_, Postgres>,
   trigger: &octacity_server_store::NormalizedTriggerOccurrence,
   trigger_version: i64,
+  security_scope: &str,
 ) -> Result<Option<ExistingEvaluation>, StoreError> {
   let record: Option<(Uuid, String, Vec<u8>, Json<Value>)> = sqlx::query_as(
     "SELECT occurrence.id, occurrence.state, record.request_digest, record.outcome \
@@ -528,15 +574,18 @@ async fn occurrence_replay(
        ON record.scope = CASE occurrence.state \
             WHEN 'accepted' THEN $1 WHEN 'suppressed' THEN $2 ELSE '' END \
       AND record.idempotency_key = occurrence.id::text \
-     WHERE occurrence.id = $3 \
-        OR (occurrence.trigger_id = $4 AND occurrence.trigger_version = $5 \
-            AND occurrence.deduplication_identity = $6) \
-     ORDER BY CASE WHEN occurrence.id = $3 THEN 0 ELSE 1 END \
+      AND record.security_scope = occurrence.security_scope \
+     WHERE occurrence.security_scope = $3 \
+       AND (occurrence.id = $4 \
+        OR (occurrence.trigger_id = $5 AND occurrence.trigger_version = $6 \
+            AND occurrence.deduplication_identity = $7)) \
+     ORDER BY CASE WHEN occurrence.id = $4 THEN 0 ELSE 1 END \
      LIMIT 1 \
      FOR UPDATE OF occurrence, record",
   )
   .bind(MutationKind::AcceptTrigger.scope())
   .bind(MutationKind::SuppressTrigger.scope())
+  .bind(security_scope)
   .bind(trigger.id.as_uuid())
   .bind(trigger.trigger.id.as_uuid())
   .bind(trigger_version)

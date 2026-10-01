@@ -65,6 +65,7 @@ fn management_audit() -> MutationAuditContext {
       kind: AuditActorKind::UnauthenticatedManagement,
       identity: None,
     },
+    octacity_server_store::ManagementSecurityScope::trusted_network(),
     "application-contract-request",
   )
   .unwrap()
@@ -219,6 +220,8 @@ fn manual_trigger_resolves_source_and_materializes_the_complete_dag() {
 mod retry;
 #[path = "manual_trigger/schedule.rs"]
 mod schedule;
+#[path = "manual_trigger/security_scope.rs"]
+mod security_scope;
 #[path = "manual_trigger/webhook.rs"]
 mod webhook;
 #[test]

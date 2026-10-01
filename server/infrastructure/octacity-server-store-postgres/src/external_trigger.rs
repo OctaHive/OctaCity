@@ -71,7 +71,8 @@ pub(crate) async fn create(
   audit: &MutationAuditContext,
 ) -> Result<UnmanagedWebhookMutationOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateUnmanagedWebhook,
     request.idempotency_key.to_string(),
     request.created_at,
@@ -205,7 +206,8 @@ pub(crate) async fn create_managed(
   audit: &MutationAuditContext,
 ) -> Result<ManagedWebhookMutationOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateManagedWebhook,
     request.idempotency_key.to_string(),
     request.created_at,
@@ -387,7 +389,7 @@ pub(crate) async fn record_managed(
     ManagedWebhookOperation::Rotate => MutationKind::RotateManagedWebhook,
     ManagedWebhookOperation::Delete => MutationKind::DeleteManagedWebhook,
   };
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_non_management(
     kind,
     request.idempotency_key.to_string(),
     request.observed_at,
@@ -492,7 +494,8 @@ pub(crate) async fn enqueue_managed_operation(
   request: EnqueueManagedWebhookOperation,
   audit: &MutationAuditContext,
 ) -> Result<MutationDisposition, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::EnqueueManagedWebhookOperation,
     format!(
       "{}:{}:{}",

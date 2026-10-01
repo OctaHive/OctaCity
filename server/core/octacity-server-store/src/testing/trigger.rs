@@ -1,15 +1,20 @@
 use super::*;
+use crate::TriggerReplayNamespace;
 
 pub(super) async fn replay(
   store: &InMemoryStore,
   request: TriggerAcceptanceProbe,
 ) -> Result<Option<TriggerEvaluationOutcome>, StoreError> {
   let state = store.lock()?;
-  let existing_occurrence = existing_occurrence(&state, &request.trigger);
+  let existing_occurrence = existing_occurrence(&state, &request.trigger, &request.namespace);
   let Some(existing_occurrence) = existing_occurrence else {
     return Ok(None);
   };
-  if let Some(existing) = state.accepted.get(&existing_occurrence) {
+  if let Some(existing) = state
+    .accepted
+    .get(&existing_occurrence)
+    .filter(|existing| existing.namespace == request.namespace)
+  {
     require_matching_intent(existing.request.intent_digest, request.intent_digest)?;
     let mut outcome = existing.outcome.clone();
     outcome.disposition = MutationDisposition::Replayed;
@@ -18,6 +23,7 @@ pub(super) async fn replay(
   let existing = state
     .suppressed
     .get(&existing_occurrence)
+    .filter(|existing| existing.namespace == request.namespace)
     .ok_or(StoreError::Unavailable)?;
   require_matching_intent(existing.request.intent_digest, request.intent_digest)?;
   let mut outcome = existing.outcome;
@@ -50,15 +56,24 @@ pub(super) async fn accept(
       entity: EntityKind::Pool,
     });
   }
+  let namespace = replay_namespace(audit.as_ref());
   let deduplication_key = request.trigger.deduplication_key();
-  let evidence_identity = format!("accept-trigger:{}", request.trigger.id);
-  let existing_occurrence = existing_occurrence(&state, &request.trigger);
+  let evidence_identity = management_trigger_identity("accept-trigger", request.trigger.id, audit.as_ref());
+  let existing_occurrence = existing_occurrence(&state, &request.trigger, &namespace);
   if let Some(existing_occurrence) = existing_occurrence {
     if let Some(existing) = state.accepted.get(&existing_occurrence) {
       require_matching_intent(existing.request.intent_digest, request.intent_digest)?;
       let mut outcome = existing.outcome.clone();
       outcome.disposition = MutationDisposition::Replayed;
-      if request.trigger.id != existing_occurrence && record_replay_evidence(&mut state, evidence_identity)? {
+      if record_replay_evidence(&mut state, evidence_identity)? {
+        if let Some(audit) = audit.as_ref() {
+          state.management_audit_facts.insert(recorded_management_audit(
+            audit,
+            StoreOperation::AcceptTrigger,
+            EntityKind::Build,
+            outcome.build_id,
+          ));
+        }
         state.commit();
       }
       return Ok(outcome);
@@ -139,13 +154,14 @@ pub(super) async fn accept(
   state.accepted.insert(
     occurrence_id,
     AcceptedRecord {
+      namespace: namespace.clone(),
       request,
       outcome: outcome.clone(),
     },
   );
   state
     .evaluated_by_deduplication
-    .insert(deduplication_key, occurrence_id);
+    .insert((namespace, deduplication_key), occurrence_id);
   record_evidence(&mut state, evidence_identity);
   state.commit();
   Ok(outcome)
@@ -167,14 +183,23 @@ pub(super) async fn suppress(
       entity: EntityKind::Trigger,
     });
   }
+  let namespace = replay_namespace(audit.as_ref());
   let deduplication_key = request.trigger.deduplication_key();
-  let evidence_identity = format!("suppress-trigger:{}", request.trigger.id);
-  if let Some(existing_occurrence) = existing_occurrence(&state, &request.trigger) {
+  let evidence_identity = management_trigger_identity("suppress-trigger", request.trigger.id, audit.as_ref());
+  if let Some(existing_occurrence) = existing_occurrence(&state, &request.trigger, &namespace) {
     if let Some(existing) = state.suppressed.get(&existing_occurrence) {
       require_matching_intent(existing.request.intent_digest, request.intent_digest)?;
       let mut outcome = existing.outcome;
       outcome.disposition = MutationDisposition::Replayed;
-      if request.trigger.id != existing_occurrence && record_replay_evidence(&mut state, evidence_identity)? {
+      if record_replay_evidence(&mut state, evidence_identity)? {
+        if let Some(audit) = audit.as_ref() {
+          state.management_audit_facts.insert(recorded_management_audit(
+            audit,
+            StoreOperation::SuppressTrigger,
+            EntityKind::Trigger,
+            existing_occurrence,
+          ));
+        }
         state.commit();
       }
       return Ok(outcome);
@@ -198,26 +223,48 @@ pub(super) async fn suppress(
       occurrence_id,
     ));
   }
-  state
-    .suppressed
-    .insert(occurrence_id, SuppressedRecord { request, outcome });
+  state.suppressed.insert(
+    occurrence_id,
+    SuppressedRecord {
+      namespace: namespace.clone(),
+      request,
+      outcome,
+    },
+  );
   state
     .evaluated_by_deduplication
-    .insert(deduplication_key, occurrence_id);
+    .insert((namespace, deduplication_key), occurrence_id);
   record_evidence(&mut state, evidence_identity);
   state.commit();
   Ok(outcome)
 }
 
-fn existing_occurrence(state: &MemoryState, trigger: &NormalizedTriggerOccurrence) -> Option<TriggerOccurrenceId> {
-  (state.accepted.contains_key(&trigger.id) || state.suppressed.contains_key(&trigger.id))
-    .then_some(trigger.id)
-    .or_else(|| {
-      state
-        .evaluated_by_deduplication
-        .get(&trigger.deduplication_key())
-        .copied()
-    })
+fn existing_occurrence(
+  state: &MemoryState,
+  trigger: &NormalizedTriggerOccurrence,
+  namespace: &TriggerReplayNamespace,
+) -> Option<TriggerOccurrenceId> {
+  (state
+    .accepted
+    .get(&trigger.id)
+    .is_some_and(|existing| &existing.namespace == namespace)
+    || state
+      .suppressed
+      .get(&trigger.id)
+      .is_some_and(|existing| &existing.namespace == namespace))
+  .then_some(trigger.id)
+  .or_else(|| {
+    state
+      .evaluated_by_deduplication
+      .get(&(namespace.clone(), trigger.deduplication_key()))
+      .copied()
+  })
+}
+
+fn replay_namespace(audit: Option<&MutationAuditContext>) -> TriggerReplayNamespace {
+  audit.map_or(TriggerReplayNamespace::NonManagement, |audit| {
+    TriggerReplayNamespace::Management(audit.security_scope().clone())
+  })
 }
 
 fn require_matching_intent(existing: TriggerIntentDigest, requested: TriggerIntentDigest) -> Result<(), StoreError> {
@@ -228,6 +275,19 @@ fn require_matching_intent(existing: TriggerIntentDigest, requested: TriggerInte
       entity: EntityKind::Trigger,
     })
   }
+}
+
+fn management_trigger_identity(
+  operation: &str,
+  occurrence_id: TriggerOccurrenceId,
+  audit: Option<&MutationAuditContext>,
+) -> String {
+  audit.map_or_else(
+    || format!("{operation}:{occurrence_id}"),
+    |audit| {
+      crate::testing::scoped_management_evidence_identity(operation, audit.security_scope(), &occurrence_id.to_string())
+    },
+  )
 }
 
 fn record_replay_evidence(state: &mut MemoryState, identity: String) -> Result<bool, StoreError> {

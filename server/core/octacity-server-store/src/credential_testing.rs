@@ -1,6 +1,6 @@
 //! Deterministic in-memory Agent-credential store implementation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use async_trait::async_trait;
 use octacity_protocol::AgentInventory;
@@ -24,10 +24,12 @@ pub(crate) struct CredentialMemoryState {
   registrations: BTreeMap<RegistrationCredentialId, RegistrationRecord>,
   agents: BTreeMap<AgentId, AgentRecord>,
   current_registration: BTreeMap<AgentId, RegistrationCredentialId>,
+  management_revocations: BTreeSet<(String, crate::ManagementSecurityScope)>,
 }
 
 #[derive(Clone)]
 struct EnrollmentRecord {
+  security_scope: crate::ManagementSecurityScope,
   fingerprint: EnrollmentFingerprint,
   outcome: IssueAgentEnrollmentOutcome,
   expected_platform: ExpectedAgentPlatform,
@@ -105,7 +107,7 @@ impl AgentCredentialStore for InMemoryStore {
       expected_platform: request.expected_platform.clone(),
     };
     if let Some(existing) = state.credentials.enrollments.get(&request.credential_id) {
-      if existing.fingerprint == fingerprint {
+      if existing.security_scope == *audit.security_scope() && existing.fingerprint == fingerprint {
         let mut outcome = existing.outcome.clone();
         outcome.disposition = MutationDisposition::Replayed;
         return Ok(outcome);
@@ -121,11 +123,17 @@ impl AgentCredentialStore for InMemoryStore {
       pool_version: request.pool_version,
       expires_at: request.expires_at,
     };
-    let evidence_identity = format!("issue-agent-enrollment:{}", request.credential_id);
+    let credential_id = request.credential_id.to_string();
+    let evidence_identity = crate::testing::scoped_management_evidence_identity(
+      "issue-agent-enrollment",
+      audit.security_scope(),
+      &credential_id,
+    );
     ensure_evidence_available(&state, &evidence_identity)?;
     state.credentials.enrollments.insert(
       request.credential_id,
       EnrollmentRecord {
+        security_scope: audit.security_scope().clone(),
         fingerprint,
         outcome: outcome.clone(),
         expected_platform: request.expected_platform,
@@ -369,38 +377,47 @@ impl AgentCredentialStore for InMemoryStore {
   ) -> Result<MutationDisposition, StoreError> {
     let (request, audit) = request.into_parts();
     let mut state = self.lock()?;
+    let revocation_identity = (
+      match request.target {
+        AgentCredentialTarget::Enrollment(id) => format!("enrollment:{id}"),
+        AgentCredentialTarget::Registration(id) => format!("registration:{id}"),
+      },
+      audit.security_scope().clone(),
+    );
+    if state.credentials.management_revocations.contains(&revocation_identity) {
+      return Ok(MutationDisposition::Replayed);
+    }
     let (evidence, operation, target_kind, target_identity) = match request.target {
       AgentCredentialTarget::Enrollment(credential_id) => {
-        let record = state
-          .credentials
-          .enrollments
-          .get(&credential_id)
-          .ok_or(StoreError::NotFound {
+        if !state.credentials.enrollments.contains_key(&credential_id) {
+          return Err(StoreError::NotFound {
             entity: EntityKind::AgentEnrollmentCredential,
-          })?;
-        if record.revoked_at.is_some() {
-          return Ok(MutationDisposition::Replayed);
+          });
         }
+        let credential_identity = credential_id.to_string();
         (
-          format!("revoke-agent-enrollment:{credential_id}"),
+          crate::testing::scoped_management_evidence_identity(
+            "revoke-agent-enrollment",
+            audit.security_scope(),
+            &credential_identity,
+          ),
           StoreOperation::RevokeAgentCredential,
           EntityKind::AgentEnrollmentCredential,
           credential_id.to_string(),
         )
       }
       AgentCredentialTarget::Registration(credential_id) => {
-        let record = state
-          .credentials
-          .registrations
-          .get(&credential_id)
-          .ok_or(StoreError::NotFound {
+        if !state.credentials.registrations.contains_key(&credential_id) {
+          return Err(StoreError::NotFound {
             entity: EntityKind::AgentRegistration,
-          })?;
-        if record.revoked_at.is_some() {
-          return Ok(MutationDisposition::Replayed);
+          });
         }
         (
-          format!("revoke-agent-registration:{credential_id}"),
+          crate::testing::scoped_management_evidence_identity(
+            "revoke-agent-registration",
+            audit.security_scope(),
+            &credential_id.to_string(),
+          ),
           StoreOperation::RevokeAgentCredential,
           EntityKind::AgentRegistration,
           credential_id.to_string(),
@@ -415,7 +432,8 @@ impl AgentCredentialStore for InMemoryStore {
           .enrollments
           .get_mut(&credential_id)
           .expect("revocation target was validated")
-          .revoked_at = Some(request.revoked_at);
+          .revoked_at
+          .get_or_insert(request.revoked_at);
       }
       AgentCredentialTarget::Registration(credential_id) => {
         let record = state
@@ -423,7 +441,7 @@ impl AgentCredentialStore for InMemoryStore {
           .registrations
           .get_mut(&credential_id)
           .expect("revocation target was validated");
-        record.revoked_at = Some(request.revoked_at);
+        record.revoked_at.get_or_insert(request.revoked_at);
         let agent_id = record.outcome.agent_id;
         let registration_epoch = record.outcome.registration_epoch;
         state.credentials.current_registration.remove(&agent_id);
@@ -432,6 +450,7 @@ impl AgentCredentialStore for InMemoryStore {
         }
       }
     }
+    state.credentials.management_revocations.insert(revocation_identity);
     record_evidence(&mut state, evidence);
     state.management_audit_facts.insert(recorded_management_audit(
       &audit,

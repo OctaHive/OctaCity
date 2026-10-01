@@ -25,7 +25,8 @@ pub(crate) async fn execute(
     pool_version: request.pool_version,
     expected_platform: request.expected_platform.clone(),
   };
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::IssueAgentEnrollment,
     request.credential_id.to_string(),
     request.issued_at,

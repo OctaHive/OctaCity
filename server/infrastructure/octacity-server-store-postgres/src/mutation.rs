@@ -1,5 +1,7 @@
 use octacity_server_domain::{EntityKind, Timestamp};
-use octacity_server_store::{AuditActorKind, AuditMetadata, MutationAuditContext, StoreError};
+use octacity_server_store::{
+  AuditActorKind, AuditMetadata, ManagementSecurityScope, MutationAuditContext, StoreError, TriggerReplayNamespace,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -8,9 +10,39 @@ use uuid::Uuid;
 
 const PENDING_OUTCOME: &str = "pending";
 const STORED_OUTCOME_SCHEMA_VERSION: u16 = 1;
+const AGENT_SECURITY_SCOPE: &str = "legacy-agent-data-plane";
+const ADAPTER_SECURITY_SCOPE: &str = "legacy-adapter-data-plane";
+const TRIGGER_SECURITY_SCOPE: &str = "legacy-trigger-data-plane";
+const WORKER_SECURITY_SCOPE: &str = "legacy-worker-data-plane";
+
+enum MutationNamespace {
+  Management(ManagementSecurityScope),
+  NonManagement(NonManagementMutationClass),
+}
+
+#[derive(Clone, Copy)]
+enum NonManagementMutationClass {
+  Agent,
+  Adapter,
+  Trigger,
+  Worker,
+}
+
+impl MutationNamespace {
+  fn persisted_scope(&self) -> &str {
+    match self {
+      Self::Management(scope) => scope.as_str(),
+      Self::NonManagement(NonManagementMutationClass::Agent) => AGENT_SECURITY_SCOPE,
+      Self::NonManagement(NonManagementMutationClass::Adapter) => ADAPTER_SECURITY_SCOPE,
+      Self::NonManagement(NonManagementMutationClass::Trigger) => TRIGGER_SECURITY_SCOPE,
+      Self::NonManagement(NonManagementMutationClass::Worker) => WORKER_SECURITY_SCOPE,
+    }
+  }
+}
 
 pub(crate) struct MutationIdentity {
   pub(crate) kind: MutationKind,
+  namespace: MutationNamespace,
   pub(crate) key: String,
   pub(crate) request_digest: [u8; 32],
   pub(crate) occurred_at: Timestamp,
@@ -19,7 +51,25 @@ pub(crate) struct MutationIdentity {
 }
 
 impl MutationIdentity {
-  pub(crate) fn new<T: Serialize>(
+  pub(crate) fn new_non_management<T: Serialize>(
+    kind: MutationKind,
+    key: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request: &T,
+  ) -> Result<Self, StoreError> {
+    Self::new_in_namespace(
+      MutationNamespace::NonManagement(kind.non_management_class()),
+      kind,
+      key,
+      occurred_at,
+      conflict_entity,
+      request,
+    )
+  }
+
+  fn new_in_namespace<T: Serialize>(
+    namespace: MutationNamespace,
     kind: MutationKind,
     key: String,
     occurred_at: Timestamp,
@@ -33,6 +83,7 @@ impl MutationIdentity {
     let request_identity = format!("{}:{}", kind.scope(), key);
     Ok(Self {
       kind,
+      namespace,
       key,
       request_digest: digest.finalize().into(),
       occurred_at,
@@ -41,7 +92,28 @@ impl MutationIdentity {
     })
   }
 
-  pub(crate) fn new_with_request_identity<T: Serialize>(
+  /// Builds the identity of a management mutation in the security scope that
+  /// the application accepted for this request.
+  pub(crate) fn new_management<T: Serialize>(
+    audit: &MutationAuditContext,
+    kind: MutationKind,
+    key: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request: &T,
+  ) -> Result<Self, StoreError> {
+    Self::new_in_namespace(
+      MutationNamespace::Management(audit.security_scope().clone()),
+      kind,
+      key,
+      occurred_at,
+      conflict_entity,
+      request,
+    )
+  }
+
+  pub(crate) fn new_management_with_request_identity<T: Serialize>(
+    audit: &MutationAuditContext,
     kind: MutationKind,
     key: String,
     request_identity: String,
@@ -49,12 +121,30 @@ impl MutationIdentity {
     conflict_entity: EntityKind,
     request: &T,
   ) -> Result<Self, StoreError> {
-    let mut identity = Self::new(kind, key, occurred_at, conflict_entity, request)?;
+    let mut identity = Self::new_management(audit, kind, key, occurred_at, conflict_entity, request)?;
     identity.request_identity = request_identity;
     Ok(identity)
   }
 
-  pub(crate) fn with_digest(
+  pub(crate) fn with_non_management_digest(
+    kind: MutationKind,
+    key: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request_digest: [u8; 32],
+  ) -> Self {
+    Self::with_digest_in_namespace(
+      MutationNamespace::NonManagement(kind.non_management_class()),
+      kind,
+      key,
+      occurred_at,
+      conflict_entity,
+      request_digest,
+    )
+  }
+
+  fn with_digest_in_namespace(
+    namespace: MutationNamespace,
     kind: MutationKind,
     key: String,
     occurred_at: Timestamp,
@@ -64,12 +154,42 @@ impl MutationIdentity {
     let request_identity = format!("{}:{}", kind.scope(), key);
     Self {
       kind,
+      namespace,
       key,
       request_digest,
       occurred_at,
       conflict_entity,
       request_identity,
     }
+  }
+
+  pub(crate) fn with_management_digest(
+    audit: &MutationAuditContext,
+    kind: MutationKind,
+    key: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request_digest: [u8; 32],
+  ) -> Self {
+    Self::with_digest_in_namespace(
+      MutationNamespace::Management(audit.security_scope().clone()),
+      kind,
+      key,
+      occurred_at,
+      conflict_entity,
+      request_digest,
+    )
+  }
+
+  pub(crate) fn persisted_security_scope(&self) -> &str {
+    self.namespace.persisted_scope()
+  }
+}
+
+pub(crate) fn trigger_replay_security_scope(namespace: &TriggerReplayNamespace) -> &str {
+  match namespace {
+    TriggerReplayNamespace::Management(scope) => scope.as_str(),
+    TriggerReplayNamespace::NonManagement => TRIGGER_SECURITY_SCOPE,
   }
 }
 
@@ -196,6 +316,21 @@ pub(crate) enum MutationKind {
 }
 
 impl MutationKind {
+  const fn non_management_class(self) -> NonManagementMutationClass {
+    match self {
+      Self::ClaimReadyJob | Self::RenewLease | Self::AppendJobEvents | Self::CompleteJob | Self::RegisterAgent => {
+        NonManagementMutationClass::Agent
+      }
+      Self::CompleteManagedWebhookCreate
+      | Self::ObserveManagedWebhook
+      | Self::RotateManagedWebhook
+      | Self::DeleteManagedWebhook => NonManagementMutationClass::Adapter,
+      Self::AcceptTrigger | Self::SuppressTrigger => NonManagementMutationClass::Trigger,
+      Self::RecoverExpiredLease => NonManagementMutationClass::Worker,
+      _ => panic!("management mutation kind cannot use a non-management namespace"),
+    }
+  }
+
   const fn metadata(self) -> MutationMetadata {
     macro_rules! metadata {
       ($digest:literal, $scope:literal, $target:literal, $topic:literal) => {
@@ -503,11 +638,12 @@ pub(crate) async fn begin<'a>(pool: &'a PgPool, identity: &MutationIdentity) -> 
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let inserted = sqlx::query(
     "INSERT INTO idempotency_records \
-       (scope, idempotency_key, request_digest, outcome, created_at) \
-     VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0)) \
+       (scope, security_scope, idempotency_key, request_digest, outcome, created_at) \
+     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0)) \
      ON CONFLICT DO NOTHING",
   )
   .bind(identity.kind.scope())
+  .bind(identity.persisted_security_scope())
   .bind(&identity.key)
   .bind(identity.request_digest.as_slice())
   .bind(Json(json!({"status": PENDING_OUTCOME})))
@@ -521,9 +657,10 @@ pub(crate) async fn begin<'a>(pool: &'a PgPool, identity: &MutationIdentity) -> 
 
   let (request_digest, Json(outcome)): (Vec<u8>, Json<Value>) = sqlx::query_as(
     "SELECT request_digest, outcome FROM idempotency_records \
-     WHERE scope = $1 AND idempotency_key = $2 FOR UPDATE",
+     WHERE scope = $1 AND security_scope = $2 AND idempotency_key = $3 FOR UPDATE",
   )
   .bind(identity.kind.scope())
+  .bind(identity.persisted_security_scope())
   .bind(&identity.key)
   .fetch_one(&mut *transaction)
   .await
@@ -584,13 +721,17 @@ pub(crate) async fn commit(
   .await
   .map_err(unavailable)?;
 
-  let updated = sqlx::query("UPDATE idempotency_records SET outcome = $1 WHERE scope = $2 AND idempotency_key = $3")
-    .bind(Json(outcome))
-    .bind(identity.kind.scope())
-    .bind(&identity.key)
-    .execute(&mut *transaction)
-    .await
-    .map_err(unavailable)?;
+  let updated = sqlx::query(
+    "UPDATE idempotency_records SET outcome = $1 \
+     WHERE scope = $2 AND security_scope = $3 AND idempotency_key = $4",
+  )
+  .bind(Json(outcome))
+  .bind(identity.kind.scope())
+  .bind(identity.persisted_security_scope())
+  .bind(&identity.key)
+  .execute(&mut *transaction)
+  .await
+  .map_err(unavailable)?;
   if updated.rows_affected() != 1 {
     return Err(StoreError::Unavailable);
   }
@@ -607,10 +748,11 @@ pub(crate) async fn commit_fresh(
 ) -> Result<(), StoreError> {
   sqlx::query(
     "INSERT INTO idempotency_records \
-       (scope, idempotency_key, request_digest, outcome, created_at) \
-     VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0))",
+       (scope, security_scope, idempotency_key, request_digest, outcome, created_at) \
+     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
   )
   .bind(identity.kind.scope())
+  .bind(identity.persisted_security_scope())
   .bind(&identity.key)
   .bind(identity.request_digest.as_slice())
   .bind(Json(json!({"status": PENDING_OUTCOME})))
@@ -652,11 +794,19 @@ pub(crate) async fn append_additional_audit_fact(
 
 fn stable_record_id(record_kind: &str, identity: &MutationIdentity) -> Uuid {
   let mut digest = Sha256::new();
-  digest.update(b"octacity.store-mutation-record.v1\0");
+  if matches!(identity.namespace, MutationNamespace::Management(_)) {
+    digest.update(b"octacity.store-mutation-record.v2\0");
+  } else {
+    digest.update(b"octacity.store-mutation-record.v1\0");
+  }
   digest.update(record_kind.as_bytes());
   digest.update([0]);
   digest.update(identity.kind.scope().as_bytes());
   digest.update([0]);
+  if let MutationNamespace::Management(security_scope) = &identity.namespace {
+    digest.update(security_scope.as_str().as_bytes());
+    digest.update([0]);
+  }
   digest.update(identity.key.as_bytes());
   let mut bytes: [u8; 16] = digest.finalize()[..16]
     .try_into()

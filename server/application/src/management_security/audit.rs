@@ -27,6 +27,7 @@ impl TryFrom<&ManagementRequestContext> for MutationAuditContext {
         kind,
         identity: context.actor().identity().map(str::to_owned),
       },
+      context.security_scope().to_store(),
       context.request_id().to_string(),
     )
   }

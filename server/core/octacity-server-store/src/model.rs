@@ -13,7 +13,7 @@ use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-use crate::{StoreError, StoreInputError, StoreOperation};
+use crate::{ManagementSecurityScope, StoreError, StoreInputError, StoreOperation};
 
 /// Maximum UTF-8 bytes in one persisted Job-event classification.
 pub const MAX_JOB_EVENT_KIND_BYTES: usize = 64;
@@ -135,6 +135,17 @@ pub struct TriggerAcceptanceProbe {
   pub trigger: NormalizedTriggerOccurrence,
   /// Digest of the transport-independent caller intent.
   pub intent_digest: TriggerIntentDigest,
+  /// Replay partition established by the protocol that accepted the Trigger.
+  pub namespace: TriggerReplayNamespace,
+}
+
+/// Protocol-owned namespace used to isolate Trigger replay outcomes.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TriggerReplayNamespace {
+  /// Trigger accepted through the management plane.
+  Management(ManagementSecurityScope),
+  /// Trigger accepted by a trusted non-management protocol.
+  NonManagement,
 }
 
 /// Complete atomic input for recording policy-suppressed Trigger evaluation.

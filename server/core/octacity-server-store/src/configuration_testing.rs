@@ -15,8 +15,9 @@ use crate::testing::{
 };
 use crate::{
   BuildConfigurationMutationOutcome, ConfigurationStore, CreateBuildConfiguration, CreateRepository,
-  ManagementMutation, MutationDisposition, PublishBuildConfigurationVersion, PublishRepositoryVersion,
-  PublishedBuildConfiguration, PublishedRepository, RepositoryMutationOutcome, StoreError, StoreOperation,
+  ManagementIdempotencyKey, ManagementMutation, MutationDisposition, PublishBuildConfigurationVersion,
+  PublishRepositoryVersion, PublishedBuildConfiguration, PublishedRepository, RepositoryMutationOutcome, StoreError,
+  StoreOperation,
 };
 
 /// Deterministic process-local adapter for configuration application tests.
@@ -71,7 +72,7 @@ struct ConfigurationMemoryState {
   configurations: BTreeMap<BuildConfigurationId, ConfigurationMetadata>,
   configuration_names: BTreeMap<(ProjectId, BuildConfigurationName), BuildConfigurationId>,
   configuration_versions: BTreeMap<(BuildConfigurationId, BuildConfigurationVersion), PublishedBuildConfiguration>,
-  mutations: BTreeMap<(&'static str, String), StoredMutation>,
+  mutations: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredMutation>,
   evidence: BTreeSet<String>,
   audit: BTreeSet<RecordedManagementAuditFact>,
 }
@@ -178,13 +179,14 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       .validate()
       .map_err(|source| StoreError::invalid(StoreOperation::CreateRepository, source))?;
     let scope = "create-repository";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::CreateRepository(CreateRepositoryIntent {
       project_id: request.project_id,
       name: request.name.clone(),
       definition: request.definition.clone(),
     });
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_repository(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_repository(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     if !state.projects.contains(&request.project_id) {
@@ -222,7 +224,7 @@ impl ConfigurationStore for InMemoryConfigurationStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Repository(repository.clone()),
       recorded_management_audit(
@@ -248,13 +250,14 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       .validate()
       .map_err(|source| StoreError::invalid(StoreOperation::PublishRepositoryVersion, source))?;
     let scope = "publish-repository-version";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::PublishRepository(PublishRepositoryIntent {
       id: request.id,
       expected_current_version: request.expected_current_version,
       definition: request.definition.clone(),
     });
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_repository(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_repository(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let metadata = state
@@ -295,7 +298,7 @@ impl ConfigurationStore for InMemoryConfigurationStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Repository(repository.clone()),
       recorded_management_audit(
@@ -334,13 +337,14 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       .validate()
       .map_err(|source| StoreError::invalid(StoreOperation::CreateBuildConfiguration, source))?;
     let scope = "create-build-configuration";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::CreateConfiguration(CreateConfigurationIntent {
       project_id: request.project_id,
       name: request.name.clone(),
       definition: request.definition.clone(),
     });
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_configuration(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_configuration(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     if !state.projects.contains(&request.project_id) {
@@ -379,7 +383,7 @@ impl ConfigurationStore for InMemoryConfigurationStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Configuration(Box::new(configuration.clone())),
       recorded_management_audit(
@@ -405,13 +409,14 @@ impl ConfigurationStore for InMemoryConfigurationStore {
       .validate()
       .map_err(|source| StoreError::invalid(StoreOperation::PublishBuildConfigurationVersion, source))?;
     let scope = "publish-build-configuration-version";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::PublishConfiguration(PublishConfigurationIntent {
       id: request.id,
       expected_current_version: request.expected_current_version,
       definition: request.definition.clone(),
     });
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_configuration(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_configuration(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let metadata = state
@@ -453,7 +458,7 @@ impl ConfigurationStore for InMemoryConfigurationStore {
     record(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Configuration(Box::new(configuration.clone())),
       recorded_management_audit(
@@ -510,10 +515,10 @@ fn validate_configuration_references(
 fn replay_repository(
   state: &ConfigurationMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &MutationFingerprint,
 ) -> Result<Option<RepositoryMutationOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -531,10 +536,10 @@ fn replay_repository(
 fn replay_configuration(
   state: &ConfigurationMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &MutationFingerprint,
 ) -> Result<Option<BuildConfigurationMutationOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -552,15 +557,17 @@ fn replay_configuration(
 fn record(
   state: &mut ConfigurationMemoryState,
   scope: &'static str,
-  key: &str,
+  key: ManagementIdempotencyKey,
   fingerprint: MutationFingerprint,
   outcome: StoredOutcome,
   audit_fact: RecordedManagementAuditFact,
 ) {
   state
     .mutations
-    .insert((scope, key.to_owned()), StoredMutation { fingerprint, outcome });
-  state.evidence.insert(format!("{scope}:{key}"));
+    .insert((scope, key.clone()), StoredMutation { fingerprint, outcome });
+  state
+    .evidence
+    .insert(crate::testing::management_evidence_identity(scope, &key));
   state.audit.insert(audit_fact);
 }
 

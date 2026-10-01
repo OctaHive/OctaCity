@@ -10,16 +10,18 @@ use std::{
 use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_protocol::{PlatformArchitecture, PlatformOs};
 use octacity_server_domain::{
-  AgentId, EntityKind, JobId, LeaseId, PipelineNodeId, RuntimeClass, Timestamp, TriggerId, TriggerVersion,
+  AgentId, EntityKind, JobId, LeaseId, PipelineNodeId, ProjectId, ProjectName, RuntimeClass, Timestamp, TriggerId,
+  TriggerVersion,
 };
 use octacity_server_job::JobRequirements;
 use octacity_server_pipeline::DependencyPolicy;
 use octacity_server_store::{
-  AppendJobEvents, AppendJobEventsOutcome, ClaimDueSchedules, CompleteScheduleClaim, CompletionDisposition,
-  CreateSchedule, CreateTriggerDefinition, DueScheduleClaim, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim,
-  JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  LeaseWindow, MaterializedJob, MissedRunPolicy, MutationDisposition, ScheduleDefinition, ScheduleStore as _,
-  TriggerAcceptanceStore as _, TriggerKind, WorkerOwner,
+  AppendJobEvents, AppendJobEventsOutcome, AuditActor, AuditActorKind, ClaimDueSchedules, CompleteScheduleClaim,
+  CompletionDisposition, CreateProject, CreateSchedule, CreateTriggerDefinition, DueScheduleClaim, DurableJobEvent,
+  EventSequence, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind,
+  JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, ManagementMutation, ManagementSecurityScope,
+  MaterializedJob, MissedRunPolicy, MutationAuditContext, MutationDisposition, ProjectStore as _, ScheduleDefinition,
+  ScheduleStore as _, TriggerAcceptanceStore as _, TriggerKind, WorkerOwner,
   testing::{authoritative_store_contract_fixture, management_mutation},
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
@@ -31,6 +33,84 @@ async fn independent_pool(source: &sqlx::PgPool) -> sqlx::PgPool {
   sqlx::PgPool::connect_with((*source.connect_options()).clone())
     .await
     .expect("connect an independent server pool to the test database")
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn concurrent_exact_management_replay_commits_one_scoped_evidence_set() {
+  let database = TestDatabase::migrated().await;
+  let left = PostgresStore::new(independent_pool(&database.pool).await);
+  let right = PostgresStore::new(independent_pool(&database.pool).await);
+  let request = scoped_project_request();
+  let replay = request.clone();
+  let verify_pool = database.pool.clone();
+
+  let result = tokio::spawn(async move {
+    let barrier = Arc::new(Barrier::new(2));
+    let left_barrier = Arc::clone(&barrier);
+    let left_task = tokio::spawn(async move {
+      left_barrier.wait().await;
+      left.create_project(request).await
+    });
+    let right_task = tokio::spawn(async move {
+      barrier.wait().await;
+      right.create_project(replay).await
+    });
+    let outcomes = [left_task.await.unwrap().unwrap(), right_task.await.unwrap().unwrap()];
+    assert_eq!(
+      outcomes
+        .iter()
+        .filter(|outcome| outcome.disposition == MutationDisposition::Applied)
+        .count(),
+      1
+    );
+    assert_eq!(
+      outcomes
+        .iter()
+        .filter(|outcome| outcome.disposition == MutationDisposition::Replayed)
+        .count(),
+      1
+    );
+
+    let (idempotency, audit, outbox): (i64, i64, i64) = sqlx::query_as(
+      "SELECT \
+         (SELECT COUNT(*) FROM idempotency_records \
+          WHERE scope = 'create-project' AND security_scope = 'operator:concurrent' \
+            AND idempotency_key = 'concurrent-scoped-project'), \
+         (SELECT COUNT(*) FROM audit_facts \
+          WHERE operation = 'create-project' AND idempotency_key = 'concurrent-scoped-project'), \
+         (SELECT COUNT(*) FROM outbox_entries WHERE topic = 'project.created')",
+    )
+    .fetch_one(&verify_pool)
+    .await
+    .unwrap();
+    assert_eq!((idempotency, audit, outbox), (1, 1, 1));
+  })
+  .await;
+
+  database.cleanup().await;
+  result.unwrap();
+}
+
+fn scoped_project_request() -> ManagementMutation<CreateProject> {
+  ManagementMutation::new(
+    CreateProject {
+      id: ProjectId::from_uuid(uuid::Uuid::from_u128(9000)).unwrap(),
+      parent_id: None,
+      name: ProjectName::new("concurrent-scoped-project").unwrap(),
+      idempotency_key: IdempotencyKey::new("concurrent-scoped-project").unwrap(),
+      created_at: Timestamp::from_unix_millis(9000).unwrap(),
+    },
+    MutationAuditContext::try_new(
+      AuditActor {
+        kind: AuditActorKind::AuthenticatedManagement,
+        identity: Some("operator:concurrent".to_owned()),
+      },
+      ManagementSecurityScope::new("operator:concurrent").unwrap(),
+      "concurrent-scoped-project",
+    )
+    .unwrap(),
+  )
 }
 
 #[tokio::test]

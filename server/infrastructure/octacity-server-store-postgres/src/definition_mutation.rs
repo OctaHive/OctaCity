@@ -35,7 +35,8 @@ pub(crate) async fn publish_policy(
   audit: &MutationAuditContext,
 ) -> Result<ProjectPolicyMutationOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::PublishProjectPolicy,
     request.idempotency_key.to_string(),
     request.published_at,
@@ -123,7 +124,8 @@ pub(crate) async fn create_trigger(
   audit: &MutationAuditContext,
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateTriggerDefinition,
     request.idempotency_key.to_string(),
     request.created_at,

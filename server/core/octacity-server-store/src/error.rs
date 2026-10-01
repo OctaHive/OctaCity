@@ -227,6 +227,9 @@ pub enum StoreInputError {
   /// An idempotency key is empty, malformed, or exceeds its byte bound.
   #[error("an idempotency key is invalid")]
   InvalidIdempotencyKey,
+  /// A management security scope is empty, malformed, or exceeds its byte bound.
+  #[error("a management security scope is invalid")]
+  InvalidManagementSecurityScope,
   /// A Project page size is zero or exceeds the store contract bound.
   #[error("a project page size is outside its allowed range")]
   InvalidProjectPageSize,

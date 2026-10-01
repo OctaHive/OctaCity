@@ -16,6 +16,7 @@ impl ScheduleStore for InMemoryStore {
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     request.validate()?;
+    let idempotency = audit.scoped_idempotency_key(&request.trigger.idempotency_key);
     let mut state = self.lock()?;
     let trigger_ref = crate::TriggerDefinitionRef {
       id: request.trigger.id,
@@ -24,7 +25,7 @@ impl ScheduleStore for InMemoryStore {
     if let Some(existing) = state
       .schedules
       .values()
-      .find(|existing| existing.idempotency_key == request.trigger.idempotency_key)
+      .find(|existing| existing.idempotency_key == idempotency)
     {
       if existing.record.target.configuration_id == request.trigger.configuration_id
         && existing.record.target.configuration_version == request.trigger.configuration_version
@@ -61,19 +62,20 @@ impl ScheduleStore for InMemoryStore {
           schedule: request.schedule,
           next_occurrence_at: request.next_occurrence_at,
         },
-        idempotency_key: request.trigger.idempotency_key,
+        idempotency_key: idempotency.clone(),
         claim: None,
       },
     );
-    state.idempotency_outcomes.insert(format!("schedule:{trigger_ref:?}"));
-    state.audit_facts.insert(format!("schedule:{trigger_ref:?}"));
+    let evidence_identity = super::management_evidence_identity("schedule", &idempotency);
+    state.idempotency_outcomes.insert(evidence_identity.clone());
+    state.audit_facts.insert(evidence_identity.clone());
     state.management_audit_facts.insert(recorded_management_audit(
       &audit,
       StoreOperation::CreateSchedule,
       EntityKind::Trigger,
       request.trigger.id,
     ));
-    state.outbox_entries.insert(format!("schedule:{trigger_ref:?}"));
+    state.outbox_entries.insert(evidence_identity);
     Ok(TriggerDefinitionMutationOutcome {
       disposition: MutationDisposition::Applied,
       trigger_id: request.trigger.id,

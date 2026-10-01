@@ -11,8 +11,8 @@ use crate::testing::{
   RecordedManagementAuditFact, recorded_management_audit,
 };
 use crate::{
-  CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, ManagementMutation, MoveProject,
-  MutationAuditContext, MutationDisposition, Project, ProjectDetails, ProjectMutationOutcome, ProjectPage,
+  CreateProject, DeleteProject, DeleteProjectOutcome, ListProjects, ManagementIdempotencyKey, ManagementMutation,
+  MoveProject, MutationAuditContext, MutationDisposition, Project, ProjectDetails, ProjectMutationOutcome, ProjectPage,
   ProjectStore, RenameProject, StoreError, StoreOperation, validate_project_ancestry,
 };
 
@@ -61,7 +61,7 @@ impl InMemoryProjectStore {
 #[derive(Clone, Default)]
 struct ProjectMemoryState {
   projects: BTreeMap<ProjectId, Project>,
-  mutations: BTreeMap<(&'static str, String), StoredMutation>,
+  mutations: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredMutation>,
   active_references: BTreeSet<ProjectId>,
   audit_facts: BTreeSet<RecordedManagementAuditFact>,
   outbox_entries: BTreeSet<String>,
@@ -135,12 +135,13 @@ impl ProjectStore for InMemoryProjectStore {
   ) -> Result<ProjectMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     let scope = "create-project";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::Create {
       parent_id: request.parent_id,
       name: request.name.clone(),
     };
     let mut committed = self.lock()?;
-    if let Some(outcome) = replay_project(&committed, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_project(&committed, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     require_parent(&committed, request.parent_id)?;
@@ -165,14 +166,14 @@ impl ProjectStore for InMemoryProjectStore {
     record_idempotency_outcome(
       &mut transaction,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency.clone(),
       fingerprint,
       StoredOutcome::Project(project.clone()),
     );
     inject_failure(failure, MutationFailurePoint::IdempotencyOutcome)?;
     record_audit_fact(&mut transaction, &audit, StoreOperation::CreateProject, request.id);
     inject_failure(failure, MutationFailurePoint::AuditFact)?;
-    record_outbox_entry(&mut transaction, scope, request.idempotency_key.as_str());
+    record_outbox_entry(&mut transaction, scope, &idempotency);
     inject_failure(failure, MutationFailurePoint::OutboxEntry)?;
     inject_failure(failure, MutationFailurePoint::Commit)?;
     *committed = transaction;
@@ -188,13 +189,14 @@ impl ProjectStore for InMemoryProjectStore {
   ) -> Result<ProjectMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     let scope = "rename-project";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::Rename {
       id: request.id,
       expected_version: request.expected_version,
       name: request.name.clone(),
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_project(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_project(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let current = require_current(&state, request.id, request.expected_version)?.clone();
@@ -210,7 +212,7 @@ impl ProjectStore for InMemoryProjectStore {
     record_mutation(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Project(project.clone()),
       recorded_management_audit(&audit, StoreOperation::RenameProject, EntityKind::Project, request.id),
@@ -224,13 +226,14 @@ impl ProjectStore for InMemoryProjectStore {
   async fn move_project(&self, request: ManagementMutation<MoveProject>) -> Result<ProjectMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     let scope = "move-project";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::Move {
       id: request.id,
       expected_version: request.expected_version,
       parent_id: request.parent_id,
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_project(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_project(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let current = require_current(&state, request.id, request.expected_version)?.clone();
@@ -248,7 +251,7 @@ impl ProjectStore for InMemoryProjectStore {
     record_mutation(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Project(project.clone()),
       recorded_management_audit(&audit, StoreOperation::MoveProject, EntityKind::Project, request.id),
@@ -300,12 +303,13 @@ impl ProjectStore for InMemoryProjectStore {
   ) -> Result<DeleteProjectOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     let scope = "delete-project";
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = MutationFingerprint::Delete {
       id: request.id,
       expected_version: request.expected_version,
     };
     let mut state = self.lock()?;
-    if let Some(outcome) = replay_delete(&state, scope, request.idempotency_key.as_str(), &fingerprint)? {
+    if let Some(outcome) = replay_delete(&state, scope, &idempotency, &fingerprint)? {
       return Ok(outcome);
     }
     let current = require_current(&state, request.id, request.expected_version)?;
@@ -324,7 +328,7 @@ impl ProjectStore for InMemoryProjectStore {
     record_mutation(
       &mut state,
       scope,
-      request.idempotency_key.as_str(),
+      idempotency,
       fingerprint,
       StoredOutcome::Deleted(request.id),
       recorded_management_audit(&audit, StoreOperation::DeleteProject, EntityKind::Project, request.id),
@@ -339,10 +343,10 @@ impl ProjectStore for InMemoryProjectStore {
 fn replay_project(
   state: &ProjectMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &MutationFingerprint,
 ) -> Result<Option<ProjectMutationOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -362,10 +366,10 @@ fn replay_project(
 fn replay_delete(
   state: &ProjectMemoryState,
   scope: &'static str,
-  key: &str,
+  key: &ManagementIdempotencyKey,
   fingerprint: &MutationFingerprint,
 ) -> Result<Option<DeleteProjectOutcome>, StoreError> {
-  let Some(stored) = state.mutations.get(&(scope, key.to_owned())) else {
+  let Some(stored) = state.mutations.get(&(scope, key.clone())) else {
     return Ok(None);
   };
   if &stored.fingerprint != fingerprint {
@@ -385,26 +389,26 @@ fn replay_delete(
 fn record_mutation(
   state: &mut ProjectMemoryState,
   scope: &'static str,
-  key: &str,
+  key: ManagementIdempotencyKey,
   fingerprint: MutationFingerprint,
   outcome: StoredOutcome,
   audit_fact: RecordedManagementAuditFact,
 ) {
-  record_idempotency_outcome(state, scope, key, fingerprint, outcome);
+  record_idempotency_outcome(state, scope, key.clone(), fingerprint, outcome);
   state.audit_facts.insert(audit_fact);
-  record_outbox_entry(state, scope, key);
+  record_outbox_entry(state, scope, &key);
 }
 
 fn record_idempotency_outcome(
   state: &mut ProjectMemoryState,
   scope: &'static str,
-  key: &str,
+  key: ManagementIdempotencyKey,
   fingerprint: MutationFingerprint,
   outcome: StoredOutcome,
 ) {
   state
     .mutations
-    .insert((scope, key.to_owned()), StoredMutation { fingerprint, outcome });
+    .insert((scope, key), StoredMutation { fingerprint, outcome });
 }
 
 fn record_audit_fact(
@@ -421,8 +425,10 @@ fn record_audit_fact(
   ));
 }
 
-fn record_outbox_entry(state: &mut ProjectMemoryState, scope: &'static str, key: &str) {
-  state.outbox_entries.insert(format!("{scope}:{key}"));
+fn record_outbox_entry(state: &mut ProjectMemoryState, scope: &'static str, key: &ManagementIdempotencyKey) {
+  state
+    .outbox_entries
+    .insert(crate::testing::management_evidence_identity(scope, key));
 }
 
 fn inject_failure(configured: Option<MutationFailurePoint>, current: MutationFailurePoint) -> Result<(), StoreError> {

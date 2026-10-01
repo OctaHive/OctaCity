@@ -1,6 +1,111 @@
 use std::{collections::VecDeque, time::Duration};
 
 use super::*;
+use octacity_server_application::{
+  ManagementActor, ManagementAuthorizationGrant, ManagementClientKind, ManagementCommandUseCase, ManagementIngress,
+  ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementSecurityScope,
+  ManagementVisibility,
+};
+
+#[test]
+fn durable_manual_trigger_work_is_isolated_by_management_security_scope() {
+  run(async {
+    let fixture = fixture();
+    let work = Arc::new(ReservationProbe::default());
+    let evaluator = Arc::new(ManualTriggerService::new(
+      Arc::new(RecordingStore::default()),
+      Arc::new(StaticContext(fixture.context)),
+      Arc::new(RecordingResolver::succeed("unused")),
+    ));
+    let service = DurableManualTriggerService::new(
+      evaluator,
+      work.clone(),
+      DurableRetryPolicy::new(3, 10, 100).unwrap(),
+      Duration::from_millis(100),
+    );
+    let command = AcceptManualTriggerCommand {
+      trigger: fixture.command,
+      accepted_at: time(200),
+    };
+
+    assert!(
+      management_command_in_scope(&service, command.clone(), "operator:first", 1)
+        .await
+        .is_err()
+    );
+    assert!(
+      management_command_in_scope(&service, command, "operator:second", 2)
+        .await
+        .is_err()
+    );
+    let occurrences = work.occurrences.lock().unwrap();
+    assert_eq!(occurrences.len(), 2);
+    assert_ne!(occurrences[0], occurrences[1]);
+  });
+}
+
+async fn management_command_in_scope(
+  service: &DurableManualTriggerService,
+  command: AcceptManualTriggerCommand,
+  scope: &str,
+  request_id: u128,
+) -> Result<ManualTriggerOutcome, ManualTriggerError> {
+  let context = ManagementRequestContext::new(
+    ManagementActor::authenticated(scope).unwrap(),
+    ManagementSecurityScope::new(scope).unwrap(),
+    ManagementRequestId::new(uuid::Uuid::from_u128(request_id)).unwrap(),
+    ManagementRequestAttributes::new(
+      ManagementIngress::VerifiedIdentity,
+      Some(ManagementClientKind::Automation),
+    ),
+  )
+  .unwrap();
+  service
+    .execute_management_command(
+      &context,
+      &ManagementAuthorizationGrant::new(ManagementVisibility::all()),
+      command,
+    )
+    .await
+}
+
+#[derive(Default)]
+struct ReservationProbe {
+  occurrences: Mutex<Vec<TriggerOccurrenceId>>,
+}
+
+#[async_trait]
+impl TriggerEvaluationWorkStore for ReservationProbe {
+  async fn reserve_trigger_evaluation(
+    &self,
+    request: ManagementMutation<ReserveTriggerEvaluation>,
+  ) -> Result<TriggerEvaluationReservation, StoreError> {
+    self.occurrences.lock().unwrap().push(request.mutation().occurrence_id);
+    Ok(TriggerEvaluationReservation::Pending)
+  }
+
+  async fn claim_trigger_evaluations(
+    &self,
+    _request: ClaimTriggerEvaluations,
+  ) -> Result<Vec<TriggerEvaluationClaim>, StoreError> {
+    Ok(Vec::new())
+  }
+
+  async fn record_trigger_evaluation_revision(
+    &self,
+    _request: octacity_server_store::RecordTriggerEvaluationRevision,
+  ) -> Result<(), StoreError> {
+    Err(StoreError::Unavailable)
+  }
+
+  async fn complete_trigger_evaluation(&self, _request: CompleteTriggerEvaluation) -> Result<(), StoreError> {
+    Err(StoreError::Unavailable)
+  }
+
+  async fn fail_trigger_evaluation(&self, _request: FailTriggerEvaluation) -> Result<(), StoreError> {
+    Err(StoreError::Unavailable)
+  }
+}
 
 #[test]
 fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation() {
@@ -43,7 +148,8 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
       Err(error) if error.classification() == ApplicationFailure::Unavailable
     ));
     assert_eq!(resolver.calls(), 1);
-    assert_eq!(work.payload()["schema_version"], 1);
+    assert_eq!(work.payload()["schema_version"], 2);
+    assert_eq!(work.payload()["security_scope"], "trusted-network");
 
     let worker = ManualTriggerRetryWorker::new(evaluator, work.clone(), policy);
     let outcome = worker
@@ -64,6 +170,7 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
         octacity_server_store::AuditActorKind::UnauthenticatedManagement
       );
       assert_eq!(audit.actor().identity, None);
+      assert_eq!(audit.security_scope().as_str(), "trusted-network");
       assert_eq!(audit.request_identity(), "74eb362d-4264-4d3a-88b8-556974a3b017");
     }
     drop(trigger_audits);
@@ -73,52 +180,77 @@ fn transient_vcs_failure_is_durable_and_recovered_without_duplicate_evaluation()
 }
 
 #[test]
-fn pending_legacy_payload_is_retried_with_stable_trusted_network_attribution() {
+fn pending_legacy_payloads_are_retried_with_stable_trusted_network_attribution() {
   run(async {
-    let fixture = fixture();
-    let builds = Arc::new(RecordingStore::default());
-    let work = Arc::new(RecordingEvaluationWork::default());
-    let resolver = Arc::new(SequencedResolver::new([
-      Err(RevisionResolutionError::Unavailable),
-      Ok(ImmutableRevision::new("0123456789abcdef").unwrap()),
-    ]));
-    let evaluator = Arc::new(ManualTriggerService::new(
-      builds.clone(),
-      Arc::new(StaticContext(fixture.context)),
-      resolver,
-    ));
-    let policy = DurableRetryPolicy::new(3, 10, 100).unwrap();
-    let service = DurableManualTriggerService::new(evaluator.clone(), work.clone(), policy, Duration::from_millis(100));
-    let command = AcceptManualTriggerCommand {
-      trigger: fixture.command,
-      accepted_at: time(200),
-    };
+    verify_legacy_payload(LegacyPayload::AuditedV1).await;
+    verify_legacy_payload(LegacyPayload::Unaudited).await;
+  });
+}
 
-    assert!(management_command(&service, command.clone()).await.is_err());
-    work.replace_payload(serde_json::to_value(&command).unwrap());
+#[derive(Clone, Copy)]
+enum LegacyPayload {
+  AuditedV1,
+  Unaudited,
+}
 
-    let outcome = ManualTriggerRetryWorker::new(evaluator, work.clone(), policy)
-      .run_once(owner("retry-worker"), time(210), time(400), 4)
-      .await
-      .unwrap();
+async fn verify_legacy_payload(format: LegacyPayload) {
+  let fixture = fixture();
+  let builds = Arc::new(RecordingStore::default());
+  let work = Arc::new(RecordingEvaluationWork::default());
+  let resolver = Arc::new(SequencedResolver::new([
+    Err(RevisionResolutionError::Unavailable),
+    Ok(ImmutableRevision::new("0123456789abcdef").unwrap()),
+  ]));
+  let evaluator = Arc::new(ManualTriggerService::new(
+    builds.clone(),
+    Arc::new(StaticContext(fixture.context)),
+    resolver,
+  ));
+  let policy = DurableRetryPolicy::new(3, 10, 100).unwrap();
+  let service = DurableManualTriggerService::new(evaluator.clone(), work.clone(), policy, Duration::from_millis(100));
+  let command = AcceptManualTriggerCommand {
+    trigger: fixture.command,
+    accepted_at: time(200),
+  };
 
-    assert_eq!(outcome.completed, 1);
-    assert_eq!(work.snapshot(), WorkSnapshot::Completed { attempts: 2 });
-    let requests = builds.requests.lock().unwrap();
-    let occurrence_id = requests[0].trigger.id;
-    drop(requests);
-    let audits = builds.management_audits.lock().unwrap();
-    assert_eq!(audits.len(), 1);
-    assert_eq!(
-      audits[0].actor().kind,
-      octacity_server_store::AuditActorKind::UnauthenticatedManagement
-    );
-    assert_eq!(audits[0].actor().identity, None);
+  assert!(management_command(&service, command.clone()).await.is_err());
+  match format {
+    LegacyPayload::AuditedV1 => {
+      let mut payload = work.payload();
+      let object = payload.as_object_mut().unwrap();
+      object.insert("schema_version".to_owned(), json!(1));
+      object.remove("security_scope");
+      work.replace_payload(payload);
+    }
+    LegacyPayload::Unaudited => work.replace_payload(serde_json::to_value(&command).unwrap()),
+  }
+
+  let outcome = ManualTriggerRetryWorker::new(evaluator, work.clone(), policy)
+    .run_once(owner("retry-worker"), time(210), time(400), 4)
+    .await
+    .unwrap();
+
+  assert_eq!(outcome.completed, 1);
+  assert_eq!(work.snapshot(), WorkSnapshot::Completed { attempts: 2 });
+  let requests = builds.requests.lock().unwrap();
+  let occurrence_id = requests[0].trigger.id;
+  drop(requests);
+  let audits = builds.management_audits.lock().unwrap();
+  assert_eq!(audits.len(), 1);
+  assert_eq!(
+    audits[0].actor().kind,
+    octacity_server_store::AuditActorKind::UnauthenticatedManagement
+  );
+  assert_eq!(audits[0].actor().identity, None);
+  assert_eq!(audits[0].security_scope().as_str(), "trusted-network");
+  if matches!(format, LegacyPayload::Unaudited) {
     assert_eq!(
       audits[0].request_identity(),
       format!("legacy-trigger-evaluation:{occurrence_id}")
     );
-  });
+  } else {
+    assert_eq!(audits[0].request_identity(), "74eb362d-4264-4d3a-88b8-556974a3b017");
+  }
 }
 
 #[test]

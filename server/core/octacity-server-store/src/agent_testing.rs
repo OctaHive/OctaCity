@@ -9,8 +9,8 @@ use octacity_server_domain::{AgentId, EntityKind, PoolId, PoolVersion};
 use crate::testing::{ManagementAuditProbe, RecordedManagementAuditFact, recorded_management_audit};
 use crate::{
   AgentDrainMode, AgentPage, AgentPlatform, AgentPoolDefinition, AgentStore, DrainAgent, DrainAgentOutcome,
-  EnrolledAgent, ListAgents, ManagementMutation, MutationDisposition, PoolAdmissionPolicy, ReassignAgentPool,
-  ReassignAgentPoolOutcome, StoreError, StoreOperation,
+  EnrolledAgent, ListAgents, ManagementIdempotencyKey, ManagementMutation, MutationDisposition, PoolAdmissionPolicy,
+  ReassignAgentPool, ReassignAgentPoolOutcome, StoreError, StoreOperation,
 };
 
 /// Deterministic process-local Agent management adapter.
@@ -25,8 +25,8 @@ struct State {
   pools: BTreeMap<(PoolId, PoolVersion), AgentPoolDefinition>,
   current_pools: BTreeMap<PoolId, PoolVersion>,
   active_leases: BTreeSet<AgentId>,
-  mutations: BTreeMap<String, (Fingerprint, ReassignAgentPoolOutcome)>,
-  drain_mutations: BTreeMap<String, (DrainFingerprint, DrainAgentOutcome)>,
+  mutations: BTreeMap<ManagementIdempotencyKey, (Fingerprint, ReassignAgentPoolOutcome)>,
+  drain_mutations: BTreeMap<ManagementIdempotencyKey, (DrainFingerprint, DrainAgentOutcome)>,
   audit: BTreeSet<RecordedManagementAuditFact>,
 }
 
@@ -140,13 +140,14 @@ impl AgentStore for InMemoryAgentStore {
     request: ManagementMutation<ReassignAgentPool>,
   ) -> Result<ReassignAgentPoolOutcome, StoreError> {
     let (request, audit) = request.into_parts();
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = Fingerprint {
       agent_id: request.agent_id,
       expected_version: request.expected_version,
       target_pool_id: request.target_pool_id,
     };
     let mut state = self.lock()?;
-    if let Some((stored_fingerprint, stored_outcome)) = state.mutations.get(request.idempotency_key.as_str()) {
+    if let Some((stored_fingerprint, stored_outcome)) = state.mutations.get(&idempotency) {
       if stored_fingerprint != &fingerprint {
         return Err(StoreError::Conflict {
           entity: EntityKind::Agent,
@@ -216,9 +217,7 @@ impl AgentStore for InMemoryAgentStore {
       disposition: MutationDisposition::Applied,
       agent,
     };
-    state
-      .mutations
-      .insert(request.idempotency_key.to_string(), (fingerprint, outcome.clone()));
+    state.mutations.insert(idempotency, (fingerprint, outcome.clone()));
     state.audit.insert(recorded_management_audit(
       &audit,
       StoreOperation::ReassignAgentPool,
@@ -230,13 +229,14 @@ impl AgentStore for InMemoryAgentStore {
 
   async fn drain_agent(&self, request: ManagementMutation<DrainAgent>) -> Result<DrainAgentOutcome, StoreError> {
     let (request, audit) = request.into_parts();
+    let idempotency = audit.scoped_idempotency_key(&request.idempotency_key);
     let fingerprint = DrainFingerprint {
       agent_id: request.agent_id,
       expected_version: request.expected_version,
       mode: request.mode,
     };
     let mut state = self.lock()?;
-    if let Some((stored_fingerprint, stored_outcome)) = state.drain_mutations.get(request.idempotency_key.as_str()) {
+    if let Some((stored_fingerprint, stored_outcome)) = state.drain_mutations.get(&idempotency) {
       if stored_fingerprint != &fingerprint {
         return Err(StoreError::Conflict {
           entity: EntityKind::Agent,
@@ -268,7 +268,7 @@ impl AgentStore for InMemoryAgentStore {
     };
     state
       .drain_mutations
-      .insert(request.idempotency_key.to_string(), (fingerprint, outcome.clone()));
+      .insert(idempotency, (fingerprint, outcome.clone()));
     state.audit.insert(recorded_management_audit(
       &audit,
       StoreOperation::DrainAgent,

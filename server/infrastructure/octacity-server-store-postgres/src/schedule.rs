@@ -44,7 +44,8 @@ pub(crate) async fn create(
 ) -> Result<TriggerDefinitionMutationOutcome, StoreError> {
   request.validate()?;
   let trigger = &request.trigger;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateSchedule,
     trigger.idempotency_key.to_string(),
     trigger.created_at,

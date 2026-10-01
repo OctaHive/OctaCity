@@ -1,7 +1,8 @@
 use std::fmt;
 
 use crate::{
-  AuditActor, AuditActorKind, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_REQUEST_IDENTITY_BYTES, StoreInputError,
+  AuditActor, AuditActorKind, IdempotencyKey, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_REQUEST_IDENTITY_BYTES,
+  ManagementIdempotencyKey, ManagementSecurityScope, StoreInputError,
 };
 
 /// Validated, credential-free attribution for one authoritative management mutation.
@@ -12,12 +13,17 @@ use crate::{
 #[derive(Clone, Eq, PartialEq)]
 pub struct MutationAuditContext {
   actor: AuditActor,
+  security_scope: ManagementSecurityScope,
   request_identity: String,
 }
 
 impl MutationAuditContext {
   /// Validates management actor evidence and its safe request correlation identity.
-  pub fn try_new(actor: AuditActor, request_identity: impl Into<String>) -> Result<Self, StoreInputError> {
+  pub fn try_new(
+    actor: AuditActor,
+    security_scope: ManagementSecurityScope,
+    request_identity: impl Into<String>,
+  ) -> Result<Self, StoreInputError> {
     validate_management_actor(&actor)?;
     let request_identity = request_identity.into();
     if !is_canonical_text(&request_identity, MAX_AUDIT_REQUEST_IDENTITY_BYTES) {
@@ -25,6 +31,7 @@ impl MutationAuditContext {
     }
     Ok(Self {
       actor,
+      security_scope,
       request_identity,
     })
   }
@@ -33,6 +40,18 @@ impl MutationAuditContext {
   #[must_use]
   pub const fn actor(&self) -> &AuditActor {
     &self.actor
+  }
+
+  /// Borrows the accepted management idempotency partition.
+  #[must_use]
+  pub const fn security_scope(&self) -> &ManagementSecurityScope {
+    &self.security_scope
+  }
+
+  /// Binds a caller-selected key to this accepted management security scope.
+  #[must_use]
+  pub fn scoped_idempotency_key(&self, caller_key: &IdempotencyKey) -> ManagementIdempotencyKey {
+    ManagementIdempotencyKey::new(self.security_scope.clone(), caller_key.clone())
   }
 
   /// Borrows the safe request correlation identity.
@@ -48,6 +67,7 @@ impl fmt::Debug for MutationAuditContext {
       .debug_struct("MutationAuditContext")
       .field("actor_kind", &self.actor.kind)
       .field("actor_identity", &self.actor.identity.as_ref().map(|_| "<redacted>"))
+      .field("security_scope", &self.security_scope)
       .field("request_identity", &self.request_identity)
       .finish()
   }
@@ -160,7 +180,7 @@ mod tests {
     assert_eq!(store.mutate(None), Err(StoreInputError::InvalidMutationAuditContext));
     for actor in invalid {
       assert_eq!(
-        MutationAuditContext::try_new(actor, "request-1"),
+        MutationAuditContext::try_new(actor, ManagementSecurityScope::trusted_network(), "request-1"),
         Err(StoreInputError::InvalidMutationAuditContext)
       );
     }
@@ -177,6 +197,7 @@ mod tests {
             kind: AuditActorKind::UnauthenticatedManagement,
             identity: None,
           },
+          ManagementSecurityScope::trusted_network(),
           "request-1",
         )
         .unwrap(),
@@ -189,6 +210,7 @@ mod tests {
             kind: AuditActorKind::AuthenticatedManagement,
             identity: Some("operator-1".to_owned()),
           },
+          ManagementSecurityScope::new("operator:1").unwrap(),
           "request-2",
         )
         .unwrap(),
@@ -205,18 +227,33 @@ mod tests {
     };
     for request_identity in ["", " request-1", "request-1\n"] {
       assert_eq!(
-        MutationAuditContext::try_new(actor.clone(), request_identity),
+        MutationAuditContext::try_new(
+          actor.clone(),
+          ManagementSecurityScope::new("operator:1").unwrap(),
+          request_identity,
+        ),
         Err(StoreInputError::InvalidMutationAuditContext)
       );
     }
     assert_eq!(
-      MutationAuditContext::try_new(actor.clone(), "r".repeat(MAX_AUDIT_REQUEST_IDENTITY_BYTES + 1),),
+      MutationAuditContext::try_new(
+        actor.clone(),
+        ManagementSecurityScope::new("operator:1").unwrap(),
+        "r".repeat(MAX_AUDIT_REQUEST_IDENTITY_BYTES + 1),
+      ),
       Err(StoreInputError::InvalidMutationAuditContext)
     );
 
-    let context = MutationAuditContext::try_new(actor, "request-1").unwrap();
+    let context =
+      MutationAuditContext::try_new(actor, ManagementSecurityScope::new("operator:1").unwrap(), "request-1").unwrap();
     let debug = format!("{context:?}");
     assert!(!debug.contains("private-subject"));
+    assert!(!debug.contains("operator:1"));
     assert!(debug.contains("<redacted>"));
+
+    let caller_key = IdempotencyKey::new("caller-key").unwrap();
+    let scoped_key = context.scoped_idempotency_key(&caller_key);
+    assert_eq!(scoped_key.security_scope().as_str(), "operator:1");
+    assert_eq!(scoped_key.caller_key(), &caller_key);
   }
 }

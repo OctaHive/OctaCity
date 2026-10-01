@@ -217,6 +217,7 @@ fn accepted_context_translates_to_exact_mutation_audit_evidence() {
     crate::AuditActorKind::UnauthenticatedManagement
   );
   assert_eq!(anonymous_audit.actor().identity, None);
+  assert_eq!(anonymous_audit.security_scope().as_str(), "trusted-network");
   assert_eq!(anonymous_audit.request_identity(), request_id().to_string());
 
   let authenticated_context = ManagementRequestContext::new(
@@ -235,6 +236,7 @@ fn accepted_context_translates_to_exact_mutation_audit_evidence() {
     crate::AuditActorKind::AuthenticatedManagement
   );
   assert_eq!(authenticated_audit.actor().identity.as_deref(), Some("operator-1"));
+  assert_eq!(authenticated_audit.security_scope().as_str(), "operator:1");
   assert_eq!(authenticated_audit.request_identity(), request_id().to_string());
 }
 

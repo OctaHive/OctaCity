@@ -20,7 +20,8 @@ pub(crate) async fn execute(
   request: CancelBuild,
   audit: &MutationAuditContext,
 ) -> Result<CancellationDisposition, StoreError> {
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CancelBuild,
     request.idempotency_key.to_string(),
     request.requested_at,

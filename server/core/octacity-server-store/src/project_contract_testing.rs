@@ -9,7 +9,8 @@ use crate::testing::{
 };
 use crate::{
   AuditActor, AuditActorKind, CreateProject, DeleteProject, IdempotencyKey, ListProjects, ManagementMutation,
-  MoveProject, MutationAuditContext, MutationDisposition, ProjectStore, RenameProject, StoreError, StoreOperation,
+  ManagementSecurityScope, MoveProject, MutationAuditContext, MutationDisposition, ProjectStore, RenameProject,
+  StoreError, StoreOperation,
 };
 
 const DEEP_TREE_DEPTH: u64 = 96;
@@ -248,6 +249,40 @@ where
   assert_management_audit_facts(evidence.as_ref(), expected_audit).await;
 }
 
+/// Verifies that caller keys are replayed only inside their accepted security
+/// scope while exact replays remain stable within each scope.
+pub async fn verify_security_scoped_project_replay<S, P>(store: Arc<S>, evidence: Arc<P>)
+where
+  S: ProjectStore + 'static,
+  P: ManagementAuditProbe + MutationEvidenceProbe + 'static,
+{
+  let left = scoped_create(991, "scope-left", "shared-key", "operator:left", "request-left");
+  let right = scoped_create(992, "scope-right", "shared-key", "operator:right", "request-right");
+
+  let left_outcome = store.create_project(left.clone()).await.unwrap();
+  let right_outcome = store.create_project(right.clone()).await.unwrap();
+  assert_eq!(left_outcome.disposition, MutationDisposition::Applied);
+  assert_eq!(right_outcome.disposition, MutationDisposition::Applied);
+  assert_ne!(left_outcome.project.id, right_outcome.project.id);
+  assert_eq!(
+    store.create_project(left).await.unwrap().disposition,
+    MutationDisposition::Replayed
+  );
+  assert_eq!(
+    store.create_project(right).await.unwrap().disposition,
+    MutationDisposition::Replayed
+  );
+
+  assert_eq!(
+    evidence.mutation_evidence_counts().await,
+    crate::testing::MutationEvidenceCounts {
+      idempotency: 2,
+      audit: 2,
+      outbox: 2,
+    }
+  );
+}
+
 /// Runs the Project contract against the deterministic in-memory adapter.
 pub fn verify_in_memory_project_store_contract() {
   let store = Arc::new(InMemoryProjectStore::new());
@@ -255,9 +290,38 @@ pub fn verify_in_memory_project_store_contract() {
     async move {
       verify_project_store_contract(Arc::clone(&store), store).await;
       verify_actor_faithful_replay().await;
+      let scoped = Arc::new(InMemoryProjectStore::new());
+      verify_security_scoped_project_replay(Arc::clone(&scoped), scoped).await;
     },
     "in-memory Project store operations must complete without I/O",
   );
+}
+
+fn scoped_create(
+  id_value: u64,
+  name: &str,
+  key_value: &str,
+  security_scope: &str,
+  request_identity: &str,
+) -> ManagementMutation<CreateProject> {
+  ManagementMutation::new(
+    CreateProject {
+      id: id(id_value),
+      parent_id: None,
+      name: ProjectName::new(name).unwrap(),
+      idempotency_key: key(key_value),
+      created_at: time(i64::try_from(id_value).unwrap()),
+    },
+    MutationAuditContext::try_new(
+      AuditActor {
+        kind: AuditActorKind::AuthenticatedManagement,
+        identity: Some(security_scope.to_owned()),
+      },
+      ManagementSecurityScope::new(security_scope).unwrap(),
+      request_identity,
+    )
+    .unwrap(),
+  )
 }
 
 async fn verify_actor_faithful_replay() {
@@ -274,6 +338,7 @@ async fn verify_actor_faithful_replay() {
       kind: AuditActorKind::AuthenticatedManagement,
       identity: Some("operator-42".to_owned()),
     },
+    crate::ManagementSecurityScope::new("operator:42").unwrap(),
     "request-42",
   )
   .unwrap();

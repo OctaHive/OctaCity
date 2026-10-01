@@ -108,6 +108,7 @@ where
     .replay_trigger_acceptance(TriggerAcceptanceProbe {
       trigger: equivalent_occurrence.clone(),
       intent_digest: request.intent_digest,
+      namespace: crate::TriggerReplayNamespace::NonManagement,
     })
     .await
     .unwrap()
@@ -137,6 +138,7 @@ where
     .replay_trigger_acceptance(TriggerAcceptanceProbe {
       trigger: suppressed_occurrence,
       intent_digest: suppressed_intent,
+      namespace: crate::TriggerReplayNamespace::NonManagement,
     })
     .await
     .unwrap()
@@ -165,6 +167,7 @@ where
       .replay_trigger_acceptance(TriggerAcceptanceProbe {
         trigger: equivalent_occurrence,
         intent_digest: TriggerIntentDigest::from_bytes([99; 32]),
+        namespace: crate::TriggerReplayNamespace::NonManagement,
       })
       .await
       .unwrap_err(),
@@ -704,6 +707,10 @@ where
   .unwrap();
   let accepted_audit = authenticated_audit("accept-request");
   let suppressed_audit = authenticated_audit("suppress-request");
+  let mut independently_scoped = trigger_request(92, 902, allowed_pool);
+  independently_scoped.trigger.deduplication_identity = accepted.trigger.deduplication_identity.clone();
+  independently_scoped.intent_digest = accepted.intent_digest;
+  let independent_audit = authenticated_audit_in_scope("operator-84", "operator:84", "independent-accept-request");
 
   assert_eq!(
     store
@@ -715,12 +722,43 @@ where
   );
   assert_eq!(
     store
-      .accept_management_trigger(ManagementMutation::new(accepted.clone(), accepted_audit))
+      .accept_management_trigger(ManagementMutation::new(accepted.clone(), accepted_audit.clone()))
       .await
       .unwrap()
       .disposition,
     MutationDisposition::Replayed
   );
+  assert_eq!(
+    store
+      .accept_management_trigger(ManagementMutation::new(
+        independently_scoped.clone(),
+        independent_audit.clone(),
+      ))
+      .await
+      .unwrap()
+      .disposition,
+    MutationDisposition::Applied,
+    "the same caller key in another management scope must produce an independent outcome"
+  );
+  let first_replay = store
+    .replay_trigger_acceptance(TriggerAcceptanceProbe {
+      trigger: accepted.trigger.clone(),
+      intent_digest: accepted.intent_digest,
+      namespace: crate::TriggerReplayNamespace::Management(accepted_audit.security_scope().clone()),
+    })
+    .await
+    .unwrap()
+    .expect("the first scope must retain its own outcome");
+  let independent_replay = store
+    .replay_trigger_acceptance(TriggerAcceptanceProbe {
+      trigger: independently_scoped.trigger.clone(),
+      intent_digest: independently_scoped.intent_digest,
+      namespace: crate::TriggerReplayNamespace::Management(independent_audit.security_scope().clone()),
+    })
+    .await
+    .unwrap()
+    .expect("the second scope must retain its own outcome");
+  assert_ne!(first_replay, independent_replay);
   assert_eq!(
     store
       .suppress_management_trigger(ManagementMutation::new(suppressed.clone(), suppressed_audit.clone()))
@@ -757,6 +795,14 @@ where
         target_identity: suppressed.trigger.id.to_string(),
         request_identity: "suppress-request".to_owned(),
       },
+      RecordedManagementAuditFact {
+        actor_kind: AuditActorKind::AuthenticatedManagement,
+        actor_identity: Some("operator-84".to_owned()),
+        operation: StoreOperation::AcceptTrigger,
+        target_kind: EntityKind::Build,
+        target_identity: independently_scoped.build.id.to_string(),
+        request_identity: "independent-accept-request".to_owned(),
+      },
     ]
   );
 }
@@ -782,11 +828,20 @@ pub fn verify_in_memory_store_contract() {
 }
 
 fn authenticated_audit(request_identity: &str) -> MutationAuditContext {
+  authenticated_audit_in_scope("operator-42", "operator:42", request_identity)
+}
+
+fn authenticated_audit_in_scope(
+  actor_identity: &str,
+  security_scope: &str,
+  request_identity: &str,
+) -> MutationAuditContext {
   MutationAuditContext::try_new(
     AuditActor {
       kind: AuditActorKind::AuthenticatedManagement,
-      identity: Some("operator-42".to_owned()),
+      identity: Some(actor_identity.to_owned()),
     },
+    crate::ManagementSecurityScope::new(security_scope).unwrap(),
     request_identity,
   )
   .unwrap()

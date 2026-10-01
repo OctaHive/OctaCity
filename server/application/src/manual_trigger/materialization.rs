@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use octacity_server_domain::{AttemptId, BuildId, ImmutableRevision, JobId, PipelineNodeId, TriggerOccurrenceId};
 use octacity_server_job::JobRequirements;
 use octacity_server_store::{
-  BuildRetentionDeadlines, MaterializedJob, MaterializedJobPayload, PublishedPipeline, StoreError,
+  BuildRetentionDeadlines, ManagementSecurityScope, MaterializedJob, MaterializedJobPayload, PublishedPipeline,
+  StoreError,
 };
 use serde_json::Value;
 use uuid::Uuid;
@@ -25,6 +26,15 @@ pub(super) struct ManualBuildIdentities {
 impl ManualBuildIdentities {
   pub(super) fn occurrence_id(command: &ManualTriggerCommand) -> TriggerOccurrenceId {
     Self::occurrence_id_for("manual", command)
+  }
+
+  pub(super) fn management_occurrence_id(
+    command: &ManualTriggerCommand,
+    security_scope: &ManagementSecurityScope,
+  ) -> TriggerOccurrenceId {
+    let base = Self::occurrence_id(command);
+    let occurrence_uuid = Uuid::new_v5(&base.as_uuid(), security_scope.as_str().as_bytes());
+    TriggerOccurrenceId::from_uuid(occurrence_uuid).expect("UUIDv5 is never nil")
   }
 
   pub(super) fn occurrence_id_for(kind: &str, command: &ManualTriggerCommand) -> TriggerOccurrenceId {

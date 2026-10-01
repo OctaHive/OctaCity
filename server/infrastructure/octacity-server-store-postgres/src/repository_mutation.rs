@@ -32,7 +32,8 @@ pub(crate) async fn create(
   audit: &MutationAuditContext,
 ) -> Result<RepositoryMutationOutcome, StoreError> {
   validate(&request.definition, StoreOperation::CreateRepository)?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::CreateRepository,
     request.idempotency_key.to_string(),
     request.published_at,
@@ -96,7 +97,8 @@ pub(crate) async fn publish(
   audit: &MutationAuditContext,
 ) -> Result<RepositoryMutationOutcome, StoreError> {
   validate(&request.definition, StoreOperation::PublishRepositoryVersion)?;
-  let identity = MutationIdentity::new(
+  let identity = MutationIdentity::new_management(
+    audit,
     MutationKind::PublishRepositoryVersion,
     request.idempotency_key.to_string(),
     request.published_at,
