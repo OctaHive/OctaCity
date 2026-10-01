@@ -221,7 +221,9 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   };
   let paths = guest_paths(&runner, &request).unwrap();
   let environment = process_environment(vec!["PATH=/tools/bin".to_owned(), "HOME=/workspace".to_owned()]).unwrap();
-  let spec = oci_spec(&fixture.config, &runner, &request, &paths, &environment, "octacity-job").unwrap();
+  let id = resource_id("release-containerd-0123456789abcdef0123456789abcdef", "job-1");
+  assert!(id.len() > 64, "fixture must cover a release-style resource ID");
+  let spec = oci_spec(&fixture.config, &runner, &request, &paths, &environment, &id).unwrap();
   assert_eq!(paths.data_dir, Path::new("/workspace/data"));
   assert_eq!(
     paths.cache.as_ref().unwrap().local_directory,
@@ -239,6 +241,8 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   assert_eq!(spec["process"]["env"][1], "PATH=/tools/bin");
   assert_eq!(spec["linux"]["resources"]["pids"]["limit"], 4096);
   assert_eq!(spec["process"]["rlimits"][0]["hard"], 65536);
+  assert!(spec["hostname"].as_str().unwrap().len() <= super::spec::LINUX_UTS_HOSTNAME_MAX_BYTES);
+  assert_eq!(spec["linux"]["cgroupsPath"], format!("octacity/{id}"));
   assert_eq!(
     spec["annotations"]["com.octacity.security-profile"],
     SECURITY_PROFILE_VERSION

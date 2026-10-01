@@ -3,6 +3,8 @@
 use super::*;
 use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, WORKLOAD_IDENTITY_PATH};
 
+pub(super) const LINUX_UTS_HOSTNAME_MAX_BYTES: usize = 64;
+
 /// Maps verified host paths into fixed paths inside the OCI root filesystem.
 pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> Result<ExecutionPaths, ExecutionError> {
   Ok(ExecutionPaths {
@@ -30,6 +32,7 @@ pub(super) fn oci_spec(
   id: &str,
 ) -> Result<serde_json::Value, ExecutionError> {
   let executable = map_path(&runner.release_root, &runner.executable, Path::new(GUEST_RELEASE))?;
+  let hostname = oci_hostname(id);
   // The agent keeps each workspace private (0700). Matching its ownership lets
   // the capability-free runner and its plugin children traverse the bind mount
   // without granting container root or weakening the host-side permissions.
@@ -55,7 +58,7 @@ pub(super) fn oci_spec(
       "capabilities": { "bounding": [], "effective": [], "inheritable": [], "permitted": [], "ambient": [] }
     },
     "root": { "path": "rootfs", "readonly": true },
-    "hostname": id,
+    "hostname": hostname,
     "mounts": [
       { "destination": "/proc", "type": "proc", "source": "proc", "options": ["nosuid", "noexec", "nodev"] },
       { "destination": "/dev", "type": "tmpfs", "source": "tmpfs", "options": ["nosuid", "strictatime", "mode=755", "size=65536k"] },
@@ -124,6 +127,15 @@ pub(super) fn oci_spec(
     }
   }
   Ok(spec)
+}
+
+/// Keeps OCI hostnames within Linux's 64-byte UTS limit without shortening resource IDs.
+fn oci_hostname(id: &str) -> String {
+  if id.len() <= LINUX_UTS_HOSTNAME_MAX_BYTES {
+    id.to_owned()
+  } else {
+    format!("octacity-{:.32x}", Sha256::digest(id.as_bytes()))
+  }
 }
 
 fn push_bind_mount(spec: &mut serde_json::Value, destination: &str, source: &Path, readonly: bool) {
