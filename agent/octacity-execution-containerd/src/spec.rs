@@ -30,6 +30,11 @@ pub(super) fn oci_spec(
   id: &str,
 ) -> Result<serde_json::Value, ExecutionError> {
   let executable = map_path(&runner.release_root, &runner.executable, Path::new(GUEST_RELEASE))?;
+  // The agent keeps each workspace private (0700). Matching its ownership lets
+  // the capability-free runner and its plugin children traverse the bind mount
+  // without granting container root or weakening the host-side permissions.
+  let workspace_metadata = fs::metadata(&request.workspace)
+    .map_err(|error| backend(format!("inspect workspace '{}': {error}", request.workspace.display())))?;
   let cpu_period = 100_000_u64;
   let cpu_quota = u64::from(request.cpu_millis)
     .checked_mul(cpu_period)
@@ -41,7 +46,7 @@ pub(super) fn oci_spec(
     "ociVersion": "1.1.0",
     "process": {
       "terminal": false,
-      "user": { "uid": 0, "gid": 0 },
+      "user": { "uid": workspace_metadata.uid(), "gid": workspace_metadata.gid() },
       "args": [executable],
       "env": image_environment,
       "cwd": paths.workspace,

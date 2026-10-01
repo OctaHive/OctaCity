@@ -228,6 +228,9 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
     Path::new(CACHE_DIRECTORY_PATH)
   );
   assert_eq!(spec["root"]["readonly"], true);
+  let workspace_metadata = fs::metadata(&workspace).unwrap();
+  assert_eq!(spec["process"]["user"]["uid"], workspace_metadata.uid());
+  assert_eq!(spec["process"]["user"]["gid"], workspace_metadata.gid());
   assert_eq!(spec["linux"]["resources"]["cpu"]["quota"], 200_000);
   assert_eq!(spec["linux"]["resources"]["memory"]["limit"], 1024);
   assert_eq!(spec["linux"]["namespaces"][1]["type"], "network");
