@@ -24,6 +24,7 @@ mod cancel_build;
 mod configuration_query;
 mod configuration_row;
 mod database;
+mod definition_discovery;
 mod definition_mutation;
 mod external_trigger;
 mod internal_trigger;

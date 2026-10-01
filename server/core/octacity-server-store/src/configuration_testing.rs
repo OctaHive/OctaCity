@@ -9,14 +9,17 @@ use octacity_server_domain::{
   PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion,
 };
 
+use crate::definition_discovery_model::finish_current_definition_page;
 use crate::testing::{
   ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
   recorded_management_audit,
 };
 use crate::{
-  BuildConfigurationMutationOutcome, ConfigurationStore, CreateBuildConfiguration, CreateRepository,
-  ManagementIdempotencyKey, ManagementMutation, MutationDisposition, PublishBuildConfigurationVersion,
-  PublishRepositoryVersion, PublishedBuildConfiguration, PublishedRepository, RepositoryMutationOutcome, StoreError,
+  BuildConfigurationMutationOutcome, ConfigurationDiscoveryStore, ConfigurationStore, CreateBuildConfiguration,
+  CreateRepository, CurrentBuildConfigurationPage, CurrentBuildConfigurationSummary, CurrentRepositoryPage,
+  CurrentRepositorySummary, ListProjectBuildConfigurations, ListProjectRepositories, ManagementIdempotencyKey,
+  ManagementMutation, MutationDisposition, PublishBuildConfigurationVersion, PublishRepositoryVersion,
+  PublishedBuildConfiguration, PublishedRepository, ReadVisibilityKind, RepositoryMutationOutcome, StoreError,
   StoreOperation,
 };
 
@@ -164,6 +167,98 @@ impl ManagementAuditProbe for InMemoryConfigurationStore {
       .iter()
       .cloned()
       .collect()
+  }
+}
+
+#[async_trait]
+impl ConfigurationDiscoveryStore for InMemoryConfigurationStore {
+  async fn list_project_repositories(
+    &self,
+    request: ListProjectRepositories,
+  ) -> Result<CurrentRepositoryPage, StoreError> {
+    let state = self.lock()?;
+    if !state.projects.contains(&request.project_id()) {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Project,
+      });
+    }
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(CurrentRepositoryPage {
+        items: Vec::new(),
+        next_cursor: None,
+      });
+    }
+    let limit = usize::from(request.limit().get());
+    let mut items = state
+      .repositories
+      .iter()
+      .filter(|(id, metadata)| {
+        metadata.project_id == request.project_id()
+          && request.visibility().allows(id)
+          && request.after().is_none_or(|after| **id > after)
+      })
+      .take(limit + 1)
+      .map(|(id, metadata)| {
+        let current = state
+          .repository_versions
+          .get(&(*id, metadata.current_version))
+          .ok_or(StoreError::Unavailable)?;
+        Ok(CurrentRepositorySummary {
+          id: current.id,
+          project_id: current.project_id,
+          name: current.name.clone(),
+          version: current.version,
+          published_at: current.published_at,
+        })
+      })
+      .collect::<Result<Vec<_>, StoreError>>()?;
+    let next_cursor = finish_current_definition_page(&mut items, request.limit(), |item| item.id);
+    Ok(CurrentRepositoryPage { items, next_cursor })
+  }
+
+  async fn list_project_build_configurations(
+    &self,
+    request: ListProjectBuildConfigurations,
+  ) -> Result<CurrentBuildConfigurationPage, StoreError> {
+    let state = self.lock()?;
+    if !state.projects.contains(&request.project_id()) {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Project,
+      });
+    }
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(CurrentBuildConfigurationPage {
+        items: Vec::new(),
+        next_cursor: None,
+      });
+    }
+    let limit = usize::from(request.limit().get());
+    let mut items = state
+      .configurations
+      .iter()
+      .filter(|(id, metadata)| {
+        metadata.project_id == request.project_id()
+          && request.visibility().allows(id)
+          && request.after().is_none_or(|after| **id > after)
+      })
+      .take(limit + 1)
+      .map(|(id, metadata)| {
+        let current = state
+          .configuration_versions
+          .get(&(*id, metadata.current_version))
+          .ok_or(StoreError::Unavailable)?;
+        Ok(CurrentBuildConfigurationSummary {
+          id: current.id,
+          project_id: current.project_id,
+          name: current.name.clone(),
+          version: current.version,
+          enabled: current.definition.enabled,
+          published_at: current.published_at,
+        })
+      })
+      .collect::<Result<Vec<_>, StoreError>>()?;
+    let next_cursor = finish_current_definition_page(&mut items, request.limit(), |item| item.id);
+    Ok(CurrentBuildConfigurationPage { items, next_cursor })
   }
 }
 

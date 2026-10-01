@@ -20,6 +20,8 @@ mod configuration_model;
 mod configuration_port;
 mod credential_port;
 mod credentials;
+mod definition_discovery_model;
+mod definition_discovery_port;
 mod definition_model;
 mod definition_port;
 mod error;
@@ -69,6 +71,12 @@ mod configuration_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod configuration_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod definition_discovery_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod definition_discovery_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod authoritative_contract_testing;
@@ -159,6 +167,15 @@ pub use credentials::{
   ExpectedAgentPlatform, FreshRegistrationCredential, IssueAgentEnrollment, IssueAgentEnrollmentOutcome,
   MAX_AGENT_INVENTORY_BYTES, MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RegistrationValidity,
   RevokeAgentCredential,
+};
+pub use definition_discovery_model::{
+  CurrentBuildConfigurationPage, CurrentBuildConfigurationSummary, CurrentPipelinePage, CurrentPipelineSummary,
+  CurrentRepositoryPage, CurrentRepositorySummary, CurrentTriggerDefinitionKind, CurrentTriggerDefinitionPage,
+  CurrentTriggerDefinitionSummary, ListProjectBuildConfigurations, ListProjectPipelines, ListProjectRepositories,
+  ListProjectTriggerDefinitions, MAX_CURRENT_DEFINITION_PAGE_SIZE,
+};
+pub use definition_discovery_port::{
+  ConfigurationDiscoveryStore, PipelineDiscoveryStore, TriggerDefinitionDiscoveryStore,
 };
 pub use definition_model::{
   CreateTriggerDefinition, ProjectPolicyMutationOutcome, PublishProjectPolicy, TriggerDefinitionMutationOutcome,
@@ -265,8 +282,10 @@ pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
 pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
-  BuildLogSearchVisibility, CacheSessionListVisibility, InternalTriggerListVisibility, JobEventReadVisibility,
-  MAX_READ_VISIBILITY_IDENTITIES, ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView,
+  BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
+  InternalTriggerListVisibility, JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility,
+  ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
+  TriggerDefinitionListVisibility,
 };
 pub use restore::{
   MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
@@ -405,6 +424,11 @@ mod tests {
   #[test]
   fn in_memory_adapter_satisfies_the_configuration_store_contract() {
     super::testing::verify_in_memory_configuration_store_contract();
+  }
+
+  #[test]
+  fn in_memory_adapters_satisfy_the_definition_discovery_contract() {
+    super::testing::verify_in_memory_definition_discovery_contract();
   }
 
   #[test]

@@ -463,7 +463,7 @@ pub fn verify_in_memory_configuration_store_contract() {
   );
 }
 
-fn repository_definition(locator: &str) -> RepositoryDefinition {
+pub(crate) fn repository_definition(locator: &str) -> RepositoryDefinition {
   RepositoryDefinition {
     vcs_integration_id: id::<IntegrationId>(500),
     repository_locator: octacity_server_domain::RepositoryLocator::new(locator).unwrap(),
@@ -475,7 +475,7 @@ fn repository_definition(locator: &str) -> RepositoryDefinition {
   }
 }
 
-fn build_configuration(
+pub(crate) fn build_configuration(
   repository_id: RepositoryId,
   repository_version: RepositoryVersion,
   pipeline_id: PipelineId,

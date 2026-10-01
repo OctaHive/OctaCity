@@ -187,6 +187,13 @@ impl PipelineStore for PostgresStore {
 }
 
 #[async_trait]
+impl PipelineDiscoveryStore for PostgresStore {
+  async fn list_project_pipelines(&self, request: ListProjectPipelines) -> Result<CurrentPipelinePage, StoreError> {
+    crate::definition_discovery::pipelines(&self.pool, request).await
+  }
+}
+
+#[async_trait]
 impl ConfigurationStore for PostgresStore {
   async fn create_repository(
     &self,
@@ -234,6 +241,33 @@ impl ConfigurationStore for PostgresStore {
     version: BuildConfigurationVersion,
   ) -> Result<PublishedBuildConfiguration, StoreError> {
     crate::configuration_query::build_configuration(&self.pool, configuration_id, version).await
+  }
+}
+
+#[async_trait]
+impl ConfigurationDiscoveryStore for PostgresStore {
+  async fn list_project_repositories(
+    &self,
+    request: ListProjectRepositories,
+  ) -> Result<CurrentRepositoryPage, StoreError> {
+    crate::definition_discovery::repositories(&self.pool, request).await
+  }
+
+  async fn list_project_build_configurations(
+    &self,
+    request: ListProjectBuildConfigurations,
+  ) -> Result<CurrentBuildConfigurationPage, StoreError> {
+    crate::definition_discovery::build_configurations(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl TriggerDefinitionDiscoveryStore for PostgresStore {
+  async fn list_project_trigger_definitions(
+    &self,
+    request: ListProjectTriggerDefinitions,
+  ) -> Result<CurrentTriggerDefinitionPage, StoreError> {
+    crate::definition_discovery::triggers(&self.pool, request).await
   }
 }
 

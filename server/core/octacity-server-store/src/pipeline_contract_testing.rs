@@ -187,7 +187,7 @@ pub fn verify_in_memory_pipeline_store_contract() {
   );
 }
 
-fn dag(node_id: &str) -> PublishablePipelineDag {
+pub(crate) fn dag(node_id: &str) -> PublishablePipelineDag {
   let native = ExecutionCapability::new("native").unwrap();
   let root = PipelineNode::new(
     PipelineNodeId::new(node_id).unwrap(),

@@ -124,6 +124,21 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Creates a typed bounded current Trigger definition discovery query for one Project.
+  pub fn list_project_trigger_definitions(
+    &self,
+    project_id: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<ListProjectTriggerDefinitionsQuery, ManagementInputError> {
+    ListProjectTriggerDefinitionsQuery::try_new(
+      parse(project_id, "project id")?,
+      optional_parse(after, "trigger definition cursor")?,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("current-definition page"))
+  }
+
   /// Creates a typed unmanaged webhook configuration command.
   pub fn create_unmanaged_webhook(
     &self,

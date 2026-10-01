@@ -6,15 +6,17 @@ use octacity_server_domain::{
   RepositoryVersion, Timestamp,
 };
 use octacity_server_store::{
-  BuildConfigurationDefinition, ConfigurationStore, CreateBuildConfiguration, CreateRepository, IdempotencyKey,
+  BuildConfigurationDefinition, ConfigurationDiscoveryStore, ConfigurationStore, CreateBuildConfiguration,
+  CreateRepository, IdempotencyKey, ListProjectBuildConfigurations, ListProjectRepositories,
   PublishBuildConfigurationVersion, PublishRepositoryVersion, RepositoryDefinition,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, BuildConfigurationProjection, Command, CommandTransaction, ManagementAction,
-  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, Query, RepositoryProjection,
+  ApplicationError, BuildConfigurationPageProjection, BuildConfigurationProjection, Command, CommandTransaction,
+  ListProjectBuildConfigurationsQuery, ListProjectRepositoriesQuery, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition, Query,
+  RepositoryPageProjection, RepositoryProjection,
   management_security::{audited_mutation, instance_resource, owned_collection_resource},
   projections::validate_configuration_projection,
 };
@@ -376,6 +378,37 @@ where
 }
 
 #[async_trait]
+impl<S> crate::ManagementQueryUseCase<ListProjectRepositoriesQuery> for BuildConfigurationHandlers<S>
+where
+  S: ConfigurationDiscoveryStore + 'static,
+{
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    query: ListProjectRepositoriesQuery,
+  ) -> Result<RepositoryPageProjection, Self::Error> {
+    let page = self
+      .store
+      .list_project_repositories(ListProjectRepositories::new(
+        query.page().project_id(),
+        query.page().after().copied(),
+        query.page().limit(),
+        grant
+          .visibility_for::<ListProjectRepositoriesQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
+      .await?;
+    Ok(RepositoryPageProjection {
+      items: page.items.into_iter().map(Into::into).collect(),
+      next_cursor: page.next_cursor,
+    })
+  }
+}
+
+#[async_trait]
 impl<S> crate::ManagementCommandUseCase<CreateBuildConfigurationCommand> for BuildConfigurationHandlers<S>
 where
   S: ConfigurationStore + 'static,
@@ -464,5 +497,36 @@ where
       .await?
       .try_into()
       .map_err(Into::into)
+  }
+}
+
+#[async_trait]
+impl<S> crate::ManagementQueryUseCase<ListProjectBuildConfigurationsQuery> for BuildConfigurationHandlers<S>
+where
+  S: ConfigurationDiscoveryStore + 'static,
+{
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    query: ListProjectBuildConfigurationsQuery,
+  ) -> Result<BuildConfigurationPageProjection, Self::Error> {
+    let page = self
+      .store
+      .list_project_build_configurations(ListProjectBuildConfigurations::new(
+        query.page().project_id(),
+        query.page().after().copied(),
+        query.page().limit(),
+        grant
+          .visibility_for::<ListProjectBuildConfigurationsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
+      .await?;
+    Ok(BuildConfigurationPageProjection {
+      items: page.items.into_iter().map(Into::into).collect(),
+      next_cursor: page.next_cursor,
+    })
   }
 }

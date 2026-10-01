@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use octacity_server_domain::{AgentId, ArtifactId, AuditFactId, CacheSessionId, JobId, PoolId, ProjectId, TriggerId};
+use octacity_server_domain::{
+  AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, JobId, PipelineId, PoolId,
+  ProjectId, RepositoryId, TriggerId,
+};
 use thiserror::Error;
 
 /// Maximum identities accepted by one restricted management read scope.
@@ -136,6 +139,31 @@ query_visibility!(
   ProjectListVisibility,
   ProjectId,
   "Visibility input for a deterministic Project collection page."
+);
+query_visibility!(
+  PipelineListVisibility,
+  PipelineId,
+  "Visibility input for a deterministic current Pipeline page."
+);
+query_visibility!(
+  RepositoryListVisibility,
+  RepositoryId,
+  "Visibility input for a deterministic current Repository page."
+);
+query_visibility!(
+  BuildConfigurationListVisibility,
+  BuildConfigurationId,
+  "Visibility input for a deterministic current Build Configuration page."
+);
+query_visibility!(
+  TriggerDefinitionListVisibility,
+  TriggerId,
+  "Visibility input for a deterministic current Trigger definition page."
+);
+query_visibility!(
+  BuildListVisibility,
+  BuildId,
+  "Visibility input for a deterministic Project Build page."
 );
 query_visibility!(
   AgentPoolListVisibility,

@@ -23,12 +23,13 @@ use crate::{
   DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery,
   GetInternalTriggerQuery, GetJobQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   InternalTriggerDefinition, InternalTriggerSourceStrategy, IssueAgentEnrollmentCommand, ListAgentPoolsQuery,
-  ListAgentsQuery, ListInternalTriggersQuery, ListProjectsQuery, MAX_JOB_EVENT_WAIT, ManualSourceSelection,
-  ManualTriggerCommand, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, ProjectPolicyDefinition,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  ScheduledBuildDefinition,
+  ListAgentsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery,
+  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
+  MAX_JOB_EVENT_WAIT, ManualSourceSelection, ManualTriggerCommand, MoveProjectCommand,
+  ObserveManagedWebhookRegistrationCommand, ProjectPolicyDefinition, PublishAgentPoolVersionCommand,
+  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand, ScheduledBuildDefinition,
 };
 
 mod agent;
@@ -262,14 +263,18 @@ mod tests {
 
   use super::*;
 
-  #[test]
-  fn rejects_pipeline_capabilities_outside_the_configured_catalog() {
-    let factory = ManagementInputFactory::new(
+  fn factory() -> ManagementInputFactory {
+    ManagementInputFactory::new(
       ["native".to_owned()],
       Duration::from_secs(900),
       AgentEnrollmentSecretKey::new([7; 32]),
     )
-    .unwrap();
+    .unwrap()
+  }
+
+  #[test]
+  fn rejects_pipeline_capabilities_outside_the_configured_catalog() {
+    let factory = factory();
     let dag = json!({
       "schema_version": 1,
       "nodes": [{
@@ -293,5 +298,53 @@ mod tests {
       ),
       Err(ManagementInputError::Invalid("pipeline DAG"))
     );
+  }
+
+  #[test]
+  fn discovery_constructors_reject_unbounded_pages_and_invalid_build_inputs() {
+    let factory = factory();
+    let project_id = Uuid::from_u128(1).to_string();
+
+    assert_eq!(
+      factory.list_project_pipelines(&project_id, None, 0),
+      Err(ManagementInputError::Invalid("current-definition page"))
+    );
+    assert_eq!(
+      factory.list_project_builds(&project_id, None, Some("unknown"), None, 1),
+      Err(ManagementInputError::Invalid("build state"))
+    );
+    assert_eq!(
+      factory.list_project_builds(&project_id, None, None, Some("not-a-cursor"), 1),
+      Err(ManagementInputError::Invalid("build cursor"))
+    );
+  }
+
+  #[test]
+  fn build_discovery_constructor_preserves_typed_filter_and_cursor() {
+    let factory = factory();
+    let project_id = Uuid::from_u128(1).to_string();
+    let configuration_id = BuildConfigurationId::from_uuid(Uuid::from_u128(2)).unwrap();
+    let cursor = crate::BuildPageCursor::new(
+      Timestamp::from_unix_millis(1_797_000_000_123).unwrap(),
+      octacity_server_domain::BuildId::from_uuid(Uuid::from_u128(3)).unwrap(),
+    );
+
+    let query = factory
+      .list_project_builds(
+        &project_id,
+        Some(&configuration_id.to_string()),
+        Some("running"),
+        Some(&cursor.encode()),
+        25,
+      )
+      .unwrap();
+
+    assert_eq!(query.filter().configuration_id, Some(configuration_id));
+    assert_eq!(
+      query.filter().state,
+      Some(octacity_server_orchestrator::BuildState::Running)
+    );
+    assert_eq!(query.after(), Some(cursor));
+    assert_eq!(query.limit(), 25);
   }
 }

@@ -1,13 +1,19 @@
 use crate::{
   ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
-  ListInternalTriggersQuery, ListProjectsQuery, ManagementAuthorizationGrant, ManagementResource,
-  ManagementResourceKind, ManagementVisibilityView, Query, ReadJobEventsQuery, SearchBuildLogsQuery,
+  ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectPipelinesQuery,
+  ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery, ManagementAuthorizationGrant,
+  ManagementResource, ManagementResourceKind, ManagementVisibilityView, Query, ReadJobEventsQuery,
+  SearchBuildLogsQuery,
 };
-use octacity_server_domain::{AgentId, ArtifactId, AuditFactId, CacheSessionId, JobId, PoolId, ProjectId, TriggerId};
+use octacity_server_domain::{
+  AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, JobId, PipelineId, PoolId,
+  ProjectId, RepositoryId, TriggerId,
+};
 use octacity_server_store::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
-  BuildLogSearchVisibility, CacheSessionListVisibility, InternalTriggerListVisibility, JobEventReadVisibility,
-  ProjectListVisibility,
+  BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
+  InternalTriggerListVisibility, JobEventReadVisibility, PipelineListVisibility, ProjectListVisibility,
+  RepositoryListVisibility, TriggerDefinitionListVisibility,
 };
 use thiserror::Error;
 
@@ -32,26 +38,94 @@ pub enum ManagementVisibilityError {
   InvalidRestrictedScope,
 }
 
-macro_rules! visibility_input {
-  ($($visibility:ty),+ $(,)?) => {
-    $(
-      impl sealed::VisibilityInput for $visibility {}
-      impl ManagementVisibilityInput for $visibility {}
-    )+
+macro_rules! instance_scoped_query_registry {
+  ($apply:ident) => {
+    $apply! {
+      (ListProjectsQuery, ProjectListVisibility, ProjectId, ManagementResourceKind::Project, 1),
+      (ListProjectPipelinesQuery, PipelineListVisibility, PipelineId, ManagementResourceKind::Pipeline, 2),
+      (ListProjectRepositoriesQuery, RepositoryListVisibility, RepositoryId, ManagementResourceKind::Repository, 3),
+      (
+        ListProjectBuildConfigurationsQuery,
+        BuildConfigurationListVisibility,
+        BuildConfigurationId,
+        ManagementResourceKind::BuildConfiguration,
+        4
+      ),
+      (
+        ListProjectTriggerDefinitionsQuery,
+        TriggerDefinitionListVisibility,
+        TriggerId,
+        ManagementResourceKind::Trigger,
+        5
+      ),
+      (ListProjectBuildsQuery, BuildListVisibility, BuildId, ManagementResourceKind::Build, 6),
+      (ListAgentPoolsQuery, AgentPoolListVisibility, PoolId, ManagementResourceKind::AgentPool, 7),
+      (ListAgentsQuery, AgentListVisibility, AgentId, ManagementResourceKind::Agent, 8),
+      (
+        ListInternalTriggersQuery,
+        InternalTriggerListVisibility,
+        TriggerId,
+        ManagementResourceKind::Trigger,
+        9
+      ),
+      (ReadJobEventsQuery, JobEventReadVisibility, JobId, ManagementResourceKind::Job, 10),
+      (
+        SearchBuildLogsQuery,
+        BuildLogSearchVisibility,
+        ProjectId,
+        ManagementResourceKind::Project,
+        11
+      ),
+      (
+        ListAuditFactsQuery,
+        AuditFactListVisibility,
+        AuditFactId,
+        ManagementResourceKind::AuditFact,
+        12
+      ),
+      (
+        ListBuildArtifactsQuery,
+        ArtifactListVisibility,
+        ArtifactId,
+        ManagementResourceKind::Artifact,
+        13
+      ),
+      (
+        ListBuildCacheSessionsQuery,
+        CacheSessionListVisibility,
+        CacheSessionId,
+        ManagementResourceKind::CacheSession,
+        14
+      )
+    }
   };
 }
 
-visibility_input!(
-  ProjectListVisibility,
-  AgentPoolListVisibility,
-  AgentListVisibility,
-  InternalTriggerListVisibility,
-  JobEventReadVisibility,
-  BuildLogSearchVisibility,
-  AuditFactListVisibility,
-  ArtifactListVisibility,
-  CacheSessionListVisibility,
-);
+macro_rules! implement_instance_scoped_queries {
+  ($(($query:ty, $visibility:ty, $identity:ty, $kind:expr, $sample:literal)),+ $(,)?) => {
+    $(
+      impl sealed::VisibilityInput for $visibility {}
+      impl ManagementVisibilityInput for $visibility {}
+
+      impl ManagementVisibilityTarget for $query {
+        type Visibility = $visibility;
+        const RESTRICTED_RESOURCE_KIND: ManagementResourceKind = $kind;
+
+        fn visibility_from(
+          grant: &ManagementAuthorizationGrant,
+        ) -> Result<Self::Visibility, ManagementVisibilityError> {
+          translate_visibility(
+            grant,
+            |resource| instance_identity::<$identity>(resource, Self::RESTRICTED_RESOURCE_KIND),
+            <$visibility>::all,
+            <$visibility>::none,
+            <$visibility>::restricted,
+          )
+        }
+      }
+    )+
+  };
+}
 
 /// Declares the explicit backend-neutral visibility input for one paged management query.
 pub trait ManagementVisibilityTarget: Query {
@@ -65,70 +139,7 @@ pub trait ManagementVisibilityTarget: Query {
   fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError>;
 }
 
-macro_rules! instance_scoped_query {
-  ($query:ty => $visibility:ty, $identity:ty, $kind:expr) => {
-    impl ManagementVisibilityTarget for $query {
-      type Visibility = $visibility;
-      const RESTRICTED_RESOURCE_KIND: ManagementResourceKind = $kind;
-
-      fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
-        translate_visibility(
-          grant,
-          |resource| instance_identity::<$identity>(resource, Self::RESTRICTED_RESOURCE_KIND),
-          <$visibility>::all,
-          <$visibility>::none,
-          <$visibility>::restricted,
-        )
-      }
-    }
-  };
-}
-
-instance_scoped_query!(
-  ListProjectsQuery => ProjectListVisibility,
-  ProjectId,
-  ManagementResourceKind::Project
-);
-instance_scoped_query!(
-  ListAgentPoolsQuery => AgentPoolListVisibility,
-  PoolId,
-  ManagementResourceKind::AgentPool
-);
-instance_scoped_query!(
-  ListAgentsQuery => AgentListVisibility,
-  AgentId,
-  ManagementResourceKind::Agent
-);
-instance_scoped_query!(
-  ListInternalTriggersQuery => InternalTriggerListVisibility,
-  TriggerId,
-  ManagementResourceKind::Trigger
-);
-instance_scoped_query!(
-  ReadJobEventsQuery => JobEventReadVisibility,
-  JobId,
-  ManagementResourceKind::Job
-);
-instance_scoped_query!(
-  SearchBuildLogsQuery => BuildLogSearchVisibility,
-  ProjectId,
-  ManagementResourceKind::Project
-);
-instance_scoped_query!(
-  ListAuditFactsQuery => AuditFactListVisibility,
-  AuditFactId,
-  ManagementResourceKind::AuditFact
-);
-instance_scoped_query!(
-  ListBuildArtifactsQuery => ArtifactListVisibility,
-  ArtifactId,
-  ManagementResourceKind::Artifact
-);
-instance_scoped_query!(
-  ListBuildCacheSessionsQuery => CacheSessionListVisibility,
-  CacheSessionId,
-  ManagementResourceKind::CacheSession
-);
+instance_scoped_query_registry!(implement_instance_scoped_queries);
 
 impl ManagementAuthorizationGrant {
   /// Produces the query-specific read scope selected by this authorization grant.
@@ -191,59 +202,18 @@ mod tests {
     TypeId::of::<Q::Visibility>()
   }
 
-  #[test]
-  fn paged_management_queries_have_distinct_typed_visibility_inputs() {
-    let visibility_types = [
-      visibility_type::<ListProjectsQuery>(),
-      visibility_type::<ListAgentPoolsQuery>(),
-      visibility_type::<ListAgentsQuery>(),
-      visibility_type::<ListInternalTriggersQuery>(),
-      visibility_type::<ReadJobEventsQuery>(),
-      visibility_type::<SearchBuildLogsQuery>(),
-      visibility_type::<ListAuditFactsQuery>(),
-      visibility_type::<ListBuildArtifactsQuery>(),
-      visibility_type::<ListBuildCacheSessionsQuery>(),
-    ];
-    assert_eq!(
-      visibility_types.into_iter().collect::<BTreeSet<_>>().len(),
-      visibility_types.len()
-    );
+  macro_rules! registered_visibility_types {
+    ($(($query:ty, $visibility:ty, $identity:ty, $kind:expr, $sample:literal)),+ $(,)?) => {
+      [$(visibility_type::<$query>()),+]
+    };
   }
 
   #[test]
-  fn scoped_queries_declare_the_identity_kind_accepted_from_restricted_grants() {
+  fn paged_management_queries_have_distinct_typed_visibility_inputs() {
+    let visibility_types = instance_scoped_query_registry!(registered_visibility_types);
     assert_eq!(
-      ListProjectsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::Project
-    );
-    assert_eq!(
-      ListAgentPoolsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::AgentPool
-    );
-    assert_eq!(ListAgentsQuery::RESTRICTED_RESOURCE_KIND, ManagementResourceKind::Agent);
-    assert_eq!(
-      ListInternalTriggersQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::Trigger
-    );
-    assert_eq!(
-      ReadJobEventsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::Job
-    );
-    assert_eq!(
-      SearchBuildLogsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::Project
-    );
-    assert_eq!(
-      ListAuditFactsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::AuditFact
-    );
-    assert_eq!(
-      ListBuildArtifactsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::Artifact
-    );
-    assert_eq!(
-      ListBuildCacheSessionsQuery::RESTRICTED_RESOURCE_KIND,
-      ManagementResourceKind::CacheSession
+      visibility_types.into_iter().collect::<BTreeSet<_>>().len(),
+      visibility_types.len()
     );
   }
 
@@ -262,67 +232,18 @@ mod tests {
 
   #[test]
   fn every_scoped_query_translates_its_supported_restricted_resource_shape() {
-    let project_id = ProjectId::from_uuid(uuid::Uuid::from_u128(1)).unwrap();
-    let pool_id = PoolId::from_uuid(uuid::Uuid::from_u128(2)).unwrap();
-    let agent_id = AgentId::from_uuid(uuid::Uuid::from_u128(3)).unwrap();
-    let trigger_id = TriggerId::from_uuid(uuid::Uuid::from_u128(4)).unwrap();
-    let job_id = JobId::from_uuid(uuid::Uuid::from_u128(5)).unwrap();
-    let log_project_id = ProjectId::from_uuid(uuid::Uuid::from_u128(6)).unwrap();
-    let audit_fact_id = AuditFactId::from_uuid(uuid::Uuid::from_u128(7)).unwrap();
-    let artifact_id = ArtifactId::from_uuid(uuid::Uuid::from_u128(8)).unwrap();
-    let cache_session_id = CacheSessionId::from_uuid(uuid::Uuid::from_u128(9)).unwrap();
+    macro_rules! assert_registered_mappings {
+      ($(($query:ty, $visibility:ty, $identity:ty, $kind:expr, $sample:literal)),+ $(,)?) => {
+        $(
+          let identity = <$identity>::from_uuid(uuid::Uuid::from_u128($sample)).unwrap();
+          assert_eq!(<$query>::RESTRICTED_RESOURCE_KIND, $kind);
+          let grant = restricted(instance($kind, identity));
+          assert!(grant.visibility_for::<$query>().unwrap().allows(&identity));
+        )+
+      };
+    }
 
-    let grant = restricted(instance(ManagementResourceKind::Project, project_id));
-    assert!(grant.visibility_for::<ListProjectsQuery>().unwrap().allows(&project_id));
-
-    let grant = restricted(instance(ManagementResourceKind::AgentPool, pool_id));
-    assert!(grant.visibility_for::<ListAgentPoolsQuery>().unwrap().allows(&pool_id));
-
-    let grant = restricted(instance(ManagementResourceKind::Agent, agent_id));
-    assert!(grant.visibility_for::<ListAgentsQuery>().unwrap().allows(&agent_id));
-
-    let grant = restricted(instance(ManagementResourceKind::Trigger, trigger_id));
-    assert!(
-      grant
-        .visibility_for::<ListInternalTriggersQuery>()
-        .unwrap()
-        .allows(&trigger_id)
-    );
-
-    let grant = restricted(instance(ManagementResourceKind::Job, job_id));
-    assert!(grant.visibility_for::<ReadJobEventsQuery>().unwrap().allows(&job_id));
-
-    let grant = restricted(instance(ManagementResourceKind::Project, log_project_id));
-    assert!(
-      grant
-        .visibility_for::<SearchBuildLogsQuery>()
-        .unwrap()
-        .allows(&log_project_id)
-    );
-
-    let grant = restricted(instance(ManagementResourceKind::AuditFact, audit_fact_id));
-    assert!(
-      grant
-        .visibility_for::<ListAuditFactsQuery>()
-        .unwrap()
-        .allows(&audit_fact_id)
-    );
-
-    let grant = restricted(instance(ManagementResourceKind::Artifact, artifact_id));
-    assert!(
-      grant
-        .visibility_for::<ListBuildArtifactsQuery>()
-        .unwrap()
-        .allows(&artifact_id)
-    );
-
-    let grant = restricted(instance(ManagementResourceKind::CacheSession, cache_session_id));
-    assert!(
-      grant
-        .visibility_for::<ListBuildCacheSessionsQuery>()
-        .unwrap()
-        .allows(&cache_session_id)
-    );
+    instance_scoped_query_registry!(assert_registered_mappings);
   }
 
   #[test]

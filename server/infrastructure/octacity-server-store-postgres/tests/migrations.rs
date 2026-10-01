@@ -65,6 +65,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   );
   assert!(authenticated_management_actor_is_allowed(&previous.pool).await?);
   verify_security_scoped_idempotency(&previous.pool).await?;
+  verify_definition_discovery_indexes(&previous.pool).await?;
   assert_snapshot_marker(&previous.pool).await?;
 
   let failed = snapshot.restore().await;
@@ -94,7 +95,8 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     PREVIOUS_BINARY_SCHEMA_VERSION
   );
   assert!(authenticated_management_actor_is_allowed(&rollback.pool).await?);
-  assert!(!column_exists(&rollback.pool, "idempotency_records", "security_scope").await?);
+  verify_security_scoped_idempotency(&rollback.pool).await?;
+  assert!(definition_discovery_index_definitions(&rollback.pool).await?.is_empty());
   assert_legacy_idempotency_record(&rollback.pool).await?;
   assert_snapshot_marker(&rollback.pool).await?;
 
@@ -222,12 +224,14 @@ async fn seed_legacy_idempotency_record(pool: &sqlx::PgPool) -> Result<(), sqlx:
   .bind(vec![7_u8; 32])
   .execute(pool)
   .await?;
-  for (scope, key, _) in LEGACY_OPERATION_SCOPES {
+  for (scope, key, security_scope) in LEGACY_OPERATION_SCOPES {
     sqlx::query(
-      "INSERT INTO idempotency_records (scope, idempotency_key, request_digest, outcome, created_at) \
-       VALUES ($1, $2, $3, '{\"schema_version\": 1}', now())",
+      "INSERT INTO idempotency_records \
+         (scope, security_scope, idempotency_key, request_digest, outcome, created_at) \
+       VALUES ($1, $2, $3, $4, '{\"schema_version\": 1}', now())",
     )
     .bind(scope)
+    .bind(security_scope)
     .bind(key)
     .bind(vec![7_u8; 32])
     .execute(pool)
@@ -412,7 +416,34 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "business behavior must not be implemented by stored PL/pgSQL routines"
   );
   verify_security_scoped_idempotency(pool).await?;
+  verify_definition_discovery_indexes(pool).await?;
   Ok(())
+}
+
+async fn verify_definition_discovery_indexes(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  let definitions = definition_discovery_index_definitions(pool).await?;
+  assert_eq!(definitions.len(), 3);
+  assert!(definitions[0].1.contains("(project_id, id)"));
+  assert!(definitions[1].1.contains("(project_id, id)"));
+  assert!(definitions[2].1.contains("(project_id, id)"));
+  Ok(())
+}
+
+async fn definition_discovery_index_definitions(pool: &sqlx::PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+  sqlx::query_as(
+    "SELECT indexname, indexdef FROM pg_indexes \
+     WHERE schemaname = 'public' AND indexname = ANY($1::text[]) ORDER BY indexname",
+  )
+  .bind(
+    [
+      "build_configurations_project_discovery_idx",
+      "pipelines_project_discovery_idx",
+      "repositories_project_discovery_idx",
+    ]
+    .as_slice(),
+  )
+  .fetch_all(pool)
+  .await
 }
 
 async fn verify_security_scoped_idempotency(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {

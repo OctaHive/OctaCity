@@ -6,13 +6,15 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, PipelineId, PipelineName, PipelineVersion, ProjectId};
 
+use crate::definition_discovery_model::finish_current_definition_page;
 use crate::testing::{
   ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
   recorded_management_audit,
 };
 use crate::{
-  CreatePipeline, ManagementIdempotencyKey, ManagementMutation, MutationAuditContext, MutationDisposition,
-  PipelineMutationOutcome, PipelineStore, PublishPipelineVersion, PublishedPipeline, StoreError, StoreInputError,
+  CreatePipeline, CurrentPipelinePage, CurrentPipelineSummary, ListProjectPipelines, ManagementIdempotencyKey,
+  ManagementMutation, MutationAuditContext, MutationDisposition, PipelineDiscoveryStore, PipelineMutationOutcome,
+  PipelineStore, PublishPipelineVersion, PublishedPipeline, ReadVisibilityKind, StoreError, StoreInputError,
   StoreOperation,
 };
 
@@ -101,6 +103,50 @@ impl ManagementAuditProbe for InMemoryPipelineStore {
       .iter()
       .cloned()
       .collect()
+  }
+}
+
+#[async_trait]
+impl PipelineDiscoveryStore for InMemoryPipelineStore {
+  async fn list_project_pipelines(&self, request: ListProjectPipelines) -> Result<CurrentPipelinePage, StoreError> {
+    let state = self.lock()?;
+    if !state.projects.contains(&request.project_id()) {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Project,
+      });
+    }
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(CurrentPipelinePage {
+        items: Vec::new(),
+        next_cursor: None,
+      });
+    }
+    let limit = usize::from(request.limit().get());
+    let mut items = state
+      .pipelines
+      .iter()
+      .filter(|(id, metadata)| {
+        metadata.project_id == request.project_id()
+          && request.visibility().allows(id)
+          && request.after().is_none_or(|after| **id > after)
+      })
+      .take(limit + 1)
+      .map(|(id, metadata)| {
+        let current = state
+          .versions
+          .get(&(*id, metadata.current_version))
+          .ok_or(StoreError::Unavailable)?;
+        Ok(CurrentPipelineSummary {
+          id: current.id,
+          project_id: current.project_id,
+          name: current.name.clone(),
+          version: current.version,
+          published_at: current.published_at,
+        })
+      })
+      .collect::<Result<Vec<_>, StoreError>>()?;
+    let next_cursor = finish_current_definition_page(&mut items, request.limit(), |item| item.id);
+    Ok(CurrentPipelinePage { items, next_cursor })
   }
 }
 

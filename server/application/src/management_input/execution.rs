@@ -8,6 +8,32 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Creates a typed bounded newest-first Build discovery query for one Project.
+  pub fn list_project_builds(
+    &self,
+    project_id: &str,
+    configuration_id: Option<&str>,
+    state: Option<&str>,
+    cursor: Option<&str>,
+    limit: u16,
+  ) -> Result<ListProjectBuildsQuery, ManagementInputError> {
+    let state = state.map(parse_build_state).transpose()?;
+    let after = cursor
+      .map(crate::BuildPageCursor::decode)
+      .transpose()
+      .map_err(|_| ManagementInputError::Invalid("build cursor"))?;
+    ListProjectBuildsQuery::try_new(
+      parse(project_id, "project id")?,
+      crate::BuildListFilter {
+        configuration_id: optional_parse(configuration_id, "build configuration id")?,
+        state,
+      },
+      after,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("build page"))
+  }
+
   /// Creates a typed Attempt read query.
   pub fn get_attempt(&self, id: &str) -> Result<GetAttemptQuery, ManagementInputError> {
     Ok(GetAttemptQuery {
@@ -71,4 +97,8 @@ impl ManagementInputFactory {
       wait,
     })
   }
+}
+
+fn parse_build_state(value: &str) -> Result<octacity_server_orchestrator::BuildState, ManagementInputError> {
+  decode(Value::String(value.to_owned()), "build state")
 }

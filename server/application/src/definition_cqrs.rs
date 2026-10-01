@@ -5,15 +5,18 @@ use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, ProjectId, ProjectPolicyVersion, Timestamp, TriggerId,
   TriggerVersion,
 };
-use octacity_server_store::{CreateTriggerDefinition, DefinitionStore, IdempotencyKey, PublishProjectPolicy};
+use octacity_server_store::{
+  CreateTriggerDefinition, DefinitionStore, IdempotencyKey, ListProjectTriggerDefinitions, PublishProjectPolicy,
+  TriggerDefinitionDiscoveryStore,
+};
 use octacity_server_trigger::TriggerKind;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-  ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
-  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
-  ProjectPolicyDefinition,
+  ApplicationError, Command, CommandTransaction, ListProjectTriggerDefinitionsQuery, ManagementAction,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
+  MutationDisposition, ProjectPolicyDefinition, TriggerDefinitionPageProjection,
   management_security::{audited_mutation, owned_collection_resource},
 };
 
@@ -233,5 +236,36 @@ where
     command: CreateTriggerDefinitionCommand,
   ) -> Result<TriggerDefinitionCommandOutcome, Self::Error> {
     self.store.commit_command(context, command).await
+  }
+}
+
+#[async_trait]
+impl<S> crate::ManagementQueryUseCase<ListProjectTriggerDefinitionsQuery> for DefinitionHandlers<S>
+where
+  S: TriggerDefinitionDiscoveryStore + 'static,
+{
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    query: ListProjectTriggerDefinitionsQuery,
+  ) -> Result<TriggerDefinitionPageProjection, Self::Error> {
+    let page = self
+      .store
+      .list_project_trigger_definitions(ListProjectTriggerDefinitions::new(
+        query.page().project_id(),
+        query.page().after().copied(),
+        query.page().limit(),
+        grant
+          .visibility_for::<ListProjectTriggerDefinitionsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
+      .await?;
+    Ok(TriggerDefinitionPageProjection {
+      items: page.items.into_iter().map(Into::into).collect(),
+      next_cursor: page.next_cursor,
+    })
   }
 }

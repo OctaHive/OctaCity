@@ -47,6 +47,21 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Creates a typed bounded current Pipeline discovery query for one Project.
+  pub fn list_project_pipelines(
+    &self,
+    project_id: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<ListProjectPipelinesQuery, ManagementInputError> {
+    ListProjectPipelinesQuery::try_new(
+      parse(project_id, "project id")?,
+      optional_parse(after, "pipeline cursor")?,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("current-definition page"))
+  }
+
   /// Creates a typed Repository-create command.
   pub fn create_repository(
     &self,
@@ -91,6 +106,21 @@ impl ManagementInputFactory {
       repository_id: parse(id, "repository id")?,
       version: version(version_value, "repository version")?,
     })
+  }
+
+  /// Creates a typed bounded current Repository discovery query for one Project.
+  pub fn list_project_repositories(
+    &self,
+    project_id: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<ListProjectRepositoriesQuery, ManagementInputError> {
+    ListProjectRepositoriesQuery::try_new(
+      parse(project_id, "project id")?,
+      optional_parse(after, "repository cursor")?,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("current-definition page"))
   }
 
   /// Creates a typed Build Configuration-create command.
@@ -141,6 +171,21 @@ impl ManagementInputFactory {
       configuration_id: parse(id, "build configuration id")?,
       version: version(version_value, "build configuration version")?,
     })
+  }
+
+  /// Creates a typed bounded current Build Configuration discovery query for one Project.
+  pub fn list_project_build_configurations(
+    &self,
+    project_id: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<ListProjectBuildConfigurationsQuery, ManagementInputError> {
+    ListProjectBuildConfigurationsQuery::try_new(
+      parse(project_id, "project id")?,
+      optional_parse(after, "build configuration cursor")?,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("current-definition page"))
   }
 
   fn pipeline_dag(

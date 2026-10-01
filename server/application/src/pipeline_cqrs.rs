@@ -4,13 +4,15 @@ use async_trait::async_trait;
 use octacity_server_domain::{PipelineId, PipelineName, PipelineVersion, ProjectId, Timestamp};
 use octacity_server_job::JobExecutionTemplate;
 use octacity_server_pipeline::PublishablePipelineDag;
-use octacity_server_store::{CreatePipeline, IdempotencyKey, PipelineStore, PublishPipelineVersion};
+use octacity_server_store::{
+  CreatePipeline, IdempotencyKey, ListProjectPipelines, PipelineDiscoveryStore, PipelineStore, PublishPipelineVersion,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  ApplicationError, Command, CommandTransaction, ManagementAction, ManagementAuthorizationMapping,
-  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
-  PipelineProjection, ProjectionError, Query,
+  ApplicationError, Command, CommandTransaction, ListProjectPipelinesQuery, ManagementAction,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
+  MutationDisposition, PipelinePageProjection, PipelineProjection, ProjectionError, Query,
   management_security::{audited_mutation, instance_resource, owned_collection_resource},
 };
 
@@ -240,6 +242,37 @@ where
       .await?
       .try_into()
       .map_err(Into::into)
+  }
+}
+
+#[async_trait]
+impl<S> crate::ManagementQueryUseCase<ListProjectPipelinesQuery> for PipelineHandlers<S>
+where
+  S: PipelineDiscoveryStore + 'static,
+{
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    query: ListProjectPipelinesQuery,
+  ) -> Result<PipelinePageProjection, Self::Error> {
+    let page = self
+      .store
+      .list_project_pipelines(ListProjectPipelines::new(
+        query.page().project_id(),
+        query.page().after().copied(),
+        query.page().limit(),
+        grant
+          .visibility_for::<ListProjectPipelinesQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
+      .await?;
+    Ok(PipelinePageProjection {
+      items: page.items.into_iter().map(Into::into).collect(),
+      next_cursor: page.next_cursor,
+    })
   }
 }
 

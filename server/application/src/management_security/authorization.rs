@@ -420,6 +420,7 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
         ManagementResourceKind::BuildConfiguration,
         ManagementResourceKind::Project
       )
+      | (ManagementResourceKind::Trigger, ManagementResourceKind::Project)
       | (
         ManagementResourceKind::Trigger,
         ManagementResourceKind::BuildConfiguration
@@ -428,6 +429,7 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
         ManagementResourceKind::Schedule,
         ManagementResourceKind::BuildConfiguration
       )
+      | (ManagementResourceKind::Build, ManagementResourceKind::Project)
       | (ManagementResourceKind::JobEvent, ManagementResourceKind::Job)
       | (ManagementResourceKind::BuildLog, ManagementResourceKind::Project)
       | (ManagementResourceKind::Artifact, ManagementResourceKind::Build)

@@ -22,6 +22,7 @@ mod artifact_transfer;
 mod artifact_transfer_tests;
 mod audit_query;
 mod build_cqrs;
+mod build_discovery;
 mod cache_data_plane;
 mod cache_session;
 #[cfg(test)]
@@ -29,6 +30,7 @@ mod cache_session_tests;
 mod configuration_cqrs;
 mod cqrs;
 mod definition_cqrs;
+mod definition_discovery;
 mod diagnostic;
 mod error;
 mod external_trigger;
@@ -63,12 +65,13 @@ mod webhook_delivery;
 pub use octacity_server_domain::{RetentionHoldVersion, Timestamp};
 pub use octacity_server_store::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditActorKind, AuditFactListVisibility,
-  AuditOutcome, BuildLogSearchVisibility, BuildLogStream, CacheSessionListVisibility, InternalTriggerListVisibility,
-  JobEventReadVisibility, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode, LogSearchQuery,
-  MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_OPERATION_BYTES, MAX_AUDIT_PAGE_SIZE, MAX_AUDIT_REQUEST_IDENTITY_BYTES,
-  MAX_AUDIT_TARGET_IDENTITY_BYTES, MAX_AUDIT_TARGET_KIND_BYTES, MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES,
-  MAX_LOG_SEARCH_SNIPPET_BYTES, MAX_READ_VISIBILITY_IDENTITIES, MutationAuditContext, ProjectListVisibility,
-  ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, StoreError,
+  AuditOutcome, BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, BuildLogStream,
+  CacheSessionListVisibility, InternalTriggerListVisibility, JobEventReadVisibility, LogIndexPosition, LogSearchCursor,
+  LogSearchError, LogSearchMode, LogSearchQuery, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_OPERATION_BYTES,
+  MAX_AUDIT_PAGE_SIZE, MAX_AUDIT_REQUEST_IDENTITY_BYTES, MAX_AUDIT_TARGET_IDENTITY_BYTES, MAX_AUDIT_TARGET_KIND_BYTES,
+  MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, MAX_READ_VISIBILITY_IDENTITIES,
+  MutationAuditContext, PipelineListVisibility, ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind,
+  ReadVisibilityView, RepositoryListVisibility, StoreError, TriggerDefinitionListVisibility,
 };
 
 pub use agent_cqrs::{
@@ -104,6 +107,10 @@ pub use build_cqrs::{
   AttemptDetailsProjection, BuildDetailsProjection, BuildHandlers, CancelBuildCommand, CancelBuildCommandOutcome,
   GetAttemptQuery, GetBuildQuery, GetJobQuery, RetryBuildCommand, RetryBuildCommandOutcome,
 };
+pub use build_discovery::{
+  BuildListFilter, BuildPageCursor, BuildPageCursorError, BuildPageInputError, BuildPageProjection,
+  BuildSummaryProjection, ListProjectBuildsQuery, MAX_BUILD_LIST_PAGE_SIZE, MAX_BUILD_PAGE_CURSOR_BYTES,
+};
 pub use cache_data_plane::{
   CacheDataPlaneError, CacheDataPlaneService, CacheDataPlaneUseCases, CacheRequestAuthority, CacheWriteResult,
 };
@@ -121,6 +128,13 @@ pub use cqrs::{Command, CommandHandler, MutationDisposition, Query, QueryHandler
 pub use definition_cqrs::{
   CreateTriggerDefinitionCommand, DefinitionHandlers, ProjectPolicyCommandOutcome, PublishProjectPolicyCommand,
   TriggerDefinitionCommandOutcome,
+};
+pub use definition_discovery::{
+  BuildConfigurationPageProjection, BuildConfigurationSummaryProjection, CurrentDefinitionPageError,
+  CurrentDefinitionPageInput, ListProjectBuildConfigurationsQuery, ListProjectPipelinesQuery,
+  ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, MAX_CURRENT_DEFINITION_PAGE_SIZE,
+  PipelinePageProjection, PipelineSummaryProjection, RepositoryPageProjection, RepositorySummaryProjection,
+  TriggerDefinitionKindProjection, TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
 };
 pub use error::{ApplicationError, ApplicationFailure};
 pub use external_trigger::{

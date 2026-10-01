@@ -42,20 +42,28 @@ pub enum StoreOperation {
   PublishPipelineVersion,
   /// Read one exact immutable Pipeline version.
   ReadPipelineVersion,
+  /// List one bounded page of current Pipelines owned by a Project.
+  ListProjectPipelines,
   /// Create one Repository identity and immutable initial version.
   CreateRepository,
   /// Append exactly the next immutable Repository version.
   PublishRepositoryVersion,
   /// Read one exact immutable Repository version.
   ReadRepositoryVersion,
+  /// List one bounded page of current Repositories owned by a Project.
+  ListProjectRepositories,
   /// Create one Build Configuration identity and immutable initial version.
   CreateBuildConfiguration,
   /// Append exactly the next immutable Build Configuration version.
   PublishBuildConfigurationVersion,
   /// Read one exact immutable Build Configuration version.
   ReadBuildConfigurationVersion,
+  /// List one bounded page of current Build Configurations owned by a Project.
+  ListProjectBuildConfigurations,
   /// Create one immutable Trigger definition.
   CreateTriggerDefinition,
+  /// List one bounded page of current Trigger definitions owned by a Project.
+  ListProjectTriggerDefinitions,
   /// Create version one of an internal Trigger definition.
   CreateInternalTriggerDefinition,
   /// Publish the next immutable internal Trigger definition version.
@@ -233,6 +241,9 @@ pub enum StoreInputError {
   /// A Project page size is zero or exceeds the store contract bound.
   #[error("a project page size is outside its allowed range")]
   InvalidProjectPageSize,
+  /// A current-definition page size was zero or exceeded its fixed bound.
+  #[error("a current-definition page size is outside its allowed range")]
+  InvalidCurrentDefinitionPageSize,
   /// An Agent Pool page size is zero or exceeds the store contract bound.
   #[error("an agent pool page size is outside its allowed range")]
   InvalidAgentPoolPageSize,
