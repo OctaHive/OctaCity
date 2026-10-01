@@ -510,7 +510,10 @@ pub enum ManagementVisibilityView<'a> {
   Restricted(&'a BTreeSet<ManagementResource>),
 }
 
-/// Authorization-derived visibility applied by read adapters before pagination.
+/// Authorization-derived visibility applied by read adapters before result shaping.
+///
+/// Read adapters apply this constraint before ordering, cursor comparison,
+/// pagination, counts, snippets, freshness metadata, and provider-side limits.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ManagementVisibility(Visibility);
 
@@ -589,7 +592,7 @@ impl ManagementAuthorizationGrant {
     Self { visibility }
   }
 
-  /// Borrows the visibility that read adapters must apply before pagination.
+  /// Borrows the visibility that read adapters must apply before result shaping.
   #[must_use]
   pub const fn visibility(&self) -> &ManagementVisibility {
     &self.visibility

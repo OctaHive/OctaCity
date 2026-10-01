@@ -239,6 +239,10 @@ impl FromStr for ManagementRequestId {
 }
 
 /// Credential-free facts carried with every management command and query.
+///
+/// The context contains only an accepted actor, an opaque idempotency security
+/// scope, a safe request identity, and bounded attributes. Raw credentials,
+/// headers, sessions, and identity-provider claims do not cross this boundary.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ManagementRequestContext {
   actor: ManagementActor,

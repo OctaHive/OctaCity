@@ -9,7 +9,9 @@ use crate::{
 ///
 /// The value records only facts accepted by the application layer. Store
 /// adapters must persist these facts as supplied and must never replace them
-/// with an infrastructure-selected actor.
+/// with an infrastructure-selected actor. Its security scope also partitions
+/// caller-selected idempotency keys, so equal keys in different accepted scopes
+/// have independent outcomes.
 #[derive(Clone, Eq, PartialEq)]
 pub struct MutationAuditContext {
   actor: AuditActor,

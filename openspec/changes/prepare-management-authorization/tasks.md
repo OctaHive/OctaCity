@@ -46,5 +46,5 @@
 ## 9. Architecture, Documentation, and Regression Verification
 
 - [x] 9.1 Extend architecture checks to reject authorization in REST or infrastructure, direct undecorated management-handler assembly, raw credential fields in management context, and store-selected management actors; verify positive production and negative fixture cases pass.
-- [ ] 9.2 Document the trusted-network policy, authorization boundary, visibility-before-pagination rule, audit/idempotency scoping, and explicit absence of login/RBAC/ABAC; verify public Rust items and operator-facing security assumptions are covered without exposing internal package inventories.
+- [x] 9.2 Document the trusted-network policy, authorization boundary, visibility-before-pagination rule, audit/idempotency scoping, and explicit absence of login/RBAC/ABAC; verify public Rust items and operator-facing security assumptions are covered without exposing internal package inventories.
 - [ ] 9.3 Run formatting, workspace Clippy with warnings denied, portable tests, architecture checks, OpenAPI contracts, migration and PostgreSQL store contracts, coverage gates, and released-server contracts; verify the trusted-network API remains compatible and every required suite is green.

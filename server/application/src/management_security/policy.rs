@@ -6,6 +6,10 @@ use super::{
 };
 
 /// Application-layer seam for authorizing one typed management capability.
+///
+/// Transport and persistence adapters must not implement this decision. Every
+/// management command and query is expected to cross an authorized application
+/// handler before its inner use case runs.
 #[async_trait]
 pub trait ManagementAuthorizationPolicy: Send + Sync {
   /// Returns a visibility-bearing grant or the opaque stable denial.
@@ -18,6 +22,10 @@ pub trait ManagementAuthorizationPolicy: Send + Sync {
 }
 
 /// Initial policy for the explicitly acknowledged trusted-network deployment.
+///
+/// This policy accepts only the canonical anonymous trusted-network context and
+/// grants unrestricted visibility. It is not login, identity verification,
+/// RBAC, or ABAC; deployment network controls remain its trust boundary.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TrustedNetworkManagementPolicy;
 

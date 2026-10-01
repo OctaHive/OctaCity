@@ -21,10 +21,12 @@ Direct Host execution deliberately gives repository code the Agent host's
 security boundary. It is therefore allowed only by explicit Project and Pool
 policy and is not suitable for mutually untrusted workloads.
 
-The v1 management API has no operator authentication. It is safe only on a
-trusted network behind the documented listener and proxy boundary. A public or
-multi-tenant deployment requires a later authentication and authorization
-change; network placement is not treated as user identity.
+The v1 management API has no operator authentication, login, RBAC, or ABAC. An
+application-layer policy authorizes only its canonical anonymous
+trusted-network context before dispatch and grants that context unrestricted
+visibility. It is safe only on a trusted network behind the documented listener
+and proxy boundary. A public or multi-tenant deployment requires a later
+identity-aware policy; network placement is not treated as user identity.
 
 ## Assets
 

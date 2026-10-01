@@ -53,6 +53,38 @@ Do not publish `/metrics`, `/health/*`, OpenAPI, or management paths through the
 public webhook virtual host. Health probes are intentionally unauthenticated
 and are not a substitute for the management firewall.
 
+### Management authorization contract
+
+The release policy admits only the canonical anonymous management context from
+the trusted management listener. It grants that context access to all
+management resources and rejects every other actor shape. The application
+authorizes each management operation before invoking its command or query;
+transport and storage components do not make independent authorization
+decisions. A rejection returns the generic documented `403 forbidden` response
+without invoking the operation or creating mutation side effects.
+
+Network placement is still the caller trust boundary. This release has no
+operator login, user accounts, sessions, roles, RBAC, or ABAC, and forwarded
+identity headers do not add any of them. Keep the listener private even when a
+reverse proxy terminates TLS. Do not infer distinct operator identities from
+source addresses, proxy headers, or request metadata.
+
+Every read receives authorization-derived visibility. The data source applies
+it before ordering, cursor comparison, pagination, counts, snippets, freshness
+metadata, and result limits. Consequently, resources outside the accepted
+visibility cannot change page boundaries or response metadata. The current
+trusted-network policy grants unrestricted visibility, but this ordering is a
+required contract for later policies with narrower visibility.
+
+Every accepted mutation carries the policy-accepted actor and safe request ID
+into its authoritative audit record; storage preserves those facts and never
+invents an operator identity. Caller-selected idempotency keys are partitioned
+by the accepted management security scope. The current trusted-network policy
+uses one stable anonymous scope, so operators must use a new key for a new
+intent and reuse the original key only to replay the same intent. A future
+identity-aware policy may create independent scopes without changing the
+public management request format.
+
 ### Reverse-proxy trust
 
 The server keys ingress admission to the accepted socket peer and deliberately

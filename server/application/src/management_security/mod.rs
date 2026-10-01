@@ -1,4 +1,25 @@
-//! Transport-independent, credential-free management security vocabulary.
+//! Transport-independent, credential-free management authorization contracts.
+//!
+//! The current release uses [`TrustedNetworkManagementPolicy`]. It accepts
+//! only the canonical anonymous trusted-network context and grants unrestricted
+//! visibility; every other context is denied. Network placement therefore
+//! remains the operator trust boundary. This policy does not provide login,
+//! sessions, user accounts, roles, RBAC, or ABAC.
+//!
+//! Authorization is an application-layer decision. Management commands and
+//! queries cross an [`AuthorizedManagementCommandHandler`] or
+//! [`AuthorizedManagementQueryHandler`] before the inner use case is invoked.
+//! Transport code only supplies a normalized credential-free
+//! [`ManagementRequestContext`], and persistence code consumes the resulting
+//! grant and accepted mutation evidence without making policy decisions.
+//!
+//! A grant carries [`ManagementVisibility`]. Read adapters must apply that
+//! visibility before ordering, cursor comparison, pagination, aggregation,
+//! snippets, or freshness metadata so hidden resources cannot affect the
+//! result. Accepted mutations carry the normalized actor and request identity
+//! for audit, while [`ManagementSecurityScope`] partitions caller-selected
+//! idempotency keys. Future identity-aware policies can replace the initial
+//! policy without moving these boundaries or adding credentials to this API.
 
 mod audit;
 mod authorization;
