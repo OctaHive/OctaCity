@@ -6,7 +6,7 @@ use octacity_server_application::{
   MAX_SCHEDULE_CATCH_UP, MAX_SCHEDULE_EXPRESSION_BYTES, MAX_SCHEDULE_TIMEZONE_BYTES, MAX_WEBHOOK_VERIFICATION_HEADERS,
 };
 
-use super::{API_PREFIX, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES};
+use super::{API_PREFIX, MANAGEMENT_FORBIDDEN_MESSAGE, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES};
 
 pub(super) use operations::ParameterProfile;
 pub use operations::{MANAGEMENT_OPERATIONS, ManagementOperation};
@@ -68,6 +68,19 @@ pub fn openapi_document() -> Value {
             "application/json": {"schema": {"$ref": "#/components/schemas/ErrorResponse"}}
           }
         },
+        "ManagementForbidden": {
+          "description": "Management authorization denied without disclosing policy or resource details",
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/ForbiddenErrorResponse"},
+              "example": {
+                "code": "forbidden",
+                "message": MANAGEMENT_FORBIDDEN_MESSAGE,
+                "request_id": "33333333-3333-4333-8333-333333333333"
+              }
+            }
+          }
+        },
         "ManagementRateLimited": {
           "description": "Per-client request rate exceeded",
           "headers": {
@@ -127,6 +140,10 @@ fn responses(operation: &ManagementOperation) -> Value {
   ] {
     responses.insert(status.to_owned(), error_response(description));
   }
+  responses.insert(
+    "403".to_owned(),
+    json!({"$ref": "#/components/responses/ManagementForbidden"}),
+  );
   responses.insert("429".to_owned(), rate_limit_response());
   if operation.request_schema.is_some() {
     responses.insert("413".to_owned(), error_response("Request body too large"));

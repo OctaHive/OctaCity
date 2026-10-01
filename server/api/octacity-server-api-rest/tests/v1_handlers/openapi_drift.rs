@@ -33,6 +33,65 @@ fn validate_authorization_inventory(
   }
 }
 
+fn documented_operation_inventory(document: &serde_json::Value) -> BTreeSet<(String, String, String)> {
+  document["paths"]
+    .as_object()
+    .unwrap()
+    .iter()
+    .flat_map(|(path, item)| {
+      item
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(_, operation)| operation["operationId"] != "getOpenApiDocument")
+        .map(move |(method, operation)| {
+          (
+            method.to_ascii_uppercase(),
+            path.clone(),
+            operation["operationId"].as_str().unwrap().to_owned(),
+          )
+        })
+    })
+    .collect()
+}
+
+fn registered_operation_inventory() -> BTreeSet<(String, String, String)> {
+  management_authorization_operations()
+    .into_iter()
+    .map(|operation| {
+      (
+        operation.method.to_owned(),
+        operation.path.to_owned(),
+        operation.operation_id.to_owned(),
+      )
+    })
+    .collect()
+}
+
+fn assert_forbidden_contract(document: &serde_json::Value) {
+  for operation in MANAGEMENT_OPERATIONS {
+    let method = operation.method.to_ascii_lowercase();
+    assert_eq!(
+      document["paths"][operation.path][method]["responses"]["403"]["$ref"],
+      "#/components/responses/ManagementForbidden",
+      "{} must document its forbidden response",
+      operation.operation_id
+    );
+  }
+  let forbidden_content = &document["components"]["responses"]["ManagementForbidden"]["content"]["application/json"];
+  assert_eq!(
+    forbidden_content["schema"]["$ref"],
+    "#/components/schemas/ForbiddenErrorResponse"
+  );
+  let expected = serde_json::json!({
+      "code": "forbidden",
+      "message": "management operation is forbidden",
+      "request_id": "33333333-3333-4333-8333-333333333333"
+  });
+  assert_eq!(forbidden_content["example"], expected);
+  assert_json_matches_component(document, "ForbiddenErrorResponse", &expected);
+}
+
 #[test]
 fn authorization_inventory_rejects_missing_and_duplicate_mappings() {
   assert_eq!(
@@ -81,37 +140,11 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     })
   );
 
-  let documented = document["paths"]
-    .as_object()
-    .unwrap()
-    .iter()
-    .flat_map(|(path, item)| {
-      item
-        .as_object()
-        .unwrap()
-        .iter()
-        .filter(|(_, operation)| operation["operationId"] != "getOpenApiDocument")
-        .map(move |(method, operation)| {
-          (
-            method.to_ascii_uppercase(),
-            path.clone(),
-            operation["operationId"].as_str().unwrap().to_owned(),
-          )
-        })
-    })
-    .collect::<BTreeSet<_>>();
+  let documented = documented_operation_inventory(&document);
   let registered = management_authorization_operations();
-  let registered_contract = registered
-    .iter()
-    .map(|operation| {
-      (
-        operation.method.to_owned(),
-        operation.path.to_owned(),
-        operation.operation_id.to_owned(),
-      )
-    })
-    .collect::<BTreeSet<_>>();
+  let registered_contract = registered_operation_inventory();
   assert_eq!(documented, registered_contract);
+  assert_forbidden_contract(&document);
   validate_authorization_inventory(
     MANAGEMENT_OPERATIONS.iter().map(|operation| operation.operation_id),
     registered.iter().map(|operation| operation.operation_id),
@@ -434,4 +467,25 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     "BuildLogSearchPage",
     &serde_json::from_str(include_str!("../../fixtures/v1/build-log-search-page.json")).unwrap(),
   );
+}
+
+#[test]
+fn generated_openapi_contract_is_line_ending_independent() {
+  let generated = openapi_document();
+  let pretty = serde_json::to_string_pretty(&generated).unwrap();
+
+  for (platform, line_ending) in [("Linux", "\n"), ("macOS", "\r"), ("Windows", "\r\n")] {
+    let encoded = pretty.lines().collect::<Vec<_>>().join(line_ending);
+    let parsed: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+      parsed, generated,
+      "generated document changed with {platform} line endings"
+    );
+    assert_eq!(
+      documented_operation_inventory(&parsed),
+      registered_operation_inventory(),
+      "registered route inventory changed with {platform} line endings"
+    );
+    assert_forbidden_contract(&parsed);
+  }
 }

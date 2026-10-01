@@ -4,6 +4,7 @@ use octacity_server_application::{
 };
 
 use super::{ApiError, ErrorCode, RequestId, application_error};
+use crate::v1::MANAGEMENT_FORBIDDEN_MESSAGE;
 
 pub(crate) trait ApplicationErrorClassification {
   fn classification(&self) -> ApplicationFailure;
@@ -37,7 +38,7 @@ pub(crate) fn authorized_handler_error<E: ApplicationErrorClassification>(
       ApiError::new(
         StatusCode::FORBIDDEN,
         ErrorCode::Forbidden,
-        "management operation is forbidden",
+        MANAGEMENT_FORBIDDEN_MESSAGE,
         &request_id,
       )
     }

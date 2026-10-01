@@ -24,6 +24,20 @@ pub(super) fn insert_common_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "ForbiddenErrorResponse".to_owned(),
+    object(
+      [
+        ("code", json!({"type": "string", "const": "forbidden"})),
+        (
+          "message",
+          json!({"type": "string", "const": MANAGEMENT_FORBIDDEN_MESSAGE}),
+        ),
+        ("request_id", non_empty_string()),
+      ],
+      &["code", "message", "request_id"],
+    ),
+  );
+  schemas.insert(
     "MutationDisposition".to_owned(),
     json!({"type": "string", "enum": ["applied", "replayed"]}),
   );

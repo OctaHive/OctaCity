@@ -12,6 +12,8 @@ pub const OPTIMISTIC_PRECONDITION_HEADER: &str = "if-match";
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
 /// Maximum bytes accepted in one opaque pagination cursor.
 pub const MAX_CURSOR_BYTES: usize = 512;
+/// Stable safe explanation returned when management authorization denies an operation.
+pub(crate) const MANAGEMENT_FORBIDDEN_MESSAGE: &str = "management operation is forbidden";
 
 /// Stable machine-readable failure code for management clients.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
