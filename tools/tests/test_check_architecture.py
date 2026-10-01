@@ -21,6 +21,18 @@ sys.modules[SPEC.name] = ARCHITECTURE
 SPEC.loader.exec_module(ARCHITECTURE)
 
 
+def management_security_violation_codes(relative_path: str, source: str) -> list[str]:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        workspace = Path(temporary_directory)
+        source_path = workspace / relative_path
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text(source, encoding="utf-8")
+        return [
+            violation.code
+            for violation in ARCHITECTURE.check_management_security_sources(workspace)
+        ]
+
+
 class ArchitecturePolicyTests(unittest.TestCase):
     def test_current_workspace_satisfies_the_policy(self):
         graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
@@ -28,6 +40,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
             ARCHITECTURE.check(graph)
             + ARCHITECTURE.check_shared_sources(graph)
             + ARCHITECTURE.check_management_route_sources(REPOSITORY)
+            + ARCHITECTURE.check_management_security_sources(REPOSITORY)
             + ARCHITECTURE.check_postgres_management_actor_sources(REPOSITORY),
             [],
         )
@@ -152,6 +165,75 @@ class ArchitecturePolicyTests(unittest.TestCase):
             self.assertEqual(
                 [violation.code for violation in violations],
                 ["ARCH014_STORE_SELECTED_MANAGEMENT_ACTOR"],
+            )
+
+    def test_rest_and_infrastructure_cannot_own_management_authorization(self):
+        invalid_sources = {
+            "REST policy": (
+                "server/api/octacity-server-api-rest/src/policy.rs",
+                "impl ManagementAuthorizationPolicy for RestPolicy {}",
+            ),
+            "infrastructure decision": (
+                "server/infrastructure/fixture-adapter/src/lib.rs",
+                "policy.authorize(&context, action, &resource).await;",
+            ),
+        }
+        for label, (relative_path, source) in invalid_sources.items():
+            with self.subTest(label=label):
+                self.assertEqual(
+                    management_security_violation_codes(relative_path, source),
+                    ["ARCH015_AUTHORIZATION_OUTSIDE_APPLICATION"],
+                )
+
+    def test_management_application_cannot_assemble_raw_use_cases(self):
+        for seam in ("ManagementCommandUseCase", "ManagementQueryUseCase"):
+            with self.subTest(seam=seam):
+                self.assertEqual(
+                    management_security_violation_codes(
+                        "server/app/src/runtime/application.rs",
+                        f"let handler: Arc<dyn {seam}<Request>> = undecorated;",
+                    ),
+                    ["ARCH016_UNDECORATED_MANAGEMENT_HANDLER"],
+                )
+
+    def test_management_context_cannot_contain_raw_credential_fields(self):
+        for field in (
+            "authorization_header",
+            "bearer_token",
+            "cookie",
+            "password",
+            "client_certificate",
+            "provider_claims",
+            "raw_credential",
+        ):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    management_security_violation_codes(
+                        "server/application/src/management_security/context.rs",
+                        f"pub struct ManagementRequestContext {{ pub {field}: String }}",
+                    ),
+                    ["ARCH017_RAW_MANAGEMENT_CREDENTIAL"],
+                )
+
+    def test_cfg_test_security_fixtures_do_not_change_production_policy(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            source_path = workspace / "server/api/octacity-server-api-rest/src/lib.rs"
+            source_path.parent.mkdir(parents=True)
+            source_path.write_text(
+                "#[cfg(test)]\nmod tests { impl ManagementAuthorizationPolicy for FixturePolicy {} }\n"
+                "fn expose(handler: &dyn ManagementQueryUseCase<Request>) {}",
+                encoding="utf-8",
+            )
+            (source_path.parent / "tests.rs").write_text(
+                "impl ManagementAuthorizationPolicy for StandaloneFixturePolicy {}",
+                encoding="utf-8",
+            )
+
+            violations = ARCHITECTURE.check_management_security_sources(workspace)
+            self.assertEqual(
+                [violation.code for violation in violations],
+                ["ARCH016_UNDECORATED_MANAGEMENT_HANDLER"],
             )
 
     def test_only_named_infrastructure_support_packages_may_be_shared_by_adapters(self):

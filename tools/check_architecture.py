@@ -213,6 +213,9 @@ SHARED_SOURCE_RULES = (
 )
 
 REST_API_SOURCE = Path("server/api/octacity-server-api-rest/src")
+SERVER_COMPOSITION_SOURCE = Path("server/app/src")
+SERVER_INFRASTRUCTURE_SOURCE = Path("server/infrastructure")
+MANAGEMENT_SECURITY_SOURCE = Path("server/application/src/management_security")
 POSTGRES_STORE_SOURCE = Path("server/infrastructure/octacity-server-store-postgres/src")
 TYPED_MANAGEMENT_ROUTE_REGISTRY = Path("v1/adapter/routes.rs")
 MANAGEMENT_PATH_DECLARATIONS = Path("v1/openapi/operations")
@@ -229,6 +232,19 @@ STORE_SELECTED_MANAGEMENT_ACTOR = re.compile(
 UNTYPED_MUTATION_FACTS = re.compile(
     r"\bMutationFacts\s*\{[^}]*\bactor_kind\s*(?::|[,}])",
     re.DOTALL,
+)
+MANAGEMENT_AUTHORIZATION_IMPLEMENTATION = re.compile(
+    r"\b(?:ManagementAuthorizationPolicy|TrustedNetworkManagementPolicy|"
+    r"AuthorizedCommandHandler|AuthorizedQueryHandler)\b|\.\s*authorize\s*\("
+)
+UNDECORATED_MANAGEMENT_HANDLER = re.compile(
+    r"\b(?:ManagementCommandUseCase|ManagementQueryUseCase)\b"
+)
+RAW_MANAGEMENT_CREDENTIAL_FIELD = re.compile(
+    r"(?:^|[{,])\s*(?:pub(?:\([^)]*\))?\s+)?"
+    r"[A-Za-z0-9_]*(?:credential|password|token|cookie|header|certificate|claim)"
+    r"[A-Za-z0-9_]*\s*:",
+    re.MULTILINE,
 )
 
 SHARED_FORBIDDEN_SOURCE_DIRECTORIES = frozenset({
@@ -685,6 +701,84 @@ def check_management_route_sources(workspace: Path) -> list[Violation]:
     return sorted(set(violations), key=lambda violation: (violation.code, violation.message))
 
 
+def _production_rust_source(source_path: Path) -> str:
+    """Read source while excluding inline modules compiled only for tests."""
+
+    try:
+        source = source_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise MetadataError(f"cannot read Rust source {source_path}: {error}") from error
+    test_module = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*mod\s+\w+\s*\{")
+    while match := test_module.search(source):
+        depth = 0
+        for index in range(match.end() - 1, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    source = source[: match.start()] + source[index + 1 :]
+                    break
+        else:
+            raise MetadataError(f"unclosed cfg(test) module in {source_path}")
+    return source
+
+
+def _is_rust_test_source(source_path: Path) -> bool:
+    return source_path.name == "tests.rs" or source_path.name.endswith("_tests.rs")
+
+
+def check_management_security_sources(workspace: Path) -> list[Violation]:
+    """Keep management authorization and credential facts at their owning boundaries."""
+
+    rest_sources = (workspace / REST_API_SOURCE).rglob("*.rs")
+    infrastructure_sources = (workspace / SERVER_INFRASTRUCTURE_SOURCE).glob("*/src/**/*.rs")
+    decision_sources = {
+        source_path
+        for source_path in set(rest_sources) | set(infrastructure_sources)
+        if not _is_rust_test_source(source_path)
+    }
+    composition_sources = (workspace / SERVER_COMPOSITION_SOURCE).rglob("*.rs")
+    assembly_sources = {
+        source_path
+        for source_path in set(decision_sources) | set(composition_sources)
+        if not _is_rust_test_source(source_path)
+    }
+    context_sources = {
+        source_path
+        for source_path in (workspace / MANAGEMENT_SECURITY_SOURCE).rglob("*.rs")
+        if not _is_rust_test_source(source_path)
+    }
+
+    violations: list[Violation] = []
+    for source_path in sorted(assembly_sources | context_sources):
+        source = _production_rust_source(source_path)
+        relative_path = source_path.relative_to(workspace)
+        if source_path in decision_sources and MANAGEMENT_AUTHORIZATION_IMPLEMENTATION.search(source):
+            violations.append(
+                Violation(
+                    "ARCH015_AUTHORIZATION_OUTSIDE_APPLICATION",
+                    f"management authorization decisions belong to the application layer: {relative_path}",
+                )
+            )
+        if source_path in assembly_sources and UNDECORATED_MANAGEMENT_HANDLER.search(source):
+            violations.append(
+                Violation(
+                    "ARCH016_UNDECORATED_MANAGEMENT_HANDLER",
+                    f"management composition must expose only authorized handler seams: {relative_path}",
+                )
+            )
+        if source_path in context_sources and RAW_MANAGEMENT_CREDENTIAL_FIELD.search(source):
+            violations.append(
+                Violation(
+                    "ARCH017_RAW_MANAGEMENT_CREDENTIAL",
+                    f"management context must contain only bounded credential-free facts: {relative_path}",
+                )
+            )
+
+    return sorted(set(violations), key=lambda violation: (violation.code, violation.message))
+
+
 def check_postgres_management_actor_sources(workspace: Path) -> list[Violation]:
     """Reject PostgreSQL adapters that select a management actor themselves."""
 
@@ -772,6 +866,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             check(graph)
             + check_shared_sources(graph)
             + check_management_route_sources(options.workspace)
+            + check_management_security_sources(options.workspace)
             + check_postgres_management_actor_sources(options.workspace)
         )
         violations.sort(key=lambda violation: (violation.code, violation.message))
