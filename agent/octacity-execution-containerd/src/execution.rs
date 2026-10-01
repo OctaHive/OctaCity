@@ -13,6 +13,7 @@ pub(super) struct PreparedExecution<'a> {
   pub request: &'a StartExecution,
   pub id: &'a str,
   pub snapshot_key: &'a str,
+  pub lease_id: &'a str,
   pub labels: HashMap<String, String>,
   pub rootfs: Vec<containerd_client::types::Mount>,
   pub image_environment: &'a [String],
@@ -30,6 +31,7 @@ pub(super) async fn start_prepared(prepared: PreparedExecution<'_>) -> Result<Co
     request,
     id,
     snapshot_key,
+    lease_id,
     labels,
     rootfs,
     image_environment,
@@ -66,14 +68,18 @@ pub(super) async fn start_prepared(prepared: PreparedExecution<'_>) -> Result<Co
     deadline,
     Some(cancellation),
     "create containerd container",
-    client.containers().create(namespaced(
+    client.containers().create(leased(
       CreateContainerRequest {
         container: Some(container),
       },
       &config.namespace,
+      lease_id,
     )?),
   )
   .await?;
+  // The container is now the durable root for the snapshot, so the temporary
+  // lease can be released before task creation triggers any further GC work.
+  delete_lease(client, &config.namespace, lease_id, deadline, Some(cancellation)).await?;
 
   let io = ContainerIo::create(io_directory)?;
   grpc_before(

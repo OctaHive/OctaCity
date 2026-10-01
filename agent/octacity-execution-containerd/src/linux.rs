@@ -60,12 +60,14 @@ mod execution;
 mod filesystem;
 #[path = "io.rs"]
 mod io;
+#[path = "lease.rs"]
+mod lease;
 #[path = "metrics.rs"]
 mod metrics;
 #[path = "spec.rs"]
 mod spec;
 
-use client::{before_deadline, elapsed_millis, grpc, grpc_before, namespaced, operation_deadline};
+use client::{before_deadline, elapsed_millis, grpc, grpc_before, leased, namespaced, operation_deadline};
 use execution::{PreparedExecution, destroy_resources, start_prepared};
 #[cfg(test)]
 use filesystem::agent_resource_prefix;
@@ -79,6 +81,7 @@ use image::{
   is_manifest_media_type, process_environment, validate_digest,
 };
 use io::ContainerIo;
+use lease::{create_startup_lease, delete_lease, owned_lease_ids};
 use metrics::decode_cgroup_v2_metrics;
 #[cfg(test)]
 use metrics::{CgroupV2Metrics, CpuStat, IoEntry, IoStat, MemoryStat};
@@ -260,58 +263,69 @@ impl OciEngine for ContainerdEngine {
 
     let id = resource_id(&self.config.agent_id, &request.execution_id);
     let snapshot_key = format!("{id}-rootfs");
+    let lease_id = format!("{id}-startup");
     // Ownership labels are the only resources cleanup_orphans may reclaim;
     // resources belonging to another agent or namespace remain untouched.
     let labels = HashMap::from([
       (OWNER_LABEL.to_owned(), self.config.agent_id.clone()),
       (EXECUTION_LABEL.to_owned(), request.execution_id.clone()),
     ]);
-    let prepared = grpc_before(
-      deadline,
-      Some(&cancellation),
-      "prepare containerd snapshot",
-      client.snapshots().prepare(namespaced(
-        PrepareSnapshotRequest {
-          snapshotter: self.config.snapshotter.clone(),
-          key: snapshot_key.clone(),
-          parent: image.chain_id,
-          labels: labels.clone(),
-        },
-        &self.config.namespace,
-      )?),
-    )
-    .await;
     let io_directory = self.io_root.join(&id);
-    let result = match prepared {
-      Ok(prepared) => {
-        start_prepared(PreparedExecution {
-          client: &client,
-          config: &self.config,
-          runner,
-          request: &request,
-          id: &id,
-          snapshot_key: &snapshot_key,
-          labels,
-          rootfs: prepared.into_inner().mounts,
-          image_environment: &image.environment,
-          io_directory: &io_directory,
-          deadline,
-          cancellation: &cancellation,
-        })
-        .await
-      }
-      Err(error) => Err(error),
-    };
+    let result = async {
+      create_startup_lease(
+        &client,
+        &self.config.namespace,
+        &lease_id,
+        labels.clone(),
+        deadline,
+        &cancellation,
+      )
+      .await?;
+      let prepared = grpc_before(
+        deadline,
+        Some(&cancellation),
+        "prepare containerd snapshot",
+        client.snapshots().prepare(leased(
+          PrepareSnapshotRequest {
+            snapshotter: self.config.snapshotter.clone(),
+            key: snapshot_key.clone(),
+            parent: image.chain_id,
+            labels: labels.clone(),
+          },
+          &self.config.namespace,
+          &lease_id,
+        )?),
+      )
+      .await?;
+      start_prepared(PreparedExecution {
+        client: &client,
+        config: &self.config,
+        runner,
+        request: &request,
+        id: &id,
+        snapshot_key: &snapshot_key,
+        lease_id: &lease_id,
+        labels,
+        rootfs: prepared.into_inner().mounts,
+        image_environment: &image.environment,
+        io_directory: &io_directory,
+        deadline,
+        cancellation: &cancellation,
+      })
+      .await
+    }
+    .await;
     match result {
       Ok(execution) => Ok(Box::new(execution)),
       Err(error) => {
-        // Snapshot preparation is the first mutating daemon call. Every later
-        // startup failure therefore rolls the complete resource set back.
+        // Lease creation is the first mutating daemon call. Every startup
+        // failure therefore rolls the complete resource set back.
         match cleanup_resources(
           &client,
           &self.config,
           &id,
           &snapshot_key,
+          &lease_id,
           &io_directory,
           self.config.cleanup_timeout,
         )
@@ -327,6 +341,12 @@ impl OciEngine for ContainerdEngine {
   async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
     let deadline = operation_deadline(self.config.cleanup_timeout)?;
     let client = self.connect(deadline, None).await?;
+    let mut failures = Vec::new();
+    for lease_id in owned_lease_ids(&client, &self.config.namespace, &self.config.agent_id, deadline).await? {
+      if let Err(error) = delete_lease(&client, &self.config.namespace, &lease_id, deadline, None).await {
+        failures.push(error.to_string());
+      }
+    }
     let response = grpc_before(
       deadline,
       None,
@@ -338,7 +358,6 @@ impl OciEngine for ContainerdEngine {
     )
     .await?
     .into_inner();
-    let mut failures = Vec::new();
     // Container deletion normally removes task state; the subsequent snapshot
     // pass also catches crashes between snapshot creation and container create.
     for container in response.containers {
@@ -413,23 +432,36 @@ async fn cleanup_resources(
   config: &ContainerdEngineConfig,
   id: &str,
   snapshot_key: &str,
+  lease_id: &str,
   io_directory: &Path,
   cleanup_timeout: Duration,
 ) -> Result<(), ExecutionError> {
-  let result = destroy_resources(
+  let deadline = operation_deadline(cleanup_timeout)?;
+  let mut failures = Vec::new();
+  if let Err(error) = delete_lease(client, &config.namespace, lease_id, deadline, None).await {
+    failures.push(error.to_string());
+  }
+  let remaining = deadline.saturating_duration_since(Instant::now());
+  if let Err(error) = destroy_resources(
     client,
     &config.namespace,
     &config.snapshotter,
     id,
     snapshot_key,
     io_directory,
-    cleanup_timeout,
+    remaining,
   )
-  .await;
-  if let Err(error) = &result {
-    warn!(container_id = id, %error, "failed to roll back containerd execution startup");
+  .await
+  {
+    failures.push(error.to_string());
   }
-  result
+  if failures.is_empty() {
+    Ok(())
+  } else {
+    let error = ExecutionError::Backend(failures.join("; "));
+    warn!(container_id = id, %error, "failed to roll back containerd execution startup");
+    Err(error)
+  }
 }
 
 fn validate_request(

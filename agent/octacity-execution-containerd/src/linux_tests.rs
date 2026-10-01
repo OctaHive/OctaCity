@@ -401,6 +401,16 @@ fn validates_metadata_paths_platforms_and_namespaces() {
   );
   assert!(namespaced((), "octacity").is_ok());
   assert!(namespaced((), "bad\nnamespace").is_err());
+  let leased_request = leased((), "octacity", "execution-1").unwrap();
+  assert_eq!(
+    leased_request.metadata().get("containerd-namespace").unwrap(),
+    "octacity"
+  );
+  assert_eq!(
+    leased_request.metadata().get("containerd-lease").unwrap(),
+    "execution-1"
+  );
+  assert!(leased((), "octacity", "bad\nlease").is_err());
   assert!(validate_identifier("value", "safe.name-1").is_ok());
   assert!(validate_identifier("value", "not safe").is_err());
 

@@ -241,6 +241,8 @@ verify_clean() {
         || fail "containerd tasks remain after the contract"
       [[ -z $("$ctr" --address "$socket" --namespace "$namespace" containers list --quiet) ]] \
         || fail "containerd containers remain after the contract"
+      [[ -z $("$ctr" --address "$socket" --namespace "$namespace" leases list --quiet) ]] \
+        || fail "containerd leases remain after the contract"
       ;;
     microsandbox)
       [[ -d $root/work ]] || fail "Microsandbox work root is missing"

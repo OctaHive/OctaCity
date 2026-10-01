@@ -14,6 +14,15 @@ pub(super) fn namespaced<T>(value: T, namespace: &str) -> Result<Request<T>, Exe
   Ok(request)
 }
 
+/// Adds the namespace and lease that keep newly created resources reachable by containerd GC.
+pub(super) fn leased<T>(value: T, namespace: &str, lease_id: &str) -> Result<Request<T>, ExecutionError> {
+  let lease = MetadataValue::try_from(lease_id)
+    .map_err(|_| invalid("containerd lease cannot be represented as gRPC metadata"))?;
+  let mut request = namespaced(value, namespace)?;
+  request.metadata_mut().insert("containerd-lease", lease);
+  Ok(request)
+}
+
 /// Converts monotonic elapsed time into the saturating wire representation.
 pub(super) fn elapsed_millis(started: Instant) -> u64 {
   u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
