@@ -873,7 +873,7 @@ mod tests {
   }
 
   #[test]
-  fn release_cache_fixture_stays_within_blob_compression_ratio() {
+  fn release_artifact_fixture_matches_download_assertions_and_compression_limit() {
     const CACHE_PUBLICATION_COMPRESSION_RATIO_LIMIT: usize = 1_000;
 
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
@@ -904,6 +904,7 @@ mod tests {
     );
 
     let payload = fs::read(workspace.join("dist/performance.bin")).unwrap();
+    assert_release_artifact_payload(&payload);
     let encoded = zstd::stream::encode_all(payload.as_slice(), 3).unwrap();
     assert!(
       payload.len() <= encoded.len().saturating_mul(CACHE_PUBLICATION_COMPRESSION_RATIO_LIMIT),

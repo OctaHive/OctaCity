@@ -202,13 +202,20 @@ pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Valu
     .await
     .unwrap();
   let elapsed = download_started.elapsed().as_secs_f64().max(f64::EPSILON);
-  assert_eq!(bytes.len(), ARTIFACT_BYTES);
-  assert!(bytes.iter().all(|byte| *byte == 0));
+  assert_release_artifact_payload(&bytes);
   assert_eq!(download["artifact"]["sha256"], format!("{:x}", Sha256::digest(&bytes)));
   (
     json!({"page": page, "downloaded_sha256": download["artifact"]["sha256"]}),
     bytes.len() as f64 / elapsed,
   )
+}
+
+pub(super) fn assert_release_artifact_payload(bytes: &[u8]) {
+  assert_eq!(bytes.len(), ARTIFACT_BYTES);
+  assert!(
+    bytes.iter().any(|byte| *byte != 0),
+    "release artifact must contain the generated performance payload"
+  );
 }
 
 pub(super) async fn verify_log_search(
