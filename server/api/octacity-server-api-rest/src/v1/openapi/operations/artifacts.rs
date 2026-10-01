@@ -19,7 +19,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::ArtifactList),
+  .with_parameters(ParameterProfile::ArtifactList)
+  .with_visibility::<ListBuildArtifactsQuery>(),
   operation!(
     GetArtifactQuery,
     "GET",
@@ -59,7 +60,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::CacheSessionList),
+  .with_parameters(ParameterProfile::CacheSessionList)
+  .with_visibility::<ListBuildCacheSessionsQuery>(),
   operation!(
     GetCacheSessionQuery,
     "GET",

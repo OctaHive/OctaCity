@@ -9,9 +9,9 @@ use async_trait::async_trait;
 use octacity_server_domain::{BuildId, LogChunkId, LogIndexingWorkId, ProjectId};
 
 use crate::{
-  DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCursor, LogSearchDocument, LogSearchError,
-  LogSearchHit, LogSearchIndex, LogSearchMode, LogSearchMutationDisposition, LogSearchOperation, LogSearchQuery,
-  WriteLogSearchDocument, bounded_log_search_snippet,
+  DeleteLogSearchDocuments, IndexedLogSearchPage, LogIndexPosition, LogSearchCriteria, LogSearchCursor,
+  LogSearchDocument, LogSearchError, LogSearchHit, LogSearchIndex, LogSearchMode, LogSearchMutationDisposition,
+  LogSearchOperation, LogSearchQuery, WriteLogSearchDocument, bounded_log_search_snippet,
 };
 
 /// Deterministic process-local log-search projection for application tests.
@@ -59,20 +59,30 @@ impl LogSearchIndex for InMemoryLogSearchIndex {
     query
       .validate()
       .map_err(|source| LogSearchError::invalid(LogSearchOperation::Search, source))?;
+    if !query.visibility.allows(&query.criteria.project_id) {
+      return Ok(IndexedLogSearchPage {
+        hits: Vec::new(),
+        next_cursor: None,
+        indexed_through: None,
+      });
+    }
     let state = self.lock()?;
     let mut documents: Vec<_> = state
       .documents
       .values()
-      .filter(|document| matches_query(document, &query))
+      .filter(|document| matches_query(document, &query.criteria))
       .collect();
     documents.sort_unstable_by_key(|document| std::cmp::Reverse((document.occurred_at, document.chunk_id)));
-    if let Some(after) = query.after {
+    if let Some(after) = query.criteria.after {
       documents.retain(|document| (document.occurred_at, document.chunk_id) < (after.occurred_at, after.chunk_id));
     }
 
-    let has_more = documents.len() > usize::from(query.limit);
-    documents.truncate(usize::from(query.limit));
-    let hits: Vec<_> = documents.into_iter().map(|document| hit(document, &query)).collect();
+    let has_more = documents.len() > usize::from(query.criteria.limit);
+    documents.truncate(usize::from(query.criteria.limit));
+    let hits: Vec<_> = documents
+      .into_iter()
+      .map(|document| hit(document, &query.criteria))
+      .collect();
     let next_cursor = has_more.then(|| {
       let last = hits.last().expect("a page with more results cannot be empty");
       LogSearchCursor {
@@ -83,7 +93,7 @@ impl LogSearchIndex for InMemoryLogSearchIndex {
     Ok(IndexedLogSearchPage {
       hits,
       next_cursor,
-      indexed_through: indexed_through(&state, query.project_id),
+      indexed_through: indexed_through(&state, query.criteria.project_id),
     })
   }
 
@@ -198,7 +208,7 @@ fn indexed_through(state: &LogSearchMemoryState, project_id: ProjectId) -> Optio
     .and_then(|project| project.indexed_through)
 }
 
-fn matches_query(document: &LogSearchDocument, query: &LogSearchQuery) -> bool {
+fn matches_query(document: &LogSearchDocument, query: &LogSearchCriteria) -> bool {
   document.project_id == query.project_id
     && query.build_id.is_none_or(|build_id| document.build_id == build_id)
     && query
@@ -226,7 +236,7 @@ fn text_matches(document: &str, query: &str, mode: LogSearchMode) -> bool {
   }
 }
 
-fn hit(document: &LogSearchDocument, query: &LogSearchQuery) -> LogSearchHit {
+fn hit(document: &LogSearchDocument, query: &LogSearchCriteria) -> LogSearchHit {
   LogSearchHit {
     chunk_id: document.chunk_id,
     build_id: document.build_id,
@@ -249,4 +259,81 @@ fn contiguous_progress_discards_positions_below_the_watermark() {
   advance_freshness(&mut project, LogIndexPosition::new(1).unwrap());
   assert_eq!(project.indexed_through, LogIndexPosition::new(2).ok());
   assert!(project.applied_positions.is_empty());
+}
+
+#[test]
+fn visibility_precedes_log_search_pagination_snippets_and_freshness() {
+  crate::test_support::run_ready(
+    async {
+      let index = InMemoryLogSearchIndex::new();
+      let project_id = crate::test_support::id::<ProjectId>(1);
+      let other_project_id = crate::test_support::id::<ProjectId>(2);
+      let build_id = crate::test_support::id::<BuildId>(3);
+      for (value, occurred_at, position) in [(10, 1_000, 1), (11, 2_000, 2)] {
+        index
+          .index(WriteLogSearchDocument {
+            work_id: crate::test_support::id(value + 100),
+            position: LogIndexPosition::new(position).unwrap(),
+            document: LogSearchDocument {
+              chunk_id: crate::test_support::id(value),
+              project_id,
+              build_id,
+              attempt_id: crate::test_support::id(4),
+              job_id: crate::test_support::id(5),
+              stream: crate::BuildLogStream::Stdout,
+              first_sequence: position,
+              last_sequence: position,
+              occurred_at: octacity_server_domain::Timestamp::from_unix_millis(occurred_at).unwrap(),
+              redacted_text: format!("visible match {position}"),
+            },
+          })
+          .await
+          .unwrap();
+      }
+
+      let query = |visibility| LogSearchQuery {
+        criteria: crate::LogSearchCriteria {
+          project_id,
+          text: "visible".to_owned(),
+          mode: LogSearchMode::Literal,
+          build_id: None,
+          attempt_id: None,
+          job_id: None,
+          stream: None,
+          occurred_from: None,
+          occurred_through: None,
+          after: None,
+          limit: 1,
+        },
+        visibility,
+      };
+      let all = index
+        .search(query(crate::BuildLogSearchVisibility::all()))
+        .await
+        .unwrap();
+      assert_eq!(all.hits.len(), 1);
+      assert!(all.next_cursor.is_some());
+      assert_eq!(all.indexed_through, LogIndexPosition::new(2).ok());
+      assert!(all.hits[0].snippet.contains("visible"));
+
+      let restricted = index
+        .search(query(
+          crate::BuildLogSearchVisibility::restricted([project_id]).unwrap(),
+        ))
+        .await
+        .unwrap();
+      assert_eq!(restricted, all);
+
+      for visibility in [
+        crate::BuildLogSearchVisibility::restricted([other_project_id]).unwrap(),
+        crate::BuildLogSearchVisibility::none(),
+      ] {
+        let hidden = index.search(query(visibility)).await.unwrap();
+        assert!(hidden.hits.is_empty());
+        assert_eq!(hidden.next_cursor, None);
+        assert_eq!(hidden.indexed_through, None);
+      }
+    },
+    "in-memory log visibility must complete without I/O",
+  );
 }

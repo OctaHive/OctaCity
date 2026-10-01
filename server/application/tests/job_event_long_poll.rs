@@ -10,7 +10,10 @@ use std::{
 };
 
 use async_trait::async_trait;
-use octacity_server_application::{JobEventLongPoll, JobEventWaiter, ReadJobEventsQuery};
+use octacity_server_application::{
+  JobEventLongPoll, JobEventWaiter, ManagementAuthorizationGrant, ManagementResource, ManagementResourceIdentity,
+  ManagementResourceKind, ManagementVisibility, ReadJobEventsQuery,
+};
 use octacity_server_domain::{JobId, Timestamp};
 use octacity_server_store::{
   DurableJobEvent, EventSequence, JobEventKind, JobEventPage, JobEventReadStore, ReadJobEvents, StoreError,
@@ -19,12 +22,13 @@ use serde_json::json;
 
 #[path = "support/management_query.rs"]
 mod management_query_support;
-use management_query_support::management_query;
+use management_query_support::{management_query, management_query_with_grant};
 
 struct ScriptedStore {
   pages: Mutex<VecDeque<JobEventPage>>,
   active_reads: AtomicUsize,
   reads: AtomicUsize,
+  requests: Mutex<Vec<ReadJobEvents>>,
 }
 
 impl ScriptedStore {
@@ -33,15 +37,17 @@ impl ScriptedStore {
       pages: Mutex::new(pages.into_iter().collect()),
       active_reads: AtomicUsize::new(0),
       reads: AtomicUsize::new(0),
+      requests: Mutex::new(Vec::new()),
     }
   }
 }
 
 #[async_trait]
 impl JobEventReadStore for ScriptedStore {
-  async fn read_job_events(&self, _request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
+  async fn read_job_events(&self, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
     self.active_reads.fetch_add(1, Ordering::SeqCst);
     self.reads.fetch_add(1, Ordering::SeqCst);
+    self.requests.lock().unwrap().push(request);
     let page = self.pages.lock().unwrap().pop_front().unwrap();
     self.active_reads.fetch_sub(1, Ordering::SeqCst);
     Ok(page)
@@ -79,6 +85,37 @@ fn returns_ordered_durable_replay_without_waiting() {
   assert_eq!(result.cursor, 3);
   assert_eq!(store.reads.load(Ordering::SeqCst), 1);
   assert_eq!(waiter.waits.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn restricted_visibility_reaches_the_store_and_the_page_is_not_post_filtered() {
+  let store = Arc::new(ScriptedStore::new([page(&[1, 2], 2)]));
+  let waiter = Arc::new(ObservingWaiter {
+    store: Arc::clone(&store),
+    waits: AtomicUsize::new(0),
+  });
+  let service = JobEventLongPoll::new(Arc::clone(&store), waiter);
+  let job_id = query(Duration::ZERO).job_id;
+  let resource = ManagementResource::instance(
+    ManagementResourceKind::Job,
+    ManagementResourceIdentity::new(job_id.to_string()).unwrap(),
+  )
+  .unwrap();
+  let grant = ManagementAuthorizationGrant::new(ManagementVisibility::restricted([resource]).unwrap());
+
+  let result = run_ready(management_query_with_grant(&service, query(Duration::ZERO), grant)).unwrap();
+
+  assert_eq!(
+    result.events.iter().map(|event| event.sequence).collect::<Vec<_>>(),
+    [1, 2]
+  );
+  let requests = store.requests.lock().unwrap();
+  assert_eq!(requests.len(), 1);
+  assert!(requests[0].visibility.allows(&job_id));
+  assert_eq!(
+    requests[0].visibility.kind(),
+    octacity_server_store::ReadVisibilityKind::Restricted
+  );
 }
 
 #[test]

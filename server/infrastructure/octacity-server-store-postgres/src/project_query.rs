@@ -2,7 +2,7 @@ use octacity_server_domain::{EntityKind, ProjectId};
 use octacity_server_store::{ListProjects, Project, ProjectDetails, ProjectPage, StoreError};
 use sqlx::PgPool;
 
-use crate::{database::unavailable, project_row::ProjectRow};
+use crate::{database::unavailable, project_row::ProjectRow, read_visibility::sql_read_visibility};
 
 pub(crate) async fn read(pool: &PgPool, project_id: ProjectId) -> Result<ProjectDetails, StoreError> {
   let mut lineage = sqlx::query_as::<_, ProjectRow>(
@@ -35,6 +35,13 @@ pub(crate) async fn read(pool: &PgPool, project_id: ProjectId) -> Result<Project
 }
 
 pub(crate) async fn list(pool: &PgPool, request: ListProjects) -> Result<ProjectPage, StoreError> {
+  if request.visibility().kind() == octacity_server_store::ReadVisibilityKind::None {
+    return Ok(ProjectPage {
+      projects: Vec::new(),
+      next_cursor: None,
+    });
+  }
+  let visibility = sql_read_visibility(request.visibility().view(), |id| id.as_uuid());
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   if let Some(parent_id) = request.parent_id() {
     let exists = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM projects WHERE id = $1 FOR KEY SHARE")
@@ -56,10 +63,14 @@ pub(crate) async fn list(pool: &PgPool, request: ListProjects) -> Result<Project
        FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis \
      FROM projects \
-     WHERE parent_id IS NOT DISTINCT FROM $1 AND ($2::UUID IS NULL OR id > $2) \
-     ORDER BY id LIMIT $3",
+     WHERE parent_id IS NOT DISTINCT FROM $1 \
+       AND ($2 OR id = ANY($3::uuid[])) \
+       AND ($4::UUID IS NULL OR id > $4) \
+     ORDER BY id LIMIT $5",
   )
   .bind(request.parent_id().map(ProjectId::as_uuid))
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .bind(request.after().map(ProjectId::as_uuid))
   .bind(fetch_limit)
   .fetch_all(&mut *transaction)

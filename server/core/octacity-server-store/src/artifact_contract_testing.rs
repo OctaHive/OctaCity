@@ -279,6 +279,7 @@ where
       .list_published_artifacts(ListPublishedArtifacts {
         build_id: fixture.build_id,
         limit: 10,
+        visibility: crate::ArtifactListVisibility::all(),
       })
       .await
       .unwrap(),

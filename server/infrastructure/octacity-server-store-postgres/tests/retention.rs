@@ -95,7 +95,15 @@ async fn retention_deadlines_and_interrupted_cleanup_are_durable() {
   );
   let deletion = preparation.search_deletion.unwrap();
   let hidden_events = store
-    .read_job_events(ReadJobEvents::new(grant.job_id, 0, 10).unwrap())
+    .read_job_events(
+      ReadJobEvents::new(
+        grant.job_id,
+        0,
+        10,
+        octacity_server_store::JobEventReadVisibility::all(),
+      )
+      .unwrap(),
+    )
     .await
     .unwrap();
   assert!(hidden_events.events.is_empty());

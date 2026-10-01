@@ -2,13 +2,13 @@ use std::str::FromStr as _;
 
 use octacity_server_domain::{AuditFactId, Timestamp};
 use octacity_server_store::{
-  AuditActor, AuditActorKind, AuditCursor, AuditFact, AuditFactPage, AuditFactQuery, AuditMetadata, AuditOutcome,
+  AuditActor, AuditActorKind, AuditCursor, AuditFact, AuditFactPage, AuditMetadata, AuditOutcome, ListAuditFacts,
   StoreError, StoreInputError, StoreOperation,
 };
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, types::Json};
 
-use crate::database::unavailable;
+use crate::{database::unavailable, read_visibility::sql_read_visibility};
 
 #[derive(FromRow)]
 struct AuditFactRow {
@@ -25,7 +25,9 @@ struct AuditFactRow {
   occurred_at_unix_ms: i64,
 }
 
-pub(crate) async fn list(pool: &PgPool, query: AuditFactQuery) -> Result<AuditFactPage, StoreError> {
+pub(crate) async fn list(pool: &PgPool, request: ListAuditFacts) -> Result<AuditFactPage, StoreError> {
+  let visibility = sql_read_visibility(request.visibility.view(), |id| id.as_uuid());
+  let query = request.query;
   query.validate().map_err(|_| StoreError::InvalidInput {
     operation: StoreOperation::ListAuditFacts,
     source: StoreInputError::InvalidAuditQuery,
@@ -45,9 +47,10 @@ pub(crate) async fn list(pool: &PgPool, query: AuditFactQuery) -> Result<AuditFa
        AND ($6::text IS NULL OR request_identity = $6) \
        AND ($7::bigint IS NULL OR occurred_at >= to_timestamp($7::double precision / 1000.0)) \
        AND ($8::bigint IS NULL OR occurred_at <= to_timestamp($8::double precision / 1000.0)) \
-       AND ($9::bigint IS NULL OR (occurred_at, id) < \
-         (to_timestamp($9::double precision / 1000.0), $10::uuid)) \
-     ORDER BY occurred_at DESC, id DESC LIMIT $11",
+       AND ($9 OR id = ANY($10::uuid[])) \
+       AND ($11::bigint IS NULL OR (occurred_at, id) < \
+         (to_timestamp($11::double precision / 1000.0), $12::uuid)) \
+     ORDER BY occurred_at DESC, id DESC LIMIT $13",
   )
   .bind(query.actor_kind.map(AuditActorKind::as_str))
   .bind(query.actor_identity.as_deref())
@@ -57,6 +60,8 @@ pub(crate) async fn list(pool: &PgPool, query: AuditFactQuery) -> Result<AuditFa
   .bind(query.request_identity.as_deref())
   .bind(query.occurred_from.map(Timestamp::unix_millis))
   .bind(query.occurred_through.map(Timestamp::unix_millis))
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .bind(after_time)
   .bind(after_id)
   .bind(i64::from(query.limit) + 1)

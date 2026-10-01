@@ -7,9 +7,9 @@ use std::{fmt::Debug, str::FromStr};
 use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_server_domain::{ArtifactName, Timestamp};
 use octacity_server_store::{
-  ArtifactContentDigest, ArtifactIdentity, ArtifactMediaType, ArtifactRetentionPolicy, ArtifactType, JobClaim,
-  JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, RestoreInventoryStore as _,
-  TriggerAcceptanceStore as _,
+  ArtifactContentDigest, ArtifactIdentity, ArtifactListVisibility, ArtifactMediaType, ArtifactRecordStore as _,
+  ArtifactRetentionPolicy, ArtifactType, JobClaim, JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence,
+  LeaseWindow, ListPublishedArtifacts, RestoreInventoryStore as _, TriggerAcceptanceStore as _,
   testing::{
     ArtifactRecordStoreContractFixture, ArtifactUploadStoreContractFixture, authoritative_store_contract_fixture,
     compatible_snapshot, verify_artifact_record_store_contract, verify_artifact_upload_store_contract,
@@ -107,6 +107,39 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
     },
   )
   .await;
+  let store = PostgresStore::new(database.pool.clone());
+  let all = store
+    .list_published_artifacts(ListPublishedArtifacts {
+      build_id: fixture.request.build.id,
+      limit: 1,
+      visibility: ArtifactListVisibility::all(),
+    })
+    .await?;
+  assert_eq!(all.len(), 1);
+  assert_eq!(all[0].artifact.identity().artifact_id, id(953));
+  let restricted = store
+    .list_published_artifacts(ListPublishedArtifacts {
+      build_id: fixture.request.build.id,
+      limit: 1,
+      visibility: ArtifactListVisibility::restricted([id(953)])?,
+    })
+    .await?;
+  assert_eq!(restricted, all);
+  for visibility in [
+    ArtifactListVisibility::restricted([id(999)])?,
+    ArtifactListVisibility::none(),
+  ] {
+    assert!(
+      store
+        .list_published_artifacts(ListPublishedArtifacts {
+          build_id: fixture.request.build.id,
+          limit: 1,
+          visibility,
+        })
+        .await?
+        .is_empty()
+    );
+  }
   let restored = PostgresStore::new(database.pool.clone())
     .restore_artifact_page(None, 1)
     .await?;

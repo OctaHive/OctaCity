@@ -10,8 +10,9 @@ use octacity_server_cache::{ActionResultV1, BlobDescriptor, BlobEncoding, CacheC
 use octacity_server_domain::Timestamp;
 use octacity_server_store::{
   BeginCacheSession, CacheBlobPreparationOutcome, CacheDataAccess, CacheDataStore as _, CachePublicationOutcome,
-  CacheSessionStore as _, IdempotencyKey, JobClaim, JobClaimOutcome, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  LeaseWindow, PublishCacheAction, PublishCacheBlob, RestoreInventoryStore as _, TriggerAcceptanceStore as _,
+  CacheSessionListVisibility, CacheSessionStore as _, IdempotencyKey, JobClaim, JobClaimOutcome,
+  JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow, ListBuildCacheSessions, PublishCacheAction,
+  PublishCacheBlob, RestoreInventoryStore as _, TriggerAcceptanceStore as _,
   testing::{
     CacheSessionStoreContractFixture, authoritative_store_contract_fixture, compatible_snapshot,
     job_spec_template_with_cache, verify_cache_session_store_contract,
@@ -101,6 +102,39 @@ async fn verify_cache_sessions(database: &support::TestDatabase) -> Result<(), B
     },
   )
   .await;
+  let store = PostgresStore::new(database.pool.clone());
+  let all = store
+    .list_build_cache_sessions(ListBuildCacheSessions {
+      build_id: fixture.request.build.id,
+      limit: 1,
+      visibility: CacheSessionListVisibility::all(),
+    })
+    .await?;
+  assert_eq!(all.len(), 1);
+  assert_eq!(all[0].id, id(971));
+  let restricted = store
+    .list_build_cache_sessions(ListBuildCacheSessions {
+      build_id: fixture.request.build.id,
+      limit: 1,
+      visibility: CacheSessionListVisibility::restricted([id(971)])?,
+    })
+    .await?;
+  assert_eq!(restricted, all);
+  for visibility in [
+    CacheSessionListVisibility::restricted([id(999)])?,
+    CacheSessionListVisibility::none(),
+  ] {
+    assert!(
+      store
+        .list_build_cache_sessions(ListBuildCacheSessions {
+          build_id: fixture.request.build.id,
+          limit: 1,
+          visibility,
+        })
+        .await?
+        .is_empty()
+    );
+  }
   Ok(())
 }
 

@@ -326,12 +326,18 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListInternalTriggersQuery,
   ) -> Result<InternalTriggerPageProjection, Self::Error> {
     let page = self
       .store
-      .list_internal_trigger_definitions(ListInternalTriggerDefinitions::new(query.after, query.limit)?)
+      .list_internal_trigger_definitions(ListInternalTriggerDefinitions::new(
+        query.after,
+        query.limit,
+        grant
+          .visibility_for::<ListInternalTriggersQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
       .await?;
     Ok(InternalTriggerPageProjection {
       items: page.items.into_iter().map(project).collect::<Result<_, _>>()?,

@@ -98,12 +98,14 @@ pub enum ArtifactVerificationResult {
 }
 
 /// Bounded query for visible outputs of one Build.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListPublishedArtifacts {
   /// Build whose outputs are requested.
   pub build_id: BuildId,
   /// Positive result ceiling.
   pub limit: u16,
+  /// Authorization-derived Artifact identities applied before the result ceiling.
+  pub visibility: crate::ArtifactListVisibility,
 }
 
 /// Request to reserve one immutable logical Artifact under a current fenced Lease.

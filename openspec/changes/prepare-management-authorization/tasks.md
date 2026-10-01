@@ -33,10 +33,10 @@
 
 ## 7. Authorization-safe Read Visibility
 
-- [ ] 7.1 Inventory every management collection, search, audit, event, artifact, Agent, and other paged query and assign a query-specific typed visibility input; verify a contract test fails when any paged management query lacks an explicit scope.
-- [ ] 7.2 Apply visibility in in-memory read adapters before ordering, cursor construction, pagination, counts, snippets, and freshness; verify `All`, bounded-subset, and `None` cases return pages and metadata derived only from visible resources.
-- [ ] 7.3 Apply equivalent predicates in PostgreSQL read adapters before `ORDER BY`, cursor comparison, aggregation, and `LIMIT`; verify adapter contracts cover hidden rows before, within, and after page boundaries without short-page or existence leaks.
-- [ ] 7.4 Pass authorization grants from query decorators through application handlers into each scoped read port and reject unsupported scope/query combinations; verify no application or REST response performs post-fetch authorization filtering.
+- [x] 7.1 Inventory every management collection, search, audit, event, artifact, Agent, and other paged query and assign a query-specific typed visibility input; verify a contract test fails when any paged management query lacks an explicit scope.
+- [x] 7.2 Apply visibility in in-memory read adapters before ordering, cursor construction, pagination, counts, snippets, and freshness; verify `All`, bounded-subset, and `None` cases return pages and metadata derived only from visible resources.
+- [x] 7.3 Apply equivalent predicates in PostgreSQL read adapters before `ORDER BY`, cursor comparison, aggregation, and `LIMIT`; verify adapter contracts cover hidden rows before, within, and after page boundaries without short-page or existence leaks.
+- [x] 7.4 Pass authorization grants from query decorators through application handlers into each scoped read port and reject unsupported scope/query combinations; verify no application or REST response performs post-fetch authorization filtering.
 
 ## 8. REST and OpenAPI Contracts
 

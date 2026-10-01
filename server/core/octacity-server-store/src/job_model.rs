@@ -422,7 +422,7 @@ pub struct AppendJobEventsOutcome {
 }
 
 /// Bounded durable read after one caller-observed Job-event sequence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadJobEvents {
   /// Job whose immutable event stream is requested.
   pub job_id: JobId,
@@ -430,23 +430,36 @@ pub struct ReadJobEvents {
   pub after_sequence: u64,
   /// Maximum number of events returned by one store operation.
   pub limit: u16,
+  /// Authorization-derived Job identities applied before event ordering and cursor creation.
+  pub visibility: crate::JobEventReadVisibility,
 }
 
 impl ReadJobEvents {
   /// Creates one validated bounded Job-event read.
-  pub fn new(job_id: JobId, after_sequence: u64, limit: u16) -> Result<Self, StoreError> {
+  pub fn new(
+    job_id: JobId,
+    after_sequence: u64,
+    limit: u16,
+    visibility: crate::JobEventReadVisibility,
+  ) -> Result<Self, StoreError> {
     let request = Self {
       job_id,
       after_sequence,
       limit,
+      visibility,
     };
     request.validate()?;
     Ok(request)
   }
 
   /// Revalidates the page bound at an adapter seam.
-  pub fn validate(self) -> Result<(), StoreError> {
-    if self.limit == 0 || usize::from(self.limit) > MAX_JOB_EVENT_READ_PAGE_SIZE {
+  pub fn validate(&self) -> Result<(), StoreError> {
+    Self::validate_page_size(self.limit)
+  }
+
+  /// Validates a page bound before an authorization-derived visibility scope exists.
+  pub fn validate_page_size(limit: u16) -> Result<(), StoreError> {
+    if limit == 0 || usize::from(limit) > MAX_JOB_EVENT_READ_PAGE_SIZE {
       return Err(StoreError::invalid(
         StoreOperation::ReadJobEvents,
         StoreInputError::InvalidJobEventPageSize,

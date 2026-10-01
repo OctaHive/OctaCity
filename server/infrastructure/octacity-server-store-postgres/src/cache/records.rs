@@ -11,7 +11,7 @@ use serde_json::Value;
 use sqlx::{FromRow, PgPool, types::Json};
 use uuid::Uuid;
 
-use crate::database::unavailable;
+use crate::{database::unavailable, read_visibility::sql_read_visibility};
 
 pub(crate) async fn read(pool: &PgPool, session_id: CacheSessionId) -> Result<CacheSessionRecord, StoreError> {
   load_one(pool, session_id)
@@ -32,11 +32,15 @@ pub(crate) async fn list(
       source: StoreInputError::InvalidCacheSession,
     });
   }
+  let visibility = sql_read_visibility(request.visibility.view(), |id| id.as_uuid());
   let rows: Vec<CacheSessionRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-    "{} WHERE session.build_id = $1 ORDER BY session.created_at, session.id LIMIT $2",
+    "{} WHERE session.build_id = $1 AND ($2 OR session.id = ANY($3::uuid[])) \
+     ORDER BY session.created_at, session.id LIMIT $4",
     SELECT_SESSION
   )))
   .bind(request.build_id.as_uuid())
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .bind(i64::from(request.limit))
   .fetch_all(pool)
   .await

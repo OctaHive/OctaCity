@@ -279,6 +279,12 @@ impl ProjectStore for InMemoryProjectStore {
   }
 
   async fn list_projects(&self, request: ListProjects) -> Result<ProjectPage, StoreError> {
+    if request.visibility().kind() == crate::ReadVisibilityKind::None {
+      return Ok(ProjectPage {
+        projects: Vec::new(),
+        next_cursor: None,
+      });
+    }
     let state = self.lock()?;
     if let Some(parent_id) = request.parent_id() {
       require_parent(&state, Some(parent_id))?;
@@ -287,6 +293,7 @@ impl ProjectStore for InMemoryProjectStore {
     let mut projects: Vec<_> = state
       .projects
       .values()
+      .filter(|project| request.visibility().allows(&project.id))
       .filter(|project| project.parent_id == request.parent_id() && request.after().is_none_or(|id| project.id > id))
       .take(limit + 1)
       .cloned()

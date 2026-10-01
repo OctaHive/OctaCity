@@ -151,54 +151,61 @@ impl LogSearchIndex for PostgresLogSearchIndex {
       .execute(&mut *transaction)
       .await
       .map_err(unavailable)?;
+    let visibility = crate::read_visibility::sql_read_visibility(query.visibility.view(), |id| id.as_uuid());
 
     let mut sql = QueryBuilder::<Postgres>::new(
       "SELECT chunk_id, build_id, attempt_id, job_id, stream, first_sequence, last_sequence, \
        FLOOR(EXTRACT(EPOCH FROM occurred_at) * 1000)::BIGINT AS occurred_at_millis, normalized_text \
        FROM log_search_documents WHERE project_id = ",
     );
-    sql.push_bind(query.project_id.as_uuid());
+    sql.push_bind(query.criteria.project_id.as_uuid());
+    sql
+      .push(" AND (")
+      .push_bind(visibility.all)
+      .push(" OR project_id = ANY(")
+      .push_bind(visibility.identities.clone())
+      .push("::uuid[]))");
     sql.push(
       " AND NOT EXISTS (SELECT 1 FROM builds WHERE builds.id = log_search_documents.build_id \
        AND NOT builds.logs_visible)",
     );
-    match query.mode {
+    match query.criteria.mode {
       LogSearchMode::FullText => {
         sql.push(" AND search_vector @@ plainto_tsquery('simple', ");
-        sql.push_bind(&query.text);
+        sql.push_bind(&query.criteria.text);
         sql.push(")");
       }
       LogSearchMode::Literal => {
         sql.push(" AND normalized_text LIKE ");
-        sql.push_bind(literal_pattern(&query.text));
+        sql.push_bind(literal_pattern(&query.criteria.text));
         sql.push(" ESCAPE '\\'");
       }
     }
-    if let Some(build_id) = query.build_id {
+    if let Some(build_id) = query.criteria.build_id {
       sql.push(" AND build_id = ").push_bind(build_id.as_uuid());
     }
-    if let Some(attempt_id) = query.attempt_id {
+    if let Some(attempt_id) = query.criteria.attempt_id {
       sql.push(" AND attempt_id = ").push_bind(attempt_id.as_uuid());
     }
-    if let Some(job_id) = query.job_id {
+    if let Some(job_id) = query.criteria.job_id {
       sql.push(" AND job_id = ").push_bind(job_id.as_uuid());
     }
-    if let Some(stream) = query.stream {
+    if let Some(stream) = query.criteria.stream {
       sql.push(" AND stream = ").push_bind(stream.as_str());
     }
-    if let Some(from) = query.occurred_from {
+    if let Some(from) = query.criteria.occurred_from {
       sql
         .push(" AND occurred_at >= to_timestamp(")
         .push_bind(from.unix_millis())
         .push("::double precision / 1000.0)");
     }
-    if let Some(through) = query.occurred_through {
+    if let Some(through) = query.criteria.occurred_through {
       sql
         .push(" AND occurred_at <= to_timestamp(")
         .push_bind(through.unix_millis())
         .push("::double precision / 1000.0)");
     }
-    if let Some(after) = query.after {
+    if let Some(after) = query.criteria.after {
       sql
         .push(" AND (occurred_at, chunk_id) < (to_timestamp(")
         .push_bind(after.occurred_at.unix_millis())
@@ -208,20 +215,26 @@ impl LogSearchIndex for PostgresLogSearchIndex {
     }
     sql
       .push(" ORDER BY occurred_at DESC, chunk_id DESC LIMIT ")
-      .push_bind(i64::from(query.limit) + 1);
+      .push_bind(i64::from(query.criteria.limit) + 1);
 
     let mut rows = sql.build_query_as::<SearchRow>().fetch(&mut *transaction);
-    let mut hits = Vec::with_capacity(usize::from(query.limit));
+    let mut hits = Vec::with_capacity(usize::from(query.criteria.limit));
     let mut has_more = false;
     while let Some(row) = rows.try_next().await.map_err(unavailable)? {
-      if hits.len() == usize::from(query.limit) {
+      if hits.len() == usize::from(query.criteria.limit) {
         has_more = true;
         break;
       }
       hits.push(row.into_hit(&query)?);
     }
     drop(rows);
-    let indexed_through = read_indexed_through(&mut *transaction, query.project_id).await?;
+    let indexed_through = read_visible_indexed_through(
+      &mut *transaction,
+      query.criteria.project_id,
+      visibility.all,
+      visibility.identities,
+    )
+    .await?;
     transaction.commit().await.map_err(unavailable)?;
 
     let next_cursor = has_more.then(|| {
@@ -574,6 +587,35 @@ where
     .transpose()
 }
 
+async fn read_visible_indexed_through<'e, E>(
+  executor: E,
+  project_id: ProjectId,
+  visibility_all: bool,
+  visible_projects: Vec<uuid::Uuid>,
+) -> Result<Option<LogIndexPosition>, LogSearchError>
+where
+  E: sqlx::Executor<'e, Database = Postgres>,
+{
+  let value: Option<i64> = sqlx::query_scalar(
+    "SELECT indexed_through FROM log_search_project_positions \
+     WHERE project_id = $1 AND ($2 OR project_id = ANY($3::uuid[])) AND indexed_through > 0",
+  )
+  .bind(project_id.as_uuid())
+  .bind(visibility_all)
+  .bind(visible_projects)
+  .fetch_optional(executor)
+  .await
+  .map_err(unavailable)?;
+  value
+    .map(|value| {
+      u64::try_from(value)
+        .ok()
+        .and_then(|value| LogIndexPosition::new(value).ok())
+        .ok_or(LogSearchError::Unavailable)
+    })
+    .transpose()
+}
+
 #[derive(FromRow)]
 struct SearchRow {
   chunk_id: uuid::Uuid,
@@ -604,7 +646,7 @@ impl SearchRow {
   }
 
   fn into_hit(self, query: &LogSearchQuery) -> Result<LogSearchHit, LogSearchError> {
-    let document = self.into_document(query.project_id)?;
+    let document = self.into_document(query.criteria.project_id)?;
     Ok(LogSearchHit {
       chunk_id: document.chunk_id,
       build_id: document.build_id,
@@ -614,7 +656,7 @@ impl SearchRow {
       first_sequence: document.first_sequence,
       last_sequence: document.last_sequence,
       occurred_at: document.occurred_at,
-      snippet: bounded_log_search_snippet(&document.redacted_text, &query.text, query.mode),
+      snippet: bounded_log_search_snippet(&document.redacted_text, &query.criteria.text, query.criteria.mode),
     })
   }
 }

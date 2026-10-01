@@ -33,7 +33,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::AgentPoolList),
+  .with_parameters(ParameterProfile::AgentPoolList)
+  .with_visibility::<ListAgentPoolsQuery>(),
   operation!(
     PublishAgentPoolVersionCommand,
     "POST",
@@ -99,7 +100,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::AgentList),
+  .with_parameters(ParameterProfile::AgentList)
+  .with_visibility::<ListAgentsQuery>(),
   operation!(
     GetAgentQuery,
     "GET",

@@ -120,11 +120,18 @@ impl AgentStore for InMemoryAgentStore {
   }
 
   async fn list_agents(&self, request: ListAgents) -> Result<AgentPage, StoreError> {
+    if request.visibility().kind() == crate::ReadVisibilityKind::None {
+      return Ok(AgentPage {
+        agents: Vec::new(),
+        next_cursor: None,
+      });
+    }
     let state = self.lock()?;
     let limit = usize::from(request.limit().get());
     let mut agents = state
       .agents
       .iter()
+      .filter(|(id, _)| request.visibility().allows(id))
       .filter(|(id, _)| request.after().is_none_or(|after| **id > after))
       .map(|(_, record)| record.0.clone())
       .take(limit + 1)
@@ -309,11 +316,40 @@ mod tests {
     store
       .seed_agent(agent, AgentPlatform::new("linux", "amd64").unwrap())
       .unwrap();
+    let mut second_agent = enrolled_agent(source);
+    second_agent.id = id(11);
+    second_agent.name = AgentName::new("builder-2").unwrap();
+    store
+      .seed_agent(second_agent.clone(), AgentPlatform::new("linux", "amd64").unwrap())
+      .unwrap();
 
     run_ready(
       async move {
-        let listed = store.list_agents(ListAgents::new(None, 1).unwrap()).await.unwrap();
+        let listed = store
+          .list_agents(ListAgents::new(None, 1, crate::AgentListVisibility::all()).unwrap())
+          .await
+          .unwrap();
         assert_eq!(listed.agents.len(), 1);
+        assert_eq!(listed.next_cursor, Some(agent_id));
+        let restricted = store
+          .list_agents(
+            ListAgents::new(
+              None,
+              1,
+              crate::AgentListVisibility::restricted([second_agent.id]).unwrap(),
+            )
+            .unwrap(),
+          )
+          .await
+          .unwrap();
+        assert_eq!(restricted.agents, vec![second_agent]);
+        assert_eq!(restricted.next_cursor, None);
+        let none = store
+          .list_agents(ListAgents::new(None, 1, crate::AgentListVisibility::none()).unwrap())
+          .await
+          .unwrap();
+        assert!(none.agents.is_empty());
+        assert_eq!(none.next_cursor, None);
         assert_eq!(store.agent(agent_id).await.unwrap().pool_id, source);
 
         store.set_active_lease(agent_id, true).unwrap();

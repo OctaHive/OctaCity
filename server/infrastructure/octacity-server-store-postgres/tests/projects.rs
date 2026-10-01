@@ -4,10 +4,64 @@ use std::{fmt::Debug, str::FromStr, sync::Arc};
 
 use octacity_server_domain::{EntityKind, ProjectId, ProjectName, Timestamp};
 use octacity_server_store::testing::management_mutation;
-use octacity_server_store::{CreateProject, DeleteProject, IdempotencyKey, MoveProject, ProjectStore as _, StoreError};
+use octacity_server_store::{
+  CreateProject, DeleteProject, IdempotencyKey, ListProjects, MoveProject, ProjectListVisibility, ProjectStore as _,
+  StoreError,
+};
 use octacity_server_store_postgres::PostgresStore;
 use support::TestDatabase;
 use tokio::sync::Barrier;
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn visibility_is_applied_before_project_page_boundaries() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let mut projects = Vec::new();
+  for value in 101..=107 {
+    projects.push(
+      create(
+        &store,
+        value,
+        None,
+        &format!("visibility-{value}"),
+        &format!("visibility-{value}"),
+        i64::try_from(value).unwrap(),
+      )
+      .await,
+    );
+  }
+
+  let all = store
+    .list_projects(ListProjects::new(None, None, 2, ProjectListVisibility::all()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(all.projects, projects[..2]);
+  assert_eq!(all.next_cursor, Some(projects[1].id));
+
+  let restricted = ProjectListVisibility::restricted([projects[1].id, projects[3].id, projects[5].id]).unwrap();
+  let first = store
+    .list_projects(ListProjects::new(None, None, 2, restricted.clone()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(first.projects, vec![projects[1].clone(), projects[3].clone()]);
+  assert_eq!(first.next_cursor, Some(projects[3].id));
+  let second = store
+    .list_projects(ListProjects::new(None, first.next_cursor, 2, restricted).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(second.projects, vec![projects[5].clone()]);
+  assert_eq!(second.next_cursor, None);
+
+  let none = store
+    .list_projects(ListProjects::new(Some(id(999)), None, 2, ProjectListVisibility::none()).unwrap())
+    .await
+    .unwrap();
+  assert!(none.projects.is_empty());
+  assert_eq!(none.next_cursor, None);
+
+  database.cleanup().await;
+}
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]

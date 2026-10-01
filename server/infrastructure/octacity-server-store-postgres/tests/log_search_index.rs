@@ -412,17 +412,20 @@ fn write(work: u128, position: u64, document: LogSearchDocument) -> WriteLogSear
 
 fn search(project_id: ProjectId, text: &str, mode: LogSearchMode) -> LogSearchQuery {
   LogSearchQuery {
-    project_id,
-    text: text.to_owned(),
-    mode,
-    build_id: None,
-    attempt_id: None,
-    job_id: None,
-    stream: None,
-    occurred_from: None,
-    occurred_through: None,
-    after: None,
-    limit: 10,
+    criteria: octacity_server_store::LogSearchCriteria {
+      project_id,
+      text: text.to_owned(),
+      mode,
+      build_id: None,
+      attempt_id: None,
+      job_id: None,
+      stream: None,
+      occurred_from: None,
+      occurred_through: None,
+      after: None,
+      limit: 10,
+    },
+    visibility: octacity_server_store::BuildLogSearchVisibility::all(),
   }
 }
 

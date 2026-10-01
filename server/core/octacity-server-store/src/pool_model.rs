@@ -6,7 +6,10 @@ use octacity_server_job::JobRuntimePolicy;
 use octacity_server_scheduler::PoolDrainState;
 use serde::{Deserialize, Serialize};
 
-use crate::{AgentPlatform, IdempotencyKey, MutationDisposition, StoreError, StoreInputError, StoreOperation};
+use crate::{
+  AgentPlatform, AgentPoolListVisibility, IdempotencyKey, MutationDisposition, StoreError, StoreInputError,
+  StoreOperation,
+};
 
 /// Maximum number of Agent Pools returned by one management query.
 pub const MAX_AGENT_POOL_PAGE_SIZE: u16 = 200;
@@ -260,15 +263,16 @@ pub struct DeleteAgentPoolOutcome {
 }
 
 /// Bounded deterministic query over current Agent Pool versions.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListAgentPools {
   after: Option<PoolId>,
   limit: NonZeroU16,
+  visibility: AgentPoolListVisibility,
 }
 
 impl ListAgentPools {
   /// Validates a stable-identity cursor and page size.
-  pub fn new(after: Option<PoolId>, limit: u16) -> Result<Self, StoreError> {
+  pub fn new(after: Option<PoolId>, limit: u16, visibility: AgentPoolListVisibility) -> Result<Self, StoreError> {
     let limit = NonZeroU16::new(limit)
       .filter(|value| value.get() <= MAX_AGENT_POOL_PAGE_SIZE)
       .ok_or_else(|| {
@@ -277,19 +281,29 @@ impl ListAgentPools {
           StoreInputError::InvalidAgentPoolPageSize,
         )
       })?;
-    Ok(Self { after, limit })
+    Ok(Self {
+      after,
+      limit,
+      visibility,
+    })
   }
 
   /// Exclusive stable-identity cursor.
   #[must_use]
-  pub const fn after(self) -> Option<PoolId> {
+  pub const fn after(&self) -> Option<PoolId> {
     self.after
   }
 
   /// Positive bounded page size.
   #[must_use]
-  pub const fn limit(self) -> NonZeroU16 {
+  pub const fn limit(&self) -> NonZeroU16 {
     self.limit
+  }
+
+  /// Authorization-derived Pool identities applied before cursor and limit.
+  #[must_use]
+  pub const fn visibility(&self) -> &AgentPoolListVisibility {
+    &self.visibility
   }
 }
 

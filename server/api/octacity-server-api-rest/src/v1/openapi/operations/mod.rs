@@ -1,6 +1,8 @@
-use std::any::{TypeId, type_name};
+use std::any::TypeId;
 
-use octacity_server_application::{ManagementAuthorizationMapping, ManagementAuthorizationTarget};
+use octacity_server_application::{
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementVisibilityTarget,
+};
 
 /// One management operation in the versioned REST contract.
 ///
@@ -29,55 +31,49 @@ pub struct ManagementOperation {
   /// Whether the operation requires an optimistic `If-Match` precondition.
   pub optimistic_precondition: bool,
   authorization: Option<ManagementOperationAuthorization>,
+  visibility: Option<ManagementOperationVisibility>,
   pub(super) parameter_profile: ParameterProfile,
   pub(super) capability_unavailable_response: bool,
   pub(super) precondition_failed_response: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ManagementOperationAuthorization {
-  request_type_id: fn() -> TypeId,
-  request_type_name: fn() -> &'static str,
-  mapping: fn() -> ManagementAuthorizationMapping,
+  request_type_id: TypeId,
+  mapping: ManagementAuthorizationMapping,
 }
 
 impl ManagementOperationAuthorization {
   pub(crate) fn request_type_id(self) -> TypeId {
-    (self.request_type_id)()
-  }
-
-  pub(crate) fn request_type_name(self) -> &'static str {
-    (self.request_type_name)()
+    self.request_type_id
   }
 
   pub(crate) fn mapping(self) -> ManagementAuthorizationMapping {
-    (self.mapping)()
+    self.mapping
   }
 }
 
-impl std::fmt::Debug for ManagementOperationAuthorization {
-  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    formatter
-      .debug_struct("ManagementOperationAuthorization")
-      .field("request_type", &self.request_type_name())
-      .field("mapping", &self.mapping())
-      .finish()
-  }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ManagementOperationVisibility {
+  query_type_id: TypeId,
 }
 
-impl PartialEq for ManagementOperationAuthorization {
-  fn eq(&self, other: &Self) -> bool {
-    self.request_type_id() == other.request_type_id() && self.mapping() == other.mapping()
+impl ManagementOperationVisibility {
+  pub(crate) fn query_type_id(self) -> TypeId {
+    self.query_type_id
   }
 }
-
-impl Eq for ManagementOperationAuthorization {}
 
 const fn authorization<T: ManagementAuthorizationTarget + 'static>() -> ManagementOperationAuthorization {
   ManagementOperationAuthorization {
-    request_type_id: TypeId::of::<T>,
-    request_type_name: type_name::<T>,
-    mapping: || T::AUTHORIZATION,
+    request_type_id: TypeId::of::<T>(),
+    mapping: T::AUTHORIZATION,
+  }
+}
+
+const fn visibility<T: ManagementVisibilityTarget + 'static>() -> ManagementOperationVisibility {
+  ManagementOperationVisibility {
+    query_type_id: TypeId::of::<T>(),
   }
 }
 
@@ -103,9 +99,28 @@ impl ManagementOperation {
       .expect("published management operations carry authorization metadata")
   }
 
+  pub(crate) const fn visibility(&self) -> Option<ManagementOperationVisibility> {
+    self.visibility
+  }
+
   const fn with_parameters(mut self, profile: ParameterProfile) -> Self {
     self.parameter_profile = profile;
     self
+  }
+
+  const fn with_visibility<T: ManagementVisibilityTarget + 'static>(mut self) -> Self {
+    self.visibility = Some(visibility::<T>());
+    self
+  }
+
+  /// Returns whether this operation derives a bounded page or search result.
+  #[must_use]
+  pub const fn requires_visibility(&self) -> bool {
+    !matches!(self.parameter_profile, ParameterProfile::None)
+  }
+
+  pub(crate) const fn has_valid_visibility_contract(&self) -> bool {
+    self.requires_visibility() == self.visibility.is_some()
   }
 
   const fn with_capability_unavailable_response(mut self) -> Self {
@@ -133,6 +148,7 @@ macro_rules! operation {
       idempotent_mutation: $mutation,
       optimistic_precondition: $precondition,
       authorization: Some($crate::v1::openapi::operations::authorization::<$target>()),
+      visibility: None,
       parameter_profile: ParameterProfile::None,
       capability_unavailable_response: false,
       precondition_failed_response: false,
@@ -175,6 +191,7 @@ const EMPTY_OPERATION: ManagementOperation = ManagementOperation {
   idempotent_mutation: false,
   optimistic_precondition: false,
   authorization: None,
+  visibility: None,
   parameter_profile: ParameterProfile::None,
   capability_unavailable_response: false,
   precondition_failed_response: false,
@@ -201,3 +218,17 @@ const OPERATIONS: [ManagementOperation; OPERATION_COUNT] = collect_operations();
 
 /// Complete inventory of registered management operations.
 pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &OPERATIONS;
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn paged_operation_requires_an_explicit_typed_visibility_scope() {
+    let missing = EMPTY_OPERATION.with_parameters(ParameterProfile::ProjectList);
+    assert!(!missing.has_valid_visibility_contract());
+
+    let scoped = missing.with_visibility::<octacity_server_application::ListProjectsQuery>();
+    assert!(scoped.has_valid_visibility_contract());
+  }
+}

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use octacity_server_domain::{AttemptId, BuildId, JobId, LogChunkId, ProjectId, Timestamp};
 use octacity_server_store::{
-  BuildLogStream, IndexedLogSearchPage, LogIndexPosition, LogIndexWorkStore, LogSearchCursor, LogSearchError,
-  LogSearchFreshness, LogSearchIndex, LogSearchMode, LogSearchOperation, LogSearchQuery, StoreError,
+  BuildLogStream, IndexedLogSearchPage, LogIndexPosition, LogIndexWorkStore, LogSearchCriteria, LogSearchCursor,
+  LogSearchError, LogSearchFreshness, LogSearchIndex, LogSearchMode, LogSearchOperation, LogSearchQuery, StoreError,
 };
 use thiserror::Error;
 
@@ -17,7 +17,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SearchBuildLogsQuery {
   /// Backend-neutral validated search shape.
-  pub search: LogSearchQuery,
+  pub search: LogSearchCriteria,
 }
 
 /// Transport-independent input used to construct a validated Build-log query.
@@ -59,7 +59,7 @@ pub struct BuildLogSearchCursorInput {
 impl SearchBuildLogsQuery {
   /// Parses identities and times, then validates all backend-neutral bounds.
   pub fn try_from_input(input: BuildLogSearchInput) -> Result<Self, ApplicationError> {
-    let search = LogSearchQuery {
+    let search = LogSearchCriteria {
       project_id: input.project_id.parse().map_err(|_| ApplicationError::invalid())?,
       text: input.text,
       mode: input.mode,
@@ -208,17 +208,23 @@ where
     query.validate().map_err(|source| {
       BuildLogSearchError::SearchIndex(LogSearchError::invalid(LogSearchOperation::Search, source))
     })?;
-    let committed_through = self
-      .work
-      .committed_log_index_position(query.project_id)
-      .await
-      .map_err(BuildLogSearchError::AuthoritativeStore)?;
-    self
+    let project_id = query.criteria.project_id;
+    let project_visible = query.visibility.allows(&project_id);
+    let indexed = self
       .index
       .search(query)
       .await
-      .map(|indexed| project_log_search_page(indexed, committed_through))
-      .map_err(BuildLogSearchError::SearchIndex)
+      .map_err(BuildLogSearchError::SearchIndex)?;
+    let committed_through = if project_visible {
+      self
+        .work
+        .committed_log_index_position(project_id)
+        .await
+        .map_err(BuildLogSearchError::AuthoritativeStore)?
+    } else {
+      None
+    };
+    Ok(project_log_search_page(indexed, committed_through))
   }
 
   /// Reports projection freshness against the durable committed watermark.
@@ -251,10 +257,16 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: SearchBuildLogsQuery,
   ) -> Result<BuildLogSearchPageProjection, Self::Error> {
-    self.search(query.search).await
+    let visibility = grant
+      .visibility_for::<SearchBuildLogsQuery>()
+      .map_err(|_| BuildLogSearchError::InvalidAuthorizationVisibility)?;
+    let query = LogSearchQuery::new(query.search, visibility).map_err(|source| {
+      BuildLogSearchError::SearchIndex(LogSearchError::invalid(LogSearchOperation::Search, source))
+    })?;
+    self.search(query).await
   }
 }
 
@@ -310,6 +322,9 @@ where
 /// Safe application-level failure from a Build-log search query.
 #[derive(Debug, Error)]
 pub enum BuildLogSearchError {
+  /// A policy grant could not be represented by the protected search port.
+  #[error("authorization visibility is incompatible with the build-log query")]
+  InvalidAuthorizationVisibility,
   /// The authoritative watermark could not be read.
   #[error("authoritative log-index watermark is unavailable")]
   AuthoritativeStore(#[source] StoreError),
@@ -323,6 +338,7 @@ impl BuildLogSearchError {
   #[must_use]
   pub const fn classification(&self) -> ApplicationFailure {
     match self {
+      Self::InvalidAuthorizationVisibility => ApplicationFailure::Internal,
       Self::AuthoritativeStore(StoreError::InvalidInput { .. })
       | Self::SearchIndex(LogSearchError::InvalidInput { .. }) => ApplicationFailure::Invalid,
       Self::AuthoritativeStore(StoreError::NotFound { .. }) => ApplicationFailure::NotFound,

@@ -79,7 +79,7 @@ where
       ..
     }
   ));
-  invalid_query.limit = 10;
+  invalid_query.criteria.limit = 10;
   assert_eq!(index.search(invalid_query).await.unwrap().hits.len(), 1);
 
   let validation_project = id::<ProjectId>(6);
@@ -124,8 +124,26 @@ where
   assert_eq!((page.hits[0].first_sequence, page.hits[0].last_sequence), (1, 10));
   assert_eq!(page.indexed_through.unwrap().get(), 2);
 
+  let mut restricted = query(project_id, "compiler failed", LogSearchMode::FullText, 10);
+  restricted.visibility = crate::BuildLogSearchVisibility::restricted([project_id]).unwrap();
+  let restricted = index.search(restricted).await.unwrap();
+  assert_eq!(restricted.hits.len(), 1);
+  assert_eq!(restricted.hits[0].chunk_id, first.chunk_id);
+  assert_eq!(restricted.indexed_through.unwrap().get(), 2);
+  for visibility in [
+    crate::BuildLogSearchVisibility::restricted([other_project_id]).unwrap(),
+    crate::BuildLogSearchVisibility::none(),
+  ] {
+    let mut hidden = query(project_id, "compiler failed", LogSearchMode::FullText, 10);
+    hidden.visibility = visibility;
+    let hidden = index.search(hidden).await.unwrap();
+    assert!(hidden.hits.is_empty());
+    assert_eq!(hidden.next_cursor, None);
+    assert_eq!(hidden.indexed_through, None);
+  }
+
   let mut literal = query(project_id, "/workspace/src/main.rs:42", LogSearchMode::Literal, 10);
-  literal.stream = Some(BuildLogStream::Stderr);
+  literal.criteria.stream = Some(BuildLogStream::Stderr);
   assert_eq!(index.search(literal).await.unwrap().hits[0].chunk_id, second.chunk_id);
 
   let first_page = index
@@ -134,7 +152,7 @@ where
     .unwrap();
   assert_eq!(first_page.hits[0].chunk_id, second.chunk_id);
   let mut following = query(project_id, "Build", LogSearchMode::Literal, 1);
-  following.after = first_page.next_cursor;
+  following.criteria.after = first_page.next_cursor;
   let following = index.search(following).await.unwrap();
   assert_eq!(following.hits[0].chunk_id, first.chunk_id);
   assert!(following.next_cursor.is_none());
@@ -254,16 +272,19 @@ fn write(work: u64, position: u64, document: LogSearchDocument) -> WriteLogSearc
 
 fn query(project_id: ProjectId, text: &str, mode: LogSearchMode, limit: u16) -> LogSearchQuery {
   LogSearchQuery {
-    project_id,
-    text: text.to_owned(),
-    mode,
-    build_id: None,
-    attempt_id: None,
-    job_id: None,
-    stream: None,
-    occurred_from: None,
-    occurred_through: None,
-    after: None,
-    limit,
+    criteria: crate::LogSearchCriteria {
+      project_id,
+      text: text.to_owned(),
+      mode,
+      build_id: None,
+      attempt_id: None,
+      job_id: None,
+      stream: None,
+      occurred_from: None,
+      occurred_through: None,
+      after: None,
+      limit,
+    },
+    visibility: crate::BuildLogSearchVisibility::all(),
   }
 }

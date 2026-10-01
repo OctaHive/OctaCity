@@ -5,7 +5,7 @@ use super::{ManagementSecurityError, is_canonical_text};
 /// Maximum UTF-8 bytes in an opaque management resource identity.
 pub const MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES: usize = 256;
 /// Maximum resources in one restricted visibility grant.
-pub const MAX_MANAGEMENT_VISIBILITY_RESOURCES: usize = 256;
+pub const MAX_MANAGEMENT_VISIBILITY_RESOURCES: usize = octacity_server_store::MAX_READ_VISIBILITY_IDENTITIES;
 
 /// Stable management capability independent of HTTP methods and route names.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -403,6 +403,7 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::CacheSession
       | ManagementResourceKind::AgentPool
       | ManagementResourceKind::Agent
+      | ManagementResourceKind::AuditFact
       | ManagementResourceKind::WebhookIntegration
       | ManagementResourceKind::Retention
   )

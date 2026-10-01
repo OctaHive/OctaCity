@@ -44,6 +44,7 @@ mod project_model;
 mod project_policy;
 mod project_policy_port;
 mod project_port;
+mod read_visibility;
 mod schedule_model;
 mod schedule_port;
 mod trigger_evaluation_model;
@@ -127,7 +128,7 @@ pub use artifact_model::{
   VerifyArtifactUpload, artifact_authority_is_valid,
 };
 pub use artifact_port::ArtifactRecordStore;
-pub use audit_port::AuditFactStore;
+pub use audit_port::{AuditFactStore, ListAuditFacts};
 pub use build_control::{
   CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
 };
@@ -201,11 +202,12 @@ pub use lease_recovery::{
 pub use lease_recovery_port::LeaseRecoveryStore;
 pub use log_search::{
   BuildLogStream, ClaimLogIndexWork, CompleteLogIndexWork, DeleteLogSearchDocuments, FailLogIndexWork,
-  IndexedLogSearchPage, LogIndexDocumentSource, LogIndexPosition, LogIndexWorkClaim, LogIndexWorkKind, LogSearchCursor,
-  LogSearchDocument, LogSearchError, LogSearchFreshness, LogSearchHit, LogSearchInputError, LogSearchMode,
-  LogSearchMutationDisposition, LogSearchOperation, LogSearchPage, LogSearchQuery, MAX_LOG_INDEX_FAILURE_CODE_BYTES,
-  MAX_LOG_INDEX_WORK_BATCH_SIZE, MAX_LOG_SEARCH_DOCUMENT_BYTES, MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES,
-  MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument, bounded_log_search_snippet,
+  IndexedLogSearchPage, LogIndexDocumentSource, LogIndexPosition, LogIndexWorkClaim, LogIndexWorkKind,
+  LogSearchCriteria, LogSearchCursor, LogSearchDocument, LogSearchError, LogSearchFreshness, LogSearchHit,
+  LogSearchInputError, LogSearchMode, LogSearchMutationDisposition, LogSearchOperation, LogSearchPage, LogSearchQuery,
+  MAX_LOG_INDEX_FAILURE_CODE_BYTES, MAX_LOG_INDEX_WORK_BATCH_SIZE, MAX_LOG_SEARCH_DOCUMENT_BYTES,
+  MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, WriteLogSearchDocument,
+  bounded_log_search_snippet,
 };
 pub use log_search_port::{LogIndexWorkQueue, LogIndexWorkStore, LogSearchIndex};
 pub use management_mutation::{ManagementMutation, MutationAuditContext};
@@ -261,6 +263,11 @@ pub use project_model::{
 pub use project_policy::ProjectPolicyDocument;
 pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
+pub use read_visibility::{
+  AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
+  BuildLogSearchVisibility, CacheSessionListVisibility, InternalTriggerListVisibility, JobEventReadVisibility,
+  MAX_READ_VISIBILITY_IDENTITIES, ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView,
+};
 pub use restore::{
   MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
   RestoreInventoryStore, RestoreLogChunkPage,
@@ -487,7 +494,7 @@ mod tests {
     );
     for invalid_limit in [0, MAX_PROJECT_PAGE_SIZE + 1] {
       assert_eq!(
-        ListProjects::new(None, None, invalid_limit),
+        ListProjects::new(None, None, invalid_limit, crate::ProjectListVisibility::all()),
         Err(StoreError::InvalidInput {
           operation: StoreOperation::ListProjects,
           source: StoreInputError::InvalidProjectPageSize,

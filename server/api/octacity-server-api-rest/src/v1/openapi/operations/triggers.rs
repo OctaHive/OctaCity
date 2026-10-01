@@ -60,7 +60,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::InternalTriggerList),
+  .with_parameters(ParameterProfile::InternalTriggerList)
+  .with_visibility::<ListInternalTriggersQuery>(),
   operation!(
     PublishInternalTriggerVersionCommand,
     "POST",

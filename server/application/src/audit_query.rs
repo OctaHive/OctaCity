@@ -175,12 +175,17 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListAuditFactsQuery,
   ) -> Result<AuditFactPageProjection, Self::Error> {
     self
       .store
-      .list_audit_facts(query.query)
+      .list_audit_facts(octacity_server_store::ListAuditFacts {
+        query: query.query,
+        visibility: grant
+          .visibility_for::<ListAuditFactsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      })
       .await
       .map(project_page)
       .map_err(Into::into)

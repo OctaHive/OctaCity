@@ -223,12 +223,14 @@ pub enum CacheAuthorizationOutcome {
 }
 
 /// Bounded management query for one Build's session diagnostics.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListBuildCacheSessions {
   /// Build whose sessions are requested.
   pub build_id: BuildId,
   /// Positive result ceiling.
   pub limit: u16,
+  /// Authorization-derived cache-session identities applied before the result ceiling.
+  pub visibility: crate::CacheSessionListVisibility,
 }
 
 /// Derives a stable opaque L1 scope without exposing a physical store layout.

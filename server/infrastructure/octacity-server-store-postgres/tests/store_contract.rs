@@ -12,12 +12,13 @@ use octacity_server_domain::{
 use octacity_server_job::{JobFailureClass, JobState};
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
-  AgentCredentialStore as _, AgentRegistrationProof, AgentStore as _, AppendJobEvents, AuditActor, AuditActorKind,
-  BuildControlStore as _, BuildQueryStore as _, CreateProject, CredentialSecret, DurableJobEvent, EventSequence,
-  FreshRegistrationCredential, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind,
-  JobEventKind, JobEventReadStore as _, JobExecutionStore as _, LeaseAccess, LeaseFence, LeaseWindow,
-  ManagementMutation, MutationAuditContext, MutationDisposition, ProjectStore as _, ReadJobEvents, ReassignAgentPool,
-  RegisterAgent, RegistrationValidity, StoreError, StoreOperation, TriggerAcceptanceStore as _,
+  AgentCredentialStore as _, AgentListVisibility, AgentRegistrationProof, AgentStore as _, AppendJobEvents, AuditActor,
+  AuditActorKind, BuildControlStore as _, BuildQueryStore as _, CreateProject, CredentialSecret, DurableJobEvent,
+  EventSequence, FreshRegistrationCredential, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion,
+  JobCompletionKind, JobEventKind, JobEventReadStore as _, JobExecutionStore as _, LeaseAccess, LeaseFence,
+  LeaseWindow, ListAgents, ManagementMutation, MutationAuditContext, MutationDisposition, ProjectStore as _,
+  ReadJobEvents, ReassignAgentPool, RegisterAgent, RegistrationValidity, StoreError, StoreOperation,
+  TriggerAcceptanceStore as _,
   testing::{
     ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
     agent_credential_store_contract_fixture, authoritative_store_contract_fixture, compatible_snapshot,
@@ -787,6 +788,26 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   let request = fixture.request.clone();
   let store = PostgresAuthoritativeStore::new(pool.clone(), support::test_signer());
   let accepted = store.accept_trigger(request.clone()).await?;
+  let management = PostgresStore::new(pool.clone());
+  let all_agents = management
+    .list_agents(ListAgents::new(None, 10, AgentListVisibility::all())?)
+    .await?;
+  assert!(all_agents.agents.iter().any(|agent| agent.id == fixture.agent_id));
+  let restricted_agents = management
+    .list_agents(ListAgents::new(
+      None,
+      10,
+      AgentListVisibility::restricted([fixture.agent_id])?,
+    )?)
+    .await?;
+  assert_eq!(restricted_agents.agents.len(), 1);
+  assert_eq!(restricted_agents.agents[0].id, fixture.agent_id);
+  assert_eq!(restricted_agents.next_cursor, None);
+  for visibility in [AgentListVisibility::restricted([id(999)])?, AgentListVisibility::none()] {
+    let hidden = management.list_agents(ListAgents::new(None, 10, visibility)?).await?;
+    assert!(hidden.agents.is_empty());
+    assert_eq!(hidden.next_cursor, None);
+  }
   let persisted_job_specs: Vec<Option<serde_json::Value>> =
     sqlx::query_scalar("SELECT signed_job_spec FROM jobs ORDER BY id")
       .fetch_all(pool)
@@ -814,12 +835,45 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   };
   let event = one_event(access);
   let appended = store.append_job_events(event.clone()).await?;
-  let event_page = store.read_job_events(ReadJobEvents::new(grant.job_id, 0, 10)?).await?;
+  let event_page = store
+    .read_job_events(ReadJobEvents::new(
+      grant.job_id,
+      0,
+      10,
+      octacity_server_store::JobEventReadVisibility::all(),
+    )?)
+    .await?;
   assert_eq!(event_page.events.len(), 1);
   assert_eq!(event_page.events[0].sequence().get(), 1);
   assert_eq!(event_page.events[0].payload(), &json!({"state": "running"}));
   assert_eq!(event_page.cursor, 1);
-  let empty_page = store.read_job_events(ReadJobEvents::new(grant.job_id, 1, 10)?).await?;
+  let restricted_event_page = store
+    .read_job_events(ReadJobEvents::new(
+      grant.job_id,
+      0,
+      10,
+      octacity_server_store::JobEventReadVisibility::restricted([grant.job_id])?,
+    )?)
+    .await?;
+  assert_eq!(restricted_event_page, event_page);
+  for visibility in [
+    octacity_server_store::JobEventReadVisibility::restricted([id(999)])?,
+    octacity_server_store::JobEventReadVisibility::none(),
+  ] {
+    let hidden = store
+      .read_job_events(ReadJobEvents::new(grant.job_id, 0, 10, visibility)?)
+      .await?;
+    assert!(hidden.events.is_empty());
+    assert_eq!(hidden.cursor, 0);
+  }
+  let empty_page = store
+    .read_job_events(ReadJobEvents::new(
+      grant.job_id,
+      1,
+      10,
+      octacity_server_store::JobEventReadVisibility::all(),
+    )?)
+    .await?;
   assert!(empty_page.events.is_empty());
   assert_eq!(empty_page.cursor, 1);
   let completion = JobCompletion {
@@ -865,7 +919,12 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   assert_eq!(recovered.append_job_events(event).await?, appended);
   assert_eq!(
     recovered
-      .read_job_events(ReadJobEvents::new(grant.job_id, 0, 10)?)
+      .read_job_events(ReadJobEvents::new(
+        grant.job_id,
+        0,
+        10,
+        octacity_server_store::JobEventReadVisibility::all(),
+      )?)
       .await?,
     event_page,
     "a fresh adapter must reconstruct the event page from durable state"

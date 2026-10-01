@@ -242,11 +242,15 @@ impl CacheSessionStore for InMemoryCacheSessionStore {
         crate::StoreInputError::InvalidCacheSession,
       ));
     }
+    if request.visibility.kind() == crate::ReadVisibilityKind::None {
+      return Ok(Vec::new());
+    }
     let state = self.state.lock().map_err(|_| StoreError::Unavailable)?;
     Ok(
       state
         .sessions
         .values()
+        .filter(|stored| request.visibility.allows(&stored.record.id))
         .filter(|stored| stored.record.build_id == request.build_id)
         .take(usize::from(request.limit))
         .map(|stored| {
@@ -336,6 +340,35 @@ mod tests {
         credential_key: CacheCredentialKey::new([8; 32]),
       },
     ));
+    let all = run_ready(store.list_build_cache_sessions(ListBuildCacheSessions {
+      build_id: id(4),
+      limit: 1,
+      visibility: crate::CacheSessionListVisibility::all(),
+    }))
+    .unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].id, id(6));
+    let restricted = run_ready(store.list_build_cache_sessions(ListBuildCacheSessions {
+      build_id: id(4),
+      limit: 1,
+      visibility: crate::CacheSessionListVisibility::restricted([id(6)]).unwrap(),
+    }))
+    .unwrap();
+    assert_eq!(restricted, all);
+    let hidden = run_ready(store.list_build_cache_sessions(ListBuildCacheSessions {
+      build_id: id(4),
+      limit: 1,
+      visibility: crate::CacheSessionListVisibility::restricted([id(99)]).unwrap(),
+    }))
+    .unwrap();
+    assert!(hidden.is_empty());
+    let none = run_ready(store.list_build_cache_sessions(ListBuildCacheSessions {
+      build_id: id(4),
+      limit: 1,
+      visibility: crate::CacheSessionListVisibility::none(),
+    }))
+    .unwrap();
+    assert!(none.is_empty());
   }
 
   fn run_ready<T>(future: impl Future<Output = T>) -> T {

@@ -1,6 +1,15 @@
 use async_trait::async_trait;
 
-use crate::{AuditFactPage, AuditFactQuery, StoreError};
+use crate::{AuditFactListVisibility, AuditFactPage, AuditFactQuery, StoreError};
+
+/// Complete bounded audit-fact read with authorization-derived visibility.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListAuditFacts {
+  /// Existing audit filters, ordering, cursor, and page bound.
+  pub query: AuditFactQuery,
+  /// Audit-fact identities applied before ordering and pagination.
+  pub visibility: AuditFactListVisibility,
+}
 
 /// Read-only authoritative access to immutable structured audit facts.
 ///
@@ -10,7 +19,7 @@ use crate::{AuditFactPage, AuditFactQuery, StoreError};
 #[async_trait]
 pub trait AuditFactStore: Send + Sync {
   /// Lists one bounded deterministic page without changing audit state.
-  async fn list_audit_facts(&self, query: AuditFactQuery) -> Result<AuditFactPage, StoreError>;
+  async fn list_audit_facts(&self, request: ListAuditFacts) -> Result<AuditFactPage, StoreError>;
 }
 
 #[cfg(test)]

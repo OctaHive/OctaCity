@@ -331,7 +331,7 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListBuildCacheSessionsQuery,
   ) -> Result<Vec<CacheSessionProjection>, Self::Error> {
     let observed_at = query_timestamp(query.observed_at_unix_ms)?;
@@ -340,6 +340,9 @@ where
       .list_build_cache_sessions(ListBuildCacheSessions {
         build_id: query.build_id,
         limit: query.limit,
+        visibility: grant
+          .visibility_for::<ListBuildCacheSessionsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
       })
       .await?
       .into_iter()

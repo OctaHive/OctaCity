@@ -451,13 +451,17 @@ pub(crate) async fn list_published(
   if query.limit == 0 || query.limit > octacity_server_store::MAX_ARTIFACT_PAGE_SIZE {
     return Err(invalid(StoreOperation::ListPublishedArtifacts));
   }
+  let visibility = crate::read_visibility::sql_read_visibility(query.visibility.view(), |id| id.as_uuid());
   sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
     "artifact.build_id = $1 AND artifact.state = 'published' AND \
+     ($2 OR artifact.id = ANY($3::uuid[])) AND \
      ((artifact.artifact_type = 'artifact' AND build.artifacts_visible) OR \
       (artifact.artifact_type = 'report' AND build.reports_visible)) \
-     ORDER BY artifact.published_at, artifact.id LIMIT $2"
+     ORDER BY artifact.published_at, artifact.id LIMIT $4"
   ))
   .bind(query.build_id.as_uuid())
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .bind(i64::from(query.limit))
   .fetch_all(pool)
   .await

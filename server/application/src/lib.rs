@@ -62,10 +62,13 @@ mod webhook_delivery;
 
 pub use octacity_server_domain::{RetentionHoldVersion, Timestamp};
 pub use octacity_server_store::{
-  AuditActorKind, AuditOutcome, BuildLogStream, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode,
-  LogSearchQuery, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_OPERATION_BYTES, MAX_AUDIT_PAGE_SIZE,
-  MAX_AUDIT_REQUEST_IDENTITY_BYTES, MAX_AUDIT_TARGET_IDENTITY_BYTES, MAX_AUDIT_TARGET_KIND_BYTES,
-  MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, MutationAuditContext, StoreError,
+  AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditActorKind, AuditFactListVisibility,
+  AuditOutcome, BuildLogSearchVisibility, BuildLogStream, CacheSessionListVisibility, InternalTriggerListVisibility,
+  JobEventReadVisibility, LogIndexPosition, LogSearchCursor, LogSearchError, LogSearchMode, LogSearchQuery,
+  MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_OPERATION_BYTES, MAX_AUDIT_PAGE_SIZE, MAX_AUDIT_REQUEST_IDENTITY_BYTES,
+  MAX_AUDIT_TARGET_IDENTITY_BYTES, MAX_AUDIT_TARGET_KIND_BYTES, MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES,
+  MAX_LOG_SEARCH_SNIPPET_BYTES, MAX_READ_VISIBILITY_IDENTITIES, MutationAuditContext, ProjectListVisibility,
+  ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, StoreError,
 };
 
 pub use agent_cqrs::{
@@ -159,8 +162,9 @@ pub use management_security::{
   ManagementCommandUseCase, ManagementHandlerError, ManagementIngress, ManagementQueryUseCase,
   ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId, ManagementResource,
   ManagementResourceIdentity, ManagementResourceKind, ManagementResourcePattern, ManagementResourceResult,
-  ManagementSecurityError, ManagementSecurityScope, ManagementVisibility, ManagementVisibilityKind,
-  ManagementVisibilityView, TrustedNetworkManagementPolicy,
+  ManagementSecurityError, ManagementSecurityScope, ManagementVisibility, ManagementVisibilityError,
+  ManagementVisibilityInput, ManagementVisibilityKind, ManagementVisibilityTarget, ManagementVisibilityView,
+  TrustedNetworkManagementPolicy,
 };
 pub use manual_trigger::{
   AcceptManualTriggerCommand, DurableManualTriggerService, EffectiveProjectPolicySource,

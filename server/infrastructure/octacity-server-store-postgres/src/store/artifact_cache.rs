@@ -6,8 +6,8 @@ use super::PostgresStore;
 
 #[async_trait]
 impl AuditFactStore for PostgresStore {
-  async fn list_audit_facts(&self, query: AuditFactQuery) -> Result<AuditFactPage, StoreError> {
-    crate::audit_query::list(&self.pool, query).await
+  async fn list_audit_facts(&self, request: ListAuditFacts) -> Result<AuditFactPage, StoreError> {
+    crate::audit_query::list(&self.pool, request).await
   }
 }
 

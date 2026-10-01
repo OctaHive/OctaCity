@@ -327,12 +327,18 @@ impl<S: AgentStore + 'static> crate::ManagementQueryUseCase<ListAgentsQuery> for
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListAgentsQuery,
   ) -> Result<AgentPageProjection, Self::Error> {
     let page = self
       .store
-      .list_agents(ListAgents::new(query.after, query.limit)?)
+      .list_agents(ListAgents::new(
+        query.after,
+        query.limit,
+        grant
+          .visibility_for::<ListAgentsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
       .await?;
     Ok(AgentPageProjection {
       agents: page.agents.into_iter().map(Into::into).collect(),

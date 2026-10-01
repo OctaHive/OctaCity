@@ -269,11 +269,18 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
   }
 
   async fn list_agent_pools(&self, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
+    if request.visibility().kind() == crate::ReadVisibilityKind::None {
+      return Ok(AgentPoolPage {
+        pools: Vec::new(),
+        next_cursor: None,
+      });
+    }
     let state = self.lock()?;
     let limit = usize::from(request.limit().get());
     let mut pools = state
       .current
       .iter()
+      .filter(|(id, _)| request.visibility().allows(id))
       .filter(|(id, _)| request.after().is_none_or(|after| **id > after))
       .map(|(id, version)| {
         state

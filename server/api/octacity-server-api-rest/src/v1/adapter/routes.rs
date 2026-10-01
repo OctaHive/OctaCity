@@ -47,8 +47,6 @@ pub struct ManagementAuthorizationOperation {
   pub path: &'static str,
   /// Stable OpenAPI operation identifier.
   pub operation_id: &'static str,
-  /// Fully qualified application request type.
-  pub request_type: &'static str,
   /// Typed action and resource mapping declared by that request.
   pub authorization: ManagementAuthorizationMapping,
 }
@@ -163,6 +161,17 @@ where
     Request::AUTHORIZATION.is_supported(),
     "route mapping must use a supported resource shape"
   );
+  if let Some(visibility) = operation.visibility() {
+    assert_eq!(
+      visibility.query_type_id(),
+      TypeId::of::<Request>(),
+      "route request type must match its visibility declaration"
+    );
+  }
+  assert!(
+    operation.has_valid_visibility_contract(),
+    "paged operations must declare exactly one typed visibility scope"
+  );
   operation
 }
 
@@ -171,7 +180,6 @@ fn authorization_operation(operation: &'static ManagementOperation) -> Managemen
     method: operation.method,
     path: operation.path,
     operation_id: operation.operation_id,
-    request_type: operation.authorization().request_type_name(),
     authorization: operation.authorization().mapping(),
   }
 }

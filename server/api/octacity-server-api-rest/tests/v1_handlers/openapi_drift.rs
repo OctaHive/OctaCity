@@ -128,17 +128,12 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       .collect::<BTreeSet<_>>()
   );
   for operation in &registered {
-    assert!(!operation.request_type.is_empty());
     assert!(operation.authorization.is_supported());
   }
   let create_project = registered
     .iter()
     .find(|operation| operation.operation_id == "createProject")
     .unwrap();
-  assert_eq!(
-    create_project.request_type,
-    std::any::type_name::<CreateProjectCommand>()
-  );
   assert_eq!(
     create_project.authorization,
     <CreateProjectCommand as ManagementAuthorizationTarget>::AUTHORIZATION

@@ -11,6 +11,7 @@ use sqlx::{FromRow, PgPool, types::Json};
 use crate::{
   database::{classify, number, unavailable},
   mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
+  read_visibility::sql_read_visibility,
 };
 
 #[derive(Serialize)]
@@ -172,16 +173,27 @@ pub(crate) async fn list(
   pool: &PgPool,
   request: ListInternalTriggerDefinitions,
 ) -> Result<InternalTriggerDefinitionPage, StoreError> {
+  if request.visibility.kind() == octacity_server_store::ReadVisibilityKind::None {
+    return Ok(InternalTriggerDefinitionPage {
+      items: Vec::new(),
+      next_after: None,
+    });
+  }
+  let visibility = sql_read_visibility(request.visibility.view(), |id| id.as_uuid());
   let mut rows = sqlx::query_as::<_, DefinitionRow>(
     "SELECT trigger_id, trigger_version, build_configuration_id, build_configuration_version, enabled, definition, \
        created_at_millis FROM (\
        SELECT DISTINCT ON (id) id AS trigger_id, version AS trigger_version, build_configuration_id, \
          build_configuration_version, enabled, definition, \
          FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis \
-       FROM triggers WHERE kind = 'internal' AND ($1::uuid IS NULL OR id > $1) \
+       FROM triggers WHERE kind = 'internal' \
+         AND ($1 OR id = ANY($2::uuid[])) \
+         AND ($3::uuid IS NULL OR id > $3) \
        ORDER BY id, version DESC\
-     ) AS current ORDER BY trigger_id LIMIT $2",
+     ) AS current ORDER BY trigger_id LIMIT $4",
   )
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .bind(request.after.map(TriggerId::as_uuid))
   .bind(i64::from(request.limit.get()) + 1)
   .fetch_all(pool)

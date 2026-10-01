@@ -87,11 +87,17 @@ pub struct ListInternalTriggerDefinitions {
   pub after: Option<TriggerId>,
   /// Positive bounded page size.
   pub limit: NonZeroU16,
+  /// Authorization-derived Trigger identities applied before cursor and limit.
+  pub visibility: crate::InternalTriggerListVisibility,
 }
 
 impl ListInternalTriggerDefinitions {
   /// Validates and constructs a listing request.
-  pub fn new(after: Option<TriggerId>, limit: u16) -> Result<Self, StoreError> {
+  pub fn new(
+    after: Option<TriggerId>,
+    limit: u16,
+    visibility: crate::InternalTriggerListVisibility,
+  ) -> Result<Self, StoreError> {
     let limit = NonZeroU16::new(limit)
       .filter(|limit| limit.get() <= MAX_INTERNAL_TRIGGER_PAGE_SIZE)
       .ok_or_else(|| {
@@ -100,7 +106,11 @@ impl ListInternalTriggerDefinitions {
           StoreInputError::InvalidInternalTriggerPageSize,
         )
       })?;
-    Ok(Self { after, limit })
+    Ok(Self {
+      after,
+      limit,
+      visibility,
+    })
   }
 }
 

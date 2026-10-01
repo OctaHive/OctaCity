@@ -256,6 +256,9 @@ impl ArtifactRecordStore for InMemoryArtifactRecordStore {
     if query.limit == 0 || query.limit > crate::MAX_ARTIFACT_PAGE_SIZE {
       return Err(invalid(StoreOperation::ListPublishedArtifacts));
     }
+    if query.visibility.kind() == crate::ReadVisibilityKind::None {
+      return Ok(Vec::new());
+    }
     Ok(
       self
         .state
@@ -263,6 +266,7 @@ impl ArtifactRecordStore for InMemoryArtifactRecordStore {
         .map_err(|_| StoreError::Unavailable)?
         .uploads
         .values()
+        .filter(|upload| query.visibility.allows(&upload.artifact.identity().artifact_id))
         .filter(|upload| upload.artifact.identity().build_id == query.build_id && upload.artifact.state().is_visible())
         .take(usize::from(query.limit))
         .cloned()
@@ -428,6 +432,35 @@ mod tests {
         publication_at: time(1_900),
       },
     ));
+    let all = block_on(store.list_published_artifacts(ListPublishedArtifacts {
+      build_id: identity.build_id,
+      limit: 1,
+      visibility: crate::ArtifactListVisibility::all(),
+    }))
+    .unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].artifact.identity().artifact_id, id(8));
+    let restricted = block_on(store.list_published_artifacts(ListPublishedArtifacts {
+      build_id: identity.build_id,
+      limit: 1,
+      visibility: crate::ArtifactListVisibility::restricted([id(8)]).unwrap(),
+    }))
+    .unwrap();
+    assert_eq!(restricted, all);
+    let hidden = block_on(store.list_published_artifacts(ListPublishedArtifacts {
+      build_id: identity.build_id,
+      limit: 1,
+      visibility: crate::ArtifactListVisibility::restricted([id(99)]).unwrap(),
+    }))
+    .unwrap();
+    assert!(hidden.is_empty());
+    let none = block_on(store.list_published_artifacts(ListPublishedArtifacts {
+      build_id: identity.build_id,
+      limit: 1,
+      visibility: crate::ArtifactListVisibility::none(),
+    }))
+    .unwrap();
+    assert!(none.is_empty());
   }
 
   fn block_on<F: Future>(future: F) -> F::Output {

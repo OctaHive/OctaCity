@@ -4,7 +4,7 @@ use octacity_server_domain::{ProjectId, ProjectName, ProjectVersion, Timestamp};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{IdempotencyKey, MutationDisposition, StoreError, StoreInputError, StoreOperation};
+use crate::{IdempotencyKey, MutationDisposition, ProjectListVisibility, StoreError, StoreInputError, StoreOperation};
 
 /// Maximum number of Projects returned by one direct-children query.
 pub const MAX_PROJECT_PAGE_SIZE: u16 = 200;
@@ -135,7 +135,7 @@ pub struct DeleteProjectOutcome {
 }
 
 /// Bounded direct-children query ordered by stable Project identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListProjects {
   /// Parent whose direct children are requested, or `None` for roots.
   parent_id: Option<ProjectId>,
@@ -143,11 +143,18 @@ pub struct ListProjects {
   after: Option<ProjectId>,
   /// Positive page size no greater than [`MAX_PROJECT_PAGE_SIZE`].
   limit: NonZeroU16,
+  /// Authorization-derived Project identities applied before cursor and limit.
+  visibility: ProjectListVisibility,
 }
 
 impl ListProjects {
   /// Constructs and validates one bounded Project list query.
-  pub fn new(parent_id: Option<ProjectId>, after: Option<ProjectId>, limit: u16) -> Result<Self, StoreError> {
+  pub fn new(
+    parent_id: Option<ProjectId>,
+    after: Option<ProjectId>,
+    limit: u16,
+    visibility: ProjectListVisibility,
+  ) -> Result<Self, StoreError> {
     let limit = NonZeroU16::new(limit)
       .filter(|limit| limit.get() <= MAX_PROJECT_PAGE_SIZE)
       .ok_or(StoreError::invalid(
@@ -158,25 +165,32 @@ impl ListProjects {
       parent_id,
       after,
       limit,
+      visibility,
     })
   }
 
   /// Returns the parent whose direct children are requested.
   #[must_use]
-  pub const fn parent_id(self) -> Option<ProjectId> {
+  pub const fn parent_id(&self) -> Option<ProjectId> {
     self.parent_id
   }
 
   /// Returns the exclusive stable-identity cursor.
   #[must_use]
-  pub const fn after(self) -> Option<ProjectId> {
+  pub const fn after(&self) -> Option<ProjectId> {
     self.after
   }
 
   /// Returns the validated positive page size.
   #[must_use]
-  pub const fn limit(self) -> NonZeroU16 {
+  pub const fn limit(&self) -> NonZeroU16 {
     self.limit
+  }
+
+  /// Returns the authorization-derived Project visibility.
+  #[must_use]
+  pub const fn visibility(&self) -> &ProjectListVisibility {
+    &self.visibility
   }
 }
 

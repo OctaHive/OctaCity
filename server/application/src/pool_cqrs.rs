@@ -451,12 +451,18 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListAgentPoolsQuery,
   ) -> Result<AgentPoolPageProjection, Self::Error> {
     let page = self
       .store
-      .list_agent_pools(ListAgentPools::new(query.after, query.limit)?)
+      .list_agent_pools(ListAgentPools::new(
+        query.after,
+        query.limit,
+        grant
+          .visibility_for::<ListAgentPoolsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
       .await?;
     Ok(AgentPoolPageProjection {
       pools: page.pools.into_iter().map(AgentPoolProjection::from).collect(),

@@ -5,17 +5,21 @@ use octacity_server_store::{
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, types::Json};
 
-use crate::database::{number, unavailable};
+use crate::{
+  database::{number, unavailable},
+  read_visibility::sql_read_visibility,
+};
 
 pub(crate) async fn read(pool: &PgPool, request: ReadJobEvents) -> Result<JobEventPage, StoreError> {
   request.validate()?;
   let after_sequence = number(request.after_sequence, StoreOperation::ReadJobEvents)?;
+  let visibility = sql_read_visibility(request.visibility.view(), |id| id.as_uuid());
   let rows = sqlx::query_as::<_, JobEventReadRow>(
     "WITH current_job AS (
        SELECT job.id, build.logs_visible FROM jobs AS job
        JOIN attempts AS attempt ON attempt.id = job.attempt_id
        JOIN builds AS build ON build.id = attempt.build_id
-       WHERE job.id = $1
+       WHERE job.id = $1 AND ($4 OR job.id = ANY($5::uuid[]))
      ), current_cursor AS (
        SELECT current_job.id AS job_id, COALESCE(MAX(job_events.sequence), 0)::BIGINT AS current_sequence
        FROM current_job LEFT JOIN job_events ON job_events.job_id = current_job.id
@@ -37,16 +41,23 @@ pub(crate) async fn read(pool: &PgPool, request: ReadJobEvents) -> Result<JobEve
   .bind(request.job_id.as_uuid())
   .bind(after_sequence)
   .bind(i64::from(request.limit))
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .fetch_all(pool)
   .await
   .map_err(unavailable)?;
 
-  let current_sequence = rows
-    .first()
-    .map(|row| row.current_sequence)
-    .ok_or(StoreError::NotFound {
-      entity: EntityKind::Job,
-    })?;
+  let Some(current_sequence) = rows.first().map(|row| row.current_sequence) else {
+    if request.visibility.allows(&request.job_id) {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Job,
+      });
+    }
+    return Ok(JobEventPage {
+      events: Vec::new(),
+      cursor: request.after_sequence,
+    });
+  };
   let current_cursor = u64::try_from(current_sequence).map_err(|_| StoreError::Unavailable)?;
   let mut events = Vec::with_capacity(rows.len());
   for row in rows {

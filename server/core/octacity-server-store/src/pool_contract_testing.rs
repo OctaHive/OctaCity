@@ -99,10 +99,30 @@ where
   let exact = store.agent_pool_version(pool_id, PoolVersion::INITIAL).await.unwrap();
   assert_eq!(exact, created.pool, "publishing must not rewrite the prior version");
   let page = store
-    .list_agent_pools(ListAgentPools::new(None, 1).unwrap())
+    .list_agent_pools(ListAgentPools::new(None, 1, crate::AgentPoolListVisibility::all()).unwrap())
     .await
     .unwrap();
   assert_eq!(page.pools.as_slice(), std::slice::from_ref(&draining.pool));
+  let restricted = store
+    .list_agent_pools(
+      ListAgentPools::new(None, 1, crate::AgentPoolListVisibility::restricted([pool_id]).unwrap()).unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(restricted, page);
+  for visibility in [
+    crate::AgentPoolListVisibility::restricted([id(999)]).unwrap(),
+    crate::AgentPoolListVisibility::none(),
+  ] {
+    let hidden = store
+      .list_agent_pools(ListAgentPools::new(None, 1, visibility).unwrap())
+      .await
+      .unwrap();
+    assert!(hidden.pools.is_empty());
+    assert_eq!(hidden.next_cursor, None);
+  }
+
+  verify_visibility_before_pool_pagination(store.as_ref(), &mut expected_audit).await;
 
   let disposable_id = id::<PoolId>(3);
   let disposable = store
@@ -211,6 +231,66 @@ pub fn verify_in_memory_agent_pool_store_contract() {
     },
     "in-memory Agent Pool operations must complete without I/O",
   );
+}
+
+async fn verify_visibility_before_pool_pagination<S>(
+  store: &S,
+  expected_audit: &mut Vec<crate::testing::RecordedManagementAuditFact>,
+) where
+  S: AgentPoolStore,
+{
+  let mut pools = Vec::new();
+  for (value, name) in [
+    (1_001, "visibility-first"),
+    (1_002, "visibility-second"),
+    (1_003, "visibility-third"),
+  ] {
+    let pool = store
+      .create_agent_pool(create(
+        id(value),
+        name,
+        name,
+        definition(PoolDrainState::Accepting),
+        i64::try_from(value).unwrap(),
+      ))
+      .await
+      .unwrap()
+      .pool;
+    expected_audit.push(expected_management_audit(
+      StoreOperation::CreateAgentPool,
+      EntityKind::Pool,
+      pool.id,
+    ));
+    pools.push(pool);
+  }
+
+  let all = store
+    .list_agent_pools(ListAgentPools::new(Some(id(1)), 2, crate::AgentPoolListVisibility::all()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(all.pools, pools[..2]);
+  assert_eq!(all.next_cursor, Some(pools[1].id));
+
+  let restricted = crate::AgentPoolListVisibility::restricted([pools[1].id, pools[2].id]).unwrap();
+  let first_visible = store
+    .list_agent_pools(ListAgentPools::new(None, 1, restricted.clone()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(first_visible.pools, vec![pools[1].clone()]);
+  assert_eq!(first_visible.next_cursor, Some(pools[1].id));
+  let second_visible = store
+    .list_agent_pools(ListAgentPools::new(first_visible.next_cursor, 1, restricted).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(second_visible.pools, vec![pools[2].clone()]);
+  assert_eq!(second_visible.next_cursor, None);
+
+  let none = store
+    .list_agent_pools(ListAgentPools::new(None, 1, crate::AgentPoolListVisibility::none()).unwrap())
+    .await
+    .unwrap();
+  assert!(none.pools.is_empty());
+  assert_eq!(none.next_cursor, None);
 }
 
 fn create(

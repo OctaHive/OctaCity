@@ -4,7 +4,7 @@ use octacity_protocol::AgentInventory;
 use octacity_server_domain::{AgentId, AgentName, AgentVersion, PoolId, PoolVersion, Timestamp};
 use serde::{Deserialize, Serialize};
 
-use crate::{IdempotencyKey, MutationDisposition, StoreError, StoreInputError, StoreOperation};
+use crate::{AgentListVisibility, IdempotencyKey, MutationDisposition, StoreError, StoreInputError, StoreOperation};
 
 /// Maximum number of Agents returned by one management query.
 pub const MAX_AGENT_PAGE_SIZE: u16 = 200;
@@ -57,31 +57,42 @@ pub struct EnrolledAgent {
 }
 
 /// Bounded deterministic query over enrolled Agents.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListAgents {
   after: Option<AgentId>,
   limit: NonZeroU16,
+  visibility: AgentListVisibility,
 }
 
 impl ListAgents {
   /// Validates a stable-identity cursor and page size.
-  pub fn new(after: Option<AgentId>, limit: u16) -> Result<Self, StoreError> {
+  pub fn new(after: Option<AgentId>, limit: u16, visibility: AgentListVisibility) -> Result<Self, StoreError> {
     let limit = NonZeroU16::new(limit)
       .filter(|value| value.get() <= MAX_AGENT_PAGE_SIZE)
       .ok_or_else(|| StoreError::invalid(StoreOperation::ListAgents, StoreInputError::InvalidAgentPageSize))?;
-    Ok(Self { after, limit })
+    Ok(Self {
+      after,
+      limit,
+      visibility,
+    })
   }
 
   /// Exclusive stable-identity cursor.
   #[must_use]
-  pub const fn after(self) -> Option<AgentId> {
+  pub const fn after(&self) -> Option<AgentId> {
     self.after
   }
 
   /// Positive bounded page size.
   #[must_use]
-  pub const fn limit(self) -> NonZeroU16 {
+  pub const fn limit(&self) -> NonZeroU16 {
     self.limit
+  }
+
+  /// Authorization-derived Agent identities applied before cursor and limit.
+  #[must_use]
+  pub const fn visibility(&self) -> &AgentListVisibility {
+    &self.visibility
   }
 }
 

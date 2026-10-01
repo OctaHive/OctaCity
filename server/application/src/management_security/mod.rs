@@ -5,6 +5,7 @@ mod authorization;
 mod context;
 mod dispatch;
 mod policy;
+mod visibility;
 
 pub(crate) use audit::audited_mutation;
 
@@ -29,6 +30,7 @@ pub use dispatch::{
   ManagementHandlerError, ManagementQueryUseCase,
 };
 pub use policy::{ManagementAuthorizationPolicy, TrustedNetworkManagementPolicy};
+pub use visibility::{ManagementVisibilityError, ManagementVisibilityInput, ManagementVisibilityTarget};
 
 use thiserror::Error;
 

@@ -430,7 +430,7 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListBuildArtifactsQuery,
   ) -> Result<Vec<ArtifactProjection>, Self::Error> {
     let uploads = self
@@ -438,6 +438,9 @@ where
       .list_published_artifacts(ListPublishedArtifacts {
         build_id: query.build_id,
         limit: query.limit,
+        visibility: grant
+          .visibility_for::<ListBuildArtifactsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
       })
       .await?;
     let mut projections = Vec::with_capacity(uploads.len());

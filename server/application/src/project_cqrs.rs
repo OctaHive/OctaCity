@@ -434,12 +434,19 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ListProjectsQuery,
   ) -> Result<ProjectPageProjection, Self::Error> {
     let page = self
       .store
-      .list_projects(ListProjects::new(query.parent_id, query.after, query.limit)?)
+      .list_projects(ListProjects::new(
+        query.parent_id,
+        query.after,
+        query.limit,
+        grant
+          .visibility_for::<ListProjectsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
       .await?;
     Ok(ProjectPageProjection {
       projects: page.projects.into_iter().map(Into::into).collect(),

@@ -1,7 +1,7 @@
 use octacity_server_domain::{EntityKind, PoolId, PoolVersion};
 use octacity_server_store::{AgentPoolPage, ListAgentPools, PublishedAgentPool, StoreError};
 
-use crate::{database::unavailable, pool_row::PoolRow};
+use crate::{database::unavailable, pool_row::PoolRow, read_visibility::sql_read_visibility};
 
 pub(crate) async fn read(
   pool: &sqlx::PgPool,
@@ -25,13 +25,24 @@ pub(crate) async fn read(
 }
 
 pub(crate) async fn list(pool: &sqlx::PgPool, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
+  if request.visibility().kind() == octacity_server_store::ReadVisibilityKind::None {
+    return Ok(AgentPoolPage {
+      pools: Vec::new(),
+      next_cursor: None,
+    });
+  }
+  let visibility = sql_read_visibility(request.visibility().view(), |id| id.as_uuid());
   let limit = i64::from(request.limit().get()) + 1;
   let rows = sqlx::query_as::<_, PoolRow>(
     "SELECT id, name, version, enabled, drain_state, admission_policy, concurrency_limit, fairness_policy, \
        static_capacity_limit, FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS published_at_millis \
-     FROM (SELECT DISTINCT ON (id) * FROM pools ORDER BY id, version DESC) AS current \
-     WHERE ($1::uuid IS NULL OR id > $1) ORDER BY id LIMIT $2",
+     FROM (SELECT DISTINCT ON (id) * FROM pools \
+       WHERE ($1 OR id = ANY($2::uuid[])) \
+       ORDER BY id, version DESC) AS current \
+     WHERE ($3::uuid IS NULL OR id > $3) ORDER BY id LIMIT $4",
   )
+  .bind(visibility.all)
+  .bind(visibility.identities)
   .bind(request.after().map(PoolId::as_uuid))
   .bind(limit)
   .fetch_all(pool)

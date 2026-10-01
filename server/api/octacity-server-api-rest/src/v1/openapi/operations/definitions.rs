@@ -34,7 +34,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::ProjectList),
+  .with_parameters(ParameterProfile::ProjectList)
+  .with_visibility::<ListProjectsQuery>(),
   operation!(
     GetProjectQuery,
     "GET",

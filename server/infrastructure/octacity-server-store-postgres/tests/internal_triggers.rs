@@ -322,13 +322,83 @@ async fn internal_trigger_versions_are_replay_safe_queryable_and_disableable() {
     .unwrap();
   assert!(!exact.enabled);
 
+  let hidden_before = TriggerId::from_uuid(uuid::Uuid::from_u128(8_099)).unwrap();
+  let second_visible = TriggerId::from_uuid(uuid::Uuid::from_u128(8_101)).unwrap();
+  let hidden_after = TriggerId::from_uuid(uuid::Uuid::from_u128(8_102)).unwrap();
+  sqlx::query(
+    "INSERT INTO triggers \
+       (id, version, build_configuration_id, build_configuration_version, kind, enabled, definition, created_at) \
+     SELECT source.id, 1, seed.build_configuration_id, seed.build_configuration_version, seed.kind, \
+            seed.enabled, seed.definition, seed.created_at \
+     FROM UNNEST($1::uuid[]) AS source(id) \
+     CROSS JOIN triggers AS seed \
+     WHERE seed.id = $2 AND seed.version = 2",
+  )
+  .bind(
+    [
+      hidden_before.as_uuid(),
+      second_visible.as_uuid(),
+      hidden_after.as_uuid(),
+    ]
+    .as_slice(),
+  )
+  .bind(trigger_id.as_uuid())
+  .execute(&database.pool)
+  .await
+  .unwrap();
+
   let page = store
-    .list_internal_trigger_definitions(ListInternalTriggerDefinitions::new(None, 10).unwrap())
+    .list_internal_trigger_definitions(
+      ListInternalTriggerDefinitions::new(None, 10, octacity_server_store::InternalTriggerListVisibility::all())
+        .unwrap(),
+    )
     .await
     .unwrap();
-  assert_eq!(page.items.len(), 1);
-  assert_eq!(page.items[0].trigger.version, published.version);
-  assert!(!page.items[0].enabled);
+  assert_eq!(page.items.len(), 4);
+
+  let restricted = store
+    .list_internal_trigger_definitions(
+      ListInternalTriggerDefinitions::new(
+        None,
+        1,
+        octacity_server_store::InternalTriggerListVisibility::restricted([trigger_id, second_visible]).unwrap(),
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(restricted.items.len(), 1);
+  assert_eq!(restricted.items[0].trigger.id, trigger_id);
+  assert_eq!(restricted.next_after, Some(trigger_id));
+  let restricted_after = store
+    .list_internal_trigger_definitions(
+      ListInternalTriggerDefinitions::new(
+        restricted.next_after,
+        1,
+        octacity_server_store::InternalTriggerListVisibility::restricted([trigger_id, second_visible]).unwrap(),
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(restricted_after.items.len(), 1);
+  assert_eq!(restricted_after.items[0].trigger.id, second_visible);
+  assert_eq!(restricted_after.next_after, None);
+  for visibility in [
+    octacity_server_store::InternalTriggerListVisibility::restricted([TriggerId::from_uuid(uuid::Uuid::from_u128(
+      999,
+    ))
+    .unwrap()])
+    .unwrap(),
+    octacity_server_store::InternalTriggerListVisibility::none(),
+  ] {
+    let hidden = store
+      .list_internal_trigger_definitions(ListInternalTriggerDefinitions::new(None, 10, visibility).unwrap())
+      .await
+      .unwrap();
+    assert!(hidden.items.is_empty());
+    assert_eq!(hidden.next_after, None);
+  }
 
   database.cleanup().await;
 }

@@ -56,9 +56,9 @@ pub struct LogSearchCursor {
   pub chunk_id: LogChunkId,
 }
 
-/// Bounded backend-neutral Build-log query.
+/// Bounded backend-neutral Build-log search criteria before authorization is applied.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LogSearchQuery {
+pub struct LogSearchCriteria {
   /// Project boundary that every result must belong to.
   pub project_id: ProjectId,
   /// Non-empty bounded UTF-8 query text.
@@ -83,7 +83,7 @@ pub struct LogSearchQuery {
   pub limit: u16,
 }
 
-impl LogSearchQuery {
+impl LogSearchCriteria {
   /// Validates all adapter-independent query bounds.
   pub fn validate(&self) -> Result<(), LogSearchInputError> {
     if self.text.is_empty()
@@ -104,6 +104,31 @@ impl LogSearchQuery {
       return Err(LogSearchInputError::InvalidTimeRange);
     }
     Ok(())
+  }
+}
+
+/// Authorized backend-neutral Build-log query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogSearchQuery {
+  /// Validated search and pagination criteria.
+  pub criteria: LogSearchCriteria,
+  /// Authorization-derived Project identities applied before search, snippets, pagination, and freshness.
+  pub visibility: crate::BuildLogSearchVisibility,
+}
+
+impl LogSearchQuery {
+  /// Combines validated search criteria with the authorization-derived Project scope.
+  pub fn new(
+    criteria: LogSearchCriteria,
+    visibility: crate::BuildLogSearchVisibility,
+  ) -> Result<Self, LogSearchInputError> {
+    criteria.validate()?;
+    Ok(Self { criteria, visibility })
+  }
+
+  /// Revalidates all adapter-independent query bounds.
+  pub fn validate(&self) -> Result<(), LogSearchInputError> {
+    self.criteria.validate()
   }
 }
 

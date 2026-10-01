@@ -94,7 +94,11 @@ where
     Self { store, waiter }
   }
 
-  async fn read(&self, query: ReadJobEventsQuery) -> Result<JobEventPageProjection, ApplicationError> {
+  async fn read(
+    &self,
+    query: ReadJobEventsQuery,
+    visibility: octacity_server_store::JobEventReadVisibility,
+  ) -> Result<JobEventPageProjection, ApplicationError> {
     if query.wait > MAX_JOB_EVENT_WAIT {
       return Err(
         StoreError::InvalidInput {
@@ -104,8 +108,8 @@ where
         .into(),
       );
     }
-    let request = ReadJobEvents::new(query.job_id, query.after_sequence, query.limit)?;
-    let initial = self.store.read_job_events(request).await?;
+    let request = ReadJobEvents::new(query.job_id, query.after_sequence, query.limit, visibility)?;
+    let initial = self.store.read_job_events(request.clone()).await?;
     if !initial.events.is_empty() || query.wait.is_zero() {
       return Ok(project(initial));
     }
@@ -138,10 +142,13 @@ where
   async fn execute_management_query(
     &self,
     _context: &crate::ManagementRequestContext,
-    _grant: &crate::ManagementAuthorizationGrant,
+    grant: &crate::ManagementAuthorizationGrant,
     query: ReadJobEventsQuery,
   ) -> Result<JobEventPageProjection, Self::Error> {
-    self.read(query).await
+    let visibility = grant
+      .visibility_for::<ReadJobEventsQuery>()
+      .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
+    self.read(query, visibility).await
   }
 }
 

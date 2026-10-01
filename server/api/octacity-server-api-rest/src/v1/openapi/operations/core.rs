@@ -29,5 +29,6 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
-  .with_parameters(ParameterProfile::AuditFacts),
+  .with_parameters(ParameterProfile::AuditFacts)
+  .with_visibility::<ListAuditFactsQuery>(),
 ];

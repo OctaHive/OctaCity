@@ -49,6 +49,7 @@ mod project_mutation;
 mod project_policy_query;
 mod project_query;
 mod project_row;
+mod read_visibility;
 mod ready_queue_notification;
 mod repository_mutation;
 mod restore;

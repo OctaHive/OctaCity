@@ -62,7 +62,7 @@ impl ManagementInputFactory {
       return Err(ManagementInputError::Invalid("job event wait"));
     }
     let job_id = parse(job_id, "job id")?;
-    octacity_server_store::ReadJobEvents::new(job_id, after_sequence, limit)
+    octacity_server_store::ReadJobEvents::validate_page_size(limit)
       .map_err(|_| ManagementInputError::Invalid("job event page"))?;
     Ok(ReadJobEventsQuery {
       job_id,

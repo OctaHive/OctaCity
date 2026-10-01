@@ -40,6 +40,9 @@ pub enum ApplicationError {
   /// Authoritative data could not be represented by a safe application projection.
   #[error("authoritative state cannot be projected safely")]
   Projection(#[from] ProjectionError),
+  /// A policy grant could not be represented by the protected query's read port.
+  #[error("authorization visibility is incompatible with the application query")]
+  InvalidAuthorizationVisibility,
 }
 
 impl ApplicationError {
@@ -79,7 +82,7 @@ impl ApplicationError {
         | StoreError::EventsMissing { .. }
         | StoreError::CredentialRejected,
       ) => ApplicationFailure::Conflict,
-      Self::Projection(_) => ApplicationFailure::Internal,
+      Self::Projection(_) | Self::InvalidAuthorizationVisibility => ApplicationFailure::Internal,
     }
   }
 }
