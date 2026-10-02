@@ -187,20 +187,52 @@ def extract_source(archive: Path, destination: Path, source: dict[str, Any]) -> 
             raise BuildError(f"source archive is empty: {archive}")
 
 
-def verify_release_ref(source: dict[str, Any]) -> None:
-    """Require the upstream release tag to resolve to the pinned source revision."""
+def verify_release_ref(source: dict[str, Any], *, attempts: int = 5) -> None:
+    """Require a transient-tolerant tag lookup to match the pinned revision."""
 
     reference = f"refs/tags/{source['tag']}"
-    try:
-        result = subprocess.run(
-            ["git", "ls-remote", source["repository"], reference, f"{reference}^{{}}"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        raise BuildError(f"cannot resolve release tag {source['tag']}: {error}") from error
+    result = None
+    for attempt in range(1, attempts + 1):
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "ls-remote",
+                    source["repository"],
+                    reference,
+                    f"{reference}^{{}}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            break
+        except (
+            OSError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ) as error:
+            stderr = getattr(error, "stderr", None)
+            detail = (
+                stderr.strip()
+                if isinstance(stderr, str) and stderr.strip()
+                else str(error)
+            )
+            if attempt == attempts:
+                raise BuildError(
+                    f"cannot resolve release tag {source['tag']} after "
+                    f"{attempts} attempts: {detail}"
+                ) from error
+            delay = min(2 ** (attempt - 1), 8)
+            print(
+                f"release tag lookup attempt {attempt}/{attempts} failed: "
+                f"{detail}; retrying in {delay}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    if result is None:
+        raise BuildError(f"cannot resolve release tag {source['tag']}")
     resolved: dict[str, str] = {}
     for line in result.stdout.splitlines():
         fields = line.split()

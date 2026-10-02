@@ -140,6 +140,44 @@ class PinnedMinioBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(BUILDER.BuildError, "resolves to"):
                 BUILDER.verify_release_ref(source)
 
+    def test_release_tag_resolution_retries_a_transient_git_failure(self):
+        source = self.document["sources"]["minio"]
+        tag_ref = f"refs/tags/{source['tag']}"
+        failure = BUILDER.subprocess.CalledProcessError(
+            128,
+            ["git", "ls-remote"],
+            stderr="temporary upstream failure",
+        )
+        result = mock.Mock(stdout=f"{source['source_revision']}\t{tag_ref}\n")
+        with (
+            mock.patch.object(
+                BUILDER.subprocess, "run", side_effect=[failure, result]
+            ) as run,
+            mock.patch.object(BUILDER.time, "sleep") as sleep,
+        ):
+            BUILDER.verify_release_ref(source)
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    def test_release_tag_resolution_failure_is_bounded_and_diagnostic(self):
+        source = self.document["sources"]["minio"]
+        failure = BUILDER.subprocess.CalledProcessError(
+            128,
+            ["git", "ls-remote"],
+            stderr="upstream unavailable",
+        )
+        with (
+            mock.patch.object(BUILDER.subprocess, "run", side_effect=failure) as run,
+            mock.patch.object(BUILDER.time, "sleep") as sleep,
+        ):
+            with self.assertRaisesRegex(
+                BUILDER.BuildError,
+                "after 2 attempts: upstream unavailable",
+            ):
+                BUILDER.verify_release_ref(source, attempts=2)
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(1)
+
 
 if __name__ == "__main__":
     unittest.main()
