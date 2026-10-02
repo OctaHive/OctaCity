@@ -70,20 +70,20 @@ shared/*/*
 !shared/*/src/
 !shared/*/src/**
 
-# Locked UI production build inputs. Tests remain because the checked-in
-# TypeScript project includes them in its type-checking boundary.
+# Locked UI production build inputs. The ignored OpenAPI schema is generated
+# inside the builder from the checked-in Rust contract and generator script.
+# Tests remain because the checked-in TypeScript project includes them in its
+# type-checking boundary.
 !ui/
 ui/*
-!ui/.generated/
-ui/.generated/*
-!ui/.generated/api/
-ui/.generated/api/*
-!ui/.generated/api/schema.d.ts
 !ui/.npmrc
 !ui/index.html
 !ui/package.json
 !ui/pnpm-lock.yaml
 !ui/playwright.config.ts
+!ui/scripts/
+ui/scripts/*
+!ui/scripts/generate-api.mjs
 !ui/tsconfig.json
 !ui/vite.config.ts
 !ui/public/

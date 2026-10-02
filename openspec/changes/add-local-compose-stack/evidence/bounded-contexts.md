@@ -17,14 +17,15 @@ The root `.dockerignore` begins with `**` and reopens only:
 - workspace lockfile, manifest, pinned Rust toolchain, and license;
 - production Rust manifests, build scripts, sources, and embedded PostgreSQL
   migrations below `agent/`, `server/`, and `shared/`;
-- the locked UI inputs required by its current TypeScript and Vite build;
+- the locked UI inputs and generator script required to derive the ignored
+  OpenAPI schema inside the TypeScript and Vite builder;
 - repository-owned `deployment/local-stand` Dockerfiles and JSON policies.
 
 Every reopened directory level is denied again before individual inputs are
 allowed. Final rules unconditionally exclude `.git`, Cargo targets,
-`node_modules`, UI distributions, pnpm stores, Python caches, `.env` files,
-private keys, secret directories, IDE metadata, and generated or durable local
-stand state.
+`node_modules`, generated UI schemas, UI distributions, pnpm stores, Python
+caches, `.env` files, private keys, secret directories, IDE metadata, and
+generated or durable local stand state.
 
 The context was materialized through the OrbStack Docker engine with a scratch
 `COPY . /` build. Docker exported 669 files (approximately 5.5 MiB). The
