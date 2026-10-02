@@ -488,6 +488,11 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("containerd Transfer plugin is unavailable", provisioner)
         self.assertIn('"OCTACITY_CONTRACT_CONTAINERD_SNAPSHOTTER=overlayfs"', provisioner)
         self.assertIn("[[ -c /dev/kvm ]]", provisioner)
+        self.assertIn("for command in curl docker find mountpoint", provisioner)
+        self.assertIn(
+            'pull_microsandbox_image "$runtime/msb" "$state_root" "$image" "$root/microsandbox-image.tar"',
+            provisioner,
+        )
         self.assertIn("tasks list --quiet", provisioner)
         self.assertIn("containers list --quiet", provisioner)
 
@@ -525,7 +530,7 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
 
     @unittest.skipIf(sys.platform == "win32", "Linux Microsandbox provisioner executes only on POSIX hosts")
-    def test_linux_microsandbox_retries_an_interrupted_image_pull(self):
+    def test_linux_microsandbox_imports_the_image_without_using_its_flaky_registry_client(self):
         provisioner = (REPOSITORY / "tools/runner/github-hosted-oci.sh").read_text(encoding="utf-8")
         function = provisioner.split("pull_microsandbox_image() {\n", 1)[1].split("\n}", 1)[0]
         image = "registry.example/build@sha256:" + "a" * 64
@@ -535,31 +540,48 @@ class PackageReleaseTests(unittest.TestCase):
                 "pull_microsandbox_image() {",
                 function,
                 "}",
-                "attempt_file=$(mktemp)",
-                "trap 'rm -f -- \"$attempt_file\"' EXIT",
-                "printf '0\\n' >\"$attempt_file\"",
+                "archive=$(mktemp)",
+                "pull_attempt_file=$(mktemp)",
+                "load_count_file=$(mktemp)",
+                "trap 'rm -f -- \"$archive\" \"$pull_attempt_file\" \"$load_count_file\"' EXIT",
+                "printf '0\\n' >\"$pull_attempt_file\"",
+                "printf '0\\n' >\"$load_count_file\"",
                 "success_after=2",
                 "sleep() { :; }",
+                "docker() {",
+                "  if [[ $1 == pull ]]; then",
+                "    local attempt",
+                "    attempt=$(<\"$pull_attempt_file\")",
+                "    attempt=$((attempt + 1))",
+                "    printf '%s\\n' \"$attempt\" >\"$pull_attempt_file\"",
+                "    (( attempt >= success_after ))",
+                "    return",
+                "  fi",
+                "  [[ $1 == image && $2 == save && $3 == --output && $4 == \"$archive\" ]] || return 90",
+                "  [[ $5 == '" + image + "' ]] || return 91",
+                "  printf 'docker archive\\n' >\"$archive\"",
+                "}",
                 "fake_msb() {",
-                "  local attempt",
-                "  attempt=$(<\"$attempt_file\")",
-                "  attempt=$((attempt + 1))",
-                "  printf '%s\\n' \"$attempt\" >\"$attempt_file\"",
                 "  [[ ${MSB_HOME:-} == /tmp/microsandbox-state/microsandbox ]] || return 90",
-                "  [[ $* == 'image pull --quiet --materialize layered '" + image + " ]] || return 91",
-                "  if (( attempt < success_after )); then",
+                "  if [[ $1 == image && $2 == pull ]]; then",
                 "    printf '%s\\n' 'image error: error decoding response body' >&2",
                 "    return 1",
                 "  fi",
+                "  [[ $1 == image && $2 == load && $3 == --quiet && $4 == --input ]] || return 92",
+                "  [[ $5 == \"$archive\" && $6 == --tag && $7 == '" + image + "' ]] || return 93",
+                "  [[ -s $5 ]] || return 94",
+                "  printf '%s\\n' \"$(( $(<\"$load_count_file\") + 1 ))\" >\"$load_count_file\"",
                 "}",
-                "pull_microsandbox_image fake_msb /tmp/microsandbox-state '" + image + "'",
-                "[[ $(<\"$attempt_file\") == 2 ]]",
-                "printf '0\\n' >\"$attempt_file\"",
+                "pull_microsandbox_image fake_msb /tmp/microsandbox-state '" + image + "' \"$archive\"",
+                "[[ $(<\"$pull_attempt_file\") == 2 ]]",
+                "[[ $(<\"$load_count_file\") == 1 ]]",
+                "printf '0\\n' >\"$pull_attempt_file\"",
                 "success_after=4",
-                "if pull_microsandbox_image fake_msb /tmp/microsandbox-state '" + image + "'; then",
-                "  exit 92",
+                "if pull_microsandbox_image fake_msb /tmp/microsandbox-state '" + image + "' \"$archive\"; then",
+                "  exit 95",
                 "fi",
-                "[[ $(<\"$attempt_file\") == 3 ]]",
+                "[[ $(<\"$pull_attempt_file\") == 3 ]]",
+                "[[ $(<\"$load_count_file\") == 1 ]]",
             )
         )
         result = subprocess.run(["bash"], input=script.encode("utf-8"), check=False, capture_output=True)

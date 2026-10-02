@@ -190,21 +190,24 @@ microsandbox_asset() {
 }
 
 pull_microsandbox_image() {
-  local executable=$1 state_root=$2 image=$3 attempt max_attempts=3 retry_delay_seconds=2
+  local executable=$1 state_root=$2 image=$3 archive=$4 attempt max_attempts=3 retry_delay_seconds=2
   for (( attempt = 1; attempt <= max_attempts; attempt++ )); do
-    if MSB_HOME="$state_root/microsandbox" \
-      "$executable" image pull --quiet --materialize layered "$image"; then
-      return 0
+    if docker pull "$image"; then
+      break
     fi
     (( attempt < max_attempts )) || return 1
-    echo "Microsandbox image pull attempt $attempt failed; retrying" >&2
+    echo "Docker image pull attempt $attempt failed; retrying" >&2
     sleep "$retry_delay_seconds"
   done
+  docker image save --output "$archive" "$image"
+  MSB_HOME="$state_root/microsandbox" \
+    "$executable" image load --quiet --input "$archive" --tag "$image"
+  rm -f -- "$archive"
 }
 
 setup_microsandbox() {
   local root=$1 asset digest archive=$root/microsandbox.tar.gz runtime=$root/runtime image state_root
-  for command in curl find mountpoint python3 sha256sum sudo tar; do
+  for command in curl docker find mountpoint python3 sha256sum sudo tar; do
     require_command "$command"
   done
   [[ -c /dev/kvm ]] || fail "GitHub-hosted runner does not expose /dev/kvm"
@@ -229,7 +232,7 @@ setup_microsandbox() {
   firmware=$(find "$runtime" -maxdepth 1 -type f -name 'libkrunfw.so.*' -print -quit)
   [[ -n $firmware ]] || fail "Microsandbox bundle contains no libkrun firmware"
   image=$(oci_image)
-  pull_microsandbox_image "$runtime/msb" "$state_root" "$image"
+  pull_microsandbox_image "$runtime/msb" "$state_root" "$image" "$root/microsandbox-image.tar"
   write_environment \
     "OCTACITY_CONTRACT_OCTA_RELEASE_ROOT=$root/octa-release" \
     "OCTACITY_CONTRACT_WORKSPACE_BYTES=$WORKSPACE_BYTES" \
