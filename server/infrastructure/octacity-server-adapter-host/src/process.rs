@@ -209,6 +209,7 @@ where
     adapter: adapter.clone(),
     source: std::io::Error::other(source),
   })?;
+  ensure_spawn_allowed(&adapter, deadline, &cancellation)?;
   let child = process_group.spawn(command).map_err(|source| HostError::Spawn {
     adapter: adapter.clone(),
     source: std::io::Error::other(source),
@@ -335,6 +336,20 @@ where
   }
   debug!(adapter = %adapter, request_id = request.request_id, "adapter operation completed");
   Ok(decoded)
+}
+
+fn ensure_spawn_allowed(adapter: &str, deadline: Instant, cancellation: &CancellationToken) -> Result<(), HostError> {
+  if cancellation.is_cancelled() {
+    Err(HostError::Cancelled {
+      adapter: adapter.to_owned(),
+    })
+  } else if Instant::now() >= deadline {
+    Err(HostError::TimedOut {
+      adapter: adapter.to_owned(),
+    })
+  } else {
+    Ok(())
+  }
 }
 
 async fn run_before_deadline<F>(
@@ -619,6 +634,20 @@ mod tests {
   use tokio::io::BufReader;
 
   use super::*;
+
+  #[test]
+  fn pre_spawn_guard_rejects_cancelled_and_expired_operations() {
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert!(matches!(
+      ensure_spawn_allowed("fixture", Instant::now() + Duration::from_secs(1), &cancellation),
+      Err(HostError::Cancelled { .. })
+    ));
+    assert!(matches!(
+      ensure_spawn_allowed("fixture", Instant::now(), &CancellationToken::new()),
+      Err(HostError::TimedOut { .. })
+    ));
+  }
 
   #[tokio::test]
   async fn rejects_oversized_incoming_frames_before_allocating_past_the_limit() {
