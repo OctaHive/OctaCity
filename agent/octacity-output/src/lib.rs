@@ -465,5 +465,5 @@ fn upload_key(lease: &LeaseAssignment, index: usize, output: &PreparedOutput) ->
     digest.update((value.len() as u64).to_be_bytes());
     digest.update(value);
   }
-  format!("{:x}", digest.finalize())
+  hex::encode(digest.finalize())
 }

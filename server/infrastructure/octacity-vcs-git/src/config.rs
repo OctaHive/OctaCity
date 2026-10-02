@@ -123,7 +123,7 @@ impl GitAdapterConfig {
     if handle == "anonymous" {
       return Ok(None);
     }
-    let digest = format!("{:x}", Sha256::digest(handle.as_bytes()));
+    let digest = hex::encode(Sha256::digest(handle.as_bytes()));
     let path = self.credential_directory.join(format!("{digest}.gitconfig"));
     validate_regular_file(&path, false)?;
     let metadata = fs::metadata(&path)?;

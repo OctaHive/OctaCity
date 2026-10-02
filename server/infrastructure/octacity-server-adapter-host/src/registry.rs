@@ -392,7 +392,7 @@ fn file_sha256(path: &Path) -> Result<String, RegistryError> {
     }
     hasher.update(&buffer[..read]);
   }
-  Ok(format!("{:x}", hasher.finalize()))
+  Ok(hex::encode(hasher.finalize()))
 }
 
 fn relative_wire_path(value: &str) -> bool {

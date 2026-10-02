@@ -203,7 +203,7 @@ pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Valu
     .unwrap();
   let elapsed = download_started.elapsed().as_secs_f64().max(f64::EPSILON);
   assert_release_artifact_payload(&bytes);
-  assert_eq!(download["artifact"]["sha256"], format!("{:x}", Sha256::digest(&bytes)));
+  assert_eq!(download["artifact"]["sha256"], hex::encode(Sha256::digest(&bytes)));
   (
     json!({"page": page, "downloaded_sha256": download["artifact"]["sha256"]}),
     bytes.len() as f64 / elapsed,

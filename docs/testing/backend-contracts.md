@@ -24,7 +24,7 @@ fresh GitHub-hosted `ubuntu-24.04` VM; the job downloads and verifies the
 pinned Octa release, delegates an isolated cgroup-v2 subtree, and mounts
 separate bounded loopback filesystems for workspaces and cache. Linux
 containerd and Linux Microsandbox also run on fresh `ubuntu-24.04` machines:
-the former downloads a checksum-pinned containerd 2.3.6 LTS bundle and starts
+the former downloads a checksum-pinned containerd 2.4.1 LTS bundle and starts
 its daemon privately as root with the `overlayfs` snapshotter, while the latter
 requires the hosted VM to expose KVM. GitHub does not guarantee nested
 virtualization, so the Microsandbox job is an explicit fail-closed release
@@ -83,14 +83,14 @@ docker run --detach --rm --name octacity-vault-contract --cap-add=IPC_LOCK \
   -p 127.0.0.1:18200:8200 \
   -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
   -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
-  hashicorp/vault:1.20.4@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
+  hashicorp/vault:2.1.1@sha256:8af37ae9d45e4a0fac48ab700e0d99efc4c2d6cd84354a869f2147f1d3abab46
 
+python3 tools/build_pinned_minio.py minio octacity/minio-contract:source-pinned
 docker run --detach --rm --name octacity-minio-contract \
   -p 127.0.0.1:19000:9000 \
   -e MINIO_ROOT_USER=octacity \
   -e MINIO_ROOT_PASSWORD=octacity-secret \
-  docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
-  server /bitnami/minio/data
+  octacity/minio-contract:source-pinned
 ```
 
 Run the lifecycle contract against those services:
@@ -539,7 +539,7 @@ export OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT=/absolute/path/to/micro-work
 export OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT=/absolute/path/to/micro-state
 export OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE=/opt/microsandbox/bin/msb
 export OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW=/opt/microsandbox/lib/libkrunfw.so
-export OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY=microsandbox-0.6.18-linux-amd64
+export OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY=microsandbox-0.7.6-linux-amd64
 export OCTACITY_CONTRACT_MICROSANDBOX_IMAGE='registry.example/build@sha256:<64-lowercase-hex>'
 export OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST=allowed.contract.example
 export OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST=denied.contract.example
@@ -547,7 +547,7 @@ cargo test -p octacity-job --test backend_contract \
   microsandbox_backend_satisfies_the_real_runner_contract -- --ignored --exact --nocapture
 ```
 
-The Windows preview workflow downloads the pinned `0.6.18` x86_64 ZIP, verifies
+The Windows preview workflow downloads the pinned `0.7.6` x86_64 ZIP, verifies
 its hard-coded SHA-256, requires `msb doctor` to accept WHP, and runs only on a
 self-hosted runner labelled `Windows`, `X64`, and
 `octacity-microsandbox-whp`. Merely compiling the adapter or seeing upstream

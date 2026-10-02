@@ -272,7 +272,7 @@ fn upload_records_are_bound_to_the_registration_and_lease_fence() {
       ArtifactId::generate(),
       ArtifactUploadId::generate(),
       0,
-      format!("{:x}", Sha256::digest([])),
+      hex::encode(Sha256::digest([])),
       "application/octet-stream",
     )
     .unwrap(),
@@ -285,7 +285,7 @@ fn upload_records_are_bound_to_the_registration_and_lease_fence() {
       report_format: None,
       transport_content_type: "application/octet-stream".to_owned(),
       size_bytes: 0,
-      sha256: format!("{:x}", Sha256::digest([])),
+      sha256: hex::encode(Sha256::digest([])),
     },
     registration_id: "registration-1".to_owned(),
     fence: LeaseFence {

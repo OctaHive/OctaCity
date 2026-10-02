@@ -341,7 +341,10 @@ pub(super) fn chain_id(diff_ids: &[String]) -> Result<String, ExecutionError> {
   let mut chain = first.clone();
   for diff_id in ids {
     validate_digest(diff_id)?;
-    chain = format!("sha256:{:x}", Sha256::digest(format!("{chain} {diff_id}").as_bytes()));
+    chain = format!(
+      "sha256:{}",
+      hex::encode(Sha256::digest(format!("{chain} {diff_id}").as_bytes()))
+    );
   }
   Ok(chain)
 }

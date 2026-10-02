@@ -359,7 +359,7 @@ impl SnapshotWriter {
   }
 
   fn finish(self) -> (u64, String) {
-    (self.written, format!("{:x}", self.hasher.finalize()))
+    (self.written, hex::encode(self.hasher.finalize()))
   }
 }
 

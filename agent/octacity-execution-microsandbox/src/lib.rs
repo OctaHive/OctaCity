@@ -171,7 +171,7 @@ impl MicrosandboxEngine {
     let libkrunfw = canonical_runtime_file("Microsandbox libkrunfw", &libkrunfw)?;
     let backend = LocalBackend::builder()
       .home(state_root.join("microsandbox"))
-      .try_build_lazy()
+      .build_lazy()
       .map_err(msb_error)?;
     Ok(Self {
       agent_id,
@@ -205,7 +205,6 @@ impl OciEngine for MicrosandboxEngine {
     let deadline = Instant::now()
       .checked_add(request.max_duration)
       .ok_or_else(|| invalid("Microsandbox execution timeout is too large"))?;
-    self.configure_runtime()?;
     let capability = requested_capability(&request)?;
     if Some(capability) != GUEST_CAPABILITY {
       return Err(unavailable(format!(
@@ -218,6 +217,7 @@ impl OciEngine for MicrosandboxEngine {
         "execution workspace_root does not match the Microsandbox backend work_root",
       ));
     }
+    self.configure_runtime()?;
     let plan = before_deadline(
       deadline,
       &cancellation,

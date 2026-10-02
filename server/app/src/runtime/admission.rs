@@ -244,7 +244,7 @@ fn digest_key(parts: &[&[u8]]) -> String {
     digest.update((part.len() as u64).to_be_bytes());
     digest.update(part);
   }
-  format!("{digest:x}", digest = digest.finalize())
+  hex::encode(digest.finalize())
 }
 
 #[derive(Serialize)]

@@ -805,7 +805,7 @@ fn attempt_directory(fence: &LeaseFence) -> String {
   digest.update(fence.lease_id.as_bytes());
   digest.update([0]);
   digest.update(fence.fencing_token.as_bytes());
-  format!("attempt-{:x}", digest.finalize())
+  format!("attempt-{}", hex::encode(digest.finalize()))
 }
 
 fn cache_operation_id(fence: &LeaseFence, operation: &str) -> String {
@@ -817,7 +817,7 @@ fn cache_operation_id(fence: &LeaseFence, operation: &str) -> String {
   digest.update(fence.fencing_token.as_bytes());
   digest.update([0]);
   digest.update(operation.as_bytes());
-  format!("cache-{operation}-{:x}", digest.finalize())
+  format!("cache-{operation}-{}", hex::encode(digest.finalize()))
 }
 
 fn is_attempt_directory(name: &str) -> bool {

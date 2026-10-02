@@ -390,7 +390,7 @@ impl CacheSessionManager {
       self
         .root
         .join(SCOPE_LAYOUT_DIRECTORY)
-        .join(format!("{:x}", digest.finalize())),
+        .join(hex::encode(digest.finalize())),
     )
   }
 

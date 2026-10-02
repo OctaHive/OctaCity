@@ -280,7 +280,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
       .await
       .unwrap();
     let bytes = reqwest::get(download.url).await.unwrap().bytes().await.unwrap();
-    assert_eq!(format!("{:x}", Sha256::digest(&bytes)), record.object.sha256());
+    assert_eq!(hex::encode(Sha256::digest(&bytes)), record.object.sha256());
   }
   assert_tree_excludes(temporary.path(), &[SECRET, &jwt]);
 

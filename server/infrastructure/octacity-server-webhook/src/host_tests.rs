@@ -306,7 +306,7 @@ mod process {
     let executable = directory.join("adapter");
     fs::write(&executable, script).unwrap();
     make_executable(&executable);
-    let digest = format!("{:x}", Sha256::digest(script.as_bytes()));
+    let digest = hex::encode(Sha256::digest(script.as_bytes()));
     fs::write(
       directory.join("adapter.toml"),
       format!(

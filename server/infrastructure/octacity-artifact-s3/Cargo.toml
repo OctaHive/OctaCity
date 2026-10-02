@@ -16,6 +16,7 @@ octacity-artifact-store = { path = "../../core/octacity-artifact-store" }
 octacity-server-cache = { path = "../../core/octacity-server-cache" }
 octacity-server-artifacts = { path = "../../core/octacity-server-artifacts" }
 sha2.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true

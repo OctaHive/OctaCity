@@ -16,6 +16,7 @@ octacity-runner = { path = "../octacity-runner" }
 octacity-private-fs = { path = "../octacity-private-fs" }
 serde_json.workspace = true
 sha2.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

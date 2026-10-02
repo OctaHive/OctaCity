@@ -10,6 +10,7 @@
 use std::{
   collections::BTreeMap,
   fs,
+  io::Read as _,
   path::{Path, PathBuf},
 };
 
@@ -439,11 +440,18 @@ fn file_sha256(path: &Path) -> Result<String, RunnerInstallationError> {
     source,
   })?;
   let mut hasher = Sha256::new();
-  std::io::copy(&mut file, &mut hasher).map_err(|source| RunnerInstallationError::Hash {
-    path: path.to_owned(),
-    source,
-  })?;
-  Ok(format!("{:x}", hasher.finalize()))
+  let mut buffer = [0_u8; 64 * 1024];
+  loop {
+    let read = file.read(&mut buffer).map_err(|source| RunnerInstallationError::Hash {
+      path: path.to_owned(),
+      source,
+    })?;
+    if read == 0 {
+      break;
+    }
+    hasher.update(&buffer[..read]);
+  }
+  Ok(hex::encode(hasher.finalize()))
 }
 
 fn runner_filename() -> &'static str {

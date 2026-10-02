@@ -123,6 +123,7 @@ V1_APPROVED_EXTERNAL_DEPENDENCIES = frozenset({
     "ed25519-dalek",
     "fs4",
     "futures-util",
+    "hex",
     "hmac",
     "http",
     "libc",

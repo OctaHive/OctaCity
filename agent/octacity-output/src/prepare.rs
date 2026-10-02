@@ -440,7 +440,7 @@ mod tests {
     .unwrap();
 
     assert_eq!(outputs[0].metadata.size_bytes, 0);
-    assert_eq!(outputs[0].metadata.sha256, format!("{:x}", Sha256::digest([])));
+    assert_eq!(outputs[0].metadata.sha256, hex::encode(Sha256::digest([])));
   }
 
   #[cfg(unix)]

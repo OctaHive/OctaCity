@@ -486,7 +486,7 @@ fn file_sha256(path: &FilePath) -> String {
   loop {
     let read = file.read(&mut buffer).unwrap();
     if read == 0 {
-      return format!("{:x}", digest.finalize());
+      return hex::encode(digest.finalize());
     }
     digest.update(&buffer[..read]);
   }

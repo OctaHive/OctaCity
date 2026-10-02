@@ -352,7 +352,8 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("--agent-root", action)
         self.assertIn("--octa-root", action)
         self.assertIn("released_linux_native_matrix_satisfies_the_end_to_end_contract", action)
-        self.assertIn("MINIO_DEFAULT_BUCKETS=octacity-artifacts", action)
+        self.assertIn("mc mb --ignore-existing local/octacity-artifacts", action)
+        self.assertIn("python3 tools/build_pinned_minio.py", action)
         self.assertNotIn("server /bitnami/minio/data", action)
         self.assertIn('${{ steps.test.outputs.evidence }}', action)
         self.assertIn('> "${OCTACITY_RELEASE_EVIDENCE_DIR}/minio.log"', action)
@@ -478,13 +479,13 @@ class PackageReleaseTests(unittest.TestCase):
             self.assertIn("if: always()", job)
 
         provisioner = (REPOSITORY / "tools/runner/github-hosted-oci.sh").read_text(encoding="utf-8")
-        self.assertIn("CONTAINERD_VERSION=2.3.6", provisioner)
+        self.assertIn("CONTAINERD_VERSION=2.4.1", provisioner)
         self.assertIn("@sha256:", provisioner)
         self.assertIn("63773f454664cd77e239f8e0b13ae7f18effe9e3d6612a325b5646eb3bda11f1", provisioner)
         self.assertIn("83205934094144b56f645f86c42b84f81083f423b0bea9cb233f91c21bab0919", provisioner)
         self.assertIn("sha256sum --check --strict", provisioner)
-        self.assertIn("containerd-2.3.6-linux-amd64.tar.gz", provisioner)
-        self.assertIn("containerd-2.3.6-linux-arm64.tar.gz", provisioner)
+        self.assertIn("containerd-2.4.1-linux-amd64.tar.gz", provisioner)
+        self.assertIn("containerd-2.4.1-linux-arm64.tar.gz", provisioner)
         self.assertIn("containerd Transfer plugin is unavailable", provisioner)
         self.assertIn('"OCTACITY_CONTRACT_CONTAINERD_SNAPSHOTTER=overlayfs"', provisioner)
         self.assertIn("[[ -c /dev/kvm ]]", provisioner)
@@ -641,8 +642,8 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("if: always()", preview)
 
         provisioner = (REPOSITORY / "tools/runner/self-hosted-microsandbox-whp.ps1").read_text(encoding="utf-8")
-        self.assertIn('$MicrosandboxVersion = "0.6.18"', provisioner)
-        self.assertIn("7e89516b78911dac58df546b24af4956f3772ea44ba13e13306712ffdde374e2", provisioner)
+        self.assertIn('$MicrosandboxVersion = "0.7.6"', provisioner)
+        self.assertIn("78fe36cf700d9c888e041373e2826bca7d553da2374b4d8172d12edae333ef4c", provisioner)
         self.assertIn("msb.FullName doctor", provisioner)
         self.assertIn("--platform linux-amd64", provisioner)
         self.assertIn("OCTACITY_CONTRACT_MICROSANDBOX_ENVIRONMENT_IDENTITY", provisioner)
@@ -710,7 +711,7 @@ class PackageReleaseTests(unittest.TestCase):
             self.assertNotIn("ubuntu-latest", workflow)
             self.assertNotIn("windows-latest", workflow)
             if "rust-toolchain@" in workflow:
-                self.assertIn("toolchain: 1.98.1", workflow)
+                self.assertIn("toolchain: 1.99.0", workflow)
 
     def test_security_workflow_installs_pinned_verified_security_tools(self):
         workflow = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
@@ -756,7 +757,7 @@ class PackageReleaseTests(unittest.TestCase):
         workflow = (REPOSITORY / ".github/workflows/security.yml").read_text(encoding="utf-8")
         fuzz = workflow.split("  fuzz-protocols:\n", 1)[1]
 
-        self.assertIn("    RUSTUP_TOOLCHAIN: nightly-2026-09-01\n", fuzz)
+        self.assertIn("    RUSTUP_TOOLCHAIN: nightly-2026-10-01\n", fuzz)
 
     def test_release_requires_every_quality_and_security_gate(self):
         ci = (REPOSITORY / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -797,12 +798,14 @@ class PackageReleaseTests(unittest.TestCase):
         )
 
     def test_workflow_service_images_retain_tags_and_pin_manifest_digests(self):
-        image = re.compile(r"(?:hashicorp/vault|quay\.io/minio/minio):[^\s@]+@sha256:[0-9a-f]{64}")
+        image = re.compile(r"hashicorp/vault:[^\s@]+@sha256:[0-9a-f]{64}")
         for name in ("ci.yml", "backend-contracts.yml"):
             workflow = (REPOSITORY / ".github/workflows" / name).read_text(encoding="utf-8")
             for line in workflow.splitlines():
-                if "hashicorp/vault:" in line or "quay.io/minio/minio:" in line:
+                if "hashicorp/vault:" in line:
                     self.assertRegex(line, image, f"mutable service image in {name}: {line}")
+            self.assertIn("python3 tools/build_pinned_minio.py", workflow)
+            self.assertNotIn("bitnamilegacy/minio", workflow)
 
 
 if __name__ == "__main__":

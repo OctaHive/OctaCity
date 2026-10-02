@@ -86,7 +86,7 @@ fn executable_verification_rejects_symlinks() {
       &directory,
       "fixture".to_owned(),
       "adapter",
-      format!("{:x}", Sha256::digest(b"adapter")),
+      hex::encode(Sha256::digest(b"adapter")),
     ),
     Err(RegistryError::InvalidEntry { .. })
   ));

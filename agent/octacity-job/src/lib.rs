@@ -746,7 +746,7 @@ fn execution_id(job_id: &str, attempt: u32) -> String {
   digest.update(job_id.as_bytes());
   digest.update([0]);
   digest.update(attempt.to_be_bytes());
-  format!("job-{:x}", digest.finalize())
+  format!("job-{}", hex::encode(digest.finalize()))
 }
 
 fn is_execution_directory(name: &str) -> bool {

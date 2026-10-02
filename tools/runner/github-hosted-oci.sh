@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MICROSANDBOX_VERSION=0.6.18
-CONTAINERD_VERSION=2.3.6
+MICROSANDBOX_VERSION=0.7.6
+CONTAINERD_VERSION=2.4.1
 WORKSPACE_BYTES=1073741824
 
 fail() {
@@ -124,8 +124,8 @@ wait_for_containerd() {
 
 containerd_asset() {
   case "$(uname -m)" in
-    x86_64) printf '%s %s\n' containerd-2.3.6-linux-amd64.tar.gz df806bb9b86653ebc94822a7076642ff3c3614324dbc1b511bdf75ac1669b762 ;;
-    aarch64|arm64) printf '%s %s\n' containerd-2.3.6-linux-arm64.tar.gz 6b3d383cc051f0bd7b2303f9034fdc9029f04c237cadb23b5e890a5b68534e05 ;;
+    x86_64) printf '%s %s\n' containerd-2.4.1-linux-amd64.tar.gz d65eda6a188aac1006848d8060099be88ba9c4bcddbfd9a23a961194710d0dd4 ;;
+    aarch64|arm64) printf '%s %s\n' containerd-2.4.1-linux-arm64.tar.gz 67f9b0a81c7140aaf15fe69053e88175270fadd33aeaffc1b9017123c1f55cea ;;
     *) fail "unsupported Linux architecture: $(uname -m)" ;;
   esac
 }
@@ -183,8 +183,8 @@ setup_containerd() {
 
 microsandbox_asset() {
   case "$(uname -m)" in
-    x86_64) printf '%s %s\n' microsandbox-linux-x86_64.tar.gz b001b3c6b980ab1ffcceb817496648c1520dba36b9e0caac37ea8d2f4acd9bdd ;;
-    aarch64|arm64) printf '%s %s\n' microsandbox-linux-aarch64.tar.gz e53098e7601fddd85af7e943d4af3d4370ace276d9e863a89456338f2d076d1b ;;
+    x86_64) printf '%s %s\n' microsandbox-linux-x86_64.tar.gz daa69c6a644289bbb7ef889bd862ffba7acddf934d45e724fa160edcd9a540e0 ;;
+    aarch64|arm64) printf '%s %s\n' microsandbox-linux-aarch64.tar.gz 47e4787423b12f56f24119f657c54974b1869c0853b3d7a0873157668d29aa03 ;;
     *) fail "unsupported Linux architecture: $(uname -m)" ;;
   esac
 }

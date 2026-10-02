@@ -191,7 +191,7 @@ pub(super) async fn remove_cgroup(cgroup: &Path, timeout: Duration) -> Result<()
 
 /// Creates a stable, filesystem-safe cgroup name without exposing the job ID.
 pub(super) fn cgroup_name(execution_id: &str) -> String {
-  let digest = format!("{:x}", Sha256::digest(execution_id.as_bytes()));
+  let digest = hex::encode(Sha256::digest(execution_id.as_bytes()));
   format!("execution-{}", &digest[..32])
 }
 

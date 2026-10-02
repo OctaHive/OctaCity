@@ -36,13 +36,13 @@ pub(super) fn map_path(root: &Path, path: &Path, guest_root: &Path) -> Result<Pa
 
 /// Produces an agent-scoped opaque resource name for containerd objects.
 pub(super) fn resource_id(agent_id: &str, execution_id: &str) -> String {
-  let digest = Sha256::digest(format!("{agent_id}\0{execution_id}").as_bytes());
-  format!("{}-{:.16x}", agent_resource_prefix(agent_id), digest)
+  let digest = hex::encode(Sha256::digest(format!("{agent_id}\0{execution_id}").as_bytes()));
+  format!("{}-{}", agent_resource_prefix(agent_id), &digest[..16])
 }
 
 pub(super) fn agent_resource_prefix(agent_id: &str) -> String {
-  let digest = Sha256::digest(agent_id.as_bytes());
-  format!("octacity-{}-{:.12x}", sanitize_id(agent_id), digest)
+  let digest = hex::encode(Sha256::digest(agent_id.as_bytes()));
+  format!("octacity-{}-{}", sanitize_id(agent_id), &digest[..12])
 }
 
 pub(super) fn sanitize_id(value: &str) -> String {

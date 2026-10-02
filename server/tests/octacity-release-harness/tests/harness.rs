@@ -302,5 +302,5 @@ fn collect(root: &Path, directory: &Path, files: &mut BTreeMap<PathBuf, String>)
 }
 
 fn sha256(path: &Path) -> String {
-  format!("{:x}", Sha256::digest(fs::read(path).unwrap()))
+  hex::encode(Sha256::digest(fs::read(path).unwrap()))
 }

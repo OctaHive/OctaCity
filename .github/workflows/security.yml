@@ -31,17 +31,17 @@ jobs:
   dependency-audit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Install pinned dependency scanners
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-audit@0.22.2,cargo-deny@0.20.2
           fallback: none
@@ -78,19 +78,19 @@ jobs:
       # The workspace pins stable Rust, while cargo-fuzz requires nightly for
       # sanitizer and coverage instrumentation. A job-level rustup override is
       # inherited by cargo-fuzz and the cargo/rustc processes it starts.
-      RUSTUP_TOOLCHAIN: nightly-2026-09-01
+      RUSTUP_TOOLCHAIN: nightly-2026-10-01
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable action, pinned nightly
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable action, pinned nightly
         with:
-          toolchain: nightly-2026-09-01
+          toolchain: nightly-2026-10-01
       - name: Install build and fuzz tools
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc,cargo-fuzz@0.13.2
           fallback: cargo-install

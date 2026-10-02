@@ -134,7 +134,8 @@ fn oci_hostname(id: &str) -> String {
   if id.len() <= LINUX_UTS_HOSTNAME_MAX_BYTES {
     id.to_owned()
   } else {
-    format!("octacity-{:.32x}", Sha256::digest(id.as_bytes()))
+    let digest = hex::encode(Sha256::digest(id.as_bytes()));
+    format!("octacity-{}", &digest[..32])
   }
 }
 

@@ -638,6 +638,24 @@ pub(crate) mod tests {
     all(target_os = "macos", target_arch = "aarch64")
   ))]
   pub(crate) fn installed_agent_fixture(server_url: &str) -> InstalledAgentFixture {
+    agent_fixture(server_url, true)
+  }
+
+  /// Creates an inventory-only installation for daemon lifecycle tests that
+  /// must not exercise a concrete execution provider.
+  #[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(target_os = "macos", target_arch = "aarch64")
+  ))]
+  pub(crate) fn inventory_only_agent_fixture(server_url: &str) -> InstalledAgentFixture {
+    agent_fixture(server_url, false)
+  }
+
+  #[cfg(any(
+    all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")),
+    all(target_os = "macos", target_arch = "aarch64")
+  ))]
+  fn agent_fixture(server_url: &str, include_microsandbox: bool) -> InstalledAgentFixture {
     use std::os::unix::fs::PermissionsExt as _;
 
     let temporary = tempfile::tempdir().unwrap();
@@ -682,6 +700,21 @@ pub(crate) mod tests {
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
     let libkrunfw = temporary.path().join("libkrunfw.so");
     fs::write(&libkrunfw, "inert firmware fixture").unwrap();
+
+    let virtualization_provider = include_microsandbox.then(|| {
+      format!(
+        r#"
+[[virtualization_providers]]
+provider = "microsandbox"
+environment_identity = "microsandbox-linux-guest-v1"
+executable = "{}"
+libkrunfw = "{}"
+metrics_sample_interval_seconds = 1
+"#,
+        executable.display(),
+        libkrunfw.display(),
+      )
+    });
 
     let config = temporary.path().join("agent.toml");
     fs::write(
@@ -729,13 +762,7 @@ max_accounting_failures = 1
 
 [server_signing_keys]
 primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
-
-[[virtualization_providers]]
-provider = "microsandbox"
-environment_identity = "microsandbox-linux-guest-v1"
-executable = "{}"
-libkrunfw = "{}"
-metrics_sample_interval_seconds = 1
+{}
 "#,
         credential.display(),
         work_root.display(),
@@ -743,8 +770,7 @@ metrics_sample_interval_seconds = 1
         release_root.display(),
         source_plugins.display(),
         cache_root.display(),
-        executable.display(),
-        libkrunfw.display(),
+        virtualization_provider.as_deref().unwrap_or_default(),
       ),
     )
     .unwrap();

@@ -354,7 +354,7 @@ fn object(bytes: &[u8]) -> ArtifactObject {
     ArtifactId::generate(),
     ArtifactUploadId::generate(),
     bytes.len() as u64,
-    format!("{:x}", Sha256::digest(bytes)),
+    hex::encode(Sha256::digest(bytes)),
     "application/octet-stream",
   )
   .unwrap()

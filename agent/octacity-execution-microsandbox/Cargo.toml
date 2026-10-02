@@ -13,6 +13,7 @@ microsandbox.workspace = true
 octacity-execution = { path = "../octacity-execution" }
 octacity-execution-oci = { path = "../octacity-execution-oci" }
 sha2.workspace = true
+hex.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

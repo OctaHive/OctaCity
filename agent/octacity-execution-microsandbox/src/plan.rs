@@ -196,7 +196,7 @@ pub(super) fn sandbox_name(agent_id: &str, execution_id: &str) -> String {
   digest.update(agent_id.as_bytes());
   digest.update([0]);
   digest.update(execution_id.as_bytes());
-  format!("octacity-{:x}", digest.finalize())
+  format!("octacity-{}", hex::encode(digest.finalize()))
 }
 
 /// Measures regular files without following symlinks outside the workspace.

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use hmac::{Hmac, Mac as _};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use zeroize::Zeroizing;
 
 const AGENT_ENROLLMENT_SECRET_DOMAIN: &[u8] = b"octacity.agent-enrollment-secret.v1\0";

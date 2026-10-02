@@ -56,40 +56,50 @@ runs:
 
     - name: Start disposable PostgreSQL and MinIO
       shell: bash
+      working-directory: octacity
       run: |
         set -euo pipefail
         suffix=$(printf '%s-%s-%s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" "${GITHUB_JOB}" | tr -c 'A-Za-z0-9_.-' '-')
         postgres_name="octacity-release-postgres-${suffix}"
         minio_name="octacity-release-minio-${suffix}"
+        minio_image="octacity/minio-contract:${GITHUB_SHA}"
         printf 'OCTACITY_RELEASE_POSTGRES_CONTAINER=%s\n' "${postgres_name}" >> "${GITHUB_ENV}"
         printf 'OCTACITY_RELEASE_MINIO_CONTAINER=%s\n' "${minio_name}" >> "${GITHUB_ENV}"
+        python3 tools/build_pinned_minio.py minio "${minio_image}" --architecture amd64
         docker run --detach --rm --name "${postgres_name}" \
           -p 127.0.0.1::5432 \
           -e POSTGRES_USER=octacity \
           -e POSTGRES_PASSWORD=octacity-secret \
-          postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+          postgres:18.6-bookworm@sha256:9e73daeb439141c2b11eea2463f5f1a3b269fd90d897b41cddb7cb440f21aa5d
         docker run --detach --rm --name "${minio_name}" \
           -p 127.0.0.1::9000 \
           -e MINIO_ROOT_USER=octacity \
           -e MINIO_ROOT_PASSWORD=octacity-secret \
-          -e MINIO_DEFAULT_BUCKETS=octacity-artifacts \
-          docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7
+          "${minio_image}"
 
         postgres_port=$(docker port "${postgres_name}" 5432/tcp | awk -F: 'NR == 1 {print $NF}')
         minio_port=$(docker port "${minio_name}" 9000/tcp | awk -F: 'NR == 1 {print $NF}')
         printf 'OCTACITY_POSTGRES_URL=postgres://octacity:octacity-secret@127.0.0.1:%s/postgres\n' "${postgres_port}" >> "${GITHUB_ENV}"
         printf 'OCTACITY_MINIO_ENDPOINT=http://127.0.0.1:%s\n' "${minio_port}" >> "${GITHUB_ENV}"
 
+        services_ready=false
         for attempt in {1..60}; do
           if docker exec "${postgres_name}" pg_isready -U octacity >/dev/null \
             && curl --fail --silent "http://127.0.0.1:${minio_port}/minio/health/live" >/dev/null; then
-            exit 0
+            services_ready=true
+            break
           fi
           sleep 1
         done
-        docker logs "${postgres_name}"
-        docker logs "${minio_name}"
-        exit 1
+        if [[ "${services_ready}" != true ]]; then
+          docker logs "${postgres_name}"
+          docker logs "${minio_name}"
+          exit 1
+        fi
+        docker exec -e MC_CONFIG_DIR=/tmp/.mc "${minio_name}" \
+          mc alias set local http://127.0.0.1:9000 octacity octacity-secret
+        docker exec -e MC_CONFIG_DIR=/tmp/.mc "${minio_name}" \
+          mc mb --ignore-existing local/octacity-artifacts
 
     - id: test
       name: Run release vertical slice

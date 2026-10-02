@@ -67,7 +67,7 @@ oci_engines = []
 # release pool before that evidence exists.
 # [[virtualization_providers]]
 # provider = "microsandbox"
-# environment_identity = "microsandbox-0.6.18-linux-amd64-preview"
+# environment_identity = "microsandbox-0.7.6-linux-amd64-preview"
 # executable = 'C:\Program Files\Microsandbox\msb.exe'
 # libkrunfw = 'C:\Program Files\Microsandbox\libkrunfw.dll'
 # metrics_sample_interval_seconds = 1

@@ -232,7 +232,7 @@ printf '{"protocol_version":1,"request_id":"%s","outcome":{"status":"resolved","
     let executable = directory.join("adapter");
     fs::write(&executable, script).unwrap();
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
-    let digest = format!("{:x}", Sha256::digest(script.as_bytes()));
+    let digest = hex::encode(Sha256::digest(script.as_bytes()));
     fs::write(
       directory.join("adapter.toml"),
       format!(

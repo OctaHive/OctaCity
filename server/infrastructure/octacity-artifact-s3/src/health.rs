@@ -100,7 +100,7 @@ impl S3ArtifactStore {
     let copy = format!("{}/copy", self.health_probe_prefix);
     let empty_digest = Sha256::digest([]);
     let checksum = STANDARD.encode(empty_digest);
-    let digest = format!("{empty_digest:x}");
+    let digest = hex::encode(empty_digest);
     self
       .client
       .put_object()

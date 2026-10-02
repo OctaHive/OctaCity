@@ -7,8 +7,8 @@ workspace.
 
 ## Toolchain
 
-- Node.js 22.17.0
-- pnpm 10.34.6 through Corepack
+- Node.js 24.21.0
+- pnpm 12.8.1
 
 Dependency lifecycle scripts are disabled by `.npmrc`. Keep them disabled unless a reviewed
 dependency has a documented, narrowly scoped build requirement.

@@ -19,7 +19,7 @@ pub use octa_cache_protocol::{
   REMOTE_CACHE_PROTOCOL_HEADER_VALUE_V1, REMOTE_CACHE_PROTOCOL_V1, WriteActionRequestV1,
 };
 
-use hmac::{Hmac, Mac as _};
+use hmac::{Hmac, KeyInit as _, Mac as _};
 use octacity_server_domain::{CacheSessionId, EntityKind, TransitionError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use sha2::{Digest as _, Sha256};

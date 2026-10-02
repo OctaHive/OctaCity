@@ -28,7 +28,7 @@ fn object_for_body(body: &[u8]) -> ArtifactObject {
     artifact_id(),
     upload_id(),
     body.len() as u64,
-    format!("{:x}", Sha256::digest(body)),
+    hex::encode(Sha256::digest(body)),
     "application/octet-stream",
   )
   .unwrap()

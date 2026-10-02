@@ -426,7 +426,7 @@ pub(crate) fn sha256(path: &Path) -> Result<String, HarnessError> {
     }
     digest.update(&buffer[..count]);
   }
-  Ok(format!("{:x}", digest.finalize()))
+  Ok(hex::encode(digest.finalize()))
 }
 
 pub(crate) fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, HarnessError> {

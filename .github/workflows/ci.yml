@@ -18,20 +18,20 @@ jobs:
         os: [ubuntu-24.04, macos-14, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
           components: rustfmt, clippy
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
       - name: Install protobuf compiler
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -94,20 +94,20 @@ jobs:
   coverage:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
           components: llvm-tools-preview
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
       - name: Install coverage and protobuf tools
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: cargo-llvm-cov@0.9.1,protoc
           fallback: none
@@ -118,12 +118,12 @@ jobs:
         working-directory: octacity
       - name: Start pinned MinIO service
         run: |
+          python3 tools/build_pinned_minio.py minio octacity/minio-contract:${GITHUB_SHA} --architecture amd64
           docker run --detach --rm --name octacity-coverage-minio \
             -p 127.0.0.1:19000:9000 \
             -e MINIO_ROOT_USER=octacity \
             -e MINIO_ROOT_PASSWORD=octacity-secret \
-            docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
-            server /bitnami/minio/data
+            octacity/minio-contract:${GITHUB_SHA}
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null; then
               exit 0
@@ -132,6 +132,7 @@ jobs:
           done
           docker logs octacity-coverage-minio
           exit 1
+        working-directory: octacity
       - name: Start pinned PostgreSQL service
         run: |
           docker run --detach --rm --name octacity-coverage-postgres \
@@ -139,7 +140,7 @@ jobs:
             -e POSTGRES_USER=octacity \
             -e POSTGRES_PASSWORD=octacity-secret \
             -e POSTGRES_DB=postgres \
-            postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+            postgres:18.6-bookworm@sha256:9e73daeb439141c2b11eea2463f5f1a3b269fd90d897b41cddb7cb440f21aa5d
           for attempt in {1..30}; do
             if docker exec octacity-coverage-postgres pg_isready -U octacity -d postgres >/dev/null; then
               exit 0
@@ -174,7 +175,7 @@ jobs:
       - name: Generate LCOV report
         run: cargo llvm-cov report --lcov --output-path lcov.info
         working-directory: octacity
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: lcov

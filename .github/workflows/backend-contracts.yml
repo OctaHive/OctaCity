@@ -61,7 +61,7 @@ jobs:
       run_macos_microsandbox: ${{ steps.plan.outputs.run_macos_microsandbox }}
       run_windows_microsandbox_preview: ${{ steps.plan.outputs.run_windows_microsandbox_preview }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Plan backend jobs for this invocation
@@ -84,7 +84,7 @@ jobs:
       runner_macos_microsandbox: ${{ steps.runners.outputs.runner_macos_microsandbox }}
       runner_windows_microsandbox_preview: ${{ steps.runners.outputs.runner_windows_microsandbox_preview }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Inspect explicitly provisioned self-hosted runners
@@ -115,18 +115,18 @@ jobs:
           - platform: windows-amd64
             runner: windows-2025
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent for the Agent build
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -170,7 +170,7 @@ jobs:
         working-directory: octacity
       - name: Retain released Host evidence
         if: success()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-host-${{ matrix.platform }}
           path: ${{ runner.temp }}/octacity-host-contract/evidence
@@ -181,18 +181,18 @@ jobs:
     if: ${{ needs.matrix-plan.outputs.run_failure_matrix == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent for compilation
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
       - name: Install protobuf compiler
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -200,18 +200,18 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes libcap-ng-dev
       - name: Start disposable failure-injection dependencies
         run: |
+          python3 tools/build_pinned_minio.py minio octacity/minio-contract:${GITHUB_SHA} --architecture amd64
           docker run --detach --rm --name octacity-failure-minio \
             -p 127.0.0.1:19000:9000 \
             -e MINIO_ROOT_USER=octacity \
             -e MINIO_ROOT_PASSWORD=octacity-secret \
-            docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
-            server /bitnami/minio/data
+            octacity/minio-contract:${GITHUB_SHA}
           docker run --detach --rm --name octacity-failure-postgres \
             -p 127.0.0.1:15432:5432 \
             -e POSTGRES_USER=octacity \
             -e POSTGRES_PASSWORD=octacity-secret \
             -e POSTGRES_DB=postgres \
-            postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+            postgres:18.6-bookworm@sha256:9e73daeb439141c2b11eea2463f5f1a3b269fd90d897b41cddb7cb440f21aa5d
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null \
               && docker exec octacity-failure-postgres pg_isready -U octacity -d postgres >/dev/null; then
@@ -222,6 +222,7 @@ jobs:
           docker logs octacity-failure-minio
           docker logs octacity-failure-postgres
           exit 1
+        working-directory: octacity
       - name: Run the complete failure-injection matrix
         working-directory: octacity
         env:
@@ -239,7 +240,7 @@ jobs:
           octacity-failure-minio octacity-failure-postgres || true
       - name: Retain failure-injection evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-failure-matrix
           path: ${{ runner.temp }}/octacity-failure-matrix
@@ -250,18 +251,18 @@ jobs:
     if: ${{ needs.matrix-plan.outputs.run_security_matrix == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent for compilation
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
       - name: Install protobuf compiler
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -274,7 +275,7 @@ jobs:
             -e POSTGRES_USER=octacity \
             -e POSTGRES_PASSWORD=octacity-secret \
             -e POSTGRES_DB=postgres \
-            postgres:17.6-bookworm@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3
+            postgres:18.6-bookworm@sha256:9e73daeb439141c2b11eea2463f5f1a3b269fd90d897b41cddb7cb440f21aa5d
           for attempt in {1..30}; do
             if docker exec octacity-security-postgres \
               pg_isready -U octacity -d postgres >/dev/null; then
@@ -296,7 +297,7 @@ jobs:
         run: docker rm --force octacity-security-postgres || true
       - name: Retain security-boundary evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-security-matrix
           path: ${{ runner.temp }}/octacity-security-matrix
@@ -307,18 +308,18 @@ jobs:
     if: ${{ needs.matrix-plan.outputs.run_lifecycle_matrix == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent for compilation
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
       - name: Install protobuf compiler
-        uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -331,7 +332,7 @@ jobs:
           --evidence-dir "${RUNNER_TEMP}/octacity-lifecycle-matrix"
       - name: Retain release lifecycle evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-lifecycle-matrix
           path: ${{ runner.temp }}/octacity-lifecycle-matrix
@@ -342,31 +343,31 @@ jobs:
     if: ${{ needs.matrix-plan.outputs.run_vault_artifact_contract == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Build the real Octa runner and required plugins
         run: cargo build -p octa-runner -p octa_plugin_shell -p octa_plugin_tpl
         working-directory: octa
       - name: Start pinned Vault and MinIO services
         run: |
+          python3 tools/build_pinned_minio.py minio octacity/minio-contract:${GITHUB_SHA} --architecture amd64
           docker run --detach --rm --name octacity-vault-contract --cap-add=IPC_LOCK \
             -p 127.0.0.1:18200:8200 \
             -e VAULT_DEV_ROOT_TOKEN_ID=octacity-root \
             -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
-            hashicorp/vault:1.20.4@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10
+            hashicorp/vault:2.1.1@sha256:8af37ae9d45e4a0fac48ab700e0d99efc4c2d6cd84354a869f2147f1d3abab46
           docker run --detach --rm --name octacity-minio-contract \
             -p 127.0.0.1:19000:9000 \
             -e MINIO_ROOT_USER=octacity \
             -e MINIO_ROOT_PASSWORD=octacity-secret \
-            docker.io/bitnamilegacy/minio:2025.7.23@sha256:8935e75fa5d11295c17171e4aa49efe390a1193cd7f12e4d21b92af9ffef09d7 \
-            server /bitnami/minio/data
+            octacity/minio-contract:${GITHUB_SHA}
           for attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:18200/v1/sys/health >/dev/null \
               && curl --fail --silent http://127.0.0.1:19000/minio/health/live >/dev/null; then
@@ -377,6 +378,7 @@ jobs:
           docker logs octacity-vault-contract
           docker logs octacity-minio-contract
           exit 1
+        working-directory: octacity
       - name: Run the Vault and artifact service contract
         env:
           OCTACITY_MINIO_ENDPOINT: http://127.0.0.1:19000
@@ -402,18 +404,18 @@ jobs:
     env:
       OCTACITY_PERFORMANCE_GATE: ${{ needs.matrix-plan.outputs.run_performance_gate }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -454,7 +456,7 @@ jobs:
           --report "${{ steps.release-slice.outputs.evidence }}/performance-report.json"
       - name: Retain Linux Native release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-slice-linux-native
           path: ${{ steps.release-slice.outputs.evidence }}
@@ -469,18 +471,18 @@ jobs:
     if: ${{ needs.matrix-plan.outputs.run_linux_containerd == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -514,7 +516,7 @@ jobs:
         run: tools/runner/github-hosted-oci.sh verify-clean containerd
       - name: Retain Linux containerd release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-slice-linux-containerd
           path: ${{ steps.release-slice.outputs.evidence }}
@@ -529,18 +531,18 @@ jobs:
     if: ${{ needs.matrix-plan.outputs.run_linux_microsandbox == 'true' }}
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -574,7 +576,7 @@ jobs:
         run: tools/runner/github-hosted-oci.sh verify-clean microsandbox
       - name: Retain Linux Microsandbox release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-slice-linux-microsandbox
           path: ${{ steps.release-slice.outputs.evidence }}
@@ -591,18 +593,18 @@ jobs:
       group: octacity-release
       labels: [self-hosted, macOS, ARM64, octacity-microsandbox]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -624,7 +626,7 @@ jobs:
           backend: microsandbox
       - name: Retain macOS Microsandbox release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-slice-macos-microsandbox
           path: ${{ steps.release-slice.outputs.evidence }}
@@ -638,18 +640,18 @@ jobs:
       group: octacity-release
       labels: [self-hosted, Windows, X64, octacity-microsandbox-whp]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
+          toolchain: 1.99.0
       - name: Set up Microsandbox guest agent
         uses: ./octacity/.github/actions/setup-microsandbox-agentd
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -687,16 +689,16 @@ jobs:
       group: octacity-release
       labels: [self-hosted, macOS, ARM64, octacity-apple-vf]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Checkout pinned Octa revision
         id: octa-source
         uses: ./octacity/.github/actions/checkout-octa
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
-          toolchain: 1.98.1
-      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
+          toolchain: 1.99.0
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: protoc
           fallback: none
@@ -728,7 +730,7 @@ jobs:
         run: tools/runner/self-hosted-apple-vf.sh verify-clean
       - name: Retain Apple VF release evidence
         if: always() && steps.release-slice.outputs.evidence != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-slice-macos-apple-vf
           path: ${{ steps.release-slice.outputs.evidence }}
@@ -756,7 +758,7 @@ jobs:
       - macos-apple-vf
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: octacity
       - name: Verify required backend release evidence

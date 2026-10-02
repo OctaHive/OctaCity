@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "container_platform": "linux/arm64",
+  "images": {
+    "alpine": {
+      "platform": "linux/arm64",
+      "reference": "docker.io/library/alpine:3.24.2@sha256:260479a1cfaf304c4c20da7f8405d3ce313513dcd534bb743257bdd2fe0f3e2d"
+    },
+    "go": {
+      "platform": "linux/arm64",
+      "reference": "docker.io/library/golang:1.27.1-alpine3.24@sha256:092dd976c2202d32342b9517d6ff22c2dfd89f66c914aed205fed0643ee4a240"
+    },
+    "nginx": {
+      "platform": "linux/arm64",
+      "reference": "docker.io/library/nginx:1.30.5-alpine3.24@sha256:3abad30db61dfb2a339ea21acc9f3e6bbe78e291fcff2f835f4510c8fdfcbd83"
+    },
+    "node": {
+      "platform": "linux/arm64",
+      "reference": "docker.io/library/node:24.21.0-bookworm-slim@sha256:24b8bc17702002d2ed0c1da9ad66c3ee507cc279d0856726662ff2b6fc35c149"
+    },
+    "postgres": {
+      "platform": "linux/arm64",
+      "reference": "docker.io/library/postgres:18.6-bookworm@sha256:4c6516b5d6dfd96a6888541396f76545a63290be0aec2542547d7bcdd7515e28"
+    },
+    "rust": {
+      "platform": "linux/arm64",
+      "reference": "docker.io/library/rust:1.99.0-bookworm@sha256:03d2d688e32dbbe817df802e979f5bfdc5de52c76c7e71f7db9e211124c30620"
+    }
+  },
+  "ci_images": {
+    "alpine": {
+      "platform": "linux/amd64",
+      "reference": "docker.io/library/alpine:3.24.2@sha256:d56c381f961d307a21b3ca004cf1e3910f106644aefb1f43e654c8a56c4fd395"
+    },
+    "go": {
+      "platform": "linux/amd64",
+      "reference": "docker.io/library/golang:1.27.1-alpine3.24@sha256:cd9a32216aee5667f957a62d13a10032a63fd58e14b3f3d9cc8c2122f501e95e"
+    }
+  },
+  "sources": {
+    "minio": {
+      "archive_max_bytes": 134217728,
+      "archive_url": "https://codeload.github.com/minio/minio/tar.gz/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a",
+      "expanded_max_bytes": 1073741824,
+      "file_max_bytes": 268435456,
+      "license": "AGPL-3.0-only",
+      "member_max_count": 65536,
+      "repository": "https://github.com/minio/minio",
+      "sha256": "45521908307306e925c98d629e1c17d78c8b72b6ee242b1bfb1409f7d8ee5841",
+      "source_revision": "9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a",
+      "tag": "RELEASE.2025-10-15T17-29-55Z"
+    },
+    "minio_client": {
+      "archive_max_bytes": 67108864,
+      "archive_url": "https://codeload.github.com/minio/mc/tar.gz/7394ce0dd2a80935aded936b09fa12cbb3cb8096",
+      "expanded_max_bytes": 536870912,
+      "file_max_bytes": 134217728,
+      "license": "AGPL-3.0-only",
+      "member_max_count": 32768,
+      "repository": "https://github.com/minio/mc",
+      "sha256": "95cd293c7119f16921a6dc515a1fb74a2227f19fd994b9c8b770a154e802ac44",
+      "source_revision": "7394ce0dd2a80935aded936b09fa12cbb3cb8096",
+      "tag": "RELEASE.2025-08-13T08-35-41Z"
+    }
+  },
+  "native": {
+    "microsandbox": {
+      "asset": "microsandbox-darwin-aarch64.tar.gz",
+      "asset_id": 603564615,
+      "firmware": "libkrunfw.5.dylib",
+      "platform": "darwin-arm64",
+      "release_url": "https://github.com/superradcompany/microsandbox/releases/download/v0.7.6/microsandbox-darwin-aarch64.tar.gz",
+      "sha256": "a4f1722fee6460d4e2813e62b60dae4c092021d8120b7aaa9c2f4b5679d97d89",
+      "source_revision": "09df3d4b9d832adaede1fb9a198cfc660bfab8cd",
+      "tag": "v0.7.6",
+      "version": "0.7.6"
+    },
+    "octa": {
+      "asset": "octa-Linux-arm64.tar.gz",
+      "archive_max_bytes": 536870912,
+      "platform": "linux-arm64",
+      "release_name": "octa-linux-arm64-v0.4.0",
+      "release_url": "https://github.com/OctaHive/octa/releases/download/v0.4.0/octa-Linux-arm64.tar.gz",
+      "repository": "https://github.com/OctaHive/octa",
+      "sha256": "3b93a906d478568c9d8882f10a136e672a1875ca005580b9263d2657b4b7dd5d",
+      "source_archive_max_bytes": 67108864,
+      "source_archive_sha256": "03826599a9ec1aa431fd825c33e42ac065c0d4fdfd9eacd2fe2cf9e47e3aafc3",
+      "source_archive_url": "https://codeload.github.com/OctaHive/octa/tar.gz/9c917a987c00c61b5c2d8bf6aecdcc66483f38f3",
+      "source_revision": "9c917a987c00c61b5c2d8bf6aecdcc66483f38f3",
+      "version": "0.4.0"
+    },
+    "octacity_agent": {
+      "platform": "macos-arm64",
+      "source_revision": {
+        "format": "lowercase-git-sha1",
+        "mode": "required-at-stage"
+      },
+      "version": "0.1.0"
+    }
+  }
+}

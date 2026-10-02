@@ -14,7 +14,7 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 
-VERSION = "0.6.18"
+VERSION = "0.7.6"
 RELEASE_URL = (
     "https://github.com/superradcompany/microsandbox/releases/download/"
     f"v{VERSION}"
@@ -33,13 +33,13 @@ class Asset(NamedTuple):
 ASSETS = {
     "aarch64": Asset(
         "agentd-aarch64",
-        "446efc7c97fd4c17233c500f1162a19b546562222d8088889207f45091468f29",
-        553487982,
+        "f858a7b227308b40e06387b99c5f9a99f5fb9f1aeaa70f47080a8998b87dd2ba",
+        603564489,
     ),
     "x86_64": Asset(
         "agentd-x86_64",
-        "ba7f7a719bacb4afdfa211b5e42da9f75cea2fcadc0b1a58a686cd5a727ecdf7",
-        553487978,
+        "78bb21c3bf16f195068c946ce72419d242fa2b3f1bebd2c339cc8e58dd79847d",
+        603564491,
     ),
 }
 

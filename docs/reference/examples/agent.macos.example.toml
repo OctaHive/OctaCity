@@ -73,7 +73,7 @@ oci_engines = []
 
 # [[virtualization_providers]]
 # provider = "microsandbox"
-# environment_identity = "microsandbox-0.6.18-linux-arm64-v1"
+# environment_identity = "microsandbox-0.7.6-linux-arm64-v1"
 # executable = "/Users/octacity/.microsandbox/bin/msb"
 # libkrunfw = "/Users/octacity/.microsandbox/lib/libkrunfw.5.dylib"
 # metrics_sample_interval_seconds = 1

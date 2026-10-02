@@ -13,6 +13,7 @@ octacity-observability = { path = "../../../shared/octacity-observability" }
 processkit.workspace = true
 serde.workspace = true
 sha2.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

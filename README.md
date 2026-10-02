@@ -67,7 +67,7 @@ platform matrix and its test cadence.
 
 ### Build from source
 
-The workspace uses Rust 1.98.1 and requires `protoc`. Linux builds also require
+The workspace uses Rust 1.99.0 and requires `protoc`. Linux builds also require
 the `libcap-ng` development package. Octa is a separate repository and must be
 checked out beside OctaCity at the revision pinned by this repository:
 

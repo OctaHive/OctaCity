@@ -151,7 +151,10 @@ fn rejects_requests_the_engine_cannot_enforce() {
 fn derives_the_containerd_snapshot_chain_id() {
   let first = format!("sha256:{}", "1".repeat(64));
   let second = format!("sha256:{}", "2".repeat(64));
-  let expected = format!("sha256:{:x}", Sha256::digest(format!("{first} {second}").as_bytes()));
+  let expected = format!(
+    "sha256:{}",
+    hex::encode(Sha256::digest(format!("{first} {second}").as_bytes()))
+  );
   assert_eq!(chain_id(&[first, second]).unwrap(), expected);
   assert!(chain_id(&[]).is_err());
   assert!(chain_id(&["sha512:bad".to_owned()]).is_err());

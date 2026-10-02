@@ -526,7 +526,7 @@ mod tests {
   #[tokio::test]
   async fn cleanup_and_idle_drain_remain_live_under_disk_pressure() {
     let _guard = crate::composition::tests::component_graph_guard().await;
-    let fixture = crate::composition::tests::installed_agent_fixture("https://coordinator.example");
+    let fixture = crate::composition::tests::inventory_only_agent_fixture("https://coordinator.example");
     let mut components = Components::load(&fixture.config).await.unwrap();
     components.validated.config.maintenance.work_reserve_bytes = u64::MAX
       .checked_sub(components.validated.config.max_workspace_bytes)

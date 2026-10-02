@@ -14,6 +14,7 @@ octacity-source-plugin = { path = "../octacity-source-plugin" }
 processkit.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+hex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

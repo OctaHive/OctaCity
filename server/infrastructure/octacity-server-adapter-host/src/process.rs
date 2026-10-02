@@ -373,7 +373,7 @@ where
 #[must_use]
 pub fn cancel_request_id(request_id: &str) -> String {
   let digest = Sha256::digest(request_id.as_bytes());
-  format!("host-cancel-{digest:x}")
+  format!("host-cancel-{}", hex::encode(digest))
 }
 
 async fn verify_current_executable(executable: &VerifiedExecutable) -> Result<(), HostError> {
@@ -401,7 +401,7 @@ async fn verify_current_executable(executable: &VerifiedExecutable) -> Result<()
     }
     digest.update(&buffer[..read]);
   }
-  if format!("{:x}", digest.finalize()) != executable.sha256() {
+  if hex::encode(digest.finalize()) != executable.sha256() {
     return Err(changed());
   }
   Ok(())
