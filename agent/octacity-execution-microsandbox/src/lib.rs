@@ -169,6 +169,8 @@ impl MicrosandboxEngine {
       .map_err(|error| backend(format!("canonicalize Microsandbox work root: {error}")))?;
     let executable = canonical_runtime_file("Microsandbox executable", &executable)?;
     let libkrunfw = canonical_runtime_file("Microsandbox libkrunfw", &libkrunfw)?;
+    microsandbox::config::set_sdk_msb_path(&executable);
+    microsandbox::set_libkrunfw_path(&libkrunfw);
     let backend = LocalBackend::builder()
       .home(state_root.join("microsandbox"))
       .build_lazy()

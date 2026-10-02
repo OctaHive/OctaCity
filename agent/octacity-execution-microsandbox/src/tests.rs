@@ -132,6 +132,54 @@ fn keeps_microsandbox_state_under_the_agent_state_root() {
   assert!(MicrosandboxEngine::new(invalid_metrics).is_err());
 }
 
+#[test]
+fn binds_the_configured_runtime_to_the_local_backend() {
+  const CHILD: &str = "OCTACITY_TEST_MICROSANDBOX_RUNTIME_BINDING";
+  if std::env::var_os(CHILD).is_none() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+      .arg("--exact")
+      .arg("tests::binds_the_configured_runtime_to_the_local_backend")
+      .arg("--nocapture")
+      .env(CHILD, "1")
+      .env_remove("MSB_CONFIG_PATH")
+      .env_remove("MSB_HOME")
+      .env_remove("MSB_PATH")
+      .env_remove("MSB_LIBKRUNFW_PATH")
+      .output()
+      .unwrap();
+    assert!(
+      output.status.success(),
+      "{}\n{}",
+      String::from_utf8_lossy(&output.stdout),
+      String::from_utf8_lossy(&output.stderr)
+    );
+    return;
+  }
+  let Some(platform) = GUEST_PLATFORM else {
+    return;
+  };
+  let temporary = tempfile::tempdir().unwrap();
+  let engine = MicrosandboxEngine::new(engine_config(
+    temporary.path(),
+    "agent-1",
+    temporary.path(),
+    temporary.path(),
+    platform,
+    Duration::from_secs(5),
+  ))
+  .unwrap();
+  let local = engine.backend.as_local().unwrap();
+
+  assert_eq!(
+    local.config().resolve_msb_path().unwrap(),
+    temporary.path().join("msb").canonicalize().unwrap()
+  );
+  assert_eq!(
+    local.config().resolve_libkrunfw_path().unwrap(),
+    temporary.path().join("libkrunfw").canonicalize().unwrap()
+  );
+}
+
 #[tokio::test]
 async fn rejects_a_workspace_outside_the_configured_work_root() {
   let temporary = tempfile::tempdir().unwrap();
