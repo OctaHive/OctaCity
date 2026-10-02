@@ -8,7 +8,7 @@ use sqlx::{
 /// A rollback to that binary requires restoring a database snapshot captured
 /// at this exact version. A previous binary is never allowed to open a database
 /// containing migrations it does not know.
-pub const PREVIOUS_BINARY_SCHEMA_VERSION: i64 = 41;
+pub const PREVIOUS_BINARY_SCHEMA_VERSION: i64 = 42;
 
 /// Ordered embedded forward migrations for the authoritative PostgreSQL store.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();

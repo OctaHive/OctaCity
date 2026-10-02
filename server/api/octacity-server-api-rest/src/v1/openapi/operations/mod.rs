@@ -85,6 +85,7 @@ pub(crate) enum ParameterProfile {
   CurrentDefinitionList,
   AgentPoolList,
   AgentList,
+  ProjectBuildList,
   JobEvents,
   ArtifactList,
   CacheSessionList,

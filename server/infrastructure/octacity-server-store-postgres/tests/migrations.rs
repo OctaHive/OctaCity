@@ -66,6 +66,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   assert!(authenticated_management_actor_is_allowed(&previous.pool).await?);
   verify_security_scoped_idempotency(&previous.pool).await?;
   verify_definition_discovery_indexes(&previous.pool).await?;
+  verify_build_discovery_indexes(&previous.pool).await?;
   assert_snapshot_marker(&previous.pool).await?;
 
   let failed = snapshot.restore().await;
@@ -96,7 +97,8 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   );
   assert!(authenticated_management_actor_is_allowed(&rollback.pool).await?);
   verify_security_scoped_idempotency(&rollback.pool).await?;
-  assert!(definition_discovery_index_definitions(&rollback.pool).await?.is_empty());
+  verify_definition_discovery_indexes(&rollback.pool).await?;
+  assert!(build_discovery_index_definitions(&rollback.pool).await?.is_empty());
   assert_legacy_idempotency_record(&rollback.pool).await?;
   assert_snapshot_marker(&rollback.pool).await?;
 
@@ -417,6 +419,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   );
   verify_security_scoped_idempotency(pool).await?;
   verify_definition_discovery_indexes(pool).await?;
+  verify_build_discovery_indexes(pool).await?;
   Ok(())
 }
 
@@ -439,6 +442,45 @@ async fn definition_discovery_index_definitions(pool: &sqlx::PgPool) -> Result<V
       "build_configurations_project_discovery_idx",
       "pipelines_project_discovery_idx",
       "repositories_project_discovery_idx",
+    ]
+    .as_slice(),
+  )
+  .fetch_all(pool)
+  .await
+}
+
+async fn verify_build_discovery_indexes(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  let definitions = build_discovery_index_definitions(pool).await?;
+  assert_eq!(definitions.len(), 3);
+  assert!(
+    definitions[0]
+      .1
+      .contains("(project_id, build_configuration_id, created_at DESC, id DESC)")
+  );
+  assert!(definitions[1].1.contains("(project_id, created_at DESC, id DESC)"));
+  assert!(
+    definitions[2]
+      .1
+      .contains("(project_id, state, created_at DESC, id DESC)")
+  );
+  assert!(
+    definitions
+      .iter()
+      .all(|(_, definition)| definition.contains("WHERE metadata_visible"))
+  );
+  Ok(())
+}
+
+async fn build_discovery_index_definitions(pool: &sqlx::PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+  sqlx::query_as(
+    "SELECT indexname, indexdef FROM pg_indexes \
+     WHERE schemaname = 'public' AND indexname = ANY($1::text[]) ORDER BY indexname",
+  )
+  .bind(
+    [
+      "builds_project_configuration_discovery_idx",
+      "builds_project_discovery_idx",
+      "builds_project_state_discovery_idx",
     ]
     .as_slice(),
   )

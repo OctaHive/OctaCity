@@ -3,6 +3,99 @@ use serde_json::Value;
 
 use super::MutationDisposition;
 
+/// Aggregate Build state exposed by the management API.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildStateResource {
+  /// The Build is accepted and waiting for its Attempt to start.
+  Queued,
+  /// At least one Attempt is still active.
+  Running,
+  /// The Build completed successfully.
+  Succeeded,
+  /// The Build completed unsuccessfully.
+  Failed,
+  /// The Build was cancelled.
+  Cancelled,
+}
+
+/// Aggregate Attempt state exposed by Build summaries.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptStateResource {
+  /// Jobs exist but the Attempt has not started running.
+  Created,
+  /// At least one Job is still active.
+  Running,
+  /// Every required Job completed successfully.
+  Succeeded,
+  /// At least one required Job failed.
+  Failed,
+  /// The Attempt was cancelled.
+  Cancelled,
+}
+
+/// Provider-neutral cause that initiated a Build.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TriggerCauseResource {
+  /// Trusted-network management intent.
+  Manual,
+  /// A persisted schedule reached its occurrence time.
+  Scheduled,
+  /// An authenticated external repository event.
+  External {
+    /// Server-owned integration that authenticated the event.
+    integration_id: String,
+    /// Repository named by the normalized event.
+    repository_id: String,
+    /// Provider-neutral event classification.
+    event_kind: String,
+    /// Optional mutable source reference.
+    reference: Option<String>,
+    /// Optional immutable revision reported by the event.
+    revision: Option<String>,
+  },
+  /// A server-owned event derived from an earlier Build.
+  Internal {
+    /// Build whose durable event produced this Build.
+    source_build_id: String,
+    /// Documented server event classification.
+    event_kind: String,
+  },
+}
+
+/// Compact REST representation of one Build in a Project collection.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSummaryResource {
+  /// Stable Build identity.
+  pub id: String,
+  /// Owning Project identity.
+  pub project_id: String,
+  /// Selected Build Configuration identity.
+  pub configuration_id: String,
+  /// Exact immutable Build Configuration version.
+  pub configuration_version: u64,
+  /// Provider-neutral cause that initiated the Build.
+  pub cause: TriggerCauseResource,
+  /// Current aggregate state, including terminal outcome when complete.
+  pub state: BuildStateResource,
+  /// Authoritative Build creation time as Unix milliseconds.
+  pub created_at_unix_ms: i64,
+  /// Current Attempt identity.
+  pub current_attempt_id: String,
+  /// Current positive Attempt number.
+  pub current_attempt_number: u64,
+  /// Current Attempt state.
+  pub current_attempt_state: AttemptStateResource,
+  /// Terminal transition time as Unix milliseconds, when complete.
+  pub terminal_at_unix_ms: Option<i64>,
+}
+
+/// Bounded newest-first page of Build summaries.
+pub type BuildSummaryPage = super::CursorPage<BuildSummaryResource>;
+
 /// Summary of one Build Attempt.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -16,7 +109,7 @@ pub struct AttemptSummaryResource {
   /// Prior failed Attempt, when this is a retry.
   pub retry_of_attempt_id: Option<String>,
   /// Current aggregate state.
-  pub state: String,
+  pub state: AttemptStateResource,
   /// Optimistic state version.
   pub version: u64,
   /// Authoritative creation time as Unix milliseconds.
@@ -56,7 +149,7 @@ pub struct BuildResource {
   /// Durable ready-queue priority.
   pub priority: i64,
   /// Current aggregate state.
-  pub state: String,
+  pub state: BuildStateResource,
   /// Optimistic state version.
   pub version: u64,
   /// Safe normalized initiating Trigger facts.

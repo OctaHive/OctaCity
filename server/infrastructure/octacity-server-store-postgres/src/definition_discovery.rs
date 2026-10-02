@@ -1,6 +1,6 @@
 use octacity_server_domain::{
-  BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, EntityKind, PipelineId, PipelineName,
-  PipelineVersion, ProjectId, RepositoryId, RepositoryName, RepositoryVersion, Timestamp, TriggerId, TriggerVersion,
+  BuildConfigurationId, BuildConfigurationName, BuildConfigurationVersion, PipelineId, PipelineName, PipelineVersion,
+  ProjectId, RepositoryId, RepositoryName, RepositoryVersion, TriggerId, TriggerVersion,
 };
 use octacity_server_store::{
   CurrentBuildConfigurationPage, CurrentBuildConfigurationSummary, CurrentPipelinePage, CurrentPipelineSummary,
@@ -10,7 +10,11 @@ use octacity_server_store::{
 };
 use sqlx::{FromRow, PgPool};
 
-use crate::{database::unavailable, read_visibility::sql_read_visibility};
+use crate::{
+  database::unavailable,
+  discovery::{decode_page, positive, requested_row_limit, require_project, timestamp},
+  read_visibility::sql_read_visibility,
+};
 
 #[derive(FromRow)]
 struct NamedDefinitionRow {
@@ -243,52 +247,4 @@ fn decode_trigger(row: TriggerDefinitionSummaryRow) -> Result<CurrentTriggerDefi
     enabled: row.enabled,
     published_at: timestamp(row.published_at_millis)?,
   })
-}
-
-fn positive(value: i64) -> Result<u64, StoreError> {
-  u64::try_from(value)
-    .ok()
-    .filter(|value| *value > 0)
-    .ok_or(StoreError::Unavailable)
-}
-
-fn timestamp(value: i64) -> Result<Timestamp, StoreError> {
-  Timestamp::from_unix_millis(value).map_err(|_| StoreError::Unavailable)
-}
-
-async fn require_project(pool: &PgPool, project_id: ProjectId) -> Result<(), StoreError> {
-  let exists = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
-    .bind(project_id.as_uuid())
-    .fetch_one(pool)
-    .await
-    .map_err(unavailable)?;
-  if exists {
-    Ok(())
-  } else {
-    Err(StoreError::NotFound {
-      entity: EntityKind::Project,
-    })
-  }
-}
-
-fn requested_row_limit(page_limit: u16) -> i64 {
-  i64::from(page_limit) + 1
-}
-
-fn decode_page<R, T, I: Copy>(
-  rows: Vec<R>,
-  limit: u16,
-  decode: impl FnMut(R) -> Result<T, StoreError>,
-  identity: impl Fn(&T) -> I,
-) -> Result<(Vec<T>, Option<I>), StoreError> {
-  let mut items = rows.into_iter().map(decode).collect::<Result<Vec<_>, _>>()?;
-  let next_cursor = finish_page(&mut items, limit, identity);
-  Ok((items, next_cursor))
-}
-
-fn finish_page<T, I: Copy>(items: &mut Vec<T>, limit: u16, identity: impl Fn(&T) -> I) -> Option<I> {
-  let limit = usize::from(limit);
-  let has_more = items.len() > limit;
-  items.truncate(limit);
-  has_more.then(|| identity(items.last().expect("a non-zero full page has a last item")))
 }

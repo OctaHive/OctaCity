@@ -16,11 +16,12 @@ use octacity_server_api_rest::{
   v1::{ErrorCode, MANAGEMENT_OPERATIONS, management_authorization_operations, openapi_document},
 };
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, AuditActorKind, AuditActorProjection, AuditFactPageProjection,
-  AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery, BuildConfigurationPageProjection,
-  BuildConfigurationSummaryProjection, BuildLogSearchCursorProjection, BuildLogSearchError,
-  BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection, BuildLogStream,
-  CancelBuildCommand, Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand,
+  AcceptManualTriggerCommand, ApplicationError, AttemptState, AuditActorKind, AuditActorProjection,
+  AuditFactPageProjection, AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery,
+  BuildConfigurationPageProjection, BuildConfigurationSummaryProjection, BuildLogSearchCursorProjection,
+  BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection,
+  BuildLogStream, BuildPageCursor, BuildPageProjection, BuildState, BuildSummaryProjection, CancelBuildCommand,
+  Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand,
   CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
   CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand,
   DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery,
@@ -28,7 +29,7 @@ use octacity_server_application::{
   GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery, GetManualTriggerDefinitionQuery,
   GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery,
   ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
   LogSearchError, ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant,
   ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementCommandUseCase,
@@ -38,13 +39,15 @@ use octacity_server_application::{
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
   PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, ReadJobEventsQuery, ReassignAgentPoolCommand,
   ReleaseBuildResultHoldCommand, RenameProjectCommand, RepositoryPageProjection, RepositorySummaryProjection,
-  RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery, Timestamp,
+  RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery, Timestamp, TriggerCauseProjection,
   TriggerDefinitionKindProjection, TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
 };
 use tower::ServiceExt as _;
 
 #[path = "v1_handlers/audit.rs"]
 mod audit;
+#[path = "v1_handlers/build_discovery.rs"]
+mod build_discovery;
 #[path = "v1_handlers/definition_discovery.rs"]
 mod definition_discovery;
 #[path = "v1_handlers/log_search.rs"]
@@ -82,6 +85,8 @@ struct RecordingApplication {
   calls: Mutex<Vec<&'static str>>,
   protected_side_effects: Mutex<ProtectedSideEffectCounts>,
   log_search_queries: Mutex<Vec<SearchBuildLogsQuery>>,
+  build_list_queries: Mutex<Vec<ListProjectBuildsQuery>>,
+  build_summary_states: Option<(BuildState, AttemptState)>,
   successful_workflow: bool,
   capability_unavailable_for_managed: bool,
 }
@@ -92,8 +97,17 @@ impl RecordingApplication {
       calls: Mutex::default(),
       protected_side_effects: Mutex::default(),
       log_search_queries: Mutex::default(),
+      build_list_queries: Mutex::default(),
+      build_summary_states: Some((BuildState::Succeeded, AttemptState::Succeeded)),
       successful_workflow: true,
       capability_unavailable_for_managed: false,
+    }
+  }
+
+  fn queued_build_workflow() -> Self {
+    Self {
+      build_summary_states: Some((BuildState::Queued, AttemptState::Created)),
+      ..Self::successful_workflow()
     }
   }
 
@@ -386,6 +400,49 @@ impl ManagementQueryUseCase<ListProjectTriggerDefinitionsQuery> for RecordingApp
         .into_iter()
         .collect(),
       next_cursor: first_page.then_some(id),
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListProjectBuildsQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListProjectBuildsQuery,
+  ) -> Result<BuildPageProjection, Self::Error> {
+    self.record("list_project_builds");
+    self.build_list_queries.lock().unwrap().push(query.clone());
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let id = "99999999-9999-4999-8999-999999999999".parse().unwrap();
+    let created_at = Timestamp::from_unix_millis(1_700_000_000_500).unwrap();
+    let first_page = query.after().is_none();
+    let (state, current_attempt_state) = self
+      .build_summary_states
+      .expect("successful fixture must define states");
+    Ok(BuildPageProjection {
+      items: first_page
+        .then(|| BuildSummaryProjection {
+          id,
+          project_id: query.project_id(),
+          configuration_id: "44444444-4444-4444-8444-444444444444".parse().unwrap(),
+          configuration_version: serde_json::from_value(serde_json::json!(3)).unwrap(),
+          cause: TriggerCauseProjection::Manual,
+          state,
+          created_at,
+          current_attempt_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".parse().unwrap(),
+          current_attempt_number: serde_json::from_value(serde_json::json!(2)).unwrap(),
+          current_attempt_state,
+          terminal_at: Some(Timestamp::from_unix_millis(1_700_000_001_500).unwrap()),
+        })
+        .into_iter()
+        .collect(),
+      next_cursor: first_page.then_some(BuildPageCursor::new(created_at, id)),
     })
   }
 }
@@ -727,6 +784,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
       &format!("/api/v1/projects/{project_id}/trigger-definitions?limit=10"),
       None,
     ),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/builds?limit=10"), None),
     json_request(
       "POST",
       "/api/v1/pipelines",
@@ -990,6 +1048,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_project_repositories",
       "list_project_build_configurations",
       "list_project_trigger_definitions",
+      "list_project_builds",
       "create_pipeline",
       "publish_pipeline",
       "get_pipeline",

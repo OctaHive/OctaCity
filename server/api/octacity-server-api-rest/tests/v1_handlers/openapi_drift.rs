@@ -480,6 +480,84 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     assert_json_matches_component(&document, page_schema, &serde_json::from_str(fixture).unwrap());
   }
 
+  let build_list = &document["paths"]["/api/v1/projects/{project_id}/builds"]["get"];
+  assert_eq!(build_list["operationId"], "listProjectBuilds");
+  assert_eq!(
+    build_list["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+    "#/components/schemas/BuildSummaryPage"
+  );
+  let build_parameters = build_list["parameters"].as_array().unwrap();
+  let parameter = |name| {
+    build_parameters
+      .iter()
+      .find(|parameter| parameter["name"] == name)
+      .unwrap()
+  };
+  assert_eq!(parameter("state")["schema"]["$ref"], "#/components/schemas/BuildState");
+  assert_eq!(parameter("after")["schema"]["maxLength"], 128);
+  assert_eq!(parameter("limit")["schema"]["maximum"], 200);
+  assert!(
+    build_parameters
+      .iter()
+      .any(|parameter| parameter["name"] == "project_id")
+  );
+  assert!(
+    build_parameters
+      .iter()
+      .any(|parameter| parameter["name"] == "configuration_id")
+  );
+  assert_json_matches_component(
+    &document,
+    "BuildSummaryPage",
+    &serde_json::from_str(include_str!("../../fixtures/v1/build-summary-page.json")).unwrap(),
+  );
+  assert_eq!(
+    document["components"]["schemas"]["BuildState"]["enum"],
+    serde_json::json!(["queued", "running", "succeeded", "failed", "cancelled"])
+  );
+  assert_eq!(
+    document["components"]["schemas"]["AttemptState"]["enum"],
+    serde_json::json!(["created", "running", "succeeded", "failed", "cancelled"])
+  );
+  let build_summary = document["components"]["schemas"]["BuildSummaryResource"]["properties"]
+    .as_object()
+    .unwrap();
+  for diagnostic_field in ["jobs", "edges", "events", "parameters", "effective_policy", "trigger"] {
+    assert!(build_summary.get(diagnostic_field).is_none());
+  }
+
+  let build_detail = document["components"]["schemas"]["BuildResource"]["properties"]
+    .as_object()
+    .unwrap()
+    .keys()
+    .map(String::as_str)
+    .collect::<BTreeSet<_>>();
+  assert_eq!(
+    build_detail,
+    BTreeSet::from([
+      "configuration_id",
+      "configuration_version",
+      "created_at_unix_ms",
+      "current_attempt",
+      "effective_policy",
+      "id",
+      "immutable_revision",
+      "parameters",
+      "pipeline_id",
+      "pipeline_version",
+      "priority",
+      "project_id",
+      "repository_id",
+      "repository_version",
+      "source",
+      "state",
+      "trigger",
+      "updated_at_unix_ms",
+      "version",
+    ]),
+    "the Build collection must not alter the existing Build detail contract"
+  );
+
   for (path, operation_id, response_schema) in [
     (
       "/api/v1/pipelines/{pipeline_id}/versions/{version}",

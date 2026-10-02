@@ -11,12 +11,12 @@ use octacity_server_application::{
   GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
   GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery,
   ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery,
-  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
-  ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand,
-  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
-  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
-  ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
-  RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
+  ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery,
+  ListProjectsQuery, ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand,
+  PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
+  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
+  PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand,
+  RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
 };
 
 type ProjectCreate = dyn AuthorizedManagementCommandHandler<CreateProjectCommand, Error = ApplicationError>;
@@ -54,6 +54,7 @@ type AgentDrain = dyn AuthorizedManagementCommandHandler<DrainAgentCommand, Erro
 type AgentEnrollmentIssue =
   dyn AuthorizedManagementCommandHandler<IssueAgentEnrollmentCommand, Error = ApplicationError>;
 type BuildGet = dyn AuthorizedManagementQueryHandler<GetBuildQuery, Error = ApplicationError>;
+type BuildList = dyn AuthorizedManagementQueryHandler<ListProjectBuildsQuery, Error = ApplicationError>;
 type AttemptGet = dyn AuthorizedManagementQueryHandler<GetAttemptQuery, Error = ApplicationError>;
 type JobGet = dyn AuthorizedManagementQueryHandler<GetJobQuery, Error = ApplicationError>;
 type BuildCancel = dyn AuthorizedManagementCommandHandler<CancelBuildCommand, Error = ApplicationError>;
@@ -285,6 +286,7 @@ impl AgentManagementApplication {
 
 /// Type-erased Build execution handlers consumed by REST.
 pub struct BuildManagementApplication {
+  pub(super) list: Arc<BuildList>,
   pub(super) get_build: Arc<BuildGet>,
   pub(super) get_attempt: Arc<AttemptGet>,
   pub(super) get_job: Arc<JobGet>,
@@ -300,11 +302,13 @@ impl BuildManagementApplication {
       + AuthorizedManagementCommandHandler<RetryBuildCommand, Error = ApplicationError>
       + 'static,
     Q: AuthorizedManagementQueryHandler<GetBuildQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListProjectBuildsQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<GetAttemptQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<GetJobQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
+      list: queries.clone(),
       get_build: queries.clone(),
       get_attempt: queries.clone(),
       get_job: queries,

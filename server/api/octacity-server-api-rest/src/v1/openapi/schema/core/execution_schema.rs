@@ -2,6 +2,62 @@ use super::*;
 
 pub(super) fn insert_execution_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert(
+    "BuildState".to_owned(),
+    string_enum(&["queued", "running", "succeeded", "failed", "cancelled"]),
+  );
+  schemas.insert(
+    "AttemptState".to_owned(),
+    string_enum(&["created", "running", "succeeded", "failed", "cancelled"]),
+  );
+  schemas.insert(
+    "BuildSummaryResource".to_owned(),
+    object(
+      [
+        ("id", non_empty_string()),
+        ("project_id", non_empty_string()),
+        ("configuration_id", non_empty_string()),
+        ("configuration_version", positive_integer()),
+        ("cause", schema_ref("TriggerCause")),
+        ("state", schema_ref("BuildState")),
+        ("created_at_unix_ms", integer()),
+        ("current_attempt_id", non_empty_string()),
+        ("current_attempt_number", positive_integer()),
+        ("current_attempt_state", schema_ref("AttemptState")),
+        ("terminal_at_unix_ms", nullable(integer())),
+      ],
+      &[
+        "id",
+        "project_id",
+        "configuration_id",
+        "configuration_version",
+        "cause",
+        "state",
+        "created_at_unix_ms",
+        "current_attempt_id",
+        "current_attempt_number",
+        "current_attempt_state",
+        "terminal_at_unix_ms",
+      ],
+    ),
+  );
+  schemas.insert(
+    "BuildSummaryPage".to_owned(),
+    object(
+      [
+        ("items", array(schema_ref("BuildSummaryResource"))),
+        (
+          "next_cursor",
+          nullable(json!({
+            "type": "string",
+            "minLength": 1,
+            "maxLength": octacity_server_application::MAX_BUILD_PAGE_CURSOR_BYTES
+          })),
+        ),
+      ],
+      &["items", "next_cursor"],
+    ),
+  );
+  schemas.insert(
     "AttemptSummaryResource".to_owned(),
     object(
       [
@@ -9,7 +65,7 @@ pub(super) fn insert_execution_schemas(schemas: &mut Map<String, Value>) {
         ("build_id", non_empty_string()),
         ("number", positive_integer()),
         ("retry_of_attempt_id", nullable(non_empty_string())),
-        ("state", string_enum(&["running", "succeeded", "failed", "cancelled"])),
+        ("state", schema_ref("AttemptState")),
         ("version", positive_integer()),
         ("created_at_unix_ms", integer()),
         ("updated_at_unix_ms", integer()),
@@ -43,7 +99,7 @@ pub(super) fn insert_execution_schemas(schemas: &mut Map<String, Value>) {
         ("source", schema_ref("ManualSource")),
         ("effective_policy", schema_ref("EffectiveProjectPolicy")),
         ("priority", integer()),
-        ("state", string_enum(&["running", "succeeded", "failed", "cancelled"])),
+        ("state", schema_ref("BuildState")),
         ("version", positive_integer()),
         ("trigger", schema_ref("TriggerHistory")),
         ("created_at_unix_ms", integer()),

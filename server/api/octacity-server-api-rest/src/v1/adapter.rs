@@ -14,11 +14,11 @@ use axum::{
 };
 use octacity_server_application::{
   AgentCommandOutcome, AgentEnrollmentSecretKey, AgentPageProjection, AgentPoolCommandOutcome, AgentPoolPageProjection,
-  AgentPoolProjection, AgentProjection, ApplicationFailure, AttemptDetailsProjection, BuildConfigurationCommandOutcome,
-  BuildConfigurationPageProjection, BuildConfigurationProjection, BuildDetailsProjection, CancelBuildCommandOutcome,
-  DeleteAgentPoolCommandOutcome, DeleteProjectCommandOutcome,
-  DependencyPolicyProjection as ApplicationDependencyPolicy, InternalTriggerDefinitionInput,
-  InternalTriggerPageProjection, InternalTriggerProjection,
+  AgentPoolProjection, AgentProjection, ApplicationFailure, AttemptDetailsProjection, AttemptState,
+  BuildConfigurationCommandOutcome, BuildConfigurationPageProjection, BuildConfigurationProjection,
+  BuildDetailsProjection, BuildState, CancelBuildCommandOutcome, DeleteAgentPoolCommandOutcome,
+  DeleteProjectCommandOutcome, DependencyPolicyProjection as ApplicationDependencyPolicy,
+  InternalTriggerDefinitionInput, InternalTriggerPageProjection, InternalTriggerProjection,
   InternalTriggerSourceStrategy as ApplicationInternalTriggerSource, JobEventPageProjection, JobProjection,
   ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerDefinitionProjection,
   ManualTriggerInput, ManualTriggerOutcome, MutationDisposition as ApplicationMutationDisposition,
@@ -38,8 +38,9 @@ use uuid::Uuid;
 use super::{
   AcceptManualTriggerRequest, AgentCapacity, AgentDrainMode, AgentPlatform, AgentPoolAdmissionPolicy,
   AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy, AgentPoolResource, AgentRequirements,
-  AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptSummaryResource, BuildConfigurationDefinition,
-  BuildConfigurationResource, BuildConfigurationSummaryPage, BuildConfigurationSummaryResource, BuildResource,
+  AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptStateResource, AttemptSummaryResource,
+  BuildConfigurationDefinition, BuildConfigurationResource, BuildConfigurationSummaryPage,
+  BuildConfigurationSummaryResource, BuildResource, BuildStateResource, BuildSummaryPage, BuildSummaryResource,
   CachePolicy, CancelBuildResponse, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
   CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest, CreateRepositoryRequest,
   CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource, DeleteAgentPoolResponse,
@@ -55,8 +56,9 @@ use super::{
   PublishProjectPolicyRequest, PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest,
   RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage,
   RepositorySummaryResource, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy,
-  ScheduleResource, TriggerDefinitionKind, TriggerDefinitionResource, TriggerDefinitionSummaryPage,
-  TriggerDefinitionSummaryResource, TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
+  ScheduleResource, TriggerCauseResource, TriggerDefinitionKind, TriggerDefinitionResource,
+  TriggerDefinitionSummaryPage, TriggerDefinitionSummaryResource, TriggerEvaluationResponse, TriggerKind,
+  VersionPrecondition,
 };
 use crate::RequestId;
 
@@ -113,7 +115,7 @@ use definition_discovery::{
   list_project_trigger_definitions,
 };
 use error::ApiError;
-use execution::{cancel_build, get_attempt, get_build, get_job, retry_build};
+use execution::{cancel_build, get_attempt, get_build, get_job, list_project_builds, retry_build};
 use internal_trigger::{
   create_internal_trigger, get_internal_trigger, list_internal_triggers, publish_internal_trigger,
 };

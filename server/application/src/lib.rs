@@ -63,6 +63,7 @@ mod transaction;
 mod webhook_delivery;
 
 pub use octacity_server_domain::{RetentionHoldVersion, Timestamp};
+pub use octacity_server_orchestrator::{AttemptState, BuildState};
 pub use octacity_server_store::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditActorKind, AuditFactListVisibility,
   AuditOutcome, BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, BuildLogStream,

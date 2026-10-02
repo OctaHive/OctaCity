@@ -280,6 +280,20 @@ impl BuildControlStore for PostgresAuthoritativeStore {
 }
 
 #[async_trait]
+impl BuildDiscoveryStore for PostgresStore {
+  async fn list_project_builds(&self, request: ListProjectBuilds) -> Result<ProjectBuildPage, StoreError> {
+    crate::build_discovery::list(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl BuildDiscoveryStore for PostgresAuthoritativeStore {
+  async fn list_project_builds(&self, request: ListProjectBuilds) -> Result<ProjectBuildPage, StoreError> {
+    self.store.list_project_builds(request).await
+  }
+}
+
+#[async_trait]
 impl BuildQueryStore for PostgresStore {
   async fn build(&self, build_id: octacity_server_domain::BuildId) -> Result<BuildRecord, StoreError> {
     crate::build_query::build(&self.pool, build_id).await

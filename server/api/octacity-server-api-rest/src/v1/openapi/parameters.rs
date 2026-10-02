@@ -51,6 +51,15 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       cursor_parameter(),
       limit_parameter(MAX_AGENT_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
     ]),
+    ParameterProfile::ProjectBuildList => parameters.extend([
+      json!({"name": "configuration_id", "in": "query", "required": false, "schema": non_empty_string()}),
+      json!({"name": "state", "in": "query", "required": false, "schema": schema_ref("BuildState")}),
+      cursor_parameter_with_max(octacity_server_application::MAX_BUILD_PAGE_CURSOR_BYTES),
+      limit_parameter(
+        octacity_server_application::MAX_BUILD_LIST_PAGE_SIZE,
+        super::super::adapter::DEFAULT_PAGE_LIMIT,
+      ),
+    ]),
     ParameterProfile::JobEvents => parameters.extend([
       json!({
         "name": "after",
@@ -158,11 +167,15 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
 }
 
 fn cursor_parameter() -> Value {
+  cursor_parameter_with_max(MAX_CURSOR_BYTES)
+}
+
+fn cursor_parameter_with_max(maximum: usize) -> Value {
   json!({
     "name": "after",
     "in": "query",
     "required": false,
-    "schema": {"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES}
+    "schema": {"type": "string", "minLength": 1, "maxLength": maximum}
   })
 }
 

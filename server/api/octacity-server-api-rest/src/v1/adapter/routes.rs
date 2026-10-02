@@ -15,8 +15,8 @@ use octacity_server_application::{
   GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
   GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery,
   ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery,
-  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
-  ManagementAuthorizationMapping, ManagementAuthorizationTarget, MoveProjectCommand,
+  ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery,
+  ListProjectsQuery, ManagementAuthorizationMapping, ManagementAuthorizationTarget, MoveProjectCommand,
   ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
   PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
@@ -33,11 +33,12 @@ use super::{
   get_build_configuration, get_build_result_retention, get_cache_session, get_internal_trigger, get_job,
   get_manual_trigger_definition, get_operational_metadata, get_pipeline, get_project, get_repository, get_schedule,
   issue_agent_enrollment, list_agent_pools, list_agents, list_audit_facts, list_build_artifacts,
-  list_build_cache_sessions, list_internal_triggers, list_project_build_configurations, list_project_pipelines,
-  list_project_repositories, list_project_trigger_definitions, list_projects, move_project, observe_managed_webhook,
-  openapi, place_build_result_hold, publish_agent_pool, publish_build_configuration, publish_internal_trigger,
-  publish_pipeline, publish_project_policy, publish_repository, read_job_events, reassign_agent_pool,
-  release_build_result_hold, rename_project, retry_build, rotate_managed_webhook, search_build_logs,
+  list_build_cache_sessions, list_internal_triggers, list_project_build_configurations, list_project_builds,
+  list_project_pipelines, list_project_repositories, list_project_trigger_definitions, list_projects, move_project,
+  observe_managed_webhook, openapi, place_build_result_hold, publish_agent_pool, publish_build_configuration,
+  publish_internal_trigger, publish_pipeline, publish_project_policy, publish_repository, read_job_events,
+  reassign_agent_pool, release_build_result_hold, rename_project, retry_build, rotate_managed_webhook,
+  search_build_logs,
 };
 use crate::v1::{API_PREFIX, MANAGEMENT_OPERATIONS, ManagementOperation};
 
@@ -205,6 +206,7 @@ fn registered_routes() -> ManagementRoutes {
       "listProjectBuildConfigurations",
       list_project_build_configurations,
     )
+    .get::<ListProjectBuildsQuery, _, _>("listProjectBuilds", list_project_builds)
     .get::<ListProjectTriggerDefinitionsQuery, _, _>("listProjectTriggerDefinitions", list_project_trigger_definitions)
     .delete::<DeleteProjectCommand, _, _>("deleteProject", delete_project)
     .post::<RenameProjectCommand, _, _>("renameProject", rename_project)

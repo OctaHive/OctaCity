@@ -165,7 +165,7 @@ fn trigger_definition_summary(
   }
 }
 
-fn cursor_page<T>(
+pub(super) fn cursor_page<T>(
   items: Vec<T>,
   next_cursor: Option<String>,
   request_id: &RequestId,

@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "id": "99999999-9999-4999-8999-999999999999",
+      "project_id": "11111111-1111-4111-8111-111111111111",
+      "configuration_id": "44444444-4444-4444-8444-444444444444",
+      "configuration_version": 3,
+      "cause": { "kind": "manual" },
+      "state": "succeeded",
+      "created_at_unix_ms": 1700000000500,
+      "current_attempt_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "current_attempt_number": 2,
+      "current_attempt_state": "succeeded",
+      "terminal_at_unix_ms": 1700000001500
+    }
+  ],
+  "next_cursor": "MToxNzAwMDAwMDAwNTAwOjk5OTk5OTk5LTk5OTktNDk5OS04OTk5LTk5OTk5OTk5OTk5OQ"
+}

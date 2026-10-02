@@ -1,12 +1,27 @@
 use octacity_server_application::{
   CancelBuildCommand, GetAttemptQuery, GetBuildQuery, GetBuildResultRetentionQuery, GetJobQuery,
-  PlaceBuildResultHoldCommand, ReadJobEventsQuery, ReleaseBuildResultHoldCommand, RetryBuildCommand,
-  SearchBuildLogsQuery,
+  ListProjectBuildsQuery, PlaceBuildResultHoldCommand, ReadJobEventsQuery, ReleaseBuildResultHoldCommand,
+  RetryBuildCommand, SearchBuildLogsQuery,
 };
 
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    ListProjectBuildsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/builds",
+    "listProjectBuilds",
+    "Builds",
+    "List Builds owned by a Project",
+    None,
+    "BuildSummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::ProjectBuildList)
+  .with_visibility::<ListProjectBuildsQuery>(),
   operation!(
     GetBuildQuery,
     "GET",

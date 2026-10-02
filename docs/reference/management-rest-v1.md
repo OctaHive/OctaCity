@@ -301,6 +301,20 @@ Summaries contain only operator-safe metadata. Follow their identity and exact
 version through the corresponding version endpoint to inspect immutable
 content.
 
+### Project Build discovery
+
+`GET /api/v1/projects/{project_id}/builds` returns a bounded newest-first page
+of Build summaries. It accepts the same exclusive `after` cursor and a `limit`
+from 1 through 200, plus optional exact `configuration_id` and `state` filters.
+Build `state` is one of `queued`, `running`, `succeeded`, `failed`, or
+`cancelled`; the current Attempt state is one of `created`, `running`,
+`succeeded`, `failed`, or `cancelled`.
+Each item includes the Build and Project identities, selected Build
+Configuration and version, normalized cause and creation time, current Attempt
+identity, number and state, and the terminal time when present. The collection
+does not embed the Attempt DAG, Job events, parameters, or policy snapshot;
+follow `GET /api/v1/builds/{build_id}` for the unchanged Build detail contract.
+
 ## 7. Accept one manual Trigger occurrence
 
 The HTTP idempotency key must equal `deduplication_identity` for a manual
