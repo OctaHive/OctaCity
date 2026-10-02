@@ -40,6 +40,7 @@ describe('evergreen tokens', () => {
     ['color-sidebar-text', 'color-evergreen-950'],
     ['color-sidebar-muted', 'color-evergreen-950'],
     ['color-warning-ink', 'color-surface'],
+    ['color-warning-ink', 'color-warning-soft'],
     ['color-danger-ink', 'color-surface'],
     ['color-information-ink', 'color-surface'],
     ['color-success-ink', 'color-surface'],

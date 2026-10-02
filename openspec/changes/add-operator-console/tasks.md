@@ -17,7 +17,7 @@
 
 ## 3. Project Navigation
 
-- [ ] 3.1 Implement bounded root/child Project hierarchy navigation and breadcrumbs using existing Project endpoints; verify pagination, nested ancestry, selection deep links, loading, empty, not-found, and stale-refresh states in component tests.
+- [x] 3.1 Implement bounded root/child Project hierarchy navigation and breadcrumbs using existing Project endpoints; verify pagination, nested ancestry, selection deep links, loading, empty, not-found, and stale-refresh states in component tests.
 - [ ] 3.2 Implement the Project view sections for current Pipelines, Repositories, Build Configurations, and typed Trigger summaries using the new collections and existing detail reads; verify each section paginates independently and never asks for a manually entered UUID.
 - [ ] 3.3 Implement the recent Project Builds section with URL-backed configuration/state filters and newest-first pagination; verify filter round trips, copied URLs, equal-time results, empty filters, and navigation to `/builds/:buildId` in browser tests.
 

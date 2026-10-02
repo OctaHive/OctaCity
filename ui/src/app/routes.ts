@@ -11,3 +11,8 @@ export const CONSOLE_PATHS = {
 } as const;
 
 export type ConsolePath = (typeof CONSOLE_PATHS)[keyof typeof CONSOLE_PATHS];
+
+/** Returns the stable deep link for one Project identity. */
+export function projectPath(projectId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}`;
+}

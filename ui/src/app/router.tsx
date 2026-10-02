@@ -1,6 +1,8 @@
 import { Navigate, createBrowserRouter, type RouteObject, useParams } from 'react-router-dom';
 
 import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
+import { projectsApi, type ProjectsApi } from '../features/projects/api';
+import { ProjectHierarchyView, ProjectView } from '../features/projects/ProjectViews';
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
 import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
@@ -29,6 +31,7 @@ function PlaceholderView({ description, parameter, title }: PlaceholderViewProps
 /** Returns the complete first-release route tree for browser and memory routers. */
 export function createConsoleRoutes(
   readinessProbe: ReadinessProbe = fetchReadiness,
+  projectApi: ProjectsApi = projectsApi,
 ): RouteObject[] {
   return [
     {
@@ -39,22 +42,11 @@ export function createConsoleRoutes(
         { index: true, element: <Navigate replace to={CONSOLE_PATHS.projects} /> },
         {
           path: childPath(CONSOLE_PATHS.projects),
-          element: (
-            <PlaceholderView
-              description="Browse the bounded Project hierarchy and select an operator workspace."
-              title="Projects"
-            />
-          ),
+          element: <ProjectHierarchyView api={projectApi} />,
         },
         {
           path: childPath(CONSOLE_PATHS.project),
-          element: (
-            <PlaceholderView
-              description="Current definitions and recent Builds will appear in this Project view."
-              parameter="projectId"
-              title="Project"
-            />
-          ),
+          element: <ProjectView api={projectApi} />,
         },
         {
           path: childPath(CONSOLE_PATHS.build),

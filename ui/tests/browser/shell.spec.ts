@@ -10,6 +10,13 @@ async function openReadyConsole(page: Page, path: string) {
       status: 200,
     });
   });
+  await page.route('**/api/v1/projects*', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ items: [], next_cursor: null }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
   await page.goto(path);
   await expect(page.getByRole('status')).toHaveText('Server ready');
 }
@@ -46,9 +53,12 @@ test('renders the semantic application shell', async ({ page }) => {
         - text: This console is unauthenticated and must not be exposed to an untrusted network.
     - main:
       - region "Projects":
-        - paragraph: Operator workspace
+        - paragraph: Project hierarchy
         - heading "Projects" [level=1]
-        - paragraph: Browse the bounded Project hierarchy and select an operator workspace.
+        - paragraph: Browse root Projects and continue through their bounded child collections.
+        - paragraph: 0 Projects loaded
+        - button "Refresh"
+        - paragraph: No root Projects are available.
   `);
 });
 
