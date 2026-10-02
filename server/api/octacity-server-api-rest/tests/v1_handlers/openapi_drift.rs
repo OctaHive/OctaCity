@@ -437,6 +437,101 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     assert!(audit_fact.get(forbidden).is_none());
   }
 
+  for (path, operation_id, page_schema, fixture) in [
+    (
+      "/api/v1/projects/{project_id}/pipelines",
+      "listProjectPipelines",
+      "PipelineSummaryPage",
+      include_str!("../../fixtures/v1/pipeline-summary-page.json"),
+    ),
+    (
+      "/api/v1/projects/{project_id}/repositories",
+      "listProjectRepositories",
+      "RepositorySummaryPage",
+      include_str!("../../fixtures/v1/repository-summary-page.json"),
+    ),
+    (
+      "/api/v1/projects/{project_id}/build-configurations",
+      "listProjectBuildConfigurations",
+      "BuildConfigurationSummaryPage",
+      include_str!("../../fixtures/v1/build-configuration-summary-page.json"),
+    ),
+    (
+      "/api/v1/projects/{project_id}/trigger-definitions",
+      "listProjectTriggerDefinitions",
+      "TriggerDefinitionSummaryPage",
+      include_str!("../../fixtures/v1/trigger-definition-summary-page.json"),
+    ),
+  ] {
+    let operation = &document["paths"][path]["get"];
+    assert_eq!(operation["operationId"], operation_id);
+    assert_eq!(
+      operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+      format!("#/components/schemas/{page_schema}")
+    );
+    let parameters = operation["parameters"].as_array().unwrap();
+    assert!(parameters.iter().any(|parameter| parameter["name"] == "project_id"));
+    assert!(parameters.iter().any(|parameter| parameter["name"] == "after"));
+    let limit = parameters
+      .iter()
+      .find(|parameter| parameter["name"] == "limit")
+      .unwrap();
+    assert_eq!(limit["schema"]["maximum"], 200);
+    assert_json_matches_component(&document, page_schema, &serde_json::from_str(fixture).unwrap());
+  }
+
+  for (path, operation_id, response_schema) in [
+    (
+      "/api/v1/pipelines/{pipeline_id}/versions/{version}",
+      "getPipelineVersion",
+      "PipelineResource",
+    ),
+    (
+      "/api/v1/repositories/{repository_id}/versions/{version}",
+      "getRepositoryVersion",
+      "RepositoryResource",
+    ),
+    (
+      "/api/v1/build-configurations/{configuration_id}/versions/{version}",
+      "getBuildConfigurationVersion",
+      "BuildConfigurationResource",
+    ),
+    (
+      "/api/v1/trigger-definitions/internal/{trigger_id}/versions/{version}",
+      "getInternalTriggerDefinitionVersion",
+      "InternalTriggerResource",
+    ),
+    (
+      "/api/v1/trigger-definitions/manual/{trigger_id}/versions/{version}",
+      "getManualTriggerDefinitionVersion",
+      "ManualTriggerDefinitionResource",
+    ),
+    (
+      "/api/v1/schedules/{trigger_id}/versions/{version}",
+      "getSchedule",
+      "ScheduleResource",
+    ),
+  ] {
+    let operation = &document["paths"][path]["get"];
+    assert_eq!(operation["operationId"], operation_id);
+    assert_eq!(
+      operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+      format!("#/components/schemas/{response_schema}")
+    );
+  }
+
+  let trigger_summary = document["components"]["schemas"]["TriggerDefinitionSummaryResource"]["properties"]
+    .as_object()
+    .unwrap();
+  for forbidden in [
+    "credential",
+    "credential_handle",
+    "secret",
+    "verification_material_handle",
+  ] {
+    assert!(trigger_summary.get(forbidden).is_none());
+  }
+
   for (schema, body) in request_examples() {
     assert_json_matches_component(&document, schema, &body);
   }

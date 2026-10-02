@@ -156,7 +156,7 @@ pub(super) fn management_application(
   let agent_commands = authorized_commands(&management_policy, agents.clone());
   let enrollment_commands = authorized_commands(&management_policy, enrollments);
   let build_commands = authorized_commands(&management_policy, builds.clone());
-  let definition_commands = authorized_commands(&management_policy, definitions);
+  let definition_commands = authorized_commands(&management_policy, definitions.clone());
   let schedule_commands = authorized_commands(&management_policy, schedules.clone());
   let internal_trigger_commands = authorized_commands(&management_policy, internal_triggers.clone());
   let webhook_commands = authorized_commands(&management_policy, webhook_management);
@@ -165,6 +165,7 @@ pub(super) fn management_application(
   let project_queries = authorized_queries(&management_policy, projects);
   let pipeline_queries = authorized_queries(&management_policy, pipelines);
   let configuration_queries = authorized_queries(&management_policy, configurations);
+  let definition_queries = authorized_queries(&management_policy, definitions);
   let pool_queries = authorized_queries(&management_policy, pools);
   let agent_queries = authorized_queries(&management_policy, agents);
   let build_queries = authorized_queries(&management_policy, builds);
@@ -187,7 +188,7 @@ pub(super) fn management_application(
         ProjectManagementApplication::new(project_commands, project_queries),
         PipelineManagementApplication::new(pipeline_commands, pipeline_queries),
         ConfigurationManagementApplication::new(configuration_commands, configuration_queries),
-        DefinitionManagementApplication::new(definition_commands, webhook_commands),
+        DefinitionManagementApplication::new(definition_commands, webhook_commands, definition_queries),
         ScheduleManagementApplication::new(schedule_commands, schedule_queries),
         InternalTriggerManagementApplication::new(internal_trigger_commands, internal_trigger_queries),
       ),

@@ -6,7 +6,7 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{EntityKind, ProjectId, TriggerId, TriggerVersion};
 
-use crate::definition_discovery_model::finish_current_definition_page;
+use crate::pagination::finish_bounded_page;
 use crate::{
   CurrentTriggerDefinitionPage, CurrentTriggerDefinitionSummary, ListProjectTriggerDefinitions, ReadVisibilityKind,
   StoreError, TriggerDefinitionDiscoveryStore,
@@ -106,7 +106,7 @@ impl TriggerDefinitionDiscoveryStore for InMemoryTriggerDefinitionDiscoveryStore
         break;
       }
     }
-    let next_cursor = finish_current_definition_page(&mut items, request.limit(), |item| item.id);
+    let next_cursor = finish_bounded_page(&mut items, request.limit(), |item| item.id);
     Ok(CurrentTriggerDefinitionPage { items, next_cursor })
   }
 }

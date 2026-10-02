@@ -82,6 +82,7 @@ pub(crate) enum ParameterProfile {
   #[default]
   None,
   ProjectList,
+  CurrentDefinitionList,
   AgentPoolList,
   AgentList,
   JobEvents,

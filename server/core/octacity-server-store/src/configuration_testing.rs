@@ -9,7 +9,7 @@ use octacity_server_domain::{
   PoolId, ProjectId, RepositoryId, RepositoryName, RepositoryVersion,
 };
 
-use crate::definition_discovery_model::finish_current_definition_page;
+use crate::pagination::finish_bounded_page;
 use crate::testing::{
   ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
   recorded_management_audit,
@@ -212,7 +212,7 @@ impl ConfigurationDiscoveryStore for InMemoryConfigurationStore {
         })
       })
       .collect::<Result<Vec<_>, StoreError>>()?;
-    let next_cursor = finish_current_definition_page(&mut items, request.limit(), |item| item.id);
+    let next_cursor = finish_bounded_page(&mut items, request.limit(), |item| item.id);
     Ok(CurrentRepositoryPage { items, next_cursor })
   }
 
@@ -257,7 +257,7 @@ impl ConfigurationDiscoveryStore for InMemoryConfigurationStore {
         })
       })
       .collect::<Result<Vec<_>, StoreError>>()?;
-    let next_cursor = finish_current_definition_page(&mut items, request.limit(), |item| item.id);
+    let next_cursor = finish_bounded_page(&mut items, request.limit(), |item| item.id);
     Ok(CurrentBuildConfigurationPage { items, next_cursor })
   }
 }

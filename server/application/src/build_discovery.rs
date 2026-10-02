@@ -16,7 +16,7 @@ use crate::{
 const BUILD_PAGE_CURSOR_VERSION: &str = "1";
 
 /// Maximum number of Build summaries accepted by one Project-scoped page.
-pub const MAX_BUILD_LIST_PAGE_SIZE: u16 = 200;
+pub const MAX_BUILD_LIST_PAGE_SIZE: u16 = octacity_server_store::MAX_PROJECT_BUILD_PAGE_SIZE;
 /// Maximum encoded UTF-8 bytes accepted for one opaque Build page cursor.
 pub const MAX_BUILD_PAGE_CURSOR_BYTES: usize = 128;
 
@@ -214,6 +214,25 @@ pub struct BuildPageProjection {
   pub items: Vec<BuildSummaryProjection>,
   /// Opaque position that continues strictly after the final returned Build.
   pub next_cursor: Option<BuildPageCursor>,
+}
+
+impl From<octacity_server_store::ProjectBuildSummary> for BuildSummaryProjection {
+  fn from(summary: octacity_server_store::ProjectBuildSummary) -> Self {
+    let cause = (&summary.cause).into();
+    Self {
+      id: summary.id,
+      project_id: summary.project_id,
+      configuration_id: summary.configuration_id,
+      configuration_version: summary.configuration_version,
+      cause,
+      state: summary.state,
+      created_at: summary.created_at,
+      current_attempt_id: summary.current_attempt_id,
+      current_attempt_number: summary.current_attempt_number,
+      current_attempt_state: summary.current_attempt_state,
+      terminal_at: summary.terminal_at,
+    }
+  }
 }
 
 #[cfg(test)]

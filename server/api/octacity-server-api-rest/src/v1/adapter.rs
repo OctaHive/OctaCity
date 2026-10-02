@@ -15,17 +15,20 @@ use axum::{
 use octacity_server_application::{
   AgentCommandOutcome, AgentEnrollmentSecretKey, AgentPageProjection, AgentPoolCommandOutcome, AgentPoolPageProjection,
   AgentPoolProjection, AgentProjection, ApplicationFailure, AttemptDetailsProjection, BuildConfigurationCommandOutcome,
-  BuildConfigurationProjection, BuildDetailsProjection, CancelBuildCommandOutcome, DeleteAgentPoolCommandOutcome,
-  DeleteProjectCommandOutcome, DependencyPolicyProjection as ApplicationDependencyPolicy,
-  InternalTriggerDefinitionInput, InternalTriggerPageProjection, InternalTriggerProjection,
+  BuildConfigurationPageProjection, BuildConfigurationProjection, BuildDetailsProjection, CancelBuildCommandOutcome,
+  DeleteAgentPoolCommandOutcome, DeleteProjectCommandOutcome,
+  DependencyPolicyProjection as ApplicationDependencyPolicy, InternalTriggerDefinitionInput,
+  InternalTriggerPageProjection, InternalTriggerProjection,
   InternalTriggerSourceStrategy as ApplicationInternalTriggerSource, JobEventPageProjection, JobProjection,
-  ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerInput, ManualTriggerOutcome,
-  MutationDisposition as ApplicationMutationDisposition, NetworkPolicyProjection as ApplicationNetworkPolicy,
-  ParameterTypeProjection as ApplicationParameterType, PipelineCommandOutcome, PipelineProjection,
+  ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerDefinitionProjection,
+  ManualTriggerInput, ManualTriggerOutcome, MutationDisposition as ApplicationMutationDisposition,
+  NetworkPolicyProjection as ApplicationNetworkPolicy, ParameterTypeProjection as ApplicationParameterType,
+  PipelineCommandOutcome, PipelinePageProjection, PipelineProjection,
   PlatformArchitectureProjection as ApplicationPlatformArchitecture, PlatformOsProjection as ApplicationPlatformOs,
-  ProjectCommandOutcome, ProjectPageProjection, ProjectProjection, RepositoryCommandOutcome, RepositoryProjection,
-  RetryBuildCommandOutcome, RetryClassProjection as ApplicationRetryClass,
+  ProjectCommandOutcome, ProjectPageProjection, ProjectProjection, RepositoryCommandOutcome, RepositoryPageProjection,
+  RepositoryProjection, RetryBuildCommandOutcome, RetryClassProjection as ApplicationRetryClass,
   RuntimeClassProjection as ApplicationRuntimeClass, ScheduleProjection, ScheduledTriggerDefinitionInput,
+  TriggerDefinitionKindProjection as ApplicationTriggerDefinitionKind, TriggerDefinitionPageProjection,
   TriggerKindProjection as ApplicationTriggerKind,
 };
 use serde::{Deserialize, Serialize};
@@ -36,22 +39,24 @@ use super::{
   AcceptManualTriggerRequest, AgentCapacity, AgentDrainMode, AgentPlatform, AgentPoolAdmissionPolicy,
   AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy, AgentPoolResource, AgentRequirements,
   AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptSummaryResource, BuildConfigurationDefinition,
-  BuildConfigurationResource, BuildResource, CachePolicy, CancelBuildResponse, CreateAgentPoolRequest,
-  CreateBuildConfigurationRequest, CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest,
-  CreateRepositoryRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource,
-  DeleteAgentPoolResponse, DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode, ExecutionGuarantee,
-  IDEMPOTENCY_KEY_HEADER, IdempotencyKey, InternalTriggerDefinitionRequest, InternalTriggerOutcome,
-  InternalTriggerResource, InternalTriggerSource, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
-  JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource,
-  JobTerminalResource, ManualSource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
+  BuildConfigurationResource, BuildConfigurationSummaryPage, BuildConfigurationSummaryResource, BuildResource,
+  CachePolicy, CancelBuildResponse, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
+  CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest, CreateRepositoryRequest,
+  CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource, DeleteAgentPoolResponse,
+  DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode, ExecutionGuarantee, IDEMPOTENCY_KEY_HEADER,
+  IdempotencyKey, InternalTriggerDefinitionRequest, InternalTriggerOutcome, InternalTriggerResource,
+  InternalTriggerSource, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, JobAssignmentResource,
+  JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource, JobTerminalResource, ManualSource,
+  ManualTriggerDefinitionResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
   OPTIMISTIC_PRECONDITION_HEADER, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
-  PipelineNode, PipelineResource, Platform, PlatformArchitecture, PlatformOs, PoolExecutionMode, PoolExecutionTarget,
-  ProjectDetails, ProjectPolicyResource, ProjectResource, PublishAgentPoolVersionRequest,
-  PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest, PublishProjectPolicyRequest,
-  PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition,
-  RepositoryResource, RepositorySelectionPolicy, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass,
-  RuntimePolicy, ScheduleResource, TriggerDefinitionResource, TriggerEvaluationResponse, TriggerKind,
-  VersionPrecondition,
+  PipelineNode, PipelineResource, PipelineSummaryPage, PipelineSummaryResource, Platform, PlatformArchitecture,
+  PlatformOs, PoolExecutionMode, PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource,
+  PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest,
+  PublishProjectPolicyRequest, PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest,
+  RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage,
+  RepositorySummaryResource, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy,
+  ScheduleResource, TriggerDefinitionKind, TriggerDefinitionResource, TriggerDefinitionSummaryPage,
+  TriggerDefinitionSummaryResource, TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
 };
 use crate::RequestId;
 
@@ -63,6 +68,7 @@ mod audit;
 mod authorization;
 mod cache;
 mod configuration;
+mod definition_discovery;
 mod error;
 mod execution;
 mod internal_trigger;
@@ -102,6 +108,10 @@ use configuration::{
   create_build_configuration, create_repository, get_build_configuration, get_repository, publish_build_configuration,
   publish_repository,
 };
+use definition_discovery::{
+  list_project_build_configurations, list_project_pipelines, list_project_repositories,
+  list_project_trigger_definitions,
+};
 use error::ApiError;
 use execution::{cancel_build, get_attempt, get_build, get_job, retry_build};
 use internal_trigger::{
@@ -110,7 +120,7 @@ use internal_trigger::{
 use job_event::read_job_events;
 pub(crate) use log_search::DEFAULT_LOG_SEARCH_LIMIT;
 use log_search::search_build_logs;
-use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition};
+use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition, get_manual_trigger_definition};
 use operational::get_operational_metadata;
 use pipeline::{create_pipeline, get_pipeline, publish_pipeline};
 use project::{

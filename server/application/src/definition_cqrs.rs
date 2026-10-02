@@ -16,8 +16,8 @@ use serde_json::Value;
 use crate::{
   ApplicationError, Command, CommandTransaction, ListProjectTriggerDefinitionsQuery, ManagementAction,
   ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, ProjectPolicyDefinition, TriggerDefinitionPageProjection,
-  management_security::{audited_mutation, owned_collection_resource},
+  MutationDisposition, ProjectPolicyDefinition, Query, TriggerDefinitionPageProjection,
+  management_security::{audited_mutation, instance_resource, owned_collection_resource},
 };
 
 /// Publishes exactly the next immutable policy version for one Project.
@@ -54,6 +54,34 @@ pub struct CreateTriggerDefinitionCommand {
   pub definition: Value,
   /// Stable replay identity.
   pub idempotency_key: IdempotencyKey,
+  /// Authoritative creation time.
+  pub created_at: Timestamp,
+}
+
+/// Reads one exact immutable manual Trigger definition version.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GetManualTriggerDefinitionQuery {
+  /// Stable Trigger identity.
+  pub trigger_id: TriggerId,
+  /// Exact immutable Trigger version.
+  pub version: TriggerVersion,
+}
+
+/// Exact manual Trigger definition exposed by the application boundary.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManualTriggerDefinitionProjection {
+  /// Stable Trigger identity.
+  pub trigger_id: TriggerId,
+  /// Exact immutable Trigger version.
+  pub version: TriggerVersion,
+  /// Target Build Configuration identity.
+  pub configuration_id: BuildConfigurationId,
+  /// Exact immutable Build Configuration version.
+  pub configuration_version: BuildConfigurationVersion,
+  /// Whether new occurrences may be accepted.
+  pub enabled: bool,
+  /// Bounded, credential-free definition document.
+  pub definition: Value,
   /// Authoritative creation time.
   pub created_at: Timestamp,
 }
@@ -117,6 +145,19 @@ impl ManagementAuthorizationTarget for CreateTriggerDefinitionCommand {
       ManagementResourceKind::BuildConfiguration,
       self.configuration_id,
     )
+  }
+}
+
+impl Query for GetManualTriggerDefinitionQuery {
+  type Outcome = ManualTriggerDefinitionProjection;
+}
+
+impl ManagementAuthorizationTarget for GetManualTriggerDefinitionQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::View, ManagementResourceKind::Trigger);
+
+  fn management_resource(&self) -> ManagementResourceResult {
+    instance_resource(ManagementResourceKind::Trigger, self.trigger_id)
   }
 }
 
@@ -266,6 +307,35 @@ where
     Ok(TriggerDefinitionPageProjection {
       items: page.items.into_iter().map(Into::into).collect(),
       next_cursor: page.next_cursor,
+    })
+  }
+}
+
+#[async_trait]
+impl<S> crate::ManagementQueryUseCase<GetManualTriggerDefinitionQuery> for DefinitionHandlers<S>
+where
+  S: DefinitionStore + 'static,
+{
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: GetManualTriggerDefinitionQuery,
+  ) -> Result<ManualTriggerDefinitionProjection, Self::Error> {
+    let record = self
+      .store
+      .manual_trigger_definition(query.trigger_id, query.version)
+      .await?;
+    Ok(ManualTriggerDefinitionProjection {
+      trigger_id: record.id,
+      version: record.version,
+      configuration_id: record.configuration_id,
+      configuration_version: record.configuration_version,
+      enabled: record.enabled,
+      definition: record.definition,
+      created_at: record.created_at,
     })
   }
 }

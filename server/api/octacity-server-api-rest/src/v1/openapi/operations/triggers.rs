@@ -1,8 +1,9 @@
 use octacity_server_application::{
   AcceptManualTriggerCommand, CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreateScheduleCommand,
   CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteManagedWebhookRegistrationCommand,
-  GetInternalTriggerQuery, GetScheduleQuery, ListInternalTriggersQuery, ObserveManagedWebhookRegistrationCommand,
-  PublishInternalTriggerVersionCommand, RotateManagedWebhookRegistrationCommand,
+  GetInternalTriggerQuery, GetManualTriggerDefinitionQuery, GetScheduleQuery, ListInternalTriggersQuery,
+  ObserveManagedWebhookRegistrationCommand, PublishInternalTriggerVersionCommand,
+  RotateManagedWebhookRegistrationCommand,
 };
 
 use super::{ManagementOperation, ParameterProfile};
@@ -19,6 +20,19 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "TriggerDefinitionMutationResponse",
     "201",
     true,
+    false
+  ),
+  operation!(
+    GetManualTriggerDefinitionQuery,
+    "GET",
+    "/api/v1/trigger-definitions/manual/{trigger_id}/versions/{version}",
+    "getManualTriggerDefinitionVersion",
+    "Triggers",
+    "Get a manual Trigger definition version",
+    None,
+    "ManualTriggerDefinitionResource",
+    "200",
+    false,
     false
   ),
   operation!(

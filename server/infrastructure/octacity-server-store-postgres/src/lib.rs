@@ -26,6 +26,7 @@ mod configuration_row;
 mod database;
 mod definition_discovery;
 mod definition_mutation;
+mod definition_query;
 mod external_trigger;
 mod internal_trigger;
 mod internal_trigger_definition;

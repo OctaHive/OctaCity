@@ -64,6 +64,8 @@ pub use crate::artifact_testing::{ArtifactLeaseFixture, InMemoryArtifactRecordSt
 pub use crate::authoritative_contract_testing::{
   verify_authoritative_store_contract, verify_in_memory_store_contract, verify_management_trigger_audit_contract,
 };
+pub use crate::build_discovery_contract_testing::verify_in_memory_build_discovery_contract;
+pub use crate::build_discovery_testing::InMemoryBuildDiscoveryStore;
 pub use crate::cache_contract_testing::{CacheSessionStoreContractFixture, verify_cache_session_store_contract};
 pub use crate::cache_testing::{CacheLeaseFixture, InMemoryCacheSessionStore};
 pub use crate::configuration_contract_testing::{

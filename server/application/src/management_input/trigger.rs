@@ -24,6 +24,18 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Creates a typed exact-version manual Trigger definition query.
+  pub fn get_manual_trigger_definition(
+    &self,
+    trigger_id: &str,
+    version_value: u64,
+  ) -> Result<GetManualTriggerDefinitionQuery, ManagementInputError> {
+    Ok(GetManualTriggerDefinitionQuery {
+      trigger_id: parse(trigger_id, "trigger id")?,
+      version: version(version_value, "trigger version")?,
+    })
+  }
+
   /// Creates a typed scheduled Trigger-definition command.
   pub fn create_scheduled_trigger_definition(
     &self,

@@ -1,12 +1,13 @@
 mod support;
 
-use octacity_server_domain::{ProjectId, TriggerId};
+use octacity_server_domain::{ProjectId, TriggerId, TriggerVersion};
 use octacity_server_store::testing::{
   verify_seeded_configuration_definition_discovery_contract, verify_seeded_pipeline_definition_discovery_contract,
   verify_seeded_trigger_definition_discovery_contract,
 };
 use octacity_server_store::{
-  ListProjectTriggerDefinitions, TriggerDefinitionDiscoveryStore, TriggerDefinitionListVisibility,
+  DefinitionStore as _, ListProjectTriggerDefinitions, StoreError, TriggerDefinitionDiscoveryStore,
+  TriggerDefinitionListVisibility,
 };
 use octacity_server_store_postgres::PostgresStore;
 use serde_json::Value;
@@ -38,6 +39,19 @@ async fn postgres_definition_discovery_matches_the_in_memory_contract() {
       .collect::<Vec<_>>(),
     "external definitions and definitions owned by another Project must stay hidden"
   );
+  let manual = store
+    .manual_trigger_definition(trigger_id(300), TriggerVersion::INITIAL)
+    .await
+    .unwrap();
+  assert_eq!(manual.id, trigger_id(300));
+  assert_eq!(manual.configuration_id.as_uuid(), uuid::Uuid::from_u128(200));
+  assert_eq!(manual.definition, serde_json::json!({}));
+  assert!(matches!(
+    store
+      .manual_trigger_definition(trigger_id(300), TriggerVersion::new(2).unwrap())
+      .await,
+    Err(StoreError::NotFound { .. })
+  ));
 
   database.cleanup().await;
 }

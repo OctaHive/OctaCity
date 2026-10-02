@@ -122,6 +122,26 @@ pub struct TriggerDefinitionResource {
   pub version: u64,
 }
 
+/// Management representation of one immutable manual Trigger definition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManualTriggerDefinitionResource {
+  /// Stable Trigger identity.
+  pub trigger_id: String,
+  /// Exact immutable Trigger version.
+  pub version: u64,
+  /// Target Build Configuration identity.
+  pub configuration_id: String,
+  /// Exact immutable Build Configuration version.
+  pub configuration_version: u64,
+  /// Whether new occurrences may be accepted.
+  pub enabled: bool,
+  /// Bounded, credential-free manual Trigger definition document.
+  pub definition: Value,
+  /// Authoritative creation time as Unix milliseconds.
+  pub created_at_unix_ms: i64,
+}
+
 /// Terminal upstream Build outcome matched by an internal Trigger.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

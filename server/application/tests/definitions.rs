@@ -7,14 +7,16 @@ use std::{
 
 use async_trait::async_trait;
 use octacity_server_application::{
-  CreateTriggerDefinitionCommand, DefinitionHandlers, ProjectPolicyDefinition, PublishProjectPolicyCommand,
+  CreateTriggerDefinitionCommand, DefinitionHandlers, GetManualTriggerDefinitionQuery, ProjectPolicyDefinition,
+  PublishProjectPolicyCommand,
 };
 use octacity_server_domain::{
   BuildConfigurationId, BuildConfigurationVersion, ProjectId, Timestamp, TriggerId, TriggerVersion,
 };
 use octacity_server_store::{
-  CreateTriggerDefinition, DefinitionStore, IdempotencyKey, ManagementMutation, MutationDisposition,
-  ProjectPolicyMutationOutcome, PublishProjectPolicy, StoreError, TriggerDefinitionMutationOutcome,
+  CreateTriggerDefinition, DefinitionStore, IdempotencyKey, ManagementMutation, ManualTriggerDefinitionRecord,
+  MutationDisposition, ProjectPolicyMutationOutcome, PublishProjectPolicy, StoreError,
+  TriggerDefinitionMutationOutcome,
 };
 use octacity_server_trigger::TriggerKind;
 use serde_json::{Value, json};
@@ -22,6 +24,9 @@ use serde_json::{Value, json};
 #[path = "support/management_command.rs"]
 mod management_command_support;
 use management_command_support::management_command;
+#[path = "support/management_query.rs"]
+mod management_query_support;
+use management_query_support::management_query;
 
 #[derive(Default)]
 struct RecordingDefinitionStore {
@@ -54,6 +59,22 @@ impl DefinitionStore for RecordingDefinitionStore {
       disposition: MutationDisposition::Applied,
       trigger_id: request.id,
       version: request.version,
+    })
+  }
+
+  async fn manual_trigger_definition(
+    &self,
+    trigger_id: TriggerId,
+    version: TriggerVersion,
+  ) -> Result<ManualTriggerDefinitionRecord, StoreError> {
+    Ok(ManualTriggerDefinitionRecord {
+      id: trigger_id,
+      version,
+      configuration_id: BuildConfigurationId::from_str("33333333-3333-4333-8333-333333333333").unwrap(),
+      configuration_version: BuildConfigurationVersion::INITIAL,
+      enabled: true,
+      definition: json!({"reason": "manual"}),
+      created_at: Timestamp::from_unix_millis(2).unwrap(),
     })
   }
 }
@@ -100,6 +121,18 @@ fn definition_handlers_keep_policy_and_trigger_persistence_transport_independent
     .unwrap();
     assert_eq!(trigger_outcome.trigger_id, trigger_id);
     assert_eq!(store.trigger.lock().unwrap().as_ref(), Some(&definition));
+
+    let queried = management_query(
+      &handlers,
+      GetManualTriggerDefinitionQuery {
+        trigger_id,
+        version: TriggerVersion::INITIAL,
+      },
+    )
+    .await
+    .unwrap();
+    assert_eq!(queried.trigger_id, trigger_id);
+    assert_eq!(queried.definition, definition);
   });
 }
 

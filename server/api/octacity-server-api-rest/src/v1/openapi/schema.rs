@@ -3,6 +3,7 @@ mod artifact;
 mod audit;
 mod cache;
 mod core;
+mod definition_discovery;
 mod execution;
 mod log_search;
 mod operational;

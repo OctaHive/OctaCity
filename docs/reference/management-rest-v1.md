@@ -272,10 +272,34 @@ fact, and outbox entry atomically.
 
 Send `POST /api/v1/trigger-definitions/manual` with an `Idempotency-Key` and a
 body containing `configuration_id`, `configuration_version`, `enabled`, and a
-bounded `definition` object. The response is `201 Created`; use `resource.id`
-and `resource.version` in the occurrence request. Trigger identities are
-server-owned, so automation does not need a database bootstrap or a
-deterministic-ID convention.
+bounded, credential-free `definition` object. Secrets and credential handles
+must not be embedded in this operator-visible document. The response is `201
+Created`; use `resource.id` and `resource.version` in the occurrence request.
+Trigger identities are server-owned, so automation does not need a database
+bootstrap or a deterministic-ID convention.
+
+Read an exact immutable version with
+`GET /api/v1/trigger-definitions/manual/{trigger_id}/versions/{version}`. The
+response contains the target Build Configuration, enabled state, definition,
+and authoritative creation timestamp.
+
+### Current Project definition discovery
+
+The console discovers current definitions through bounded Project-scoped
+collections:
+
+| Method and path | Current resources |
+| --- | --- |
+| `GET /api/v1/projects/{project_id}/pipelines` | Pipelines |
+| `GET /api/v1/projects/{project_id}/repositories` | Repositories |
+| `GET /api/v1/projects/{project_id}/build-configurations` | Build Configurations |
+| `GET /api/v1/projects/{project_id}/trigger-definitions` | Manual, scheduled, and internal Triggers |
+
+Each collection accepts an exclusive stable-identity `after` cursor and a
+`limit` from 1 through 200, and returns `items` plus a nullable `next_cursor`.
+Summaries contain only operator-safe metadata. Follow their identity and exact
+version through the corresponding version endpoint to inspect immutable
+content.
 
 ## 7. Accept one manual Trigger occurrence
 

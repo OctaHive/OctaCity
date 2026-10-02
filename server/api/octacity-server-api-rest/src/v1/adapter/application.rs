@@ -8,14 +8,15 @@ use octacity_server_application::{
   CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand,
   DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery,
   GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
-  GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
-  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, ManualTriggerError, MoveProjectCommand,
-  ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
-  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
-  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
-  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  SearchBuildLogsQuery,
+  GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
+  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery,
+  ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery,
+  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
+  ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand,
+  PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
+  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
+  ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand,
+  RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
 };
 
 type ProjectCreate = dyn AuthorizedManagementCommandHandler<CreateProjectCommand, Error = ApplicationError>;
@@ -27,15 +28,19 @@ type ProjectList = dyn AuthorizedManagementQueryHandler<ListProjectsQuery, Error
 type PipelineCreate = dyn AuthorizedManagementCommandHandler<CreatePipelineCommand, Error = ApplicationError>;
 type PipelinePublish = dyn AuthorizedManagementCommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>;
 type PipelineGet = dyn AuthorizedManagementQueryHandler<GetPipelineQuery, Error = ApplicationError>;
+type PipelineList = dyn AuthorizedManagementQueryHandler<ListProjectPipelinesQuery, Error = ApplicationError>;
 type RepositoryCreate = dyn AuthorizedManagementCommandHandler<CreateRepositoryCommand, Error = ApplicationError>;
 type RepositoryPublish =
   dyn AuthorizedManagementCommandHandler<PublishRepositoryVersionCommand, Error = ApplicationError>;
 type RepositoryGet = dyn AuthorizedManagementQueryHandler<GetRepositoryQuery, Error = ApplicationError>;
+type RepositoryList = dyn AuthorizedManagementQueryHandler<ListProjectRepositoriesQuery, Error = ApplicationError>;
 type ConfigurationCreate =
   dyn AuthorizedManagementCommandHandler<CreateBuildConfigurationCommand, Error = ApplicationError>;
 type ConfigurationPublish =
   dyn AuthorizedManagementCommandHandler<PublishBuildConfigurationVersionCommand, Error = ApplicationError>;
 type ConfigurationGet = dyn AuthorizedManagementQueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>;
+type ConfigurationList =
+  dyn AuthorizedManagementQueryHandler<ListProjectBuildConfigurationsQuery, Error = ApplicationError>;
 type AgentPoolCreate = dyn AuthorizedManagementCommandHandler<CreateAgentPoolCommand, Error = ApplicationError>;
 type AgentPoolPublish =
   dyn AuthorizedManagementCommandHandler<PublishAgentPoolVersionCommand, Error = ApplicationError>;
@@ -57,6 +62,10 @@ type ProjectPolicyPublish =
   dyn AuthorizedManagementCommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>;
 type TriggerDefinitionCreate =
   dyn AuthorizedManagementCommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>;
+type TriggerDefinitionList =
+  dyn AuthorizedManagementQueryHandler<ListProjectTriggerDefinitionsQuery, Error = ApplicationError>;
+type ManualTriggerDefinitionGet =
+  dyn AuthorizedManagementQueryHandler<GetManualTriggerDefinitionQuery, Error = ApplicationError>;
 type UnmanagedWebhookCreate =
   dyn AuthorizedManagementCommandHandler<CreateUnmanagedWebhookCommand, Error = ApplicationError>;
 type ManagedWebhookCreate =
@@ -145,6 +154,7 @@ pub struct PipelineManagementApplication {
   pub(super) create: Arc<PipelineCreate>,
   pub(super) publish: Arc<PipelinePublish>,
   pub(super) get: Arc<PipelineGet>,
+  pub(super) list: Arc<PipelineList>,
 }
 
 impl PipelineManagementApplication {
@@ -154,12 +164,15 @@ impl PipelineManagementApplication {
     C: AuthorizedManagementCommandHandler<CreatePipelineCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<PublishPipelineVersionCommand, Error = ApplicationError>
       + 'static,
-    Q: AuthorizedManagementQueryHandler<GetPipelineQuery, Error = ApplicationError> + 'static,
+    Q: AuthorizedManagementQueryHandler<GetPipelineQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListProjectPipelinesQuery, Error = ApplicationError>
+      + 'static,
   {
     Self {
       create: commands.clone(),
       publish: commands,
-      get: queries,
+      get: queries.clone(),
+      list: queries,
     }
   }
 }
@@ -169,9 +182,11 @@ pub struct ConfigurationManagementApplication {
   pub(super) create_repository: Arc<RepositoryCreate>,
   pub(super) publish_repository: Arc<RepositoryPublish>,
   pub(super) get_repository: Arc<RepositoryGet>,
+  pub(super) list_repositories: Arc<RepositoryList>,
   pub(super) create_configuration: Arc<ConfigurationCreate>,
   pub(super) publish_configuration: Arc<ConfigurationPublish>,
   pub(super) get_configuration: Arc<ConfigurationGet>,
+  pub(super) list_configurations: Arc<ConfigurationList>,
 }
 
 impl ConfigurationManagementApplication {
@@ -185,15 +200,19 @@ impl ConfigurationManagementApplication {
       + 'static,
     Q: AuthorizedManagementQueryHandler<GetRepositoryQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<GetBuildConfigurationQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListProjectRepositoriesQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListProjectBuildConfigurationsQuery, Error = ApplicationError>
       + 'static,
   {
     Self {
       create_repository: commands.clone(),
       publish_repository: commands.clone(),
       get_repository: queries.clone(),
+      list_repositories: queries.clone(),
       create_configuration: commands.clone(),
       publish_configuration: commands,
-      get_configuration: queries,
+      get_configuration: queries.clone(),
+      list_configurations: queries,
     }
   }
 }
@@ -299,6 +318,8 @@ impl BuildManagementApplication {
 pub struct DefinitionManagementApplication {
   pub(super) publish_project_policy: Arc<ProjectPolicyPublish>,
   pub(super) create_trigger: Arc<TriggerDefinitionCreate>,
+  pub(super) get_manual_trigger: Arc<ManualTriggerDefinitionGet>,
+  pub(super) list_triggers: Arc<TriggerDefinitionList>,
   pub(super) create_unmanaged_webhook: Arc<UnmanagedWebhookCreate>,
   pub(super) create_managed_webhook: Arc<ManagedWebhookCreate>,
   pub(super) observe_managed_webhook: Arc<ManagedWebhookObserve>,
@@ -356,7 +377,7 @@ impl ScheduleManagementApplication {
 
 impl DefinitionManagementApplication {
   /// Erases one definition service behind its endpoint capabilities.
-  pub fn new<D, W>(definitions: Arc<D>, webhooks: Arc<W>) -> Self
+  pub fn new<D, W, Q>(definitions: Arc<D>, webhooks: Arc<W>, queries: Arc<Q>) -> Self
   where
     D: AuthorizedManagementCommandHandler<PublishProjectPolicyCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<CreateTriggerDefinitionCommand, Error = ApplicationError>
@@ -367,10 +388,15 @@ impl DefinitionManagementApplication {
       + AuthorizedManagementCommandHandler<RotateManagedWebhookRegistrationCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<DeleteManagedWebhookRegistrationCommand, Error = ApplicationError>
       + 'static,
+    Q: AuthorizedManagementQueryHandler<ListProjectTriggerDefinitionsQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetManualTriggerDefinitionQuery, Error = ApplicationError>
+      + 'static,
   {
     Self {
       publish_project_policy: definitions.clone(),
       create_trigger: definitions,
+      get_manual_trigger: queries.clone(),
+      list_triggers: queries,
       create_unmanaged_webhook: webhooks.clone(),
       create_managed_webhook: webhooks.clone(),
       observe_managed_webhook: webhooks.clone(),

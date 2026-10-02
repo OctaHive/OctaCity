@@ -68,6 +68,14 @@ impl DefinitionStore for PostgresStore {
     let (request, audit) = request.into_parts();
     crate::definition_mutation::create_trigger(&self.pool, request, &audit).await
   }
+
+  async fn manual_trigger_definition(
+    &self,
+    trigger_id: TriggerId,
+    version: TriggerVersion,
+  ) -> Result<ManualTriggerDefinitionRecord, StoreError> {
+    crate::definition_query::read_manual(&self.pool, trigger_id, version).await
+  }
 }
 
 #[async_trait]

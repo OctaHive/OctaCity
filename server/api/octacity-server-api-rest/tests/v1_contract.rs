@@ -1,12 +1,13 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
   AcceptManualTriggerRequest, AgentPoolAdmissionPolicy, AgentPoolResource, AgentResource, ArtifactDownload,
-  ArtifactOutputType, ArtifactResource, BuildLogSearchPage, CacheSessionResource, CacheSessionState, CapabilityStatus,
-  ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest, CreateManagedWebhookRequest,
-  CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage,
-  DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
+  ArtifactOutputType, ArtifactResource, BuildConfigurationSummaryPage, BuildLogSearchPage, CacheSessionResource,
+  CacheSessionState, CapabilityStatus, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
+  CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest,
+  Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
   IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES,
-  OperationalMetadata, PlaceBuildResultHoldRequest, ProjectResource, VersionPrecondition,
+  OperationalMetadata, PipelineSummaryPage, PlaceBuildResultHoldRequest, ProjectResource, RepositorySummaryPage,
+  TriggerDefinitionSummaryPage, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -26,6 +27,10 @@ const AGENT_PAGE: &str = include_str!("../fixtures/v1/agent-page.json");
 const ISSUE_AGENT_ENROLLMENT: &str = include_str!("../fixtures/v1/issue-agent-enrollment-request.json");
 const ISSUED_AGENT_ENROLLMENT: &str = include_str!("../fixtures/v1/issue-agent-enrollment-response.json");
 const BUILD_LOG_SEARCH_PAGE: &str = include_str!("../fixtures/v1/build-log-search-page.json");
+const PIPELINE_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/pipeline-summary-page.json");
+const REPOSITORY_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/repository-summary-page.json");
+const BUILD_CONFIGURATION_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/build-configuration-summary-page.json");
+const TRIGGER_DEFINITION_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/trigger-definition-summary-page.json");
 
 #[test]
 fn v1_golden_documents_round_trip_without_application_types() {
@@ -44,6 +49,10 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<IssueAgentEnrollmentRequest>(ISSUE_AGENT_ENROLLMENT);
   assert_golden::<IssueAgentEnrollmentResponse>(ISSUED_AGENT_ENROLLMENT);
   assert_golden::<BuildLogSearchPage>(BUILD_LOG_SEARCH_PAGE);
+  assert_golden::<PipelineSummaryPage>(PIPELINE_SUMMARY_PAGE);
+  assert_golden::<RepositorySummaryPage>(REPOSITORY_SUMMARY_PAGE);
+  assert_golden::<BuildConfigurationSummaryPage>(BUILD_CONFIGURATION_SUMMARY_PAGE);
+  assert_golden::<TriggerDefinitionSummaryPage>(TRIGGER_DEFINITION_SUMMARY_PAGE);
 }
 
 #[test]
@@ -163,6 +172,22 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
   let mut project_page: Value = serde_json::from_str(PROJECT_PAGE).unwrap();
   project_page["items"][0]["private_transfer_url"] = json!("https://storage.invalid/secret");
   assert!(serde_json::from_value::<CursorPage<ProjectResource>>(project_page).is_err());
+
+  let mut pipeline_page: Value = serde_json::from_str(PIPELINE_SUMMARY_PAGE).unwrap();
+  pipeline_page["items"][0]["dag"] = json!({"nodes": [], "edges": []});
+  assert!(serde_json::from_value::<PipelineSummaryPage>(pipeline_page).is_err());
+
+  let mut repository_page: Value = serde_json::from_str(REPOSITORY_SUMMARY_PAGE).unwrap();
+  repository_page["items"][0]["credential_handle"] = json!("secret:source");
+  assert!(serde_json::from_value::<RepositorySummaryPage>(repository_page).is_err());
+
+  let mut configuration_page: Value = serde_json::from_str(BUILD_CONFIGURATION_SUMMARY_PAGE).unwrap();
+  configuration_page["items"][0]["parameters"] = json!({"secret": "value"});
+  assert!(serde_json::from_value::<BuildConfigurationSummaryPage>(configuration_page).is_err());
+
+  let mut trigger_page: Value = serde_json::from_str(TRIGGER_DEFINITION_SUMMARY_PAGE).unwrap();
+  trigger_page["items"][0]["credential"] = json!("must-never-leak");
+  assert!(serde_json::from_value::<TriggerDefinitionSummaryPage>(trigger_page).is_err());
 
   let mut pipeline: Value = serde_json::from_str(CREATE_PIPELINE).unwrap();
   pipeline["dag"]["nodes"][0]["execution"]["secret_profile"] = json!("production");

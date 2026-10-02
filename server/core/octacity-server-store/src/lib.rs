@@ -12,6 +12,8 @@ mod artifact_model;
 mod artifact_port;
 mod audit_port;
 mod build_control;
+mod build_discovery_model;
+mod build_discovery_port;
 mod build_query;
 mod build_query_port;
 mod cache_model;
@@ -79,6 +81,15 @@ mod definition_discovery_testing;
 mod definition_discovery_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
+mod build_discovery_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod build_discovery_contract_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod pagination;
+
+#[cfg(any(test, feature = "test-support"))]
 mod authoritative_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -140,6 +151,11 @@ pub use audit_port::{AuditFactStore, ListAuditFacts};
 pub use build_control::{
   CancelBuild, CancellationDisposition, MAX_RETRY_BUILD_BYTES, RetryBuild, RetryDisposition, retry_graph_is_equivalent,
 };
+pub use build_discovery_model::{
+  ListProjectBuilds, MAX_PROJECT_BUILD_PAGE_SIZE, ProjectBuildFilter, ProjectBuildPage, ProjectBuildPagePosition,
+  ProjectBuildSummary,
+};
+pub use build_discovery_port::BuildDiscoveryStore;
 pub use build_query::{AttemptRecord, BuildRecord, JobAssignmentRecord, JobQueueRecord, JobRecord, JobTerminalRecord};
 pub use build_query_port::BuildQueryStore;
 pub use cache_model::{
@@ -178,7 +194,8 @@ pub use definition_discovery_port::{
   ConfigurationDiscoveryStore, PipelineDiscoveryStore, TriggerDefinitionDiscoveryStore,
 };
 pub use definition_model::{
-  CreateTriggerDefinition, ProjectPolicyMutationOutcome, PublishProjectPolicy, TriggerDefinitionMutationOutcome,
+  CreateTriggerDefinition, ManualTriggerDefinitionRecord, ProjectPolicyMutationOutcome, PublishProjectPolicy,
+  TriggerDefinitionMutationOutcome,
 };
 pub use definition_port::DefinitionStore;
 pub use error::{StoreError, StoreInputError, StoreOperation};
@@ -429,6 +446,11 @@ mod tests {
   #[test]
   fn in_memory_adapters_satisfy_the_definition_discovery_contract() {
     super::testing::verify_in_memory_definition_discovery_contract();
+  }
+
+  #[test]
+  fn in_memory_adapter_satisfies_the_build_discovery_contract() {
+    super::testing::verify_in_memory_build_discovery_contract();
   }
 
   #[test]

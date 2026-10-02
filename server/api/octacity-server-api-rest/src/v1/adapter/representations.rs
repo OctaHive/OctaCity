@@ -1,5 +1,19 @@
 use super::*;
 
+pub(super) fn manual_trigger_definition_resource(
+  projection: ManualTriggerDefinitionProjection,
+) -> ManualTriggerDefinitionResource {
+  ManualTriggerDefinitionResource {
+    trigger_id: projection.trigger_id.to_string(),
+    version: projection.version.get(),
+    configuration_id: projection.configuration_id.to_string(),
+    configuration_version: projection.configuration_version.get(),
+    enabled: projection.enabled,
+    definition: projection.definition,
+    created_at_unix_ms: projection.created_at.unix_millis(),
+  }
+}
+
 pub(super) fn schedule_resource(
   projection: ScheduleProjection,
   request_id: &RequestId,
@@ -48,6 +62,118 @@ pub(super) fn project_page(
     next_cursor: page
       .next_cursor
       .map(|cursor| Cursor::new(cursor.to_string()))
+      .transpose()
+      .map_err(|_| internal_conversion(request_id))?,
+  })
+}
+
+pub(super) fn pipeline_summary_page(
+  page: PipelinePageProjection,
+  request_id: &RequestId,
+) -> Result<PipelineSummaryPage, ApiError> {
+  cursor_page(
+    page.items.into_iter().map(pipeline_summary).collect(),
+    page.next_cursor.map(|cursor| cursor.to_string()),
+    request_id,
+  )
+}
+
+fn pipeline_summary(projection: octacity_server_application::PipelineSummaryProjection) -> PipelineSummaryResource {
+  PipelineSummaryResource {
+    id: projection.id.to_string(),
+    project_id: projection.project_id.to_string(),
+    name: projection.name.to_string(),
+    version: projection.version.get(),
+    published_at_unix_ms: projection.published_at.unix_millis(),
+  }
+}
+
+pub(super) fn repository_summary_page(
+  page: RepositoryPageProjection,
+  request_id: &RequestId,
+) -> Result<RepositorySummaryPage, ApiError> {
+  cursor_page(
+    page.items.into_iter().map(repository_summary).collect(),
+    page.next_cursor.map(|cursor| cursor.to_string()),
+    request_id,
+  )
+}
+
+fn repository_summary(
+  projection: octacity_server_application::RepositorySummaryProjection,
+) -> RepositorySummaryResource {
+  RepositorySummaryResource {
+    id: projection.id.to_string(),
+    project_id: projection.project_id.to_string(),
+    name: projection.name.to_string(),
+    version: projection.version.get(),
+    published_at_unix_ms: projection.published_at.unix_millis(),
+  }
+}
+
+pub(super) fn build_configuration_summary_page(
+  page: BuildConfigurationPageProjection,
+  request_id: &RequestId,
+) -> Result<BuildConfigurationSummaryPage, ApiError> {
+  cursor_page(
+    page.items.into_iter().map(build_configuration_summary).collect(),
+    page.next_cursor.map(|cursor| cursor.to_string()),
+    request_id,
+  )
+}
+
+fn build_configuration_summary(
+  projection: octacity_server_application::BuildConfigurationSummaryProjection,
+) -> BuildConfigurationSummaryResource {
+  BuildConfigurationSummaryResource {
+    id: projection.id.to_string(),
+    project_id: projection.project_id.to_string(),
+    name: projection.name.to_string(),
+    version: projection.version.get(),
+    enabled: projection.enabled,
+    published_at_unix_ms: projection.published_at.unix_millis(),
+  }
+}
+
+pub(super) fn trigger_definition_summary_page(
+  page: TriggerDefinitionPageProjection,
+  request_id: &RequestId,
+) -> Result<TriggerDefinitionSummaryPage, ApiError> {
+  cursor_page(
+    page.items.into_iter().map(trigger_definition_summary).collect(),
+    page.next_cursor.map(|cursor| cursor.to_string()),
+    request_id,
+  )
+}
+
+fn trigger_definition_summary(
+  projection: octacity_server_application::TriggerDefinitionSummaryProjection,
+) -> TriggerDefinitionSummaryResource {
+  TriggerDefinitionSummaryResource {
+    id: projection.id.to_string(),
+    project_id: projection.project_id.to_string(),
+    configuration_id: projection.configuration_id.to_string(),
+    configuration_version: projection.configuration_version.get(),
+    version: projection.version.get(),
+    kind: match projection.kind {
+      ApplicationTriggerDefinitionKind::Manual => TriggerDefinitionKind::Manual,
+      ApplicationTriggerDefinitionKind::Scheduled => TriggerDefinitionKind::Scheduled,
+      ApplicationTriggerDefinitionKind::Internal => TriggerDefinitionKind::Internal,
+    },
+    enabled: projection.enabled,
+    published_at_unix_ms: projection.published_at.unix_millis(),
+  }
+}
+
+fn cursor_page<T>(
+  items: Vec<T>,
+  next_cursor: Option<String>,
+  request_id: &RequestId,
+) -> Result<CursorPage<T>, ApiError> {
+  Ok(CursorPage {
+    items,
+    next_cursor: next_cursor
+      .map(Cursor::new)
       .transpose()
       .map_err(|_| internal_conversion(request_id))?,
   })
@@ -598,4 +724,38 @@ pub(super) fn internal_conversion(request_id: &RequestId) -> ApiError {
     "application result cannot be represented by the REST contract",
     request_id,
   )
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn maps_every_trigger_definition_kind_without_fallbacks() {
+    let expected = [
+      (ApplicationTriggerDefinitionKind::Manual, TriggerDefinitionKind::Manual),
+      (
+        ApplicationTriggerDefinitionKind::Scheduled,
+        TriggerDefinitionKind::Scheduled,
+      ),
+      (
+        ApplicationTriggerDefinitionKind::Internal,
+        TriggerDefinitionKind::Internal,
+      ),
+    ];
+
+    for (application_kind, wire_kind) in expected {
+      let resource = trigger_definition_summary(octacity_server_application::TriggerDefinitionSummaryProjection {
+        id: "88888888-8888-4888-8888-888888888888".parse().unwrap(),
+        project_id: "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+        configuration_id: "44444444-4444-4444-8444-444444444444".parse().unwrap(),
+        configuration_version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+        version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+        kind: application_kind,
+        enabled: true,
+        published_at: octacity_server_application::Timestamp::from_unix_millis(1).unwrap(),
+      });
+      assert_eq!(resource.kind, wire_kind);
+    }
+  }
 }

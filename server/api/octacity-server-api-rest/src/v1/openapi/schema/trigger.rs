@@ -26,6 +26,29 @@ pub(super) fn insert_trigger_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "ManualTriggerDefinitionResource".to_owned(),
+    object(
+      [
+        ("trigger_id", non_empty_string()),
+        ("version", positive_integer()),
+        ("configuration_id", non_empty_string()),
+        ("configuration_version", positive_integer()),
+        ("enabled", json!({"type": "boolean"})),
+        ("definition", json!({"type": "object"})),
+        ("created_at_unix_ms", integer()),
+      ],
+      &[
+        "trigger_id",
+        "version",
+        "configuration_id",
+        "configuration_version",
+        "enabled",
+        "definition",
+        "created_at_unix_ms",
+      ],
+    ),
+  );
+  schemas.insert(
     "MissedRunPolicy".to_owned(),
     json!({
       "oneOf": [

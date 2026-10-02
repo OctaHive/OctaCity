@@ -1,5 +1,23 @@
 use super::*;
 
+pub(super) async fn get_manual_trigger_definition(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path((trigger_id, version)): Path<(String, u64)>,
+) -> Result<impl IntoResponse, ApiError> {
+  let query = application
+    .inputs
+    .get_manual_trigger_definition(&trigger_id, version)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let projection = application
+    .definitions
+    .get_manual_trigger
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  Ok(Json(representations::manual_trigger_definition_resource(projection)))
+}
+
 pub(super) async fn accept_manual_trigger(
   State(application): State<Arc<ManagementApplication>>,
   Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,

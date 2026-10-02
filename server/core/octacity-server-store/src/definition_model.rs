@@ -67,6 +67,25 @@ pub struct CreateTriggerDefinition {
   pub created_at: Timestamp,
 }
 
+/// Exact immutable manual Trigger definition returned to management queries.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ManualTriggerDefinitionRecord {
+  /// Stable Trigger identity.
+  pub id: TriggerId,
+  /// Exact immutable Trigger version.
+  pub version: TriggerVersion,
+  /// Target Build Configuration identity.
+  pub configuration_id: BuildConfigurationId,
+  /// Exact immutable Build Configuration version.
+  pub configuration_version: BuildConfigurationVersion,
+  /// Whether new occurrences may be accepted.
+  pub enabled: bool,
+  /// Bounded, credential-free manual Trigger definition document.
+  pub definition: Value,
+  /// Authoritative creation time.
+  pub created_at: Timestamp,
+}
+
 impl CreateTriggerDefinition {
   /// Revalidates invariants at the persistence seam.
   pub fn validate(&self) -> Result<(), StoreError> {

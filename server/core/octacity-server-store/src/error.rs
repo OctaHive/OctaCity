@@ -60,8 +60,12 @@ pub enum StoreOperation {
   ReadBuildConfigurationVersion,
   /// List one bounded page of current Build Configurations owned by a Project.
   ListProjectBuildConfigurations,
+  /// List one bounded newest-first page of Builds owned by a Project.
+  ListProjectBuilds,
   /// Create one immutable Trigger definition.
   CreateTriggerDefinition,
+  /// Read one exact immutable manual Trigger definition version.
+  ReadManualTriggerDefinition,
   /// List one bounded page of current Trigger definitions owned by a Project.
   ListProjectTriggerDefinitions,
   /// Create version one of an internal Trigger definition.
@@ -244,6 +248,9 @@ pub enum StoreInputError {
   /// A current-definition page size was zero or exceeded its fixed bound.
   #[error("a current-definition page size is outside its allowed range")]
   InvalidCurrentDefinitionPageSize,
+  /// A Project Build page size was zero or exceeded its fixed bound.
+  #[error("a Project Build page size is outside its allowed range")]
+  InvalidProjectBuildPageSize,
   /// An Agent Pool page size is zero or exceeds the store contract bound.
   #[error("an agent pool page size is outside its allowed range")]
   InvalidAgentPoolPageSize,

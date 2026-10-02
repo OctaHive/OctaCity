@@ -1,8 +1,9 @@
 use octacity_server_application::{
   CreateBuildConfigurationCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
   DeleteProjectCommand, GetBuildConfigurationQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
-  ListProjectsQuery, MoveProjectCommand, PublishBuildConfigurationVersionCommand, PublishPipelineVersionCommand,
-  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, RenameProjectCommand,
+  ListProjectBuildConfigurationsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
+  ListProjectTriggerDefinitionsQuery, ListProjectsQuery, MoveProjectCommand, PublishBuildConfigurationVersionCommand,
+  PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, RenameProjectCommand,
 };
 
 use super::{ManagementOperation, ParameterProfile};
@@ -115,6 +116,21 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListProjectPipelinesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/pipelines",
+    "listProjectPipelines",
+    "Pipelines",
+    "List current Pipelines in a Project",
+    None,
+    "PipelineSummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<ListProjectPipelinesQuery>(),
+  operation!(
     PublishPipelineVersionCommand,
     "POST",
     "/api/v1/pipelines/{pipeline_id}/versions",
@@ -153,6 +169,21 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true,
     false
   ),
+  operation!(
+    ListProjectRepositoriesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/repositories",
+    "listProjectRepositories",
+    "Repositories",
+    "List current Repositories in a Project",
+    None,
+    "RepositorySummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<ListProjectRepositoriesQuery>(),
   operation!(
     PublishRepositoryVersionCommand,
     "POST",
@@ -193,6 +224,21 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   ),
   operation!(
+    ListProjectBuildConfigurationsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/build-configurations",
+    "listProjectBuildConfigurations",
+    "Build Configurations",
+    "List current Build Configurations in a Project",
+    None,
+    "BuildConfigurationSummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<ListProjectBuildConfigurationsQuery>(),
+  operation!(
     PublishBuildConfigurationVersionCommand,
     "POST",
     "/api/v1/build-configurations/{configuration_id}/versions",
@@ -218,4 +264,19 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   ),
+  operation!(
+    ListProjectTriggerDefinitionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/trigger-definitions",
+    "listProjectTriggerDefinitions",
+    "Trigger Definitions",
+    "List current Trigger definitions in a Project",
+    None,
+    "TriggerDefinitionSummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<ListProjectTriggerDefinitionsQuery>(),
 ];

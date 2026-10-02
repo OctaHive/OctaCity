@@ -17,30 +17,36 @@ use octacity_server_api_rest::{
 };
 use octacity_server_application::{
   AcceptManualTriggerCommand, ApplicationError, AuditActorKind, AuditActorProjection, AuditFactPageProjection,
-  AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery, BuildLogSearchCursorProjection,
-  BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection,
-  BuildLogStream, CancelBuildCommand, Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
-  CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
-  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
-  DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand, DrainAgentCommand,
-  GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery,
-  GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
+  AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery, BuildConfigurationPageProjection,
+  BuildConfigurationSummaryProjection, BuildLogSearchCursorProjection, BuildLogSearchError,
+  BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection, BuildLogStream,
+  CancelBuildCommand, Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand,
+  CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
+  CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand,
+  DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery,
+  GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery,
+  GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery, GetManualTriggerDefinitionQuery,
   GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectsQuery, LogSearchError, ManagementAction,
-  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
-  ManagementAuthorizationTarget, ManagementCommandUseCase, ManagementOperationalMetadataProjection,
-  ManagementQueryUseCase, ManagementRequestContext, ManagementResource, ManualTriggerError, MoveProjectCommand,
-  ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery,
+  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
+  LogSearchError, ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant,
+  ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementCommandUseCase,
+  ManagementOperationalMetadataProjection, ManagementQueryUseCase, ManagementRequestContext, ManagementResource,
+  ManualTriggerDefinitionProjection, ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand,
+  PipelinePageProjection, PipelineSummaryProjection, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
   PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, ReadJobEventsQuery, ReassignAgentPoolCommand,
-  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  SearchBuildLogsQuery,
+  ReleaseBuildResultHoldCommand, RenameProjectCommand, RepositoryPageProjection, RepositorySummaryProjection,
+  RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery, Timestamp,
+  TriggerDefinitionKindProjection, TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
 };
 use tower::ServiceExt as _;
 
 #[path = "v1_handlers/audit.rs"]
 mod audit;
+#[path = "v1_handlers/definition_discovery.rs"]
+mod definition_discovery;
 #[path = "v1_handlers/log_search.rs"]
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
@@ -225,6 +231,164 @@ unavailable_query!(ListBuildCacheSessionsQuery, "list_build_cache_sessions");
 unavailable_query!(GetBuildResultRetentionQuery, "get_build_result_retention");
 unavailable_command!(PlaceBuildResultHoldCommand, "place_build_result_hold");
 unavailable_command!(ReleaseBuildResultHoldCommand, "release_build_result_hold");
+
+#[async_trait]
+impl ManagementQueryUseCase<GetManualTriggerDefinitionQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: GetManualTriggerDefinitionQuery,
+  ) -> Result<ManualTriggerDefinitionProjection, Self::Error> {
+    self.record("get_manual_trigger_definition");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(ManualTriggerDefinitionProjection {
+      trigger_id: query.trigger_id,
+      version: query.version,
+      configuration_id: "44444444-4444-4444-8444-444444444444".parse().unwrap(),
+      configuration_version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+      enabled: true,
+      definition: serde_json::json!({"reason": "operator"}),
+      created_at: Timestamp::from_unix_millis(1_700_000_000_400).unwrap(),
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListProjectPipelinesQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListProjectPipelinesQuery,
+  ) -> Result<PipelinePageProjection, Self::Error> {
+    self.record("list_project_pipelines");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let id = serde_json::from_value(serde_json::json!("22222222-2222-4222-8222-222222222222")).unwrap();
+    let first_page = query.page().after().is_none();
+    Ok(PipelinePageProjection {
+      items: first_page
+        .then(|| PipelineSummaryProjection {
+          id,
+          project_id: query.page().project_id(),
+          name: serde_json::from_value(serde_json::json!("main")).unwrap(),
+          version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+          published_at: Timestamp::from_unix_millis(1_700_000_000_000).unwrap(),
+        })
+        .into_iter()
+        .collect(),
+      next_cursor: first_page.then_some(id),
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListProjectRepositoriesQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListProjectRepositoriesQuery,
+  ) -> Result<RepositoryPageProjection, Self::Error> {
+    self.record("list_project_repositories");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let id = serde_json::from_value(serde_json::json!("33333333-3333-4333-8333-333333333333")).unwrap();
+    let first_page = query.page().after().is_none();
+    Ok(RepositoryPageProjection {
+      items: first_page
+        .then(|| RepositorySummaryProjection {
+          id,
+          project_id: query.page().project_id(),
+          name: serde_json::from_value(serde_json::json!("source")).unwrap(),
+          version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+          published_at: Timestamp::from_unix_millis(1_700_000_000_100).unwrap(),
+        })
+        .into_iter()
+        .collect(),
+      next_cursor: first_page.then_some(id),
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListProjectBuildConfigurationsQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListProjectBuildConfigurationsQuery,
+  ) -> Result<BuildConfigurationPageProjection, Self::Error> {
+    self.record("list_project_build_configurations");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let id = serde_json::from_value(serde_json::json!("44444444-4444-4444-8444-444444444444")).unwrap();
+    let first_page = query.page().after().is_none();
+    Ok(BuildConfigurationPageProjection {
+      items: first_page
+        .then(|| BuildConfigurationSummaryProjection {
+          id,
+          project_id: query.page().project_id(),
+          name: serde_json::from_value(serde_json::json!("release")).unwrap(),
+          version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+          enabled: true,
+          published_at: Timestamp::from_unix_millis(1_700_000_000_200).unwrap(),
+        })
+        .into_iter()
+        .collect(),
+      next_cursor: first_page.then_some(id),
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListProjectTriggerDefinitionsQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListProjectTriggerDefinitionsQuery,
+  ) -> Result<TriggerDefinitionPageProjection, Self::Error> {
+    self.record("list_project_trigger_definitions");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let id = serde_json::from_value(serde_json::json!("88888888-8888-4888-8888-888888888888")).unwrap();
+    let first_page = query.page().after().is_none();
+    Ok(TriggerDefinitionPageProjection {
+      items: first_page
+        .then(|| TriggerDefinitionSummaryProjection {
+          id,
+          project_id: query.page().project_id(),
+          configuration_id: "44444444-4444-4444-8444-444444444444".parse().unwrap(),
+          configuration_version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+          version: serde_json::from_value(serde_json::json!(1)).unwrap(),
+          kind: TriggerDefinitionKindProjection::Scheduled,
+          enabled: true,
+          published_at: Timestamp::from_unix_millis(1_700_000_000_300).unwrap(),
+        })
+        .into_iter()
+        .collect(),
+      next_cursor: first_page.then_some(id),
+    })
+  }
+}
 
 #[async_trait]
 impl ManagementQueryUseCase<SearchBuildLogsQuery> for RecordingApplication {
@@ -543,6 +707,26 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     ),
     empty_request("GET", &format!("/api/v1/projects/{project_id}"), None),
     empty_request("GET", "/api/v1/projects?limit=10", None),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/pipelines?limit=10"),
+      None,
+    ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/repositories?limit=10"),
+      None,
+    ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/build-configurations?limit=10"),
+      None,
+    ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/trigger-definitions?limit=10"),
+      None,
+    ),
     json_request(
       "POST",
       "/api/v1/pipelines",
@@ -600,6 +784,11 @@ fn management_contract_requests() -> Vec<Request<Body>> {
       &format!(
         r#"{{"configuration_id":"{configuration_id}","configuration_version":1,"enabled":true,"definition":{{}}}}"#
       ),
+    ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/trigger-definitions/manual/{schedule_id}/versions/1"),
+      None,
     ),
     json_request(
       "POST",
@@ -797,6 +986,10 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "delete_project",
       "get_project",
       "list_projects",
+      "list_project_pipelines",
+      "list_project_repositories",
+      "list_project_build_configurations",
+      "list_project_trigger_definitions",
       "create_pipeline",
       "publish_pipeline",
       "get_pipeline",
@@ -807,6 +1000,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "publish_configuration",
       "get_configuration",
       "create_trigger_definition",
+      "get_manual_trigger_definition",
       "create_schedule",
       "create_internal_trigger",
       "list_internal_triggers",

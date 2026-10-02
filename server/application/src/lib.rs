@@ -126,7 +126,8 @@ pub use configuration_cqrs::{
 };
 pub use cqrs::{Command, CommandHandler, MutationDisposition, Query, QueryHandler};
 pub use definition_cqrs::{
-  CreateTriggerDefinitionCommand, DefinitionHandlers, ProjectPolicyCommandOutcome, PublishProjectPolicyCommand,
+  CreateTriggerDefinitionCommand, DefinitionHandlers, GetManualTriggerDefinitionQuery,
+  ManualTriggerDefinitionProjection, ProjectPolicyCommandOutcome, PublishProjectPolicyCommand,
   TriggerDefinitionCommandOutcome,
 };
 pub use definition_discovery::{

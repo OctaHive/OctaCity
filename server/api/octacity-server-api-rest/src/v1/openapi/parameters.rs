@@ -36,6 +36,13 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       cursor_parameter(),
       limit_parameter(MAX_PROJECT_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
     ]),
+    ParameterProfile::CurrentDefinitionList => parameters.extend([
+      cursor_parameter(),
+      limit_parameter(
+        octacity_server_application::MAX_CURRENT_DEFINITION_PAGE_SIZE,
+        super::super::adapter::DEFAULT_PAGE_LIMIT,
+      ),
+    ]),
     ParameterProfile::AgentPoolList => parameters.extend([
       cursor_parameter(),
       limit_parameter(MAX_AGENT_POOL_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),

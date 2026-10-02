@@ -216,15 +216,3 @@ pub struct CurrentTriggerDefinitionPage {
   /// Exclusive cursor for the following page, when one exists.
   pub next_cursor: Option<TriggerId>,
 }
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) fn finish_current_definition_page<T, I: Copy>(
-  items: &mut Vec<T>,
-  limit: NonZeroU16,
-  identity: impl Fn(&T) -> I,
-) -> Option<I> {
-  let limit = usize::from(limit.get());
-  let has_more = items.len() > limit;
-  items.truncate(limit);
-  has_more.then(|| identity(items.last().expect("a non-zero full page has a last item")))
-}

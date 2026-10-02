@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 
 use crate::{
-  CreateTriggerDefinition, ManagementMutation, ProjectPolicyMutationOutcome, PublishProjectPolicy, StoreError,
-  TriggerDefinitionMutationOutcome,
+  CreateTriggerDefinition, ManagementMutation, ManualTriggerDefinitionRecord, ProjectPolicyMutationOutcome,
+  PublishProjectPolicy, StoreError, TriggerDefinitionMutationOutcome,
 };
 
-/// Backend-neutral atomic mutations for policy and Trigger definitions.
+use octacity_server_domain::{TriggerId, TriggerVersion};
+
+/// Backend-neutral persistence for policy and manual Trigger definitions.
 #[async_trait]
 pub trait DefinitionStore: Send + Sync {
   /// Publishes exactly the next immutable Project policy version.
@@ -19,4 +21,11 @@ pub trait DefinitionStore: Send + Sync {
     &self,
     request: ManagementMutation<CreateTriggerDefinition>,
   ) -> Result<TriggerDefinitionMutationOutcome, StoreError>;
+
+  /// Reads one exact immutable manual Trigger definition version.
+  async fn manual_trigger_definition(
+    &self,
+    trigger_id: TriggerId,
+    version: TriggerVersion,
+  ) -> Result<ManualTriggerDefinitionRecord, StoreError>;
 }

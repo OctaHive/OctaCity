@@ -115,7 +115,7 @@ where
         ProjectManagementApplication::new(commands.clone(), queries.clone()),
         PipelineManagementApplication::new(commands.clone(), queries.clone()),
         ConfigurationManagementApplication::new(commands.clone(), queries.clone()),
-        DefinitionManagementApplication::new(commands.clone(), commands.clone()),
+        DefinitionManagementApplication::new(commands.clone(), commands.clone(), queries.clone()),
         ScheduleManagementApplication::new(commands.clone(), queries.clone()),
         InternalTriggerManagementApplication::new(commands.clone(), queries.clone()),
       ),

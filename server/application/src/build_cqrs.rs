@@ -4,17 +4,19 @@ use async_trait::async_trait;
 use octacity_server_domain::{AttemptId, BuildId, JobId, Timestamp};
 use octacity_server_job::JobState;
 use octacity_server_store::{
-  AttemptRecord, BuildControlStore, BuildQueryStore, CancelBuild, IdempotencyKey, JobRecord,
-  MutationDisposition as StoreMutationDisposition, RetryBuild, StoreError,
+  AttemptRecord, BuildControlStore, BuildDiscoveryStore, BuildQueryStore, CancelBuild, IdempotencyKey, JobRecord,
+  ListProjectBuilds, MutationDisposition as StoreMutationDisposition, ProjectBuildFilter, ProjectBuildPagePosition,
+  RetryBuild, StoreError,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-  ApplicationError, AttemptProjection, BuildProjection, Command, DagCausalityProjection, JobAssignmentProjection,
-  JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection, ManagementAction,
-  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult,
-  MutationDisposition, Query, TriggerHistoryProjection,
+  ApplicationError, AttemptProjection, BuildPageCursor, BuildPageProjection, BuildProjection, Command,
+  DagCausalityProjection, JobAssignmentProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
+  JobTerminalOutcomeProjection, ListProjectBuildsQuery, ManagementAction, ManagementAuthorizationMapping,
+  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition, Query,
+  TriggerHistoryProjection,
   management_security::{audited_mutation, instance_resource},
 };
 
@@ -223,6 +225,47 @@ where
         build.updated_at,
       )?,
       current_attempt: attempt_projection(&current_attempt),
+    })
+  }
+}
+
+#[async_trait]
+impl<S> crate::ManagementQueryUseCase<ListProjectBuildsQuery> for BuildHandlers<S>
+where
+  S: BuildDiscoveryStore + 'static,
+{
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    query: ListProjectBuildsQuery,
+  ) -> Result<BuildPageProjection, Self::Error> {
+    let filter = query.filter();
+    let page = self
+      .store
+      .list_project_builds(ListProjectBuilds::new(
+        query.project_id(),
+        ProjectBuildFilter {
+          configuration_id: filter.configuration_id,
+          state: filter.state,
+        },
+        query.after().map(|cursor| ProjectBuildPagePosition {
+          created_at: cursor.created_at(),
+          build_id: cursor.build_id(),
+        }),
+        query.limit(),
+        grant
+          .visibility_for::<ListProjectBuildsQuery>()
+          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+      )?)
+      .await?;
+    Ok(BuildPageProjection {
+      items: page.items.into_iter().map(Into::into).collect(),
+      next_cursor: page
+        .next_cursor
+        .map(|cursor| BuildPageCursor::new(cursor.created_at, cursor.build_id)),
     })
   }
 }
