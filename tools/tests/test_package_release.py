@@ -524,6 +524,47 @@ class PackageReleaseTests(unittest.TestCase):
         result = subprocess.run(["bash"], input=script.encode("utf-8"), check=False, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
 
+    @unittest.skipIf(sys.platform == "win32", "Linux Microsandbox provisioner executes only on POSIX hosts")
+    def test_linux_microsandbox_retries_an_interrupted_image_pull(self):
+        provisioner = (REPOSITORY / "tools/runner/github-hosted-oci.sh").read_text(encoding="utf-8")
+        function = provisioner.split("pull_microsandbox_image() {\n", 1)[1].split("\n}", 1)[0]
+        image = "registry.example/build@sha256:" + "a" * 64
+        script = "\n".join(
+            (
+                "set -euo pipefail",
+                "pull_microsandbox_image() {",
+                function,
+                "}",
+                "attempt_file=$(mktemp)",
+                "trap 'rm -f -- \"$attempt_file\"' EXIT",
+                "printf '0\\n' >\"$attempt_file\"",
+                "success_after=2",
+                "sleep() { :; }",
+                "fake_msb() {",
+                "  local attempt",
+                "  attempt=$(<\"$attempt_file\")",
+                "  attempt=$((attempt + 1))",
+                "  printf '%s\\n' \"$attempt\" >\"$attempt_file\"",
+                "  [[ ${MSB_HOME:-} == /tmp/microsandbox-state/microsandbox ]] || return 90",
+                "  [[ $* == 'image pull --quiet --materialize layered '" + image + " ]] || return 91",
+                "  if (( attempt < success_after )); then",
+                "    printf '%s\\n' 'image error: error decoding response body' >&2",
+                "    return 1",
+                "  fi",
+                "}",
+                "pull_microsandbox_image fake_msb /tmp/microsandbox-state '" + image + "'",
+                "[[ $(<\"$attempt_file\") == 2 ]]",
+                "printf '0\\n' >\"$attempt_file\"",
+                "success_after=4",
+                "if pull_microsandbox_image fake_msb /tmp/microsandbox-state '" + image + "'; then",
+                "  exit 92",
+                "fi",
+                "[[ $(<\"$attempt_file\") == 3 ]]",
+            )
+        )
+        result = subprocess.run(["bash"], input=script.encode("utf-8"), check=False, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+
     def test_apple_vf_release_gate_is_explicit_and_self_hosted(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")
         macos_microsandbox = workflow.split("  macos-microsandbox:\n", 1)[1].split(
