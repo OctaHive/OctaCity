@@ -92,6 +92,27 @@ fn assert_forbidden_contract(document: &serde_json::Value) {
   assert_json_matches_component(document, "ForbiddenErrorResponse", &expected);
 }
 
+fn collect_local_references<'a>(value: &'a serde_json::Value, references: &mut Vec<&'a str>) {
+  match value {
+    serde_json::Value::Array(values) => {
+      for value in values {
+        collect_local_references(value, references);
+      }
+    }
+    serde_json::Value::Object(object) => {
+      if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+        && reference.starts_with("#/")
+      {
+        references.push(reference);
+      }
+      for value in object.values() {
+        collect_local_references(value, references);
+      }
+    }
+    _ => {}
+  }
+}
+
 #[test]
 fn authorization_inventory_rejects_missing_and_duplicate_mappings() {
   assert_eq!(
@@ -661,4 +682,18 @@ fn generated_openapi_contract_is_line_ending_independent() {
     );
     assert_forbidden_contract(&parsed);
   }
+}
+
+#[test]
+fn generated_openapi_contract_has_no_dangling_local_references() {
+  let document = openapi_document();
+  let mut references = Vec::new();
+  collect_local_references(&document, &mut references);
+
+  let unresolved = references
+    .into_iter()
+    .filter(|reference| document.pointer(&reference[1..]).is_none())
+    .collect::<BTreeSet<_>>();
+
+  assert!(unresolved.is_empty(), "unresolved OpenAPI references: {unresolved:?}");
 }

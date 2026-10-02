@@ -5,7 +5,7 @@ Defines the trusted-network browser console through which operators discover, ob
 ## ADDED Requirements
 
 ### Requirement: Trusted same-origin console deployment
-The operator console SHALL be a separately deployable static browser application served from the same trusted origin that proxies `/api/v1` to the private management listener. It SHALL use relative management URLs, SHALL NOT require or collect an operator credential, and SHALL identify the deployment as unauthenticated trusted-network access. The deployment contract SHALL NOT require cross-origin management access or expose the management listener directly to an untrusted network.
+The operator console SHALL be a separately deployable static browser application whose source and toolchain are rooted directly at `ui/`, without an additional single-application directory or repository-level JavaScript workspace. It SHALL be served from the same trusted origin that proxies `/api/v1` to the private management listener. It SHALL own an application entry point and browser bootstrap and SHALL produce a directly deployable SPA bundle containing `index.html` and content-hashed static assets. It SHALL NOT expose a reusable library entry point, package export surface, or registry publication contract. It SHALL use relative management URLs, SHALL NOT require or collect an operator credential, and SHALL identify the deployment as unauthenticated trusted-network access. The deployment contract SHALL NOT require cross-origin management access or expose the management listener directly to an untrusted network.
 
 #### Scenario: Operator opens the console on the trusted network
 - **WHEN** an operator opens the configured console origin
@@ -18,6 +18,21 @@ The operator console SHALL be a separately deployable static browser application
 #### Scenario: Cross-origin API configuration is absent
 - **WHEN** the console is deployed according to the supported contract
 - **THEN** it does not require permissive CORS, browser credentials, forwarded operator identity, or storage of an authentication token
+
+#### Scenario: Production application is built
+- **WHEN** the console production build completes
+- **THEN** it emits a runnable static SPA rooted at `index.html` without a library bundle, public component exports, package-registry artifact, or Node runtime
+
+### Requirement: Deterministic frontend authoring boundary
+The console SHALL pin its supported Node, package-manager, compiler, formatter, linter, and test tool versions. Its lint gate SHALL cover JavaScript, TypeScript, React, React Hooks, and browser DOM correctness and SHALL reject unused lint suppressions. Repository-level editor and Git text rules SHALL normalize UTF-8 source text, final newlines, trailing whitespace, and LF line endings without introducing UI-only policy for shared file types.
+
+#### Scenario: Frontend quality gates run
+- **WHEN** a contributor runs the documented frontend format, lint, type-check, test, and build commands from `ui/`
+- **THEN** the pinned tools evaluate the standalone application deterministically and stale lint suppressions fail the lint command
+
+#### Scenario: Cross-platform source is checked in
+- **WHEN** a supported text source file is edited on a platform with different editor or line-ending defaults
+- **THEN** repository policy normalizes the committed text to the declared UTF-8 and LF conventions
 
 ### Requirement: URL-addressable operator navigation
 The console SHALL provide stable, directly addressable views for the Project hierarchy, one Project, one Build, Agents, Agent Pools, and audit facts. A Project view SHALL discover its current Pipelines, Repositories, Build Configurations, Trigger definitions, and recent Builds through bounded REST collections rather than requiring an operator to enter opaque identifiers.

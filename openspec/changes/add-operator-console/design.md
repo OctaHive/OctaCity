@@ -28,15 +28,19 @@ The existing release system produces deterministic checksummed native server bun
 
 ### 1. Deploy a separate SPA behind one trusted origin
 
-The console will live in `ui/operator-console` and build to immutable static assets. A trusted reverse proxy will serve the SPA at `/`, route `/api/v1/*` and `/health/*` to the private management listener, and return `index.html` for non-file UI routes only. API and health misses must never fall through to the SPA.
+The console will live directly in `ui/` and build to immutable static assets. Because it is the repository's only UI application, an additional single-app directory would add structure without defining a useful boundary. A trusted reverse proxy will serve the SPA at `/`, route `/api/v1/*` and `/health/*` to the private management listener, and return `index.html` for non-file UI routes only. API and health misses must never fall through to the SPA.
 
 The supported browser configuration has no runtime API-origin setting: requests use relative paths. The documented proxy configuration will disable caching for `index.html`, allow long immutable caching for content-hashed assets, and set a restrictive Content Security Policy, `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, and an explicit trusted-network exposure warning. Browser API requests use `credentials: 'omit'`; the server does not enable CORS or consume forwarded identity headers.
 
 This is preferred to embedding assets in the Rust server because console and server packaging can evolve independently and server-only installations remain unchanged. A separate browser origin was rejected because it would require CORS now and complicate a later session-based authentication design.
 
-### 2. Use a deliberately small React package
+### 2. Build one deliberately small React application
 
-The package will use TypeScript, React, Vite, React Router, and TanStack Query, with pnpm and a locked Node/pnpm toolchain in CI. It remains a single package with its own lockfile; a JavaScript workspace root is not introduced until a second package actually exists.
+`ui/` is the root of a standalone browser application, not a container for a component library or a JavaScript workspace. It owns its `index.html`, application bootstrap, root React tree, router, development server, production build, tests, package manifest, lockfile, and static output directory. It will use TypeScript, React, Vite, React Router, and TanStack Query, with pnpm and a locked Node/pnpm toolchain in CI. A JavaScript workspace root or another nested application directory is not introduced until a second JavaScript project actually exists.
+
+The package manifest is build metadata for the application rather than a published library contract: it has no library-mode Vite configuration, package export map, reusable component entry point, registry publication workflow, or runtime dependency on Node. Its supported consumer is a browser loading the generated `index.html` and content-hashed assets from the separately deployed static bundle.
+
+The quality boundary combines strict TypeScript, deterministic formatting, and ESLint rules for JavaScript, TypeScript, React, React Hooks, and browser DOM usage. Unused lint suppressions fail the check so exceptions cannot silently outlive their justification. Repository-level EditorConfig and Git attributes normalize UTF-8 text, final newlines, whitespace, and LF line endings across Rust, Markdown, and frontend sources instead of creating UI-only editor policy.
 
 CSS Modules and a small set of semantic design tokens will own layout, typography, spacing, state colors, and focus treatment. No general component framework or global client-state library is added. Server state belongs to TanStack Query, route/filter state belongs in URLs, transient interaction state stays in the owning component, and shared components are introduced only after a second real use.
 

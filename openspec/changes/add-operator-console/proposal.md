@@ -4,7 +4,7 @@ OctaCity exposes a complete trusted-network management workflow through REST, bu
 
 ## What Changes
 
-- Add a separately deployable browser operator console for the trusted management network, available through the same origin as `/api/v1` and explicitly operating without login, sessions, RBAC, or forwarded identity.
+- Add a separately deployable browser operator application rooted directly at `ui/` for the trusted management network, available through the same origin as `/api/v1` and explicitly operating without login, sessions, RBAC, or forwarded identity. It is the repository's single standalone SPA product with its own application entry point and static release artifact, not a reusable frontend library or package published for consumers.
 - Add bounded project-scoped discovery reads for current Pipelines, Repositories, Build Configurations, Trigger definitions, and recent Builds so the console never requires operators to enter known UUIDs.
 - Add project and Build navigation, Build/Attempt/Job diagnostics, bounded live event following, log search, Artifact and cache diagnostics, retention inspection, Agent and Agent Pool views, and audit browsing.
 - Add guarded operator actions for manual Build triggering, cancellation, retry, Build Result hold management, Agent drain and pool reassignment, using existing idempotency and concurrency contracts.
@@ -24,7 +24,7 @@ OctaCity exposes a complete trusted-network management workflow through REST, bu
 
 ## Impact
 
-- Adds a React and TypeScript SPA built with Vite, a generated OpenAPI client, client-side routing and query state, focused component styling, and browser unit and end-to-end tests.
+- Adds a standalone React and TypeScript SPA application built with Vite, a generated OpenAPI client, client-side routing and query state, focused component styling, and browser unit and end-to-end tests. It exposes no library entry point or public component API.
 - Adds application queries, store ports/adapters, PostgreSQL and in-memory projections, REST handlers, schemas, OpenAPI operations, and contract tests for the new discovery reads.
 - Adds release packaging and reverse-proxy documentation for serving static console assets and routing `/api/v1` to the private management listener under one trusted origin.
 - Does not embed UI assets into the Rust server, change existing command semantics, add browser credentials, or make the management listener safe for public exposure.

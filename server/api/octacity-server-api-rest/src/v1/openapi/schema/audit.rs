@@ -1,6 +1,6 @@
 use serde_json::{Map, Value, json};
 
-use super::super::{array, integer, non_empty_string, nullable, object, schema_ref, string_enum};
+use super::super::{MAX_CURSOR_BYTES, array, integer, non_empty_string, nullable, object, schema_ref, string_enum};
 
 pub(super) fn insert_audit_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert(
@@ -60,7 +60,10 @@ pub(super) fn insert_audit_schemas(schemas: &mut Map<String, Value>) {
     object(
       [
         ("items", array(schema_ref("AuditFactResource"))),
-        ("next_cursor", nullable(schema_ref("Cursor"))),
+        (
+          "next_cursor",
+          nullable(json!({"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES})),
+        ),
       ],
       &["items", "next_cursor"],
     ),

@@ -156,7 +156,7 @@ references, protocols, and planning material.
 
 ## Development
 
-The portable quality gate is:
+The portable Rust quality gate is:
 
 ```shell
 cargo fmt --all -- --check
@@ -166,6 +166,23 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 RUSTDOCFLAGS="-D missing-docs" cargo doc --workspace --all-features --no-deps
 cargo test --workspace --all-features
 ```
+
+The standalone operator console has its own locked quality gate:
+
+```shell
+cd ui
+corepack pnpm install --frozen-lockfile
+corepack pnpm exec playwright install chromium
+corepack pnpm api:generate
+corepack pnpm format
+corepack pnpm lint
+corepack pnpm typecheck
+corepack pnpm test
+corepack pnpm build
+```
+
+See [`ui/README.md`](ui/README.md) for the browser application boundary, supported toolchain,
+and development workflow.
 
 Coverage, security, failure, lifecycle, performance, and privileged backend
 gates have different infrastructure requirements and cadences. Their canonical
@@ -178,6 +195,7 @@ The repository is organized by responsibility:
 - `server/` — control-plane domain, application, API, and infrastructure code;
 - `agent/` — agent lifecycle, source acquisition, execution, and output code;
 - `shared/` — protocols and observability shared across process boundaries;
+- `ui/` — the standalone operator console application and frontend toolchain;
 - `docs/` — public contracts, configuration examples, and runbooks;
 - `tools/` — release, validation, and retained-evidence tooling.
 
