@@ -1,64 +1,65 @@
 ## Context
 
-See [proposal.md](proposal.md) for motivation. The current development host is Apple Silicon macOS with the Docker CLI installed. Docker containers therefore run as Linux ARM64 processes inside Docker Desktop's VM rather than as macOS processes. Microsandbox supports execution inside a Linux container only when that environment exposes a usable `/dev/kvm`; the physical Mac's virtualization support alone is insufficient.
+See [proposal.md](proposal.md) for motivation and the [local Compose stack specification](specs/deployment/local-compose-stack/spec.md) for observable behavior. The target host is Apple Silicon macOS with OrbStack. OrbStack provides a Docker-compatible Linux ARM64 service environment but, by its documented design, cannot expose nested KVM on Apple Silicon. The already-supported native macOS Microsandbox provider instead uses the host virtualization framework and runs Linux ARM64 guests without weakening the isolation contract.
 
-The repository currently packages host-native server and Agent archives but has no container images or Compose topology. The Agent also requires a separately versioned Octa runner bundle, a packaged source plugin, private enrollment state, and the server signing public key. Server and Agent URL validation permits HTTPS for non-loopback services, while artifact transfer returns presigned URLs that must be reachable by the Agent and potentially by the host browser. The console builds to static Vite output and expects a trusted reverse proxy to keep management API calls same-origin.
+The repository currently packages host-native server and Agent archives but has no local Compose topology or unified stand lifecycle. The native Agent requires a separately versioned Linux ARM64 Octa runner bundle, a packaged source plugin, private enrollment state, the server signing public key, and pinned Microsandbox runtime and firmware. Server and Agent URL validation permits HTTPS for non-loopback services, while artifact transfer returns presigned URLs that must be reachable from both containers and the macOS host. The console builds to static Vite output and expects a trusted reverse proxy to keep management API calls same-origin.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Make `docker compose up --build` the only command needed to initialize and run every stand component.
-- Exercise the real Linux ARM64 server, REST bootstrap, Agent registration, Octa runner, source plugin, MinIO transfer, and Microsandbox virtualization path.
-- Preserve the existing listener, credential-file, signing, and provider-neutral execution boundaries.
-- Make unsupported Docker/KVM environments fail early and diagnostically.
-- Keep rebuilds cacheable and ordinary restarts durable.
+- Make `tools/local-stand up` and `tools/local-stand down` the normal lifecycle interface for the entire hybrid stand.
+- Exercise the real Linux ARM64 server, REST bootstrap, native macOS Agent registration, Octa runner, source plugin, MinIO transfer, and Microsandbox virtualization path.
+- Preserve listener, credential-file, signing, provider-neutral execution, and non-root container boundaries.
+- Fail early and diagnostically when OrbStack, native Microsandbox, or staged release inputs are unavailable.
+- Make rebuilds cacheable and ordinary stop/start cycles durable and idempotent.
 
 **Non-Goals:**
 
 - Production deployment, high availability, externally trusted TLS, backup automation, or remote exposure.
-- Claiming the macOS host-provider matrix: the Agent runs inside Docker's Linux VM and truthfully advertises a Linux host platform.
+- Running Microsandbox inside OrbStack or claiming that Compose alone owns the native Agent lifecycle.
 - Falling back to Host, Native, containerd, Apple VF, or simulated execution when Microsandbox is unavailable.
+- Installing a persistent system-wide launch daemon or requiring administrator privileges for normal stand lifecycle.
 - Replacing release-candidate packaging or the Agent Ready release gate.
 
 ## Decisions
 
-### 1. Use one root `compose.yaml` with separate single-purpose services
+### 1. Split the service plane and native execution plane behind one launcher
 
-The stack will contain `postgres`, `minio`, `minio-init`, `secrets-init`, `gateway`, `server`, `bootstrap`, and `agent-microsandbox`. Init and bootstrap services terminate successfully; long-lived services remain one process per container. Named volumes own database, object, generated-secret, Agent, and Microsandbox state.
+The root `compose.yaml` will contain `postgres`, `minio`, `minio-init`, `server`, and `gateway`. A repository-owned `tools/local-stand` launcher owns initialization, Compose invocation, management bootstrap, and one native Agent process. `up` starts Compose detached, waits on declared health, performs replay-safe bootstrap, starts the Agent in a separate process group, and waits for registration. `down` validates its ownership record, requests bounded graceful Agent shutdown, escalates only that verified process when necessary, and then runs ordinary `docker compose down`.
 
-This satisfies the one-file and one-command requirement without combining unrelated daemons into a supervisor container. A Linux overlay file was rejected because the requested acceptance surface is the current Mac and one Compose application.
-
-The dependency graph is:
+The launcher stores an exclusive lock, PID plus process-start identity, logs, and generated state below one configurable private host directory. Repeated `up` and `down` calls converge safely; stale PID files are diagnosed and repaired without signalling an unrelated process. `status` and `logs` expose both lifecycle halves, while a separately confirmed `reset` removes named volumes and host state.
 
 ```text
-secrets-init ───────────────┐
-                            v
-postgres ───────────────> server ─────> bootstrap ─────> agent-microsandbox
-minio ──> minio-init ────> server             ^                    ^
-     gateway/TLS ─────────> server             │                    │
-                            └── readiness ──────┘          /dev/kvm preflight
+tools/local-stand up
+        │
+        ├── initialize private host state and validate immutable inputs
+        ├── docker compose up --build --detach
+        │       ├── postgres ───────────────┐
+        │       ├── minio ──> minio-init ──┼──> server ──> gateway
+        │       └── gateway/TLS ────────────┘
+        ├── bootstrap Pool and enrollment through gateway
+        └── native Agent ──> agent/cache/object gateway origins
+                    └── native Microsandbox ──> Linux ARM64 guest
 ```
 
-Compose health and `service_completed_successfully` conditions will express this graph. Fixed sleeps are not startup coordination.
+Trying to launch a host process from a container or mounting the Docker socket into a supervisor was rejected because both expand privilege and make process ownership ambiguous. A persistent launchd service was rejected for the local stand because it adds machine-wide state and outlives the repository workflow.
 
-### 2. Build repository-owned images from one multi-target container build
+### 2. Build narrow service images and stage one verified native execution bundle
 
-A repository-owned multi-stage build will produce narrow server, bootstrap, Agent, and gateway targets. Shared Rust stages build the server, Agent, and source plugin once. The Agent target also stages the exact Linux ARM64 Octa release named by the repository's pinned version and source revision, validates its release contract and checksums, and copies the pinned Microsandbox runtime and firmware from its immutable upstream image. The server target receives a JobSpec policy generated from the same staged runner and plugin manifests, preventing image drift between signer and executor.
+A repository-owned multi-stage container build will produce narrow server and gateway targets. Shared build stages compile the server and the source plugin once; the gateway target builds `ui/` with locked Node and pnpm versions and copies only static output plus nginx configuration into its runtime image. The Rust builder receives a checksum-verified Octa source archive as a named build context, places it beside the OctaCity tree, and therefore satisfies the workspace's versioned path dependencies without a developer sibling checkout. MinIO Community and mc are built in repository-owned targets from their last official source releases, exact Git revisions, and digest-qualified Go and Alpine bases because upstream no longer maintains Community binary images.
 
-The gateway target builds `ui/` with its locked Node and pnpm versions, then copies only static output and nginx configuration into the runtime image. Production release archives remain unchanged; these images are local deployment products.
+The launcher stages a native macOS Agent bundle, Microsandbox 0.7.6 runtime and firmware, the exact Linux ARM64 Octa release, and the source plugin into a versioned local installation directory. Every downloaded or built input is checked against version, source revision, manifest, platform, and SHA-256 metadata before activation. The server JobSpec policy is generated from the same runner and plugin manifests consumed by the native Agent, preventing signer/executor drift.
 
-Alternatives considered were building from a sibling Octa checkout, which would couple Compose to one developer's directory layout, and downloading mutable latest artifacts at container startup, which would make restarts network-dependent and unverifiable.
+Alternatives considered were building from a developer-owned sibling Octa checkout, which couples the stand to one directory layout, and downloading mutable latest artifacts during every `up`, which makes restart network-dependent and unverifiable. The selected named context is staged from the revision URL and checksum in the immutable-input manifest; it is not the developer checkout and is safe to cache offline after verification.
 
-### 3. Treat the Compose Agent as Linux ARM64 and require KVM
+### 3. Run the Agent natively with only the Microsandbox provider
 
-`agent-microsandbox` maps `/dev/kvm` with Compose `devices` and does not receive blanket `privileged` mode or the Docker socket. A small root entrypoint may install the generated local CA and grant the dedicated Agent group access to the mapped device; it then runs `msb doctor` as the Agent user and permanently drops privileges before configuration validation and Agent startup. Its configuration enables only the revision-2 Microsandbox virtualization provider.
+The Agent runs as the invoking macOS user with separate state, work, cache, and log roots. Its generated configuration enables only the revision-2 Microsandbox virtualization provider, advertises a macOS ARM64 host and Linux ARM64 guest, and records the exact Microsandbox environment identity. The launcher runs the pinned `msb doctor` and Agent configuration validation before bootstrap can lead to registration.
 
-The preflight checks the device, read/write access, pinned CLI and firmware, and Microsandbox initialization. Failure terminates the Agent service with remediation that points to Docker Desktop nested virtualization. It never changes the advertised mode or starts an unisolated runner.
+The native Agent never receives the Docker socket and does not require `/dev/kvm`, `sudo`, or a privileged container. A failed preflight prevents Agent startup and registration; it never changes the advertised mode or starts an unisolated runner.
 
-Although the physical machine is macOS, the Agent's observable host is Docker's Linux ARM64 VM. Pool admission and bootstrap therefore bind the enrollment to Linux ARM64, and the environment identity records the exact Microsandbox and Linux guest image family.
-
-### 4. Put all routable origins behind one TLS gateway
+### 4. Put all routable service origins behind one TLS gateway
 
 nginx will listen only on loopback-published host ports and use distinct `.localhost` hostnames on a shared TLS port:
 
@@ -67,51 +68,49 @@ nginx will listen only on loopback-published host ports and use distinct `.local
 - `cache.localhost` proxies only the cache protocol listener;
 - `objects.localhost` proxies the S3-compatible MinIO API.
 
-The gateway receives these names as Compose network aliases, so server and Agent containers resolve the same origins internally that the host resolves to loopback. This keeps presigned object URLs valid without exposing MinIO directly or rewriting signed requests. A first-run init service generates a local CA and leaf certificate into a private volume. Server and Agent entrypoints add only the public CA to their container trust stores before dropping privileges. The generated CA certificate is exported to a documented host path for optional browser trust; accepting or trusting that local CA is not required for non-browser health verification.
+The gateway receives these names as Compose network aliases, while macOS resolves them to loopback. This keeps presigned object URLs valid for the native Agent and internal service probes without publishing MinIO or raw server listeners. The host initializer creates a local CA and leaf certificate. Containers mount only the public CA and required key material; the native Agent trusts the same public CA in addition to normal roots. Optional browser trust remains a documented operator action, not an `up` side effect.
 
-One unencrypted internal network was considered, but the existing server and Agent deliberately reject non-loopback HTTP endpoints. Weakening those validators for Compose would alter a production trust boundary, so the stand supplies TLS instead.
+One unencrypted internal network was considered, but the existing server and Agent deliberately reject non-loopback HTTP endpoints. Weakening those validators would alter a production trust boundary, so the stand supplies TLS instead.
 
-### 5. Generate secrets once and expose them as private files
+### 5. Generate private host state once and mount least-privilege subsets
 
-`secrets-init` creates distinct random database, MinIO, signing, Agent-enrollment, and cache keys only when their target files do not already exist. It also derives the signing public key needed by the Agent and writes server configuration inputs with fixed service identities. The generated-secret volume is not bind-mounted into the repository. Long-lived processes receive only their required subset through read-only mounts, with ownership and modes satisfying existing validators.
+The launcher creates its configurable state root outside the repository with owner-only directory permissions. It generates distinct database, MinIO, signing, management-bootstrap, enrollment, and cache credentials only when their target files do not already exist, and derives the signing public key needed by the Agent. Compose mounts only the subset required by each service, read-only wherever mutation is unnecessary. The Agent sees only its credential, public trust material, configuration, and its own mutable roots.
 
-No credential is passed on a command line or logged. Compose interpolation is limited to non-secret tuning values. Committed `.env.example` content may select ports and resource bounds but contains no functional credentials.
+No credential is passed on a command line or logged. Compose interpolation is limited to non-secret paths, ports, and resource bounds. Committed `.env.example` content contains no functional credentials. A repository-local secret directory and static development passwords were rejected because they are easy to commit or reuse outside the local boundary.
 
-Static well-known development passwords were rejected because they tend to escape the local boundary and conflict with the repository's credential-file rules.
+### 6. Make host-side REST bootstrap replay-safe and registration-aware
 
-### 6. Make REST bootstrap replay-safe and registration-aware
+The launcher waits for gateway readiness, then uses the published management contract with a credential file. It submits a stable Pool definition with stable idempotency keys. Enrollment uses another stable identity and binds to the returned Pool version, macOS ARM64 host, and Linux ARM64 Microsandbox target. The response body is handled in memory or a protected staging file; only the credential is atomically installed without being echoed.
 
-The bootstrap image uses the published management contract. It waits for `/health/ready`, then submits a stable Pool definition with stable idempotency keys. Enrollment uses another stable key and is bound to the returned Pool version and Linux ARM64 platform. Bootstrap writes the response body directly to a protected staging file, extracts only the credential without echoing it, and atomically installs the Agent configuration and credential.
+If an Agent registration credential already exists, bootstrap preserves it. If a first-run response was lost, replay with the same idempotency key recovers the original result. Concurrent launchers are excluded by the lifecycle lock. Bootstrap will be a bounded repository-owned program or script with fixtures and log-redaction tests; ad-hoc shell interpolation of JSON and secrets is not acceptable.
 
-The Agent owns the credential file after bootstrap and may replace enrollment material with its registration credential. On restart, bootstrap detects the existing private credential and does not overwrite it. If a first-run response was lost, replay with the same idempotency key recovers the server's original result. Removing all stand volumes deliberately resets both authoritative server state and Agent identity.
+### 7. Separate durable container and host state with explicit reset semantics
 
-Bootstrap will be implemented as a bounded repository-owned program or script with fixtures and log-redaction tests; ad-hoc shell interpolation of JSON and secrets is not acceptable.
+Database and object bytes use distinct named volumes. Generated credentials, native Agent identity, Microsandbox state, work/cache roots, lifecycle metadata, and logs use distinct directories below the private host state root so permissions and cleanup can be checked independently. Ordinary `down` preserves both storage classes.
 
-### 7. Separate durable volumes and publish explicit reset semantics
+The launcher exposes an explicitly confirmed destructive reset that first performs a safe `down`, then removes the known Compose volumes and the resolved stand-specific host state directory. It refuses unresolved, root, home, repository-root, or otherwise broad deletion targets and lists the affected state before deletion.
 
-Database rows, object bytes, Microsandbox state, Agent state/cache/work roots, and generated credentials use distinct volumes so permissions, capacity, and cleanup can be checked independently. Ordinary `docker compose down` preserves them. The documented clean reset is `docker compose down --volumes` and explicitly lists that it destroys local Builds, object data, Agent identity, and generated trust material.
+Workspace and cache limits remain bounded in Agent configuration. The design does not claim hard quota enforcement beyond what the native macOS filesystem and existing Agent validators actually provide.
 
-Workspace and cache limits remain bounded in Agent configuration. The implementation will verify whether Docker Desktop volume capacity can satisfy the configured maximum and choose conservative local defaults rather than claiming hard quota enforcement that the platform does not provide.
+### 8. Validate portable structure and native behavior separately
 
-### 8. Validate structure portably and behavior on a KVM-capable runner
-
-Portable CI validates Compose rendering, pinned image references, container builds, configuration generation, nginx routing, secret-log redaction, idempotent bootstrap fixtures, and absence of host-published dependency ports. A KVM-capable ARM64 environment runs the real stack, asserts all health conditions, inspects Agent inventory, submits a minimal virtualization job, and verifies cleanup. The current Mac must pass the same preflight before it is accepted as a working local stand.
+Portable CI validates Compose rendering, pinned references, container builds, generated configurations, gateway routing, secret-log redaction, bootstrap fixtures, launcher state transitions, and absence of host-published dependency ports. Existing Apple Silicon self-hosted coverage validates the native Microsandbox contract. The target Mac runs the complete hybrid vertical slice through `tools/local-stand up`, including a real job, restart, and `down`.
 
 ## Risks / Trade-offs
 
-- **[Docker Desktop may not expose `/dev/kvm` on this Mac]** → Make the official in-container preflight the first acceptance gate and fail the Agent honestly; no Compose setting or `privileged` flag is presented as a workaround.
-- **[A generated local CA is not automatically trusted by the host browser]** → Keep startup fully automated, export the public CA, document optional Keychain trust and removal, and retain CLI health verification that uses the exported CA explicitly.
-- **[Hairpin routing through nginx adds overhead to object and cache traffic]** → Accept it for the bounded local stand because it preserves one reachable signed origin and production-equivalent TLS validation; measure the vertical slice rather than claim production throughput.
-- **[Container builds must obtain the separately released Octa bundle]** → Pin version, revision, platform, checksum, and manifest; use BuildKit cache and fail closed on any mismatch.
-- **[Root is briefly needed for CA and KVM device setup]** → Keep that work in a small audited entrypoint, drop to fixed non-root identities before validation or networking, remove unnecessary capabilities, and never mount the Docker socket.
-- **[Current console implementation is still evolving]** → Build the checked-in `ui/` state and test the proxy contract independently; the stack does not expand the UI feature scope.
+- **[The stand spans container and host process lifecycles]** → Hide the sequencing behind one locked launcher, verify process identity before signalling, and provide unified status and logs.
+- **[A generated local CA is not automatically trusted by the host browser]** → Export the public CA, document optional Keychain trust and removal, and retain CLI health verification with the explicit CA.
+- **[Host and container callers share gateway origins]** → Use `.localhost` names, Compose aliases, and routing tests that cover both sides and preserve S3 signing inputs.
+- **[Native runtime downloads can drift or disappear]** → Pin version, revision, platform, digest, and manifest; stage atomically into versioned directories and reuse verified installations offline.
+- **[Native state can outlive Compose volumes]** → Put all state below one resolved root and make destructive reset enumerate and remove both halves only after confirmation.
+- **[Current console implementation is still evolving]** → Build the checked-in `ui/` state and test the proxy contract independently; the stand does not expand UI feature scope.
 
 ## Migration Plan
 
-1. Add and validate pinned container build targets and generated configuration fixtures without changing existing release packages.
-2. Add the single Compose topology, init/bootstrap lifecycle, health checks, and local operations guide.
-3. Run portable structural and security checks.
-4. Start Docker Desktop on the target Mac and run the `/dev/kvm` plus `msb doctor` gate.
-5. If the gate passes, run the full local vertical slice and retain diagnostic evidence. If it fails, keep the core diagnosis visible and do not mark the change complete for this machine.
+1. Replace the failed nested-KVM assumption with a pinned native Microsandbox preflight on the target Mac.
+2. Add and validate pinned container build targets plus the native execution bundle without changing release packages.
+3. Add host-state initialization, the single launcher, Compose topology, replay-safe bootstrap, health checks, and operations guide.
+4. Run portable structural and security checks plus the existing native backend contract.
+5. Run the full hybrid local vertical slice through `up`, restart, and `down`, retaining concise diagnostic evidence.
 
-Rollback removes the Compose assets and local images. Named volumes remain recoverable unless the operator explicitly executes the documented destructive reset.
+Rollback stops the verified native Agent process and removes the launcher and Compose assets. Durable state remains recoverable unless the operator explicitly executes the confirmed destructive reset.

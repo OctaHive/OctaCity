@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "inputs": [
+    {
+      "role": "octacity_agent",
+      "filename": "octacity-agent-macos-arm64.tar.gz",
+      "manifest_entry": "native.octacity_agent",
+      "integrity": "release-manifest-and-sha256-sidecar",
+      "max_bytes": 134217728,
+      "max_expanded_bytes": 536870912,
+      "max_members": 4096
+    },
+    {
+      "role": "octa",
+      "filename": "octa-linux-arm64-v0.4.0.tar.gz",
+      "manifest_entry": "native.octa",
+      "integrity": "release-manifest-and-sha256-sidecar",
+      "max_bytes": 268435456,
+      "max_expanded_bytes": 1073741824,
+      "max_members": 4096
+    },
+    {
+      "role": "microsandbox",
+      "filename": "microsandbox-darwin-aarch64.tar.gz",
+      "manifest_entry": "native.microsandbox",
+      "integrity": "manifest-sha256",
+      "max_bytes": 536870912,
+      "max_expanded_bytes": 1073741824,
+      "max_members": 4096
+    }
+  ]
+}
