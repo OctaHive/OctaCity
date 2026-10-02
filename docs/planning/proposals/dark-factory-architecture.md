@@ -328,6 +328,20 @@ Task Envelope фиксирует protocol version, identities, mode, exact revis
 task/spec artifacts, previous findings, permissions, network policy, secret
 handles, budgets, expected output schema и prompt/policy digests.
 
+Permissions являются typed, deny-by-default контрактом, а не свободной map. Они
+отдельно задают разрешённые tools/commands, read/write filesystem roots, mount
+modes, network hosts, secret profiles, workload identity и output capabilities.
+Идентичность executable или plugin фиксируется digest/version; разрешение tool
+не означает разрешение произвольной команды, аргументов, working directory или
+дочернего процесса.
+
+Effective permissions вычисляются только как пересечение Factory Policy, Task
+Envelope, локальной Agent policy и реально обеспечиваемых backend capabilities.
+Каждый слой может только сузить полномочия. Неизвестная permission, отсутствующая
+локальная grant или невозможность backend'а обеспечить требуемое ограничение
+отклоняет Job до запуска; переход на Host или другой более слабый backend
+запрещён.
+
 Coding result содержит status, changed-path summary, summary, usage, diagnostics,
 transcript и provider provenance. Изменения остаются в sandbox до trusted
 ChangeSet capture.
@@ -523,6 +537,13 @@ tool reports, URLs и provider metadata.
 - repository text передаётся как evidence, не instructions;
 - system rubric хранится вне repo и фиксируется digest;
 - permissions enforced кодом, а не prompt;
+- effective permissions являются пересечением Factory Policy, Task Envelope,
+  локальной Agent policy и backend capabilities;
+- tools/commands, executable identity, arguments, child-process policy,
+  filesystem roots, mount modes, network hosts, secret profiles и output
+  capabilities проверяются до spawn и при каждом защищённом действии;
+- backend, не способный обеспечить требуемую permission, завершает admission
+  fail-closed без fallback на более слабый execution mode;
 - evaluator по умолчанию не имеет shell/write/arbitrary network;
 - LLM output schema-validated и никогда не исполняется напрямую;
 - secrets и cross-tenant data не попадают в context;
@@ -534,6 +555,12 @@ tool reports, URLs и provider metadata.
 - deterministic gates имеют приоритет;
 - required indeterminate никогда не становится pass;
 - auto-merge только opt-in для allowlisted low-risk policy.
+
+OctaCity Agent остаётся доверенным execution worker и может владеть
+привилегированным доступом к containerd, KVM или Virtualization.framework.
+Изоляционной границей продукта является Job/coding harness, а не процесс Agent.
+Hardening и выделенная машина/VM для самого Agent относятся к deployment
+profile; backend sockets и host devices никогда не передаются workload.
 
 ## 15. Failure, retry и fencing
 
@@ -607,7 +634,9 @@ Claude adapters, один coding plugin contract, несколько Criterion P
 ### Phase A: contracts
 
 Утвердить glossary; Work/Task Envelope; ChangeSet; Assessment/Decision schemas;
-plugin provenance; threat model; ADR о разделении Factory Run и Build.
+typed permission vocabulary; effective-permission intersection; backend
+capability/admission matrix; plugin provenance; threat model; ADR о разделении
+Factory Run и Build.
 
 ### Phase B: manual factory to PR
 
@@ -646,6 +675,11 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
 13. Required missing/indeterminate evidence не означает pass.
 14. External status — projection, не correctness state.
 15. Auto-merge opt-in и ограничен risk policy.
+16. Effective permissions могут только сужаться на каждом trust boundary.
+17. Невозможность обеспечить permission приводит к отказу до spawn, а не к
+    fallback на более слабый backend.
+18. OctaCity Agent является доверенным worker; изолируется недоверенный
+    Job/harness и его descendants.
 
 ## 20. Решения для отдельных ADR
 
@@ -659,6 +693,9 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
 8. Граница auto-merge и аварийное отключение.
 9. Хранение resumable sessions как optional optimization.
 10. Разделение Git publication и forge PR operations.
+11. Каноническая идентичность tool/command, допустимые arguments и descendants.
+12. Формат filesystem roots и mount policy для implementation и evaluator.
+13. Разделение Factory Policy, Task Envelope и локальной Agent policy.
 
 ## 21. Критерии подтверждения архитектуры
 
@@ -674,6 +711,12 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
 10. Delivery retry после lost response не создаёт второй PR.
 11. Coding harness не имеет push/merge credential.
 12. Удаление worktree не уничтожает возможность продолжить Factory Run.
+13. Запрос tool, command, path, mount, host или secret profile вне allowlist
+    отклоняется до spawn или до соответствующего защищённого действия.
+14. Job, требующий unsupported backend capability, не запускается через Host или
+    другой более слабый execution mode.
+15. Реальный backend contract одновременно доказывает разрешённые и запрещённые
+    tool, filesystem, network и secret операции.
 
 ## 22. Итог
 
