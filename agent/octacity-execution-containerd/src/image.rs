@@ -83,8 +83,28 @@ fn retryable_image_pull(error: &Status) -> bool {
   matches!(
     error.code(),
     Code::Unavailable | Code::ResourceExhausted | Code::Aborted
-  ) || (error.code() == Code::Unknown
-    && (error.message().contains("short read") || error.message().contains("unexpected EOF")))
+  ) || (error.code() == Code::Unknown && is_known_interrupted_transfer(error.message()))
+}
+
+/// Recognizes the exact unstructured short-read diagnostic emitted by the
+/// pinned containerd transfer service when a registry blob ends prematurely.
+/// Unknown errors with only similar wording remain permanent failures.
+fn is_known_interrupted_transfer(message: &str) -> bool {
+  let Some((expected, remainder)) = message
+    .strip_prefix("short read: expected ")
+    .and_then(|message| message.split_once(" bytes but got "))
+  else {
+    return false;
+  };
+  let Some((actual, suffix)) = remainder.split_once(": ") else {
+    return false;
+  };
+  suffix == "unexpected EOF"
+    && expected
+      .parse::<u64>()
+      .ok()
+      .zip(actual.parse::<u64>().ok())
+      .is_some_and(|(expected, actual)| actual < expected)
 }
 
 /// Resolves the pulled digest to a platform-specific rootfs chain and process environment.

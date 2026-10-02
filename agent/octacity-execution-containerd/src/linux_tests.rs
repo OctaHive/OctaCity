@@ -515,6 +515,23 @@ async fn does_not_retry_a_permanent_image_pull_failure() {
 }
 
 #[tokio::test]
+async fn does_not_retry_an_unknown_failure_with_only_a_near_match() {
+  let attempts = std::cell::Cell::new(0_u8);
+  let result = retry_image_pull::<(), _, _>(
+    operation_deadline(Duration::from_secs(1)).unwrap(),
+    &CancellationToken::new(),
+    || {
+      attempts.set(attempts.get() + 1);
+      Ok(async { Err(Status::unknown("registry denied access after unexpected EOF")) })
+    },
+  )
+  .await;
+
+  assert!(matches!(result, Err(ExecutionError::Backend(_))));
+  assert_eq!(attempts.get(), 1);
+}
+
+#[tokio::test]
 async fn bounds_repeated_interrupted_image_pull_failures() {
   let attempts = std::cell::Cell::new(0_u8);
   let result = retry_image_pull::<(), _, _>(
@@ -522,7 +539,11 @@ async fn bounds_repeated_interrupted_image_pull_failures() {
     &CancellationToken::new(),
     || {
       attempts.set(attempts.get() + 1);
-      Ok(async { Err(Status::unknown("short read: unexpected EOF")) })
+      Ok(async {
+        Err(Status::unknown(
+          "short read: expected 64 bytes but got 32: unexpected EOF",
+        ))
+      })
     },
   )
   .await;
