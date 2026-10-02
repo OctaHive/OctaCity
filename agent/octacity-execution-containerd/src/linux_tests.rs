@@ -470,3 +470,83 @@ async fn bounds_grpc_operations_by_the_shared_deadline() {
   .unwrap_err();
   assert!(matches!(error, ExecutionError::Cancelled));
 }
+
+#[tokio::test]
+async fn retries_an_interrupted_digest_pinned_image_pull() {
+  let attempts = std::cell::Cell::new(0_u8);
+  let result = retry_image_pull(
+    operation_deadline(Duration::from_secs(1)).unwrap(),
+    &CancellationToken::new(),
+    || {
+      attempts.set(attempts.get() + 1);
+      let attempt = attempts.get();
+      Ok(async move {
+        if attempt == 1 {
+          Err(Status::unknown(
+            "short read: expected 63174720 bytes but got 2097153: unexpected EOF",
+          ))
+        } else {
+          Ok(())
+        }
+      })
+    },
+  )
+  .await;
+
+  assert!(result.is_ok());
+  assert_eq!(attempts.get(), 2);
+}
+
+#[tokio::test]
+async fn does_not_retry_a_permanent_image_pull_failure() {
+  let attempts = std::cell::Cell::new(0_u8);
+  let result = retry_image_pull::<(), _, _>(
+    operation_deadline(Duration::from_secs(1)).unwrap(),
+    &CancellationToken::new(),
+    || {
+      attempts.set(attempts.get() + 1);
+      Ok(async { Err(Status::permission_denied("registry denied access")) })
+    },
+  )
+  .await;
+
+  assert!(matches!(result, Err(ExecutionError::Backend(_))));
+  assert_eq!(attempts.get(), 1);
+}
+
+#[tokio::test]
+async fn bounds_repeated_interrupted_image_pull_failures() {
+  let attempts = std::cell::Cell::new(0_u8);
+  let result = retry_image_pull::<(), _, _>(
+    operation_deadline(Duration::from_secs(2)).unwrap(),
+    &CancellationToken::new(),
+    || {
+      attempts.set(attempts.get() + 1);
+      Ok(async { Err(Status::unknown("short read: unexpected EOF")) })
+    },
+  )
+  .await;
+
+  assert!(matches!(result, Err(ExecutionError::Backend(_))));
+  assert_eq!(attempts.get(), 3);
+}
+
+#[tokio::test]
+async fn stops_image_pull_retries_when_cancelled() {
+  let attempts = std::cell::Cell::new(0_u8);
+  let cancellation = CancellationToken::new();
+  let cancellation_for_attempt = cancellation.clone();
+  let result = retry_image_pull::<(), _, _>(
+    operation_deadline(Duration::from_secs(1)).unwrap(),
+    &cancellation,
+    || {
+      attempts.set(attempts.get() + 1);
+      cancellation_for_attempt.cancel();
+      Ok(async { Err(Status::unavailable("registry connection closed")) })
+    },
+  )
+  .await;
+
+  assert!(matches!(result, Err(ExecutionError::Cancelled)));
+  assert_eq!(attempts.get(), 1);
+}

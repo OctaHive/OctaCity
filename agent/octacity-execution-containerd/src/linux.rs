@@ -78,7 +78,7 @@ use filesystem::{
 #[cfg(test)]
 use image::{
   ImagePlatform, chain_id, containerd_platform, execution_architecture, execution_os, is_index_media_type,
-  is_manifest_media_type, process_environment, validate_digest,
+  is_manifest_media_type, process_environment, retry_image_pull, validate_digest,
 };
 use io::ContainerIo;
 use lease::{create_startup_lease, delete_lease, owned_lease_ids};

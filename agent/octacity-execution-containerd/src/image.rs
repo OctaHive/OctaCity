@@ -2,6 +2,9 @@
 
 use super::*;
 
+const IMAGE_PULL_MAX_ATTEMPTS: usize = 3;
+const IMAGE_PULL_RETRY_DELAY: Duration = Duration::from_millis(200);
+
 /// Pulls and unpacks exactly the requested platform into the configured snapshotter.
 pub(super) async fn pull_and_unpack(
   client: &Client,
@@ -32,21 +35,56 @@ pub(super) async fn pull_and_unpack(
     }],
     ..Default::default()
   };
-  grpc_before(
-    deadline,
-    Some(cancellation),
-    "pull and unpack OCI image",
-    client.transfer().transfer(namespaced(
-      TransferRequest {
-        source: Some(to_any(&source)),
-        destination: Some(to_any(&destination)),
-        options: Some(TransferOptions::default()),
-      },
-      &config.namespace,
-    )?),
-  )
+  let request = TransferRequest {
+    source: Some(to_any(&source)),
+    destination: Some(to_any(&destination)),
+    options: Some(TransferOptions::default()),
+  };
+  retry_image_pull(deadline, cancellation, || {
+    let request = namespaced(request.clone(), &config.namespace)?;
+    let mut transfer = client.transfer();
+    Ok(async move { transfer.transfer(request).await })
+  })
   .await?;
   Ok(())
+}
+
+/// Retries only selected transient failures while preserving the operation's shared budget.
+pub(super) async fn retry_image_pull<T, F, Fut>(
+  deadline: Instant,
+  cancellation: &CancellationToken,
+  mut operation: F,
+) -> Result<T, ExecutionError>
+where
+  F: FnMut() -> Result<Fut, ExecutionError>,
+  Fut: Future<Output = Result<T, Status>>,
+{
+  for attempt in 1..=IMAGE_PULL_MAX_ATTEMPTS {
+    let error = match before_deadline(deadline, Some(cancellation), "pull and unpack OCI image", operation()?).await? {
+      Ok(value) => return Ok(value),
+      Err(error) => error,
+    };
+    if attempt == IMAGE_PULL_MAX_ATTEMPTS || !retryable_image_pull(&error) {
+      return Err(grpc("pull and unpack OCI image", error));
+    }
+    warn!(attempt, code = ?error.code(), "retrying interrupted containerd image pull");
+    before_deadline(
+      deadline,
+      Some(cancellation),
+      "wait to retry containerd image pull",
+      tokio::time::sleep(IMAGE_PULL_RETRY_DELAY),
+    )
+    .await?;
+  }
+  unreachable!("positive bounded image pull attempt count")
+}
+
+fn retryable_image_pull(error: &Status) -> bool {
+  matches!(
+    error.code(),
+    Code::Unavailable | Code::ResourceExhausted | Code::Aborted
+  ) || (error.code() == Code::Unknown
+    && (error.message().contains("short read") || error.message().contains("unexpected EOF")))
 }
 
 /// Resolves the pulled digest to a platform-specific rootfs chain and process environment.
