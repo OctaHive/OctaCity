@@ -2,14 +2,17 @@
 
 use std::{
   fs,
-  io::Read as _,
+  io::{Read as _, Write as _},
   path::{Path, PathBuf},
   sync::RwLock,
   time::Duration,
 };
 
 use async_trait::async_trait;
-use octacity_private_fs::read_bounded_regular_file;
+use octacity_private_fs::{
+  open_regular_file_no_follow, read_bounded_regular_file, validate_private_access, validate_trusted_directory_chain,
+  validate_trusted_owner,
+};
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AgentTelemetrySample,
   AppendEventsRequest, AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse,
@@ -54,6 +57,7 @@ pub struct HttpCoordinatorConfig {
 /// Bounded HTTPS implementation of [`CoordinatorClient`].
 pub struct HttpCoordinatorClient {
   base_url: Url,
+  credential_file: PathBuf,
   authorization: RwLock<header::HeaderValue>,
   client: reqwest::Client,
   request_timeout: Duration,
@@ -112,6 +116,7 @@ impl HttpCoordinatorClient {
     })?;
     Ok(Self {
       base_url,
+      credential_file: config.credential_file,
       authorization: RwLock::new(authorization),
       client,
       request_timeout: config.request_timeout,
@@ -277,6 +282,7 @@ impl HttpCoordinatorClient {
       .promote(registration_id)
       .map_err(|_| invalid("registration credential identity is invalid"))?;
     let encoded = promoted.encode();
+    persist_credential(&self.credential_file, encoded.as_str())?;
     let mut promoted = header::HeaderValue::from_str(&format!("Bearer {}", encoded.as_str()))
       .map_err(|_| invalid("registration credential cannot be represented as an HTTP bearer token"))?;
     promoted.set_sensitive(true);
@@ -286,6 +292,68 @@ impl HttpCoordinatorClient {
       .map_err(|_| invalid("coordinator credential state is unavailable"))? = promoted;
     Ok(())
   }
+}
+
+fn persist_credential(path: &Path, credential: &str) -> Result<(), CoordinatorError> {
+  let parent = path
+    .parent()
+    .ok_or_else(|| invalid("credential file has no parent directory"))?;
+  open_regular_file_no_follow(path).map_err(|source| CoordinatorError::Credential {
+    path: path.to_owned(),
+    source,
+  })?;
+  for protected in [parent, path] {
+    validate_private_access(protected).map_err(|source| CoordinatorError::Credential {
+      path: protected.to_owned(),
+      source,
+    })?;
+    validate_trusted_owner(protected).map_err(|source| CoordinatorError::Credential {
+      path: protected.to_owned(),
+      source,
+    })?;
+  }
+  validate_trusted_directory_chain(parent).map_err(|source| CoordinatorError::Credential {
+    path: parent.to_owned(),
+    source,
+  })?;
+
+  let mut staged = tempfile::NamedTempFile::new_in(parent).map_err(|source| CoordinatorError::Credential {
+    path: parent.to_owned(),
+    source,
+  })?;
+  validate_private_access(staged.path()).map_err(|source| CoordinatorError::Credential {
+    path: staged.path().to_owned(),
+    source,
+  })?;
+  validate_trusted_owner(staged.path()).map_err(|source| CoordinatorError::Credential {
+    path: staged.path().to_owned(),
+    source,
+  })?;
+  staged
+    .write_all(credential.as_bytes())
+    .and_then(|()| staged.write_all(b"\n"))
+    .and_then(|()| staged.as_file_mut().sync_all())
+    .map_err(|source| CoordinatorError::Credential {
+      path: path.to_owned(),
+      source,
+    })?;
+  staged.persist(path).map_err(|error| CoordinatorError::Credential {
+    path: path.to_owned(),
+    source: error.error,
+  })?;
+  open_regular_file_no_follow(path).map_err(|source| CoordinatorError::Credential {
+    path: path.to_owned(),
+    source,
+  })?;
+  validate_private_access(path).map_err(|source| CoordinatorError::Credential {
+    path: path.to_owned(),
+    source,
+  })?;
+  validate_trusted_owner(path).map_err(|source| CoordinatorError::Credential {
+    path: path.to_owned(),
+    source,
+  })?;
+  Ok(())
 }
 
 /// Loads a bounded no-follow PEM bundle for coordinator-adjacent HTTPS clients.

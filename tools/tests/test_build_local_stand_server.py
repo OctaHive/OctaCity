@@ -61,6 +61,10 @@ class LocalStandServerBuildTests(unittest.TestCase):
             arguments,
         )
         self.assertIn(
+            "ALPINE_IMAGE=" + self.document["images"]["alpine"]["reference"],
+            arguments,
+        )
+        self.assertIn(
             "OCTA_REVISION=" + self.document["native"]["octa"]["source_revision"],
             arguments,
         )
@@ -75,8 +79,9 @@ class LocalStandServerBuildTests(unittest.TestCase):
         self.assertIn("ARG RUST_IMAGE=scratch", dockerfile)
         self.assertIn("cargo build --locked --release", dockerfile)
         self.assertIn("ldd \"$binary\"", dockerfile)
-        self.assertIn("FROM scratch AS server", dockerfile)
+        self.assertIn("FROM ${ALPINE_IMAGE} AS server", dockerfile)
         self.assertIn("COPY --from=server-builder /out/rootfs /", dockerfile)
+        self.assertIn("server-entrypoint.sh", dockerfile)
         self.assertIn("USER 65532:65532", dockerfile)
         self.assertNotIn("target-feature=+crt-static", dockerfile)
         self.assertNotIn("docker/dockerfile:", dockerfile)

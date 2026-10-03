@@ -74,6 +74,34 @@ class PinnedMinioBuildTests(unittest.TestCase):
         self.assertIn(f"org.opencontainers.image.revision={source['source_revision']}", command)
         self.assertIn(f"org.opencontainers.image.version={source['tag']}", command)
 
+    def test_cached_image_requires_exact_architecture_revision_and_version(self):
+        source = self.document["sources"]["minio"]
+        metadata = {
+            "Architecture": "arm64",
+            "Config": {
+                "Labels": {
+                    "org.opencontainers.image.revision": source["source_revision"],
+                    "org.opencontainers.image.version": source["tag"],
+                }
+            },
+        }
+        inspected = mock.Mock(stdout=json.dumps(metadata))
+        with mock.patch.object(BUILDER.subprocess, "run", return_value=inspected):
+            self.assertTrue(
+                BUILDER.image_is_current(
+                    self.document, "minio", "octacity/minio:test", "arm64"
+                )
+            )
+
+        metadata["Architecture"] = "amd64"
+        inspected.stdout = json.dumps(metadata)
+        with mock.patch.object(BUILDER.subprocess, "run", return_value=inspected):
+            self.assertFalse(
+                BUILDER.image_is_current(
+                    self.document, "minio", "octacity/minio:test", "arm64"
+                )
+            )
+
     def test_mc_image_contains_the_bounded_object_store_initializer(self):
         dockerfile = BUILDER.DOCKERFILE.read_text(encoding="utf-8")
         initializer = BUILDER.OBJECT_STORE_INITIALIZER.read_text(encoding="utf-8")

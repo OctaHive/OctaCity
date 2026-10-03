@@ -35,7 +35,6 @@ CREDENTIAL_FILES = {
     "object_access_key": "object-access-key",
     "object_secret_key": "object-secret-key",
     "signing_key": "signing-key",
-    "management_bootstrap_key": "management-bootstrap-key",
     "agent_enrollment_key": "agent-enrollment-key",
     "cache_credential_key": "cache-credential-key",
 }
@@ -51,7 +50,6 @@ PUBLIC_PKI_FILES = frozenset(set(PKI_FILES) - PRIVATE_PKI_FILES)
 BASE64_CREDENTIALS = frozenset(
     {
         "signing_key",
-        "management_bootstrap_key",
         "agent_enrollment_key",
         "cache_credential_key",
     }

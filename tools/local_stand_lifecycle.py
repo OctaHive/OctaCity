@@ -290,6 +290,11 @@ class LifecycleState:
         if self._lock_descriptor is None:
             raise LifecycleError("lifecycle operation requires the exclusive lock")
 
+    def require_exclusive_lock(self) -> None:
+        """Prove this instance currently owns the shared launcher lock."""
+
+        self._require_lock()
+
     def _record_path(self, name: str) -> Path:
         return self.lifecycle_root / f"{_process_name(name)}.json"
 
@@ -456,6 +461,9 @@ class LifecycleState:
         disposition = self.reconcile_before_start(name)
         if disposition is StartDisposition.ALREADY_RUNNING:
             raise LifecycleError(f"{name} is already running")
+        control_socket: Path | None = None
+        control_token: str | None = None
+        record_written = False
         with self.open_log(name) as output:
             try:
                 process, control_socket, control_token = supervisor.spawn(
@@ -472,10 +480,34 @@ class LifecycleState:
                     control_socket,
                     control_token,
                 )
+                record_written = True
                 if supervisor.request(control_socket, control_token, "commit") != "committed":
                     raise LifecycleError(f"{name} supervisor did not commit startup")
                 return record
-            except (OSError, supervisor.SupervisorError) as error:
+            except (OSError, supervisor.SupervisorError, LifecycleError) as error:
+                cleanup_error: BaseException | None = None
+                try:
+                    if record_written:
+                        self.shutdown(
+                            name,
+                            graceful_timeout_seconds=2,
+                            forced_timeout_seconds=2,
+                        )
+                    elif control_socket is not None and control_token is not None:
+                        supervisor.request(
+                            control_socket,
+                            control_token,
+                            "shutdown",
+                            graceful_timeout_seconds=2,
+                            forced_timeout_seconds=2,
+                            timeout_seconds=5,
+                        )
+                except (LifecycleError, supervisor.SupervisorError) as rollback_error:
+                    cleanup_error = rollback_error
+                if cleanup_error is not None:
+                    raise LifecycleError(
+                        f"cannot launch {name}: {error}; startup rollback failed: {cleanup_error}"
+                    ) from error
                 raise LifecycleError(f"cannot launch {name}: {error}") from error
 
     def _remove_record(self, stored: _StoredRecord) -> None:

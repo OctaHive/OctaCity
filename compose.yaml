@@ -93,17 +93,156 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  server:
+    image: octacity/server:local
+    pull_policy: never
+    platform: linux/arm64
+    command:
+      - run
+      - /run/octacity/server.toml
+    user: "0:0"
+    configs:
+      - source: local-ca-certificate
+        target: /etc/ssl/certs/octacity-local-ca.pem
+      - source: server-config
+        target: /run/octacity/server.toml
+      - source: server-job-spec-policy
+        target: /run/octacity/job-spec-policy.json
+    secrets:
+      - source: postgres-url
+        target: postgres-url
+      - source: object-access-key
+        target: object-access-key
+      - source: object-secret-key
+        target: object-secret-key
+      - source: signing-key
+        target: signing-key
+      - source: agent-enrollment-key
+        target: agent-enrollment-key
+      - source: cache-credential-key
+        target: cache-credential-key
+    networks:
+      - stand
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --output-document=/dev/null
+        - --timeout=2
+        - http://127.0.0.1:8080/health/ready
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /run/octacity-secrets:size=64k,mode=0700
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  gateway:
+    image: octacity/gateway:local
+    pull_policy: never
+    platform: linux/arm64
+    configs:
+      - source: local-ca-certificate
+        target: /run/octacity/local-ca.pem
+    secrets:
+      - source: gateway-certificate
+        target: gateway.pem
+      - source: gateway-private-key
+        target: gateway-key.pem
+    ports:
+      - target: 443
+        published: ${OCTACITY_LOCAL_STAND_HTTPS_PORT:-8443}
+        host_ip: 127.0.0.1
+        protocol: tcp
+    networks:
+      edge:
+      stand:
+        aliases:
+          - octacity.localhost
+          - agent.localhost
+          - cache.localhost
+          - objects.localhost
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - --cacert
+        - /run/octacity/local-ca.pem
+        - --resolve
+        - octacity.localhost:443:127.0.0.1
+        - --connect-timeout
+        - "1"
+        - --max-time
+        - "2"
+        - https://octacity.localhost/health/ready
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
 networks:
+  edge:
   stand:
     internal: true
 
+configs:
+  local-ca-certificate:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/pki/local-ca.pem
+  server-config:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/server/server.toml
+  server-job-spec-policy:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/server/job-spec-policy.json
+
 secrets:
+  agent-enrollment-key:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/agent-enrollment-key
+  cache-credential-key:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/cache-credential-key
+  gateway-certificate:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/pki/gateway.pem
+  gateway-private-key:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/pki/gateway-key.pem
   postgres-password:
     file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/postgres-password
+  postgres-url:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/server/postgres-url
   object-access-key:
     file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/object-access-key
   object-secret-key:
     file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/object-secret-key
+  signing-key:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/signing-key
 
 volumes:
   postgres-data:

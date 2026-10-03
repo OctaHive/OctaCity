@@ -282,25 +282,25 @@ def build(image: str, manifest: Path, repository: Path) -> None:
         octacity_source = root / "octacity"
         stage_octa_source(document, octa_source)
         stage_octacity_source(repository, octacity_source, revision)
-        expected_version = workspace_version(octacity_source)
-        node_version, pnpm_version = ui_toolchain(octacity_source)
-        subprocess.run(
-            docker_arguments(
-                document,
-                image,
-                octa_source,
-                octacity_source,
-                revision,
-            ),
-            check=True,
-        )
-    verify_image(
-        image,
-        expected_version,
-        revision,
-        node_version,
-        pnpm_version,
+        build_staged(image, document, octa_source, octacity_source, revision)
+
+
+def build_staged(
+    image: str,
+    document: dict[str, Any],
+    octa_source: Path,
+    octacity_source: Path,
+    revision: str,
+) -> None:
+    """Build and verify the gateway from an already verified shared context."""
+
+    expected_version = workspace_version(octacity_source)
+    node_version, pnpm_version = ui_toolchain(octacity_source)
+    subprocess.run(
+        docker_arguments(document, image, octa_source, octacity_source, revision),
+        check=True,
     )
+    verify_image(image, expected_version, revision, node_version, pnpm_version)
 
 
 def main() -> int:

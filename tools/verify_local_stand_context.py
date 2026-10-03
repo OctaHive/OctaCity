@@ -51,6 +51,7 @@ REQUIRED_CONTEXT_PATHS = (
     "deployment/local-stand/minio.Dockerfile",
     "deployment/local-stand/nginx.conf",
     "deployment/local-stand/server.Dockerfile",
+    "deployment/local-stand/server-entrypoint.sh",
     "deployment/local-stand/staging-allowlist.json",
 )
 

@@ -554,13 +554,20 @@ async fn successful_registration_promotes_the_enrollment_bearer_for_later_calls(
     Action::Register { request_id: None },
   ])
   .await;
-  let client = client_with_credential(
-    &server,
-    "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
-    1,
-    Duration::from_secs(1),
-    4096,
-  );
+  let directory = tempfile::tempdir().unwrap();
+  let credential = directory.path().canonicalize().unwrap().join("credential");
+  fs::write(
+    &credential,
+    "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\n",
+  )
+  .unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
+  }
+  let client = HttpCoordinatorClient::new(http_config(server.url.clone(), credential.clone())).unwrap();
 
   client.register(&inventory(), CancellationToken::new()).await.unwrap();
   client.register(&inventory(), CancellationToken::new()).await.unwrap();
@@ -574,6 +581,11 @@ async fn successful_registration_promotes_the_enrollment_bearer_for_later_calls(
     records[1].authorization,
     "Bearer registration.registration-1.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
   );
+  assert_eq!(
+    fs::read_to_string(&credential).unwrap(),
+    "registration.registration-1.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\n"
+  );
+  octacity_private_fs::validate_private_access(&credential).unwrap();
 }
 
 #[tokio::test]

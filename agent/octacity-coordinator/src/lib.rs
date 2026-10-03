@@ -76,8 +76,8 @@ pub enum CoordinatorError {
   /// Local client configuration is invalid.
   #[error("invalid coordinator client configuration: {0}")]
   Invalid(String),
-  /// Enrollment credentials could not be inspected or read.
-  #[error("failed to read coordinator credential '{path}': {source}")]
+  /// Coordinator credentials could not be read or atomically updated.
+  #[error("failed to access coordinator credential '{path}': {source}")]
   Credential {
     /// Credential file path.
     path: PathBuf,

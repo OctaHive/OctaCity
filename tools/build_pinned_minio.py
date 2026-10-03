@@ -57,6 +57,17 @@ def host_architecture() -> str:
     raise BuildError(f"unsupported Docker host architecture: {architecture}")
 
 
+def local_image_name(document: dict[str, Any], target: str) -> str:
+    """Return the Compose image name derived from one pinned source identity."""
+
+    source_name = {"minio": "minio", "mc": "minio_client"}.get(target)
+    if source_name is None:
+        raise BuildError(f"unsupported MinIO build target: {target}")
+    source = document["sources"][source_name]
+    date = release_version(source["tag"]).split("T", 1)[0]
+    return f"octacity/{target}:release-{date}-{source['source_revision'][:12]}"
+
+
 def manifest_images(document: dict[str, Any], architecture: str) -> dict[str, str]:
     """Select the digest-qualified build images for one supported architecture."""
 
@@ -125,8 +136,37 @@ def docker_arguments(
     return arguments
 
 
-def build(manifest: Path, target: str, image: str, architecture: str) -> None:
-    """Stage verified source trees and ask Docker to build the selected target."""
+def image_is_current(
+    document: dict[str, Any], target: str, image: str, architecture: str
+) -> bool:
+    """Return whether one local image has the exact pinned target identity."""
+
+    source_name = {"minio": "minio", "mc": "minio_client"}.get(target)
+    if source_name is None:
+        raise BuildError(f"unsupported MinIO build target: {target}")
+    try:
+        inspected = subprocess.run(
+            ["docker", "image", "inspect", "--format", "{{json .}}", image],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        metadata = json.loads(inspected.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return False
+    source = document["sources"][source_name]
+    labels = (metadata.get("Config") or {}).get("Labels") or {}
+    return (
+        metadata.get("Architecture") == architecture
+        and labels.get("org.opencontainers.image.revision") == source["source_revision"]
+        and labels.get("org.opencontainers.image.version") == source["tag"]
+    )
+
+
+def build_targets(
+    manifest: Path, targets: dict[str, str], architecture: str
+) -> None:
+    """Stage pinned sources once and build every requested target from them."""
 
     try:
         document = json.loads(manifest.read_text(encoding="utf-8"))
@@ -142,9 +182,17 @@ def build(manifest: Path, target: str, image: str, architecture: str) -> None:
             download(source, archive)
             extract_source(archive, context / directory, source)
             archive.unlink()
-        subprocess.run(
-            docker_arguments(document, target, image, architecture, context), check=True
-        )
+        for target, image in targets.items():
+            subprocess.run(
+                docker_arguments(document, target, image, architecture, context),
+                check=True,
+            )
+
+
+def build(manifest: Path, target: str, image: str, architecture: str) -> None:
+    """Build one target through the shared multi-target staging path."""
+
+    build_targets(manifest, {target: image}, architecture)
 
 
 def parse_args() -> argparse.Namespace:

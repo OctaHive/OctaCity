@@ -16,6 +16,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import tomllib
 from typing import Any
 
 import init_local_stand as initializer
@@ -37,6 +38,14 @@ MAX_CA_BYTES = 1024 * 1024
 INSTALLATION_FILE_MODES = frozenset({0o600, 0o644, 0o755})
 HASH_CHUNK_BYTES = 1024 * 1024
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
+LOCAL_AGENT_NAME = "local-stand-agent"
+LOCAL_AGENT_LABELS = {
+    "os": "macos",
+    "arch": "arm64",
+    "guest": "linux-arm64",
+    "environment": "local-stand",
+}
+LOCAL_HOST_PLATFORM = {"os": "macos", "architecture": "arm64"}
 
 # This is a workstation profile, not protocol policy. Values are collected in
 # one place so future hardware profiles can replace the renderer input without
@@ -98,6 +107,17 @@ class InstallationLimits:
     entries: int
     single_file_bytes: int
     total_bytes: int
+
+
+@dataclass(frozen=True)
+class AgentLaunchPlan:
+    """Validated executable and state paths owned by the generated profile."""
+
+    configuration: Path
+    state_root: Path
+    agent: Path
+    msb: Path
+    libkrunfw: Path
 
 
 class AgentConfigurationError(RuntimeError):
@@ -292,6 +312,22 @@ def _toml_inline_integer_table(values: dict[str, int]) -> str:
     return "{ " + ", ".join(f"{name} = {value}" for name, value in values.items()) + " }"
 
 
+def _environment_identity(microsandbox_version: str) -> str:
+    return f"microsandbox-{microsandbox_version}-linux-arm64-v1"
+
+
+def _virtualization_provider(
+    installation: Path, microsandbox_version: str
+) -> dict[str, object]:
+    return {
+        "provider": "microsandbox",
+        "environment_identity": _environment_identity(microsandbox_version),
+        "executable": str(installation / "microsandbox/bin/msb"),
+        "libkrunfw": str(installation / "microsandbox/lib/libkrunfw.5.dylib"),
+        "metrics_sample_interval_seconds": 1,
+    }
+
+
 def _render_config(
     *,
     root: Path,
@@ -315,7 +351,7 @@ def _render_config(
         "plugins": _toml_string(installation / "agent/source-plugins"),
         "msb": _toml_string(installation / "microsandbox/bin/msb"),
         "libkrunfw": _toml_string(installation / "microsandbox/lib/libkrunfw.5.dylib"),
-        "identity": _toml_string(f"microsandbox-{microsandbox_version}-linux-arm64-v1"),
+        "identity": _toml_string(_environment_identity(microsandbox_version)),
         "signing_key": _toml_string(signing_public_key),
     }
     agent_limits = _toml_integer_lines(LOCAL_AGENT_LIMITS)
@@ -323,7 +359,10 @@ def _render_config(
     cache_limits = _toml_integer_lines(LOCAL_CACHE_LIMITS)
     cache_capacity = _toml_integer_lines(LOCAL_CACHE_CAPACITY)
     storage_reserves = _toml_integer_lines(LOCAL_STORAGE_RESERVES)
-    return f'''agent_id = "local-stand-agent"
+    labels = "\n".join(
+        f"{name} = {json.dumps(value)}" for name, value in LOCAL_AGENT_LABELS.items()
+    )
+    return f'''agent_id = "{LOCAL_AGENT_NAME}"
 server_url = "https://agent.localhost"
 credential_file = {values["credential"]}
 tls_ca_certificate_file = {values["ca"]}
@@ -370,11 +409,70 @@ metrics_sample_interval_seconds = 1
 local-stand = {values["signing_key"]}
 
 [labels]
-os = "macos"
-arch = "arm64"
-guest = "linux-arm64"
-environment = "local-stand"
+{labels}
 '''.encode("utf-8")
+
+
+def validated_launch_plan(
+    root: Path, installation: Path, receipt: dict[str, str]
+) -> AgentLaunchPlan:
+    """Validate the generated profile once at its owning module boundary."""
+
+    expected_config = root / "config/agent.toml"
+    expected_state = root / "agent/state"
+    if receipt.get("config") != str(expected_config) or receipt.get("state_root") != str(
+        expected_state
+    ):
+        raise AgentConfigurationError("Agent configuration receipt targets unexpected state")
+    try:
+        document = tomllib.loads(
+            _regular_file(
+                expected_config,
+                "generated Agent configuration",
+                max_bytes=256 * 1024,
+                modes=frozenset({PRIVATE_FILE_MODE}),
+            ).decode("utf-8")
+        )
+    except (UnicodeError, tomllib.TOMLDecodeError) as cause:
+        raise AgentConfigurationError("generated Agent configuration is invalid") from cause
+    disabled = {
+        "enabled_runtime_modes": [],
+        "allow_native_execution": False,
+        "allow_host_execution": False,
+        "oci_engines": [],
+        "isolation_providers": [],
+    }
+    providers = document.get("virtualization_providers")
+    if any(document.get(name) != value for name, value in disabled.items()):
+        raise AgentConfigurationError("Agent configuration enables a fallback execution capability")
+    if not isinstance(providers, list) or len(providers) != 1:
+        raise AgentConfigurationError("Agent configuration must enable exactly one virtualization provider")
+    if document.get("agent_id") != LOCAL_AGENT_NAME or document.get("labels") != LOCAL_AGENT_LABELS:
+        raise AgentConfigurationError("Agent configuration advertises an unexpected identity")
+
+    installation = installation.resolve()
+    manifest = _json_object(
+        _regular_file(
+            installation / "installation-manifest.json",
+            "native installation manifest",
+            max_bytes=MAX_MANIFEST_BYTES,
+            modes=frozenset({0o600, 0o644}),
+        ),
+        "native installation manifest",
+    )
+    version = manifest.get("microsandbox_version")
+    if not isinstance(version, str):
+        raise AgentConfigurationError("native installation manifest has no Microsandbox version")
+    expected_provider = _virtualization_provider(installation, version)
+    if providers[0] != expected_provider:
+        raise AgentConfigurationError("Agent configuration differs from the pinned Microsandbox provider")
+    return AgentLaunchPlan(
+        expected_config,
+        expected_state,
+        installation / "agent/bin/octacity-agent",
+        installation / "microsandbox/bin/msb",
+        installation / "microsandbox/lib/libkrunfw.5.dylib",
+    )
 
 
 def _ensure_exact_private_file(path: Path, contents: bytes, description: str) -> None:

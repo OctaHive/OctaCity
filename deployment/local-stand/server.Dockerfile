@@ -1,6 +1,7 @@
 ARG RUST_IMAGE=scratch
 ARG NODE_IMAGE=scratch
 ARG NGINX_IMAGE=scratch
+ARG ALPINE_IMAGE=scratch
 
 FROM ${RUST_IMAGE} AS rust-builder
 WORKDIR /workspace
@@ -24,7 +25,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     printf 'octacity:x:65532:65532:OctaCity:/nonexistent:/sbin/nologin\n' > /out/rootfs/etc/passwd; \
     printf 'octacity:x:65532:\n' > /out/rootfs/etc/group
 
-FROM scratch AS server
+FROM ${ALPINE_IMAGE} AS server
 ARG OCTACITY_VERSION
 ARG OCTACITY_REVISION
 ARG OCTA_REVISION
@@ -35,8 +36,9 @@ LABEL org.opencontainers.image.title="OctaCity server" \
       dev.octacity.octa.revision="${OCTA_REVISION}" \
       dev.octacity.octa.source-sha256="${OCTA_SOURCE_SHA256}"
 COPY --from=server-builder /out/rootfs /
+COPY --chmod=0755 deployment/local-stand/server-entrypoint.sh /usr/local/bin/octacity-server-entrypoint
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/octacity-server"]
+ENTRYPOINT ["/usr/local/bin/octacity-server-entrypoint"]
 
 FROM rust-builder AS openapi-builder
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \

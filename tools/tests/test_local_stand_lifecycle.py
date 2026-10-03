@@ -28,7 +28,8 @@ def load_module(name: str, path: Path):
 
 
 LIFECYCLE = load_module(
-    "local_stand_lifecycle", REPOSITORY / "tools/local_stand_lifecycle.py"
+    "local_stand_lifecycle_contract_fixture",
+    REPOSITORY / "tools/local_stand_lifecycle.py",
 )
 
 
@@ -181,6 +182,35 @@ class LocalStandLifecycleTests(unittest.TestCase):
                         poll_interval_seconds=0.001,
                     )
         self.assertTrue((self.root / "lifecycle/agent.json").exists())
+
+    def test_failed_supervisor_commit_rolls_back_atomic_ownership(self):
+        process = mock.Mock(pid=self.identity.pid)
+        socket_path = self.root.resolve() / "lifecycle/agent.sock"
+        token = "a" * LIFECYCLE.CONTROL_TOKEN_LENGTH
+        with LIFECYCLE.LifecycleState(self.root) as state:
+            with (
+                mock.patch.object(
+                    LIFECYCLE.supervisor,
+                    "spawn",
+                    return_value=(process, socket_path, token),
+                ),
+                mock.patch.object(
+                    LIFECYCLE.supervisor,
+                    "request",
+                    side_effect=("invalid-commit", "graceful"),
+                ),
+                mock.patch.object(
+                    LIFECYCLE,
+                    "_process_identity",
+                    side_effect=(self.identity, self.identity, None),
+                ),
+                self.assertRaisesRegex(
+                    LIFECYCLE.LifecycleError, "did not commit startup"
+                ),
+            ):
+                state.launch("agent", ["/usr/bin/true"])
+
+        self.assertFalse((self.root / "lifecycle/agent.json").exists())
 
     def test_graceful_shutdown_and_repeated_down_are_idempotent(self):
         with LIFECYCLE.LifecycleState(self.root) as state:

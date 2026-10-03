@@ -135,7 +135,7 @@ acknowledge_unauthenticated_management = true
 supported_pipeline_capabilities = ["oci.hypervisor", "shell"]
 
 [postgres]
-url_file = "/run/secrets/postgres-url"
+    url_file = "/run/octacity-secrets/postgres-url"
 max_connections = 10
 
 [object_storage]
@@ -143,19 +143,19 @@ endpoint = "https://objects.localhost"
 region = "us-east-1"
 bucket = "octacity-artifacts"
 force_path_style = true
-access_key_file = "/run/secrets/object-access-key"
-secret_key_file = "/run/secrets/object-secret-key"
+    access_key_file = "/run/octacity-secrets/object-access-key"
+    secret_key_file = "/run/octacity-secrets/object-secret-key"
 
 [signing]
 key_id = "local-stand"
-key_file = "/run/secrets/signing-key"
+key_file = "/run/octacity-secrets/signing-key"
 
 [agent_credentials]
-enrollment_key_file = "/run/secrets/agent-enrollment-key"
+enrollment_key_file = "/run/octacity-secrets/agent-enrollment-key"
 
 [cache]
 endpoint = "https://cache.localhost"
-credential_key_file = "/run/secrets/cache-credential-key"
+credential_key_file = "/run/octacity-secrets/cache-credential-key"
 session_lifetime_milliseconds = 300000
 
 [job_spec]

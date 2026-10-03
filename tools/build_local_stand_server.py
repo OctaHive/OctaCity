@@ -55,6 +55,8 @@ def docker_arguments(
         "--build-arg",
         f"RUST_IMAGE={document['images']['rust']['reference']}",
         "--build-arg",
+        f"ALPINE_IMAGE={document['images']['alpine']['reference']}",
+        "--build-arg",
         f"OCTACITY_VERSION={workspace_version(octacity_source)}",
         "--build-arg",
         f"OCTACITY_REVISION={revision}",
@@ -91,12 +93,13 @@ def verification_commands(image: str, fixture: Path) -> tuple[list[str], list[st
         "none",
         "--read-only",
     ]
-    version = [*common, image, "--version"]
+    executable = ["--entrypoint", "/usr/local/bin/octacity-server", image]
+    version = [*common, *executable, "--version"]
     validate = [
         *common,
         "--mount",
         f"type=bind,src={fixture.resolve()},dst=/fixtures/server.toml,readonly",
-        image,
+        *executable,
         "validate",
         "--syntax-only",
         "/fixtures/server.toml",
@@ -107,7 +110,7 @@ def verification_commands(image: str, fixture: Path) -> tuple[list[str], list[st
 def verify_image(
     image: str, fixture: Path, expected_version: str, expected_revision: str
 ) -> None:
-    """Verify non-root metadata and execute both required server commands."""
+    """Verify the non-root default and execute both required server commands."""
 
     inspected = subprocess.run(
         ["docker", "image", "inspect", "--format", "{{json .Config}}", image],
@@ -147,17 +150,26 @@ def build(image: str, manifest: Path, fixture: Path, repository: Path) -> None:
         octacity_source = root / "octacity"
         stage_octa_source(document, octa_source)
         stage_octacity_source(repository, octacity_source, revision)
-        expected_version = workspace_version(octacity_source)
-        subprocess.run(
-            docker_arguments(
-                document,
-                image,
-                octa_source,
-                octacity_source,
-                revision,
-            ),
-            check=True,
+        build_staged(
+            image, document, fixture, octa_source, octacity_source, revision
         )
+
+
+def build_staged(
+    image: str,
+    document: dict[str, Any],
+    fixture: Path,
+    octa_source: Path,
+    octacity_source: Path,
+    revision: str,
+) -> None:
+    """Build and verify the server from an already verified shared context."""
+
+    expected_version = workspace_version(octacity_source)
+    subprocess.run(
+        docker_arguments(document, image, octa_source, octacity_source, revision),
+        check=True,
+    )
     verify_image(image, fixture, expected_version, revision)
 
 
