@@ -1,23 +1,21 @@
 //! Agent configuration parsing and invariant tests.
 
-use std::{fs::File, io::Write as _, path::Path};
+use std::{fs::File, io::Write as _};
 
 use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use octacity_private_fs::test_support::PrivateDirectoryFixture;
 
 mod virtualization;
 
-#[cfg(windows)]
-const WINDOWS_FIXTURE_CREATE_ATTEMPTS: usize = 16;
-
 struct Fixture {
-  _temp: FixtureRoot,
+  _temp: PrivateDirectoryFixture,
   config: AgentConfig,
 }
 
 impl Fixture {
   fn new() -> Self {
-    let temp = fixture_tempdir();
+    let temp = PrivateDirectoryFixture::new().unwrap();
     let credential_root = temp.path().join("credentials");
     octacity_private_fs::create_private_directory(&credential_root).unwrap();
     let credential = credential_root.join("credential");
@@ -121,58 +119,6 @@ impl Fixture {
       max_accounting_failures: 3,
     };
     Self { _temp: temp, config }
-  }
-}
-
-struct FixtureRoot {
-  path: PathBuf,
-  #[cfg(not(windows))]
-  _temporary: tempfile::TempDir,
-}
-
-impl FixtureRoot {
-  fn path(&self) -> &Path {
-    &self.path
-  }
-}
-
-fn fixture_tempdir() -> FixtureRoot {
-  #[cfg(windows)]
-  {
-    // The GitHub runner profile itself grants an object-applicable delete ACE
-    // to another local principal. A real installation must start below a safe
-    // operator-owned ancestor, so model that by placing the protected fixture
-    // directly below the profile's volume root.
-    let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
-    let profile = fs::canonicalize(profile).expect("Windows tests require a canonical USERPROFILE");
-    let volume_root = profile
-      .ancestors()
-      .last()
-      .expect("Windows USERPROFILE must have a volume root");
-    for _ in 0..WINDOWS_FIXTURE_CREATE_ATTEMPTS {
-      let path = volume_root.join(format!(".octacity-test-{}", uuid::Uuid::new_v4().simple()));
-      match octacity_private_fs::create_private_directory(&path) {
-        Ok(()) => return FixtureRoot { path },
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => panic!("failed to create protected Windows fixture root: {error}"),
-      }
-    }
-    panic!("failed to allocate a unique protected Windows fixture root")
-  }
-  #[cfg(not(windows))]
-  {
-    let temporary = tempfile::tempdir().unwrap();
-    FixtureRoot {
-      path: temporary.path().to_owned(),
-      _temporary: temporary,
-    }
-  }
-}
-
-#[cfg(windows)]
-impl Drop for FixtureRoot {
-  fn drop(&mut self) {
-    let _ = fs::remove_dir_all(&self.path);
   }
 }
 

@@ -24,4 +24,5 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+octacity-private-fs = { path = "../octacity-private-fs", features = ["test-support"] }
 tempfile.workspace = true

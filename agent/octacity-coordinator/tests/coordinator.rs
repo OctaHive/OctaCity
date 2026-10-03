@@ -15,6 +15,7 @@ use octacity_coordinator::{
   HttpCoordinatorConfig, LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, LeasePollOutcome, LeasePoller,
   OutputUploadCoordinator, Registration, RetryPolicy,
 };
+use octacity_private_fs::test_support::PrivateDirectoryFixture;
 use octacity_protocol::{
   AcquireLeaseResponse, ActiveJob, AgentInventory, AgentLifecycleEvent, AgentTelemetryIsolation, AgentTelemetryRuntime,
   AgentTelemetrySample, AppendEventsResponse, AttemptEventEnvelope, AttemptEventKind, BackendHealth,
@@ -389,6 +390,25 @@ fn idle_snapshot() -> HostSnapshot {
   }
 }
 
+struct PersistentCredentialFixture {
+  path: std::path::PathBuf,
+  _root: PrivateDirectoryFixture,
+}
+
+impl PersistentCredentialFixture {
+  fn new(value: &str) -> Self {
+    let root = PrivateDirectoryFixture::new().unwrap();
+    let path = root.path().join("credential");
+    fs::write(&path, format!("{value}\n")).unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt as _;
+      fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    Self { path, _root: root }
+  }
+}
+
 fn client(
   server: &MockServer,
   max_attempts: usize,
@@ -554,19 +574,10 @@ async fn successful_registration_promotes_the_enrollment_bearer_for_later_calls(
     Action::Register { request_id: None },
   ])
   .await;
-  let directory = tempfile::tempdir().unwrap();
-  let credential = directory.path().canonicalize().unwrap().join("credential");
-  fs::write(
-    &credential,
-    "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\n",
-  )
-  .unwrap();
-  #[cfg(unix)]
-  {
-    use std::os::unix::fs::PermissionsExt as _;
-    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
-  }
+  let fixture = PersistentCredentialFixture::new(
+    "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
+  );
+  let credential = fixture.path.clone();
   let client = HttpCoordinatorClient::new(http_config(server.url.clone(), credential.clone())).unwrap();
 
   client.register(&inventory(), CancellationToken::new()).await.unwrap();

@@ -7,6 +7,13 @@ license.workspace = true
 repository.workspace = true
 description = "Cross-platform owner-only filesystem primitives for OctaCity"
 
+[features]
+test-support = ["dep:tempfile", "dep:uuid"]
+
+[dependencies]
+tempfile = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 

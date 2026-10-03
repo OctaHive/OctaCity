@@ -1,8 +1,6 @@
 use std::{collections::BTreeMap, path::Path, process::Command, sync::Arc};
 
-#[cfg(windows)]
-use std::sync::atomic::{AtomicU64, Ordering};
-
+use octacity_private_fs::test_support::PrivateDirectoryFixture;
 use octacity_protocol::{
   BeginCacheSessionResponse, CachePolicy, ExecutionCacheIdentityV2, ExecutionEnvironmentId, ExecutionEvidenceV2,
   ExecutionMode, ExecutionProviderId, ExecutionTargetV2, PlatformArchitecture, PlatformOs, PlatformSpec,
@@ -11,65 +9,15 @@ use octacity_protocol::{
 
 use super::*;
 
-struct FixtureRoot {
-  path: PathBuf,
-  #[cfg(not(windows))]
-  _temporary: tempfile::TempDir,
-}
-
-impl FixtureRoot {
-  fn path(&self) -> &Path {
-    &self.path
-  }
-}
-
-fn fixture_root() -> FixtureRoot {
-  #[cfg(windows)]
-  {
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-    let profile = std::env::var_os("USERPROFILE").expect("Windows tests require USERPROFILE");
-    let profile = std::fs::canonicalize(profile).expect("Windows tests require a canonical USERPROFILE");
-    let volume_root = profile
-      .ancestors()
-      .last()
-      .expect("Windows profile must have a volume root");
-    for _ in 0..16 {
-      let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-      let path = volume_root.join(format!(".octacity-cache-test-{}-{sequence}", std::process::id()));
-      match octacity_private_fs::create_private_directory(&path) {
-        Ok(()) => return FixtureRoot { path },
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => panic!("failed to create protected Windows cache fixture: {error}"),
-      }
-    }
-    panic!("failed to allocate a protected Windows cache fixture")
-  }
-  #[cfg(not(windows))]
-  {
-    let temporary = tempfile::tempdir().unwrap();
-    FixtureRoot {
-      path: temporary.path().to_owned(),
-      _temporary: temporary,
-    }
-  }
-}
-
-#[cfg(windows)]
-impl Drop for FixtureRoot {
-  fn drop(&mut self) {
-    let _ = std::fs::remove_dir_all(&self.path);
-  }
-}
-
 struct SessionFixture {
-  _root: FixtureRoot,
+  _root: PrivateDirectoryFixture,
   cache: PathBuf,
   job: PathBuf,
 }
 
 impl SessionFixture {
   fn new() -> Self {
-    let root = fixture_root();
+    let root = PrivateDirectoryFixture::new().unwrap();
     let cache = root.path().join("cache");
     let job = root.path().join("job");
     octacity_private_fs::create_private_directory(&cache).unwrap();
@@ -114,7 +62,7 @@ fn cache_root_lock_child() {
 
 #[test]
 fn one_agent_process_exclusively_owns_a_cache_root() {
-  let temporary = fixture_root();
+  let temporary = PrivateDirectoryFixture::new().unwrap();
   let cache = temporary.path().join("cache");
   octacity_private_fs::create_private_directory(&cache).unwrap();
   let first = manager(&cache);
@@ -566,7 +514,7 @@ async fn active_scopes_cannot_be_evicted_to_exceed_the_scope_limit() {
 
 #[tokio::test]
 async fn reclamation_leaves_unrecognized_cache_state_untouched() {
-  let temporary = fixture_root();
+  let temporary = PrivateDirectoryFixture::new().unwrap();
   let cache = temporary.path().join("cache");
   octacity_private_fs::create_private_directory(&cache).unwrap();
   let layout = cache.join("v1");
@@ -769,7 +717,7 @@ async fn reclamation_rejects_a_corrupt_host_only_access_marker() {
 
 #[test]
 fn construction_enforces_the_complete_local_policy_boundary() {
-  let temporary = fixture_root();
+  let temporary = PrivateDirectoryFixture::new().unwrap();
   let cache = temporary.path().join("cache");
   octacity_private_fs::create_private_directory(&cache).unwrap();
 

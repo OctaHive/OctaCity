@@ -13,6 +13,10 @@ use std::{
   path::Path,
 };
 
+/// Test fixtures that exercise the same private-directory boundary as production.
+#[cfg(feature = "test-support")]
+pub mod test_support;
+
 /// Stable identity of one open Windows filesystem object.
 ///
 /// The volume serial and 128-bit file ID distinguish a replacement file even

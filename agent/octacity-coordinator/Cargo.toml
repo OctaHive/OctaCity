@@ -25,5 +25,6 @@ uuid.workspace = true
 [dev-dependencies]
 base64.workspace = true
 ed25519-dalek = { workspace = true, features = ["rand_core"] }
+octacity-private-fs = { path = "../octacity-private-fs", features = ["test-support"] }
 rcgen.workspace = true
 tempfile.workspace = true

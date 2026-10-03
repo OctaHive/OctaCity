@@ -20,5 +20,4 @@ toml.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
-uuid.workspace = true
+octacity-private-fs = { path = "../octacity-private-fs", features = ["test-support"] }

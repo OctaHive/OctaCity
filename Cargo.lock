@@ -3973,11 +3973,9 @@ dependencies = [
  "octacity-private-fs",
  "octacity-protocol",
  "serde",
- "tempfile",
  "thiserror",
  "toml",
  "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -4232,6 +4230,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "tempfile",
+ "uuid",
  "windows-sys 0.61.2",
 ]
 
