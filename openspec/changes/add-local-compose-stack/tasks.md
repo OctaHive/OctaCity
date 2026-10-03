@@ -6,10 +6,10 @@
 
 ## 2. Container and Native Build Products
 
-- [ ] 2.1 Add the shared Rust builder with the checksum-verified Octa source archive staged as its named sibling context, plus a minimal non-root server runtime target; build with locked dependencies and no developer checkout, and verify the image runs `octacity-server --version` and `octacity-server validate` against a fixture configuration.
-- [ ] 2.2 Add atomic staging for the native macOS Agent, source plugin, checksum-verified Linux ARM64 Octa release, and pinned Microsandbox runtime and firmware; verify every manifest/digest and run offline Agent installation and configuration validation fixtures.
-- [ ] 2.3 Generate the server JobSpec policy from the exact runner and plugin assets staged for the native Agent; verify a drift test fails if signer and executor would use different versions, protocols, platforms, or SHA-256 values.
-- [ ] 2.4 Add the gateway build target using the locked `ui/` toolchain and a minimal nginx runtime; verify `pnpm build` succeeds and the runtime image contains static output but no source tree, package-manager store, or development server.
+- [x] 2.1 Add the shared Rust builder with the checksum-verified Octa source archive staged as its named sibling context, plus a minimal non-root server runtime target; build with locked dependencies and no developer checkout, and verify the image runs `octacity-server --version` and `octacity-server validate` against a fixture configuration.
+- [x] 2.2 Add atomic staging for the native macOS Agent, source plugin, checksum-verified Linux ARM64 Octa release, and pinned Microsandbox runtime and firmware; verify every manifest/digest and run offline Agent installation and configuration validation fixtures.
+- [x] 2.3 Generate the server JobSpec policy from the exact runner and plugin assets staged for the native Agent; verify a drift test fails if signer and executor would use different versions, protocols, platforms, or SHA-256 values.
+- [x] 2.4 Add the gateway build target using the locked `ui/` toolchain and a minimal nginx runtime; verify `pnpm build` succeeds and the runtime image contains static output but no source tree, package-manager store, or development server.
 
 ## 3. Host State, Trust, and Configuration
 

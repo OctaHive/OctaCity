@@ -19,7 +19,12 @@ The root `.dockerignore` begins with `**` and reopens only:
   migrations below `agent/`, `server/`, and `shared/`;
 - the locked UI inputs and generator script required to derive the ignored
   OpenAPI schema inside the TypeScript and Vite builder;
-- repository-owned `deployment/local-stand` Dockerfiles and JSON policies.
+- repository-owned `deployment/local-stand` Dockerfiles, JSON policies, and
+  the minimal nginx runtime configuration.
+
+Container and native builds archive the same exact committed OctaCity revision
+instead of reading product sources from a mutable working tree. OCI revision
+labels are derived from that snapshot and verified after each image build.
 
 Every reopened directory level is denied again before individual inputs are
 allowed. Final rules unconditionally exclude `.git`, Cargo targets,

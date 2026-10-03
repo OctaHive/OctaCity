@@ -7,11 +7,19 @@ use std::{
   path::{Path, PathBuf},
 };
 
-use octacity_release_harness::{ReleaseBundles, install};
+use octacity_release_harness::{
+  AgentRuntimeBundles, AgentRuntimePlatforms, ReleaseBundles, derive_job_spec_policy, install, load_job_spec_policy,
+  verify_job_spec_policy,
+};
+use octacity_server_job::{JobSpecToolchainPolicy, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
 const REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
+
+fn runtime_platforms() -> AgentRuntimePlatforms {
+  AgentRuntimePlatforms::new("linux-amd64", "linux-x86_64")
+}
 
 #[test]
 fn installs_only_verified_released_bundles() {
@@ -138,6 +146,185 @@ fn rejects_octa_without_exact_source_revision() {
   let error = install(&bundles, &temporary.path().join("rejected-octa-revision")).unwrap_err();
 
   assert!(error.to_string().contains("do not identify their source revision"));
+}
+
+#[test]
+fn derives_and_verifies_server_policy_from_the_agent_assets() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let runtime = AgentRuntimeBundles {
+    agent: bundles.agent,
+    octa: bundles.octa,
+  };
+
+  let policy = derive_job_spec_policy(&runtime, &runtime_platforms(), 900).unwrap();
+  let document = serde_json::to_value(&policy).unwrap();
+
+  assert_eq!(document["source"]["provider"], "git");
+  assert_eq!(document["source"]["plugin_version"], "0.1.0");
+  assert_eq!(document["octa"]["version"], "0.4.0");
+  assert_eq!(document["octa"]["runner_protocol"], 3);
+  assert_eq!(document["octa"]["event_schema"], 4);
+  assert_eq!(document["octa"]["plugin_protocol"], 2);
+  assert_eq!(document["validity"], 900);
+  verify_job_spec_policy(&runtime, &runtime_platforms(), &policy, 900).unwrap();
+}
+
+#[test]
+fn derives_policy_for_a_macos_agent_with_a_linux_arm64_octa_guest() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let agent_manifest_path = bundles.agent.join("release-manifest.json");
+  let mut agent_manifest: Value = serde_json::from_slice(&fs::read(&agent_manifest_path).unwrap()).unwrap();
+  agent_manifest["platform"] = json!("macos-arm64");
+  write_json(&agent_manifest_path, &agent_manifest);
+  let source_manifest_path = bundles.agent.join("source-plugins/git/plugin.toml");
+  let source_manifest = fs::read_to_string(&source_manifest_path)
+    .unwrap()
+    .replace("platforms = [\"linux-x86_64\"]", "platforms = [\"macos-aarch64\"]");
+  fs::write(source_manifest_path, source_manifest).unwrap();
+  write_checksums(&bundles.agent);
+
+  let capabilities_path = bundles.octa.join("octa-runner-capabilities.json");
+  let mut capabilities: Value = serde_json::from_slice(&fs::read(&capabilities_path).unwrap()).unwrap();
+  capabilities["platform"] = json!("linux-aarch64");
+  write_json(&capabilities_path, &capabilities);
+  let lock_path = bundles.octa.join("Octa.lock");
+  let lock = fs::read_to_string(&lock_path)
+    .unwrap()
+    .replace("platforms: [linux-x86_64]", "platforms: [linux-aarch64]");
+  fs::write(lock_path, lock).unwrap();
+  write_checksums(&bundles.octa);
+  let runtime = AgentRuntimeBundles {
+    agent: bundles.agent,
+    octa: bundles.octa,
+  };
+
+  let policy = derive_job_spec_policy(
+    &runtime,
+    &AgentRuntimePlatforms::new("macos-arm64", "linux-aarch64"),
+    900,
+  )
+  .unwrap();
+
+  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.4.0");
+}
+
+#[test]
+fn rejects_server_policy_version_protocol_and_digest_drift() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let runtime = AgentRuntimeBundles {
+    agent: bundles.agent,
+    octa: bundles.octa,
+  };
+  let policy = derive_job_spec_policy(&runtime, &runtime_platforms(), 900).unwrap();
+  let baseline = serde_json::to_value(policy).unwrap();
+  let mutations = [
+    (
+      "source plugin version",
+      vec!["source", "plugin_version"],
+      json!("9.9.9"),
+    ),
+    ("Octa version", vec!["octa", "version"], json!("9.9.9")),
+    ("runner protocol", vec!["octa", "runner_protocol"], json!(9)),
+    ("event schema", vec!["octa", "event_schema"], json!(9)),
+    ("plugin protocol", vec!["octa", "plugin_protocol"], json!(9)),
+    ("source digest", vec!["source", "plugin_sha256"], json!("f".repeat(64))),
+    ("runner digest", vec!["octa", "runner_sha256"], json!("f".repeat(64))),
+    (
+      "task plugin digest",
+      vec!["octa", "plugin_digests", "shell"],
+      json!("f".repeat(64)),
+    ),
+  ];
+
+  for (name, path, replacement) in mutations {
+    let mut document = baseline.clone();
+    let mut target = &mut document;
+    for component in path {
+      target = &mut target[component];
+    }
+    *target = replacement;
+    let drifted: JobSpecToolchainPolicy = serde_json::from_value(document).unwrap();
+    let error = verify_job_spec_policy(&runtime, &runtime_platforms(), &drifted, 900).expect_err(name);
+    assert!(error.to_string().contains("differs from the verified Agent toolchain"));
+  }
+}
+
+#[test]
+fn rejects_policy_verification_after_executor_platform_drift() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let runtime = AgentRuntimeBundles {
+    agent: bundles.agent,
+    octa: bundles.octa,
+  };
+  let policy = derive_job_spec_policy(&runtime, &runtime_platforms(), 900).unwrap();
+  let capabilities_path = runtime.octa.join("octa-runner-capabilities.json");
+  let mut capabilities: Value = serde_json::from_slice(&fs::read(&capabilities_path).unwrap()).unwrap();
+  capabilities["platform"] = json!("windows-x86_64");
+  write_json(&capabilities_path, &capabilities);
+  let lock_path = runtime.octa.join("Octa.lock");
+  let lock = fs::read_to_string(&lock_path)
+    .unwrap()
+    .replace("platforms: [linux-x86_64]", "platforms: [windows-x86_64]");
+  fs::write(lock_path, lock).unwrap();
+  write_checksums(&runtime.octa);
+
+  let error = verify_job_spec_policy(&runtime, &runtime_platforms(), &policy, 900).unwrap_err();
+
+  assert!(error.to_string().contains("target different runtime platforms"));
+}
+
+#[test]
+fn rejects_coherent_executor_platform_relabeling_against_the_signer_expectation() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let agent_manifest_path = bundles.agent.join("release-manifest.json");
+  let mut agent_manifest: Value = serde_json::from_slice(&fs::read(&agent_manifest_path).unwrap()).unwrap();
+  agent_manifest["platform"] = json!("windows-amd64");
+  write_json(&agent_manifest_path, &agent_manifest);
+  let source_manifest_path = bundles.agent.join("source-plugins/git/plugin.toml");
+  let source_manifest = fs::read_to_string(&source_manifest_path)
+    .unwrap()
+    .replace("platforms = [\"linux-x86_64\"]", "platforms = [\"windows-x86_64\"]");
+  fs::write(source_manifest_path, source_manifest).unwrap();
+  write_checksums(&bundles.agent);
+
+  let capabilities_path = bundles.octa.join("octa-runner-capabilities.json");
+  let mut capabilities: Value = serde_json::from_slice(&fs::read(&capabilities_path).unwrap()).unwrap();
+  capabilities["platform"] = json!("windows-x86_64");
+  write_json(&capabilities_path, &capabilities);
+  let lock_path = bundles.octa.join("Octa.lock");
+  let lock = fs::read_to_string(&lock_path)
+    .unwrap()
+    .replace("platforms: [linux-x86_64]", "platforms: [windows-x86_64]");
+  fs::write(lock_path, lock).unwrap();
+  write_checksums(&bundles.octa);
+
+  let error = derive_job_spec_policy(
+    &AgentRuntimeBundles {
+      agent: bundles.agent,
+      octa: bundles.octa,
+    },
+    &runtime_platforms(),
+    900,
+  )
+  .unwrap_err();
+
+  assert!(error.to_string().contains("differ from the signing policy expectation"));
+}
+
+#[test]
+fn rejects_an_oversized_job_spec_policy_before_deserialization() {
+  let temporary = tempfile::tempdir().unwrap();
+  let policy = temporary.path().join("job-spec-policy.json");
+  fs::write(&policy, vec![b' '; MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES as usize + 1]).unwrap();
+
+  let error = load_job_spec_policy(&policy).unwrap_err();
+
+  assert!(error.to_string().contains("exceeds the 1048576-byte limit"));
 }
 
 #[test]

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
@@ -28,8 +28,21 @@ async function exportOpenApi() {
   return JSON.parse(stdout);
 }
 
+async function loadOpenApi() {
+  const suppliedSchema = process.env.OCTACITY_OPENAPI_SCHEMA_FILE;
+  if (suppliedSchema === undefined) {
+    return exportOpenApi();
+  }
+  const schemaPath = path.resolve(uiRoot, suppliedSchema);
+  const metadata = await stat(schemaPath);
+  if (!metadata.isFile() || metadata.size > MAX_EXPORTED_OPENAPI_BYTES) {
+    throw new Error('Supplied management API schema must be a bounded regular file.');
+  }
+  return JSON.parse(await readFile(schemaPath, 'utf8'));
+}
+
 async function generateApiTypes() {
-  const document = await exportOpenApi();
+  const document = await loadOpenApi();
   const declarations = astToString(await openapiTS(document));
 
   await mkdir(generatedDirectory, { recursive: true });

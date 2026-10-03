@@ -9,10 +9,11 @@ mod retry;
 mod service;
 
 pub use model::{
-  AcceptManualTriggerCommand, EffectiveProjectPolicySourceError, JobSpecToolchainPolicy, ManualSourceSelection,
-  ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerError, ManualTriggerInputError,
-  ManualTriggerOutcome, RevisionResolutionError, RevisionResolutionRequest,
+  AcceptManualTriggerCommand, EffectiveProjectPolicySourceError, ManualSourceSelection, ManualTriggerCommand,
+  ManualTriggerContext, ManualTriggerContextError, ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome,
+  RevisionResolutionError, RevisionResolutionRequest,
 };
+pub use octacity_server_job::JobSpecToolchainPolicy;
 pub use ports::{
   EffectiveProjectPolicySource, ExactRevisionResolver, ManualTriggerContextProvider, RevisionResolver,
   StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,

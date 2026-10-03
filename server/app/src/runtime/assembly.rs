@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use octacity_artifact_s3::{S3ArtifactStore, S3ArtifactStoreConfig};
 use octacity_server_application::{AgentEnrollmentSecretKey, CacheCredentialKey, JobSpecToolchainPolicy, LogRedactor};
-use octacity_server_job::JobSpecSigner;
+use octacity_server_job::{JobSpecSigner, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use thiserror::Error;
 use tokio::io::AsyncReadExt as _;
@@ -17,7 +17,6 @@ use crate::{
 
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
 const SIGNING_KEY_BYTES: usize = 32;
-const MAX_JOB_SPEC_POLICY_BYTES: u64 = 1024 * 1024;
 
 pub(crate) struct RuntimeResources {
   pub(crate) readiness: ReadinessChecks,
@@ -154,14 +153,14 @@ async fn load_job_spec_toolchain(path: &Path) -> Result<JobSpecToolchainPolicy, 
     })?;
   let mut bytes = Vec::new();
   file
-    .take(MAX_JOB_SPEC_POLICY_BYTES + 1)
+    .take(MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES + 1)
     .read_to_end(&mut bytes)
     .await
     .map_err(|source| RuntimeAssemblyError::ReadJobSpecPolicy {
       path: path.to_owned(),
       source,
     })?;
-  if bytes.len() as u64 > MAX_JOB_SPEC_POLICY_BYTES {
+  if bytes.len() as u64 > MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES {
     return Err(RuntimeAssemblyError::JobSpecPolicyTooLarge { path: path.to_owned() });
   }
   let policy = serde_json::from_slice::<JobSpecToolchainPolicy>(&bytes)
@@ -380,7 +379,7 @@ pub enum RuntimeAssemblyError {
     source: std::io::Error,
   },
   /// The JobSpec toolchain policy exceeded its parser limit.
-  #[error("JobSpec policy file '{path}' exceeds the {MAX_JOB_SPEC_POLICY_BYTES}-byte limit")]
+  #[error("JobSpec policy file '{path}' exceeds the {MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES}-byte limit")]
   JobSpecPolicyTooLarge {
     /// Configured policy path.
     path: std::path::PathBuf,

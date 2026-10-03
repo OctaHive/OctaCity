@@ -15,6 +15,7 @@ octa-plugin-lock.workspace = true
 octacity-protocol = { path = "../../../shared/octacity-protocol" }
 octacity-private-fs = { path = "../../../agent/octacity-private-fs" }
 octacity-runner = { path = "../../../agent/octacity-runner" }
+octacity-server-job = { path = "../../core/octacity-server-job" }
 octacity-source-plugin = { path = "../../../agent/octacity-source-plugin" }
 octacity-vcs-protocol = { path = "../../protocols/octacity-vcs-protocol" }
 octacity-webhook-provider-protocol = { path = "../../protocols/octacity-webhook-provider-protocol" }

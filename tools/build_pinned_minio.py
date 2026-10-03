@@ -4,20 +4,17 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import platform
 import re
-import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
-import time
 from typing import Any
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+
+from pinned_source_archive import SourceArchiveError as BuildError
+from pinned_source_archive import download, extract_source, verify_release_ref
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -27,10 +24,6 @@ RELEASE_TAG = re.compile(
     r"RELEASE\.(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})"
     r"T(?P<time>[0-9]{2}-[0-9]{2}-[0-9]{2})Z"
 )
-
-
-class BuildError(RuntimeError):
-    """A pinned source cannot be staged or built safely."""
 
 
 def release_version(tag: str) -> str:
@@ -77,173 +70,6 @@ def manifest_images(document: dict[str, Any], architecture: str) -> dict[str, st
         if not isinstance(reference, str) or "@sha256:" not in reference:
             raise BuildError(f"{image_set}.{role} is not digest-qualified")
     return {role: image["reference"] for role, image in selected.items()}
-
-
-def download(source: dict[str, Any], destination: Path, *, attempts: int = 5) -> None:
-    """Download one source archive and reject content that misses its pinned digest."""
-
-    expected = source["sha256"]
-    maximum = source["archive_max_bytes"]
-    request = Request(source["archive_url"], headers={"User-Agent": "OctaCity-CI"})
-    for attempt in range(1, attempts + 1):
-        destination.unlink(missing_ok=True)
-        try:
-            digest = hashlib.sha256()
-            with urlopen(request, timeout=60) as response, destination.open("wb") as target:
-                length = response.headers.get("Content-Length")
-                if length is not None:
-                    try:
-                        advertised = int(length)
-                    except ValueError as error:
-                        raise BuildError(
-                            f"archive for {source['tag']} has an invalid Content-Length"
-                        ) from error
-                    if advertised < 0:
-                        raise BuildError(
-                            f"archive for {source['tag']} has an invalid Content-Length"
-                        )
-                    if advertised > maximum:
-                        raise BuildError(
-                            f"archive for {source['tag']} exceeds {maximum} bytes"
-                        )
-                received = 0
-                while chunk := response.read(1024 * 1024):
-                    received += len(chunk)
-                    if received > maximum:
-                        raise BuildError(
-                            f"archive for {source['tag']} exceeds {maximum} bytes"
-                        )
-                    target.write(chunk)
-                    digest.update(chunk)
-            actual = digest.hexdigest()
-            if actual != expected:
-                raise BuildError(
-                    f"checksum mismatch for {source['tag']}: "
-                    f"expected {expected}, received {actual}"
-                )
-            return
-        except (OSError, URLError, BuildError) as error:
-            destination.unlink(missing_ok=True)
-            if attempt == attempts:
-                raise BuildError(
-                    f"failed to stage {source['tag']} after {attempts} attempts: {error}"
-                ) from error
-            delay = min(2 ** (attempt - 1), 8)
-            print(
-                f"source download attempt {attempt}/{attempts} failed: {error}; "
-                f"retrying in {delay}s",
-                file=sys.stderr,
-            )
-            time.sleep(delay)
-
-
-def extract_source(archive: Path, destination: Path, source: dict[str, Any]) -> None:
-    """Extract regular source files while rejecting links and path traversal."""
-
-    destination.mkdir(mode=0o700)
-    with tarfile.open(archive, mode="r:gz") as bundle:
-        root: str | None = None
-        seen: set[PurePosixPath] = set()
-        members = 0
-        expanded_bytes = 0
-        for member in bundle:
-            members += 1
-            if members > source["member_max_count"]:
-                raise BuildError(f"source archive has too many members: {archive}")
-            path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or not path.parts:
-                raise BuildError(f"unsafe source archive member: {member.name}")
-            if root is None:
-                root = path.parts[0]
-            elif path.parts[0] != root:
-                raise BuildError(f"source archive must contain one root directory: {archive}")
-            relative = PurePosixPath(*path.parts[1:])
-            if not relative.parts:
-                continue
-            if relative in seen:
-                raise BuildError(f"duplicate source archive member: {member.name}")
-            seen.add(relative)
-            target = destination.joinpath(*relative.parts)
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            if not member.isfile():
-                raise BuildError(f"unsupported source archive member: {member.name}")
-            if member.size > source["file_max_bytes"]:
-                raise BuildError(f"source archive member is too large: {member.name}")
-            expanded_bytes += member.size
-            if expanded_bytes > source["expanded_max_bytes"]:
-                raise BuildError(f"source archive expands beyond its limit: {archive}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            extracted = bundle.extractfile(member)
-            if extracted is None:
-                raise BuildError(f"cannot read source archive member: {member.name}")
-            with extracted, target.open("wb") as output:
-                shutil.copyfileobj(extracted, output)
-            if target.stat().st_size != member.size:
-                raise BuildError(f"source archive member was truncated: {member.name}")
-            target.chmod(0o755 if member.mode & 0o111 else 0o644)
-        if root is None:
-            raise BuildError(f"source archive is empty: {archive}")
-
-
-def verify_release_ref(source: dict[str, Any], *, attempts: int = 5) -> None:
-    """Require a transient-tolerant tag lookup to match the pinned revision."""
-
-    reference = f"refs/tags/{source['tag']}"
-    result = None
-    for attempt in range(1, attempts + 1):
-        try:
-            result = subprocess.run(
-                [
-                    "git",
-                    "ls-remote",
-                    source["repository"],
-                    reference,
-                    f"{reference}^{{}}",
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            break
-        except (
-            OSError,
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-        ) as error:
-            stderr = getattr(error, "stderr", None)
-            detail = (
-                stderr.strip()
-                if isinstance(stderr, str) and stderr.strip()
-                else str(error)
-            )
-            if attempt == attempts:
-                raise BuildError(
-                    f"cannot resolve release tag {source['tag']} after "
-                    f"{attempts} attempts: {detail}"
-                ) from error
-            delay = min(2 ** (attempt - 1), 8)
-            print(
-                f"release tag lookup attempt {attempt}/{attempts} failed: "
-                f"{detail}; retrying in {delay}s",
-                file=sys.stderr,
-            )
-            time.sleep(delay)
-    if result is None:
-        raise BuildError(f"cannot resolve release tag {source['tag']}")
-    resolved: dict[str, str] = {}
-    for line in result.stdout.splitlines():
-        fields = line.split()
-        if len(fields) == 2:
-            resolved[fields[1]] = fields[0]
-    actual = resolved.get(f"{reference}^{{}}", resolved.get(reference))
-    if actual != source["source_revision"]:
-        raise BuildError(
-            f"release tag {source['tag']} resolves to {actual or 'nothing'}, "
-            f"not {source['source_revision']}"
-        )
 
 
 def docker_arguments(
@@ -309,12 +135,7 @@ def build(manifest: Path, target: str, image: str, architecture: str) -> None:
             verify_release_ref(source)
             archive = context / f"{role}.tar.gz"
             download(source, archive)
-            try:
-                extract_source(archive, context / directory, source)
-            except (OSError, tarfile.TarError) as error:
-                raise BuildError(
-                    f"cannot extract verified source archive for {source['tag']}: {error}"
-                ) from error
+            extract_source(archive, context / directory, source)
             archive.unlink()
         subprocess.run(
             docker_arguments(document, target, image, architecture, context), check=True

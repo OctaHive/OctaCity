@@ -34,8 +34,8 @@ cannot drift independently.
 - mc: `RELEASE.2025-08-13T08-35-41Z`, revision
   `7394ce0dd2a80935aded936b09fa12cbb3cb8096`, checksum-pinned source archive
 - Microsandbox: `0.7.6`, revision
-  `09df3d4b9d832adaede1fb9a198cfc660bfab8cd`, release asset ID, platform,
-  firmware name, URL, and SHA-256
+  `09df3d4b9d832adaede1fb9a198cfc660bfab8cd`, exact upstream repository,
+  release asset ID, platform, firmware name, URL, and SHA-256
 - Octa: `0.4.0`, Linux ARM64 release asset SHA-256, source revision
   `9c917a987c00c61b5c2d8bf6aecdcc66483f38f3`, and a separately
   checksum-pinned source archive for the container builder
@@ -49,16 +49,18 @@ revision. Downloads, archive members, individual files, and total expanded
 bytes use manifest-owned limits. The runtime image does not depend on the
 discontinued `bitnamilegacy/minio` image.
 
+Native staging applies the same release-ref check to Microsandbox and queries
+the GitHub release metadata before download. The selected release must contain
+exactly the pinned asset ID, name, and browser download URL; the downloaded
+bytes must then match the pinned SHA-256 digest.
+
 ## Verification
 
 The following checks passed:
 
 ```console
-python3 -m unittest \
-  tools.tests.test_verify_local_stand_inputs \
-  tools.tests.test_build_pinned_minio \
-  tools.tests.test_verify_local_stand_context
-# Ran 36 tests ... OK
+python3 -m unittest discover -s tools/tests -v
+# Ran 150 tests ... OK
 
 python3 tools/verify_local_stand_inputs.py \
   deployment/local-stand/inputs.json \

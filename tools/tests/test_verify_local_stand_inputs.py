@@ -132,6 +132,14 @@ class LocalStandInputTests(unittest.TestCase):
         with self.assertRaisesRegex(VERIFIER.InputError, "does not match tag and asset"):
             self.validate(document)
 
+    def test_rejects_an_unexpected_microsandbox_repository(self):
+        document = deepcopy(self.document)
+        document["native"]["microsandbox"]["repository"] = (
+            "https://github.com/example/microsandbox"
+        )
+        with self.assertRaisesRegex(VERIFIER.InputError, "repository is unexpected"):
+            self.validate(document)
+
     def test_rejects_a_symbolic_agent_revision(self):
         with self.assertRaisesRegex(VERIFIER.InputError, "invalid format"):
             self.validate(revision="main")
@@ -153,6 +161,12 @@ class LocalStandInputTests(unittest.TestCase):
             "https://codeload.github.com/OctaHive/octa/tar.gz/" + "b" * 40
         )
         with self.assertRaisesRegex(VERIFIER.InputError, "does not match its revision"):
+            self.validate(document)
+
+    def test_rejects_unbounded_octa_source_archives(self):
+        document = deepcopy(self.document)
+        document["native"]["octa"]["source_archive_member_max_count"] = 0
+        with self.assertRaisesRegex(VERIFIER.InputError, "positive bounded integer"):
             self.validate(document)
 
 

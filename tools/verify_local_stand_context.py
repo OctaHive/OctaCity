@@ -36,15 +36,21 @@ REQUIRED_CONTEXT_PATHS = (
     "agent/octacity-source-plugin/README.md",
     "server/app/Cargo.toml",
     "server/app/src/main.rs",
+    "server/api/octacity-server-api-rest/examples/export_openapi.rs",
     "server/infrastructure/octacity-server-store-postgres/migrations/0001_authoritative_store.sql",
+    "server/tests/octacity-service-contract-tests/Cargo.toml",
+    "server/tests/octacity-release-harness/Cargo.toml",
     "shared/octacity-protocol/Cargo.toml",
     "shared/octacity-protocol/src/lib.rs",
     "ui/package.json",
     "ui/pnpm-lock.yaml",
+    "ui/.node-version",
     "ui/scripts/generate-api.mjs",
     "ui/src/main.tsx",
     "deployment/local-stand/inputs.json",
     "deployment/local-stand/minio.Dockerfile",
+    "deployment/local-stand/nginx.conf",
+    "deployment/local-stand/server.Dockerfile",
     "deployment/local-stand/staging-allowlist.json",
 )
 
@@ -281,6 +287,8 @@ def _tar_identity(path: Path, filename: str, entry: dict[str, Any]) -> dict[str,
                 count += 1
                 if count > entry["max_members"]:
                     raise ContextError(f"staging archive has too many members: {path.name}")
+                if member.name.rstrip("/") == "." and member.isdir():
+                    continue
                 candidate = PurePosixPath(member.name)
                 if (
                     candidate.is_absolute()

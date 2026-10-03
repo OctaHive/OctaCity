@@ -15,6 +15,9 @@ from unittest import mock
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 MANIFEST = REPOSITORY / "deployment/local-stand/inputs.json"
+sys.path.insert(0, str(REPOSITORY / "tools"))
+import pinned_source_archive as ARCHIVES
+
 SPEC = importlib.util.spec_from_file_location(
     "build_pinned_minio", REPOSITORY / "tools/build_pinned_minio.py"
 )
@@ -92,7 +95,7 @@ class PinnedMinioBuildTests(unittest.TestCase):
         response.headers = {}
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "source.tar.gz"
-            with mock.patch.object(BUILDER, "urlopen", return_value=response):
+            with mock.patch.object(ARCHIVES, "urlopen", return_value=response):
                 with self.assertRaisesRegex(BUILDER.BuildError, "exceeds 4 bytes"):
                     BUILDER.download(source, destination, attempts=1)
             self.assertFalse(destination.exists())
@@ -117,6 +120,43 @@ class PinnedMinioBuildTests(unittest.TestCase):
             with self.assertRaisesRegex(BUILDER.BuildError, "expands beyond"):
                 BUILDER.extract_source(archive, root / "size-output", source)
 
+    def test_release_extraction_preserves_root_files_and_rejects_links(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "release.tar.gz"
+            with tarfile.open(archive, "w:gz") as bundle:
+                directory = tarfile.TarInfo(".")
+                directory.type = tarfile.DIRTYPE
+                bundle.addfile(directory)
+                executable = tarfile.TarInfo("bin/tool")
+                executable.mode = 0o755
+                executable.size = 4
+                bundle.addfile(executable, io.BytesIO(b"tool"))
+            ARCHIVES.extract_tar_archive(
+                archive,
+                root / "release",
+                max_expanded_bytes=16,
+                max_file_bytes=8,
+                max_members=2,
+            )
+            self.assertEqual((root / "release/bin/tool").read_bytes(), b"tool")
+            self.assertEqual((root / "release/bin/tool").stat().st_mode & 0o777, 0o755)
+
+            linked = root / "linked.tar.gz"
+            with tarfile.open(linked, "w:gz") as bundle:
+                member = tarfile.TarInfo("tool-link")
+                member.type = tarfile.SYMTYPE
+                member.linkname = "/tmp/tool"
+                bundle.addfile(member)
+            with self.assertRaisesRegex(ARCHIVES.SourceArchiveError, "unsupported"):
+                ARCHIVES.extract_tar_archive(
+                    linked,
+                    root / "linked",
+                    max_expanded_bytes=16,
+                    max_file_bytes=8,
+                    max_members=2,
+                )
+
     def test_release_tag_must_resolve_to_the_pinned_revision(self):
         source = self.document["sources"]["minio_client"]
         tag_ref = f"refs/tags/{source['tag']}"
@@ -125,7 +165,7 @@ class PinnedMinioBuildTests(unittest.TestCase):
             f"{source['source_revision']}\t{tag_ref}^{{}}\n"
         )
         result = mock.Mock(stdout=output)
-        with mock.patch.object(BUILDER.subprocess, "run", return_value=result) as run:
+        with mock.patch.object(ARCHIVES.subprocess, "run", return_value=result) as run:
             BUILDER.verify_release_ref(source)
         run.assert_called_once_with(
             ["git", "ls-remote", source["repository"], tag_ref, f"{tag_ref}^{{}}"],
@@ -136,14 +176,14 @@ class PinnedMinioBuildTests(unittest.TestCase):
         )
 
         result.stdout = f"{'f' * 40}\t{tag_ref}\n"
-        with mock.patch.object(BUILDER.subprocess, "run", return_value=result):
+        with mock.patch.object(ARCHIVES.subprocess, "run", return_value=result):
             with self.assertRaisesRegex(BUILDER.BuildError, "resolves to"):
                 BUILDER.verify_release_ref(source)
 
     def test_release_tag_resolution_retries_a_transient_git_failure(self):
         source = self.document["sources"]["minio"]
         tag_ref = f"refs/tags/{source['tag']}"
-        failure = BUILDER.subprocess.CalledProcessError(
+        failure = ARCHIVES.subprocess.CalledProcessError(
             128,
             ["git", "ls-remote"],
             stderr="temporary upstream failure",
@@ -151,9 +191,9 @@ class PinnedMinioBuildTests(unittest.TestCase):
         result = mock.Mock(stdout=f"{source['source_revision']}\t{tag_ref}\n")
         with (
             mock.patch.object(
-                BUILDER.subprocess, "run", side_effect=[failure, result]
+                ARCHIVES.subprocess, "run", side_effect=[failure, result]
             ) as run,
-            mock.patch.object(BUILDER.time, "sleep") as sleep,
+            mock.patch.object(ARCHIVES.time, "sleep") as sleep,
         ):
             BUILDER.verify_release_ref(source)
         self.assertEqual(run.call_count, 2)
@@ -161,14 +201,14 @@ class PinnedMinioBuildTests(unittest.TestCase):
 
     def test_release_tag_resolution_failure_is_bounded_and_diagnostic(self):
         source = self.document["sources"]["minio"]
-        failure = BUILDER.subprocess.CalledProcessError(
+        failure = ARCHIVES.subprocess.CalledProcessError(
             128,
             ["git", "ls-remote"],
             stderr="upstream unavailable",
         )
         with (
-            mock.patch.object(BUILDER.subprocess, "run", side_effect=failure) as run,
-            mock.patch.object(BUILDER.time, "sleep") as sleep,
+            mock.patch.object(ARCHIVES.subprocess, "run", side_effect=failure) as run,
+            mock.patch.object(ARCHIVES.time, "sleep") as sleep,
         ):
             with self.assertRaisesRegex(
                 BUILDER.BuildError,
@@ -177,6 +217,48 @@ class PinnedMinioBuildTests(unittest.TestCase):
                 BUILDER.verify_release_ref(source, attempts=2)
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(1)
+
+    def test_github_release_asset_identity_is_verified(self):
+        source = self.document["native"]["microsandbox"]
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "tag_name": source["tag"],
+                "assets": [
+                    {
+                        "id": source["asset_id"],
+                        "name": source["asset"],
+                        "browser_download_url": source["release_url"],
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        response.__enter__.return_value = response
+
+        with mock.patch.object(ARCHIVES, "urlopen", return_value=response) as request:
+            ARCHIVES.verify_github_release_asset(source)
+
+        request.assert_called_once()
+
+    def test_github_release_asset_identity_mismatch_fails_without_retry(self):
+        source = self.document["native"]["microsandbox"]
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps(
+            {"tag_name": source["tag"], "assets": []}
+        ).encode("utf-8")
+        response.__enter__.return_value = response
+
+        with (
+            mock.patch.object(ARCHIVES, "urlopen", return_value=response) as request,
+            mock.patch.object(ARCHIVES.time, "sleep") as sleep,
+            self.assertRaisesRegex(
+                ARCHIVES.SourceArchiveError, "does not identify the pinned asset"
+            ),
+        ):
+            ARCHIVES.verify_github_release_asset(source)
+
+        request.assert_called_once()
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

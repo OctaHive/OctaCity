@@ -4261,6 +4261,7 @@ dependencies = [
  "octacity-private-fs",
  "octacity-protocol",
  "octacity-runner",
+ "octacity-server-job",
  "octacity-source-plugin",
  "octacity-vcs-protocol",
  "octacity-webhook-provider-protocol",

@@ -35,6 +35,9 @@ server/api/*.*
 server/api/*/*
 !server/api/*/Cargo.toml
 !server/api/*/build.rs
+!server/api/*/examples/
+server/api/*/examples/*
+!server/api/octacity-server-api-rest/examples/export_openapi.rs
 !server/api/*/src/
 !server/api/*/src/**
 !server/core/*/
@@ -60,6 +63,13 @@ server/protocols/*/*
 !server/protocols/*/build.rs
 !server/protocols/*/src/
 !server/protocols/*/src/**
+!server/tests/*/
+server/tests/*.*
+server/tests/*/*
+!server/tests/*/Cargo.toml
+!server/tests/*/build.rs
+!server/tests/*/src/
+!server/tests/*/src/**
 !shared/
 shared/*
 !shared/*/
@@ -77,6 +87,7 @@ shared/*/*
 !ui/
 ui/*
 !ui/.npmrc
+!ui/.node-version
 !ui/index.html
 !ui/package.json
 !ui/pnpm-lock.yaml
@@ -100,6 +111,7 @@ deployment/*
 deployment/local-stand/*
 !deployment/local-stand/*.Dockerfile
 !deployment/local-stand/*.json
+!deployment/local-stand/nginx.conf
 
 # Absolute exclusions are intentionally last so a later broad allow rule can
 # never admit VCS data, build products, credentials, or mutable stand state.

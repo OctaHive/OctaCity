@@ -479,18 +479,11 @@ fn write_server_config(directory: &Path, input: &ServerConfigInput<'_>) -> PathB
   let enrollment_key = private_file(directory, "agent-enrollment-key", &STANDARD.encode([8_u8; 32]));
   let cache_key = private_file(directory, "cache-credential-key", &STANDARD.encode([9_u8; 32]));
   let policy = directory.join("job-spec-policy.json");
-  fs::write(&policy, serde_json::to_vec(&json!({
-    "source": {"provider": "git", "plugin_version": input.toolchain.source_version, "plugin_sha256": input.toolchain.source_digest, "repository_parameter": "url"},
-    "octa": {
-      "version": input.toolchain.octa_version,
-      "runner_sha256": input.toolchain.runner_digest,
-      "runner_protocol": input.toolchain.runner_protocol,
-      "event_schema": input.toolchain.event_schema,
-      "plugin_protocol": input.toolchain.plugin_protocol,
-      "plugin_digests": input.toolchain.plugin_digests
-    },
-    "validity": 900
-  })).unwrap()).unwrap();
+  fs::write(
+    &policy,
+    serde_json::to_vec(&input.toolchain.job_spec_policy(900).unwrap()).unwrap(),
+  )
+  .unwrap();
   let cache_bind = input
     .cache_addr
     .map_or_else(String::new, |address| format!("cache_bind = \"{address}\"\n"));

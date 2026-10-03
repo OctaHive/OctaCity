@@ -44,6 +44,11 @@ The production application is written to `dist/` as an `index.html`-rooted stati
 `.generated/api/schema.d.ts`. The generated directory is intentionally ignored: regenerate it
 before type checking or building instead of editing or committing its contents.
 
+Locked container builds set `OCTACITY_OPENAPI_SCHEMA_FILE` to a bounded regular JSON file that
+was exported by an earlier Rust build stage. When the variable is absent, the generator runs the
+Rust exporter itself. The override is a build boundary for verified local input, not a runtime API
+URL, and the referenced document is limited to 16 MiB.
+
 ## REST boundary
 
 `src/api/client.ts` is the console's only management transport. Feature code uses its generated

@@ -38,6 +38,9 @@ impl JobRuntimePolicy {
 /// unsigned JobSpec wire timestamp.
 pub const MAX_JOB_SPEC_VALIDITY_SECONDS: u64 = MAX_TIMESTAMP_MILLIS as u64 / 1_000;
 
+/// Greatest accepted serialized size of one JobSpec toolchain policy.
+pub const MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES: u64 = 1024 * 1024;
+
 /// Positive bounded validity interval for one signed JobSpec.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JobSpecValidity(NonZeroU64);
@@ -84,6 +87,26 @@ pub struct SourcePluginPolicy {
   pub(super) plugin_version: String,
   pub(super) plugin_sha256: String,
   pub(super) repository_parameter: String,
+}
+
+/// Immutable operator policy for executable identities signed into every Job.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobSpecToolchainPolicy {
+  /// Exact source plugin and public Repository-locator parameter.
+  pub source: SourcePluginPolicy,
+  /// Exact Octa runner and task-plugin set.
+  pub octa: OctaSpec,
+  /// Number of seconds for which a derived JobSpec remains valid.
+  pub validity: JobSpecValidity,
+}
+
+impl JobSpecToolchainPolicy {
+  /// Revalidates operator configuration after strict deserialization.
+  pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
+    self.source.validate()?;
+    self.octa.validate().map_err(|_| JobSpecDerivationError::InvalidPolicy)
+  }
 }
 
 impl SourcePluginPolicy {

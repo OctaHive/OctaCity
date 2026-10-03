@@ -1,0 +1,52 @@
+agent_id = "local-stand-validation"
+server_url = "https://coordinator.invalid"
+credential_file = $credential_file
+work_root = $work_root
+state_root = $state_root
+octa_release_root = $octa_release_root
+source_plugins_dir = $source_plugins_dir
+workload_identity_profiles = {}
+cache = { root = $cache_root, capacity = { max_bytes = 1048576, high_watermark_bytes = 943718, low_watermark_bytes = 838860 }, max_scopes = 4, allow_read = true, allow_write = true, allowed_remote_origins = ["https://cache.invalid"], native_environment_identities = {}, request_timeout_seconds = 10, max_parallel_transfers = 2 }
+maintenance = { work_reserve_bytes = 1, state_reserve_bytes = 1, cache_reserve_bytes = 1, disk_check_interval_seconds = 1 }
+enabled_runtime_modes = []
+allow_native_execution = false
+native_linux_pids_limit = 0
+allow_host_execution = false
+allow_unrestricted_network = false
+host_accounting_max_entries = 1000
+allowed_network_hosts = []
+allowed_upload_origins = ["https://objects.invalid"]
+max_archive_entries = 1000
+upload_timeout_seconds = 1
+max_output_limits = { artifact_count = 1, artifact_bytes = 1, report_count = 1, report_bytes = 1, single_output_bytes = 1 }
+max_workspace_bytes = 1048576
+max_spool_bytes = 1048576
+max_spool_records = 32
+event_batch_max_bytes = 16384
+event_batch_max_records = 8
+event_channel_capacity = 8
+poll_timeout_seconds = 1
+coordinator_request_timeout_seconds = 1
+coordinator_max_body_bytes = 1048576
+retry_initial_delay_milliseconds = 1
+retry_max_delay_seconds = 1
+retry_max_attempts = 1
+heartbeat_interval_seconds = 1
+lease_safety_margin_seconds = 2
+graceful_cancel_timeout_seconds = 1
+cleanup_timeout_seconds = 1
+runner_hello_timeout_seconds = 1
+resource_sample_interval_seconds = 1
+resource_sample_timeout_seconds = 1
+max_accounting_failures = 1
+oci_engines = []
+
+[[virtualization_providers]]
+provider = "microsandbox"
+environment_identity = $microsandbox_environment_identity
+executable = $msb
+libkrunfw = $libkrunfw
+metrics_sample_interval_seconds = 1
+
+[server_signing_keys]
+primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="

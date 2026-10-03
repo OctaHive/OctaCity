@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
 
-use octacity_protocol::OctaSpec;
 use octacity_server_domain::{
   AttemptId, BuildId, ImmutableRevision, JobId, SourceReference, Timestamp, TriggerOccurrenceId,
 };
-use octacity_server_job::{JobSpecDerivationError, JobSpecValidity, SourcePluginPolicy};
+use octacity_server_job::{JobSpecDerivationError, JobSpecToolchainPolicy};
 use octacity_server_store::{
   PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, StoreError, StoreInputError,
   TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerTarget,
@@ -131,26 +130,6 @@ pub struct ManualTriggerContext {
   pub effective_policy: EffectiveProjectPolicy,
   /// Operator-owned source-plugin, Octa release, and JobSpec validity policy.
   pub job_spec_toolchain: JobSpecToolchainPolicy,
-}
-
-/// Immutable operator policy for executable identities signed into every Job.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct JobSpecToolchainPolicy {
-  /// Exact source plugin and public Repository-locator parameter.
-  pub source: SourcePluginPolicy,
-  /// Exact Octa runner and task-plugin set.
-  pub octa: OctaSpec,
-  /// Number of seconds for which a derived JobSpec remains valid.
-  pub validity: JobSpecValidity,
-}
-
-impl JobSpecToolchainPolicy {
-  /// Revalidates operator configuration after strict deserialization.
-  pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
-    self.source.validate()?;
-    self.octa.validate().map_err(|_| JobSpecDerivationError::InvalidPolicy)
-  }
 }
 
 /// Failure while loading immutable manual-Trigger context.

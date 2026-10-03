@@ -29,6 +29,10 @@ GIT_SHA1 = re.compile(r"[0-9a-f]{40}")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
 MINIO_RELEASE_TAG = re.compile(r"RELEASE\.[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z")
 MAX_PINNED_INPUT_BYTES = 2 * 1024 * 1024 * 1024
+EXPECTED_AGENT_RELEASE_PLATFORM = "macos-arm64"
+EXPECTED_SOURCE_PLUGIN_PLATFORM = "macos-aarch64"
+EXPECTED_OCTA_RELEASE_PLATFORM = "linux-arm64"
+EXPECTED_OCTA_RUNTIME_PLATFORM = "linux-aarch64"
 
 
 class InputError(ValueError):
@@ -233,6 +237,7 @@ def validate_microsandbox(value: dict[str, Any]) -> None:
             "firmware",
             "platform",
             "release_url",
+            "repository",
             "sha256",
             "source_revision",
             "tag",
@@ -253,10 +258,12 @@ def validate_microsandbox(value: dict[str, Any]) -> None:
         raise InputError("native.microsandbox.asset_id must be a positive integer")
     if value["firmware"] != "libkrunfw.5.dylib":
         raise InputError("native.microsandbox.firmware is unexpected")
+    if value["repository"] != "https://github.com/superradcompany/microsandbox":
+        raise InputError("native.microsandbox.repository is unexpected")
     require_match(value["sha256"], SHA256, "native.microsandbox.sha256")
     require_match(value["source_revision"], GIT_SHA1, "native.microsandbox.source_revision")
     expected_url = (
-        "https://github.com/superradcompany/microsandbox/releases/download/"
+        f"{value['repository']}/releases/download/"
         f"{tag}/{asset}"
     )
     if value["release_url"] != expected_url:
@@ -276,7 +283,10 @@ def validate_octa(value: dict[str, Any]) -> None:
             "release_url",
             "repository",
             "sha256",
+            "source_archive_expanded_max_bytes",
+            "source_archive_file_max_bytes",
             "source_archive_max_bytes",
+            "source_archive_member_max_count",
             "source_archive_sha256",
             "source_archive_url",
             "source_revision",
@@ -286,8 +296,10 @@ def validate_octa(value: dict[str, Any]) -> None:
     )
     version = require_match(value["version"], SEMVER, "native.octa.version")
     require_match(value["source_revision"], GIT_SHA1, "native.octa.source_revision")
-    if value["platform"] != "linux-arm64":
-        raise InputError("native.octa.platform must equal linux-arm64")
+    if value["platform"] != EXPECTED_OCTA_RELEASE_PLATFORM:
+        raise InputError(
+            f"native.octa.platform must equal {EXPECTED_OCTA_RELEASE_PLATFORM}"
+        )
     if value["release_name"] != f"octa-linux-arm64-v{version}":
         raise InputError("native.octa.release_name does not match its version and platform")
     if value["repository"] != "https://github.com/OctaHive/octa":
@@ -309,9 +321,23 @@ def validate_octa(value: dict[str, Any]) -> None:
     require_match(
         value["source_archive_sha256"], SHA256, "native.octa.source_archive_sha256"
     )
-    require_size_limit(
+    archive_limit = require_size_limit(
         value["source_archive_max_bytes"], "native.octa.source_archive_max_bytes"
     )
+    file_limit = require_size_limit(
+        value["source_archive_file_max_bytes"],
+        "native.octa.source_archive_file_max_bytes",
+    )
+    expanded_limit = require_size_limit(
+        value["source_archive_expanded_max_bytes"],
+        "native.octa.source_archive_expanded_max_bytes",
+    )
+    require_size_limit(
+        value["source_archive_member_max_count"],
+        "native.octa.source_archive_member_max_count",
+    )
+    if archive_limit > expanded_limit or file_limit > expanded_limit:
+        raise InputError("native.octa source archive limits are inconsistent")
 
 
 def validate_agent(value: dict[str, Any], agent_revision: str) -> None:
@@ -319,8 +345,11 @@ def validate_agent(value: dict[str, Any], agent_revision: str) -> None:
 
     require_exact_keys(value, {"platform", "source_revision", "version"}, "native.octacity_agent")
     require_match(value["version"], SEMVER, "native.octacity_agent.version")
-    if value["platform"] != "macos-arm64":
-        raise InputError("native.octacity_agent.platform must equal macos-arm64")
+    if value["platform"] != EXPECTED_AGENT_RELEASE_PLATFORM:
+        raise InputError(
+            "native.octacity_agent.platform must equal "
+            f"{EXPECTED_AGENT_RELEASE_PLATFORM}"
+        )
     policy = require_object(value["source_revision"], "native.octacity_agent.source_revision")
     require_exact_keys(policy, {"format", "mode"}, "native.octacity_agent.source_revision")
     if policy != {"format": "lowercase-git-sha1", "mode": "required-at-stage"}:

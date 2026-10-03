@@ -17,10 +17,14 @@ use std::{
   path::{Path, PathBuf},
 };
 
+use octacity_protocol::OctaSpec;
+use octacity_server_job::{
+  JobSpecToolchainPolicy, JobSpecValidity, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES, SourcePluginPolicy,
+};
 use serde::Serialize;
 use thiserror::Error;
 
-use bundle::{Bundle, octa_runtime_platform};
+use bundle::{Bundle, octa_runtime_platform, read_bounded};
 use contract::ReleaseContract;
 use octa::OctaBundle;
 
@@ -45,6 +49,24 @@ pub struct AgentRuntimeBundles {
   pub agent: PathBuf,
   /// Extracted checksummed Octa release root.
   pub octa: PathBuf,
+}
+
+/// Exact release-platform identities expected from one staged Agent runtime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentRuntimePlatforms {
+  agent_release: String,
+  octa_runner: String,
+}
+
+impl AgentRuntimePlatforms {
+  /// Creates the platform expectation checked before a signing policy is emitted.
+  #[must_use]
+  pub fn new(agent_release: impl Into<String>, octa_runner: impl Into<String>) -> Self {
+    Self {
+      agent_release: agent_release.into(),
+      octa_runner: octa_runner.into(),
+    }
+  }
 }
 
 /// Validated paths and identities consumed by a release scenario.
@@ -120,6 +142,32 @@ pub struct InstalledToolchain {
   pub plugin_protocol: u16,
   /// Installed Octa task-plugin executable digests by logical name.
   pub plugin_digests: BTreeMap<String, String>,
+}
+
+impl InstalledToolchain {
+  /// Converts the verified executor identities into the server's signing policy.
+  pub fn job_spec_policy(&self, validity_seconds: u64) -> Result<JobSpecToolchainPolicy, HarnessError> {
+    let source = SourcePluginPolicy::new("git", &self.source_version, &self.source_digest, "url")
+      .map_err(|_| invalid("derived source-plugin policy is invalid"))?;
+    let validity =
+      JobSpecValidity::new(validity_seconds).map_err(|_| invalid("JobSpec validity interval is invalid"))?;
+    let policy = JobSpecToolchainPolicy {
+      source,
+      octa: OctaSpec {
+        version: self.octa_version.clone(),
+        runner_sha256: self.runner_digest.clone(),
+        runner_protocol: self.runner_protocol,
+        event_schema: self.event_schema,
+        plugin_protocol: self.plugin_protocol,
+        plugin_digests: self.plugin_digests.clone(),
+      },
+      validity,
+    };
+    policy
+      .validate()
+      .map_err(|_| invalid("derived JobSpec policy is invalid"))?;
+    Ok(policy)
+  }
 }
 
 /// Failure to install or validate released bundles.
@@ -202,7 +250,7 @@ pub fn install_agent_runtime(
   validate_agent_octa_compatibility(
     &agent_source.manifest,
     &octa_source,
-    bundle::runtime_platform(&agent_source.manifest.platform)?,
+    octa_runtime_platform(&agent_source.manifest.platform)?,
   )?;
 
   create_directory(destination)?;
@@ -221,6 +269,62 @@ pub fn install_agent_runtime(
   )?;
   guard.commit();
   Ok(installed)
+}
+
+/// Revalidates an already isolated Agent and Octa installation.
+pub fn validate_installed_agent_runtime(bundles: &AgentRuntimeBundles) -> Result<InstalledAgentRuntime, HarnessError> {
+  let root = agent_runtime_common_parent(bundles)?;
+  load_agent_runtime(bundles, root)
+}
+
+/// Derives the server's exact JobSpec signing policy from a verified Agent installation.
+///
+/// The same release manifests, runner capabilities, plugin lock, platforms,
+/// protocols, and executable digests consumed by the Agent are revalidated
+/// before any server policy is returned.
+pub fn derive_job_spec_policy(
+  bundles: &AgentRuntimeBundles,
+  platforms: &AgentRuntimePlatforms,
+  validity_seconds: u64,
+) -> Result<JobSpecToolchainPolicy, HarnessError> {
+  let installed = validate_installed_agent_runtime(bundles)?;
+  if installed.agent_manifest.platform() != platforms.agent_release
+    || installed.octa_capabilities.platform() != platforms.octa_runner
+  {
+    return Err(invalid(
+      "installed Agent runtime platforms differ from the signing policy expectation",
+    ));
+  }
+  installed.toolchain.job_spec_policy(validity_seconds)
+}
+
+/// Rejects a server JobSpec policy that differs from the verified Agent assets.
+pub fn verify_job_spec_policy(
+  bundles: &AgentRuntimeBundles,
+  platforms: &AgentRuntimePlatforms,
+  policy: &JobSpecToolchainPolicy,
+  validity_seconds: u64,
+) -> Result<(), HarnessError> {
+  policy
+    .validate()
+    .map_err(|_| invalid("configured JobSpec policy is invalid"))?;
+  let expected = derive_job_spec_policy(bundles, platforms, validity_seconds)?;
+  if policy != &expected {
+    return Err(invalid(
+      "server JobSpec policy differs from the verified Agent toolchain",
+    ));
+  }
+  Ok(())
+}
+
+/// Loads and validates one bounded server JobSpec policy document.
+pub fn load_job_spec_policy(path: &Path) -> Result<JobSpecToolchainPolicy, HarnessError> {
+  let contents = read_bounded(path, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES)?;
+  let policy: JobSpecToolchainPolicy = serde_json::from_slice(&contents)?;
+  policy
+    .validate()
+    .map_err(|_| invalid("configured JobSpec policy is invalid"))?;
+  Ok(policy)
 }
 
 /// Revalidates an already isolated installation and returns its typed identity.
@@ -262,11 +366,7 @@ fn load_agent_runtime(bundles: &AgentRuntimeBundles, root: PathBuf) -> Result<In
   let canonical_contract = ReleaseContract::canonical()?;
   let agent = Bundle::load(&bundles.agent, "octacity-agent", &canonical_contract)?;
   let octa = OctaBundle::load(&bundles.octa)?;
-  validate_agent_octa_compatibility(
-    &agent.manifest,
-    &octa,
-    bundle::runtime_platform(&agent.manifest.platform)?,
-  )?;
+  validate_agent_octa_compatibility(&agent.manifest, &octa, octa_runtime_platform(&agent.manifest.platform)?)?;
   agent.verify_binary_version("agent")?;
 
   let source = agent.source_plugin()?;
@@ -361,6 +461,19 @@ fn common_parent(bundles: &ReleaseBundles) -> Result<PathBuf, HarnessError> {
   if bundles.agent.parent() != Some(root) || bundles.octa.parent() != Some(root) {
     return Err(invalid(
       "installed release roots do not share one installation directory",
+    ));
+  }
+  Ok(root.to_owned())
+}
+
+fn agent_runtime_common_parent(bundles: &AgentRuntimeBundles) -> Result<PathBuf, HarnessError> {
+  let root = bundles
+    .agent
+    .parent()
+    .ok_or_else(|| invalid("installed Agent root has no parent directory"))?;
+  if bundles.octa.parent() != Some(root) {
+    return Err(invalid(
+      "installed Agent and Octa roots do not share one installation directory",
     ));
   }
   Ok(root.to_owned())

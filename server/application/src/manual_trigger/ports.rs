@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use octacity_server_domain::{ImmutableRevision, ProjectId};
+use octacity_server_job::JobSpecToolchainPolicy;
 use octacity_server_store::{
   ConfigurationStore, PipelineStore, ProjectPolicyStore, StoreError, TriggerDefinitionRef, TriggerDefinitionStore,
   TriggerKind, TriggerTarget,
@@ -10,8 +11,8 @@ use octacity_server_store::{
 use crate::{EffectiveProjectPolicy, ProjectPolicyLayer, resolve_project_policy};
 
 use super::model::{
-  EffectiveProjectPolicySourceError, JobSpecToolchainPolicy, ManualTriggerContext, ManualTriggerContextError,
-  RevisionResolutionError, RevisionResolutionRequest,
+  EffectiveProjectPolicySourceError, ManualTriggerContext, ManualTriggerContextError, RevisionResolutionError,
+  RevisionResolutionRequest,
 };
 
 /// Loads immutable server-owned context for a manual Trigger command.
