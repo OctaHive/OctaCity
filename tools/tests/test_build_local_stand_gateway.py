@@ -119,6 +119,9 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         self.assertIn("/srv/octacity-ui/index.html", contract)
         self.assertIn("https://octacity.localhost:8443/", contract)
         self.assertIn("cmp /tmp/index.html /srv/octacity-ui/index.html", contract)
+        self.assertIn("-name '*.js'", contract)
+        self.assertIn("application/javascript*|text/javascript*", contract)
+        self.assertIn('cmp /tmp/javascript "$javascript"', contract)
         self.assertIn("/api/v1/management-only", contract)
         self.assertIn("/api/v1/unknown", contract)
         self.assertIn("/health/unknown", contract)
@@ -143,6 +146,8 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
 
         self.assertIn("ssl_certificate /run/secrets/gateway.pem", config)
         self.assertIn("ssl_certificate_key /run/secrets/gateway-key.pem", config)
+        self.assertIn("include /etc/nginx/mime.types;", config)
+        self.assertIn("default_type application/octet-stream;", config)
         self.assertIn("proxy_set_header Host $http_host", config)
         for host in (
             "octacity.localhost",

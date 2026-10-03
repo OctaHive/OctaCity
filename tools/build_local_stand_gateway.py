@@ -133,6 +133,18 @@ until curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
 done
 cmp /tmp/index.html __STATIC_ROOT__/index.html
 
+javascript=$(find __STATIC_ROOT__/assets -maxdepth 1 -type f -name '*.js' -print -quit)
+test -n "$javascript"
+javascript_url=${javascript#__STATIC_ROOT__}
+javascript_type=$(curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
+  --output /tmp/javascript --write-out '%{content_type}' \
+  "https://octacity.localhost:__HTTPS_PORT__${javascript_url}")
+case "$javascript_type" in
+  application/javascript*|text/javascript*) ;;
+  *) echo "gateway returned an invalid JavaScript MIME type: $javascript_type" >&2; exit 1 ;;
+esac
+cmp /tmp/javascript "$javascript"
+
 curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
   https://octacity.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/management
 printf management >/tmp/expected-management
