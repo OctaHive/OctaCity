@@ -46,6 +46,14 @@
   font-size: 1.05rem;
 }
 
+.sectionDescription {
+  max-width: 44rem;
+  margin: -0.6rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 .identity {
   width: fit-content;
   max-width: 100%;
@@ -250,15 +258,34 @@
   padding: var(--space-lg);
 }
 
-.failurePanel p {
+.failurePanel p,
+.compactFailure p {
   margin: 0.35rem 0 0.55rem;
 }
 
+.compactFailure {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: var(--space-md);
+  padding: 0.6rem;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-small);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+  font-size: 0.72rem;
+}
+
 .staleNotice {
+  align-items: center;
   margin: 0;
   padding: 0.65rem 0.8rem;
   font-size: 0.8rem;
   font-weight: 700;
+}
+
+.staleNotice > span {
+  flex: 1;
 }
 
 @keyframes spin {

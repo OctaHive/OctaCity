@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { createMemoryRouter } from 'react-router-dom';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { App } from '../../App';
-import { ManagementApiError } from '../../api/client';
-import { createConsoleQueryClient } from '../../app/query';
-import { createConsoleRoutes } from '../../app/router';
-import type { ProjectDetails, ProjectPage, ProjectResource, ProjectsApi } from './api';
+import type { ProjectDetails } from './api';
+import {
+  fakeProjectsApi,
+  managementError,
+  page,
+  project,
+  renderProjects,
+} from './ProjectTestSupport';
 
 afterEach(cleanup);
 
@@ -108,47 +110,3 @@ describe('Project hierarchy', () => {
     expect(alert.textContent).toContain('request-projects');
   });
 });
-
-function renderProjects(path: string, api: ProjectsApi) {
-  const queryClient = createConsoleQueryClient();
-  const router = createMemoryRouter(
-    createConsoleRoutes(async () => 'ready', api),
-    {
-      initialEntries: [path],
-    },
-  );
-  const result = render(<App queryClient={queryClient} router={router} />);
-  return { ...result, router };
-}
-
-function fakeProjectsApi() {
-  return {
-    getProject: vi.fn<ProjectsApi['getProject']>(),
-    listProjects: vi.fn<ProjectsApi['listProjects']>(),
-  };
-}
-
-function page(items: ProjectResource[], nextCursor: string | null): ProjectPage {
-  return { items, next_cursor: nextCursor };
-}
-
-function project(id: string, name: string, parentId: string | null = null): ProjectResource {
-  return {
-    created_at_unix_ms: 1_700_000_000_000,
-    id,
-    name,
-    parent_id: parentId,
-    updated_at_unix_ms: 1_700_000_000_000,
-    version: 1,
-  };
-}
-
-function managementError(code: 'not_found' | 'unavailable', requestId: string): ManagementApiError {
-  return new ManagementApiError({
-    code,
-    message: 'Safe management failure.',
-    requestId,
-    retryAfterMilliseconds: null,
-    status: code === 'not_found' ? 404 : 503,
-  });
-}

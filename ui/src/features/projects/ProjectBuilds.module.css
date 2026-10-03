@@ -1,0 +1,169 @@
+.section {
+  display: grid;
+  gap: var(--space-md);
+}
+
+.sectionHeading > span {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(10rem, 1fr)) auto;
+  align-items: end;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.filters label {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.filters select {
+  min-width: 0;
+  min-height: 2.35rem;
+  padding: 0.4rem 2rem 0.4rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.78rem;
+}
+
+.filters select:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.filterOptionsButton {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-brand-action);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.filterOptionsButton:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.tableFrame {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.table {
+  width: 100%;
+  min-width: 58rem;
+  border-collapse: collapse;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+}
+
+.table caption {
+  padding: 0.65rem var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.table th,
+.table td {
+  padding: 0.7rem var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table th {
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 0.67rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table td > strong,
+.table td > span:not(.state) {
+  display: block;
+}
+
+.table td > span:not(.state) {
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 15rem;
+  color: var(--color-brand-action);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.48rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.stateSucceeded {
+  background: var(--color-brand-soft);
+  color: var(--color-success-ink);
+}
+
+.stateFailed {
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+}
+
+.stateActive {
+  background: var(--color-information-soft);
+  color: var(--color-information-ink);
+}
+
+@media (max-width: 42rem) {
+  .filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,15 +1,28 @@
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
-import { AlertTriangle, ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
+import { ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
-import type { ProjectDetails, ProjectPage, ProjectResource, ProjectsApi } from './api';
+import type {
+  ProjectDetails,
+  ProjectHierarchyApi,
+  ProjectPage,
+  ProjectResource,
+  ProjectsApi,
+} from './api';
+import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
+import { ProjectBuilds } from './ProjectBuilds';
+import { ProjectDefinitions } from './ProjectDefinitions';
 import styles from './Projects.module.css';
 
 interface ProjectsViewProps {
   api: ProjectsApi;
+}
+
+interface ProjectHierarchyProps {
+  api: ProjectHierarchyApi;
 }
 
 export function ProjectHierarchyView({ api }: ProjectsViewProps) {
@@ -45,7 +58,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
     return isNotFound(project.error) ? (
       <ProjectNotFound />
     ) : (
-      <ProjectFailure error={project.error} onRetry={() => void project.refetch()} />
+      <ProjectDataFailure error={project.error} label="Project" onRetry={project.refetch} />
     );
   }
 
@@ -68,7 +81,9 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         </button>
       </div>
       <p className={styles.identity}>{project.data.project.id}</p>
-      {project.error === null ? null : <StaleNotice />}
+      {project.error === null ? null : (
+        <ProjectDataStale label="Project" onRetry={project.refetch} />
+      )}
       <div className={styles.sectionHeading}>
         <div>
           <p className={styles.eyebrow}>Hierarchy</p>
@@ -80,6 +95,8 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         emptyLabel="This Project has no child Projects."
         parentId={projectId}
       />
+      <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
+      <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />
     </section>
   );
 }
@@ -88,7 +105,7 @@ function ProjectCollection({
   api,
   emptyLabel,
   parentId,
-}: ProjectsViewProps & { emptyLabel: string; parentId: string | null }) {
+}: ProjectHierarchyProps & { emptyLabel: string; parentId: string | null }) {
   const projects = useInfiniteQuery<
     ProjectPage,
     Error,
@@ -106,7 +123,9 @@ function ProjectCollection({
     return <LoadingPanel />;
   }
   if (projects.data === undefined) {
-    return <ProjectFailure error={projects.error} onRetry={() => void projects.refetch()} />;
+    return (
+      <ProjectDataFailure error={projects.error} label="Projects" onRetry={projects.refetch} />
+    );
   }
 
   const items = projects.data.pages.flatMap((page) => page.items);
@@ -124,7 +143,12 @@ function ProjectCollection({
           {projects.isFetching && !projects.isFetchingNextPage ? 'Refreshing' : 'Refresh'}
         </button>
       </div>
-      {projects.error === null ? null : <StaleNotice />}
+      {projects.error === null ? null : (
+        <ProjectDataStale
+          label="Project"
+          onRetry={projects.isFetchNextPageError ? projects.fetchNextPage : projects.refetch}
+        />
+      )}
       {items.length === 0 ? (
         <div className={styles.emptyState}>
           <FolderTree aria-hidden="true" size={28} strokeWidth={1.6} />
@@ -233,34 +257,6 @@ function ProjectNotFound() {
         Return to Projects
       </Link>
     </section>
-  );
-}
-
-function ProjectFailure({ error, onRetry }: { error: Error | null; onRetry: () => void }) {
-  const requestId = error instanceof ManagementApiError ? error.requestId : null;
-  return (
-    <div className={styles.failurePanel} role="alert">
-      <AlertTriangle aria-hidden="true" size={20} />
-      <div>
-        <strong>Projects could not be loaded.</strong>
-        <p>
-          Try the request again.
-          {requestId === null ? null : ` Request ID: ${requestId}`}
-        </p>
-        <button className={styles.textButton} onClick={onRetry} type="button">
-          Retry
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StaleNotice() {
-  return (
-    <p className={styles.staleNotice} role="status">
-      <AlertTriangle aria-hidden="true" size={16} />
-      Refresh failed. Showing the last loaded Project data.
-    </p>
   );
 }
 

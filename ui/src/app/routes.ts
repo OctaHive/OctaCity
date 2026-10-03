@@ -12,6 +12,11 @@ export const CONSOLE_PATHS = {
 
 export type ConsolePath = (typeof CONSOLE_PATHS)[keyof typeof CONSOLE_PATHS];
 
+/** Returns the stable deep link for one Build identity. */
+export function buildPath(buildId: string): string {
+  return `/builds/${encodeURIComponent(buildId)}`;
+}
+
 /** Returns the stable deep link for one Project identity. */
 export function projectPath(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}`;
