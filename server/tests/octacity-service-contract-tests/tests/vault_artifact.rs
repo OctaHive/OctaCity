@@ -129,6 +129,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
     HttpCoordinatorClient::new(HttpCoordinatorConfig {
       server_url: server_origin,
       credential_file: credential,
+      ca_certificate_file: None,
       request_timeout: Duration::from_secs(5),
       max_body_bytes: 64 * 1024,
       retry: RetryPolicy {
@@ -145,6 +146,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
       output_coordinator,
       PresignedOutputPublisherConfig {
         allowed_origins: vec![endpoint],
+        ca_certificate_file: None,
         max_archive_entries: 32,
         upload_timeout: Duration::from_secs(10),
         retry: RetryPolicy {

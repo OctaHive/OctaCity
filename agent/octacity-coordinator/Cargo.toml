@@ -11,6 +11,7 @@ description = "Bounded HTTPS coordinator client and lease supervision for OctaCi
 async-trait.workspace = true
 ed25519-dalek.workspace = true
 octacity-protocol = { path = "../../shared/octacity-protocol" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -23,4 +24,5 @@ uuid.workspace = true
 [dev-dependencies]
 base64.workspace = true
 ed25519-dalek = { workspace = true, features = ["rand_core"] }
+rcgen.workspace = true
 tempfile.workspace = true

@@ -82,6 +82,17 @@ jobs:
       - name: Check warnings
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
         working-directory: octacity
+      - name: Validate generated local-stand configurations with real binaries
+        if: runner.os == 'macOS'
+        env:
+          OCTACITY_AGENT_BIN: ${{ github.workspace }}/octacity/target/debug/octacity-agent
+          OCTACITY_SERVER_BIN: ${{ github.workspace }}/octacity/target/debug/octacity-server
+        run: |
+          cargo build --locked -p octacity-agent -p octacity-server
+          python3 -m unittest \
+            tools.tests.test_configure_local_stand_agent \
+            tools.tests.test_configure_local_stand_server -v
+        working-directory: octacity
       - name: Check public API documentation
         env:
           RUSTDOCFLAGS: -D missing_docs

@@ -19,7 +19,7 @@ mod vcs;
 mod webhook;
 mod workers;
 
-pub use assembly::RuntimeAssemblyError;
+pub use assembly::{RuntimeAssemblyError, validate_runtime_files};
 pub use error::{DurableWorkerError, ServerRuntimeError};
 pub use maintenance::{
   LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, rebuild_log_search,

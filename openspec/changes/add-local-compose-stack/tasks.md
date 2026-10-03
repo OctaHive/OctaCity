@@ -13,10 +13,10 @@
 
 ## 3. Host State, Trust, and Configuration
 
-- [ ] 3.1 Implement a bounded host initializer that creates the resolved private stand root, distinct database, object-store, signing, management-bootstrap, enrollment, and cache credentials, plus a local CA and gateway certificate only when absent; verify file type, ownership, modes, SANs, key separation, unsafe-path rejection, and idempotent reruns.
-- [ ] 3.2 Generate server configuration for private listeners, explicit trusted-network acknowledgement, PostgreSQL, the TLS object origin, signing/enrollment files, the TLS cache origin, and the generated JobSpec policy; verify valid generation and fail-closed malformed or missing-secret cases with `octacity-server validate`.
-- [ ] 3.3 Generate a native macOS ARM64 Agent configuration with only the Microsandbox virtualization provider, distinct bounded roots, TLS Agent/cache/object origins, the derived server public key, conservative local resource limits, and no Host/Native/containerd/Apple-VF fallback; verify it with `octacity-agent validate`.
-- [ ] 3.4 Implement reusable lifecycle state primitives for an exclusive lock, atomic PID/start-identity record, bounded process readiness and shutdown, stale-state repair, and log paths; verify duplicate `up`, repeated `down`, stale PID, PID reuse, concurrent invocation, and forced-stop tests never signal an unrelated process.
+- [x] 3.1 Implement a bounded host initializer that creates the resolved private stand root, distinct database, object-store, signing, management-bootstrap, enrollment, and cache credentials, plus a local CA and gateway certificate only when absent; verify file type, ownership, modes, SANs, key separation, unsafe-path rejection, and idempotent reruns.
+- [x] 3.2 Generate server configuration for private listeners, explicit trusted-network acknowledgement, PostgreSQL, the TLS object origin, signing/enrollment files, the TLS cache origin, and the generated JobSpec policy; verify valid generation and fail-closed malformed or missing-secret cases with `octacity-server validate`.
+- [x] 3.3 Generate a native macOS ARM64 Agent configuration with only the Microsandbox virtualization provider, distinct bounded roots, TLS Agent/cache/object origins, the derived server public key, conservative local resource limits, and no Host/Native/containerd/Apple-VF fallback; verify it with `octacity-agent validate`.
+- [x] 3.4 Implement reusable lifecycle state primitives for an exclusive lock, atomic PID/start-identity record, bounded process readiness and shutdown, stale-state repair, and log paths; verify duplicate `up`, repeated `down`, stale PID, PID reuse, concurrent invocation, and forced-stop tests never signal an unrelated process.
 
 ## 4. Gateway and Infrastructure Services
 

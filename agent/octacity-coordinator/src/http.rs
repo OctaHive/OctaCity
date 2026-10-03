@@ -1,8 +1,15 @@
 //! Reqwest adapter for the versioned outbound coordinator protocol.
 
-use std::{fs, io::Read as _, path::PathBuf, sync::RwLock, time::Duration};
+use std::{
+  fs,
+  io::Read as _,
+  path::{Path, PathBuf},
+  sync::RwLock,
+  time::Duration,
+};
 
 use async_trait::async_trait;
+use octacity_private_fs::read_bounded_regular_file;
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AgentTelemetrySample,
   AppendEventsRequest, AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse,
@@ -34,6 +41,8 @@ pub struct HttpCoordinatorConfig {
   pub server_url: String,
   /// Permissions-restricted bearer enrollment credential file.
   pub credential_file: PathBuf,
+  /// Optional PEM CA bundle added to the normal platform trust roots.
+  pub ca_certificate_file: Option<PathBuf>,
   /// Timeout for non-long-poll coordinator requests.
   pub request_timeout: Duration,
   /// Maximum serialized bytes in one request or response body.
@@ -91,14 +100,16 @@ impl HttpCoordinatorClient {
     let mut authorization = header::HeaderValue::from_str(&format!("Bearer {credential}"))
       .map_err(|_| invalid("credential cannot be represented as an HTTP bearer token"))?;
     authorization.set_sensitive(true);
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
       .connect_timeout(config.request_timeout)
-      .user_agent(concat!("octacity-agent/", env!("CARGO_PKG_VERSION")))
-      .build()
-      .map_err(|source| CoordinatorError::Transport {
-        operation: "build HTTP client",
-        source: Box::new(source),
-      })?;
+      .user_agent(concat!("octacity-agent/", env!("CARGO_PKG_VERSION")));
+    for certificate in load_additional_root_certificates(config.ca_certificate_file.as_deref())? {
+      client = client.add_root_certificate(certificate);
+    }
+    let client = client.build().map_err(|source| CoordinatorError::Transport {
+      operation: "build HTTP client",
+      source: Box::new(source),
+    })?;
     Ok(Self {
       base_url,
       authorization: RwLock::new(authorization),
@@ -275,6 +286,24 @@ impl HttpCoordinatorClient {
       .map_err(|_| invalid("coordinator credential state is unavailable"))? = promoted;
     Ok(())
   }
+}
+
+/// Loads a bounded no-follow PEM bundle for coordinator-adjacent HTTPS clients.
+pub fn load_additional_root_certificates(path: Option<&Path>) -> Result<Vec<reqwest::Certificate>, CoordinatorError> {
+  let Some(path) = path else {
+    return Ok(Vec::new());
+  };
+  let pem = read_bounded_regular_file(path, crate::MAX_ADDITIONAL_CA_CERTIFICATE_BYTES)
+    .map_err(|error| invalid(format!("TLS CA file cannot be read safely: {error}")))?;
+  if pem.is_empty() {
+    return Err(invalid("TLS CA file must be non-empty"));
+  }
+  let certificates = reqwest::Certificate::from_pem_bundle(&pem)
+    .map_err(|_| invalid("TLS CA file is not a valid PEM certificate bundle"))?;
+  if certificates.is_empty() {
+    return Err(invalid("TLS CA file is not a valid PEM certificate bundle"));
+  }
+  Ok(certificates)
 }
 
 #[async_trait]

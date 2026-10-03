@@ -35,6 +35,36 @@ fn upload_origins_reject_credentials_paths_and_plaintext_remote_hosts() {
   );
 }
 
+#[test]
+fn rejects_invalid_additional_tls_roots_before_transport() {
+  let temporary = tempfile::tempdir().unwrap();
+  let certificate = temporary.path().join("ca.pem");
+  std::fs::write(&certificate, "not a PEM certificate").unwrap();
+  let coordinator = Arc::new(UploadCoordinator {
+    put_url: "https://objects.example/object".to_owned(),
+    expires_at: unix_now() + 60,
+    begun: Mutex::new(Vec::new()),
+    completed: Mutex::new(Vec::new()),
+  });
+
+  let result = PresignedOutputPublisher::new(
+    coordinator,
+    PresignedOutputPublisherConfig {
+      allowed_origins: vec!["https://objects.example".to_owned()],
+      ca_certificate_file: Some(certificate),
+      max_archive_entries: 16,
+      upload_timeout: Duration::from_secs(2),
+      retry: RetryPolicy {
+        max_attempts: 1,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(1),
+      },
+    },
+  );
+
+  assert!(matches!(result, Err(OutputError::Invalid(message)) if message.contains("valid PEM")));
+}
+
 struct UploadCoordinator {
   put_url: String,
   expires_at: u64,
@@ -108,6 +138,7 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
     coordinator.clone(),
     PresignedOutputPublisherConfig {
       allowed_origins: vec![format!("http://{address}")],
+      ca_certificate_file: None,
       max_archive_entries: 16,
       upload_timeout: Duration::from_secs(2),
       retry: RetryPolicy {
@@ -241,6 +272,7 @@ fn publisher(coordinator: Arc<UploadCoordinator>, origin: String, retry: RetryPo
     coordinator,
     PresignedOutputPublisherConfig {
       allowed_origins: vec![origin],
+      ca_certificate_file: None,
       max_archive_entries: 16,
       upload_timeout: Duration::from_secs(2),
       retry,

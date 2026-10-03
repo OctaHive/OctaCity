@@ -95,6 +95,7 @@ impl Components {
     let http_coordinator = Arc::new(HttpCoordinatorClient::new(HttpCoordinatorConfig {
       server_url: validated.config.server_url.clone(),
       credential_file: validated.config.credential_file.clone(),
+      ca_certificate_file: validated.config.tls_ca_certificate_file.clone(),
       request_timeout: Duration::from_secs(validated.config.coordinator_request_timeout_seconds),
       max_body_bytes: validated.config.coordinator_max_body_bytes,
       retry: retry.clone(),
@@ -106,6 +107,7 @@ impl Components {
       output_coordinator,
       PresignedOutputPublisherConfig {
         allowed_origins: validated.config.allowed_upload_origins.clone(),
+        ca_certificate_file: validated.config.tls_ca_certificate_file.clone(),
         max_archive_entries: validated.config.max_archive_entries,
         upload_timeout: Duration::from_secs(validated.config.upload_timeout_seconds),
         retry,

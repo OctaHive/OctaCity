@@ -102,7 +102,7 @@ class LocalStandServerBuildTests(unittest.TestCase):
             self.assertIn("--read-only", command)
             self.assertIn("linux/arm64", command)
         self.assertEqual(version[-1], "--version")
-        self.assertEqual(validate[-2:], ["validate", "/fixtures/server.toml"])
+        self.assertEqual(validate[-3:], ["validate", "--syntax-only", "/fixtures/server.toml"])
         self.assertIn(
             f"type=bind,src={fixture.resolve()},dst=/fixtures/server.toml,readonly",
             validate,

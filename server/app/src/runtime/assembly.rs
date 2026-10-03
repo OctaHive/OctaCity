@@ -29,46 +29,91 @@ pub(crate) struct RuntimeResources {
   pub(crate) object_storage: Arc<S3ArtifactStore>,
 }
 
+struct RuntimeFileInputs {
+  database_options: PgConnectOptions,
+  access_key: Zeroizing<String>,
+  secret_key: Zeroizing<String>,
+  signing_key: JobSpecSigner,
+  enrollment_key: AgentEnrollmentSecretKey,
+  cache_key: CacheCredentialKey,
+  job_spec_toolchain: JobSpecToolchainPolicy,
+  log_redactor: LogRedactor,
+}
+
+/// Validate every runtime file and its credential or policy contents offline.
+pub async fn validate_runtime_files(config: &ServerConfig) -> Result<(), RuntimeAssemblyError> {
+  load_runtime_file_inputs(config).await.map(drop)
+}
+
+async fn load_runtime_file_inputs(config: &ServerConfig) -> Result<RuntimeFileInputs, RuntimeAssemblyError> {
+  let (database_url, database_options) = postgres_options(config).await?;
+  let object_config = config.object_storage();
+  let access_key = read_credential("object-store access key", &object_config.access_key_file).await?;
+  let secret_key = read_credential("object-store secret key", &object_config.secret_key_file).await?;
+  let signing_material = read_credential("JobSpec signing key", &config.signing().key_file).await?;
+  let enrollment_material = read_credential(
+    "Agent enrollment derivation key",
+    &config.agent_credentials().enrollment_key_file,
+  )
+  .await?;
+  let cache_material = read_credential("cache credential derivation key", &config.cache().credential_key_file).await?;
+  let signing_key = parse_signing_key(&config.signing().key_id, &signing_material)?;
+  let enrollment_key = decode_fixed_key(
+    "Agent enrollment derivation key",
+    &enrollment_material,
+    AgentEnrollmentSecretKey::new,
+  )?;
+  let cache_key = decode_fixed_key(
+    "cache credential derivation key",
+    &cache_material,
+    CacheCredentialKey::new,
+  )?;
+  let job_spec_toolchain = load_job_spec_toolchain(&config.job_spec().policy_file).await?;
+  let mut protected = vec![
+    database_url.as_bytes().to_vec(),
+    access_key.as_bytes().to_vec(),
+    secret_key.as_bytes().to_vec(),
+    signing_material.as_bytes().to_vec(),
+    enrollment_material.as_bytes().to_vec(),
+    cache_material.as_bytes().to_vec(),
+  ];
+  if let Ok(database_url) = url::Url::parse(&database_url)
+    && let Some(password) = database_url.password()
+    && !password.is_empty()
+  {
+    protected.push(password.as_bytes().to_vec());
+  }
+  let log_redactor = LogRedactor::new(protected).map_err(|_| RuntimeAssemblyError::InvalidCredential {
+    purpose: "log redaction material",
+  })?;
+  Ok(RuntimeFileInputs {
+    database_options,
+    access_key,
+    secret_key,
+    signing_key,
+    enrollment_key,
+    cache_key,
+    job_spec_toolchain,
+    log_redactor,
+  })
+}
+
 impl RuntimeResources {
   pub(crate) async fn from_config(config: &ServerConfig) -> Result<Self, RuntimeAssemblyError> {
-    let (pool, database_url) = postgres_pool(config).await?;
-
+    let inputs = load_runtime_file_inputs(config).await?;
+    let pool = PgPoolOptions::new()
+      .max_connections(config.postgres().max_connections)
+      .acquire_timeout(config.readiness_check_timeout())
+      .connect_lazy_with(inputs.database_options);
     let object_config = config.object_storage();
-    let access_key = read_credential("object-store access key", &object_config.access_key_file).await?;
-    let secret_key = read_credential("object-store secret key", &object_config.secret_key_file).await?;
-    let signing_material = read_credential("JobSpec signing key", &config.signing().key_file).await?;
-    let enrollment_material = read_credential(
-      "Agent enrollment derivation key",
-      &config.agent_credentials().enrollment_key_file,
-    )
-    .await?;
-    let cache_material =
-      read_credential("cache credential derivation key", &config.cache().credential_key_file).await?;
-    let mut protected = vec![
-      database_url.as_bytes().to_vec(),
-      access_key.as_bytes().to_vec(),
-      secret_key.as_bytes().to_vec(),
-      signing_material.as_bytes().to_vec(),
-      enrollment_material.as_bytes().to_vec(),
-      cache_material.as_bytes().to_vec(),
-    ];
-    if let Ok(database_url) = url::Url::parse(&database_url)
-      && let Some(password) = database_url.password()
-      && !password.is_empty()
-    {
-      protected.push(password.as_bytes().to_vec());
-    }
-    let log_redactor = LogRedactor::new(protected).map_err(|_| RuntimeAssemblyError::InvalidCredential {
-      purpose: "log redaction material",
-    })?;
     let object_storage = Arc::new(
       S3ArtifactStore::new(S3ArtifactStoreConfig {
         endpoint: object_config.endpoint.clone(),
         region: object_config.region.clone(),
         bucket: object_config.bucket.clone(),
         prefix: object_config.prefix.clone(),
-        access_key,
-        secret_key,
+        access_key: inputs.access_key,
+        secret_key: inputs.secret_key,
         force_path_style: object_config.force_path_style,
         operation_timeout: object_config.operation_timeout(),
         capability_recheck_interval: object_config.capability_recheck_interval(),
@@ -76,18 +121,7 @@ impl RuntimeResources {
       .map_err(RuntimeAssemblyError::ObjectStorageConfig)?,
     );
 
-    let signing_key = Arc::new(parse_signing_key(&config.signing().key_id, &signing_material)?);
-    let agent_enrollment_secret_key = decode_fixed_key(
-      "Agent enrollment derivation key",
-      &enrollment_material,
-      AgentEnrollmentSecretKey::new,
-    )?;
-    let cache_credential_key = decode_fixed_key(
-      "cache credential derivation key",
-      &cache_material,
-      CacheCredentialKey::new,
-    )?;
-    let job_spec_toolchain = load_job_spec_toolchain(&config.job_spec().policy_file).await?;
+    let signing_key = Arc::new(inputs.signing_key);
     let readiness = ReadinessChecks::new(
       Arc::new(MigrationCheck { pool: pool.clone() }),
       Arc::new(PostgresCheck { pool: pool.clone() }),
@@ -99,29 +133,35 @@ impl RuntimeResources {
       readiness,
       postgres: pool,
       job_spec_signer: signing_key,
-      job_spec_toolchain,
-      agent_enrollment_secret_key,
-      cache_credential_key,
-      log_redactor,
+      job_spec_toolchain: inputs.job_spec_toolchain,
+      agent_enrollment_secret_key: inputs.enrollment_key,
+      cache_credential_key: inputs.cache_key,
+      log_redactor: inputs.log_redactor,
       object_storage,
     })
   }
 }
 
+async fn postgres_options(
+  config: &ServerConfig,
+) -> Result<(Zeroizing<String>, PgConnectOptions), RuntimeAssemblyError> {
+  let database_url = read_credential("PostgreSQL URL", &config.postgres().url_file).await?;
+  let options = database_url
+    .parse::<PgConnectOptions>()
+    .map_err(|_| RuntimeAssemblyError::InvalidCredential {
+      purpose: "PostgreSQL URL",
+    })?;
+  Ok((database_url, options))
+}
+
 pub(super) async fn postgres_pool(
   config: &ServerConfig,
 ) -> Result<(sqlx::PgPool, Zeroizing<String>), RuntimeAssemblyError> {
-  let database_url = read_credential("PostgreSQL URL", &config.postgres().url_file).await?;
-  let connect_options =
-    database_url
-      .parse::<PgConnectOptions>()
-      .map_err(|_| RuntimeAssemblyError::InvalidCredential {
-        purpose: "PostgreSQL URL",
-      })?;
+  let (database_url, options) = postgres_options(config).await?;
   let pool = PgPoolOptions::new()
     .max_connections(config.postgres().max_connections)
     .acquire_timeout(config.readiness_check_timeout())
-    .connect_lazy_with(connect_options);
+    .connect_lazy_with(options);
   Ok((pool, database_url))
 }
 

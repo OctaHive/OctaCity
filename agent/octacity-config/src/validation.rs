@@ -189,6 +189,18 @@ pub(super) fn canonical_regular_file(name: &str, path: &Path) -> Result<PathBuf,
     .map_err(|error| ConfigError::Invalid(format!("{name}: {error}")))
 }
 
+/// Canonicalizes integrity-sensitive public trust material in a private file.
+pub(super) fn canonical_private_trust_file(name: &str, path: &Path) -> Result<PathBuf, ConfigError> {
+  let certificate = canonical_regular_file(name, path)?;
+  validate_trusted_owner(name, &certificate)?;
+  validate_private_file_permissions(name, &certificate)?;
+  let parent = certificate
+    .parent()
+    .ok_or_else(|| ConfigError::Invalid(format!("{name} has no parent")))?;
+  validate_trusted_directory_chain(&format!("{name} parent"), parent)?;
+  Ok(certificate)
+}
+
 /// Resolves a path once so runtime code never depends on a mutable working directory.
 pub(super) fn canonical_path(name: &str, path: &Path) -> Result<PathBuf, ConfigError> {
   path

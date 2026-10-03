@@ -98,6 +98,7 @@ def verification_commands(image: str, fixture: Path) -> tuple[list[str], list[st
         f"type=bind,src={fixture.resolve()},dst=/fixtures/server.toml,readonly",
         image,
         "validate",
+        "--syntax-only",
         "/fixtures/server.toml",
     ]
     return version, validate

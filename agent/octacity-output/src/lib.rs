@@ -20,7 +20,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use octacity_coordinator::{CoordinatorError, OutputUploadCoordinator, Registration, RetryPolicy};
+use octacity_coordinator::{
+  CoordinatorError, OutputUploadCoordinator, Registration, RetryPolicy, load_additional_root_certificates,
+};
 use octacity_protocol::{
   BeginOutputUploadRequest, COORDINATOR_PROTOCOL_VERSION, CompleteOutputUploadRequest, LeaseAssignment, LeaseFence,
   OutputLimits,
@@ -156,6 +158,8 @@ pub trait OutputPublisher: Send + Sync {
 pub struct PresignedOutputPublisherConfig {
   /// Exact HTTPS origins allowed for server-issued upload URLs.
   pub allowed_origins: Vec<String>,
+  /// Optional PEM CA bundle added to the normal platform trust roots.
+  pub ca_certificate_file: Option<PathBuf>,
   /// Bound on entries traversed across one directory artifact.
   pub max_archive_entries: usize,
   /// Wall-clock limit for each direct object-store PUT.
@@ -196,13 +200,17 @@ impl PresignedOutputPublisher {
         "upload origins must not contain duplicates".to_owned(),
       ));
     }
-    let client = reqwest::Client::builder()
+    let mut client = reqwest::Client::builder()
       .connect_timeout(config.upload_timeout)
       // A redirect could move immutable job bytes and signed headers to an
       // origin that the operator never allowed. Presigned targets are exact.
-      .redirect(reqwest::redirect::Policy::none())
-      .build()
-      .map_err(|error| OutputError::Upload(error.to_string()))?;
+      .redirect(reqwest::redirect::Policy::none());
+    for certificate in load_additional_root_certificates(config.ca_certificate_file.as_deref())
+      .map_err(|error| OutputError::Invalid(error.to_string()))?
+    {
+      client = client.add_root_certificate(certificate);
+    }
+    let client = client.build().map_err(|error| OutputError::Upload(error.to_string()))?;
     Ok(Self {
       coordinator,
       client,

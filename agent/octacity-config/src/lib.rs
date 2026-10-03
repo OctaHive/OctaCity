@@ -37,6 +37,9 @@ pub struct AgentConfig {
   pub server_url: String,
   /// Private agent-enrollment credential file.
   pub credential_file: PathBuf,
+  /// Optional private CA added to the normal trust store for Agent HTTPS clients.
+  #[serde(default)]
+  pub tls_ca_certificate_file: Option<PathBuf>,
   /// Trusted server signature keys indexed by key identifier.
   pub server_signing_keys: BTreeMap<String, String>,
   /// Scheduler-visible operator labels.
@@ -431,13 +434,7 @@ impl CacheConfig {
       }
     }
     if let Some(certificate) = &mut self.ca_certificate_file {
-      *certificate = canonical_regular_file("cache.ca_certificate_file", certificate)?;
-      validate_trusted_owner("cache.ca_certificate_file", certificate)?;
-      validate_private_file_permissions("cache.ca_certificate_file", certificate)?;
-      let parent = certificate
-        .parent()
-        .ok_or_else(|| ConfigError::Invalid("cache.ca_certificate_file has no parent".to_owned()))?;
-      validate_trusted_directory_chain("cache.ca_certificate_file parent", parent)?;
+      *certificate = canonical_private_trust_file("cache.ca_certificate_file", certificate)?;
     }
     for (platform, identity) in &self.native_environment_identities {
       let parsed = platform
@@ -518,6 +515,10 @@ impl AgentConfig {
       .ok_or_else(|| ConfigError::Invalid("credential_file has no parent".to_owned()))?;
     validate_private_directory_permissions("credential_file parent", credential_parent)?;
     validate_trusted_directory_chain("credential_file parent", credential_parent)?;
+
+    if let Some(certificate) = &mut self.tls_ca_certificate_file {
+      *certificate = canonical_private_trust_file("tls_ca_certificate_file", certificate)?;
+    }
 
     if self.server_signing_keys.is_empty() {
       return invalid("server_signing_keys must contain at least one key");

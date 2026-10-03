@@ -24,9 +24,12 @@ mod http;
 mod lease;
 mod retry;
 
-pub use http::{HttpCoordinatorClient, HttpCoordinatorConfig};
+pub use http::{HttpCoordinatorClient, HttpCoordinatorConfig, load_additional_root_certificates};
 pub use lease::{LeaseMonitor, LeaseMonitorOutcome, LeaseMonitorPolicy, LeasePollOutcome, LeasePoller, VerifiedLease};
 pub use retry::RetryPolicy;
+
+/// Maximum accepted size of one operator-provided additional CA bundle.
+pub const MAX_ADDITIONAL_CA_CERTIFICATE_BYTES: u64 = 1024 * 1024;
 
 /// Successful registration epoch and server retry policy.
 #[derive(Clone, Debug, Eq, PartialEq)]

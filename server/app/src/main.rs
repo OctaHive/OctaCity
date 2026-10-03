@@ -1,7 +1,9 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand, ValueEnum};
-use octacity_server::{ServerConfig, ServerRuntime, rebuild_log_search, reconcile_restored_state};
+use octacity_server::{
+  ServerConfig, ServerRuntime, rebuild_log_search, reconcile_restored_state, validate_runtime_files,
+};
 use octacity_server_domain::ProjectId;
 use tracing::{error, info};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt as _, util::SubscriberInitExt as _};
@@ -25,6 +27,12 @@ enum Command {
   Validate {
     /// Path to the server TOML configuration.
     config: PathBuf,
+    /// Validate structure only; intended for immutable image build fixtures.
+    #[arg(long, conflicts_with = "file_root")]
+    syntax_only: bool,
+    /// Rebase absolute runtime-file paths below this offline filesystem root.
+    #[arg(long, value_name = "DIRECTORY")]
+    file_root: Option<PathBuf>,
   },
   /// Run the server until SIGINT or SIGTERM.
   Run {
@@ -62,7 +70,11 @@ fn main() -> ExitCode {
     return ExitCode::FAILURE;
   }
   let result = match cli.command {
-    Command::Validate { config } => validate(config),
+    Command::Validate {
+      config,
+      syntax_only,
+      file_root,
+    } => run_async(validate(config, syntax_only, file_root)),
     Command::Run { config } => run_async(run(config)),
     Command::RebuildLogSearch { config, project } => run_async(rebuild(config, project)),
     Command::ReconcileRestore {
@@ -104,8 +116,18 @@ async fn rebuild(path: PathBuf, project_id: ProjectId) -> Result<(), Box<dyn std
   Ok(())
 }
 
-fn validate(path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-  let config = ServerConfig::load(&path)?;
+async fn validate(
+  path: PathBuf,
+  syntax_only: bool,
+  file_root: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+  let mut config = ServerConfig::load(&path)?;
+  if let Some(root) = file_root {
+    config.rebase_runtime_files(&root)?;
+  }
+  if !syntax_only {
+    validate_runtime_files(&config).await?;
+  }
   println!(
     "server configuration is valid (management listener {}, security trusted_network_unauthenticated, external acknowledgement {}, agent listener {}, cache listener {})",
     config.management_bind(),

@@ -19,5 +19,5 @@ mod runtime;
 pub use config::{ServerConfig, ServerConfigError};
 pub use runtime::{
   DurableWorkerError, LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, RuntimeAssemblyError,
-  ServerRuntime, ServerRuntimeError, rebuild_log_search, reconcile_restored_state,
+  ServerRuntime, ServerRuntimeError, rebuild_log_search, reconcile_restored_state, validate_runtime_files,
 };

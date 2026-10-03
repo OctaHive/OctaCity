@@ -419,6 +419,7 @@ fn client_with_credential(
   HttpCoordinatorClient::new(HttpCoordinatorConfig {
     server_url: server.url.clone(),
     credential_file: credential,
+    ca_certificate_file: None,
     request_timeout,
     max_body_bytes,
     retry: RetryPolicy {
@@ -434,6 +435,7 @@ fn http_config(server_url: String, credential_file: std::path::PathBuf) -> HttpC
   HttpCoordinatorConfig {
     server_url,
     credential_file,
+    ca_certificate_file: None,
     request_timeout: Duration::from_secs(1),
     max_body_bytes: 4096,
     retry: RetryPolicy {
@@ -474,6 +476,39 @@ fn rejects_non_tls_remote_origins_and_bounded_invalid_credentials() {
     HttpCoordinatorClient::new(http_config("https://example.com".to_owned(), credential)),
     Err(CoordinatorError::Invalid(_))
   ));
+}
+
+#[test]
+fn rejects_invalid_additional_tls_roots_before_transport() {
+  let directory = tempfile::tempdir().unwrap();
+  let credential = directory.path().join("credential");
+  let certificate = directory.path().join("ca.pem");
+  fs::write(&credential, "token").unwrap();
+  fs::write(&certificate, "not a PEM certificate").unwrap();
+  let mut config = http_config("https://example.com".to_owned(), credential);
+  config.ca_certificate_file = Some(certificate);
+
+  assert!(matches!(
+    HttpCoordinatorClient::new(config),
+    Err(CoordinatorError::Invalid(message)) if message.contains("valid PEM")
+  ));
+}
+
+#[test]
+fn accepts_a_valid_additional_tls_root_before_transport() {
+  let directory = tempfile::tempdir().unwrap();
+  let credential = directory.path().join("credential");
+  let certificate = directory.path().join("ca.pem");
+  let certified = rcgen::generate_simple_self_signed(["example.com".to_owned()]).unwrap();
+  fs::write(&credential, "token").unwrap();
+  fs::write(&certificate, certified.cert.pem()).unwrap();
+
+  let roots = octacity_coordinator::load_additional_root_certificates(Some(&certificate)).unwrap();
+  let mut config = http_config("https://example.com".to_owned(), credential);
+  config.ca_certificate_file = Some(certificate);
+
+  assert_eq!(roots.len(), 1);
+  assert!(HttpCoordinatorClient::new(config).is_ok());
 }
 
 #[tokio::test]

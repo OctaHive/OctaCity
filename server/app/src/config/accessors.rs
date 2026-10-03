@@ -7,6 +7,34 @@ use super::{
 };
 
 impl ServerConfig {
+  /// Rebase absolute runtime-file paths below an offline validation root.
+  ///
+  /// This is intended for image and deployment validation where container
+  /// paths such as `/run/secrets/...` are materialized below a temporary root.
+  pub fn rebase_runtime_files(&mut self, root: &Path) -> Result<(), String> {
+    if !root.is_absolute() {
+      return Err("runtime-file validation root must be absolute".to_owned());
+    }
+    fn rebase(path: &mut std::path::PathBuf, root: &Path) -> Result<(), String> {
+      if !path.is_absolute() {
+        return Err(format!("runtime-file path must be absolute: {}", path.display()));
+      }
+      let relative = path
+        .strip_prefix(std::path::Component::RootDir.as_os_str())
+        .map_err(|_| format!("runtime-file path has no portable root: {}", path.display()))?;
+      *path = root.join(relative);
+      Ok(())
+    }
+    rebase(&mut self.postgres.url_file, root)?;
+    rebase(&mut self.object_storage.access_key_file, root)?;
+    rebase(&mut self.object_storage.secret_key_file, root)?;
+    rebase(&mut self.signing.key_file, root)?;
+    rebase(&mut self.agent_credentials.enrollment_key_file, root)?;
+    rebase(&mut self.cache.credential_key_file, root)?;
+    rebase(&mut self.job_spec.policy_file, root)?;
+    Ok(())
+  }
+
   pub(crate) const fn admission(&self) -> AdmissionConfig {
     self.admission
   }

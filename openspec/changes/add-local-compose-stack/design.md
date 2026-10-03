@@ -28,7 +28,7 @@ The repository currently packages host-native server and Agent archives but has 
 
 The root `compose.yaml` will contain `postgres`, `minio`, `minio-init`, `server`, and `gateway`. A repository-owned `tools/local-stand` launcher owns initialization, Compose invocation, management bootstrap, and one native Agent process. `up` starts Compose detached, waits on declared health, performs replay-safe bootstrap, starts the Agent in a separate process group, and waits for registration. `down` validates its ownership record, requests bounded graceful Agent shutdown, escalates only that verified process when necessary, and then runs ordinary `docker compose down`.
 
-The launcher stores an exclusive lock, PID plus process-start identity, logs, and generated state below one configurable private host directory. Repeated `up` and `down` calls converge safely; stale PID files are diagnosed and repaired without signalling an unrelated process. `status` and `logs` expose both lifecycle halves, while a separately confirmed `reset` removes named volumes and host state.
+The launcher stores an exclusive lock, supervisor PID plus process-start identity, an authenticated private Unix control socket, logs, and generated state below one configurable private host directory. The supervisor remains the native Agent process-group leader until the group is empty; `down` asks that live owner to stop its own group and never calls `killpg` from a later launcher using a persisted numeric PID. This closes the PID-reuse check/signal race and lets forced shutdown account for descendants that outlive the Agent leader. Repeated `up` and `down` calls converge safely; stale ownership files are diagnosed and repaired without signalling an unrelated process. `status` and `logs` expose both lifecycle halves, while a separately confirmed `reset` removes named volumes and host state.
 
 ```text
 tools/local-stand up
@@ -98,7 +98,7 @@ Portable CI validates Compose rendering, pinned references, container builds, ge
 
 ## Risks / Trade-offs
 
-- **[The stand spans container and host process lifecycles]** → Hide the sequencing behind one locked launcher, verify process identity before signalling, and provide unified status and logs.
+- **[The stand spans container and host process lifecycles]** → Hide the sequencing behind one locked launcher, route native shutdown through the still-live process-group supervisor, and provide unified status and logs.
 - **[A generated local CA is not automatically trusted by the host browser]** → Export the public CA, document optional Keychain trust and removal, and retain CLI health verification with the explicit CA.
 - **[Host and container callers share gateway origins]** → Use `.localhost` names, Compose aliases, and routing tests that cover both sides and preserve S3 signing inputs.
 - **[Native runtime downloads can drift or disappear]** → Pin version, revision, platform, digest, and manifest; stage atomically into versioned directories and reuse verified installations offline.

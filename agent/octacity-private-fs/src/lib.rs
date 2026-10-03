@@ -7,7 +7,11 @@
 
 #![warn(missing_docs)]
 
-use std::{fs::File, path::Path};
+use std::{
+  fs::File,
+  io::{Read as _, Take},
+  path::Path,
+};
 
 /// Stable identity of one open Windows filesystem object.
 ///
@@ -59,6 +63,45 @@ pub fn validate_trusted_directory_chain(path: &Path) -> std::io::Result<()> {
 /// race when an operator-managed credential file is rotated concurrently.
 pub fn open_regular_file_no_follow(path: &Path) -> std::io::Result<File> {
   platform::open_regular_file_no_follow(path)
+}
+
+/// Reads one no-follow regular file without allocating beyond `maximum`.
+///
+/// The size is checked through the open handle and the read itself is capped,
+/// so a concurrent replacement or growth cannot bypass the memory bound.
+pub fn read_bounded_regular_file(path: &Path, maximum: u64) -> std::io::Result<Vec<u8>> {
+  if maximum == 0 || maximum >= usize::MAX as u64 {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::InvalidInput,
+      "regular-file read bound must be between 1 and usize::MAX - 1",
+    ));
+  }
+  let file = open_regular_file_no_follow(path)?;
+  let metadata = file.metadata()?;
+  if metadata.len() > maximum {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::InvalidData,
+      "regular file exceeds its read bound",
+    ));
+  }
+  let modified = metadata.modified().ok();
+  let mut contents = Vec::with_capacity(metadata.len() as usize);
+  let mut bounded: Take<File> = file.take(maximum + 1);
+  bounded.read_to_end(&mut contents)?;
+  if contents.len() as u64 > maximum {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::InvalidData,
+      "regular file exceeds its read bound",
+    ));
+  }
+  let current = bounded.get_ref().metadata()?;
+  if current.len() != metadata.len() || current.modified().ok() != modified || contents.len() as u64 != current.len() {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::InvalidData,
+      "regular file changed while it was read",
+    ));
+  }
+  Ok(contents)
 }
 
 /// Reads the stable identity of an already open Windows file handle.
@@ -114,6 +157,19 @@ mod tests {
 
     assert!(open_regular_file_no_follow(&file).is_ok());
     assert!(open_regular_file_no_follow(temporary.path()).is_err());
+  }
+
+  #[test]
+  fn bounded_read_rejects_oversized_files() {
+    let temporary = tempfile::tempdir().unwrap();
+    let file = temporary.path().join("bounded");
+    std::fs::write(&file, b"four").unwrap();
+
+    assert_eq!(read_bounded_regular_file(&file, 4).unwrap(), b"four");
+    assert_eq!(
+      read_bounded_regular_file(&file, 3).unwrap_err().kind(),
+      std::io::ErrorKind::InvalidData
+    );
   }
 
   #[cfg(unix)]

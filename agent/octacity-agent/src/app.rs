@@ -387,6 +387,7 @@ mod tests {
       agent_id: "agent-lifecycle-test".to_owned(),
       server_url: "https://coordinator.example".to_owned(),
       credential_file: state.path().join("credential"),
+      tls_ca_certificate_file: None,
       server_signing_keys: std::collections::BTreeMap::new(),
       labels: std::collections::BTreeMap::new(),
       work_root: state.path().join("work"),

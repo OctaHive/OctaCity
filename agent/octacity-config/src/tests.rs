@@ -37,6 +37,7 @@ impl Fixture {
       agent_id: "agent-1".to_owned(),
       server_url: "https://octacity.example".to_owned(),
       credential_file: credential,
+      tls_ca_certificate_file: None,
       server_signing_keys: BTreeMap::from([(
         "primary".to_owned(),
         BASE64.encode(signing_key.verifying_key().as_bytes()),
@@ -958,6 +959,36 @@ fn protects_the_remote_cache_ca_as_trust_material() {
   }
 
   assert!(fixture.config.validate().is_ok());
+}
+
+#[test]
+fn protects_the_transport_ca_as_trust_material() {
+  let mut fixture = Fixture::new();
+  let certificate = fixture.config.state_root.join("transport-ca.pem");
+  File::create(&certificate).unwrap().write_all(b"public-ca").unwrap();
+  fixture.config.tls_ca_certificate_file = Some(certificate.clone());
+
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&certificate, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(
+      fixture
+        .config
+        .clone()
+        .validate()
+        .unwrap_err()
+        .to_string()
+        .contains("tls_ca_certificate_file")
+    );
+    fs::set_permissions(&certificate, fs::Permissions::from_mode(0o600)).unwrap();
+  }
+
+  let validated = fixture.config.validate().unwrap();
+  assert_eq!(
+    validated.config.tls_ca_certificate_file.as_deref(),
+    Some(certificate.canonicalize().unwrap().as_path())
+  );
 }
 
 #[test]
