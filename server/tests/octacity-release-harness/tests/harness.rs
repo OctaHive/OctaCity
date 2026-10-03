@@ -8,8 +8,8 @@ use std::{
 };
 
 use octacity_release_harness::{
-  AgentRuntimeBundles, AgentRuntimePlatforms, ReleaseBundles, derive_job_spec_policy, install, load_job_spec_policy,
-  verify_job_spec_policy,
+  AgentRuntimeBundles, AgentRuntimePlatforms, ReleaseBundles, derive_job_spec_policy, install, install_agent_runtime,
+  load_job_spec_policy, verify_job_spec_policy,
 };
 use octacity_server_job::{JobSpecToolchainPolicy, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES};
 use serde_json::{Value, json};
@@ -37,6 +37,45 @@ fn installs_only_verified_released_bundles() {
   assert_ne!(installed.server_root, bundles.server);
   assert_ne!(installed.agent_root, bundles.agent);
   assert_ne!(installed.octa_root, bundles.octa);
+}
+
+#[test]
+fn installs_a_native_macos_agent_runtime_for_host_execution() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let agent_manifest_path = bundles.agent.join("release-manifest.json");
+  let mut agent_manifest: Value = serde_json::from_slice(&fs::read(&agent_manifest_path).unwrap()).unwrap();
+  agent_manifest["platform"] = json!("macos-arm64");
+  write_json(&agent_manifest_path, &agent_manifest);
+  let source_manifest_path = bundles.agent.join("source-plugins/git/plugin.toml");
+  let source_manifest = fs::read_to_string(&source_manifest_path)
+    .unwrap()
+    .replace("platforms = [\"linux-x86_64\"]", "platforms = [\"macos-aarch64\"]");
+  fs::write(source_manifest_path, source_manifest).unwrap();
+  write_checksums(&bundles.agent);
+
+  let capabilities_path = bundles.octa.join("octa-runner-capabilities.json");
+  let mut capabilities: Value = serde_json::from_slice(&fs::read(&capabilities_path).unwrap()).unwrap();
+  capabilities["platform"] = json!("macos-aarch64");
+  write_json(&capabilities_path, &capabilities);
+  let lock_path = bundles.octa.join("Octa.lock");
+  let lock = fs::read_to_string(&lock_path)
+    .unwrap()
+    .replace("platforms: [linux-x86_64]", "platforms: [macos-aarch64]");
+  fs::write(lock_path, lock).unwrap();
+  write_checksums(&bundles.octa);
+
+  let installed = install_agent_runtime(
+    &AgentRuntimeBundles {
+      agent: bundles.agent,
+      octa: bundles.octa,
+    },
+    &temporary.path().join("native-macos-agent-runtime"),
+  )
+  .unwrap();
+
+  assert_eq!(installed.agent_manifest.platform(), "macos-arm64");
+  assert_eq!(installed.octa_capabilities.platform(), "macos-aarch64");
 }
 
 #[test]

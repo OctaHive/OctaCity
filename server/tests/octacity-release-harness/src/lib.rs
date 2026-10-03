@@ -24,7 +24,7 @@ use octacity_server_job::{
 use serde::Serialize;
 use thiserror::Error;
 
-use bundle::{Bundle, octa_runtime_platform, read_bounded};
+use bundle::{Bundle, octa_runtime_platform, read_bounded, runtime_platform};
 use contract::ReleaseContract;
 use octa::OctaBundle;
 
@@ -247,11 +247,11 @@ pub fn install_agent_runtime(
   let canonical_contract = ReleaseContract::canonical()?;
   let agent_source = Bundle::load(&bundles.agent, "octacity-agent", &canonical_contract)?;
   let octa_source = OctaBundle::load(&bundles.octa)?;
-  validate_agent_octa_compatibility(
-    &agent_source.manifest,
-    &octa_source,
-    octa_runtime_platform(&agent_source.manifest.platform)?,
-  )?;
+  let platforms = AgentRuntimePlatforms::new(
+    &agent_source.manifest.platform,
+    runtime_platform(&agent_source.manifest.platform)?,
+  );
+  validate_agent_runtime_platforms(&agent_source.manifest, &octa_source, &platforms)?;
 
   create_directory(destination)?;
   let mut guard = InstallationGuard::new(destination);
@@ -266,15 +266,19 @@ pub fn install_agent_runtime(
       octa: octa_root,
     },
     destination.to_owned(),
+    &platforms,
   )?;
   guard.commit();
   Ok(installed)
 }
 
-/// Revalidates an already isolated Agent and Octa installation.
-pub fn validate_installed_agent_runtime(bundles: &AgentRuntimeBundles) -> Result<InstalledAgentRuntime, HarnessError> {
+/// Revalidates an already isolated Agent and Octa installation for the expected platforms.
+pub fn validate_installed_agent_runtime(
+  bundles: &AgentRuntimeBundles,
+  platforms: &AgentRuntimePlatforms,
+) -> Result<InstalledAgentRuntime, HarnessError> {
   let root = agent_runtime_common_parent(bundles)?;
-  load_agent_runtime(bundles, root)
+  load_agent_runtime(bundles, root, platforms)
 }
 
 /// Derives the server's exact JobSpec signing policy from a verified Agent installation.
@@ -287,14 +291,7 @@ pub fn derive_job_spec_policy(
   platforms: &AgentRuntimePlatforms,
   validity_seconds: u64,
 ) -> Result<JobSpecToolchainPolicy, HarnessError> {
-  let installed = validate_installed_agent_runtime(bundles)?;
-  if installed.agent_manifest.platform() != platforms.agent_release
-    || installed.octa_capabilities.platform() != platforms.octa_runner
-  {
-    return Err(invalid(
-      "installed Agent runtime platforms differ from the signing policy expectation",
-    ));
-  }
+  let installed = validate_installed_agent_runtime(bundles, platforms)?;
   installed.toolchain.job_spec_policy(validity_seconds)
 }
 
@@ -362,11 +359,15 @@ fn load_verified(bundles: &ReleaseBundles, root: PathBuf) -> Result<InstalledRel
   })
 }
 
-fn load_agent_runtime(bundles: &AgentRuntimeBundles, root: PathBuf) -> Result<InstalledAgentRuntime, HarnessError> {
+fn load_agent_runtime(
+  bundles: &AgentRuntimeBundles,
+  root: PathBuf,
+  platforms: &AgentRuntimePlatforms,
+) -> Result<InstalledAgentRuntime, HarnessError> {
   let canonical_contract = ReleaseContract::canonical()?;
   let agent = Bundle::load(&bundles.agent, "octacity-agent", &canonical_contract)?;
   let octa = OctaBundle::load(&bundles.octa)?;
-  validate_agent_octa_compatibility(&agent.manifest, &octa, octa_runtime_platform(&agent.manifest.platform)?)?;
+  validate_agent_runtime_platforms(&agent.manifest, &octa, platforms)?;
   agent.verify_binary_version("agent")?;
 
   let source = agent.source_plugin()?;
@@ -381,6 +382,19 @@ fn load_agent_runtime(bundles: &AgentRuntimeBundles, root: PathBuf) -> Result<In
     octa_capabilities: octa.capabilities,
     toolchain,
   })
+}
+
+fn validate_agent_runtime_platforms(
+  agent: &ProductManifest,
+  octa: &OctaBundle,
+  platforms: &AgentRuntimePlatforms,
+) -> Result<(), HarnessError> {
+  if agent.platform != platforms.agent_release {
+    return Err(invalid(
+      "installed Agent runtime platforms differ from the signing policy expectation",
+    ));
+  }
+  validate_agent_octa_compatibility(agent, octa, &platforms.octa_runner)
 }
 
 fn validate_compatibility(
