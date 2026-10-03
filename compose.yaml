@@ -1,0 +1,110 @@
+name: octacity-local
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.6-bookworm@sha256:4c6516b5d6dfd96a6888541396f76545a63290be0aec2542547d7bcdd7515e28
+    platform: linux/arm64
+    environment:
+      POSTGRES_DB: octacity
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres-password
+      POSTGRES_USER: octacity
+    secrets:
+      - postgres-password
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - stand
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready --host 127.0.0.1 --username octacity --dbname octacity
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 10s
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+
+  # This local image is built only by tools/build_pinned_minio.py from inputs.json.
+  minio:
+    image: octacity/minio:release-2025-10-15-9e49d5e7a648
+    pull_policy: never
+    platform: linux/arm64
+    command:
+      - server
+      - /data
+      - --console-address
+      - :9001
+    environment:
+      MINIO_BROWSER: "off"
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/object-secret-key
+      MINIO_ROOT_USER_FILE: /run/secrets/object-access-key
+    secrets:
+      - object-access-key
+      - object-secret-key
+    volumes:
+      - minio-data:/data
+    networks:
+      - stand
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --quiet
+        - --spider
+        - http://127.0.0.1:9000/minio/health/live
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  minio-init:
+    image: octacity/mc:release-2025-08-13-7394ce0dd2a8
+    pull_policy: never
+    platform: linux/arm64
+    entrypoint:
+      - /usr/local/bin/octacity-object-store-init
+    environment:
+      OCTACITY_OBJECT_BUCKET: octacity-artifacts
+      OCTACITY_OBJECT_ENDPOINT: http://minio:9000
+      OCTACITY_OBJECT_OPERATION_TIMEOUT_SECONDS: "10"
+    secrets:
+      - object-access-key
+      - object-secret-key
+    networks:
+      - stand
+    depends_on:
+      minio:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  stand:
+    internal: true
+
+secrets:
+  postgres-password:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/postgres-password
+  object-access-key:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/object-access-key
+  object-secret-key:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/secrets/object-secret-key
+
+volumes:
+  postgres-data:
+  minio-data:

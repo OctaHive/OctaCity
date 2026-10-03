@@ -20,9 +20,9 @@
 
 ## 4. Gateway and Infrastructure Services
 
-- [ ] 4.1 Configure nginx virtual hosts for `octacity.localhost`, `agent.localhost`, `cache.localhost`, and `objects.localhost`; verify SPA fallback is limited to console routes, unknown API/health paths remain upstream 404s, protocol hosts cannot reach management routes, and S3 requests retain signing-relevant host/path/query data from both host and Compose callers.
-- [ ] 4.2 Define PostgreSQL and source-built MinIO services with pinned inputs, named volumes, bounded health checks, no host-published ports, and private credential files; verify data survives an ordinary launcher `down`/`up` cycle.
-- [ ] 4.3 Add the idempotent source-built mc bucket initializer and complete object-lifecycle readiness dependency; verify bucket creation can replay and the server remains unready while required PUT/GET/COPY/DELETE behavior is unavailable.
+- [x] 4.1 Configure nginx virtual hosts for `octacity.localhost`, `agent.localhost`, `cache.localhost`, and `objects.localhost`; verify SPA fallback is limited to console routes, unknown API/health paths remain upstream 404s, protocol hosts cannot reach management routes, and S3 requests retain signing-relevant host/path/query data from both host and Compose callers.
+- [x] 4.2 Define PostgreSQL and source-built MinIO services with pinned inputs, named volumes, bounded health checks, no host-published ports, and private credential files; verify data survives an ordinary launcher `down`/`up` cycle.
+- [x] 4.3 Add the idempotent source-built mc bucket initializer and complete object-lifecycle readiness dependency; verify bucket creation can replay and the server remains unready while required PUT/GET/COPY/DELETE behavior is unavailable.
 
 ## 5. Server, Bootstrap, Native Agent, and Launcher
 

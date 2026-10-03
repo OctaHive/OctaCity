@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,9 @@ from pinned_source_archive import download, extract_source, verify_release_ref
 REPOSITORY = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = REPOSITORY / "deployment/local-stand/inputs.json"
 DOCKERFILE = REPOSITORY / "deployment/local-stand/minio.Dockerfile"
+OBJECT_STORE_INITIALIZER = (
+    REPOSITORY / "deployment/local-stand/object-store-init.sh"
+)
 RELEASE_TAG = re.compile(
     r"RELEASE\.(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})"
     r"T(?P<time>[0-9]{2}-[0-9]{2}-[0-9]{2})Z"
@@ -130,6 +134,7 @@ def build(manifest: Path, target: str, image: str, architecture: str) -> None:
         raise BuildError(f"cannot load {manifest}: {error}") from error
     with tempfile.TemporaryDirectory(prefix="octacity-minio-build-") as temporary:
         context = Path(temporary)
+        shutil.copyfile(OBJECT_STORE_INITIALIZER, context / OBJECT_STORE_INITIALIZER.name)
         for role, directory in (("minio", "minio-source"), ("minio_client", "mc-source")):
             source = document["sources"][role]
             verify_release_ref(source)

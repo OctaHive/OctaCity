@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 from typing import Any
 
+from init_local_stand import GATEWAY_HOSTNAMES
 from local_stand_build_inputs import (
     CONTAINER_PLATFORM,
     LocalStandBuildError,
@@ -73,38 +74,97 @@ def docker_arguments(
     ]
 
 
-def runtime_contract_command(image: str) -> list[str]:
-    """Return the isolated runtime filesystem and toolchain check."""
+def runtime_contract_command(image: str, certificate: Path, private_key: Path) -> list[str]:
+    """Return the isolated runtime, routing, and filesystem contract check."""
 
-    contract = f"""
-test -f {STATIC_ROOT}/index.html
-test -d {STATIC_ROOT}/assets
+    contract = """
+test -f __STATIC_ROOT__/index.html
+test -d __STATIC_ROOT__/assets
 test ! -e /workspace
 test ! -e /pnpm
 test ! -e /root/.cache/node/corepack
 test ! -e /root/.local/share/pnpm
-test ! -e {STATIC_ROOT}/src
-test ! -e {STATIC_ROOT}/package.json
-test ! -e {STATIC_ROOT}/pnpm-lock.yaml
+test ! -e __STATIC_ROOT__/src
+test ! -e __STATIC_ROOT__/package.json
+test ! -e __STATIC_ROOT__/pnpm-lock.yaml
 ! command -v node
 ! command -v pnpm
 ! command -v vite
+
+cat >/tmp/mock-nginx.conf <<'NGINX'
+pid /tmp/mock-nginx.pid;
+error_log /dev/stderr notice;
+events {}
+http {
+  access_log off;
+  client_body_temp_path /tmp/mock-client;
+  proxy_temp_path /tmp/mock-proxy;
+  fastcgi_temp_path /tmp/mock-fastcgi;
+  uwsgi_temp_path /tmp/mock-uwsgi;
+  scgi_temp_path /tmp/mock-scgi;
+  server {
+    listen 8080;
+    location = /api/v1/management-only { return 200 "management"; }
+    location / { return 404; }
+  }
+  server { listen 8081; location / { return 404; } }
+  server { listen 8082; location / { return 404; } }
+  server {
+    listen 9000;
+    location / { return 200 "$http_host|$request_uri"; }
+  }
+}
+NGINX
+
+cleanup() {
+  nginx -s quit >/dev/null 2>&1 || true
+  nginx -c /tmp/mock-nginx.conf -s quit >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+nginx -c /tmp/mock-nginx.conf
 nginx
 attempt=0
-until wget -q -O /tmp/index.html http://127.0.0.1:8080/; do
+until curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
+  --connect-timeout 1 --max-time 2 https://octacity.localhost/ \
+  --output /tmp/index.html; do
   attempt=$((attempt + 1))
   test "$attempt" -lt 20
   sleep 0.1
 done
-cmp /tmp/index.html {STATIC_ROOT}/index.html
-if wget -q -O /tmp/api-response http://127.0.0.1:8080/api/v1/unknown; then
+cmp /tmp/index.html __STATIC_ROOT__/index.html
+
+curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
+  https://octacity.localhost/api/v1/management-only --output /tmp/management
+printf management >/tmp/expected-management
+cmp /tmp/management /tmp/expected-management
+if curl --fail --silent --cacert /run/secrets/gateway.pem \
+  https://agent.localhost/api/v1/management-only --output /tmp/agent-management; then
   exit 1
 fi
-if wget -q -O /tmp/health-response http://127.0.0.1:8080/health/unknown; then
+if curl --fail --silent --cacert /run/secrets/gateway.pem \
+  https://cache.localhost/api/v1/management-only --output /tmp/cache-management; then
   exit 1
 fi
-nginx -s quit
-""".strip()
+if curl --fail --silent --cacert /run/secrets/gateway.pem \
+  https://octacity.localhost/api/v1/unknown --output /tmp/api-response; then
+  exit 1
+fi
+if curl --fail --silent --cacert /run/secrets/gateway.pem \
+  https://octacity.localhost/health/unknown --output /tmp/health-response; then
+  exit 1
+fi
+
+object_path='/bucket/key%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host'
+curl --fail --silent --show-error --path-as-is --cacert /run/secrets/gateway.pem \
+  --resolve objects.localhost:443:127.0.0.1 \
+  "https://objects.localhost${object_path}" --output /tmp/object-host
+curl --fail --silent --show-error --path-as-is --cacert /run/secrets/gateway.pem \
+  "https://objects.localhost${object_path}" --output /tmp/object-compose
+printf 'objects.localhost|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host' \
+  >/tmp/expected-object
+cmp /tmp/object-host /tmp/expected-object
+cmp /tmp/object-compose /tmp/expected-object
+""".replace("__STATIC_ROOT__", STATIC_ROOT).strip()
     return [
         "docker",
         "run",
@@ -116,12 +176,64 @@ nginx -s quit
         "--read-only",
         "--tmpfs",
         "/tmp:rw,noexec,nosuid,nodev,size=16m",
+        "--mount",
+        f"type=bind,src={certificate.resolve()},dst=/run/secrets/gateway.pem,readonly",
+        "--mount",
+        f"type=bind,src={private_key.resolve()},dst=/run/secrets/gateway-key.pem,readonly",
+        "--add-host",
+        "server:127.0.0.1",
+        "--add-host",
+        "minio:127.0.0.1",
+        "--add-host",
+        "octacity.localhost:127.0.0.1",
+        "--add-host",
+        "agent.localhost:127.0.0.1",
+        "--add-host",
+        "cache.localhost:127.0.0.1",
+        "--add-host",
+        "objects.localhost:127.0.0.1",
         "--entrypoint",
         "/bin/sh",
         image,
         "-ec",
         contract,
     ]
+
+
+def create_contract_certificate(directory: Path) -> tuple[Path, Path]:
+    """Create an ephemeral certificate readable by the non-root test container."""
+
+    certificate = directory / "gateway.pem"
+    private_key = directory / "gateway-key.pem"
+    subject_names = ",".join(f"DNS:{name}" for name in GATEWAY_HOSTNAMES)
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=octacity.localhost",
+            "-addext",
+            f"subjectAltName={subject_names}",
+            "-keyout",
+            str(private_key),
+            "-out",
+            str(certificate),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    # The containing temporary directory remains owner-private.  Read-only
+    # files let the fixed container uid consume the fixture through bind mounts.
+    certificate.chmod(0o444)
+    private_key.chmod(0o444)
+    return certificate, private_key
 
 
 def verify_image(
@@ -151,7 +263,12 @@ def verify_image(
     }
     if any(labels.get(name) != value for name, value in expected.items()):
         raise LocalStandBuildError("gateway image toolchain labels are invalid")
-    subprocess.run(runtime_contract_command(image), check=True)
+    with tempfile.TemporaryDirectory(prefix="octacity-gateway-contract-") as temporary:
+        certificate, private_key = create_contract_certificate(Path(temporary))
+        subprocess.run(
+            runtime_contract_command(image, certificate, private_key),
+            check=True,
+        )
 
 
 def build(image: str, manifest: Path, repository: Path) -> None:

@@ -73,6 +73,6 @@ LABEL org.opencontainers.image.title="OctaCity local gateway" \
 COPY --from=ui-builder /workspace/ui/dist/ /srv/octacity-ui/
 COPY deployment/local-stand/nginx.conf /etc/nginx/nginx.conf
 USER 101:101
-EXPOSE 8080
+EXPOSE 443
 ENTRYPOINT ["nginx"]
 CMD ["-g", "daemon off;"]

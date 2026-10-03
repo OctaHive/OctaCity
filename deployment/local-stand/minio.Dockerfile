@@ -60,5 +60,6 @@ CMD ["server", "/data", "--console-address", ":9001"]
 FROM ${RUNTIME_IMAGE} AS mc
 COPY --from=mc-builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=mc-builder /out/mc /usr/local/bin/mc
+COPY --chmod=0555 object-store-init.sh /usr/local/bin/octacity-object-store-init
 USER 65534:65534
 ENTRYPOINT ["mc"]

@@ -74,6 +74,20 @@ class PinnedMinioBuildTests(unittest.TestCase):
         self.assertIn(f"org.opencontainers.image.revision={source['source_revision']}", command)
         self.assertIn(f"org.opencontainers.image.version={source['tag']}", command)
 
+    def test_mc_image_contains_the_bounded_object_store_initializer(self):
+        dockerfile = BUILDER.DOCKERFILE.read_text(encoding="utf-8")
+        initializer = BUILDER.OBJECT_STORE_INITIALIZER.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "COPY --chmod=0555 object-store-init.sh "
+            "/usr/local/bin/octacity-object-store-init",
+            dockerfile,
+        )
+        for command in ("mc pipe", "mc cat", "mc cp", "mc rm"):
+            self.assertIn(command, initializer)
+        self.assertIn('timeout -s TERM "$operation_timeout" mc', initializer)
+        self.assertNotIn("MINIO_ROOT_PASSWORD", initializer)
+
     def test_source_extraction_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

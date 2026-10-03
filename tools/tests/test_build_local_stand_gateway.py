@@ -22,6 +22,23 @@ sys.modules[SPEC.name] = BUILDER
 SPEC.loader.exec_module(BUILDER)
 
 
+def nginx_server(config: str, name: str) -> str:
+    """Return one named nginx server block from the checked-in configuration."""
+
+    marker = f"server_name {name};"
+    marker_index = config.index(marker)
+    start = config.rfind("server {", 0, marker_index)
+    depth = 0
+    for index in range(start, len(config)):
+        if config[index] == "{":
+            depth += 1
+        elif config[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return config[start : index + 1]
+    raise AssertionError(f"unterminated nginx server block for {name}")
+
+
 class LocalStandGatewayBuildTests(unittest.TestCase):
     def setUp(self):
         self.document = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -80,23 +97,35 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         )
         gateway = dockerfile.split("FROM ${NGINX_IMAGE} AS gateway", 1)[1]
         self.assertIn("USER 101:101", gateway)
-        self.assertIn("EXPOSE 8080", gateway)
+        self.assertIn("EXPOSE 443", gateway)
         self.assertNotIn("node_modules", gateway)
         self.assertNotIn("COPY ui/", gateway)
 
     def test_runtime_contract_rejects_build_inputs_and_development_tools(self):
-        command = BUILDER.runtime_contract_command("octacity/gateway:test")
+        command = BUILDER.runtime_contract_command(
+            "octacity/gateway:test",
+            Path("/verified/gateway.pem"),
+            Path("/verified/gateway-key.pem"),
+        )
         contract = command[-1]
 
         self.assertIn("--network", command)
         self.assertIn("none", command)
         self.assertIn("--read-only", command)
         self.assertIn("--tmpfs", command)
+        self.assertIn("server:127.0.0.1", command)
+        self.assertIn("minio:127.0.0.1", command)
+        self.assertIn("objects.localhost:127.0.0.1", command)
         self.assertIn("/srv/octacity-ui/index.html", contract)
-        self.assertIn("http://127.0.0.1:8080/", contract)
+        self.assertIn("https://octacity.localhost/", contract)
         self.assertIn("cmp /tmp/index.html /srv/octacity-ui/index.html", contract)
-        self.assertIn("http://127.0.0.1:8080/api/v1/unknown", contract)
-        self.assertIn("http://127.0.0.1:8080/health/unknown", contract)
+        self.assertIn("/api/v1/management-only", contract)
+        self.assertIn("/api/v1/unknown", contract)
+        self.assertIn("/health/unknown", contract)
+        self.assertIn(
+            "objects.localhost|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host",
+            contract,
+        )
         for excluded in (
             "test ! -e /workspace",
             "test ! -e /pnpm",
@@ -107,16 +136,61 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         for executable in ("node", "pnpm", "vite"):
             self.assertIn(f"! command -v {executable}", contract)
 
-    def test_nginx_serves_spa_routes_but_reserves_api_and_health_paths(self):
+    def test_nginx_uses_four_tls_hosts_and_one_console_spa_fallback(self):
         config = (REPOSITORY / "deployment/local-stand/nginx.conf").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("listen 8080", config)
-        self.assertIn("try_files $uri $uri/ /index.html", config)
-        self.assertIn("location ^~ /api/v1/", config)
-        self.assertIn("location ^~ /health/", config)
+        self.assertIn("ssl_certificate /run/secrets/gateway.pem", config)
+        self.assertIn("ssl_certificate_key /run/secrets/gateway-key.pem", config)
+        self.assertIn("proxy_set_header Host $http_host", config)
+        for host in (
+            "octacity.localhost",
+            "agent.localhost",
+            "cache.localhost",
+            "objects.localhost",
+        ):
+            self.assertIn("listen 443 ssl", nginx_server(config, host))
+        console = nginx_server(config, "octacity.localhost")
+        self.assertIn("try_files $uri $uri/ /index.html", console)
+        self.assertEqual(config.count("try_files $uri $uri/ /index.html"), 1)
         self.assertIn("pid /tmp/nginx.pid", config)
+
+    def test_console_api_and_health_prefixes_always_reach_management(self):
+        config = (REPOSITORY / "deployment/local-stand/nginx.conf").read_text(
+            encoding="utf-8"
+        )
+        console = nginx_server(config, "octacity.localhost")
+
+        for location in (
+            "location = /api/v1",
+            "location ^~ /api/v1/",
+            "location = /health",
+            "location ^~ /health/",
+            "location = /metrics",
+        ):
+            self.assertIn(location, console)
+        self.assertEqual(console.count("proxy_pass http://server:8080;"), 5)
+        self.assertNotIn("return 404", console)
+
+    def test_protocol_and_object_hosts_cannot_reach_management_listener(self):
+        config = (REPOSITORY / "deployment/local-stand/nginx.conf").read_text(
+            encoding="utf-8"
+        )
+        expected_upstreams = {
+            "agent.localhost": "http://server:8081",
+            "cache.localhost": "http://server:8082",
+            "objects.localhost": "http://minio:9000",
+        }
+        for host, upstream in expected_upstreams.items():
+            block = nginx_server(config, host)
+            self.assertIn(f"proxy_pass {upstream};", block)
+            self.assertNotIn("server:8080", block)
+            self.assertNotIn("try_files", block)
+        objects = nginx_server(config, "objects.localhost")
+        self.assertNotIn("rewrite", objects)
+        self.assertNotIn("$request_uri", objects)
+        self.assertNotIn("proxy_pass http://minio:9000/;", objects)
 
 
 if __name__ == "__main__":
