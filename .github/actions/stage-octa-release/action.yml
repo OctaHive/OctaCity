@@ -20,6 +20,8 @@ runs:
     - id: stage
       name: Download and verify released Octa toolchain
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         case "${RUNNER_OS}-${RUNNER_ARCH}" in

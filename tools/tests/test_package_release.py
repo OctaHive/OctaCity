@@ -428,6 +428,10 @@ class PackageReleaseTests(unittest.TestCase):
         )
         self.assertIn("source-allow-file:", package_action)
         self.assertIn("source_policy+=(--source-allow-file)", package_action)
+        stage_action = (REPOSITORY / ".github/actions/stage-octa-release/action.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", stage_action)
 
     def test_backend_matrix_separates_portable_and_privileged_cadence(self):
         workflow = (REPOSITORY / ".github/workflows/backend-contracts.yml").read_text(encoding="utf-8")

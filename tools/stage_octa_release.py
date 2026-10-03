@@ -28,30 +28,132 @@ ASSETS = {
 }
 DOWNLOAD_ATTEMPTS = 5
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
 MAX_FILES = 4096
+RELEASE_API = "https://api.github.com/repos/OctaHive/octa/releases"
+RELEASE_ASSET_API = f"{RELEASE_API}/assets/"
 
 
-def download(url: str) -> bytes:
+def download(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    max_bytes: int = MAX_ARCHIVE_BYTES,
+) -> bytes:
     """Download a bounded response with retry for transient release-host failures."""
 
     last: Exception | None = None
     for attempt in range(DOWNLOAD_ATTEMPTS):
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "octacity-release-gate"})
+            request_headers = {"User-Agent": "octacity-release-gate", **(headers or {})}
+            request = urllib.request.Request(url, headers=request_headers)
             with urllib.request.urlopen(request, timeout=60) as response:
                 length = response.headers.get("Content-Length")
-                if length is not None and int(length) > MAX_ARCHIVE_BYTES:
-                    raise ValueError(f"download exceeds {MAX_ARCHIVE_BYTES} bytes")
-                body = response.read(MAX_ARCHIVE_BYTES + 1)
-                if len(body) > MAX_ARCHIVE_BYTES:
-                    raise ValueError(f"download exceeds {MAX_ARCHIVE_BYTES} bytes")
+                if length is not None and int(length) > max_bytes:
+                    raise ValueError(f"download exceeds {max_bytes} bytes")
+                body = response.read(max_bytes + 1)
+                if len(body) > max_bytes:
+                    raise ValueError(f"download exceeds {max_bytes} bytes")
                 return body
-        except (OSError, urllib.error.HTTPError, urllib.error.URLError, ValueError) as error:
+        except urllib.error.HTTPError as error:
+            # HTTPError owns the response stream.  Retain only its diagnostic
+            # before retrying so failed release-host responses cannot leak FDs.
+            last = RuntimeError(str(error))
+            error.close()
+        except (OSError, urllib.error.URLError, ValueError) as error:
             last = error
-            if attempt + 1 < DOWNLOAD_ATTEMPTS:
-                time.sleep(2**attempt)
+        if attempt + 1 < DOWNLOAD_ATTEMPTS:
+            time.sleep(2**attempt)
     raise RuntimeError(f"failed to download {url} after {DOWNLOAD_ATTEMPTS} attempts: {last}")
+
+
+def github_api_headers(accept: str) -> dict[str, str]:
+    """Return GitHub API headers, authenticating metadata requests when available."""
+
+    headers = {
+        "Accept": accept,
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def release_asset_urls(version: str, required_names: tuple[str, ...]) -> dict[str, str]:
+    """Resolve exact uploaded assets from the requested GitHub release tag."""
+
+    metadata = download(
+        f"{RELEASE_API}/tags/v{version}",
+        headers=github_api_headers("application/vnd.github+json"),
+        max_bytes=MAX_RELEASE_METADATA_BYTES,
+    )
+    try:
+        document = json.loads(metadata.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("GitHub release metadata is not valid UTF-8 JSON") from error
+    if not isinstance(document, dict) or document.get("tag_name") != f"v{version}":
+        raise ValueError("GitHub release metadata does not identify the requested tag")
+    assets = document.get("assets")
+    if not isinstance(assets, list):
+        raise ValueError("GitHub release metadata has no asset list")
+
+    required = set(required_names)
+    resolved: dict[str, str] = {}
+    for candidate in assets:
+        if not isinstance(candidate, dict) or candidate.get("name") not in required:
+            continue
+        name = candidate["name"]
+        url = candidate.get("url")
+        asset_id = url.removeprefix(RELEASE_ASSET_API) if isinstance(url, str) else ""
+        if candidate.get("state") != "uploaded" or not asset_id.isdecimal():
+            raise ValueError(f"GitHub release asset is not an exact uploaded API asset: {name}")
+        if name in resolved:
+            raise ValueError(f"GitHub release contains duplicate asset: {name}")
+        resolved[name] = url
+
+    missing = required - resolved.keys()
+    if missing:
+        raise ValueError(f"GitHub release is missing required assets: {', '.join(sorted(missing))}")
+    return resolved
+
+
+def download_release_assets(version: str, names: tuple[str, ...]) -> dict[str, bytes]:
+    """Download exact release assets, using the API route after direct-host failure."""
+
+    base = f"https://github.com/OctaHive/octa/releases/download/v{version}"
+    fallback_urls: dict[str, str] | None = None
+    payloads: dict[str, bytes] = {}
+    for name in names:
+        direct_failure: RuntimeError | None = None
+        try:
+            payloads[name] = download(f"{base}/{name}")
+            continue
+        except RuntimeError as error:
+            direct_failure = error
+            if fallback_urls is None:
+                try:
+                    fallback_urls = release_asset_urls(version, names)
+                except (RuntimeError, ValueError) as resolution_error:
+                    raise RuntimeError(
+                        f"direct release download failed ({direct_failure}); "
+                        f"GitHub API resolution failed ({resolution_error})"
+                    ) from resolution_error
+        try:
+            payloads[name] = download(
+                fallback_urls[name],
+                headers={
+                    "Accept": "application/octet-stream",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+        except RuntimeError as fallback_error:
+            raise RuntimeError(
+                f"direct release download failed ({direct_failure}); "
+                f"GitHub API asset download failed ({fallback_error})"
+            ) from fallback_error
+    return payloads
 
 
 def expected_digest(document: bytes, asset: str) -> str:
@@ -139,9 +241,9 @@ def stage(version: str, platform: str, revision: str, destination: Path) -> Path
     """Stage one verified immutable Octa release below a new destination."""
 
     asset, runtime_platform = ASSETS[platform]
-    base = f"https://github.com/OctaHive/octa/releases/download/v{version}"
-    payload = download(f"{base}/{asset}")
-    checksum = download(f"{base}/{asset}.sha256")
+    payloads = download_release_assets(version, (asset, f"{asset}.sha256"))
+    payload = payloads[asset]
+    checksum = payloads[f"{asset}.sha256"]
     actual = hashlib.sha256(payload).hexdigest()
     expected = expected_digest(checksum, asset)
     if actual != expected:
