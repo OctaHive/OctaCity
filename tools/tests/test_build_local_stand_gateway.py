@@ -33,6 +33,8 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         )
 
     def test_docker_build_uses_only_pinned_arm64_inputs(self):
+        octa_source = Path("/verified/octa-source")
+        octacity_source = Path("/verified/octacity-source")
         with (
             mock.patch.object(BUILDER, "workspace_version", return_value="0.1.0"),
             mock.patch.object(
@@ -42,15 +44,15 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
             arguments = BUILDER.docker_arguments(
                 self.document,
                 "octacity/gateway:test",
-                Path("/verified/octa-source"),
-                Path("/verified/octacity-source"),
+                octa_source,
+                octacity_source,
                 "a" * 40,
             )
 
         self.assertIn("linux/arm64", arguments)
         self.assertIn("gateway", arguments)
-        self.assertIn("octa-source=/verified/octa-source", arguments)
-        self.assertEqual(arguments[-1], "/verified/octacity-source")
+        self.assertIn(f"octa-source={octa_source.resolve()}", arguments)
+        self.assertEqual(arguments[-1], str(octacity_source))
         self.assertIn("OCTACITY_REVISION=" + "a" * 40, arguments)
         for role in ("rust", "node", "nginx"):
             self.assertIn(

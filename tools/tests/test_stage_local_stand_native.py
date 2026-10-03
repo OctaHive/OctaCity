@@ -77,17 +77,16 @@ class NativeStandStagingTests(unittest.TestCase):
         policy.start()
         self.addCleanup(policy.stop)
 
-    def create_inputs(self, root: Path, *, validation_succeeds: bool = True):
+    def create_inputs(self, root: Path):
         document = deepcopy(self.document)
         agent_root = root / "agent-root"
         agent_root.mkdir()
         agent = agent_root / "bin/octacity-agent"
-        validation = "echo 'configuration is valid'" if validation_succeeds else "exit 1"
         write_executable(
             agent,
             "#!/bin/sh\n"
             "if [ \"$1\" = \"--version\" ]; then echo 'octacity-agent 0.1.0'; exit 0; fi\n"
-            f"if [ \"$1\" = \"validate\" ]; then {validation}; exit 0; fi\n"
+            "if [ \"$1\" = \"validate\" ]; then echo 'configuration is valid'; exit 0; fi\n"
             "exit 1\n",
         )
         plugin = agent_root / "source-plugins/git/octacity-source-git"
@@ -179,6 +178,34 @@ class NativeStandStagingTests(unittest.TestCase):
             directory.rmdir()
         return document
 
+    def native_processes(self, *, validation_succeeds: bool = True):
+        """Replace macOS binaries with their observable process contract."""
+
+        def run(command, **kwargs):
+            executable = Path(command[0]).name
+            arguments = command[1:]
+            self.assertTrue(kwargs["check"])
+            self.assertTrue(kwargs["capture_output"])
+            self.assertTrue(kwargs["text"])
+            if arguments == ["--version"] and executable == "octacity-agent":
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="octacity-agent 0.1.0\n"
+                )
+            if arguments == ["--version"] and executable == "msb":
+                return subprocess.CompletedProcess(command, 0, stdout="msb 0.7.6\n")
+            if arguments[:1] == ["validate"] and executable == "octacity-agent":
+                if not validation_succeeds:
+                    raise subprocess.CalledProcessError(1, command)
+                environment = kwargs["env"]
+                self.assertEqual(environment["HTTP_PROXY"], "http://127.0.0.1:9")
+                self.assertEqual(environment["NO_PROXY"], "")
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="configuration is valid\n"
+                )
+            raise AssertionError(f"unexpected native process: {command!r}")
+
+        return mock.patch.object(STAGER.subprocess, "run", side_effect=run)
+
     def test_names_bind_every_native_version_and_the_agent_revision(self):
         name = STAGER.input_set_name(self.document, REVISION)
         self.assertEqual(
@@ -242,6 +269,7 @@ class NativeStandStagingTests(unittest.TestCase):
             with (
                 mock.patch.object(STAGER, "download", side_effect=AssertionError("network used")),
                 mock.patch.object(STAGER, "_build_agent_archive", side_effect=AssertionError("build used")),
+                self.native_processes(),
             ):
                 installed = STAGER.install_native_bundle(
                     inputs_root,
@@ -259,10 +287,11 @@ class NativeStandStagingTests(unittest.TestCase):
                     ),
                     self.policy,
                 )
-                self.assertEqual(
-                    (installed / "job-spec-policy.json").stat().st_mode & 0o777,
-                    0o600,
-                )
+                if os.name == "posix":
+                    self.assertEqual(
+                        (installed / "job-spec-policy.json").stat().st_mode & 0o777,
+                        0o600,
+                    )
                 self.assertTrue((installed / "microsandbox/bin/msb").is_file())
                 self.assertEqual(
                     STAGER.install_native_bundle(
@@ -281,9 +310,12 @@ class NativeStandStagingTests(unittest.TestCase):
             root = Path(temporary)
             inputs_root = root / "inputs"
             inputs_root.mkdir()
-            document = self.create_inputs(inputs_root, validation_succeeds=False)
+            document = self.create_inputs(inputs_root)
             destination = root / "install/root"
-            with self.assertRaises(subprocess.CalledProcessError):
+            with (
+                self.native_processes(validation_succeeds=False),
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
                 STAGER.install_native_bundle(
                     inputs_root,
                     destination,
@@ -302,16 +334,7 @@ class NativeStandStagingTests(unittest.TestCase):
             inputs_root.mkdir()
             document = self.create_inputs(inputs_root)
             destination = root / "install/root"
-            STAGER.install_native_bundle(
-                inputs_root,
-                destination,
-                document,
-                self.entries,
-                REVISION,
-                REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",
-            )
-            (destination / "microsandbox/lib/libkrunfw.5.dylib").write_bytes(b"tampered")
-            with self.assertRaisesRegex(STAGER.NativeStageError, "file inventory"):
+            with self.native_processes():
                 STAGER.install_native_bundle(
                     inputs_root,
                     destination,
@@ -320,6 +343,18 @@ class NativeStandStagingTests(unittest.TestCase):
                     REVISION,
                     REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",
                 )
+                (destination / "microsandbox/lib/libkrunfw.5.dylib").write_bytes(
+                    b"tampered"
+                )
+                with self.assertRaisesRegex(STAGER.NativeStageError, "file inventory"):
+                    STAGER.install_native_bundle(
+                        inputs_root,
+                        destination,
+                        document,
+                        self.entries,
+                        REVISION,
+                        REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",
+                    )
 
     def test_policy_derivation_is_offline_bounded_and_platform_explicit(self):
         installation = Path("/verified/native-installation")

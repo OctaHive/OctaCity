@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -140,7 +141,11 @@ class PinnedMinioBuildTests(unittest.TestCase):
                 max_members=2,
             )
             self.assertEqual((root / "release/bin/tool").read_bytes(), b"tool")
-            self.assertEqual((root / "release/bin/tool").stat().st_mode & 0o777, 0o755)
+            if os.name == "posix":
+                self.assertEqual(
+                    (root / "release/bin/tool").stat().st_mode & 0o777,
+                    0o755,
+                )
 
             linked = root / "linked.tar.gz"
             with tarfile.open(linked, "w:gz") as bundle:

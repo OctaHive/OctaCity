@@ -40,19 +40,21 @@ class LocalStandServerBuildTests(unittest.TestCase):
         self.assertGreater(source["member_max_count"], 0)
 
     def test_docker_build_uses_the_verified_named_context_and_locked_inputs(self):
+        octa_source = Path("/verified/octa-source")
+        octacity_source = Path("/verified/octacity-source")
         with mock.patch.object(BUILDER, "workspace_version", return_value="0.1.0"):
             arguments = BUILDER.docker_arguments(
                 self.document,
                 "octacity/server:test",
-                Path("/verified/octa-source"),
-                Path("/verified/octacity-source"),
+                octa_source,
+                octacity_source,
                 "a" * 40,
             )
         command = "\n".join(arguments)
 
         self.assertIn("linux/arm64", arguments)
-        self.assertIn("octa-source=/verified/octa-source", arguments)
-        self.assertEqual(arguments[-1], "/verified/octacity-source")
+        self.assertIn(f"octa-source={octa_source.resolve()}", arguments)
+        self.assertEqual(arguments[-1], str(octacity_source))
         self.assertIn("OCTACITY_REVISION=" + "a" * 40, arguments)
         self.assertIn(
             "RUST_IMAGE=" + self.document["images"]["rust"]["reference"],
