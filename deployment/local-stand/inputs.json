@@ -68,6 +68,7 @@
       "asset": "microsandbox-darwin-aarch64.tar.gz",
       "asset_id": 603564615,
       "firmware": "libkrunfw.5.dylib",
+      "guest_image": "quay.io/fedora/fedora@sha256:83205934094144b56f645f86c42b84f81083f423b0bea9cb233f91c21bab0919",
       "platform": "darwin-arm64",
       "release_url": "https://github.com/superradcompany/microsandbox/releases/download/v0.7.6/microsandbox-darwin-aarch64.tar.gz",
       "repository": "https://github.com/superradcompany/microsandbox",

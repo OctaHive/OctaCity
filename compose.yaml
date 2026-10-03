@@ -167,7 +167,7 @@ services:
       - source: gateway-private-key
         target: gateway-key.pem
     ports:
-      - target: 443
+      - target: 8443
         published: ${OCTACITY_LOCAL_STAND_HTTPS_PORT:-8443}
         host_ip: 127.0.0.1
         protocol: tcp
@@ -181,7 +181,9 @@ services:
           - objects.localhost
     depends_on:
       server:
-        condition: service_healthy
+        # Server readiness checks the object store through this TLS gateway.
+        # Starting the proxy after the process avoids a circular health dependency.
+        condition: service_started
     healthcheck:
       test:
         - CMD
@@ -192,12 +194,12 @@ services:
         - --cacert
         - /run/octacity/local-ca.pem
         - --resolve
-        - octacity.localhost:443:127.0.0.1
+        - octacity.localhost:8443:127.0.0.1
         - --connect-timeout
         - "1"
         - --max-time
         - "2"
-        - https://octacity.localhost/health/ready
+        - https://octacity.localhost:8443/health/ready
       interval: 2s
       timeout: 3s
       retries: 30

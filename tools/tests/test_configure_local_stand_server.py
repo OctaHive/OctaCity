@@ -103,9 +103,9 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
 
     def validation_root(self, receipt: dict[str, str]) -> Path:
         root = Path(self.temporary.name) / "validation-root"
-        secrets = root / "run/secrets"
+        octacity_secrets = root / "run/octacity-secrets"
         policy = root / "run/octacity"
-        secrets.mkdir(parents=True, mode=0o700)
+        octacity_secrets.mkdir(parents=True, mode=0o700)
         policy.mkdir(parents=True, mode=0o700)
         sources = {
             "postgres-url": Path(receipt["postgres_url"]),
@@ -116,7 +116,7 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
             "cache-credential-key": self.root / "secrets/cache-credential-key",
         }
         for name, source in sources.items():
-            destination = secrets / name
+            destination = octacity_secrets / name
             shutil.copyfile(source, destination)
             destination.chmod(0o600)
         destination = policy / "job-spec-policy.json"
@@ -158,9 +158,11 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         self.assertIs(configuration["acknowledge_unauthenticated_management"], True)
         self.assertEqual(
             configuration["object_storage"]["endpoint"],
-            "https://objects.localhost",
+            "https://objects.localhost:8443",
         )
-        self.assertEqual(configuration["cache"]["endpoint"], "https://cache.localhost")
+        self.assertEqual(
+            configuration["cache"]["endpoint"], "https://cache.localhost:8443"
+        )
         self.assertEqual(
             configuration["job_spec"]["policy_file"],
             "/run/octacity/job-spec-policy.json",
@@ -214,14 +216,14 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         config = Path(receipt["config"])
 
         missing_root = self.validation_root(receipt)
-        (missing_root / "run/secrets/cache-credential-key").unlink()
+        (missing_root / "run/octacity-secrets/cache-credential-key").unlink()
         missing = self.validate_with_real_server(config, missing_root)
         self.assertNotEqual(missing.returncode, 0)
         self.assertIn("cache credential", missing.stdout + missing.stderr)
 
         shutil.rmtree(missing_root)
         malformed_root = self.validation_root(receipt)
-        malformed = malformed_root / "run/secrets/signing-key"
+        malformed = malformed_root / "run/octacity-secrets/signing-key"
         malformed.write_text("not-base64\n", encoding="ascii")
         malformed.chmod(0o600)
         rejected = self.validate_with_real_server(config, malformed_root)

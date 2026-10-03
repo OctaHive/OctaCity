@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 from typing import Any
 
-from init_local_stand import GATEWAY_HOSTNAMES
+from init_local_stand import GATEWAY_HOSTNAMES, GATEWAY_HTTPS_PORT
 from local_stand_build_inputs import (
     CONTAINER_PLATFORM,
     LocalStandBuildError,
@@ -125,7 +125,7 @@ nginx -c /tmp/mock-nginx.conf
 nginx
 attempt=0
 until curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
-  --connect-timeout 1 --max-time 2 https://octacity.localhost/ \
+  --connect-timeout 1 --max-time 2 https://octacity.localhost:__HTTPS_PORT__/ \
   --output /tmp/index.html; do
   attempt=$((attempt + 1))
   test "$attempt" -lt 20
@@ -134,37 +134,39 @@ done
 cmp /tmp/index.html __STATIC_ROOT__/index.html
 
 curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
-  https://octacity.localhost/api/v1/management-only --output /tmp/management
+  https://octacity.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/management
 printf management >/tmp/expected-management
 cmp /tmp/management /tmp/expected-management
 if curl --fail --silent --cacert /run/secrets/gateway.pem \
-  https://agent.localhost/api/v1/management-only --output /tmp/agent-management; then
+  https://agent.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/agent-management; then
   exit 1
 fi
 if curl --fail --silent --cacert /run/secrets/gateway.pem \
-  https://cache.localhost/api/v1/management-only --output /tmp/cache-management; then
+  https://cache.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/cache-management; then
   exit 1
 fi
 if curl --fail --silent --cacert /run/secrets/gateway.pem \
-  https://octacity.localhost/api/v1/unknown --output /tmp/api-response; then
+  https://octacity.localhost:__HTTPS_PORT__/api/v1/unknown --output /tmp/api-response; then
   exit 1
 fi
 if curl --fail --silent --cacert /run/secrets/gateway.pem \
-  https://octacity.localhost/health/unknown --output /tmp/health-response; then
+  https://octacity.localhost:__HTTPS_PORT__/health/unknown --output /tmp/health-response; then
   exit 1
 fi
 
 object_path='/bucket/key%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host'
 curl --fail --silent --show-error --path-as-is --cacert /run/secrets/gateway.pem \
-  --resolve objects.localhost:443:127.0.0.1 \
-  "https://objects.localhost${object_path}" --output /tmp/object-host
+  --resolve objects.localhost:__HTTPS_PORT__:127.0.0.1 \
+  "https://objects.localhost:__HTTPS_PORT__${object_path}" --output /tmp/object-host
 curl --fail --silent --show-error --path-as-is --cacert /run/secrets/gateway.pem \
-  "https://objects.localhost${object_path}" --output /tmp/object-compose
-printf 'objects.localhost|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host' \
+  "https://objects.localhost:__HTTPS_PORT__${object_path}" --output /tmp/object-compose
+printf 'objects.localhost:__HTTPS_PORT__|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host' \
   >/tmp/expected-object
 cmp /tmp/object-host /tmp/expected-object
 cmp /tmp/object-compose /tmp/expected-object
-""".replace("__STATIC_ROOT__", STATIC_ROOT).strip()
+""".replace("__STATIC_ROOT__", STATIC_ROOT).replace(
+        "__HTTPS_PORT__", str(GATEWAY_HTTPS_PORT)
+    ).strip()
     return [
         "docker",
         "run",

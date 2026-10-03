@@ -11,6 +11,193 @@ permissions:
   contents: read
 
 jobs:
+  local-stand-containers:
+    name: local stand containers and portable contracts
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: octacity
+          persist-credentials: false
+      - name: Validate local-stand policies, Compose, and portable contracts
+        shell: bash
+        working-directory: octacity
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          state_root="${RUNNER_TEMP}/octacity-local-stand-portable"
+          log="${RUNNER_TEMP}/octacity-local-stand-portable.log"
+          python3 tools/verify_local_stand_inputs.py \
+            deployment/local-stand/inputs.json \
+            --agent-revision "${revision}"
+          python3 tools/verify_local_stand_context.py
+          python3 tools/init_local_stand.py --root "${state_root}" >"${log}" 2>&1
+          OCTACITY_LOCAL_STAND_ROOT="${state_root}" \
+            docker compose --project-name octacity-local-ci --file compose.yaml \
+            config --format json >"${RUNNER_TEMP}/octacity-local-stand-compose.json"
+          python3 -m unittest -v \
+            tools.tests.test_bootstrap_local_stand \
+            tools.tests.test_build_local_stand_gateway \
+            tools.tests.test_build_local_stand_images \
+            tools.tests.test_check_local_stand_logs \
+            tools.tests.test_local_stand_compose.LocalStandComposeContractTests \
+            tools.tests.test_local_stand_launcher \
+            tools.tests.test_start_local_stand_agent >>"${log}" 2>&1
+          python3 tools/check_local_stand_logs.py \
+            --state-root "${state_root}" --log "${log}"
+          cat "${log}"
+      - name: Build and verify every Linux ARM64 local-stand image
+        shell: bash
+        working-directory: octacity
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/octacity-local-stand-images.log"
+          python3 tools/build_local_stand_images.py >"${log}" 2>&1
+          python3 tools/check_local_stand_logs.py \
+            --state-root "${RUNNER_TEMP}/octacity-local-stand-portable" \
+            --log "${log}"
+          cat "${log}"
+
+  local-stand-native-staging:
+    name: local stand native staging and configurations
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: octacity
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: 1.99.0
+      - name: Set up Microsandbox guest agent
+        uses: ./octacity/.github/actions/setup-microsandbox-agentd
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: protoc
+          fallback: none
+      - name: Stage every native input and validate generated configurations
+        shell: bash
+        working-directory: octacity
+        run: |
+          set -euo pipefail
+          state_root="${RUNNER_TEMP}/octacity-local-stand-native-state"
+          log="${RUNNER_TEMP}/octacity-local-stand-native.log"
+          python3 tools/init_local_stand.py --root "${state_root}" >"${log}" 2>&1
+          installation=$(python3 tools/stage_local_stand_native.py all \
+            --cache-root "${RUNNER_TEMP}/octacity-local-stand-native-cache" \
+            --install-root "${RUNNER_TEMP}/octacity-local-stand-native-installations" \
+            2>>"${log}")
+          case "${installation}" in
+            "${RUNNER_TEMP}/octacity-local-stand-native-installations/"*) ;;
+            *) echo "native staging returned an unsafe installation path" >&2; exit 1 ;;
+          esac
+          python3 tools/configure_local_stand_server.py \
+            --root "${state_root}" --native-installation "${installation}" \
+            >>"${log}" 2>&1
+          python3 tools/configure_local_stand_agent.py \
+            --root "${state_root}" --native-installation "${installation}" \
+            >>"${log}" 2>&1
+          python3 tools/check_local_stand_logs.py \
+            --state-root "${state_root}" --log "${log}"
+          cat "${log}"
+
+  local-stand-apple-silicon:
+    name: local stand Apple Silicon vertical slice
+    # Never execute pull-request-controlled code on the persistent host runner.
+    if: github.event_name != 'pull_request'
+    concurrency:
+      group: octacity-local-stand-apple-silicon
+      cancel-in-progress: false
+    runs-on:
+      group: octacity-release
+      labels: [self-hosted, macOS, ARM64, octacity-microsandbox]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: octacity
+          persist-credentials: false
+      - name: Require a clean dedicated stand namespace
+        shell: bash
+        working-directory: octacity
+        run: |
+          set -euo pipefail
+          state_root="${RUNNER_TEMP}/octacity-local-stand-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          evidence="${RUNNER_TEMP}/octacity-local-stand-evidence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "${state_root}"
+          test ! -e "${evidence}"
+          test -z "$(docker ps --all --quiet --filter label=com.docker.compose.project=octacity-local)"
+          test -z "$(docker volume ls --quiet --filter name='^octacity-local_')"
+          mkdir -m 0700 "${evidence}"
+          install -m 0600 /dev/null "${evidence}/lifecycle.log"
+          install -m 0600 /dev/null "${evidence}/runtime-running.log"
+      - name: Start and exercise the complete hybrid stand
+        shell: bash
+        working-directory: octacity
+        env:
+          SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          state_root="${RUNNER_TEMP}/octacity-local-stand-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          evidence="${RUNNER_TEMP}/octacity-local-stand-evidence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          receipt="${evidence}/vertical-slice.json"
+          tools/local-stand up --root "${state_root}" >>"${evidence}/lifecycle.log" 2>&1
+          tools/local-stand status --root "${state_root}" >>"${evidence}/lifecycle.log"
+          python3 tools/verify_local_stand_integration.py --root "${state_root}" run \
+            --source-repository "${SOURCE_REPOSITORY}" \
+            --source-revision "${SOURCE_REVISION}" \
+            --receipt "${receipt}" >>"${evidence}/lifecycle.log" 2>&1
+
+          tools/local-stand up --root "${state_root}" >>"${evidence}/lifecycle.log" 2>&1
+          python3 tools/verify_local_stand_integration.py --root "${state_root}" \
+            observe --receipt "${receipt}" >>"${evidence}/lifecycle.log" 2>&1
+
+          tools/local-stand down --root "${state_root}" >>"${evidence}/lifecycle.log" 2>&1
+          tools/local-stand up --root "${state_root}" >>"${evidence}/lifecycle.log" 2>&1
+          python3 tools/verify_local_stand_integration.py --root "${state_root}" \
+            observe --receipt "${receipt}" >>"${evidence}/lifecycle.log" 2>&1
+          tools/local-stand logs --root "${state_root}" --tail 1000 \
+            >"${evidence}/runtime-running.log" 2>&1
+          tools/local-stand down --root "${state_root}" >>"${evidence}/lifecycle.log" 2>&1
+
+          tools/local-stand status --root "${state_root}" >"${evidence}/stopped.json"
+          python3 -c 'import json,sys; status=json.load(open(sys.argv[1], encoding="utf-8")); assert status["state"] == "stopped" and status["agent"] == "stopped" and not status["compose"]["present"]' "${evidence}/stopped.json"
+      - name: Collect and scan bounded stand diagnostics
+        if: always()
+        shell: bash
+        working-directory: octacity
+        run: |
+          state_root="${RUNNER_TEMP}/octacity-local-stand-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          evidence="${RUNNER_TEMP}/octacity-local-stand-evidence-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p -m 0700 "${evidence}"
+          tools/local-stand logs --root "${state_root}" --tail 1000 \
+            >"${evidence}/runtime.log" 2>&1 || true
+          python3 tools/check_local_stand_logs.py \
+            --state-root "${state_root}" \
+            --log "${evidence}/lifecycle.log" \
+            --log "${evidence}/runtime-running.log" \
+            --log "${evidence}/runtime.log"
+      - name: Remove the dedicated stand state
+        if: always()
+        shell: bash
+        working-directory: octacity
+        run: |
+          state_root="${RUNNER_TEMP}/octacity-local-stand-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ -d "${state_root}" ]]; then
+            tools/local-stand reset --root "${state_root}" \
+              --confirm DELETE-OCTACITY-LOCAL-STAND
+          fi
+      - name: Retain local stand integration evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-stand-apple-silicon-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/octacity-local-stand-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+
   quality:
     strategy:
       fail-fast: false

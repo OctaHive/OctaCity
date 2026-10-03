@@ -22,7 +22,7 @@ import local_stand_lifecycle as lifecycle
 import local_stand_state as state
 
 
-DEFAULT_ORIGIN = "https://octacity.localhost:8443"
+DEFAULT_ORIGIN = initializer.gateway_origin("octacity.localhost")
 MAX_RESPONSE_BYTES = 128 * 1024
 MAX_CREDENTIAL_BYTES = 4096
 RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -545,7 +545,9 @@ def _converge(
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    port = os.environ.get("OCTACITY_LOCAL_STAND_HTTPS_PORT", "8443")
+    port = os.environ.get(
+        "OCTACITY_LOCAL_STAND_HTTPS_PORT", str(initializer.GATEWAY_HTTPS_PORT)
+    )
     default_origin = os.environ.get(
         "OCTACITY_LOCAL_STAND_ORIGIN", f"https://octacity.localhost:{port}"
     )

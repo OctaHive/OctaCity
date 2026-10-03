@@ -134,6 +134,7 @@ references, protocols, and planning material.
 
 ### Use and operate OctaCity
 
+- [Local Apple Silicon development stand](docs/operations/local-stand.md)
 - [Management REST v1 workflow](docs/reference/management-rest-v1.md)
 - [Server operations](docs/operations/server.md)
 - [Agent operations](docs/operations/agent.md)

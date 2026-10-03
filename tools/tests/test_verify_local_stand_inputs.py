@@ -140,6 +140,22 @@ class LocalStandInputTests(unittest.TestCase):
         with self.assertRaisesRegex(VERIFIER.InputError, "repository is unexpected"):
             self.validate(document)
 
+    def test_rejects_an_unpinned_microsandbox_guest_image(self):
+        document = deepcopy(self.document)
+        document["native"]["microsandbox"]["guest_image"] = (
+            "quay.io/fedora/fedora:latest"
+        )
+        with self.assertRaisesRegex(VERIFIER.InputError, "sha256 digest"):
+            self.validate(document)
+
+    def test_rejects_a_microsandbox_guest_image_from_another_repository(self):
+        document = deepcopy(self.document)
+        document["native"]["microsandbox"]["guest_image"] = (
+            "example.invalid/fedora@sha256:" + "b" * 64
+        )
+        with self.assertRaisesRegex(VERIFIER.InputError, "approved Fedora"):
+            self.validate(document)
+
     def test_rejects_a_symbolic_agent_revision(self):
         with self.assertRaisesRegex(VERIFIER.InputError, "invalid format"):
             self.validate(revision="main")

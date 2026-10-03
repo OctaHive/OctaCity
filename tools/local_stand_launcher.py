@@ -20,6 +20,7 @@ import bootstrap_local_stand as bootstrapper
 import build_local_stand_gateway as gateway_builder
 import build_local_stand_server as server_builder
 import build_pinned_minio as minio_builder
+import configure_local_stand_agent as agent_configurator
 import configure_local_stand_server as server_configurator
 import init_local_stand as initializer
 import local_stand_lifecycle as lifecycle
@@ -51,7 +52,7 @@ EXPECTED_SERVICES = frozenset({"postgres", "minio", "minio-init", "server", "gat
 LONG_RUNNING_SERVICES = EXPECTED_SERVICES - {"minio-init"}
 NAMED_VOLUMES = ("octacity-local_postgres-data", "octacity-local_minio-data")
 RESET_CONFIRMATION = "DELETE-OCTACITY-LOCAL-STAND"
-DEFAULT_HTTPS_PORT = 8443
+DEFAULT_HTTPS_PORT = initializer.GATEWAY_HTTPS_PORT
 DEFAULT_COMPOSE_WAIT_SECONDS = 180
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 300
 MAX_LOG_LINES = 10_000
@@ -74,13 +75,16 @@ class NativeInstallation:
 
 
 def _validated_port(value: int) -> int:
-    if isinstance(value, bool) or not 1 <= value <= 65_535:
-        raise LocalStandError("gateway HTTPS port must be between 1 and 65535")
+    if isinstance(value, bool) or value != DEFAULT_HTTPS_PORT:
+        raise LocalStandError(
+            f"gateway HTTPS port must equal the shared service port {DEFAULT_HTTPS_PORT}"
+        )
     return value
 
 
 def _gateway_origin(https_port: int) -> str:
-    return f"https://octacity.localhost:{_validated_port(https_port)}"
+    _validated_port(https_port)
+    return initializer.gateway_origin("octacity.localhost")
 
 
 def _resolved_origin(arguments: argparse.Namespace) -> str:
@@ -192,7 +196,6 @@ def _prepare_native_installation(root: Path) -> NativeInstallation:
         entries,
         revision,
         AGENT_FIXTURE,
-        REPOSITORY,
     )
     return NativeInstallation(installation, document)
 
@@ -397,13 +400,27 @@ def _compose_state(root: Path, https_port: int) -> tuple[set[str], set[str], set
     result = _run_compose(
         root, https_port, ("ps", "--all", "--format", "json"), capture_output=True
     )
-    if not result.stdout.strip():
+    output = result.stdout
+    if not output.strip():
         return set(), set(), set()
+    decoder = json.JSONDecoder()
+    documents: list[object] = []
+    cursor = 0
     try:
-        document = json.loads(result.stdout)
+        while cursor < len(output):
+            while cursor < len(output) and output[cursor].isspace():
+                cursor += 1
+            if cursor == len(output):
+                break
+            document, cursor = decoder.raw_decode(output, cursor)
+            documents.append(document)
     except json.JSONDecodeError as cause:
         raise LocalStandError("Compose returned malformed service state") from cause
-    rows = document if isinstance(document, list) else [document]
+    rows = (
+        documents[0]
+        if len(documents) == 1 and isinstance(documents[0], list)
+        else documents
+    )
     if any(not isinstance(row, dict) for row in rows):
         raise LocalStandError("Compose returned malformed service state")
     present = {str(row.get("Service", "")) for row in rows if row.get("Service")}
@@ -431,8 +448,7 @@ def _agent_is_registered(root: Path, https_port: int) -> bool:
             maximum_delay_seconds=0,
         ),
     )
-    not_before = int(time.time() * 1000) - agent_starter.EXISTING_REGISTRATION_MAX_AGE_MS
-    return agent_starter.RegistrationObserver(client, not_before).registered(
+    return agent_starter.RegistrationObserver(client, None).registered(
         agent_starter.REGISTRATION_REQUEST_TIMEOUT_SECONDS
     )
 
@@ -560,7 +576,25 @@ def _logs(arguments: argparse.Namespace) -> dict[str, object]:
 
 
 def _reset_targets(root: Path) -> dict[str, object]:
-    return {"host_state": str(root), "named_volumes": list(NAMED_VOLUMES)}
+    return {
+        "host_state": str(root),
+        "microsandbox_state": str(agent_configurator.microsandbox_state_root(root)),
+        "named_volumes": list(NAMED_VOLUMES),
+    }
+
+
+def _remove_microsandbox_state(root: Path) -> None:
+    runtime = agent_configurator.microsandbox_state_root(root)
+    if not runtime.exists() and not runtime.is_symlink():
+        return
+    state.validate_private_directory(runtime)
+    tombstone = runtime.with_name(
+        f".{runtime.name}.reset-{os.getpid()}-{time.time_ns()}"
+    )
+    if tombstone.exists() or tombstone.is_symlink():
+        raise LocalStandError(f"reset staging path already exists: {tombstone}")
+    runtime.rename(tombstone)
+    shutil.rmtree(tombstone)
 
 
 def _reset(arguments: argparse.Namespace) -> dict[str, object]:
@@ -587,6 +621,7 @@ def _reset(arguments: argparse.Namespace) -> dict[str, object]:
             root.rename(tombstone)
     if tombstone is not None:
         shutil.rmtree(tombstone)
+    _remove_microsandbox_state(root)
     return {"schema_version": 1, "state": "reset", "removed": targets}
 
 
@@ -601,8 +636,10 @@ def _positive_bounded_seconds(value: str) -> int:
 
 def _port(value: str) -> int:
     parsed = int(value)
-    if not 1 <= parsed <= 65_535:
-        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    if parsed != DEFAULT_HTTPS_PORT:
+        raise argparse.ArgumentTypeError(
+            f"port must equal the shared service port {DEFAULT_HTTPS_PORT}"
+        )
     return parsed
 
 
@@ -619,7 +656,7 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
         default=os.environ.get(
             "OCTACITY_LOCAL_STAND_HTTPS_PORT", str(DEFAULT_HTTPS_PORT)
         ),
-        help="loopback HTTPS port (default: %(default)s)",
+        help="shared host and container HTTPS port; only %(default)s is supported",
     )
 
 

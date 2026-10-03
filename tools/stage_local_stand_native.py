@@ -42,6 +42,7 @@ MAX_RELEASE_FILES = 4096
 MAX_CHECKSUM_BYTES = 4 * 1024 * 1024
 MAX_JOB_SPEC_POLICY_BYTES = 1024 * 1024
 DEFAULT_JOB_SPEC_VALIDITY_SECONDS = 900
+POLICY_HELPER_ROLE = "octacity_release_harness"
 
 
 class NativeStageError(RuntimeError):
@@ -117,6 +118,7 @@ def _download_archive(source: dict[str, Any], destination: Path) -> None:
 
 def _build_agent_archive(
     destination: Path,
+    policy_helper: Path,
     document: dict[str, Any],
     revision: str,
     repository: Path,
@@ -142,6 +144,8 @@ def _build_agent_archive(
                 "octacity-agent",
                 "-p",
                 "octacity-source-git",
+                "-p",
+                "octacity-release-harness",
             ],
             cwd=checkout,
             env=environment,
@@ -179,6 +183,15 @@ def _build_agent_archive(
             ],
             check=True,
         )
+        shutil.copyfile(
+            target / "release/octacity-release-harness",
+            policy_helper,
+        )
+        policy_helper.chmod(0o755)
+        policy_helper.with_name(f"{policy_helper.name}.sha256").write_text(
+            f"{sha256(policy_helper)}  {policy_helper.name}\n",
+            encoding="utf-8",
+        )
 
 
 def prepare_inputs(
@@ -196,7 +209,8 @@ def prepare_inputs(
 
     def populate(root: Path) -> None:
         agent = root / entries["octacity_agent"]["filename"]
-        _build_agent_archive(agent, document, revision, repository)
+        policy_helper = root / entries[POLICY_HELPER_ROLE]["filename"]
+        _build_agent_archive(agent, policy_helper, document, revision, repository)
         octa = root / entries["octa"]["filename"]
         octa_policy = dict(document["native"]["octa"])
         octa_policy["archive_max_bytes"] = entries["octa"]["max_bytes"]
@@ -449,20 +463,13 @@ def validate_native_installation(
 def derive_job_spec_policy(
     installation: Path,
     document: dict[str, Any],
-    repository: Path,
+    policy_helper: Path,
 ) -> dict[str, Any]:
     """Derive a bounded signing policy from the exact installed executor assets."""
 
     result = subprocess.run(
         [
-            "cargo",
-            "run",
-            "--quiet",
-            "--locked",
-            "--offline",
-            "-p",
-            "octacity-release-harness",
-            "--",
+            str(policy_helper),
             "job-spec-policy",
             "--agent-root",
             str(installation / "agent"),
@@ -475,27 +482,49 @@ def derive_job_spec_policy(
             "--validity-seconds",
             str(DEFAULT_JOB_SPEC_VALIDITY_SECONDS),
         ],
-        cwd=repository,
         check=True,
         capture_output=True,
+        text=True,
     )
-    if len(result.stdout) > MAX_JOB_SPEC_POLICY_BYTES:
+    if len(result.stdout.encode("utf-8")) > MAX_JOB_SPEC_POLICY_BYTES:
         raise NativeStageError("generated JobSpec policy exceeds its size limit")
     try:
         policy = json.loads(result.stdout)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except json.JSONDecodeError as error:
         raise NativeStageError(f"generated JobSpec policy is invalid JSON: {error}") from error
     if not isinstance(policy, dict):
         raise NativeStageError("generated JobSpec policy must be an object")
     return policy
 
 
+def validate_policy_helper(path: Path, document: dict[str, Any]) -> None:
+    """Require the staged policy helper to be a bounded executable of this release."""
+
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise NativeStageError("JobSpec policy helper must be a regular file")
+    if os.name == "posix" and metadata.st_mode & 0o111 == 0:
+        raise NativeStageError("JobSpec policy helper must be executable")
+    result = subprocess.run(
+        [str(path), "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    expected = (
+        "octacity-release-harness "
+        f"{document['native']['octacity_agent']['version']}"
+    )
+    if result.stdout.strip() != expected:
+        raise NativeStageError("JobSpec policy helper version differs from the Agent release")
+
+
 def _write_job_spec_policy(
     installation: Path,
     document: dict[str, Any],
-    repository: Path,
+    policy_helper: Path,
 ) -> None:
-    policy = derive_job_spec_policy(installation, document, repository)
+    policy = derive_job_spec_policy(installation, document, policy_helper)
     destination = installation / "job-spec-policy.json"
     destination.write_text(
         json.dumps(policy, sort_keys=True, separators=(",", ":")) + "\n",
@@ -507,10 +536,10 @@ def _write_job_spec_policy(
 def _verify_job_spec_policy(
     installation: Path,
     document: dict[str, Any],
-    repository: Path,
+    policy_helper: Path,
 ) -> None:
     configured = _json_object(installation / "job-spec-policy.json")
-    expected = derive_job_spec_policy(installation, document, repository)
+    expected = derive_job_spec_policy(installation, document, policy_helper)
     if configured != expected:
         raise NativeStageError(
             "installed JobSpec policy differs from the verified Agent toolchain"
@@ -559,15 +588,16 @@ def install_native_bundle(
     entries: dict[str, dict[str, Any]],
     revision: str,
     fixture: Path,
-    repository: Path = REPOSITORY,
 ) -> Path:
     """Install only verified local inputs, validate them, and atomically activate."""
 
     context.validate_staging_directory(inputs_root, entries, document, revision)
+    policy_helper = inputs_root / entries[POLICY_HELPER_ROLE]["filename"]
+    validate_policy_helper(policy_helper, document)
     if destination.is_dir() and not destination.is_symlink():
         _verify_installation_manifest(destination, document, entries, inputs_root, revision)
         validate_native_installation(destination, document, revision, fixture)
-        _verify_job_spec_policy(destination, document, repository)
+        _verify_job_spec_policy(destination, document, policy_helper)
         return destination.resolve()
 
     def populate(root: Path) -> None:
@@ -592,7 +622,7 @@ def install_native_bundle(
         _install_microsandbox(raw, root / "microsandbox")
         shutil.rmtree(raw)
         validate_native_installation(root, document, revision, fixture)
-        _write_job_spec_policy(root, document, repository)
+        _write_job_spec_policy(root, document, policy_helper)
         manifest = {
             "schema_version": 1,
             "agent_revision": revision,
@@ -654,7 +684,6 @@ def main() -> int:
                 entries,
                 revision,
                 arguments.fixture.resolve(),
-                repository,
             )
             print(path)
         else:

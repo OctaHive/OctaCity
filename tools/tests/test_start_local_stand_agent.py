@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -101,6 +102,9 @@ class NativeAgentStartupTests(unittest.TestCase):
         for relative in ("secrets", "agent/state", "config", "logs"):
             (self.root / relative).mkdir(parents=True, mode=0o700)
         self.root.chmod(0o700)
+        self.state_root = configurator.microsandbox_state_root(self.root)
+        self.state_root.mkdir(mode=0o700)
+        self.addCleanup(shutil.rmtree, self.state_root, True)
         self.installation = temporary_root / "native"
         self.agent = self.installation / "agent/bin/octacity-agent"
         self.msb = self.installation / "microsandbox/bin/msb"
@@ -144,7 +148,7 @@ class NativeAgentStartupTests(unittest.TestCase):
         self.config.chmod(0o600)
         self.receipt = {
             "config": str(self.config),
-            "state_root": str(self.root / "agent/state"),
+            "state_root": str(self.state_root),
         }
         self.online_page = {
             "items": [
@@ -208,7 +212,7 @@ class NativeAgentStartupTests(unittest.TestCase):
         arguments = doctor.call_args.args[0]
         self.assertEqual(arguments, [str(self.msb), "doctor"])
         environment = doctor.call_args.kwargs["env"]
-        self.assertEqual(environment["MSB_HOME"], str(self.root / "agent/state/microsandbox"))
+        self.assertEqual(environment["MSB_HOME"], str(self.state_root / "microsandbox"))
         self.assertEqual(environment["MSB_LIBKRUNFW_PATH"], str(self.libkrunfw))
         self.assertEqual(
             owner.launched[0],
@@ -223,8 +227,10 @@ class NativeAgentStartupTests(unittest.TestCase):
             self.root,
             disposition=lifecycle.StartDisposition.ALREADY_RUNNING,
         )
+        page = json.loads(json.dumps(self.online_page))
+        page["items"][0]["last_seen_at_unix_ms"] = 1
 
-        result, generate, doctor = self.start(owner, AgentTransport([self.online_page]))
+        result, generate, doctor = self.start(owner, AgentTransport([page]))
 
         self.assertEqual(result.state, "already_running")
         self.assertEqual(result.pid, 4242)

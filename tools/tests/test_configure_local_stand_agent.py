@@ -14,6 +14,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -46,6 +47,11 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name) / "stand"
+        self.addCleanup(
+            shutil.rmtree,
+            CONFIGURATOR.microsandbox_state_root(self.root),
+            True,
+        )
         INITIALIZER.initialize(
             self.root,
             repository=REPOSITORY,
@@ -196,15 +202,19 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         configuration_path = Path(receipt["config"])
         self.assertEqual(stat.S_IMODE(configuration_path.stat().st_mode), 0o600)
         configuration = tomllib.loads(configuration_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            Path(configuration["state_root"]),
+            CONFIGURATOR.microsandbox_state_root(self.root),
+        )
 
-        self.assertEqual(configuration["server_url"], "https://agent.localhost")
+        self.assertEqual(configuration["server_url"], "https://agent.localhost:8443")
         self.assertEqual(
             configuration["cache"]["allowed_remote_origins"],
-            ["https://cache.localhost"],
+            ["https://cache.localhost:8443"],
         )
         self.assertEqual(
             configuration["allowed_upload_origins"],
-            ["https://objects.localhost"],
+            ["https://objects.localhost:8443"],
         )
         self.assertEqual(configuration["enabled_runtime_modes"], [])
         self.assertIs(configuration["allow_native_execution"], False)
@@ -239,6 +249,17 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         snapshot = (configuration_path.read_bytes(), configuration_path.stat().st_mtime_ns)
         self.assertEqual(receipt, self.generate())
         self.assertEqual(snapshot, (configuration_path.read_bytes(), configuration_path.stat().st_mtime_ns))
+
+    def test_repeated_generation_does_not_reopen_the_live_agent_state(self):
+        with mock.patch.object(
+            CONFIGURATOR,
+            "_validate_with_agent",
+            wraps=CONFIGURATOR._validate_with_agent,
+        ) as validate:
+            self.generate()
+            self.generate()
+
+        validate.assert_called_once()
 
     def test_rejects_wrong_host_or_missing_credential_before_publishing(self):
         with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError, "Apple Silicon"):

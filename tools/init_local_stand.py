@@ -30,6 +30,7 @@ GATEWAY_HOSTNAMES = (
     "cache.localhost",
     "objects.localhost",
 )
+GATEWAY_HTTPS_PORT = 8443
 CREDENTIAL_FILES = {
     "database_password": "postgres-password",
     "object_access_key": "object-access-key",
@@ -64,6 +65,14 @@ private_umask = state.private_umask
 resolve_safe_root = state.resolve_safe_root
 validate_private_directory = state.validate_private_directory
 ensure_private_directory = state.ensure_private_directory
+
+
+def gateway_origin(hostname: str) -> str:
+    """Return the canonical origin for one reviewed local gateway hostname."""
+
+    if hostname not in GATEWAY_HOSTNAMES:
+        raise InitializationError(f"unrecognized local gateway hostname: {hostname}")
+    return f"https://{hostname}:{GATEWAY_HTTPS_PORT}"
 
 
 def _credential_value(name: str) -> bytes:

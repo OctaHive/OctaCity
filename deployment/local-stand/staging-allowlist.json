@@ -11,6 +11,15 @@
       "max_members": 4096
     },
     {
+      "role": "octacity_release_harness",
+      "filename": "octacity-release-harness-macos-arm64",
+      "manifest_entry": "native.octacity_agent",
+      "integrity": "built-revision-and-sha256-sidecar",
+      "max_bytes": 134217728,
+      "max_expanded_bytes": 134217728,
+      "max_members": 1
+    },
+    {
       "role": "octa",
       "filename": "octa-linux-arm64-v0.4.0.tar.gz",
       "manifest_entry": "native.octa",

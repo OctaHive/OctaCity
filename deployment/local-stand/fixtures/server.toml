@@ -21,7 +21,7 @@ key_file = "/run/octacity-secrets/signing-key"
 enrollment_key_file = "/run/octacity-secrets/agent-enrollment-key"
 
 [cache]
-endpoint = "https://cache.localhost"
+endpoint = "https://cache.localhost:8443"
 credential_key_file = "/run/octacity-secrets/cache-credential-key"
 session_lifetime_milliseconds = 300000
 

@@ -128,7 +128,7 @@ def _postgres_url(password: str) -> bytes:
 
 
 def _server_toml() -> bytes:
-    return b"""management_bind = "0.0.0.0:8080"
+    return f'''management_bind = "0.0.0.0:8080"
 agent_bind = "0.0.0.0:8081"
 cache_bind = "0.0.0.0:8082"
 acknowledge_unauthenticated_management = true
@@ -139,7 +139,7 @@ supported_pipeline_capabilities = ["oci.hypervisor", "shell"]
 max_connections = 10
 
 [object_storage]
-endpoint = "https://objects.localhost"
+endpoint = "{initializer.gateway_origin("objects.localhost")}"
 region = "us-east-1"
 bucket = "octacity-artifacts"
 force_path_style = true
@@ -154,13 +154,13 @@ key_file = "/run/octacity-secrets/signing-key"
 enrollment_key_file = "/run/octacity-secrets/agent-enrollment-key"
 
 [cache]
-endpoint = "https://cache.localhost"
+endpoint = "{initializer.gateway_origin("cache.localhost")}"
 credential_key_file = "/run/octacity-secrets/cache-credential-key"
 session_lifetime_milliseconds = 300000
 
 [job_spec]
 policy_file = "/run/octacity/job-spec-policy.json"
-"""
+'''.encode("utf-8")
 
 
 def _expected_bundle(password: str, policy: bytes) -> dict[str, bytes]:

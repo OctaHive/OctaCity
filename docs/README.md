@@ -16,6 +16,7 @@ Documents that explain ownership, trust boundaries, and extension points:
 
 Runbooks for deploying and maintaining released components:
 
+- [Local Apple Silicon stand](operations/local-stand.md)
 - [Server operations](operations/server.md)
 - [Agent operations](operations/agent.md)
 - [Backup, restore, and reconciliation](operations/backup-restore.md)

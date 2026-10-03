@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -351,17 +352,33 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(running, {"server", "gateway"})
         self.assertEqual(healthy, {"server"})
 
-    def test_gateway_origin_is_derived_from_the_published_port(self):
-        arguments = self.arguments("up", "--https-port", "9443")
-        self.assertEqual(launcher._resolved_origin(arguments), "https://octacity.localhost:9443")
+    def test_compose_state_accepts_compose_v5_json_lines(self):
+        rows = [
+            {"Service": "server", "State": "running", "Health": "healthy"},
+            {"Service": "minio-init", "State": "exited", "Health": ""},
+        ]
+        output = "\n".join(json.dumps(row) for row in rows)
+        with mock.patch.object(
+            launcher,
+            "_run_compose",
+            return_value=subprocess.CompletedProcess([], 0, output, ""),
+        ):
+            present, running, healthy = launcher._compose_state(self.root, 8443)
 
-        mismatch = self.arguments(
-            "up",
-            "--https-port",
-            "9443",
-            "--origin",
-            "https://octacity.localhost:8443",
+        self.assertEqual(present, {"server", "minio-init"})
+        self.assertEqual(running, {"server"})
+        self.assertEqual(healthy, {"server"})
+
+    def test_gateway_origin_uses_the_shared_host_and_container_port(self):
+        arguments = self.arguments("up")
+        self.assertEqual(
+            launcher._resolved_origin(arguments), "https://octacity.localhost:8443"
         )
+
+        with self.assertRaises(SystemExit):
+            self.arguments("up", "--https-port", "9443")
+
+        mismatch = self.arguments("up", "--origin", "https://octacity.localhost:9443")
         with self.assertRaisesRegex(launcher.LocalStandError, "must match"):
             launcher._resolved_origin(mismatch)
 
@@ -437,6 +454,11 @@ class LocalStandLauncherTests(unittest.TestCase):
     def test_confirmed_reset_stops_then_removes_volumes_and_host_state(self):
         self.root.mkdir(mode=0o700)
         (self.root / "durable").write_text("state", encoding="utf-8")
+        microsandbox_state = launcher.agent_configurator.microsandbox_state_root(
+            self.root
+        )
+        microsandbox_state.mkdir(mode=0o700)
+        self.addCleanup(shutil.rmtree, microsandbox_state, True)
         owner = FakeOwner(self.root)
         events: list[object] = []
         with (
@@ -461,6 +483,7 @@ class LocalStandLauncherTests(unittest.TestCase):
 
         self.assertEqual(events, ["agent", ("compose", True)])
         self.assertFalse(self.root.exists())
+        self.assertFalse(microsandbox_state.exists())
         self.assertEqual(receipt["state"], "reset")
 
     def test_launcher_entrypoint_is_executable(self):

@@ -11,6 +11,18 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 2 * * 1"
+  pull_request:
+    paths:
+      - ".dockerignore"
+      - ".gitleaks.toml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/security.yml"
+      - "compose.yaml"
+      - "deployment/local-stand/**"
+      - "tools/*local_stand*.py"
+      - "tools/build_pinned_minio.py"
+      - "tools/pinned_source_archive.py"
+      - "tools/tests/test_*local_stand*.py"
   push:
     branches:
       - "**"
@@ -22,7 +34,15 @@ on:
       - ".gitleaks.toml"
       - ".github/octa-source-revision"
       - ".github/actions/checkout-octa/action.yml"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/security.yml"
+      - ".dockerignore"
+      - "compose.yaml"
+      - "deployment/local-stand/**"
+      - "tools/*local_stand*.py"
+      - "tools/build_pinned_minio.py"
+      - "tools/pinned_source_archive.py"
+      - "tools/tests/test_*local_stand*.py"
 
 permissions:
   contents: read

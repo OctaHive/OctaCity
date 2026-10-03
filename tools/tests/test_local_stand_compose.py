@@ -165,6 +165,9 @@ class LocalStandComposeContractTests(unittest.TestCase):
             set(services),
             {"gateway", "minio", "minio-init", "postgres", "server"},
         )
+        self.assertTrue(
+            all(service["platform"] == "linux/arm64" for service in services.values())
+        )
         self.assertEqual(set(configuration["networks"]), {"edge", "stand"})
         self.assertTrue(configuration["networks"]["stand"]["internal"])
         self.assertFalse(configuration["networks"]["edge"].get("internal", False))
@@ -301,13 +304,13 @@ class LocalStandComposeContractTests(unittest.TestCase):
         self.assertTrue(gateway["read_only"])
         self.assertEqual(
             gateway["depends_on"],
-            {"server": {"condition": "service_healthy", "required": True}},
+            {"server": {"condition": "service_started", "required": True}},
         )
         self.assertEqual(gateway["healthcheck"]["interval"], "2s")
         self.assertEqual(gateway["healthcheck"]["timeout"], "3s")
         self.assertEqual(gateway["healthcheck"]["retries"], 30)
         self.assertIn(
-            "https://octacity.localhost/health/ready",
+            "https://octacity.localhost:8443/health/ready",
             gateway["healthcheck"]["test"],
         )
         self.assertEqual(gateway["stop_grace_period"], "30s")
@@ -340,7 +343,7 @@ class LocalStandComposeContractTests(unittest.TestCase):
         self.assertEqual(set(published), {"gateway"})
         self.assertEqual(len(published["gateway"]), 1)
         self.assertEqual(published["gateway"][0]["host_ip"], "127.0.0.1")
-        self.assertEqual(published["gateway"][0]["target"], 443)
+        self.assertEqual(published["gateway"][0]["target"], 8443)
 
 
 @unittest.skipUnless(

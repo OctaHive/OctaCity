@@ -172,6 +172,13 @@ class NativeStandStagingTests(unittest.TestCase):
         archive(msb_root, msb_archive)
         document["native"]["microsandbox"]["sha256"] = digest(msb_archive)
 
+        policy_helper = root / self.entries[STAGER.POLICY_HELPER_ROLE]["filename"]
+        write_executable(policy_helper, "#!/bin/sh\nexit 0\n")
+        policy_helper.with_name(f"{policy_helper.name}.sha256").write_text(
+            f"{digest(policy_helper)}  {policy_helper.name}\n",
+            encoding="utf-8",
+        )
+
         for directory in (agent_root, octa_root, msb_root):
             for path in sorted(directory.rglob("*"), reverse=True):
                 path.unlink() if path.is_file() else path.rmdir()
@@ -193,6 +200,12 @@ class NativeStandStagingTests(unittest.TestCase):
                 )
             if arguments == ["--version"] and executable == "msb":
                 return subprocess.CompletedProcess(command, 0, stdout="msb 0.7.6\n")
+            if arguments == ["--version"] and executable.startswith(
+                "octacity-release-harness-"
+            ):
+                return subprocess.CompletedProcess(
+                    command, 0, stdout="octacity-release-harness 0.1.0\n"
+                )
             if arguments[:1] == ["validate"] and executable == "octacity-agent":
                 if not validation_succeeds:
                     raise subprocess.CalledProcessError(1, command)
@@ -221,13 +234,21 @@ class NativeStandStagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "inputs"
 
-            def write_archive(*args, **_kwargs):
-                path = next(value for value in args if isinstance(value, Path))
-                path.write_bytes(b"archive")
+            def write_agent_archive(agent, policy_helper, *_args, **_kwargs):
+                agent.write_bytes(b"agent archive")
+                policy_helper.write_bytes(b"policy helper")
+                policy_helper.with_name(f"{policy_helper.name}.sha256").write_text(
+                    f"{digest(policy_helper)}  {policy_helper.name}\n",
+                    encoding="utf-8",
+                )
+
+            def write_archive(source, destination):
+                del source
+                destination.write_bytes(b"archive")
 
             with (
                 mock.patch.object(
-                    STAGER, "_build_agent_archive", side_effect=write_archive
+                    STAGER, "_build_agent_archive", side_effect=write_agent_archive
                 ),
                 mock.patch.object(STAGER, "_download_archive", side_effect=write_archive),
                 mock.patch.object(
@@ -358,20 +379,21 @@ class NativeStandStagingTests(unittest.TestCase):
 
     def test_policy_derivation_is_offline_bounded_and_platform_explicit(self):
         installation = Path("/verified/native-installation")
-        encoded = json.dumps(self.policy).encode("utf-8")
+        helper = Path("/verified/native-inputs/octacity-release-harness-macos-arm64")
+        encoded = json.dumps(self.policy)
         result = mock.Mock(stdout=encoded)
 
         with mock.patch.object(STAGER.subprocess, "run", return_value=result) as run:
             policy = REAL_DERIVE_JOB_SPEC_POLICY(
                 installation,
                 self.document,
-                REPOSITORY,
+                helper,
             )
 
         self.assertEqual(policy, self.policy)
         command = run.call_args.args[0]
-        self.assertIn("--offline", command)
-        self.assertIn("--locked", command)
+        self.assertEqual(Path(command[0]), helper)
+        self.assertNotIn("cargo", command)
         self.assertIn("--agent-platform", command)
         self.assertIn("macos-arm64", command)
         self.assertIn("--octa-platform", command)

@@ -104,6 +104,20 @@ def image_tag(reference: object, label: str) -> str:
     return tag
 
 
+def immutable_image(reference: object, label: str) -> str:
+    """Validate a digest-only OCI identity used by an execution backend."""
+
+    text = require_string(reference, label)
+    marker = "@sha256:"
+    if text.count(marker) != 1:
+        raise InputError(f"{label} must contain exactly one sha256 digest")
+    repository, digest = text.rsplit(marker, 1)
+    if repository != "quay.io/fedora/fedora":
+        raise InputError(f"{label} must use the approved Fedora repository")
+    require_match(digest, SHA256, f"{label} digest")
+    return text
+
+
 def validate_images(
     value: object, label: str, expected_roles: frozenset[str], platform: str
 ) -> dict[str, str]:
@@ -235,6 +249,7 @@ def validate_microsandbox(value: dict[str, Any]) -> None:
             "asset",
             "asset_id",
             "firmware",
+            "guest_image",
             "platform",
             "release_url",
             "repository",
@@ -260,6 +275,7 @@ def validate_microsandbox(value: dict[str, Any]) -> None:
         raise InputError("native.microsandbox.firmware is unexpected")
     if value["repository"] != "https://github.com/superradcompany/microsandbox":
         raise InputError("native.microsandbox.repository is unexpected")
+    immutable_image(value["guest_image"], "native.microsandbox.guest_image")
     require_match(value["sha256"], SHA256, "native.microsandbox.sha256")
     require_match(value["source_revision"], GIT_SHA1, "native.microsandbox.source_revision")
     expected_url = (

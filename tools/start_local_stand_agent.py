@@ -23,9 +23,6 @@ AGENTS_PATH = "/api/v1/agents?limit=100"
 DOCTOR_TIMEOUT_SECONDS = 30
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 60
 REGISTRATION_REQUEST_TIMEOUT_SECONDS = 2
-EXISTING_REGISTRATION_MAX_AGE_MS = (
-    3 * configurator.LOCAL_AGENT_LIMITS["heartbeat_interval_seconds"] * 1000
-)
 SHUTDOWN_GRACE_SECONDS = 10
 SHUTDOWN_FORCE_SECONDS = 5
 
@@ -105,7 +102,11 @@ def _run_doctor(
 class RegistrationObserver:
     """Recognize only the expected online native virtualization Agent."""
 
-    def __init__(self, client: bootstrap.BootstrapClient, not_before_unix_ms: int):
+    def __init__(
+        self,
+        client: bootstrap.BootstrapClient,
+        not_before_unix_ms: int | None,
+    ):
         self._client = client
         self._not_before_unix_ms = not_before_unix_ms
 
@@ -138,7 +139,10 @@ class RegistrationObserver:
         if (
             not isinstance(last_seen, int)
             or isinstance(last_seen, bool)
-            or last_seen < self._not_before_unix_ms
+            or (
+                self._not_before_unix_ms is not None
+                and last_seen < self._not_before_unix_ms
+            )
         ):
             return False
         inventory = item.get("inventory")
@@ -212,7 +216,7 @@ def _start_locked(
         now_unix_ms = int(time.time() * 1000)
         disposition = owner.reconcile_before_start(AGENT_PROCESS_NAME)
         if disposition is lifecycle.StartDisposition.ALREADY_RUNNING:
-            registration_not_before = now_unix_ms - EXISTING_REGISTRATION_MAX_AGE_MS
+            registration_not_before = None
             result_state = "already_running"
         else:
             registration_not_before = now_unix_ms

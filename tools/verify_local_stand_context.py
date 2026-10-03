@@ -93,6 +93,10 @@ STAGING_FIELDS = {
 }
 STAGING_POLICY = {
     "octacity_agent": ("native.octacity_agent", "release-manifest-and-sha256-sidecar"),
+    "octacity_release_harness": (
+        "native.octacity_agent",
+        "built-revision-and-sha256-sidecar",
+    ),
     "octa": ("native.octa", "release-manifest-and-sha256-sidecar"),
     "microsandbox": ("native.microsandbox", "manifest-sha256"),
 }
@@ -215,6 +219,9 @@ def load_staging_allowlist(path: Path, inputs_path: Path) -> dict[str, dict[str,
     native = _require_object(immutable.get("native"), "immutable inputs.native")
     expected_filenames = {
         "octacity_agent": f"octacity-agent-{native['octacity_agent']['platform']}.tar.gz",
+        "octacity_release_harness": (
+            f"octacity-release-harness-{native['octacity_agent']['platform']}"
+        ),
         "octa": f"{native['octa']['release_name']}.tar.gz",
         "microsandbox": native["microsandbox"]["asset"],
     }
@@ -372,7 +379,7 @@ def validate_staging_directory(
     sidecars = {
         f"{entry['filename']}.sha256": entry
         for entry in entries.values()
-        if entry["integrity"] == "release-manifest-and-sha256-sidecar"
+        if entry["integrity"].endswith("sha256-sidecar")
     }
     actual = {path.name: path for path in directory.iterdir()}
     expected_names = set(expected) | set(sidecars)

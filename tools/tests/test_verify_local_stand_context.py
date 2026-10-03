@@ -52,6 +52,13 @@ class LocalStandContextTests(unittest.TestCase):
         }
         for role, entry in entries.items():
             archive = root / entry["filename"]
+            if role == "octacity_release_harness":
+                archive.write_bytes(b"verified policy helper fixture")
+                digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+                (root / f"{entry['filename']}.sha256").write_text(
+                    f"{digest}  {entry['filename']}\n", encoding="utf-8"
+                )
+                continue
             if role == "microsandbox":
                 archive.write_bytes(b"verified Microsandbox fixture")
                 immutable["native"][role]["sha256"] = hashlib.sha256(
@@ -114,6 +121,10 @@ class LocalStandContextTests(unittest.TestCase):
         self.assertEqual(set(entries), set(VERIFY.STAGING_POLICY))
         self.assertEqual(entries["microsandbox"]["filename"], "microsandbox-darwin-aarch64.tar.gz")
         self.assertEqual(entries["octa"]["filename"], "octa-linux-arm64-v0.4.0.tar.gz")
+        self.assertEqual(
+            entries["octacity_release_harness"]["filename"],
+            "octacity-release-harness-macos-arm64",
+        )
 
     def test_complete_regular_staging_directory_is_accepted(self):
         entries = VERIFY.load_staging_allowlist(
@@ -169,6 +180,14 @@ class LocalStandContextTests(unittest.TestCase):
             immutable = self.staging_fixture(root, entries)
             microsandbox = root / entries["microsandbox"]["filename"]
             microsandbox.write_bytes(b"tampered")
+            with self.assertRaisesRegex(VERIFY.ContextError, "checksum mismatch"):
+                VERIFY.validate_staging_directory(root, entries, immutable, AGENT_REVISION)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            immutable = self.staging_fixture(root, entries)
+            helper = root / entries["octacity_release_harness"]["filename"]
+            helper.write_bytes(b"tampered")
             with self.assertRaisesRegex(VERIFY.ContextError, "checksum mismatch"):
                 VERIFY.validate_staging_directory(root, entries, immutable, AGENT_REVISION)
 

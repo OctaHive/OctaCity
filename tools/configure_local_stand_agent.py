@@ -46,6 +46,7 @@ LOCAL_AGENT_LABELS = {
     "environment": "local-stand",
 }
 LOCAL_HOST_PLATFORM = {"os": "macos", "architecture": "arm64"}
+MICROSANDBOX_STATE_PARENT = Path("/tmp").resolve()
 
 # This is a workstation profile, not protocol policy. Values are collected in
 # one place so future hardware profiles can replace the renderer input without
@@ -122,6 +123,13 @@ class AgentLaunchPlan:
 
 class AgentConfigurationError(RuntimeError):
     """The native local-stand Agent configuration cannot be trusted."""
+
+
+def microsandbox_state_root(root: Path) -> Path:
+    """Return a private, stable path short enough for macOS Unix sockets."""
+
+    identity = hashlib.sha256(os.fsencode(root.resolve(strict=False))).hexdigest()[:12]
+    return MICROSANDBOX_STATE_PARENT / f"ocm-{state.current_uid()}-{identity}"
 
 
 def _regular_file(
@@ -339,7 +347,7 @@ def _render_config(
 ) -> bytes:
     agent_root = root / "agent"
     work_root = agent_root / "work"
-    state_root = agent_root / "state"
+    state_root = microsandbox_state_root(root)
     cache_root = agent_root / "cache"
     values = {
         "credential": _toml_string(credential),
@@ -363,7 +371,7 @@ def _render_config(
         f"{name} = {json.dumps(value)}" for name, value in LOCAL_AGENT_LABELS.items()
     )
     return f'''agent_id = "{LOCAL_AGENT_NAME}"
-server_url = "https://agent.localhost"
+server_url = "{initializer.gateway_origin("agent.localhost")}"
 credential_file = {values["credential"]}
 tls_ca_certificate_file = {values["ca"]}
 work_root = {values["work"]}
@@ -377,7 +385,7 @@ native_linux_pids_limit = 0
 allow_host_execution = false
 allow_unrestricted_network = false
 allowed_network_hosts = []
-allowed_upload_origins = ["https://objects.localhost"]
+allowed_upload_origins = ["{initializer.gateway_origin("objects.localhost")}"]
 {agent_limits}
 max_output_limits = {output_limits}
 oci_engines = []
@@ -387,7 +395,7 @@ isolation_providers = []
 root = {values["cache"]}
 allow_read = true
 allow_write = true
-allowed_remote_origins = ["https://cache.localhost"]
+allowed_remote_origins = ["{initializer.gateway_origin("cache.localhost")}"]
 ca_certificate_file = {values["ca"]}
 native_environment_identities = {{}}
 {cache_limits}
@@ -419,7 +427,7 @@ def validated_launch_plan(
     """Validate the generated profile once at its owning module boundary."""
 
     expected_config = root / "config/agent.toml"
-    expected_state = root / "agent/state"
+    expected_state = microsandbox_state_root(root)
     if receipt.get("config") != str(expected_config) or receipt.get("state_root") != str(
         expected_state
     ):
@@ -579,9 +587,9 @@ def generate_agent_configuration(
         )
         for path in (
             agent_root / "work",
-            agent_root / "state",
             agent_root / "cache",
             agent_root / "trust",
+            microsandbox_state_root(root),
             root / "logs",
             root / "logs/agent",
             root / "config",
@@ -622,7 +630,6 @@ def generate_agent_configuration(
         destination = root / "config/agent.toml"
         if destination.exists() or destination.is_symlink():
             _ensure_exact_private_file(destination, contents, "generated Agent configuration")
-            _validate_with_agent(installed["agent"], destination)
         else:
             descriptor, temporary_name = tempfile.mkstemp(
                 prefix=f".{destination.name}.staging-", dir=destination.parent
@@ -651,7 +658,7 @@ def generate_agent_configuration(
         "config": str(destination),
         "credential": str(credential),
         "work_root": str(agent_root / "work"),
-        "state_root": str(agent_root / "state"),
+        "state_root": str(microsandbox_state_root(root)),
         "cache_root": str(agent_root / "cache"),
         "log_root": str(root / "logs/agent"),
         "ca_certificate": str(trusted_ca),

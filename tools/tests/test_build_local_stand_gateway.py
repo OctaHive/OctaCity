@@ -97,7 +97,7 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         )
         gateway = dockerfile.split("FROM ${NGINX_IMAGE} AS gateway", 1)[1]
         self.assertIn("USER 101:101", gateway)
-        self.assertIn("EXPOSE 443", gateway)
+        self.assertIn("EXPOSE 8443", gateway)
         self.assertNotIn("node_modules", gateway)
         self.assertNotIn("COPY ui/", gateway)
 
@@ -117,13 +117,13 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         self.assertIn("minio:127.0.0.1", command)
         self.assertIn("objects.localhost:127.0.0.1", command)
         self.assertIn("/srv/octacity-ui/index.html", contract)
-        self.assertIn("https://octacity.localhost/", contract)
+        self.assertIn("https://octacity.localhost:8443/", contract)
         self.assertIn("cmp /tmp/index.html /srv/octacity-ui/index.html", contract)
         self.assertIn("/api/v1/management-only", contract)
         self.assertIn("/api/v1/unknown", contract)
         self.assertIn("/health/unknown", contract)
         self.assertIn(
-            "objects.localhost|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host",
+            "objects.localhost:8443|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host",
             contract,
         )
         for excluded in (
@@ -150,11 +150,29 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
             "cache.localhost",
             "objects.localhost",
         ):
-            self.assertIn("listen 443 ssl", nginx_server(config, host))
+            self.assertIn("listen 8443 ssl", nginx_server(config, host))
         console = nginx_server(config, "octacity.localhost")
         self.assertIn("try_files $uri $uri/ /index.html", console)
         self.assertEqual(config.count("try_files $uri $uri/ /index.html"), 1)
         self.assertIn("pid /tmp/nginx.pid", config)
+
+    def test_access_log_never_records_presigned_query_credentials(self):
+        config = (REPOSITORY / "deployment/local-stand/nginx.conf").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("log_format safe", config)
+        self.assertIn('"$request_method $uri $server_protocol"', config)
+        self.assertIn("access_log /dev/stdout safe", config)
+        log_format = config.split("log_format safe", 1)[1].split(";", 1)[0]
+        for sensitive_variable in ("$request_uri", "$request ", "$args"):
+            self.assertNotIn(sensitive_variable, log_format)
+
+        # Nginx warning and error messages can embed its internal $request and
+        # upstream URL regardless of the access-log format. Credential-bearing
+        # virtual hosts therefore emit only process-critical diagnostics.
+        for host in ("cache.localhost", "objects.localhost"):
+            self.assertIn("error_log /dev/stderr crit;", nginx_server(config, host))
 
     def test_console_api_and_health_prefixes_always_reach_management(self):
         config = (REPOSITORY / "deployment/local-stand/nginx.conf").read_text(
