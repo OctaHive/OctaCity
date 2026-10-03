@@ -28,17 +28,24 @@ class LocalStandCiContractTests(unittest.TestCase):
     def test_native_gate_stages_and_validates_the_complete_apple_silicon_bundle(self):
         workflow = CI.read_text(encoding="utf-8")
         job = workflow.split("  local-stand-native-staging:\n", 1)[1].split(
-            "  quality:\n", 1
+            "  local-stand-apple-silicon:\n", 1
         )[0]
 
-        self.assertIn("runs-on: macos-14", job)
+        self.assertIn("runs-on: macos-15", job)
         self.assertIn("tools/stage_local_stand_native.py all", job)
         self.assertIn("tools/configure_local_stand_server.py", job)
         self.assertIn("tools/configure_local_stand_agent.py", job)
+        credential = "configuration-validation-only"
+        self.assertIn(credential, job)
+        self.assertLess(
+            job.index(credential), job.index("tools/configure_local_stand_agent.py")
+        )
+        self.assertIn("report_native_staging_failure", job)
+        self.assertIn("trap report_native_staging_failure EXIT", job)
         self.assertIn("python3 tools/check_local_stand_logs.py", job)
         self.assertNotIn("continue-on-error", job)
 
-    def test_apple_silicon_gate_runs_the_complete_idempotent_lifecycle(self):
+    def test_apple_silicon_gate_is_opt_in_and_runs_the_complete_idempotent_lifecycle(self):
         workflow = CI.read_text(encoding="utf-8")
         job = workflow.split("  local-stand-apple-silicon:\n", 1)[1].split(
             "  quality:\n", 1
@@ -52,6 +59,7 @@ class LocalStandCiContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", job)
         self.assertIn("persist-credentials: false", job)
         self.assertIn("if: github.event_name != 'pull_request'", job)
+        self.assertIn("vars.OCTACITY_APPLE_SILICON_LOCAL_STAND == 'true'", job)
         self.assertIn("Require a clean dedicated stand namespace", job)
         self.assertIn('install -m 0600 /dev/null "${evidence}/lifecycle.log"', job)
         self.assertIn('install -m 0600 /dev/null "${evidence}/runtime-running.log"', job)

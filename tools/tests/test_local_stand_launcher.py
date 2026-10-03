@@ -382,6 +382,9 @@ class LocalStandLauncherTests(unittest.TestCase):
         with self.assertRaisesRegex(launcher.LocalStandError, "must match"):
             launcher._resolved_origin(mismatch)
 
+    @unittest.skipUnless(
+        os.name == "posix", "local stand log ownership requires POSIX permissions"
+    )
     def test_logs_include_bounded_compose_and_native_output(self):
         self.root.mkdir(mode=0o700)
         logs = self.root / "logs"
@@ -410,6 +413,9 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(receipt["native"], ["agent", "microsandbox-preflight"])
         self.assertEqual(compose.call_args.args[2], ("logs", "--no-color", "--tail", "25"))
 
+    @unittest.skipUnless(
+        os.name == "posix", "local stand log ownership requires POSIX permissions"
+    )
     def test_log_reader_returns_only_the_bounded_tail(self):
         path = self.root.parent / "agent.log"
         path.write_bytes(b"x" * (launcher.MAX_LOG_TAIL_BYTES + 17) + b"tail")
@@ -439,8 +445,14 @@ class LocalStandLauncherTests(unittest.TestCase):
 
     def test_reset_without_exact_confirmation_only_lists_targets(self):
         output = io.StringIO()
+        microsandbox_state = self.root.parent / "microsandbox-state"
         with (
             mock.patch.object(launcher, "_compose_down") as down,
+            mock.patch.object(
+                launcher.agent_configurator,
+                "microsandbox_state_root",
+                return_value=microsandbox_state,
+            ),
             redirect_stdout(output),
             self.assertRaisesRegex(launcher.LocalStandError, "nothing was deleted"),
         ):
@@ -449,19 +461,24 @@ class LocalStandLauncherTests(unittest.TestCase):
         down.assert_not_called()
         targets = json.loads(output.getvalue())["destructive_reset_targets"]
         self.assertEqual(targets["host_state"], str(self.root))
+        self.assertEqual(targets["microsandbox_state"], str(microsandbox_state))
         self.assertEqual(tuple(targets["named_volumes"]), launcher.NAMED_VOLUMES)
 
     def test_confirmed_reset_stops_then_removes_volumes_and_host_state(self):
         self.root.mkdir(mode=0o700)
         (self.root / "durable").write_text("state", encoding="utf-8")
-        microsandbox_state = launcher.agent_configurator.microsandbox_state_root(
-            self.root
-        )
+        microsandbox_state = self.root.parent / "microsandbox-state"
         microsandbox_state.mkdir(mode=0o700)
         self.addCleanup(shutil.rmtree, microsandbox_state, True)
         owner = FakeOwner(self.root)
         events: list[object] = []
         with (
+            mock.patch.object(
+                launcher.agent_configurator,
+                "microsandbox_state_root",
+                return_value=microsandbox_state,
+            ),
+            mock.patch.object(launcher.state, "validate_private_directory"),
             mock.patch.object(launcher, "_with_optional_lifecycle", return_value=owner),
             mock.patch.object(
                 launcher,
@@ -487,8 +504,20 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(receipt["state"], "reset")
 
     def test_launcher_entrypoint_is_executable(self):
-        mode = stat.S_IMODE((REPOSITORY / "tools/local-stand").stat().st_mode)
-        self.assertEqual(mode & 0o111, 0o111)
+        entrypoint = REPOSITORY / "tools/local-stand"
+        if os.name == "posix":
+            mode = stat.S_IMODE(entrypoint.stat().st_mode)
+            self.assertEqual(mode & 0o111, 0o111)
+            return
+
+        tracked = subprocess.run(
+            ["git", "ls-files", "--stage", "--", "tools/local-stand"],
+            cwd=REPOSITORY,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertTrue(tracked.stdout.startswith("100755 "), tracked.stdout)
 
 
 if __name__ == "__main__":

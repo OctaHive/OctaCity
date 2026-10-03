@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -15,6 +16,9 @@ import check_local_stand_logs as checker  # noqa: E402
 import init_local_stand as initializer  # noqa: E402
 
 
+@unittest.skipUnless(
+    os.name == "posix", "local stand log ownership requires POSIX permissions"
+)
 class LocalStandLogSafetyTests(unittest.TestCase):
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()

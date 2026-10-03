@@ -61,7 +61,7 @@ jobs:
 
   local-stand-native-staging:
     name: local stand native staging and configurations
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +84,21 @@ jobs:
           set -euo pipefail
           state_root="${RUNNER_TEMP}/octacity-local-stand-native-state"
           log="${RUNNER_TEMP}/octacity-local-stand-native.log"
+          report_native_staging_failure() {
+            status=$?
+            trap - EXIT
+            if [[ "${status}" -eq 0 ]]; then
+              return
+            fi
+            if python3 tools/check_local_stand_logs.py \
+              --state-root "${state_root}" --log "${log}"; then
+              cat "${log}"
+            else
+              echo "native staging failed; refusing to emit an unsafe diagnostic log" >&2
+            fi
+            exit "${status}"
+          }
+          trap report_native_staging_failure EXIT
           python3 tools/init_local_stand.py --root "${state_root}" >"${log}" 2>&1
           installation=$(python3 tools/stage_local_stand_native.py all \
             --cache-root "${RUNNER_TEMP}/octacity-local-stand-native-cache" \
@@ -96,17 +111,23 @@ jobs:
           python3 tools/configure_local_stand_server.py \
             --root "${state_root}" --native-installation "${installation}" \
             >>"${log}" 2>&1
+          install -d -m 0700 "${state_root}/agent"
+          install -m 0600 /dev/null "${state_root}/agent/credential"
+          printf '%s\n' 'configuration-validation-only' \
+            >"${state_root}/agent/credential"
           python3 tools/configure_local_stand_agent.py \
             --root "${state_root}" --native-installation "${installation}" \
             >>"${log}" 2>&1
           python3 tools/check_local_stand_logs.py \
             --state-root "${state_root}" --log "${log}"
           cat "${log}"
+          trap - EXIT
 
   local-stand-apple-silicon:
     name: local stand Apple Silicon vertical slice
-    # Never execute pull-request-controlled code on the persistent host runner.
-    if: github.event_name != 'pull_request'
+    # Hosted ARM64 macOS runners cannot expose nested Virtualization.framework.
+    # Enable this only when the qualified persistent host runner is online.
+    if: github.event_name != 'pull_request' && vars.OCTACITY_APPLE_SILICON_LOCAL_STAND == 'true'
     concurrency:
       group: octacity-local-stand-apple-silicon
       cancel-in-progress: false
