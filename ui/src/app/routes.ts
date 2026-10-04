@@ -6,6 +6,7 @@ export const CONSOLE_PATHS = {
   agents: '/agents',
   audit: '/audit',
   build: '/builds/:buildId',
+  builds: '/builds',
   project: '/projects/:projectId',
   projects: '/projects',
 } as const;

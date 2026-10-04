@@ -8,7 +8,7 @@ import { ProjectHierarchyView, ProjectView } from '../features/projects/ProjectV
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
 import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
-import styles from './shell/Shell.module.css';
+import styles from './shell/RouteView.module.css';
 
 interface PlaceholderViewProps {
   description: string;
@@ -50,6 +50,15 @@ export function createConsoleRoutes(
         {
           path: childPath(CONSOLE_PATHS.project),
           element: <ProjectView api={projectApi} />,
+        },
+        {
+          path: childPath(CONSOLE_PATHS.builds),
+          element: (
+            <PlaceholderView
+              description="Choose a Build from the contextual explorer or global search."
+              title="Builds"
+            />
+          ),
         },
         {
           path: childPath(CONSOLE_PATHS.build),

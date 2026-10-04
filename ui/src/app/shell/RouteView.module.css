@@ -1,0 +1,64 @@
+.placeholder {
+  min-height: 13rem;
+  padding: 1.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.placeholder h1,
+.standaloneError h1 {
+  margin: 0.25rem 0 0;
+  color: var(--color-text-primary);
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  letter-spacing: -0.025em;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--color-brand-action);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.identity {
+  display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  margin: 0.85rem 0 0;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.35rem;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.78rem;
+}
+
+.placeholderDescription,
+.standaloneError p {
+  max-width: 42rem;
+  margin: 0.8rem 0 0;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+
+.standaloneError {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  padding: var(--space-2xl);
+  background: var(--color-canvas);
+  color: var(--color-danger-ink);
+}
+
+.returnLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: fit-content;
+  margin-top: 1.2rem;
+  font-weight: 700;
+  text-decoration: none;
+}

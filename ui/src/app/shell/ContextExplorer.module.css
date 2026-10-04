@@ -1,0 +1,151 @@
+.explorer {
+  position: sticky;
+  z-index: 20;
+  top: var(--utility-header-height);
+  display: flex;
+  grid-area: explorer;
+  width: var(--explorer-width);
+  height: calc(100vh - var(--utility-header-height));
+  min-width: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.modalExplorer {
+  position: fixed;
+  z-index: 45;
+  top: var(--utility-header-height);
+  bottom: 0;
+  left: var(--primary-rail-width);
+  width: min(var(--explorer-width), calc(100vw - var(--primary-rail-width)));
+  height: auto;
+  box-shadow: var(--shadow-floating);
+}
+
+.explorerHeader {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  min-height: 4.4rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: 0.75rem var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.explorerHeader p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.explorerHeader h2 {
+  margin: 0.2rem 0 0;
+  color: var(--color-text-primary);
+  font-size: 1rem;
+}
+
+.explorerActions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.explorerActions button {
+  display: inline-grid;
+  min-width: 2rem;
+  min-height: 2rem;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.explorerActions button:hover {
+  border-color: var(--color-brand-accent);
+  color: var(--color-brand-action);
+}
+
+.explorerBody {
+  overflow: auto;
+  padding: var(--space-md);
+}
+
+.explorerSection + .explorerSection {
+  margin-top: var(--space-xl);
+  padding-top: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+}
+
+.explorerSection h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+}
+
+.explorerSection p {
+  margin: 0.65rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+}
+
+.explorerSection ul {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.55rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.explorerSection a {
+  display: block;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--radius-small);
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.explorerSection a:hover {
+  background: var(--color-surface-subtle);
+  color: var(--color-brand-action);
+}
+
+.explorerResizeHandle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: -0.25rem;
+  bottom: 0;
+  width: 0.5rem;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.explorerResizeHandle::after {
+  position: absolute;
+  top: 0;
+  right: 0.2rem;
+  bottom: 0;
+  width: 0.125rem;
+  background: transparent;
+  content: '';
+}
+
+.explorerResizeHandle:hover::after,
+.explorerResizeHandle:focus-visible::after {
+  background: var(--color-brand-accent);
+}

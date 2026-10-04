@@ -1,36 +1,50 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  Boxes,
-  ChevronLeft,
-  ChevronRight,
+  ClipboardList,
   FolderKanban,
-  Menu,
-  Network,
-  ScrollText,
+  Hammer,
+  PanelLeftOpen,
   ServerCog,
   ShieldAlert,
 } from 'lucide-react';
-import { useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import type { ReadinessProbe } from '../../api/readiness';
 import { queryKeys, READINESS_REFRESH_MILLISECONDS } from '../query';
-import { CONSOLE_PATHS } from '../routes';
+import { CommandCenter } from './CommandCenter';
+import { ContextExplorer } from './ContextExplorer';
+import { isNarrowWorkbench, observeNarrowWorkbench, useNarrowWorkbench } from './layout';
+import { loadExplorerWidth, saveExplorerWidth } from './preferences';
+import { consoleSections, sectionForPath, type ConsoleSectionId } from './sections';
 import styles from './Shell.module.css';
+import { UtilityHeader } from './UtilityHeader';
 
-const navigation = [
-  { label: 'Projects', path: CONSOLE_PATHS.projects, icon: FolderKanban },
-  { label: 'Agents', path: CONSOLE_PATHS.agents, icon: ServerCog },
-  { label: 'Agent Pools', path: CONSOLE_PATHS.agentPools, icon: Network },
-  { label: 'Audit', path: CONSOLE_PATHS.audit, icon: ScrollText },
-] as const;
+const sectionIcons = {
+  agents: ServerCog,
+  audit: ClipboardList,
+  builds: Hammer,
+  projects: FolderKanban,
+} satisfies Record<ConsoleSectionId, typeof FolderKanban>;
 
 interface AppShellProps {
   readinessProbe: ReadinessProbe;
 }
 
+interface SearchOverlayState {
+  returnFocus: HTMLElement;
+  scopeLabel: string;
+}
+
 export function AppShell({ readinessProbe }: AppShellProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  const location = useLocation();
+  const activeSection = sectionForPath(location.pathname);
+  const narrowWorkbench = useNarrowWorkbench();
+  const [explorerOpen, setExplorerOpen] = useState(() => !isNarrowWorkbench());
+  const [explorerWidth, setExplorerWidth] = useState(loadExplorerWidth);
+  const [searchOverlay, setSearchOverlay] = useState<SearchOverlayState | null>(null);
+  const explorerHeadingRef = useRef<HTMLHeadingElement>(null);
+  const explorerOpenButtonRef = useRef<HTMLButtonElement>(null);
   const readiness = useQuery({
     queryFn: ({ signal }) => readinessProbe(signal),
     queryKey: queryKeys.readiness,
@@ -42,76 +56,137 @@ export function AppShell({ readinessProbe }: AppShellProps) {
     ? 'Checking readiness'
     : readinessLabels[readinessState];
   const readinessTone = readiness.isPending ? 'checking' : readinessState;
+  const shellStyle = { '--explorer-width': `${explorerWidth}px` } as CSSProperties;
+  const shellClassName = [
+    styles.shell,
+    explorerOpen ? null : styles.explorerCollapsed,
+    narrowWorkbench ? styles.narrowWorkbench : null,
+  ]
+    .filter((className): className is string => className !== null)
+    .join(' ');
+  const closeSearch = useCallback(() => setSearchOverlay(null), []);
+  const restoreExplorerFocus = useCallback(() => {
+    globalThis.requestAnimationFrame(() => explorerOpenButtonRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    return observeNarrowWorkbench((narrow) => {
+      if (narrow) {
+        setExplorerOpen(false);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const openCommandCenter = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key.toLowerCase() === 'k' &&
+        (event.metaKey || event.ctrlKey) &&
+        searchOverlay === null
+      ) {
+        event.preventDefault();
+        const returnFocus =
+          document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
+        setSearchOverlay({ returnFocus, scopeLabel: 'All resources' });
+      }
+    };
+    globalThis.addEventListener('keydown', openCommandCenter);
+    return () => globalThis.removeEventListener('keydown', openCommandCenter);
+  }, [searchOverlay]);
+
+  const openExplorer = useCallback(() => {
+    setExplorerOpen(true);
+    globalThis.requestAnimationFrame(() => explorerHeadingRef.current?.focus());
+  }, []);
+
+  const collapseExplorer = useCallback(() => {
+    setExplorerOpen(false);
+    globalThis.requestAnimationFrame(() => explorerOpenButtonRef.current?.focus());
+  }, []);
+
+  const selectSection = () => {
+    setExplorerOpen(true);
+  };
 
   return (
-    <div className={collapsed ? `${styles.shell} ${styles.collapsed}` : styles.shell}>
+    <div className={shellClassName} style={shellStyle}>
       <a className={styles.skipLink} href="#console-content">
         Skip to content
       </a>
-      <aside className={styles.sidebar} id="primary-navigation">
-        <NavLink
-          aria-label="OctaCity Projects"
-          className={styles.brand ?? ''}
-          to={CONSOLE_PATHS.projects}
-        >
-          <span className={styles.brandMark} aria-hidden="true">
-            <Boxes size={22} strokeWidth={1.8} />
-          </span>
-          <span className={styles.brandText}>
-            <strong>OctaCity</strong>
-            <small>Operator Console</small>
-          </span>
-        </NavLink>
+      <UtilityHeader
+        onOpenSearch={(trigger) =>
+          setSearchOverlay({ returnFocus: trigger, scopeLabel: 'All resources' })
+        }
+        readinessLabel={readinessLabel}
+        readinessTone={readinessTone}
+      />
 
-        <button
-          aria-controls="primary-navigation"
-          aria-expanded={!collapsed}
-          className={styles.collapseButton}
-          onClick={() => setCollapsed((current) => !current)}
-          type="button"
-        >
-          {collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}
-          <span className={styles.navigationLabel}>
-            {collapsed ? 'Expand navigation' : 'Collapse navigation'}
-          </span>
-        </button>
-
-        <nav aria-label="Primary navigation" className={styles.navigation}>
-          <p className={styles.navigationHeading}>Operations</p>
-          {navigation.map(({ icon: Icon, label, path }) => (
-            <NavLink
-              className={({ isActive }) =>
-                isActive
-                  ? `${styles.navigationLink} ${styles.activeNavigationLink}`
-                  : styles.navigationLink
-              }
-              key={path}
-              to={path}
-            >
-              <Icon aria-hidden="true" size={19} strokeWidth={1.8} />
-              <span className={styles.navigationLabel}>{label}</span>
-            </NavLink>
-          ))}
+      <aside className={styles.sectionRail}>
+        <nav aria-label="Primary sections">
+          {consoleSections.map((section) => {
+            const Icon = sectionIcons[section.id];
+            const active = section.id === activeSection.id;
+            return (
+              <Link
+                aria-current={active ? 'page' : undefined}
+                className={active ? `${styles.railLink} ${styles.activeRailLink}` : styles.railLink}
+                key={section.id}
+                onClick={selectSection}
+                title={section.label}
+                to={section.path}
+              >
+                <Icon aria-hidden="true" size={22} strokeWidth={1.7} />
+                <span>{section.label}</span>
+              </Link>
+            );
+          })}
         </nav>
+        {!explorerOpen ? (
+          <button
+            aria-label={`Open ${activeSection.label} explorer`}
+            className={styles.openExplorerButton}
+            onClick={openExplorer}
+            ref={explorerOpenButtonRef}
+            title="Open explorer"
+            type="button"
+          >
+            <PanelLeftOpen aria-hidden="true" size={21} />
+            <span>Explorer</span>
+          </button>
+        ) : null}
       </aside>
 
-      <div className={styles.workspace}>
-        <header className={styles.topBar}>
-          <div className={styles.topBarTitle}>
-            <Menu aria-hidden="true" size={18} />
-            <span>Operations</span>
-          </div>
-          <div
-            aria-live="polite"
-            className={`${styles.readiness ?? ''} ${styles[`readiness_${readinessTone}`] ?? ''}`}
-            role="status"
-          >
-            <span className={styles.readinessDot} aria-hidden="true" />
-            {readinessLabel}
-          </div>
-        </header>
+      {explorerOpen ? (
+        <>
+          <button
+            aria-hidden="true"
+            className={styles.explorerBackdrop}
+            onClick={collapseExplorer}
+            tabIndex={-1}
+            type="button"
+          />
+          <ContextExplorer
+            headingRef={explorerHeadingRef}
+            modal={narrowWorkbench}
+            onCollapse={collapseExplorer}
+            onOpenSearch={(trigger) =>
+              setSearchOverlay({ returnFocus: trigger, scopeLabel: activeSection.label })
+            }
+            onWidthChange={setExplorerWidth}
+            onWidthCommit={(width) => setExplorerWidth(saveExplorerWidth(width))}
+            restoreFocus={restoreExplorerFocus}
+            section={activeSection}
+            width={explorerWidth}
+          />
+        </>
+      ) : null}
 
-        <aside className={styles.securityBanner} aria-label="Security notice">
+      <div className={styles.workspace}>
+        <aside
+          className={styles.securityBanner}
+          aria-label="Security notice"
+          id="trusted-network-notice"
+        >
           <ShieldAlert aria-hidden="true" size={18} strokeWidth={1.9} />
           <p>
             <strong>Trusted network only.</strong> This console is unauthenticated and must not be
@@ -123,6 +198,14 @@ export function AppShell({ readinessProbe }: AppShellProps) {
           <Outlet />
         </main>
       </div>
+
+      {searchOverlay === null ? null : (
+        <CommandCenter
+          onClose={closeSearch}
+          returnFocus={searchOverlay.returnFocus}
+          scope={searchOverlay.scopeLabel}
+        />
+      )}
     </div>
   );
 }

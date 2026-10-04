@@ -1,19 +1,35 @@
 .shell {
-  --current-sidebar-width: var(--sidebar-width);
+  --current-explorer-width: var(--explorer-width);
 
   display: grid;
-  grid-template-columns: var(--current-sidebar-width) minmax(0, 1fr);
+  grid-template-areas:
+    'header header header'
+    'rail explorer workspace';
+  grid-template-columns:
+    var(--primary-rail-width) var(--current-explorer-width)
+    minmax(0, 1fr);
+  grid-template-rows: var(--utility-header-height) minmax(
+      calc(100vh - var(--utility-header-height)),
+      auto
+    );
   min-height: 100vh;
   background: var(--color-canvas);
 }
 
-.collapsed {
-  --current-sidebar-width: var(--sidebar-collapsed-width);
+.explorerCollapsed {
+  --current-explorer-width: 0px;
+}
+
+.narrowWorkbench {
+  grid-template-areas:
+    'header header'
+    'rail workspace';
+  grid-template-columns: var(--primary-rail-width) minmax(0, 1fr);
 }
 
 .skipLink {
   position: fixed;
-  z-index: 30;
+  z-index: 100;
   top: var(--space-md);
   left: var(--space-md);
   padding: 0.6rem 0.8rem;
@@ -28,193 +44,79 @@
   transform: translateY(0);
 }
 
-.sidebar {
+.sectionRail {
   position: sticky;
-  top: 0;
+  top: var(--utility-header-height);
   display: flex;
-  overflow: hidden;
+  grid-area: rail;
+  height: calc(100vh - var(--utility-header-height));
   flex-direction: column;
-  width: var(--current-sidebar-width);
-  height: 100vh;
-  padding: var(--space-lg) var(--space-md);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-md) var(--space-sm);
   background: var(--color-evergreen-950);
   color: var(--color-sidebar-text);
-  transition: width var(--motion-fast) ease;
 }
 
-.brand {
-  display: flex;
-  min-height: 3rem;
-  align-items: center;
-  gap: var(--space-md);
-  padding: 0.4rem 0.5rem;
-  color: var(--color-sidebar-text);
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.brandMark {
+.sectionRail nav {
   display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: 0 0 2.25rem;
-  place-items: center;
-  border: 1px solid var(--color-sidebar-outline);
-  border-radius: 0.6rem;
-  background: var(--color-brand-action);
+  width: 100%;
+  gap: var(--space-sm);
 }
 
-.brandText {
+.railLink,
+.openExplorerButton {
   display: flex;
-  min-width: 0;
+  min-height: 4.25rem;
   flex-direction: column;
-  line-height: 1.2;
-}
-
-.brandText strong {
-  font-size: 0.95rem;
-}
-
-.brandText small {
-  margin-top: 0.2rem;
-  color: var(--color-sidebar-muted);
-  font-size: 0.72rem;
-}
-
-.collapseButton {
-  display: flex;
-  min-height: 2.5rem;
   align-items: center;
-  justify-content: flex-end;
-  gap: 0.65rem;
-  margin: 0.75rem 0 0.25rem;
-  padding: 0.45rem 0.55rem;
-  border: 0;
-  border-radius: var(--radius-small);
-  background: transparent;
-  color: var(--color-sidebar-muted);
-  cursor: pointer;
-}
-
-.collapseButton:hover {
-  background: var(--color-sidebar-hover);
-  color: var(--color-sidebar-text);
-}
-
-.navigation {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  margin-top: 0.8rem;
-}
-
-.navigationHeading {
-  margin: 0 0 0.3rem;
-  padding: 0 0.65rem;
+  justify-content: center;
+  gap: 0.35rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-medium);
   color: var(--color-sidebar-muted);
   font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.navigationLink {
-  display: flex;
-  min-height: 2.55rem;
-  align-items: center;
-  gap: var(--space-md);
-  padding: 0.55rem 0.65rem;
-  border-radius: var(--radius-small);
-  color: var(--color-sidebar-muted);
-  font-size: 0.86rem;
-  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
   text-decoration: none;
-  white-space: nowrap;
 }
 
-.navigationLink:hover {
+.railLink:hover,
+.openExplorerButton:hover {
   background: var(--color-sidebar-hover);
   color: var(--color-sidebar-text);
 }
 
-.activeNavigationLink {
+.activeRailLink {
+  border-color: var(--color-sidebar-outline);
   background: var(--color-evergreen-800);
   color: var(--color-sidebar-text);
 }
 
-.collapsed .brandText,
-.collapsed .navigationLabel,
-.collapsed .navigationHeading {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
+.openExplorerButton {
+  width: 100%;
+  border-color: var(--color-sidebar-outline);
+  background: transparent;
+  cursor: pointer;
 }
 
-.collapsed .collapseButton,
-.collapsed .navigationLink {
-  justify-content: center;
+.explorerBackdrop {
+  display: none;
+}
+
+.narrowWorkbench .explorerBackdrop {
+  position: fixed;
+  z-index: 40;
+  inset: var(--utility-header-height) 0 0 var(--primary-rail-width);
+  display: block;
+  border: 0;
+  background: var(--color-overlay);
 }
 
 .workspace {
   min-width: 0;
-}
-
-.topBar {
-  position: sticky;
-  z-index: 10;
-  top: 0;
-  display: flex;
-  min-height: var(--topbar-height);
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-lg);
-  padding: 0 var(--space-xl);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-topbar-surface);
-}
-
-.topBarTitle {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  font-size: 0.86rem;
-  font-weight: 700;
-}
-
-.readiness {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.readinessDot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.readiness_checking {
-  color: var(--color-information-ink);
-}
-
-.readiness_ready {
-  color: var(--color-success-ink);
-}
-
-.readiness_unavailable {
-  color: var(--color-warning-ink);
-}
-
-.readiness_unreachable {
-  color: var(--color-danger-ink);
+  grid-area: workspace;
 }
 
 .securityBanner {
@@ -226,8 +128,8 @@
   border: 1px solid var(--color-security-border);
   border-radius: var(--radius-small);
   background: var(--color-brand-soft);
-  color: var(--color-evergreen-800);
-  font-size: 0.82rem;
+  color: var(--color-security-ink);
+  font-size: 0.8rem;
 }
 
 .securityBanner svg {
@@ -242,93 +144,14 @@
 
 .content {
   max-width: 100rem;
-  min-height: calc(100vh - var(--topbar-height));
+  min-height: calc(100vh - var(--utility-header-height));
   padding: var(--space-xl);
 }
 
-.placeholder {
-  min-height: 13rem;
-  padding: 1.4rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
-  background: var(--color-surface);
+.narrowWorkbench .securityBanner {
+  margin: var(--space-md) 0.85rem 0;
 }
 
-.placeholder h1,
-.standaloneError h1 {
-  margin: 0.25rem 0 0;
-  color: var(--color-text-primary);
-  font-size: clamp(1.45rem, 3vw, 2rem);
-  letter-spacing: -0.025em;
-}
-
-.eyebrow {
-  margin: 0;
-  color: var(--color-brand-action);
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-}
-
-.identity {
-  display: inline-block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  margin: 0.85rem 0 0;
-  padding: 0.35rem 0.55rem;
-  border-radius: 0.35rem;
-  background: var(--color-surface-subtle);
-  color: var(--color-text-muted);
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-  font-size: 0.78rem;
-}
-
-.placeholderDescription,
-.standaloneError p {
-  max-width: 42rem;
-  margin: 0.8rem 0 0;
-  color: var(--color-text-muted);
-  line-height: 1.6;
-}
-
-.standaloneError {
-  display: grid;
-  min-height: 100vh;
-  place-content: center;
-  padding: var(--space-2xl);
-  background: var(--color-canvas);
-  color: var(--color-danger-ink);
-}
-
-.returnLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  width: fit-content;
-  margin-top: 1.2rem;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-@media (max-width: 48rem) {
-  .shell {
-    --current-sidebar-width: var(--sidebar-collapsed-width);
-  }
-
-  .shell:not(.collapsed) {
-    --current-sidebar-width: min(var(--sidebar-width), 46vw);
-  }
-
-  .topBar {
-    padding-inline: 0.85rem;
-  }
-
-  .securityBanner {
-    margin: var(--space-md) 0.85rem 0;
-  }
-
-  .content {
-    padding: 0.85rem;
-  }
+.narrowWorkbench .content {
+  padding: 0.85rem;
 }

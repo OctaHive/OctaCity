@@ -2,7 +2,7 @@ import { AlertTriangle, ArrowLeft } from 'lucide-react';
 import { Link, isRouteErrorResponse, useRouteError } from 'react-router-dom';
 
 import { CONSOLE_PATHS } from '../routes';
-import styles from './Shell.module.css';
+import styles from './RouteView.module.css';
 
 export function RouteErrorBoundary() {
   const error = useRouteError();

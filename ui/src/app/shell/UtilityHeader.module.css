@@ -1,0 +1,342 @@
+.utilityHeader {
+  position: sticky;
+  z-index: 50;
+  top: 0;
+  display: grid;
+  grid-area: header;
+  grid-template-columns: minmax(11rem, 15rem) minmax(13rem, 32rem) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-lg);
+  height: var(--utility-header-height);
+  padding: 0 var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-topbar-surface);
+  backdrop-filter: blur(12px);
+}
+
+.brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-md);
+  color: var(--color-text-primary);
+  text-decoration: none;
+}
+
+.brandMark {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 2.25rem;
+  place-items: center;
+  border-radius: 0.65rem;
+  background: var(--color-brand-action);
+  color: var(--color-on-brand);
+}
+
+.brandText {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.brandText strong {
+  font-size: 0.92rem;
+}
+
+.brandText small {
+  margin-top: 0.18rem;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.globalSearch {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-height: 2.45rem;
+  padding: 0.45rem 0.55rem 0.45rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.globalSearch:hover {
+  border-color: var(--color-brand-accent);
+  background: var(--color-surface);
+}
+
+.globalSearch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.globalSearch kbd {
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.35rem;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+}
+
+.headerUtilities {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.readiness {
+  display: inline-flex;
+  min-height: 2.3rem;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.readinessDot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.readiness_checking {
+  color: var(--color-information-ink);
+}
+
+.readiness_ready {
+  color: var(--color-success-ink);
+}
+
+.readiness_unavailable {
+  color: var(--color-warning-ink);
+}
+
+.readiness_unreachable {
+  color: var(--color-danger-ink);
+}
+
+.themeControl {
+  display: inline-flex;
+  min-height: 2.3rem;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.25rem 0 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.themeControl select {
+  max-width: 5.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.iconButton {
+  display: inline-grid;
+  min-width: 2.3rem;
+  min-height: 2.3rem;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  border-color: var(--color-brand-accent);
+  color: var(--color-brand-action);
+}
+
+.popoverAnchor,
+.operatorMenu {
+  position: relative;
+}
+
+.headerPopover,
+.operatorMenuPanel {
+  position: absolute;
+  z-index: 70;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  width: min(20rem, calc(100vw - 2rem));
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-floating);
+  color: var(--color-text-primary);
+}
+
+.headerPopover p,
+.operatorMenuPanel p {
+  margin: 0.55rem 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.operatorMenu summary {
+  display: flex;
+  min-height: 2.3rem;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  list-style: none;
+  cursor: pointer;
+}
+
+.operatorMenu summary::-webkit-details-marker {
+  display: none;
+}
+
+.operatorLanguage {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  margin-top: var(--space-md);
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+}
+
+.operatorLanguage select {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-weight: 700;
+}
+
+.operatorMenuPanel dl {
+  display: grid;
+  gap: 0.65rem;
+  margin: var(--space-md) 0 0;
+}
+
+.operatorMenuPanel dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-lg);
+  font-size: 0.76rem;
+}
+
+.operatorMenuPanel dt {
+  color: var(--color-text-muted);
+}
+
+.operatorMenuPanel dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.operatorResources {
+  display: grid;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--color-border);
+}
+
+.operatorResources a {
+  color: var(--color-brand-action);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.operatorResources a:hover {
+  text-decoration: underline;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 64rem) {
+  .utilityHeader {
+    grid-template-columns: auto minmax(11rem, 1fr) auto;
+    gap: var(--space-sm);
+    padding-inline: var(--space-md);
+  }
+
+  .brandText small,
+  .readinessLabel,
+  .operatorMenu summary > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .readiness {
+    min-width: 2.3rem;
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@media (max-width: 42rem) {
+  .utilityHeader {
+    grid-template-columns: auto minmax(8rem, 1fr) auto;
+  }
+
+  .brandText,
+  .themeControl svg,
+  .globalSearch kbd {
+    display: none;
+  }
+
+  .themeControl {
+    padding-left: 0.2rem;
+  }
+
+  .themeControl select {
+    width: 4.25rem;
+  }
+
+  .globalSearch {
+    min-width: 0;
+  }
+}

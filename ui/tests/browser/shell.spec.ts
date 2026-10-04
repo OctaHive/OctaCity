@@ -21,74 +21,119 @@ async function openReadyConsole(page: Page, path: string) {
   await expect(page.getByRole('status')).toHaveText('Server ready');
 }
 
-test('renders the semantic application shell', async ({ page }) => {
-  await page.setViewportSize({ height: 900, width: 1_280 });
+test('renders the semantic contextual workbench', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1_440 });
   await openReadyConsole(page, CONSOLE_PATHS.projects);
 
-  await expect(page.locator('body')).toMatchAriaSnapshot(`
-    - link "Skip to content":
-      - /url: "#console-content"
-    - complementary:
-      - link "OctaCity Projects":
-        - /url: /projects
-        - strong: OctaCity
-        - text: Operator Console
-      - button "Collapse navigation" [expanded]
-      - navigation "Primary navigation":
-        - paragraph: Operations
-        - link "Projects":
-          - /url: /projects
-        - link "Agents":
-          - /url: /agents
-        - link "Agent Pools":
-          - /url: /agent-pools
-        - link "Audit":
-          - /url: /audit
-    - banner:
-      - text: Operations
-      - status: Server ready
-    - complementary "Security notice":
-      - paragraph:
-        - strong: Trusted network only.
-        - text: This console is unauthenticated and must not be exposed to an untrusted network.
-    - main:
-      - region "Projects":
-        - paragraph: Project hierarchy
-        - heading "Projects" [level=1]
-        - paragraph: Browse root Projects and continue through their bounded child collections.
-        - paragraph: 0 Projects loaded
-        - button "Refresh"
-        - paragraph: No root Projects are available.
-  `);
+  await expect(page.getByRole('banner')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Search resources' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Theme' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible();
+  await expect(page.getByLabel('Operator menu')).toBeVisible();
+
+  const sectionNavigation = page.getByRole('navigation', { name: 'Primary sections' });
+  await expect(sectionNavigation.getByRole('link')).toHaveCount(4);
+  await expect(sectionNavigation.getByRole('link', { name: 'Projects' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+
+  const explorer = page.getByRole('complementary', { name: 'Projects explorer' });
+  await expect(explorer).toBeVisible();
+  await expect(explorer.getByRole('heading', { name: 'Favorites' })).toBeVisible();
+  await expect(explorer.getByRole('heading', { name: 'Browse' })).toBeVisible();
+  await expect(page.locator('#console-content')).toBeVisible();
+  await expect(page.getByLabel('Security notice')).toContainText('Trusted network only');
 });
 
-test('preserves navigation and content at the narrow supported width', async ({ page }) => {
+test('resizes and restores the desktop explorer within its bounds', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await openReadyConsole(page, CONSOLE_PATHS.audit);
+
+  const separator = page.getByRole('separator', { name: 'Resize Audit explorer' });
+  await expect(separator).toHaveAttribute('aria-valuenow', '288');
+  await separator.focus();
+  await separator.press('End');
+  await expect(separator).toHaveAttribute('aria-valuenow', '480');
+
+  await page.reload();
+  await expect(page.getByRole('status')).toHaveText('Server ready');
+  const restored = page.getByRole('separator', { name: 'Resize Audit explorer' });
+  await expect(restored).toHaveAttribute('aria-valuenow', '480');
+
+  const handle = await restored.boundingBox();
+  expect(handle).not.toBeNull();
+  if (handle !== null) {
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + 120);
+    await page.mouse.down();
+    await page.mouse.move(0, handle.y + 120, { steps: 4 });
+    await page.mouse.up();
+  }
+  await expect(restored).toHaveAttribute('aria-valuenow', '240');
+
+  await page.reload();
+  await expect(page.getByRole('separator', { name: 'Resize Audit explorer' })).toHaveAttribute(
+    'aria-valuenow',
+    '240',
+  );
+
+  await page.setViewportSize({ height: 900, width: 640 });
+  await expect(page.getByRole('button', { name: 'Open Audit explorer' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Audit explorer' })).toBeHidden();
+});
+
+test('uses a focus-managed explorer overlay at the narrow supported width', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 640 });
   await openReadyConsole(page, CONSOLE_PATHS.audit);
 
-  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
   const content = page.locator('#console-content');
-  await expect(navigation).toBeVisible();
   await expect(content).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Audit' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Audit' })).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Theme' })).toBeVisible();
+  await expect(page.getByLabel('Operator menu')).toBeVisible();
 
-  const expandedContentWidth = await content.evaluate(
-    (element) => element.getBoundingClientRect().width,
-  );
-  const pageWidth = await page.evaluate(() => ({
+  const reopen = page.getByRole('button', { name: 'Open Audit explorer' });
+  await expect(reopen).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Audit explorer' })).toBeHidden();
+
+  await reopen.press('Enter');
+  const explorer = page.getByRole('dialog', { name: 'Audit explorer' });
+  await expect(explorer).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Audit' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Search Audit' })).toBeFocused();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('link', { name: 'Audit filters' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Open Audit explorer' })).toBeFocused();
+
+  const viewport = await page.evaluate(() => ({
     client: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
   }));
-  expect(pageWidth.scroll).toBe(pageWidth.client);
+  expect(viewport.scroll).toBe(viewport.client);
+});
 
-  const collapse = page.getByRole('button', { name: 'Collapse navigation' });
-  await collapse.focus();
-  await collapse.press('Enter');
-  await expect(page.getByRole('button', { name: 'Expand navigation' })).toHaveAttribute(
-    'aria-expanded',
-    'false',
-  );
-  await expect
-    .poll(async () => content.evaluate((element) => element.getBoundingClientRect().width))
-    .toBeGreaterThan(expandedContentWidth);
+test('opens global and explorer search with focus restoration', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1_280 });
+  await openReadyConsole(page, CONSOLE_PATHS.projects);
+
+  const globalSearch = page.getByRole('button', { name: 'Search resources' });
+  await globalSearch.click();
+  await expect(page.getByRole('dialog', { name: 'Search resources' })).toBeVisible();
+  await expect(page.getByRole('searchbox', { name: 'Search query' })).toBeFocused();
+  await expect(page.getByText('Scope: All resources')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(globalSearch).toBeFocused();
+
+  await page.getByRole('link', { name: 'Builds' }).focus();
+  await page.keyboard.press('Control+k');
+  await expect(page.getByRole('searchbox', { name: 'Search query' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { exact: true, name: 'Close' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('link', { name: 'Builds' })).toBeFocused();
+
+  await page.getByRole('button', { name: 'Search Projects' }).click();
+  await expect(page.getByText('Scope: Projects')).toBeVisible();
 });
