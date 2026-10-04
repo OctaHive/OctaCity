@@ -7,6 +7,7 @@ import { ManagementApiError } from '../../api/client';
 import { createConsoleQueryClient } from '../../app/query';
 import { createConsoleRoutes } from '../../app/router';
 import type {
+  BuildConfigurationResource,
   BuildConfigurationSummary,
   BuildState,
   BuildSummary,
@@ -32,7 +33,7 @@ export function renderProjects(path: string, api: ProjectsApi) {
       initialEntries: [path],
     },
   );
-  return { ...render(<App queryClient={queryClient} router={router} />), router };
+  return { ...render(<App queryClient={queryClient} router={router} />), queryClient, router };
 }
 
 export function fakeProjectsApi() {
@@ -54,6 +55,7 @@ export function fakeProjectsApi() {
       .fn<ProjectsApi['listRepositories']>()
       .mockResolvedValue(definitionPage([], null)),
     listTriggers: vi.fn<ProjectsApi['listTriggers']>().mockResolvedValue(definitionPage([], null)),
+    triggerBuild: vi.fn<ProjectsApi['triggerBuild']>(),
   };
 }
 
@@ -94,7 +96,7 @@ export function trigger(
 ): TriggerDefinitionSummary {
   return {
     configuration_id: 'configuration-a',
-    configuration_version: 2,
+    configuration_version: 3,
     enabled: true,
     id,
     kind,
@@ -106,6 +108,62 @@ export function trigger(
 
 export function configuration(id: string, name: string): BuildConfigurationSummary {
   return { ...definition(id, name), enabled: true };
+}
+
+export function configurationDetails(
+  id: string,
+  name: string,
+  parameters: BuildConfigurationResource['definition']['parameters'] = {
+    deny_unknown: true,
+    parameters: {},
+  },
+): BuildConfigurationResource {
+  return {
+    definition: {
+      agent_requirements: {
+        capabilities: [],
+        labels: {},
+        minimum_cpu_millis: 0,
+        minimum_disk_bytes: 0,
+        minimum_memory_bytes: 0,
+      },
+      allowed_pools: [],
+      artifacts: {
+        artifact_bytes: 0,
+        artifact_count: 0,
+        report_bytes: 0,
+        report_count: 0,
+        single_output_bytes: 0,
+      },
+      cache: { namespace: null, read: false, write: false },
+      enabled: true,
+      job_concurrency_limit: 1,
+      parameters,
+      pipeline_id: 'pipeline-a',
+      pipeline_version: 3,
+      repository_id: 'repository-a',
+      repository_version: 3,
+      retry: { max_attempts: 1, retry_on: [] },
+      runtime: {
+        architecture: 'arm64',
+        class: 'virtualization',
+        cpu_millis: 1_000,
+        immutable_image: null,
+        memory_bytes: 1_073_741_824,
+        network: { mode: 'disabled' },
+        operating_system: 'linux',
+        timeout_seconds: 600,
+        workload_identity_profile: null,
+        writable_disk_bytes: 1_073_741_824,
+      },
+      triggers: ['manual'],
+    },
+    id,
+    name,
+    project_id: 'delivery',
+    published_at_unix_ms: 1_700_000_000_000,
+    version: 3,
+  };
 }
 
 export function definitionPage<T>(items: T[], nextCursor: string | null) {

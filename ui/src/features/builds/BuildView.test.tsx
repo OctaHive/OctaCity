@@ -7,7 +7,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { components } from '../../../.generated/api/schema';
-import { createConsoleQueryClient } from '../../app/query';
+import { ManagementApiError } from '../../api/client';
+import { createConsoleQueryClient, queryKeys } from '../../app/query';
 import { BuildView } from './BuildView';
 import type { BuildDiagnosticsApi } from './api';
 
@@ -20,7 +21,10 @@ type FailureClassification = NonNullable<JobResource['terminal']>['failure_class
 const BUILD_ID = 'build-0001';
 const ATTEMPT_ID = 'attempt-0001';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe('Build diagnostics', () => {
   it.each([
@@ -191,6 +195,115 @@ describe('Build diagnostics', () => {
     await act(async () => router.navigate('/audit'));
     expect(requests[1]?.signal.aborted).toBe(true);
   });
+
+  it('confirms and submits one cancellation before refreshing authoritative Build state', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '55555555-5555-4555-8555-555555555555'),
+    });
+    const pending = deferred<components['schemas']['CancelBuildResponse']>();
+    const cancelled = { ...buildResource(), state: 'cancelled' as const };
+    const getBuild = vi.fn().mockResolvedValueOnce(buildResource()).mockResolvedValue(cancelled);
+    const cancelBuild = vi.fn(() => pending.promise);
+    const { queryClient } = renderBuild(attemptResource([], []), { cancelBuild, getBuild });
+    queryClient.setQueryData(queryKeys.audit, []);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel Build' }));
+    const dialog = screen.getByRole('dialog', { name: `Cancel Build ${BUILD_ID}?` });
+    expect(within(dialog).getByText(/requests cancellation.*unfinished Jobs/)).toBeTruthy();
+    const confirm = within(dialog).getByRole('button', { name: 'Cancel Build' });
+    await userEvent.click(confirm);
+    expect(confirm.hasAttribute('disabled')).toBe(true);
+    await userEvent.click(confirm);
+    expect(cancelBuild).toHaveBeenCalledTimes(1);
+    expect(cancelBuild).toHaveBeenCalledWith(BUILD_ID, {
+      'Idempotency-Key': '55555555-5555-4555-8555-555555555555',
+    });
+
+    pending.resolve({
+      attempt_id: ATTEMPT_ID,
+      build_id: BUILD_ID,
+      cancelled_job_ids: [],
+      cancelling_job_ids: [],
+      disposition: 'applied',
+    });
+    expect(await within(dialog).findByText('Cancellation accepted (Applied).')).toBeTruthy();
+    const close = within(dialog).getByRole('button', { name: 'Close' });
+    expect(close).toBe(document.activeElement);
+    expect(queryClient.getQueryState(queryKeys.audit)?.isInvalidated).toBe(true);
+    await waitFor(() => expect(getBuild).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Cancelled')).toBeTruthy();
+    await userEvent.click(close);
+    expect(screen.getByRole('heading', { level: 1, name: `Build ${BUILD_ID}` })).toBe(
+      document.activeElement,
+    );
+  });
+
+  it('replays an uncertain retry with the same command and shows request correlation', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '66666666-6666-4666-8666-666666666666'),
+    });
+    const retryBuild = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ManagementApiError({
+          code: 'transport_failure',
+          message: 'The management API could not be reached.',
+          requestId: 'request-retry-1',
+          retryAfterMilliseconds: null,
+          status: null,
+        }),
+      )
+      .mockResolvedValue({
+        attempt_id: 'attempt-0002',
+        attempt_number: 3,
+        build_id: BUILD_ID,
+        disposition: 'replayed',
+        ready_job_ids: [],
+        source_attempt_id: ATTEMPT_ID,
+      });
+    renderBuild(attemptResource([], []), {
+      getBuild: vi.fn().mockResolvedValue(buildResource('failed')),
+      retryBuild,
+    });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Retry Build' }));
+    const dialog = screen.getByRole('dialog', { name: `Retry Build ${BUILD_ID}?` });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Retry Build' }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toContain('request-retry-1');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Retry same command' }));
+
+    expect(await within(dialog).findByText('Retry Attempt 3 created (Replayed).')).toBeTruthy();
+    expect(retryBuild).toHaveBeenCalledTimes(2);
+    expect(retryBuild.mock.calls[0]).toEqual(retryBuild.mock.calls[1]);
+  });
+
+  it('stops on a definitive validation failure and exposes its safe request correlation', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '77777777-7777-4777-8777-777777777777'),
+    });
+    const cancelBuild = vi.fn().mockRejectedValue(
+      new ManagementApiError({
+        code: 'invalid_request',
+        message: 'The cancellation request is no longer valid.',
+        requestId: 'request-cancel-validation',
+        retryAfterMilliseconds: null,
+        status: 400,
+      }),
+    );
+    renderBuild(attemptResource([], []), { cancelBuild });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel Build' }));
+    const dialog = screen.getByRole('dialog', { name: `Cancel Build ${BUILD_ID}?` });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel Build' }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert.textContent).toContain('invalid_request');
+    expect(alert.textContent).toContain('request-cancel-validation');
+    expect(within(dialog).queryByRole('button', { name: 'Retry same command' })).toBeNull();
+    expect(cancelBuild).toHaveBeenCalledTimes(1);
+  });
 });
 
 function renderBuild(
@@ -200,6 +313,7 @@ function renderBuild(
 ) {
   const api: BuildDiagnosticsApi = {
     authorizeArtifactDownload: vi.fn(),
+    cancelBuild: vi.fn(),
     getBuildResultRetention: vi.fn().mockResolvedValue({
       build_id: BUILD_ID,
       deadlines: {
@@ -221,6 +335,9 @@ function renderBuild(
     getJobEvents: vi.fn((_jobId, _request, signal) => pendingUntilAbort(signal)),
     listBuildArtifacts: vi.fn().mockResolvedValue({ items: [] }),
     listBuildCacheSessions: vi.fn().mockResolvedValue({ items: [] }),
+    placeBuildResultHold: vi.fn(),
+    releaseBuildResultHold: vi.fn(),
+    retryBuild: vi.fn(),
     searchBuildLogs: vi.fn(),
     ...overrides,
   };
@@ -231,12 +348,13 @@ function renderBuild(
     ],
     { initialEntries: [initialEntry] },
   );
+  const queryClient = createConsoleQueryClient();
   render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
-  return { api, router };
+  return { api, queryClient, router };
 }
 
 function jobEvent(sequence: number) {
@@ -248,7 +366,7 @@ function jobEvent(sequence: number) {
   };
 }
 
-function buildResource(): BuildResource {
+function buildResource(state: BuildResource['state'] = 'running'): BuildResource {
   return {
     configuration_id: 'configuration-0001',
     configuration_version: 3,
@@ -259,7 +377,7 @@ function buildResource(): BuildResource {
       id: ATTEMPT_ID,
       number: 2,
       retry_of_attempt_id: 'attempt-0000',
-      state: 'running',
+      state: state === 'queued' ? 'created' : state,
       updated_at_unix_ms: 1_700_000_001_000,
       version: 4,
     },
@@ -299,7 +417,7 @@ function buildResource(): BuildResource {
     repository_id: 'repository-0001',
     repository_version: 7,
     source: { kind: 'exact_revision', value: '0123456789abcdef' },
-    state: 'running',
+    state,
     trigger: {
       build_id: BUILD_ID,
       causality: {
@@ -321,6 +439,14 @@ function buildResource(): BuildResource {
     updated_at_unix_ms: 1_700_000_001_000,
     version: 4,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }
 
 function attemptResource(jobs: JobResource[], edges: AttemptResource['edges']): AttemptResource {

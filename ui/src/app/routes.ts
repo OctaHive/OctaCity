@@ -13,6 +13,12 @@ export const CONSOLE_PATHS = {
 
 export type ConsolePath = (typeof CONSOLE_PATHS)[keyof typeof CONSOLE_PATHS];
 
+/** Returns the audit view filtered to one management request identity. */
+export function auditRequestPath(requestIdentity: string): string {
+  const parameters = new URLSearchParams({ request_identity: requestIdentity });
+  return `${CONSOLE_PATHS.audit}?${parameters.toString()}`;
+}
+
 /** Returns the stable deep link for one Build identity. */
 export function buildPath(buildId: string): string {
   return `/builds/${encodeURIComponent(buildId)}`;

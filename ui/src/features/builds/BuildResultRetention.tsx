@@ -1,18 +1,23 @@
 import { useQuery } from '@tanstack/react-query';
+import { useRef, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
+import { auditRequestPath } from '../../app/routes';
 import { formatTimestamp } from '../../shared/display';
-import type { BuildResultDiagnosticsApi, BuildResultRetentionResource } from './api';
+import type { BuildResultHoldApi, BuildResultRetentionResource } from './api';
 import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
+import { BuildResultHoldCommands } from './BuildResultHoldCommands';
 import styles from './Builds.module.css';
 
 export function BuildResultRetention({
   api,
   buildId,
 }: {
-  api: BuildResultDiagnosticsApi;
+  api: BuildResultHoldApi;
   buildId: string;
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const retention = useQuery({
     queryFn: ({ signal }) => api.getBuildResultRetention(buildId, signal),
     queryKey: queryKeys.buildResultRetention(buildId),
@@ -22,7 +27,9 @@ export function BuildResultRetention({
       <div className={styles.panelHeading}>
         <div>
           <p className={styles.eyebrow}>Lifecycle evidence</p>
-          <h2>Build Result retention</h2>
+          <h2 ref={headingRef} tabIndex={-1}>
+            Build Result retention
+          </h2>
         </div>
         {retention.data === undefined ? null : <HoldStatus retention={retention.data} />}
       </div>
@@ -35,7 +42,16 @@ export function BuildResultRetention({
           onRetry={retention.refetch}
         />
       ) : (
-        <RetentionDetails retention={retention.data} />
+        <>
+          <RetentionDetails retention={retention.data} />
+          <BuildResultHoldCommands
+            api={api}
+            buildId={buildId}
+            fallbackFocusRef={headingRef}
+            onRefresh={retention.refetch}
+            retention={retention.data}
+          />
+        </>
       )}
       {retention.data === undefined || retention.error === null ? null : (
         <DiagnosticStale label="Build Result retention" onRetry={retention.refetch} />
@@ -74,7 +90,16 @@ function RetentionDetails({ retention }: { retention: BuildResultRetentionResour
             }
           />
           <DefinitionTerm label="Version" value={String(hold.version)} />
-          <DefinitionTerm label="Placement request" value={hold.creation_audit.request_identity} />
+          <AuditTerm
+            label="Placement request"
+            requestIdentity={hold.creation_audit.request_identity}
+          />
+          {hold.release_audit === null ? null : (
+            <AuditTerm
+              label="Release request"
+              requestIdentity={hold.release_audit.request_identity}
+            />
+          )}
         </dl>
       )}
       <dl className={styles.retentionGrid}>
@@ -124,11 +149,20 @@ function RetentionComponent({
   );
 }
 
-function DefinitionTerm({ label, value }: { label: string; value: string }) {
+function DefinitionTerm({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
       <dt>{label}</dt>
       <dd>{value}</dd>
     </div>
+  );
+}
+
+function AuditTerm({ label, requestIdentity }: { label: string; requestIdentity: string }) {
+  return (
+    <DefinitionTerm
+      label={label}
+      value={<Link to={auditRequestPath(requestIdentity)}>{requestIdentity}</Link>}
+    />
   );
 }

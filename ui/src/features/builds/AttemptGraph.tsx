@@ -25,8 +25,10 @@ export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
       <svg
         aria-label="Attempt dependency graph"
         className={styles.graph}
+        height={layout.height}
         role="img"
         viewBox={`0 0 ${layout.width} ${layout.height}`}
+        width={layout.width}
       >
         <defs>
           <marker

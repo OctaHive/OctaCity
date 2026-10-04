@@ -15,6 +15,7 @@ import type {
   TriggerDefinitionSummary,
 } from './api';
 import { formatEnumLabel } from '../../shared/display';
+import { ManualBuildForm } from './ManualBuildForm';
 import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import definitionStyles from './ProjectDefinitions.module.css';
 import styles from './Projects.module.css';
@@ -95,7 +96,13 @@ export function ProjectDefinitions({ api, projectId }: ProjectDefinitionsProps) 
           icon={SlidersHorizontal}
           itemLabel={(item) => item.name}
           queryKey={queryKeys.projectBuildConfigurations(projectId)}
-          renderDetails={renderBuildConfigurationDetails}
+          renderDetails={(configuration) => (
+            <BuildConfigurationDetails
+              api={api}
+              configuration={configuration}
+              projectId={projectId}
+            />
+          )}
           renderTags={(item) => <EnabledTag enabled={item.enabled} />}
           title="Build Configurations"
         />
@@ -292,21 +299,32 @@ function renderRepositoryDetails(repository: RepositoryResource) {
   );
 }
 
-function renderBuildConfigurationDetails(configuration: BuildConfigurationResource) {
+function BuildConfigurationDetails({
+  api,
+  configuration,
+  projectId,
+}: {
+  api: ProjectDefinitionsApi;
+  configuration: BuildConfigurationResource;
+  projectId: string;
+}) {
   return (
-    <DetailList
-      items={[
-        [
-          'Pipeline',
-          `${configuration.definition.pipeline_id} v${configuration.definition.pipeline_version}`,
-        ],
-        [
-          'Repository',
-          `${configuration.definition.repository_id} v${configuration.definition.repository_version}`,
-        ],
-        ['Job concurrency', String(configuration.definition.job_concurrency_limit)],
-      ]}
-    />
+    <div className={definitionStyles.configurationDetails}>
+      <DetailList
+        items={[
+          [
+            'Pipeline',
+            `${configuration.definition.pipeline_id} v${configuration.definition.pipeline_version}`,
+          ],
+          [
+            'Repository',
+            `${configuration.definition.repository_id} v${configuration.definition.repository_version}`,
+          ],
+          ['Job concurrency', String(configuration.definition.job_concurrency_limit)],
+        ]}
+      />
+      <ManualBuildForm api={api} configuration={configuration} projectId={projectId} />
+    </div>
   );
 }
 

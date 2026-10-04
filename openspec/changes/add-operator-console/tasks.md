@@ -38,9 +38,9 @@
 
 ## 5. Safe Operator Commands
 
-- [ ] 5.1 Implement the shared confirmed-intent mutation helper that creates one UUID key, retains an immutable request for safe transport retry, prevents duplicate submission, applies `If-Match`, and performs targeted query invalidation; verify lost-response replay, explicit abandonment, new intent, conflict, and rate-limit tests pass without persisting mutation intents in the browser.
-- [ ] 5.2 Add manual Build triggering from a selected Build Configuration plus Build cancellation and retry from Build views; verify target-specific confirmations, one-command submission, replay disposition, updated Project/Build state, validation failures, and request correlation in component and browser tests.
-- [ ] 5.3 Add permanent/time-bounded Build Result hold placement and preconditioned release; verify reason/expiry validation, stale-version handling, replay, retention refresh, and audit correlation against REST fixtures.
+- [x] 5.1 Implement the shared confirmed-intent mutation helper that creates one UUID key, retains an immutable request for safe transport retry, prevents duplicate submission, applies `If-Match`, and performs targeted query invalidation; verify lost-response replay, explicit abandonment, new intent, conflict, and rate-limit tests pass without persisting mutation intents in the browser.
+- [x] 5.2 Add manual Build triggering from a selected Build Configuration plus Build cancellation and retry from Build views; verify target-specific confirmations, one-command submission, replay disposition, updated Project/Build state, validation failures, and request correlation in component and browser tests.
+- [x] 5.3 Add permanent/time-bounded Build Result hold placement and preconditioned release; verify reason/expiry validation, stale-version handling, replay, retention refresh, and audit correlation against REST fixtures.
 
 ## 6. Capacity and Audit Workflows
 

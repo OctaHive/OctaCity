@@ -1,14 +1,21 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, GitBranch, RefreshCw } from 'lucide-react';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
-import { queryKeys } from '../../app/query';
+import { queryInvalidations, queryKeys } from '../../app/query';
 import { projectPath } from '../../app/routes';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
+import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { AttemptGraph, edgeLabel, policyLabel, stateFamily, stateLabel } from './AttemptGraph';
-import type { AttemptResource, BuildDiagnosticsApi, BuildResource, JobResource } from './api';
+import type {
+  AttemptResource,
+  BuildCommandApi,
+  BuildDiagnosticsApi,
+  BuildResource,
+  JobResource,
+} from './api';
 import { BuildLogSearch } from './BuildLogSearch';
 import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
 import { BuildResultDiagnostics } from './BuildResultDiagnostics';
@@ -41,7 +48,12 @@ function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: st
 
   return (
     <section aria-labelledby="page-title" className={styles.page}>
-      <BuildHeading build={build.data} isFetching={build.isFetching} onRefresh={build.refetch} />
+      <BuildHeading
+        api={api}
+        build={build.data}
+        isFetching={build.isFetching}
+        onRefresh={build.refetch}
+      />
       {build.error === null ? null : <DiagnosticStale label="Build" onRetry={build.refetch} />}
       <AttemptPanel api={api} build={build.data} />
       <BuildResultDiagnostics api={api} buildId={build.data.id} />
@@ -50,15 +62,25 @@ function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: st
 }
 
 function BuildHeading({
+  api,
   build,
   isFetching,
   onRefresh,
 }: {
+  api: BuildCommandApi;
   build: BuildResource;
   isFetching: boolean;
   onRefresh: () => unknown;
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const queryClient = useQueryClient();
+  const [command, setCommand] = useState<{
+    kind: 'cancel' | 'retry';
+    returnFocus: HTMLElement;
+  } | null>(null);
   const created = formatTimestamp(build.created_at_unix_ms);
+  const openCommand = (kind: 'cancel' | 'retry', returnFocus: HTMLElement) =>
+    setCommand({ kind, returnFocus });
   return (
     <header className={styles.heading}>
       <Link className={styles.backLink} to={projectPath(build.project_id)}>
@@ -68,17 +90,39 @@ function BuildHeading({
       <div className={styles.headingRow}>
         <div>
           <p className={styles.eyebrow}>Build diagnostics</p>
-          <h1 id="page-title">Build {build.id}</h1>
+          <h1 id="page-title" ref={headingRef} tabIndex={-1}>
+            Build {build.id}
+          </h1>
         </div>
-        <button
-          className={styles.secondaryButton}
-          disabled={isFetching}
-          onClick={() => void onRefresh()}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" size={15} />
-          {isFetching ? 'Refreshing' : 'Refresh'}
-        </button>
+        <div className={styles.headingActions}>
+          {build.state === 'queued' || build.state === 'running' ? (
+            <button
+              className={styles.secondaryButton}
+              onClick={(event) => openCommand('cancel', event.currentTarget)}
+              type="button"
+            >
+              Cancel Build
+            </button>
+          ) : null}
+          {build.state === 'failed' ? (
+            <button
+              className={styles.secondaryButton}
+              onClick={(event) => openCommand('retry', event.currentTarget)}
+              type="button"
+            >
+              Retry Build
+            </button>
+          ) : null}
+          <button
+            className={styles.secondaryButton}
+            disabled={isFetching}
+            onClick={() => void onRefresh()}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={15} />
+            {isFetching ? 'Refreshing' : 'Refresh'}
+          </button>
+        </div>
       </div>
       <div className={styles.buildSummary}>
         <Status state={build.state} />
@@ -98,6 +142,49 @@ function BuildHeading({
         />
         <Definition label="Revision" value={build.immutable_revision} />
       </dl>
+      {command === null ? null : command.kind === 'cancel' ? (
+        <ConfirmedCommand
+          confirmLabel="Cancel Build"
+          consequence={`This requests cancellation of active Build ${build.id} and its unfinished Jobs.`}
+          execute={({ headers, request }) => api.cancelBuild(request.buildId, headers)}
+          fallbackFocusRef={headingRef}
+          invalidations={[
+            { exact: true, queryKey: queryKeys.build(build.id) },
+            { queryKey: queryKeys.projectBuildPages(build.project_id) },
+            queryInvalidations.audit,
+          ]}
+          onClose={() => setCommand(null)}
+          queryClient={queryClient}
+          renderSuccess={(result) => (
+            <span>Cancellation accepted ({formatEnumLabel(result.disposition)}).</span>
+          )}
+          request={{ buildId: build.id }}
+          returnFocus={command.returnFocus}
+          title={`Cancel Build ${build.id}?`}
+        />
+      ) : (
+        <ConfirmedCommand
+          confirmLabel="Retry Build"
+          consequence={`This creates the next Attempt from failed Build ${build.id}.`}
+          execute={({ headers, request }) => api.retryBuild(request.buildId, headers)}
+          fallbackFocusRef={headingRef}
+          invalidations={[
+            { exact: true, queryKey: queryKeys.build(build.id) },
+            { queryKey: queryKeys.projectBuildPages(build.project_id) },
+            queryInvalidations.audit,
+          ]}
+          onClose={() => setCommand(null)}
+          queryClient={queryClient}
+          renderSuccess={(result) => (
+            <span>
+              Retry Attempt {result.attempt_number} created ({formatEnumLabel(result.disposition)}).
+            </span>
+          )}
+          request={{ buildId: build.id }}
+          returnFocus={command.returnFocus}
+          title={`Retry Build ${build.id}?`}
+        />
+      )}
     </header>
   );
 }

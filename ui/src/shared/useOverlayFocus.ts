@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -27,6 +27,11 @@ export function useOverlayFocus({
   priority = false,
   restoreFocus,
 }: OverlayFocusOptions): void {
+  const onDismissRef = useRef(onDismiss);
+  const restoreFocusRef = useRef(restoreFocus);
+  onDismissRef.current = onDismiss;
+  restoreFocusRef.current = restoreFocus;
+
   useEffect(() => {
     if (!active) {
       return;
@@ -44,7 +49,7 @@ export function useOverlayFocus({
       }
       if (event.key === 'Escape') {
         event.preventDefault();
-        onDismiss();
+        onDismissRef.current();
         return;
       }
       if (event.key !== 'Tab') {
@@ -82,7 +87,7 @@ export function useOverlayFocus({
       } else {
         document.removeEventListener('keydown', handleKeyDown, true);
       }
-      restoreFocus();
+      restoreFocusRef.current();
     };
-  }, [active, containerRef, initialFocusRef, onDismiss, priority, restoreFocus]);
+  }, [active, containerRef, initialFocusRef, priority]);
 }

@@ -3,8 +3,10 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ManagementApiError } from '../../api/client';
 import { createConsoleQueryClient } from '../../app/query';
 import { queryKeys } from '../../app/query';
 import { BuildResultDiagnostics } from './BuildResultDiagnostics';
@@ -24,6 +26,7 @@ afterEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('Build Result diagnostics', () => {
@@ -95,6 +98,115 @@ describe('Build Result diagnostics', () => {
     expect(await within(panel).findByText(label)).toBeTruthy();
     expect(within(panel).getAllByText('Visible', { selector: 'dd' })).toHaveLength(3);
     expect(within(panel).getByText('Unavailable', { selector: 'dd' })).toBeTruthy();
+  });
+
+  it('validates and places a time-bounded hold with audit correlation', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '88888888-8888-4888-8888-888888888888'),
+    });
+    const active = { ...retentionResource(), hold: hold('active') };
+    const api = diagnosticsApi();
+    vi.mocked(api.getBuildResultRetention)
+      .mockReset()
+      .mockResolvedValueOnce(retentionResource())
+      .mockResolvedValue(active);
+    vi.mocked(api.placeBuildResultHold).mockResolvedValue({
+      disposition: 'applied',
+      retention: active,
+    });
+    renderDiagnostics(api);
+
+    const panel = await screen.findByRole('region', { name: 'Build Result retention' });
+    await userEvent.click(await within(panel).findByRole('button', { name: 'Review hold' }));
+    expect(await within(panel).findByText('A hold reason is required.')).toBeTruthy();
+
+    const reason = within(panel).getByRole('textbox', { name: 'Hold reason' });
+    await userEvent.type(reason, '💚'.repeat(129));
+    await userEvent.click(within(panel).getByRole('button', { name: 'Review hold' }));
+    expect(
+      await within(panel).findByText('The hold reason cannot exceed 512 UTF-8 bytes.'),
+    ).toBeTruthy();
+
+    await userEvent.clear(reason);
+    await userEvent.type(reason, 'incident evidence');
+    await userEvent.selectOptions(
+      within(panel).getByRole('combobox', { name: 'Hold duration' }),
+      'time_bounded',
+    );
+    const expiry = within(panel).getByLabelText('Hold expiry');
+    await userEvent.type(expiry, '2000-01-02T03:04');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Review hold' }));
+    expect(
+      await within(panel).findByText('Hold expiry must be a valid future date and time.'),
+    ).toBeTruthy();
+
+    await userEvent.clear(expiry);
+    await userEvent.type(expiry, '2099-01-02T03:04');
+    await userEvent.click(within(panel).getByRole('button', { name: 'Review hold' }));
+
+    const dialog = screen.getByRole('dialog', { name: `Place hold on Build ${BUILD_ID}?` });
+    expect(
+      within(dialog).getByText(/protects metadata, logs, Artifacts, and reports/),
+    ).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Place hold' }));
+
+    expect(api.placeBuildResultHold).toHaveBeenCalledWith(
+      BUILD_ID,
+      {
+        expires_at_unix_ms: new Date('2099-01-02T03:04').getTime(),
+        reason: 'incident evidence',
+      },
+      { 'Idempotency-Key': '88888888-8888-4888-8888-888888888888' },
+    );
+    expect(await within(dialog).findByText('Retention hold placed (Applied).')).toBeTruthy();
+    expect(
+      within(dialog)
+        .getByRole('link', { name: 'View placement audit evidence' })
+        .getAttribute('href'),
+    ).toBe('/audit?request_identity=request-1');
+    await waitFor(() => expect(api.getBuildResultRetention).toHaveBeenCalledTimes(2));
+  });
+
+  it('releases the current hold version and refreshes after a stale-version rejection', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '99999999-9999-4999-8999-999999999999'),
+    });
+    const api = diagnosticsApi({
+      retention: { ...retentionResource(), hold: hold('active') },
+    });
+    vi.mocked(api.getBuildResultRetention)
+      .mockResolvedValueOnce({ ...retentionResource(), hold: hold('active') })
+      .mockResolvedValue({ ...retentionResource(), hold: { ...hold('active'), version: 3 } });
+    vi.mocked(api.releaseBuildResultHold).mockRejectedValue(
+      new ManagementApiError({
+        code: 'precondition_failed',
+        message: 'The retention hold changed.',
+        requestId: 'request-stale',
+        retryAfterMilliseconds: null,
+        status: 412,
+      }),
+    );
+    renderDiagnostics(api);
+
+    const panel = await screen.findByRole('region', { name: 'Build Result retention' });
+    await userEvent.click(await within(panel).findByRole('button', { name: 'Release hold' }));
+    const dialog = screen.getByRole('dialog', { name: `Release hold on Build ${BUILD_ID}?` });
+    expect(within(dialog).getByText(/eligible for deletion/)).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Release hold' }));
+
+    expect(api.releaseBuildResultHold).toHaveBeenCalledWith(BUILD_ID, {
+      'Idempotency-Key': '99999999-9999-4999-8999-999999999999',
+      'If-Match': '"2"',
+    });
+    expect(await within(dialog).findByText('The retention hold changed.')).toBeTruthy();
+    expect(within(dialog).getByText('Request ID: request-stale')).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: 'Retry same command' })).toBeNull();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Refresh current data' }));
+    await waitFor(() => expect(api.getBuildResultRetention).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(await within(panel).findByText('3', { selector: 'dd' })).toBeTruthy();
+    expect(api.releaseBuildResultHold).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a non-HTTP download capability', async () => {
@@ -190,9 +302,11 @@ function fakeDownloadWindow() {
 function renderDiagnostics(api: BuildResultDiagnosticsApi) {
   const queryClient = createConsoleQueryClient();
   render(
-    <QueryClientProvider client={queryClient}>
-      <BuildResultDiagnostics api={api} buildId={BUILD_ID} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <BuildResultDiagnostics api={api} buildId={BUILD_ID} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
   return queryClient;
 }
@@ -215,6 +329,8 @@ function diagnosticsApi({
     getBuildResultRetention: vi.fn().mockResolvedValue(retention),
     listBuildArtifacts: vi.fn().mockResolvedValue(artifacts),
     listBuildCacheSessions: vi.fn().mockResolvedValue(cacheSessions),
+    placeBuildResultHold: vi.fn(),
+    releaseBuildResultHold: vi.fn(),
   };
 }
 

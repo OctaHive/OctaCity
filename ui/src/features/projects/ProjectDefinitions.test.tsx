@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, screen, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../app/query';
 import {
   configuration,
+  configurationDetails,
   definition,
   definitionPage,
   fakeProjectsApi,
@@ -16,7 +18,10 @@ import {
   trigger,
 } from './ProjectTestSupport';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe('Project definitions', () => {
   it('discovers current definitions and reads exact details without identifier entry', async () => {
@@ -58,6 +63,98 @@ describe('Project definitions', () => {
 
     expect(api.getPipeline).toHaveBeenCalledWith('pipeline-a', 3, expect.any(AbortSignal));
     expect(await screen.findByText('0 Jobs')).toBeTruthy();
+  });
+
+  it('validates and confirms one manual Build from the selected configuration', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '44444444-4444-4444-8444-444444444444'),
+    });
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });
+    api.listBuildConfigurations.mockResolvedValue(
+      definitionPage([configuration('configuration-a', 'Production')], null),
+    );
+    api.listTriggers.mockResolvedValue(definitionPage([trigger('manual-trigger', 'manual')], null));
+    api.getBuildConfiguration.mockResolvedValue(
+      configurationDetails('configuration-a', 'Production', {
+        deny_unknown: true,
+        parameters: {
+          environment: { default: null, required: true, value_type: 'string' },
+          publish: { default: true, required: false, value_type: 'boolean' },
+          retries: { default: 2, required: false, value_type: 'integer' },
+        },
+      }),
+    );
+    api.triggerBuild.mockResolvedValue({
+      attempt_id: 'attempt-new',
+      build_id: 'build-new',
+      disposition: 'applied',
+      outcome: 'accepted',
+      ready_job_ids: ['job-new'],
+      trigger_occurrence_id: 'occurrence-new',
+    });
+    const { queryClient } = renderProjects('/projects/delivery', api);
+    queryClient.setQueryData(queryKeys.audit, []);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View Production details' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Review Build' }));
+    expect(await screen.findByText('Environment is required.')).toBeTruthy();
+
+    await userEvent.type(screen.getByRole('textbox', { name: 'Environment' }), 'staging');
+    await userEvent.click(screen.getByRole('button', { name: 'Review Build' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Start Build from Production?' });
+    expect(within(dialog).getByText(/configuration Production version 3/)).toBeTruthy();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start Build' }));
+
+    expect(api.triggerBuild).toHaveBeenCalledWith(
+      {
+        configuration_id: 'configuration-a',
+        configuration_version: 3,
+        parameters: { environment: 'staging', publish: true, retries: 2 },
+        priority: 0,
+        source: { kind: 'default_reference' },
+        trigger_id: 'manual-trigger',
+        trigger_version: 3,
+      },
+      { 'Idempotency-Key': '44444444-4444-4444-8444-444444444444' },
+    );
+    expect((await within(dialog).findByRole('status')).textContent).toContain(
+      'Build build-new accepted (Applied).',
+    );
+    expect(screen.getByRole('link', { name: 'Open Build build-new' }).getAttribute('href')).toBe(
+      '/builds/build-new',
+    );
+    expect(queryClient.getQueryState(queryKeys.audit)?.isInvalidated).toBe(true);
+    await waitFor(() => expect(api.listBuilds).toHaveBeenCalledTimes(2));
+  });
+
+  it('dismisses a manual Build confirmation without submitting its parent form', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '44444444-4444-4444-8444-444444444444'),
+    });
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });
+    api.listBuildConfigurations.mockResolvedValue(
+      definitionPage([configuration('configuration-a', 'Production')], null),
+    );
+    api.listTriggers.mockResolvedValue(definitionPage([trigger('manual-trigger', 'manual')], null));
+    api.getBuildConfiguration.mockResolvedValue(
+      configurationDetails('configuration-a', 'Production', {
+        deny_unknown: true,
+        parameters: {},
+      }),
+    );
+    renderProjects('/projects/delivery', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View Production details' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Review Build' }));
+    expect(screen.getByRole('dialog', { name: 'Start Build from Production?' })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close confirmation' }));
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(api.triggerBuild).not.toHaveBeenCalled();
   });
 
   it('paginates every definition section with an independent server cursor', async () => {

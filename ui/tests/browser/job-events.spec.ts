@@ -5,6 +5,89 @@ const ATTEMPT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const JOB_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const ARTIFACT_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
+test('confirms Build cancellation and retry with distinct command identities', async ({ page }) => {
+  let state: 'cancelled' | 'failed' | 'running' = 'running';
+  const commands: Array<{ key: string | undefined; path: string }> = [];
+  await mockBuildDiagnostics(page, {
+    onBuildRequest: async (route) => fulfillJson(route, buildResource(state)),
+    onCancel: async (route) => {
+      commands.push({
+        key: route.request().headers()['idempotency-key'],
+        path: new URL(route.request().url()).pathname,
+      });
+      state = 'cancelled';
+      await fulfillJson(route, {
+        attempt_id: ATTEMPT_ID,
+        build_id: BUILD_ID,
+        cancelled_job_ids: [JOB_ID],
+        cancelling_job_ids: [],
+        disposition: 'applied',
+      });
+    },
+    onEventRequest: async (route) => fulfillJson(route, { cursor: 0, items: [] }),
+    onJobRequest: async (route) =>
+      fulfillJson(route, { event_cursor: 0, id: JOB_ID, state: 'succeeded' }),
+    onRetry: async (route) => {
+      commands.push({
+        key: route.request().headers()['idempotency-key'],
+        path: new URL(route.request().url()).pathname,
+      });
+      state = 'running';
+      await fulfillJson(route, {
+        attempt_id: 'attempt-next',
+        attempt_number: 2,
+        build_id: BUILD_ID,
+        disposition: 'applied',
+        ready_job_ids: [JOB_ID],
+        source_attempt_id: ATTEMPT_ID,
+      });
+    },
+  });
+
+  await page.goto(`/builds/${BUILD_ID}`);
+  await page.getByRole('button', { name: 'Cancel Build' }).click();
+  let dialog = page.getByRole('dialog', { name: `Cancel Build ${BUILD_ID}?` });
+  await dialog.getByRole('button', { name: 'Cancel Build' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Cancellation accepted (Applied).');
+  await expect(page.getByText('Cancelled')).toBeVisible();
+  await dialog.getByRole('button', { name: 'Close' }).click();
+
+  state = 'failed';
+  await page.reload();
+  await page.getByRole('button', { name: 'Retry Build' }).click();
+  dialog = page.getByRole('dialog', { name: `Retry Build ${BUILD_ID}?` });
+  await dialog.getByRole('button', { name: 'Retry Build' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Retry Attempt 2 created (Applied).');
+  await expect(page.getByText('Running', { exact: true }).first()).toBeVisible();
+
+  expect(commands.map(({ path }) => path)).toEqual([
+    `/api/v1/builds/${BUILD_ID}/cancel`,
+    `/api/v1/builds/${BUILD_ID}/retry`,
+  ]);
+  expect(commands[0]?.key).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(commands[1]?.key).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(commands[0]?.key).not.toBe(commands[1]?.key);
+});
+
+test('keeps a single-Job Attempt graph compact', async ({ page }) => {
+  await mockBuildDiagnostics(page, {
+    onEventRequest: async (route) => {
+      await fulfillJson(route, { cursor: 0, items: [] });
+    },
+    onJobRequest: async (route) => {
+      await fulfillJson(route, { event_cursor: 0, id: JOB_ID, state: 'succeeded' });
+    },
+  });
+
+  await page.goto(`/builds/${BUILD_ID}`);
+
+  const graph = page.getByRole('img', { name: 'Attempt dependency graph' });
+  const nodeBounds = await graph.getByLabel('compile, Running').locator('rect').boundingBox();
+  if (nodeBounds === null) throw new Error('single Job graph node was not rendered');
+  expect(nodeBounds.width).toBeLessThanOrEqual(180);
+  expect(nodeBounds.height).toBeLessThanOrEqual(80);
+});
+
 test('follows one bounded ordered Job stream without duplicate rows or parallel pollers', async ({
   page,
 }) => {
@@ -256,16 +339,104 @@ test('shows secret-free Build Result diagnostics and launches an ephemeral downl
   ).toBe(false);
 });
 
+test('replays one permanent hold intent and releases the current version with audit correlation', async ({
+  page,
+}) => {
+  let retentionState: 'active' | 'released' | null = null;
+  const placements: Array<{ body: unknown; key: string | undefined }> = [];
+  const releases: Array<{
+    ifMatch: string | undefined;
+    key: string | undefined;
+  }> = [];
+  await mockBuildDiagnostics(page, {
+    onEventRequest: async (route) => fulfillJson(route, { cursor: 0, items: [] }),
+    onJobRequest: async (route) =>
+      fulfillJson(route, { event_cursor: 0, id: JOB_ID, state: 'succeeded' }),
+    onPlaceHold: async (route) => {
+      placements.push({
+        body: route.request().postDataJSON() as unknown,
+        key: route.request().headers()['idempotency-key'],
+      });
+      if (placements.length === 1) {
+        await route.abort('connectionreset');
+        return;
+      }
+      retentionState = 'active';
+      await route.fulfill({
+        body: JSON.stringify({
+          disposition: 'replayed',
+          retention: retentionResource(retentionState),
+        }),
+        contentType: 'application/json',
+        status: 201,
+      });
+    },
+    onReleaseHold: async (route) => {
+      releases.push({
+        ifMatch: route.request().headers()['if-match'],
+        key: route.request().headers()['idempotency-key'],
+      });
+      retentionState = 'released';
+      await fulfillJson(route, {
+        disposition: 'applied',
+        retention: retentionResource(retentionState),
+      });
+    },
+    onRetention: async (route) => fulfillJson(route, retentionResource(retentionState)),
+  });
+
+  await page.goto(`/builds/${BUILD_ID}`);
+  const retention = page.getByRole('region', { name: 'Build Result retention' });
+  await retention.getByRole('textbox', { name: 'Hold reason' }).fill('release investigation');
+  await retention.getByRole('button', { name: 'Review hold' }).click();
+
+  let dialog = page.getByRole('dialog', { name: `Place hold on Build ${BUILD_ID}?` });
+  await dialog.getByRole('button', { name: 'Place hold' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('could not be reached');
+  await dialog.getByRole('button', { name: 'Retry same command' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Retention hold placed (Replayed).');
+  await expect(dialog.getByRole('link', { name: 'View placement audit evidence' })).toHaveAttribute(
+    'href',
+    '/audit?request_identity=request-placement',
+  );
+  expect(placements).toHaveLength(2);
+  expect(placements[0]?.body).toEqual({ reason: 'release investigation' });
+  expect(placements[1]?.body).toEqual(placements[0]?.body);
+  expect(placements[0]?.key).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(placements[1]?.key).toBe(placements[0]?.key);
+
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await retention.getByRole('button', { name: 'Release hold' }).click();
+  dialog = page.getByRole('dialog', { name: `Release hold on Build ${BUILD_ID}?` });
+  await dialog.getByRole('button', { name: 'Release hold' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Retention hold released (Applied).');
+  await expect(dialog.getByRole('link', { name: 'View release audit evidence' })).toHaveAttribute(
+    'href',
+    '/audit?request_identity=request-release',
+  );
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(retention.getByRole('heading', { name: 'Build Result retention' })).toBeFocused();
+  expect(releases).toHaveLength(1);
+  expect(releases[0]?.ifMatch).toBe('"1"');
+  expect(releases[0]?.key).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(releases[0]?.key).not.toBe(placements[0]?.key);
+});
+
 async function mockBuildDiagnostics(
   page: Page,
   handlers: {
     onArtifactDownload?: (route: Route) => Promise<void>;
     onArtifacts?: (route: Route, url: URL) => Promise<void>;
+    onBuildRequest?: (route: Route) => Promise<void>;
     onCacheSessions?: (route: Route, url: URL) => Promise<void>;
+    onCancel?: (route: Route) => Promise<void>;
     onEventRequest: (route: Route, url: URL) => Promise<void>;
     onJobRequest: (route: Route) => Promise<void>;
     onLogSearch?: (route: Route, url: URL) => Promise<void>;
+    onPlaceHold?: (route: Route) => Promise<void>;
+    onReleaseHold?: (route: Route) => Promise<void>;
     onRetention?: (route: Route) => Promise<void>;
+    onRetry?: (route: Route) => Promise<void>;
   },
 ) {
   await page.route('**/health/ready', async (route) => {
@@ -273,8 +444,16 @@ async function mockBuildDiagnostics(
   });
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === `/api/v1/builds/${BUILD_ID}/cancel` && handlers.onCancel !== undefined) {
+      await handlers.onCancel(route);
+      return;
+    }
+    if (url.pathname === `/api/v1/builds/${BUILD_ID}/retry` && handlers.onRetry !== undefined) {
+      await handlers.onRetry(route);
+      return;
+    }
     if (url.pathname === `/api/v1/builds/${BUILD_ID}`) {
-      await fulfillJson(route, buildResource());
+      await (handlers.onBuildRequest?.(route) ?? fulfillJson(route, buildResource()));
       return;
     }
     if (url.pathname === `/api/v1/attempts/${ATTEMPT_ID}`) {
@@ -287,6 +466,20 @@ async function mockBuildDiagnostics(
     }
     if (url.pathname === `/api/v1/builds/${BUILD_ID}/cache-sessions`) {
       await (handlers.onCacheSessions?.(route, url) ?? fulfillJson(route, { items: [] }));
+      return;
+    }
+    if (
+      url.pathname === `/api/v1/builds/${BUILD_ID}/retention/hold/release` &&
+      handlers.onReleaseHold !== undefined
+    ) {
+      await handlers.onReleaseHold(route);
+      return;
+    }
+    if (
+      url.pathname === `/api/v1/builds/${BUILD_ID}/retention/hold` &&
+      handlers.onPlaceHold !== undefined
+    ) {
+      await handlers.onPlaceHold(route);
       return;
     }
     if (url.pathname === `/api/v1/builds/${BUILD_ID}/retention`) {
@@ -320,7 +513,7 @@ async function mockBuildDiagnostics(
   });
 }
 
-function buildResource() {
+function buildResource(state: 'cancelled' | 'failed' | 'running' = 'running') {
   return {
     configuration_id: 'configuration-1',
     configuration_version: 1,
@@ -362,7 +555,7 @@ function buildResource() {
     repository_id: 'repository-1',
     repository_version: 1,
     source: { kind: 'exact_revision', value: '0123456789abcdef' },
-    state: 'running',
+    state,
     trigger: {
       build_id: BUILD_ID,
       causality: {
@@ -457,7 +650,7 @@ function artifactResource() {
   };
 }
 
-function retentionResource(state: 'active' | null) {
+function retentionResource(state: 'active' | 'released' | null) {
   return {
     build_id: BUILD_ID,
     deadlines: {
@@ -474,12 +667,19 @@ function retentionResource(state: 'active' | null) {
             creation_audit: {
               actor_identity: null,
               actor_kind: 'unauthenticated_management',
-              request_identity: 'request-1',
+              request_identity: 'request-placement',
             },
             expires_at_unix_ms: null,
             reason: 'incident evidence',
-            release_audit: null,
-            released_at_unix_ms: null,
+            release_audit:
+              state === 'released'
+                ? {
+                    actor_identity: null,
+                    actor_kind: 'unauthenticated_management',
+                    request_identity: 'request-release',
+                  }
+                : null,
+            released_at_unix_ms: state === 'released' ? 1_700_000_010_000 : null,
             state,
             version: 1,
           },

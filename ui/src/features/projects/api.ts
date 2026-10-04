@@ -1,4 +1,5 @@
 import type { components } from '../../../.generated/api/schema';
+import type { IdempotencyRequestHeaders } from '../../api/client';
 import { managementApi, requireManagementResponse } from '../../api/client';
 
 export const PROJECT_PAGE_SIZE = 25;
@@ -21,6 +22,11 @@ export type RepositorySummaryPage = components['schemas']['RepositorySummaryPage
 export type RepositorySummary = components['schemas']['RepositorySummaryResource'];
 export type TriggerDefinitionSummaryPage = components['schemas']['TriggerDefinitionSummaryPage'];
 export type TriggerDefinitionSummary = components['schemas']['TriggerDefinitionSummaryResource'];
+export type ManualBuildRequest = Omit<
+  components['schemas']['AcceptManualTriggerRequest'],
+  'deduplication_identity'
+>;
+export type TriggerEvaluationResponse = components['schemas']['TriggerEvaluationResponse'];
 
 export interface BuildFilters {
   configurationId: string | null;
@@ -52,7 +58,7 @@ export interface ProjectHierarchyApi {
 }
 
 /** Current-definition reads consumed by the Project workspace. */
-export interface ProjectDefinitionsApi {
+export interface ProjectDefinitionReadsApi {
   getBuildConfiguration(
     configurationId: string,
     version: number,
@@ -89,6 +95,17 @@ export interface ProjectDefinitionsApi {
     signal?: AbortSignal,
   ): Promise<TriggerDefinitionSummaryPage>;
 }
+
+/** Minimal command seam used by the manual Build form. */
+export interface ManualBuildApi extends Pick<ProjectDefinitionReadsApi, 'listTriggers'> {
+  triggerBuild(
+    request: Readonly<ManualBuildRequest>,
+    headers: IdempotencyRequestHeaders,
+  ): Promise<TriggerEvaluationResponse>;
+}
+
+/** Capabilities composed by the Project definitions view. */
+export type ProjectDefinitionsApi = ProjectDefinitionReadsApi & ManualBuildApi;
 
 /** Recent-Build reads consumed by the Project workspace. */
 export interface ProjectBuildsApi {
@@ -229,6 +246,13 @@ export const projectsApi: ProjectsApi = {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}/trigger-definitions', {
       params: { path: { project_id: projectId }, query: pageQuery(cursor) },
       signal: signal ?? null,
+    });
+    return requireManagementResponse(data);
+  },
+  async triggerBuild(request, headers) {
+    const { data } = await managementApi.POST('/api/v1/triggers/manual', {
+      body: { ...request, deduplication_identity: headers['Idempotency-Key'] },
+      params: { header: headers },
     });
     return requireManagementResponse(data);
   },

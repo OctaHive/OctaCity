@@ -18,7 +18,7 @@ import {
 } from './preferences';
 import type { ConsoleSection } from './sections';
 import styles from './ContextExplorer.module.css';
-import { useOverlayFocus } from './useOverlayFocus';
+import { useOverlayFocus } from '../../shared/useOverlayFocus';
 
 interface ContextExplorerProps {
   children?: ReactNode;

@@ -10,6 +10,7 @@ const MAX_AUTOMATIC_RETRY_AFTER_SECONDS = 60;
 
 type ManagementErrorCode = components['schemas']['ErrorCode'];
 type ManagementFetch = (request: Request) => Promise<Response>;
+export type IdempotencyRequestHeaders = Readonly<{ 'Idempotency-Key': string }>;
 
 export const MANAGEMENT_ERROR_CODES = {
   invalid_request: true,
@@ -63,9 +64,7 @@ export function requestIdFromResponse(response: Response): string | null {
 }
 
 /** Builds the required replay header for an idempotent management mutation. */
-export function idempotencyHeaders(
-  idempotencyKey: string,
-): Readonly<{ 'Idempotency-Key': string }> {
+export function idempotencyHeaders(idempotencyKey: string): IdempotencyRequestHeaders {
   if (boundedVisibleAscii(idempotencyKey, MAX_IDEMPOTENCY_KEY_LENGTH) === null) {
     throw new TypeError('Invalid idempotency key');
   }

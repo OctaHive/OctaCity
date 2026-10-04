@@ -2,7 +2,7 @@ import { useCallback, useRef } from 'react';
 
 import styles from './CommandCenter.module.css';
 import { searchScopeLabel, type ResourceSearchScope } from './searchScope';
-import { useOverlayFocus } from './useOverlayFocus';
+import { useOverlayFocus } from '../../shared/useOverlayFocus';
 
 interface CommandCenterProps {
   onClose: () => void;

@@ -1,0 +1,88 @@
+.layer {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-lg);
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: var(--color-overlay);
+}
+
+.dialog {
+  position: relative;
+  width: min(32rem, 100%);
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-floating);
+}
+
+.dialog h2,
+.dialog p {
+  margin: 0;
+}
+
+.dialog > p {
+  margin-top: var(--space-md);
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-lg);
+}
+
+.actions button {
+  min-height: 2.35rem;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.actions button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.actions .primary {
+  border-color: var(--color-brand-action);
+  background: var(--color-brand-action);
+  color: var(--color-on-brand);
+}
+
+.success,
+.error {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-small);
+  font-size: 0.78rem;
+}
+
+.success {
+  background: var(--color-brand-soft);
+  color: var(--color-success-ink);
+}
+
+.error {
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+}

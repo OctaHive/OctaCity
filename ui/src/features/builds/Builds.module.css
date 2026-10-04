@@ -54,6 +54,13 @@
   justify-content: space-between;
 }
 
+.headingActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
 .eyebrow {
   margin: 0;
   color: var(--color-brand-action);
@@ -205,9 +212,6 @@
 
 .graph {
   display: block;
-  width: 100%;
-  min-width: 34rem;
-  min-height: 8rem;
 }
 
 .graphNode {
@@ -527,6 +531,35 @@
   padding: var(--space-lg);
 }
 
+.holdCommands {
+  padding: 0 var(--space-lg) var(--space-lg);
+}
+
+.holdForm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 0.35fr) minmax(12rem, 0.45fr) auto;
+  align-items: end;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.holdForm h3,
+.holdForm > :global([role='alert']) {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.holdForm h3 {
+  font-size: 0.86rem;
+}
+
+.holdReasonField {
+  min-width: 0;
+}
+
 .holdDetails,
 .retentionGrid {
   display: grid;
@@ -684,5 +717,9 @@
 
   .logSearchForm .logQueryField {
     flex-basis: 100%;
+  }
+
+  .holdForm {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

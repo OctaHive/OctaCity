@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  audit: ['audit'] as const,
   attempt: (attemptId: string) => ['attempts', attemptId] as const,
   buildArtifacts: (buildId: string) => ['builds', buildId, 'artifacts'] as const,
   buildCacheSessions: (buildId: string) => ['builds', buildId, 'cache-sessions'] as const,
@@ -27,6 +28,7 @@ export const queryKeys = {
   project: (projectId: string) => ['projects', 'detail', projectId] as const,
   projectBuildConfigurations: (projectId: string) =>
     ['projects', projectId, 'build-configurations'] as const,
+  projectBuildPages: (projectId: string) => ['projects', projectId, 'builds'] as const,
   projectBuilds: (projectId: string, configurationId: string | null, state: string | null) =>
     ['projects', projectId, 'builds', { configurationId, state }] as const,
   projectChildren: (parentId: string | null) => ['projects', 'children', parentId] as const,
@@ -39,6 +41,11 @@ export const queryKeys = {
   trigger: (kind: string, triggerId: string, version: number) =>
     ['triggers', kind, triggerId, version] as const,
 };
+
+/** Shared invalidation targets for cross-cutting server projections. */
+export const queryInvalidations = {
+  audit: { queryKey: queryKeys.audit },
+} as const;
 
 export const READINESS_REFRESH_MILLISECONDS = 10_000;
 

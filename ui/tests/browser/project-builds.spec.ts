@@ -9,11 +9,64 @@ const BUILD_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
 const BUILD_C = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3';
 const PAGE_CURSOR = 'equal-time-page-2';
 
+test('replays one confirmed manual Build with an unchanged identity after a lost response', async ({
+  page,
+}) => {
+  const requests: Array<{ body: Record<string, unknown>; key: string | undefined }> = [];
+  let accepted = false;
+  await mockProjectApi(page, {
+    onBuilds: async (route) => {
+      await fulfillJson(
+        route,
+        pageResponse(accepted ? [build('build-new', 1_700_000_001_000)] : []),
+      );
+    },
+    onManualTrigger: async (route) => {
+      requests.push({
+        body: route.request().postDataJSON() as Record<string, unknown>,
+        key: route.request().headers()['idempotency-key'],
+      });
+      if (requests.length === 1) {
+        await route.abort('connectionfailed');
+        return;
+      }
+      accepted = true;
+      await fulfillJson(route, {
+        attempt_id: 'attempt-new',
+        build_id: 'build-new',
+        disposition: 'replayed',
+        outcome: 'accepted',
+        ready_job_ids: [],
+        trigger_occurrence_id: 'occurrence-new',
+      });
+    },
+  });
+
+  await page.goto(`/projects/${PROJECT_ID}`);
+  await page.getByRole('button', { name: 'View Release details' }).click();
+  await page.getByRole('textbox', { name: 'Environment' }).fill('staging');
+  await page.getByRole('button', { name: 'Review Build' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Start Build from Release?' });
+  await dialog.getByRole('button', { name: 'Start Build' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('management API could not be reached');
+  await dialog.getByRole('button', { name: 'Retry same command' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Build build-new accepted (Replayed).');
+  await expect(
+    page.getByRole('region', { name: 'Recent Builds' }).getByRole('link', { name: 'build-new' }),
+  ).toBeVisible();
+
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+  expect(requests[0]?.key).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(requests[0]?.body.deduplication_identity).toBe(requests[0]?.key);
+  expect(requests[0]?.body.configuration_id).toBe(CONFIGURATION_ID);
+});
+
 test('round-trips copied Build filters, preserves server order, and follows the cursor', async ({
   page,
 }) => {
   const buildRequests: URL[] = [];
-  await mockProjectApi(page, buildRequests);
+  await mockProjectApi(page, { buildRequests });
   const sharedPath = `/projects/${PROJECT_ID}?configuration_id=${CONFIGURATION_ID}&state=failed`;
 
   await page.goto(sharedPath);
@@ -57,13 +110,24 @@ test('round-trips copied Build filters, preserves server order, and follows the 
   await expect(page).toHaveURL(`/builds/${BUILD_B}`);
 });
 
-async function mockProjectApi(page: Page, buildRequests: URL[]) {
+async function mockProjectApi(
+  page: Page,
+  handlers: {
+    buildRequests?: URL[];
+    onBuilds?: (route: Route, url: URL) => Promise<void>;
+    onManualTrigger?: (route: Route) => Promise<void>;
+  } = {},
+) {
   await page.route('**/health/ready', async (route) => {
     await fulfillJson(route, { status: 'ready' });
   });
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const projectPath = `/api/v1/projects/${PROJECT_ID}`;
+    if (url.pathname === '/api/v1/triggers/manual' && handlers.onManualTrigger !== undefined) {
+      await handlers.onManualTrigger(route);
+      return;
+    }
     if (url.pathname === projectPath) {
       await fulfillJson(route, {
         ancestors: [],
@@ -98,8 +162,16 @@ async function mockProjectApi(page: Page, buildRequests: URL[]) {
       );
       return;
     }
+    if (url.pathname === `/api/v1/build-configurations/${CONFIGURATION_ID}/versions/4`) {
+      await fulfillJson(route, buildConfiguration());
+      return;
+    }
     if (url.pathname === `${projectPath}/builds`) {
-      buildRequests.push(url);
+      handlers.buildRequests?.push(url);
+      if (handlers.onBuilds !== undefined) {
+        await handlers.onBuilds(route, url);
+        return;
+      }
       const items =
         url.searchParams.get('after') === PAGE_CURSOR
           ? [build(BUILD_C, 1_699_999_999_000)]
@@ -107,16 +179,87 @@ async function mockProjectApi(page: Page, buildRequests: URL[]) {
       await fulfillJson(route, pageResponse(items, items.length === 1 ? null : PAGE_CURSOR));
       return;
     }
+    if (url.pathname === `${projectPath}/trigger-definitions`) {
+      await fulfillJson(
+        route,
+        pageResponse([
+          {
+            configuration_id: CONFIGURATION_ID,
+            configuration_version: 4,
+            enabled: true,
+            id: 'manual-trigger',
+            kind: 'manual',
+            project_id: PROJECT_ID,
+            published_at_unix_ms: 1_700_000_000_000,
+            version: 2,
+          },
+        ]),
+      );
+      return;
+    }
     if (
       url.pathname === `${projectPath}/pipelines` ||
-      url.pathname === `${projectPath}/repositories` ||
-      url.pathname === `${projectPath}/trigger-definitions`
+      url.pathname === `${projectPath}/repositories`
     ) {
       await fulfillJson(route, pageResponse([]));
       return;
     }
     await route.fulfill({ body: '{}', contentType: 'application/json', status: 404 });
   });
+}
+
+function buildConfiguration() {
+  return {
+    definition: {
+      agent_requirements: {
+        capabilities: [],
+        labels: {},
+        minimum_cpu_millis: 0,
+        minimum_disk_bytes: 0,
+        minimum_memory_bytes: 0,
+      },
+      allowed_pools: [],
+      artifacts: {
+        artifact_bytes: 0,
+        artifact_count: 0,
+        report_bytes: 0,
+        report_count: 0,
+        single_output_bytes: 0,
+      },
+      cache: { namespace: null, read: false, write: false },
+      enabled: true,
+      job_concurrency_limit: 1,
+      parameters: {
+        deny_unknown: true,
+        parameters: {
+          environment: { default: null, required: true, value_type: 'string' },
+        },
+      },
+      pipeline_id: 'pipeline-1',
+      pipeline_version: 1,
+      repository_id: 'repository-1',
+      repository_version: 1,
+      retry: { max_attempts: 1, retry_on: [] },
+      runtime: {
+        architecture: 'arm64',
+        class: 'virtualization',
+        cpu_millis: 1_000,
+        immutable_image: null,
+        memory_bytes: 1_073_741_824,
+        network: { mode: 'disabled' },
+        operating_system: 'linux',
+        timeout_seconds: 600,
+        workload_identity_profile: null,
+        writable_disk_bytes: 1_073_741_824,
+      },
+      triggers: ['manual'],
+    },
+    id: CONFIGURATION_ID,
+    name: 'Release',
+    project_id: PROJECT_ID,
+    published_at_unix_ms: 1_700_000_000_000,
+    version: 4,
+  };
 }
 
 function build(id: string, createdAt: number) {
