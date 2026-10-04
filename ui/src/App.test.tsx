@@ -153,6 +153,16 @@ describe('App', () => {
 
     await user.click(screen.getByRole('button', { name: 'Search Projects' }));
     expect(screen.getByText('Scope: Projects')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Search all resources' }));
+    expect(screen.getByText('Scope: All resources')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Search all resources' })).toBeNull();
+    await user.keyboard('{Escape}');
+
+    await user.click(screen.getByRole('link', { name: 'Builds' }));
+    await user.click(screen.getByRole('button', { name: 'Search Builds' }));
+    expect(screen.getByText('Scope: Builds')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Search all resources' }));
+    expect(screen.getByText('Scope: All resources')).toBeTruthy();
   });
 
   it('opens the command center with Command/Ctrl+K and contains focus until dismissal', async () => {

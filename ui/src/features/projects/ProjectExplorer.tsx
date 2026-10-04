@@ -1,10 +1,10 @@
 import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
-import { useState } from 'react';
 import { Link, matchPath, useLocation } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
+import { useExpansionOverrides } from '../../shared/useExpansionOverrides';
 import type { ProjectDetails, ProjectHierarchyApi, ProjectPage, ProjectSummary } from './api';
 import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import styles from './ProjectExplorer.module.css';
@@ -13,49 +13,28 @@ interface ProjectExplorerProps {
   api: ProjectHierarchyApi;
 }
 
-type ExpansionOverrides = ReadonlyMap<string, boolean>;
 type RevealedChildren = ReadonlyMap<string | null, ProjectSummary>;
 
 /** Renders the bounded server-owned Project hierarchy in the contextual explorer. */
 export function ProjectExplorer({ api }: ProjectExplorerProps) {
   const location = useLocation();
-  const [expansionOverrides, setExpansionOverrides] = useState<ExpansionOverrides>(() => new Map());
+  const expansion = useExpansionOverrides();
   const selectedProjectId =
     matchPath(CONSOLE_PATHS.project, location.pathname)?.params.projectId ?? null;
-  const toggleExpanded = (projectId: string, currentlyExpanded: boolean) => {
-    setExpansionOverrides((current) => {
-      const next = new Map(current);
-      next.set(projectId, !currentlyExpanded);
-      return next;
-    });
-  };
 
   return selectedProjectId === null ? (
-    <ProjectTree
-      api={api}
-      expansionOverrides={expansionOverrides}
-      onToggle={toggleExpanded}
-      revealedProjects={[]}
-      selectedProjectId={null}
-    />
+    <ProjectTree api={api} expansion={expansion} revealedProjects={[]} selectedProjectId={null} />
   ) : (
-    <SelectedProjectTree
-      api={api}
-      expansionOverrides={expansionOverrides}
-      onToggle={toggleExpanded}
-      selectedProjectId={selectedProjectId}
-    />
+    <SelectedProjectTree api={api} expansion={expansion} selectedProjectId={selectedProjectId} />
   );
 }
 
 function SelectedProjectTree({
   api,
-  expansionOverrides,
-  onToggle,
+  expansion,
   selectedProjectId,
 }: ProjectExplorerProps & {
-  expansionOverrides: ExpansionOverrides;
-  onToggle: (projectId: string, currentlyExpanded: boolean) => void;
+  expansion: ReturnType<typeof useExpansionOverrides>;
   selectedProjectId: string;
 }) {
   const selectedProject = useQuery({
@@ -74,8 +53,7 @@ function SelectedProjectTree({
   return (
     <ProjectTree
       api={api}
-      expansionOverrides={expansionOverrides}
-      onToggle={onToggle}
+      expansion={expansion}
       revealedProjects={revealedProjects}
       selectedProjectId={selectedProjectId}
     />
@@ -84,13 +62,11 @@ function SelectedProjectTree({
 
 function ProjectTree({
   api,
-  expansionOverrides,
-  onToggle,
+  expansion,
   revealedProjects,
   selectedProjectId,
 }: ProjectExplorerProps & {
-  expansionOverrides: ExpansionOverrides;
-  onToggle: (projectId: string, currentlyExpanded: boolean) => void;
+  expansion: ReturnType<typeof useExpansionOverrides>;
   revealedProjects: readonly ProjectSummary[];
   selectedProjectId: string | null;
 }) {
@@ -101,8 +77,7 @@ function ProjectTree({
     <ProjectBranch
       api={api}
       depth={0}
-      expansionOverrides={expansionOverrides}
-      onToggle={onToggle}
+      expansion={expansion}
       parentId={null}
       parentLabel={null}
       revealedChildren={revealedChildren}
@@ -115,8 +90,7 @@ function ProjectTree({
 function ProjectBranch({
   api,
   depth,
-  expansionOverrides,
-  onToggle,
+  expansion,
   parentId,
   parentLabel,
   revealedChildren,
@@ -124,8 +98,7 @@ function ProjectBranch({
   selectedProjectId,
 }: ProjectExplorerProps & {
   depth: number;
-  expansionOverrides: ExpansionOverrides;
-  onToggle: (projectId: string, currentlyExpanded: boolean) => void;
+  expansion: ReturnType<typeof useExpansionOverrides>;
   parentId: string | null;
   parentLabel: string | null;
   revealedChildren: RevealedChildren;
@@ -183,8 +156,7 @@ function ProjectBranch({
         <ul aria-label={depth === 0 ? listLabel : undefined} role={depth === 0 ? 'tree' : 'group'}>
           {items.map((project) => {
             const expanded =
-              project.has_children &&
-              (expansionOverrides.get(project.id) ?? revealedIds.has(project.id));
+              project.has_children && expansion.isExpanded(project.id, revealedIds.has(project.id));
             const selected = project.id === selectedProjectId;
             return (
               <li
@@ -200,7 +172,7 @@ function ProjectBranch({
                   {project.has_children ? (
                     <button
                       aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
-                      onClick={() => onToggle(project.id, expanded)}
+                      onClick={() => expansion.toggle(project.id, expanded)}
                       type="button"
                     >
                       {expanded ? (
@@ -221,8 +193,7 @@ function ProjectBranch({
                   <ProjectBranch
                     api={api}
                     depth={depth + 1}
-                    expansionOverrides={expansionOverrides}
-                    onToggle={onToggle}
+                    expansion={expansion}
                     parentId={project.id}
                     parentLabel={project.name}
                     revealedChildren={revealedChildren}

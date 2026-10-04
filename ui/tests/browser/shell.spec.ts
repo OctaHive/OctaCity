@@ -161,4 +161,13 @@ test('opens global and explorer search with focus restoration', async ({ page })
 
   await page.getByRole('button', { name: 'Search Projects' }).click();
   await expect(page.getByText('Scope: Projects')).toBeVisible();
+  await page.getByRole('button', { name: 'Search all resources' }).click();
+  await expect(page.getByText('Scope: All resources')).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('link', { name: 'Builds' }).click();
+  await page.getByRole('button', { name: 'Search Builds' }).click();
+  await expect(page.getByText('Scope: Builds')).toBeVisible();
+  await page.getByRole('button', { name: 'Search all resources' }).click();
+  await expect(page.getByText('Scope: All resources')).toBeVisible();
 });

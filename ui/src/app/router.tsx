@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter, type RouteObject, useParams } from 'reac
 
 import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
+import { BuildExplorer, type BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { BuildView } from '../features/builds/BuildView';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
 import { ProjectExplorer } from '../features/projects/ProjectExplorer';
@@ -37,12 +38,23 @@ export function createConsoleRoutes(
   projectApi: ProjectsApi = projectsApi,
   buildApi: BuildDiagnosticsApi = buildDiagnosticsApi,
 ): RouteObject[] {
+  const buildExplorerApi: BuildExplorerApi = {
+    getBuild: buildApi.getBuild,
+    getBuildConfiguration: projectApi.getBuildConfiguration,
+    getProject: projectApi.getProject,
+    listBuildConfigurations: projectApi.listBuildConfigurations,
+    listBuilds: projectApi.listBuilds,
+    listProjects: projectApi.listProjects,
+  };
   return [
     {
       path: '/',
       element: (
         <AppShell
-          explorerContent={{ projects: <ProjectExplorer api={projectApi} /> }}
+          explorerContent={{
+            builds: <BuildExplorer api={buildExplorerApi} />,
+            projects: <ProjectExplorer api={projectApi} />,
+          }}
           readinessProbe={readinessProbe}
         />
       ),

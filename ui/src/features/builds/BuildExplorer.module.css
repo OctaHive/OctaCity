@@ -1,0 +1,174 @@
+.explorerTree,
+.childBranch {
+  min-width: 0;
+}
+
+.boundedNotice {
+  margin: 0 0 var(--space-md);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.explorerTree ul,
+.childBranch ul {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.childBranch {
+  margin-left: 0.7rem;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.branchRow,
+.buildRow {
+  display: grid;
+  min-width: 0;
+  min-height: 2.2rem;
+  align-items: center;
+  border-radius: var(--radius-small);
+}
+
+.branchRow {
+  grid-template-columns: 1.55rem 1rem minmax(0, 1fr) auto;
+  color: var(--color-text-muted);
+}
+
+.branchRow:hover,
+.buildRow:hover,
+.selected {
+  background: var(--color-surface-subtle);
+}
+
+.branchRow button {
+  display: inline-grid;
+  width: 1.55rem;
+  height: 1.75rem;
+  place-items: center;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.branchRow button:hover {
+  background: var(--color-surface-subtle);
+  color: var(--color-brand-action);
+}
+
+.branchRow > span {
+  overflow: hidden;
+  padding: 0.4rem 0.25rem;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branchRow small {
+  padding-right: 0.35rem;
+  color: var(--color-text-muted);
+  font-size: 0.64rem;
+}
+
+.buildRow {
+  grid-template-columns: 1rem minmax(0, 1fr) auto;
+  gap: 0.3rem;
+  padding: 0.3rem 0.35rem;
+  color: var(--color-text-muted);
+}
+
+.buildRow a {
+  overflow: hidden;
+  color: var(--color-text-primary);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.selected a {
+  color: var(--color-brand-action);
+  font-weight: 800;
+}
+
+.buildState {
+  padding: 0.18rem 0.36rem;
+  border-radius: 999px;
+  background: var(--color-information-soft);
+  color: var(--color-information-ink);
+  font-size: 0.61rem;
+  font-weight: 800;
+}
+
+.buildState[data-state='succeeded'] {
+  background: var(--color-brand-soft);
+  color: var(--color-success-ink);
+}
+
+.buildState[data-state='failed'],
+.buildState[data-state='cancelled'] {
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+}
+
+.branchState,
+.branchFailure,
+.branchStale {
+  margin: var(--space-sm) 0;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.emptyBranch {
+  padding: var(--space-sm);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.branchFailure,
+.branchStale {
+  display: grid;
+  gap: 0.35rem;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-small);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+}
+
+.branchFailure button,
+.branchStale button,
+.loadMore {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-brand-action);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.loadMore {
+  width: 100%;
+  margin-top: var(--space-sm);
+  padding: 0.45rem;
+  border-top: 1px solid var(--color-border);
+  font-size: 0.7rem;
+}
+
+.loadMore:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}

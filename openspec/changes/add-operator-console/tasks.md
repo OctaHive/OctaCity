@@ -27,7 +27,7 @@
 - [x] 3.1 Implement bounded root/child Project hierarchy navigation and breadcrumbs using existing Project endpoints; verify pagination, nested ancestry, selection deep links, loading, empty, not-found, and stale-refresh states in component tests.
 - [x] 3.2 Implement the Project view sections for current Pipelines, Repositories, Build Configurations, and typed Trigger summaries using the new collections and existing detail reads; verify each section paginates independently and never asks for a manually entered UUID.
 - [x] 3.3 Implement the recent Project Builds section with URL-backed configuration/state filters and newest-first pagination; verify filter round trips, copied URLs, equal-time results, empty filters, and navigation to `/builds/:buildId` in browser tests.
-- [ ] 3.4 Implement the contextual Build explorer with Favorites before independently lazy-paginated `Project -> Build Configuration -> Build` branches and a header search button that opens the shared command center pre-scoped to Builds; verify branch expansion, pagination isolation, state labels, stale and empty branches, scoped-search clearing, selection deep links, selected-resource reveal, and no client-side claim of globally complete results.
+- [x] 3.4 Implement the contextual Build explorer with Favorites before independently lazy-paginated `Project -> Build Configuration -> Build` branches and a header search button that opens the shared command center pre-scoped to Builds; verify branch expansion, pagination isolation, state labels, stale and empty branches, scoped-search clearing, selection deep links, selected-resource reveal, and no client-side claim of globally complete results.
 
 ## 4. Build Diagnostics
 

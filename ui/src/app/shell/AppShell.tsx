@@ -23,6 +23,11 @@ import { CommandCenter } from './CommandCenter';
 import { ContextExplorer } from './ContextExplorer';
 import { isNarrowWorkbench, observeNarrowWorkbench, useNarrowWorkbench } from './layout';
 import { loadExplorerWidth, saveExplorerWidth } from './preferences';
+import {
+  GLOBAL_RESOURCE_SEARCH_SCOPE,
+  searchScopeForSection,
+  type ResourceSearchScope,
+} from './searchScope';
 import { consoleSections, sectionForPath, type ConsoleSectionId } from './sections';
 import styles from './Shell.module.css';
 import { UtilityHeader } from './UtilityHeader';
@@ -41,7 +46,7 @@ interface AppShellProps {
 
 interface SearchOverlayState {
   returnFocus: HTMLElement;
-  scopeLabel: string;
+  scope: ResourceSearchScope;
 }
 
 export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps) {
@@ -103,7 +108,7 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
         event.preventDefault();
         const returnFocus =
           document.activeElement instanceof HTMLElement ? document.activeElement : document.body;
-        setSearchOverlay({ returnFocus, scopeLabel: 'All resources' });
+        setSearchOverlay({ returnFocus, scope: GLOBAL_RESOURCE_SEARCH_SCOPE });
       }
     };
     globalThis.addEventListener('keydown', openCommandCenter);
@@ -131,7 +136,7 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
       </a>
       <UtilityHeader
         onOpenSearch={(trigger) =>
-          setSearchOverlay({ returnFocus: trigger, scopeLabel: 'All resources' })
+          setSearchOverlay({ returnFocus: trigger, scope: GLOBAL_RESOURCE_SEARCH_SCOPE })
         }
         readinessLabel={readinessLabel}
         readinessTone={readinessTone}
@@ -186,7 +191,10 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
             modal={narrowWorkbench}
             onCollapse={collapseExplorer}
             onOpenSearch={(trigger) =>
-              setSearchOverlay({ returnFocus: trigger, scopeLabel: activeSection.label })
+              setSearchOverlay({
+                returnFocus: trigger,
+                scope: searchScopeForSection(activeSection.id),
+              })
             }
             onWidthChange={setExplorerWidth}
             onWidthCommit={(width) => setExplorerWidth(saveExplorerWidth(width))}
@@ -220,8 +228,16 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
       {searchOverlay === null ? null : (
         <CommandCenter
           onClose={closeSearch}
+          {...(searchOverlay.scope.length === 0
+            ? {}
+            : {
+                onClearScope: () =>
+                  setSearchOverlay((current) =>
+                    current === null ? null : { ...current, scope: GLOBAL_RESOURCE_SEARCH_SCOPE },
+                  ),
+              })}
           returnFocus={searchOverlay.returnFocus}
-          scope={searchOverlay.scopeLabel}
+          scope={searchOverlay.scope}
         />
       )}
     </div>

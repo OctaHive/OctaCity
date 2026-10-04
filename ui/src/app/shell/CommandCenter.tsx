@@ -1,16 +1,18 @@
 import { useCallback, useRef } from 'react';
 
 import styles from './CommandCenter.module.css';
+import { searchScopeLabel, type ResourceSearchScope } from './searchScope';
 import { useOverlayFocus } from './useOverlayFocus';
 
 interface CommandCenterProps {
   onClose: () => void;
+  onClearScope?: () => void;
   returnFocus: HTMLElement;
-  scope: string;
+  scope: ResourceSearchScope;
 }
 
 /** Provides the focus-safe command-center frame until bounded search lands in task 7.5. */
-export function CommandCenter({ onClose, returnFocus, scope }: CommandCenterProps) {
+export function CommandCenter({ onClearScope, onClose, returnFocus, scope }: CommandCenterProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const restoreFocus = useCallback(() => returnFocus.focus(), [returnFocus]);
@@ -50,7 +52,14 @@ export function CommandCenter({ onClose, returnFocus, scope }: CommandCenterProp
           <span className={styles.visuallyHidden}>Search query</span>
           <input placeholder="Project, Build, Agent, or Agent Pool" ref={inputRef} type="search" />
         </label>
-        <p className={styles.commandScope}>Scope: {scope}</p>
+        <div className={styles.commandScope}>
+          <span>Scope: {searchScopeLabel(scope)}</span>
+          {onClearScope === undefined ? null : (
+            <button onClick={onClearScope} type="button">
+              Search all resources
+            </button>
+          )}
+        </div>
         <p className={styles.commandHint}>
           Bounded resource results will appear here when command-center search is enabled.
         </p>
