@@ -83,7 +83,10 @@ describe('Project hierarchy', () => {
     });
     api.listProjects.mockImplementation(async (parentId, cursor) => {
       if (parentId === null) {
-        return page([project('alpha', 'Alpha'), project('beta', 'Beta')], null);
+        return page(
+          [project('alpha', 'Alpha', null, true), project('beta', 'Beta', null, true)],
+          null,
+        );
       }
       if (parentId === 'alpha' && cursor === null) {
         return page([project('alpha-one', 'Alpha one', 'alpha')], 'alpha-next');
@@ -110,6 +113,18 @@ describe('Project hierarchy', () => {
     await userEvent.click(screen.getByRole('link', { name: 'Alpha one' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/projects/alpha-one'));
     expect(screen.getByRole('link', { name: 'Beta one' })).toBeTruthy();
+  });
+
+  it('renders expansion controls only for Projects with visible children', async () => {
+    const api = fakeProjectsApi();
+    api.listProjects.mockResolvedValue(
+      page([project('branch', 'Branch', null, true), project('leaf', 'Leaf')], null),
+    );
+    renderProjects('/projects', api);
+
+    expect(await screen.findByRole('button', { name: 'Expand Branch' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Expand Leaf' })).toBeNull();
+    expect(screen.queryByText('No child Projects.')).toBeNull();
   });
 
   it('shows an initial loading state', () => {

@@ -5,7 +5,7 @@ import { Link, matchPath, useLocation } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
-import type { ProjectDetails, ProjectHierarchyApi, ProjectPage, ProjectResource } from './api';
+import type { ProjectDetails, ProjectHierarchyApi, ProjectPage, ProjectSummary } from './api';
 import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import styles from './ProjectExplorer.module.css';
 
@@ -14,7 +14,7 @@ interface ProjectExplorerProps {
 }
 
 type ExpansionOverrides = ReadonlyMap<string, boolean>;
-type RevealedChildren = ReadonlyMap<string | null, ProjectResource>;
+type RevealedChildren = ReadonlyMap<string | null, ProjectSummary>;
 
 /** Renders the bounded server-owned Project hierarchy in the contextual explorer. */
 export function ProjectExplorer({ api }: ProjectExplorerProps) {
@@ -62,8 +62,14 @@ function SelectedProjectTree({
     queryFn: ({ signal }) => api.getProject(selectedProjectId, signal),
     queryKey: queryKeys.project(selectedProjectId),
   });
+  const selectedChildren = useProjectPage(api, selectedProjectId);
   const revealedProjects =
-    selectedProject.data === undefined ? [] : projectTrail(selectedProject.data);
+    selectedProject.data === undefined
+      ? []
+      : projectTrail(
+          selectedProject.data,
+          (selectedChildren.data?.pages[0]?.items.length ?? 0) > 0,
+        );
 
   return (
     <ProjectTree
@@ -85,7 +91,7 @@ function ProjectTree({
 }: ProjectExplorerProps & {
   expansionOverrides: ExpansionOverrides;
   onToggle: (projectId: string, currentlyExpanded: boolean) => void;
-  revealedProjects: readonly ProjectResource[];
+  revealedProjects: readonly ProjectSummary[];
   selectedProjectId: string | null;
 }) {
   const revealedIds = new Set(revealedProjects.map(({ id }) => id));
@@ -126,18 +132,7 @@ function ProjectBranch({
   revealedIds: ReadonlySet<string>;
   selectedProjectId: string | null;
 }) {
-  const projects = useInfiniteQuery<
-    ProjectPage,
-    Error,
-    InfiniteData<ProjectPage>,
-    ReturnType<typeof queryKeys.projectChildren>,
-    string | null
-  >({
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
-    initialPageParam: null,
-    queryFn: ({ pageParam, signal }) => api.listProjects(parentId, pageParam, signal),
-    queryKey: queryKeys.projectChildren(parentId),
-  });
+  const projects = useProjectPage(api, parentId);
 
   if (projects.isPending) {
     return <p className={styles.state}>Loading Projects…</p>;
@@ -182,39 +177,47 @@ function ProjectBranch({
           onRetry={projects.isFetchNextPageError ? projects.fetchNextPage : projects.refetch}
         />
       )}
-      {items.length === 0 ? (
-        <p className={styles.empty}>
-          {parentLabel === null ? 'No root Projects are available.' : 'No child Projects.'}
-        </p>
-      ) : (
+      {items.length === 0 && parentLabel === null ? (
+        <p className={styles.empty}>No root Projects are available.</p>
+      ) : items.length > 0 ? (
         <ul aria-label={depth === 0 ? listLabel : undefined} role={depth === 0 ? 'tree' : 'group'}>
           {items.map((project) => {
-            const expanded = expansionOverrides.get(project.id) ?? revealedIds.has(project.id);
+            const expanded =
+              project.has_children &&
+              (expansionOverrides.get(project.id) ?? revealedIds.has(project.id));
             const selected = project.id === selectedProjectId;
             return (
-              <li aria-expanded={expanded} key={project.id} role="treeitem">
+              <li
+                aria-expanded={project.has_children ? expanded : undefined}
+                key={project.id}
+                role="treeitem"
+              >
                 <div
                   className={
                     selected ? `${styles.projectRow} ${styles.selected}` : styles.projectRow
                   }
                 >
-                  <button
-                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
-                    onClick={() => onToggle(project.id, expanded)}
-                    type="button"
-                  >
-                    {expanded ? (
-                      <ChevronDown aria-hidden="true" size={15} />
-                    ) : (
-                      <ChevronRight aria-hidden="true" size={15} />
-                    )}
-                  </button>
+                  {project.has_children ? (
+                    <button
+                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
+                      onClick={() => onToggle(project.id, expanded)}
+                      type="button"
+                    >
+                      {expanded ? (
+                        <ChevronDown aria-hidden="true" size={15} />
+                      ) : (
+                        <ChevronRight aria-hidden="true" size={15} />
+                      )}
+                    </button>
+                  ) : (
+                    <span aria-hidden="true" className={styles.leafIndent} />
+                  )}
                   <FolderTree aria-hidden="true" size={15} />
                   <Link aria-current={selected ? 'page' : undefined} to={projectPath(project.id)}>
                     {project.name}
                   </Link>
                 </div>
-                {expanded ? (
+                {project.has_children && expanded ? (
                   <ProjectBranch
                     api={api}
                     depth={depth + 1}
@@ -231,7 +234,7 @@ function ProjectBranch({
             );
           })}
         </ul>
-      )}
+      ) : null}
       {projects.hasNextPage ? (
         <button
           aria-label={
@@ -251,10 +254,31 @@ function ProjectBranch({
   );
 }
 
-function projectTrail(details: ProjectDetails): readonly ProjectResource[] {
-  return [...details.ancestors, details.project];
+function useProjectPage(api: ProjectHierarchyApi, parentId: string | null) {
+  return useInfiniteQuery<
+    ProjectPage,
+    Error,
+    InfiniteData<ProjectPage>,
+    ReturnType<typeof queryKeys.projectChildren>,
+    string | null
+  >({
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    initialPageParam: null,
+    queryFn: ({ pageParam, signal }) => api.listProjects(parentId, pageParam, signal),
+    queryKey: queryKeys.projectChildren(parentId),
+  });
 }
 
-function indexRevealedChildren(projects: readonly ProjectResource[]): RevealedChildren {
+function projectTrail(
+  details: ProjectDetails,
+  selectedHasChildren: boolean,
+): readonly ProjectSummary[] {
+  return [
+    ...details.ancestors.map((project) => ({ ...project, has_children: true })),
+    { ...details.project, has_children: selectedHasChildren },
+  ];
+}
+
+function indexRevealedChildren(projects: readonly ProjectSummary[]): RevealedChildren {
   return new Map(projects.map((project) => [project.parent_id, project]));
 }

@@ -7,8 +7,9 @@ use octacity_server_api_rest::v1::{
   CreateProjectRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode,
   ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest, IssueAgentEnrollmentRequest,
   IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata,
-  OperatorAttentionCursor, OperatorAttentionPage, PipelineSummaryPage, PlaceBuildResultHoldRequest, ProjectResource,
-  RepositorySummaryPage, ResourceSearchCursor, ResourceSearchPage, TriggerDefinitionSummaryPage, VersionPrecondition,
+  OperatorAttentionCursor, OperatorAttentionPage, PipelineSummaryPage, PlaceBuildResultHoldRequest,
+  ProjectSummaryResource, RepositorySummaryPage, ResourceSearchCursor, ResourceSearchPage,
+  TriggerDefinitionSummaryPage, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -39,7 +40,7 @@ const OPERATOR_ATTENTION_PAGE: &str = include_str!("../fixtures/v1/operator-atte
 #[test]
 fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<CreateProjectRequest>(CREATE_PROJECT);
-  assert_golden::<CursorPage<ProjectResource>>(PROJECT_PAGE);
+  assert_golden::<CursorPage<ProjectSummaryResource>>(PROJECT_PAGE);
   assert_golden::<CreatePipelineRequest>(CREATE_PIPELINE);
   assert_golden::<CreateBuildConfigurationRequest>(CREATE_CONFIGURATION);
   assert_golden::<AcceptManualTriggerRequest>(ACCEPT_MANUAL_TRIGGER);
@@ -184,7 +185,7 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
 
   let mut project_page: Value = serde_json::from_str(PROJECT_PAGE).unwrap();
   project_page["items"][0]["private_transfer_url"] = json!("https://storage.invalid/secret");
-  assert!(serde_json::from_value::<CursorPage<ProjectResource>>(project_page).is_err());
+  assert!(serde_json::from_value::<CursorPage<ProjectSummaryResource>>(project_page).is_err());
 
   let mut pipeline_page: Value = serde_json::from_str(PIPELINE_SUMMARY_PAGE).unwrap();
   pipeline_page["items"][0]["dag"] = json!({"nodes": [], "edges": []});

@@ -6,6 +6,7 @@ export const PROJECT_PAGE_SIZE = 25;
 export type ProjectDetails = components['schemas']['ProjectDetails'];
 export type ProjectPage = components['schemas']['ProjectPage'];
 export type ProjectResource = components['schemas']['ProjectResource'];
+export type ProjectSummary = components['schemas']['ProjectSummaryResource'];
 export type BuildState = components['schemas']['BuildState'];
 export type BuildSummaryPage = components['schemas']['BuildSummaryPage'];
 export type BuildSummary = components['schemas']['BuildSummaryResource'];

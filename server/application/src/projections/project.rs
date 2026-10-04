@@ -32,6 +32,15 @@ impl From<Project> for ProjectSummaryProjection {
   }
 }
 
+/// Safe navigation summary of one Project and whether it has visible children.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProjectNavigationProjection {
+  /// Current Project resource fields.
+  pub project: ProjectSummaryProjection,
+  /// Whether at least one visible direct child can be expanded.
+  pub has_children: bool,
+}
+
 /// One Project together with its stable root-to-parent ancestry.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProjectProjection {

@@ -1,5 +1,16 @@
 ## ADDED Requirements
 
+### Requirement: Expandable Project navigation summaries
+The management REST API SHALL report on each Project collection summary whether the Project has at least one visible direct child. Child existence SHALL be derived with the same authorization visibility as the returned collection and SHALL NOT require a client to probe every Project independently. The existing Project detail representation SHALL remain compatible.
+
+#### Scenario: Visible Project has a visible direct child
+- **WHEN** a client lists a Project whose direct child is visible to the caller
+- **THEN** that Project summary reports that it can be expanded
+
+#### Scenario: Project has no visible direct child
+- **WHEN** a Project has no direct children or all of its direct children are hidden from the caller
+- **THEN** that Project summary reports that it cannot be expanded without revealing hidden descendants
+
 ### Requirement: Project-owned definition discovery
 The management REST API SHALL expose authorization-safe, project-scoped, cursor-paginated collections of the current Pipeline, Repository, Build Configuration, and Trigger definition versions. Collection items SHALL contain the stable identity, owning Project identity, current version, operator-facing name or kind, relevant enabled state, and publication time needed to select the exact version through an existing detail endpoint. Trigger discovery SHALL distinguish manual, scheduled, and internal definitions without exposing provider credentials or webhook secrets.
 

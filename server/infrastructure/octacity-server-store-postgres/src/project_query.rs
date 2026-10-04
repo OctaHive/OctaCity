@@ -1,8 +1,35 @@
 use octacity_server_domain::{EntityKind, ProjectId};
 use octacity_server_store::{ListProjects, Project, ProjectDetails, ProjectPage, StoreError};
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool};
+use uuid::Uuid;
 
 use crate::{database::unavailable, project_row::ProjectRow, read_visibility::sql_read_visibility};
+
+#[derive(FromRow)]
+struct ProjectNavigationRow {
+  id: Uuid,
+  parent_id: Option<Uuid>,
+  name: String,
+  version: i64,
+  created_at_millis: i64,
+  updated_at_millis: i64,
+  has_visible_children: bool,
+}
+
+impl ProjectNavigationRow {
+  fn into_project(self) -> Result<(Project, bool), StoreError> {
+    let has_visible_children = self.has_visible_children;
+    let project = Project::try_from(ProjectRow {
+      id: self.id,
+      parent_id: self.parent_id,
+      name: self.name,
+      version: self.version,
+      created_at_millis: self.created_at_millis,
+      updated_at_millis: self.updated_at_millis,
+    })?;
+    Ok((project, has_visible_children))
+  }
+}
 
 pub(crate) async fn read(pool: &PgPool, project_id: ProjectId) -> Result<ProjectDetails, StoreError> {
   let mut lineage = sqlx::query_as::<_, ProjectRow>(
@@ -38,6 +65,7 @@ pub(crate) async fn list(pool: &PgPool, request: ListProjects) -> Result<Project
   if request.visibility().kind() == octacity_server_store::ReadVisibilityKind::None {
     return Ok(ProjectPage {
       projects: Vec::new(),
+      projects_with_visible_children: Default::default(),
       next_cursor: None,
     });
   }
@@ -58,15 +86,17 @@ pub(crate) async fn list(pool: &PgPool, request: ListProjects) -> Result<Project
   }
 
   let fetch_limit = i64::from(request.limit().get()) + 1;
-  let mut projects = sqlx::query_as::<_, ProjectRow>(
-    "SELECT id, parent_id, name, version, \
-       FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
-       FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis \
-     FROM projects \
-     WHERE parent_id IS NOT DISTINCT FROM $1 \
-       AND ($2 OR id = ANY($3::uuid[])) \
-       AND ($4::UUID IS NULL OR id > $4) \
-     ORDER BY id LIMIT $5",
+  let mut rows = sqlx::query_as::<_, ProjectNavigationRow>(
+    "SELECT project.id, project.parent_id, project.name, project.version, \
+       FLOOR(EXTRACT(EPOCH FROM project.created_at) * 1000)::BIGINT AS created_at_millis, \
+       FLOOR(EXTRACT(EPOCH FROM project.updated_at) * 1000)::BIGINT AS updated_at_millis, \
+       EXISTS (SELECT 1 FROM projects AS child \
+         WHERE child.parent_id = project.id AND ($2 OR child.id = ANY($3::uuid[]))) AS has_visible_children \
+     FROM projects AS project \
+     WHERE project.parent_id IS NOT DISTINCT FROM $1 \
+       AND ($2 OR project.id = ANY($3::uuid[])) \
+       AND ($4::UUID IS NULL OR project.id > $4) \
+     ORDER BY project.id LIMIT $5",
   )
   .bind(request.parent_id().map(ProjectId::as_uuid))
   .bind(visibility.all)
@@ -77,13 +107,22 @@ pub(crate) async fn list(pool: &PgPool, request: ListProjects) -> Result<Project
   .await
   .map_err(unavailable)?
   .into_iter()
-  .map(Project::try_from)
+  .map(ProjectNavigationRow::into_project)
   .collect::<Result<Vec<_>, StoreError>>()?;
 
   transaction.commit().await.map_err(unavailable)?;
   let limit = usize::from(request.limit().get());
-  let has_more = projects.len() > limit;
-  projects.truncate(limit);
-  let next_cursor = has_more.then(|| projects.last().expect("a non-zero full page has a last item").id);
-  Ok(ProjectPage { projects, next_cursor })
+  let has_more = rows.len() > limit;
+  rows.truncate(limit);
+  let next_cursor = has_more.then(|| rows.last().expect("a non-zero full page has a last item").0.id);
+  let projects_with_visible_children = rows
+    .iter()
+    .filter_map(|(project, has_children)| has_children.then_some(project.id))
+    .collect();
+  let projects = rows.into_iter().map(|(project, _)| project).collect();
+  Ok(ProjectPage {
+    projects,
+    projects_with_visible_children,
+    next_cursor,
+  })
 }

@@ -15,9 +15,9 @@ async function openReadyConsole(page: Page, path: string) {
     const parentId = url.searchParams.get('parent_id');
     const items =
       parentId === null
-        ? [browserProject('platform', 'Platform', null)]
+        ? [browserProject('platform', 'Platform', null, true)]
         : parentId === 'platform'
-          ? [browserProject('delivery', 'Delivery', 'platform')]
+          ? [browserProject('delivery', 'Delivery', 'platform', false)]
           : [];
     await route.fulfill({
       body: JSON.stringify({ items, next_cursor: null }),
@@ -53,14 +53,16 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(explorer.getByRole('link', { name: 'Platform' })).toBeVisible();
   await explorer.getByRole('button', { name: 'Expand Platform' }).click();
   await expect(explorer.getByRole('link', { name: 'Delivery' })).toBeVisible();
+  await expect(explorer.getByRole('button', { name: 'Expand Delivery' })).toHaveCount(0);
   await expect(page.getByRole('main').getByRole('link', { name: 'Platform' })).toHaveCount(0);
   await expect(page.locator('#console-content')).toBeVisible();
   await expect(page.getByLabel('Security notice')).toContainText('Trusted network only');
 });
 
-function browserProject(id: string, name: string, parentId: string | null) {
+function browserProject(id: string, name: string, parentId: string | null, hasChildren: boolean) {
   return {
     created_at_unix_ms: 1_700_000_000_000,
+    has_children: hasChildren,
     id,
     name,
     parent_id: parentId,

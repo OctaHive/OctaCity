@@ -6,7 +6,8 @@
       "name": "Backend",
       "version": 3,
       "created_at_unix_ms": 1700000000000,
-      "updated_at_unix_ms": 1700000001000
+      "updated_at_unix_ms": 1700000001000,
+      "has_children": false
     }
   ],
   "next_cursor": "22222222-2222-4222-8222-222222222222"

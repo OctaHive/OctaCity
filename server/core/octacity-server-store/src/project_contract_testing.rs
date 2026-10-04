@@ -69,12 +69,14 @@ where
     .await
     .unwrap();
   assert_eq!(roots.projects.as_slice(), std::slice::from_ref(&root.project));
+  assert_eq!(roots.projects_with_visible_children, [root_id].into_iter().collect());
   assert_eq!(roots.next_cursor, None);
   let children = store
     .list_projects(ListProjects::new(Some(root_id), None, 10, crate::ProjectListVisibility::all()).unwrap())
     .await
     .unwrap();
   assert_eq!(children.projects.as_slice(), std::slice::from_ref(&child));
+  assert!(children.projects_with_visible_children.is_empty());
 
   assert_eq!(
     store
@@ -315,12 +317,24 @@ async fn verify_in_memory_project_visibility() {
     .await
     .unwrap()
     .project;
+  let child = store
+    .create_project(create(
+      1_004,
+      Some(second.id),
+      "visible-child",
+      "visibility-child",
+      1_004,
+    ))
+    .await
+    .unwrap()
+    .project;
 
   let all = store
     .list_projects(ListProjects::new(None, None, 2, crate::ProjectListVisibility::all()).unwrap())
     .await
     .unwrap();
   assert_eq!(all.projects, vec![first, second.clone()]);
+  assert_eq!(all.projects_with_visible_children, [second.id].into_iter().collect());
   assert_eq!(all.next_cursor, Some(second.id));
 
   let restricted = crate::ProjectListVisibility::restricted([second.id, third.id]).unwrap();
@@ -329,12 +343,14 @@ async fn verify_in_memory_project_visibility() {
     .await
     .unwrap();
   assert_eq!(first_visible.projects, vec![second]);
+  assert!(first_visible.projects_with_visible_children.is_empty());
   assert_eq!(first_visible.next_cursor, Some(first_visible.projects[0].id));
   let second_visible = store
     .list_projects(ListProjects::new(None, first_visible.next_cursor, 1, restricted).unwrap())
     .await
     .unwrap();
   assert_eq!(second_visible.projects, vec![third]);
+  assert!(second_visible.projects_with_visible_children.is_empty());
   assert_eq!(second_visible.next_cursor, None);
 
   let none = store
@@ -342,7 +358,22 @@ async fn verify_in_memory_project_visibility() {
     .await
     .unwrap();
   assert!(none.projects.is_empty());
+  assert!(none.projects_with_visible_children.is_empty());
   assert_eq!(none.next_cursor, None);
+
+  let child_page = store
+    .list_projects(
+      ListProjects::new(
+        Some(first_visible.projects[0].id),
+        None,
+        1,
+        crate::ProjectListVisibility::all(),
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(child_page.projects, vec![child]);
 }
 
 fn scoped_create(

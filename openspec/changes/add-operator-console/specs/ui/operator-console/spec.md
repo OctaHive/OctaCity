@@ -41,6 +41,10 @@ The console SHALL use one compact utility header, one primary section rail with 
 - **WHEN** an operator activates Projects, Builds, Agents, or Audit from the primary section rail
 - **THEN** the explorer changes to that section's navigation model, the large selected control and explorer title remain visibly and semantically identified, and the primary detail area preserves or opens the resource addressed by the URL
 
+#### Scenario: Operator navigates leaf Projects
+- **WHEN** a visible Project has no visible direct children
+- **THEN** the Project explorer renders it without a disclosure control and does not request or display an empty child branch
+
 #### Scenario: Operator explores Builds
 - **WHEN** the operator expands the Build explorer
 - **THEN** it presents Favorites before lazily loading visible Projects, their Build Configurations, and newest Builds as a bounded `Project -> Build Configuration -> Build` hierarchy with non-color state text

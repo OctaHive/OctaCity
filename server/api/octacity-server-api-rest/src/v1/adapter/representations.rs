@@ -56,15 +56,38 @@ pub(super) fn project_details(projection: ProjectProjection) -> ProjectDetails {
 pub(super) fn project_page(
   page: ProjectPageProjection,
   request_id: &RequestId,
-) -> Result<CursorPage<ProjectResource>, ApiError> {
+) -> Result<CursorPage<ProjectSummaryResource>, ApiError> {
   Ok(CursorPage {
-    items: page.projects.into_iter().map(project_resource).collect(),
+    items: page.projects.into_iter().map(project_summary_resource).collect(),
     next_cursor: page
       .next_cursor
       .map(|cursor| Cursor::new(cursor.to_string()))
       .transpose()
       .map_err(|_| internal_conversion(request_id))?,
   })
+}
+
+fn project_summary_resource(
+  projection: octacity_server_application::ProjectNavigationProjection,
+) -> ProjectSummaryResource {
+  let has_children = projection.has_children;
+  let ProjectResource {
+    id,
+    parent_id,
+    name,
+    version,
+    created_at_unix_ms,
+    updated_at_unix_ms,
+  } = project_resource(projection.project);
+  ProjectSummaryResource {
+    id,
+    parent_id,
+    name,
+    version,
+    created_at_unix_ms,
+    updated_at_unix_ms,
+    has_children,
+  }
 }
 
 pub(super) fn pipeline_summary_page(

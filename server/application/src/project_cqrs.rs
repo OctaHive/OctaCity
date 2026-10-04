@@ -194,7 +194,7 @@ impl ManagementAuthorizationTarget for ListProjectsQuery {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProjectPageProjection {
   /// Projects ordered by stable identity.
-  pub projects: Vec<ProjectSummaryProjection>,
+  pub projects: Vec<crate::ProjectNavigationProjection>,
   /// Cursor to pass to the next page, when one exists.
   pub next_cursor: Option<ProjectId>,
 }
@@ -448,8 +448,16 @@ where
           .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
       )?)
       .await?;
+    let expandable = page.projects_with_visible_children;
     Ok(ProjectPageProjection {
-      projects: page.projects.into_iter().map(Into::into).collect(),
+      projects: page
+        .projects
+        .into_iter()
+        .map(|project| crate::ProjectNavigationProjection {
+          has_children: expandable.contains(&project.id),
+          project: project.into(),
+        })
+        .collect(),
       next_cursor: page.next_cursor,
     })
   }

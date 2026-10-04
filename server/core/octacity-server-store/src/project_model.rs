@@ -1,4 +1,4 @@
-use std::num::NonZeroU16;
+use std::{collections::BTreeSet, num::NonZeroU16};
 
 use octacity_server_domain::{ProjectId, ProjectName, ProjectVersion, Timestamp};
 use serde::{Deserialize, Serialize};
@@ -199,6 +199,8 @@ impl ListProjects {
 pub struct ProjectPage {
   /// Projects ordered by stable identity.
   pub projects: Vec<Project>,
+  /// Returned Projects that have at least one visible direct child.
+  pub projects_with_visible_children: BTreeSet<ProjectId>,
   /// Cursor to pass as `after` for the next page, when one exists.
   pub next_cursor: Option<ProjectId>,
 }

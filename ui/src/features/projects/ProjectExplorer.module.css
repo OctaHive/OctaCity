@@ -65,6 +65,11 @@
   border-radius: 0.35rem;
 }
 
+.leafIndent {
+  width: 1.55rem;
+  height: 1.75rem;
+}
+
 .projectRow a {
   overflow: hidden;
   padding: 0.4rem 0.35rem 0.4rem 0.2rem;

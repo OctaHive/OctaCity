@@ -54,14 +54,14 @@ use super::{
   OperatorAttentionPage, OperatorAttentionSeverity, OperatorAttentionTargetKind, OperatorAttentionTargetResource,
   ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge, PipelineNode, PipelineResource,
   PipelineSummaryPage, PipelineSummaryResource, Platform, PlatformArchitecture, PlatformOs, PoolExecutionMode,
-  PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource, PublishAgentPoolVersionRequest,
-  PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest, PublishProjectPolicyRequest,
-  PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition,
-  RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage, RepositorySummaryResource,
-  ResourceSearchCursor as RestResourceSearchCursor, ResourceSearchKind, ResourceSearchPage, ResourceSearchResult,
-  RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, ScheduleResource, TriggerCauseResource,
-  TriggerDefinitionKind, TriggerDefinitionResource, TriggerDefinitionSummaryPage, TriggerDefinitionSummaryResource,
-  TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
+  PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource, ProjectSummaryResource,
+  PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest,
+  PublishProjectPolicyRequest, PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest,
+  RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage,
+  RepositorySummaryResource, ResourceSearchCursor as RestResourceSearchCursor, ResourceSearchKind, ResourceSearchPage,
+  ResourceSearchResult, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, ScheduleResource,
+  TriggerCauseResource, TriggerDefinitionKind, TriggerDefinitionResource, TriggerDefinitionSummaryPage,
+  TriggerDefinitionSummaryResource, TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
 };
 use crate::RequestId;
 

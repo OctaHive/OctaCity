@@ -103,6 +103,29 @@ pub(super) fn insert_project_schemas(schemas: &mut Map<String, Value>) {
     mutation_response("ProjectResource"),
   );
   schemas.insert(
+    "ProjectSummaryResource".to_owned(),
+    object(
+      [
+        ("id", non_empty_string()),
+        ("parent_id", nullable(non_empty_string())),
+        ("name", non_empty_string()),
+        ("version", positive_integer()),
+        ("created_at_unix_ms", integer()),
+        ("updated_at_unix_ms", integer()),
+        ("has_children", boolean()),
+      ],
+      &[
+        "id",
+        "parent_id",
+        "name",
+        "version",
+        "created_at_unix_ms",
+        "updated_at_unix_ms",
+        "has_children",
+      ],
+    ),
+  );
+  schemas.insert(
     "ProjectDetails".to_owned(),
     object(
       [
@@ -116,7 +139,7 @@ pub(super) fn insert_project_schemas(schemas: &mut Map<String, Value>) {
     "ProjectPage".to_owned(),
     object(
       [
-        ("items", array(schema_ref("ProjectResource"))),
+        ("items", array(schema_ref("ProjectSummaryResource"))),
         (
           "next_cursor",
           nullable(json!({"type": "string", "minLength": 1, "maxLength": MAX_CURSOR_BYTES})),

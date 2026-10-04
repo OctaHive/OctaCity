@@ -13,7 +13,7 @@ import type {
   PipelineResource,
   PipelineSummary,
   ProjectPage,
-  ProjectResource,
+  ProjectSummary,
   ProjectsApi,
   RepositorySummary,
   TriggerDefinitionSummary,
@@ -57,13 +57,19 @@ export function fakeProjectsApi() {
   };
 }
 
-export function page(items: ProjectResource[], nextCursor: string | null): ProjectPage {
+export function page(items: ProjectSummary[], nextCursor: string | null): ProjectPage {
   return { items, next_cursor: nextCursor };
 }
 
-export function project(id: string, name: string, parentId: string | null = null): ProjectResource {
+export function project(
+  id: string,
+  name: string,
+  parentId: string | null = null,
+  hasChildren = false,
+): ProjectSummary {
   return {
     created_at_unix_ms: 1_700_000_000_000,
+    has_children: hasChildren,
     id,
     name,
     parent_id: parentId,

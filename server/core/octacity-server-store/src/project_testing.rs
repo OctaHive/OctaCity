@@ -282,6 +282,7 @@ impl ProjectStore for InMemoryProjectStore {
     if request.visibility().kind() == crate::ReadVisibilityKind::None {
       return Ok(ProjectPage {
         projects: Vec::new(),
+        projects_with_visible_children: Default::default(),
         next_cursor: None,
       });
     }
@@ -301,7 +302,21 @@ impl ProjectStore for InMemoryProjectStore {
     let has_more = projects.len() > limit;
     projects.truncate(limit);
     let next_cursor = has_more.then(|| projects.last().expect("a non-zero full page has a last item").id);
-    Ok(ProjectPage { projects, next_cursor })
+    let projects_with_visible_children = projects
+      .iter()
+      .filter(|project| {
+        state
+          .projects
+          .values()
+          .any(|child| child.parent_id == Some(project.id) && request.visibility().allows(&child.id))
+      })
+      .map(|project| project.id)
+      .collect();
+    Ok(ProjectPage {
+      projects,
+      projects_with_visible_children,
+      next_cursor,
+    })
   }
 
   async fn delete_project(

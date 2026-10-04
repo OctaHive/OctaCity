@@ -243,9 +243,9 @@ pub use projections::{
   JobPlacementProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection,
   NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection, ParameterTypeProjection,
   ParameterValueProjection, PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection,
-  PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, ProjectProjection,
-  ProjectSummaryProjection, ProjectionError, RepositoryProjection, RepositorySelectionProjection, RetryClassProjection,
-  RetryPolicyProjection, RuntimeClassProjection, Sha256DigestProjection, TriggerCauseProjection,
+  PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, ProjectNavigationProjection,
+  ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection, RepositorySelectionProjection,
+  RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection, Sha256DigestProjection, TriggerCauseProjection,
   TriggerHistoryProjection, TriggerKindProjection,
 };
 pub use resource_search::{

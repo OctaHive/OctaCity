@@ -26,7 +26,7 @@ pub use pipeline::{
   DependencyPolicyProjection, JobExecutionProjection, PipelineEdgeProjection, PipelineNodeProjection,
   PipelineProjection,
 };
-pub use project::{ProjectProjection, ProjectSummaryProjection};
+pub use project::{ProjectNavigationProjection, ProjectProjection, ProjectSummaryProjection};
 pub use trigger::{TriggerCauseProjection, TriggerHistoryProjection};
 
 /// A persisted authoritative value cannot be represented by a safe application projection.

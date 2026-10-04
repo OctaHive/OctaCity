@@ -88,9 +88,22 @@ fn project_commands_and_queries_dispatch_through_the_in_memory_port() {
     )
     .await
     .unwrap();
+    let roots = management_query(
+      &handlers,
+      ListProjectsQuery {
+        parent_id: None,
+        after: None,
+        limit: 10,
+      },
+    )
+    .await
+    .unwrap();
 
     assert_eq!(project.ancestors[0].id, root_id);
-    assert_eq!(page.projects[0].id, child_id);
+    assert_eq!(page.projects[0].project.id, child_id);
+    assert!(!page.projects[0].has_children);
+    assert_eq!(roots.projects[0].project.id, root_id);
+    assert!(roots.projects[0].has_children);
   });
 }
 

@@ -31,12 +31,17 @@ async fn visibility_is_applied_before_project_page_boundaries() {
       .await,
     );
   }
+  let child = create(&store, 108, Some(projects[1].id), "visible-child", "visible-child", 108).await;
 
   let all = store
     .list_projects(ListProjects::new(None, None, 2, ProjectListVisibility::all()).unwrap())
     .await
     .unwrap();
   assert_eq!(all.projects, projects[..2]);
+  assert_eq!(
+    all.projects_with_visible_children,
+    [projects[1].id].into_iter().collect()
+  );
   assert_eq!(all.next_cursor, Some(projects[1].id));
 
   let restricted = ProjectListVisibility::restricted([projects[1].id, projects[3].id, projects[5].id]).unwrap();
@@ -45,12 +50,14 @@ async fn visibility_is_applied_before_project_page_boundaries() {
     .await
     .unwrap();
   assert_eq!(first.projects, vec![projects[1].clone(), projects[3].clone()]);
+  assert!(first.projects_with_visible_children.is_empty());
   assert_eq!(first.next_cursor, Some(projects[3].id));
   let second = store
     .list_projects(ListProjects::new(None, first.next_cursor, 2, restricted).unwrap())
     .await
     .unwrap();
   assert_eq!(second.projects, vec![projects[5].clone()]);
+  assert!(second.projects_with_visible_children.is_empty());
   assert_eq!(second.next_cursor, None);
 
   let none = store
@@ -58,7 +65,14 @@ async fn visibility_is_applied_before_project_page_boundaries() {
     .await
     .unwrap();
   assert!(none.projects.is_empty());
+  assert!(none.projects_with_visible_children.is_empty());
   assert_eq!(none.next_cursor, None);
+
+  let children = store
+    .list_projects(ListProjects::new(Some(projects[1].id), None, 2, ProjectListVisibility::all()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(children.projects, vec![child]);
 
   database.cleanup().await;
 }

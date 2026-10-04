@@ -44,6 +44,26 @@ pub struct ProjectResource {
   pub updated_at_unix_ms: i64,
 }
 
+/// REST navigation summary of one current Project resource.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectSummaryResource {
+  /// Stable opaque Project identity.
+  pub id: String,
+  /// Optional direct parent identity.
+  pub parent_id: Option<String>,
+  /// Current sibling-unique display name.
+  pub name: String,
+  /// Positive optimistic resource version.
+  pub version: u64,
+  /// Authoritative creation time as Unix milliseconds.
+  pub created_at_unix_ms: i64,
+  /// Latest accepted mutation time as Unix milliseconds.
+  pub updated_at_unix_ms: i64,
+  /// Whether at least one visible direct child can be expanded.
+  pub has_children: bool,
+}
+
 /// One Project together with stable root-to-parent ancestry.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
