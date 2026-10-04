@@ -43,6 +43,11 @@ class LocalStandCiContractTests(unittest.TestCase):
         self.assertIn("report_native_staging_failure", job)
         self.assertIn("trap report_native_staging_failure EXIT", job)
         self.assertIn("python3 tools/check_local_stand_logs.py", job)
+        staging_step_header = job.split(
+            "      - name: Stage every native input and validate generated configurations\n",
+            1,
+        )[1].split("        shell: bash\n", 1)[0]
+        self.assertIn("GITHUB_TOKEN: ${{ github.token }}", staging_step_header)
         self.assertNotIn("continue-on-error", job)
 
     def test_apple_silicon_gate_is_opt_in_and_runs_the_complete_idempotent_lifecycle(self):

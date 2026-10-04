@@ -233,8 +233,11 @@ class NativeStandStagingTests(unittest.TestCase):
     def test_prepare_proves_microsandbox_release_and_asset_identity(self):
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "inputs"
+            events = []
 
             def write_agent_archive(agent, policy_helper, *_args, **_kwargs):
+                self.assertNotIn("GITHUB_TOKEN", os.environ)
+                events.append("build")
                 agent.write_bytes(b"agent archive")
                 policy_helper.write_bytes(b"policy helper")
                 policy_helper.with_name(f"{policy_helper.name}.sha256").write_text(
@@ -254,10 +257,17 @@ class NativeStandStagingTests(unittest.TestCase):
                 mock.patch.object(
                     STAGER.context, "validate_staging_directory"
                 ),
-                mock.patch.object(STAGER, "verify_release_ref") as verify_ref,
                 mock.patch.object(
-                    STAGER, "verify_github_release_asset"
+                    STAGER,
+                    "verify_release_ref",
+                    side_effect=lambda *_args, **_kwargs: events.append("release-ref"),
+                ) as verify_ref,
+                mock.patch.object(
+                    STAGER,
+                    "verify_github_release_asset",
+                    side_effect=lambda *_args, **_kwargs: events.append("release-asset"),
                 ) as verify_asset,
+                mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test-token"}),
             ):
                 result = STAGER.prepare_inputs(
                     destination,
@@ -266,10 +276,14 @@ class NativeStandStagingTests(unittest.TestCase):
                     REVISION,
                     REPOSITORY,
                 )
+                self.assertEqual(os.environ["GITHUB_TOKEN"], "test-token")
 
             self.assertEqual(result, destination.resolve())
+            self.assertEqual(events[:3], ["release-ref", "release-asset", "build"])
             verify_ref.assert_called_once()
-            verify_asset.assert_called_once()
+            verify_asset.assert_called_once_with(
+                mock.ANY, github_token="test-token"
+            )
             verified = verify_asset.call_args.args[0]
             self.assertEqual(
                 verified["repository"],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
@@ -11,7 +12,7 @@ import sys
 import tarfile
 import time
 from typing import Any
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
@@ -79,7 +80,11 @@ def verify_release_ref(source: dict[str, Any], *, attempts: int = 5) -> None:
 
 
 def verify_github_release_asset(
-    source: dict[str, Any], *, attempts: int = 5, maximum_bytes: int = 1024 * 1024
+    source: dict[str, Any],
+    *,
+    attempts: int = 5,
+    maximum_bytes: int = 1024 * 1024,
+    github_token: str | None = None,
 ) -> None:
     """Verify one GitHub release asset ID, name, and download URL."""
 
@@ -89,6 +94,7 @@ def verify_github_release_asset(
         url,
         headers={
             "Accept": "application/vnd.github+json",
+            **github_authorization_header(github_token),
             "User-Agent": "OctaCity-CI",
             "X-GitHub-Api-Version": "2022-11-28",
         },
@@ -99,6 +105,8 @@ def verify_github_release_asset(
                 payload = response.read(maximum_bytes + 1)
             document = json.loads(payload)
         except (OSError, URLError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            if isinstance(error, HTTPError):
+                error.close()
             if attempt == attempts:
                 raise SourceArchiveError(
                     f"cannot verify GitHub release asset after {attempts} attempts: {error}"
@@ -135,6 +143,13 @@ def verify_github_release_asset(
                 "GitHub release metadata does not identify the pinned asset"
             )
         return
+
+
+def github_authorization_header(token: str | None = None) -> dict[str, str]:
+    """Authenticate GitHub API requests when Actions supplies its scoped token."""
+
+    token = token or os.environ.get("GITHUB_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def download(source: dict[str, Any], destination: Path, *, attempts: int = 5) -> None:

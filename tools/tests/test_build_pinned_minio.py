@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -286,6 +287,42 @@ class PinnedMinioBuildTests(unittest.TestCase):
             ARCHIVES.verify_github_release_asset(source)
 
         request.assert_called_once()
+
+    def test_github_release_asset_lookup_uses_the_actions_token(self):
+        source = self.document["native"]["microsandbox"]
+        response = mock.MagicMock()
+        response.read.return_value = json.dumps(
+            {
+                "tag_name": source["tag"],
+                "assets": [
+                    {
+                        "id": source["asset_id"],
+                        "name": source["asset"],
+                        "browser_download_url": source["release_url"],
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        response.__enter__.return_value = response
+
+        def rate_limited_without_token(request, **_kwargs):
+            if request.get_header("Authorization") != "Bearer test-token":
+                raise HTTPError(
+                    request.full_url,
+                    403,
+                    "rate limit exceeded",
+                    {},
+                    io.BytesIO(),
+                )
+            return response
+
+        with (
+            mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test-token"}),
+            mock.patch.object(
+                ARCHIVES, "urlopen", side_effect=rate_limited_without_token
+            ),
+        ):
+            ARCHIVES.verify_github_release_asset(source, attempts=1)
 
     def test_github_release_asset_identity_mismatch_fails_without_retry(self):
         source = self.document["native"]["microsandbox"]

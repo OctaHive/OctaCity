@@ -201,13 +201,20 @@ def prepare_inputs(
     revision: str,
     repository: Path,
 ) -> Path:
-    """Build/download the exact input set and atomically publish its cache."""
+    """Build/download the exact input set without exposing the API token to builds."""
 
     if destination.is_dir() and not destination.is_symlink():
         context.validate_staging_directory(destination, entries, document, revision)
         return destination.resolve()
 
+    github_token = os.environ.pop("GITHUB_TOKEN", None)
+
     def populate(root: Path) -> None:
+        msb_policy = dict(document["native"]["microsandbox"])
+        msb_policy["archive_max_bytes"] = entries["microsandbox"]["max_bytes"]
+        verify_release_ref(msb_policy)
+        verify_github_release_asset(msb_policy, github_token=github_token)
+
         agent = root / entries["octacity_agent"]["filename"]
         policy_helper = root / entries[POLICY_HELPER_ROLE]["filename"]
         _build_agent_archive(agent, policy_helper, document, revision, repository)
@@ -219,14 +226,14 @@ def prepare_inputs(
             f"{sha256(octa)}  {octa.name}\n", encoding="utf-8"
         )
         microsandbox = root / entries["microsandbox"]["filename"]
-        msb_policy = dict(document["native"]["microsandbox"])
-        msb_policy["archive_max_bytes"] = entries["microsandbox"]["max_bytes"]
-        verify_release_ref(msb_policy)
-        verify_github_release_asset(msb_policy)
         _download_archive(msb_policy, microsandbox)
         context.validate_staging_directory(root, entries, document, revision)
 
-    return _atomic_directory(destination, populate)
+    try:
+        return _atomic_directory(destination, populate)
+    finally:
+        if github_token is not None:
+            os.environ["GITHUB_TOKEN"] = github_token
 
 
 def _safe_relative(value: object) -> Path:

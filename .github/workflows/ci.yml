@@ -78,6 +78,8 @@ jobs:
           tool: protoc
           fallback: none
       - name: Stage every native input and validate generated configurations
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         working-directory: octacity
         run: |
