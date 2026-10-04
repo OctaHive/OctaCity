@@ -7,7 +7,14 @@ import {
   ServerCog,
   ShieldAlert,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import type { ReadinessProbe } from '../../api/readiness';
@@ -28,6 +35,7 @@ const sectionIcons = {
 } satisfies Record<ConsoleSectionId, typeof FolderKanban>;
 
 interface AppShellProps {
+  explorerContent?: Partial<Record<ConsoleSectionId, ReactNode>>;
   readinessProbe: ReadinessProbe;
 }
 
@@ -36,7 +44,7 @@ interface SearchOverlayState {
   scopeLabel: string;
 }
 
-export function AppShell({ readinessProbe }: AppShellProps) {
+export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps) {
   const location = useLocation();
   const activeSection = sectionForPath(location.pathname);
   const narrowWorkbench = useNarrowWorkbench();
@@ -44,6 +52,7 @@ export function AppShell({ readinessProbe }: AppShellProps) {
   const [explorerWidth, setExplorerWidth] = useState(loadExplorerWidth);
   const [searchOverlay, setSearchOverlay] = useState<SearchOverlayState | null>(null);
   const explorerHeadingRef = useRef<HTMLHeadingElement>(null);
+  const focusExplorerOnOpenRef = useRef(false);
   const explorerOpenButtonRef = useRef<HTMLButtonElement>(null);
   const readiness = useQuery({
     queryFn: ({ signal }) => readinessProbe(signal),
@@ -78,6 +87,13 @@ export function AppShell({ readinessProbe }: AppShellProps) {
   }, []);
 
   useEffect(() => {
+    if (explorerOpen && focusExplorerOnOpenRef.current) {
+      focusExplorerOnOpenRef.current = false;
+      explorerHeadingRef.current?.focus();
+    }
+  }, [explorerOpen]);
+
+  useEffect(() => {
     const openCommandCenter = (event: globalThis.KeyboardEvent) => {
       if (
         event.key.toLowerCase() === 'k' &&
@@ -95,8 +111,8 @@ export function AppShell({ readinessProbe }: AppShellProps) {
   }, [searchOverlay]);
 
   const openExplorer = useCallback(() => {
+    focusExplorerOnOpenRef.current = true;
     setExplorerOpen(true);
-    globalThis.requestAnimationFrame(() => explorerHeadingRef.current?.focus());
   }, []);
 
   const collapseExplorer = useCallback(() => {
@@ -177,7 +193,9 @@ export function AppShell({ readinessProbe }: AppShellProps) {
             restoreFocus={restoreExplorerFocus}
             section={activeSection}
             width={explorerWidth}
-          />
+          >
+            {explorerContent[activeSection.id]}
+          </ContextExplorer>
         </>
       ) : null}
 

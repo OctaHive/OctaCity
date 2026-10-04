@@ -1,5 +1,12 @@
 import { ChevronLeft, FolderOpen, Search, Star } from 'lucide-react';
-import { useEffect, useRef, type KeyboardEvent, type PointerEvent, type RefObject } from 'react';
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { Link } from 'react-router-dom';
 
 import { CONSOLE_PATHS } from '../routes';
@@ -14,6 +21,7 @@ import styles from './ContextExplorer.module.css';
 import { useOverlayFocus } from './useOverlayFocus';
 
 interface ContextExplorerProps {
+  children?: ReactNode;
   headingRef: RefObject<HTMLHeadingElement | null>;
   modal: boolean;
   onCollapse: () => void;
@@ -26,6 +34,7 @@ interface ContextExplorerProps {
 }
 
 export function ContextExplorer({
+  children,
   headingRef,
   modal,
   onCollapse,
@@ -131,7 +140,7 @@ export function ContextExplorer({
             <FolderOpen aria-hidden="true" size={15} />
             Browse
           </h3>
-          <ExplorerLinks section={section} />
+          {children === undefined ? <ExplorerLinks section={section} /> : children}
         </section>
       </div>
 

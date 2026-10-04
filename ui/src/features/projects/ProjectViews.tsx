@@ -1,17 +1,11 @@
-import { useInfiniteQuery, useQuery, type InfiniteData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
-import type {
-  ProjectDetails,
-  ProjectHierarchyApi,
-  ProjectPage,
-  ProjectResource,
-  ProjectsApi,
-} from './api';
+import type { ProjectDetails, ProjectsApi } from './api';
 import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import { ProjectBuilds } from './ProjectBuilds';
 import { ProjectDefinitions } from './ProjectDefinitions';
@@ -21,18 +15,17 @@ interface ProjectsViewProps {
   api: ProjectsApi;
 }
 
-interface ProjectHierarchyProps {
-  api: ProjectHierarchyApi;
-}
-
-export function ProjectHierarchyView({ api }: ProjectsViewProps) {
+export function ProjectsLandingView() {
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <PageHeading
-        description="Browse root Projects and continue through their bounded child collections."
+        description="Choose a Project from the contextual explorer to inspect its current definitions and recent Builds."
         title="Projects"
       />
-      <ProjectCollection api={api} emptyLabel="No root Projects are available." parentId={null} />
+      <div className={styles.emptyState}>
+        <FolderTree aria-hidden="true" size={28} strokeWidth={1.6} />
+        <p>Select a Project from the hierarchy on the left.</p>
+      </div>
     </section>
   );
 }
@@ -67,7 +60,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
       <ProjectBreadcrumbs details={project.data} />
       <div className={styles.headingRow}>
         <PageHeading
-          description="Select a child Project or inspect the current Project workspace."
+          description="Inspect the current Project workspace."
           title={project.data.project.name}
         />
         <button
@@ -84,111 +77,9 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
       {project.error === null ? null : (
         <ProjectDataStale label="Project" onRetry={project.refetch} />
       )}
-      <div className={styles.sectionHeading}>
-        <div>
-          <p className={styles.eyebrow}>Hierarchy</p>
-          <h2>Child Projects</h2>
-        </div>
-      </div>
-      <ProjectCollection
-        api={api}
-        emptyLabel="This Project has no child Projects."
-        parentId={projectId}
-      />
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
       <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />
     </section>
-  );
-}
-
-function ProjectCollection({
-  api,
-  emptyLabel,
-  parentId,
-}: ProjectHierarchyProps & { emptyLabel: string; parentId: string | null }) {
-  const projects = useInfiniteQuery<
-    ProjectPage,
-    Error,
-    InfiniteData<ProjectPage>,
-    ReturnType<typeof queryKeys.projectChildren>,
-    string | null
-  >({
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
-    initialPageParam: null as string | null,
-    queryFn: ({ pageParam, signal }) => api.listProjects(parentId, pageParam, signal),
-    queryKey: queryKeys.projectChildren(parentId),
-  });
-
-  if (projects.isPending) {
-    return <LoadingPanel />;
-  }
-  if (projects.data === undefined) {
-    return (
-      <ProjectDataFailure error={projects.error} label="Projects" onRetry={projects.refetch} />
-    );
-  }
-
-  const items = projects.data.pages.flatMap((page) => page.items);
-  return (
-    <div className={styles.collection}>
-      <div className={styles.collectionToolbar}>
-        <p>{items.length === 1 ? '1 Project loaded' : `${items.length} Projects loaded`}</p>
-        <button
-          className={styles.textButton}
-          disabled={projects.isFetching}
-          onClick={() => void projects.refetch()}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" size={15} />
-          {projects.isFetching && !projects.isFetchingNextPage ? 'Refreshing' : 'Refresh'}
-        </button>
-      </div>
-      {projects.error === null ? null : (
-        <ProjectDataStale
-          label="Project"
-          onRetry={projects.isFetchNextPageError ? projects.fetchNextPage : projects.refetch}
-        />
-      )}
-      {items.length === 0 ? (
-        <div className={styles.emptyState}>
-          <FolderTree aria-hidden="true" size={28} strokeWidth={1.6} />
-          <p>{emptyLabel}</p>
-        </div>
-      ) : (
-        <ul className={styles.projectList}>
-          {items.map((item) => (
-            <ProjectListItem key={item.id} project={item} />
-          ))}
-        </ul>
-      )}
-      {projects.hasNextPage ? (
-        <button
-          className={styles.loadMoreButton}
-          disabled={projects.isFetchingNextPage}
-          onClick={() => void projects.fetchNextPage()}
-          type="button"
-        >
-          {projects.isFetchingNextPage ? 'Loading Projects' : 'Load more Projects'}
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function ProjectListItem({ project }: { project: ProjectResource }) {
-  return (
-    <li>
-      <Link className={styles.projectLink} to={projectPath(project.id)}>
-        <span className={styles.projectIcon} aria-hidden="true">
-          <FolderTree size={20} strokeWidth={1.7} />
-        </span>
-        <span className={styles.projectSummary}>
-          <strong>{project.name}</strong>
-          <span>{project.id}</span>
-        </span>
-        <ChevronRight aria-hidden="true" size={18} />
-      </Link>
-    </li>
   );
 }
 
@@ -221,7 +112,7 @@ function ProjectBreadcrumbs({ details }: { details: ProjectDetails }) {
 function PageHeading({ description, title }: { description: string; title: string }) {
   return (
     <header className={styles.pageHeading}>
-      <p className={styles.eyebrow}>Project hierarchy</p>
+      <p className={styles.eyebrow}>Project workspace</p>
       <h1 id="page-title">{title}</h1>
       <p>{description}</p>
     </header>

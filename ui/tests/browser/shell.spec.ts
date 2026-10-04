@@ -11,8 +11,16 @@ async function openReadyConsole(page: Page, path: string) {
     });
   });
   await page.route('**/api/v1/projects*', async (route) => {
+    const url = new URL(route.request().url());
+    const parentId = url.searchParams.get('parent_id');
+    const items =
+      parentId === null
+        ? [browserProject('platform', 'Platform', null)]
+        : parentId === 'platform'
+          ? [browserProject('delivery', 'Delivery', 'platform')]
+          : [];
     await route.fulfill({
-      body: JSON.stringify({ items: [], next_cursor: null }),
+      body: JSON.stringify({ items, next_cursor: null }),
       contentType: 'application/json',
       status: 200,
     });
@@ -42,9 +50,24 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(explorer).toBeVisible();
   await expect(explorer.getByRole('heading', { name: 'Favorites' })).toBeVisible();
   await expect(explorer.getByRole('heading', { name: 'Browse' })).toBeVisible();
+  await expect(explorer.getByRole('link', { name: 'Platform' })).toBeVisible();
+  await explorer.getByRole('button', { name: 'Expand Platform' }).click();
+  await expect(explorer.getByRole('link', { name: 'Delivery' })).toBeVisible();
+  await expect(page.getByRole('main').getByRole('link', { name: 'Platform' })).toHaveCount(0);
   await expect(page.locator('#console-content')).toBeVisible();
   await expect(page.getByLabel('Security notice')).toContainText('Trusted network only');
 });
+
+function browserProject(id: string, name: string, parentId: string | null) {
+  return {
+    created_at_unix_ms: 1_700_000_000_000,
+    id,
+    name,
+    parent_id: parentId,
+    updated_at_unix_ms: 1_700_000_000_000,
+    version: 1,
+  };
+}
 
 test('resizes and restores the desktop explorer within its bounds', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1_440 });

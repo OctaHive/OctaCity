@@ -27,7 +27,6 @@
 }
 
 .headingRow,
-.collectionToolbar,
 .sectionHeading {
   display: flex;
   align-items: center;
@@ -93,82 +92,6 @@
 
 .breadcrumbs a:hover {
   text-decoration: underline;
-}
-
-.collection {
-  overflow: hidden;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-medium);
-  background: var(--color-surface);
-}
-
-.collectionToolbar {
-  min-height: 3rem;
-  padding: 0.55rem var(--space-lg);
-  border-bottom: 1px solid var(--color-border);
-}
-
-.collectionToolbar p {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.projectList {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.projectList li + li {
-  border-top: 1px solid var(--color-border);
-}
-
-.projectLink {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-md);
-  min-height: 4.3rem;
-  padding: 0.75rem var(--space-lg);
-  color: var(--color-text-primary);
-  text-decoration: none;
-}
-
-.projectLink:hover {
-  background: var(--color-surface-subtle);
-}
-
-.projectIcon {
-  display: grid;
-  width: 2.35rem;
-  height: 2.35rem;
-  place-items: center;
-  border-radius: var(--radius-small);
-  background: var(--color-brand-soft);
-  color: var(--color-brand-action);
-}
-
-.projectSummary {
-  display: grid;
-  min-width: 0;
-  gap: 0.2rem;
-}
-
-.projectSummary strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.projectSummary span {
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-  font-size: 0.72rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .emptyState,
@@ -304,10 +227,5 @@
   .headingRow {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .projectLink,
-  .collectionToolbar {
-    padding-inline: var(--space-md);
   }
 }

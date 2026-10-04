@@ -73,7 +73,9 @@ fallback.
 
 The shell uses a compact utility header, a labeled section rail, a contextual explorer, and a
 detail workbench. The explorer starts closed as a focus-managed overlay at the supported narrow
-width and is resizable from 240 to 480 pixels on desktop. The header exposes readiness,
+width and is resizable from 240 to 480 pixels on desktop. The Projects explorer owns the bounded
+root/child Project hierarchy; the detail workbench never duplicates that navigation as a list.
+The header exposes readiness,
 Command/Ctrl+K search, system/light/dark theme selection, a neutral notification placeholder, and
 an operator menu for browser-local preferences and deployment references. It deliberately has no
 login route, browser credential storage, fabricated browser identity, or logout action, and it

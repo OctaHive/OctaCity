@@ -1,0 +1,118 @@
+.rootBranch {
+  min-width: 0;
+}
+
+.treeToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.treeToolbar button,
+.projectRow button {
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.treeToolbar button {
+  width: 1.8rem;
+  height: 1.8rem;
+  border-radius: var(--radius-small);
+}
+
+.treeToolbar button:hover,
+.projectRow button:hover {
+  background: var(--color-surface-subtle);
+  color: var(--color-brand-action);
+}
+
+.rootBranch ul,
+.childBranch ul {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.childBranch {
+  margin-left: 0.7rem;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.projectRow {
+  display: grid;
+  grid-template-columns: 1.55rem 1rem minmax(0, 1fr);
+  align-items: center;
+  min-height: 2.2rem;
+  border-radius: var(--radius-small);
+  color: var(--color-text-muted);
+}
+
+.projectRow button {
+  width: 1.55rem;
+  height: 1.75rem;
+  border-radius: 0.35rem;
+}
+
+.projectRow a {
+  overflow: hidden;
+  padding: 0.4rem 0.35rem 0.4rem 0.2rem;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.projectRow:hover,
+.selected {
+  background: var(--color-surface-subtle);
+  color: var(--color-brand-action);
+}
+
+.selected a {
+  color: var(--color-brand-action);
+  font-weight: 800;
+}
+
+.state,
+.empty {
+  margin: var(--space-sm) 0;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.empty {
+  padding: var(--space-sm);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.loadMore {
+  margin-top: var(--space-sm);
+  border: 0;
+  background: transparent;
+  color: var(--color-brand-action);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.loadMore {
+  width: 100%;
+  padding: 0.45rem;
+  border-top: 1px solid var(--color-border);
+}

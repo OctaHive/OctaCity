@@ -4,7 +4,8 @@ import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import { BuildView } from '../features/builds/BuildView';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
-import { ProjectHierarchyView, ProjectView } from '../features/projects/ProjectViews';
+import { ProjectExplorer } from '../features/projects/ProjectExplorer';
+import { ProjectsLandingView, ProjectView } from '../features/projects/ProjectViews';
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
 import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
@@ -39,13 +40,18 @@ export function createConsoleRoutes(
   return [
     {
       path: '/',
-      element: <AppShell readinessProbe={readinessProbe} />,
+      element: (
+        <AppShell
+          explorerContent={{ projects: <ProjectExplorer api={projectApi} /> }}
+          readinessProbe={readinessProbe}
+        />
+      ),
       errorElement: <RouteErrorBoundary />,
       children: [
         { index: true, element: <Navigate replace to={CONSOLE_PATHS.projects} /> },
         {
           path: childPath(CONSOLE_PATHS.projects),
-          element: <ProjectHierarchyView api={projectApi} />,
+          element: <ProjectsLandingView />,
         },
         {
           path: childPath(CONSOLE_PATHS.project),
