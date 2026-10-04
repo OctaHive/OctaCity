@@ -134,6 +134,20 @@ const managementBoundaryMiddleware: Middleware = {
 
 export const managementApi = createManagementApiClient();
 
+/** Rejects an OpenAPI success response that omitted its required body. */
+export function requireManagementResponse<T>(data: T | undefined): T {
+  if (data === undefined) {
+    throw new ManagementApiError({
+      code: 'invalid_response',
+      message: 'The management API returned an invalid success response.',
+      requestId: null,
+      retryAfterMilliseconds: null,
+      status: null,
+    });
+  }
+  return data;
+}
+
 function relativeManagementRequest(): typeof Request {
   const NativeRequest = globalThis.Request;
 

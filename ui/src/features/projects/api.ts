@@ -1,5 +1,5 @@
 import type { components } from '../../../.generated/api/schema';
-import { ManagementApiError, managementApi } from '../../api/client';
+import { managementApi, requireManagementResponse } from '../../api/client';
 
 export const PROJECT_PAGE_SIZE = 25;
 
@@ -117,21 +117,21 @@ export const projectsApi: ProjectsApi = {
         signal: signal ?? null,
       },
     );
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async getPipeline(pipelineId, version, signal) {
     const { data } = await managementApi.GET('/api/v1/pipelines/{pipeline_id}/versions/{version}', {
       params: { path: { pipeline_id: pipelineId, version } },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async getProject(projectId, signal) {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}', {
       params: { path: { project_id: projectId } },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async getRepository(repositoryId, version, signal) {
     const { data } = await managementApi.GET(
@@ -141,7 +141,7 @@ export const projectsApi: ProjectsApi = {
         signal: signal ?? null,
       },
     );
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async getTrigger(summary, signal) {
     const { id: triggerId, kind, version } = summary;
@@ -153,7 +153,7 @@ export const projectsApi: ProjectsApi = {
           signal: signal ?? null,
         },
       );
-      return { kind, resource: requireResponse(data) };
+      return { kind, resource: requireManagementResponse(data) };
     }
     if (kind === 'scheduled') {
       const { data } = await managementApi.GET(
@@ -163,7 +163,7 @@ export const projectsApi: ProjectsApi = {
           signal: signal ?? null,
         },
       );
-      return { kind, resource: requireResponse(data) };
+      return { kind, resource: requireManagementResponse(data) };
     }
     const { data } = await managementApi.GET(
       '/api/v1/trigger-definitions/internal/{trigger_id}/versions/{version}',
@@ -172,14 +172,14 @@ export const projectsApi: ProjectsApi = {
         signal: signal ?? null,
       },
     );
-    return { kind, resource: requireResponse(data) };
+    return { kind, resource: requireManagementResponse(data) };
   },
   async listBuildConfigurations(projectId, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}/build-configurations', {
       params: { path: { project_id: projectId }, query: pageQuery(cursor) },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async listBuilds(projectId, filters, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}/builds', {
@@ -195,14 +195,14 @@ export const projectsApi: ProjectsApi = {
       },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async listPipelines(projectId, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}/pipelines', {
       params: { path: { project_id: projectId }, query: pageQuery(cursor) },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async listProjects(parentId, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/projects', {
@@ -215,21 +215,21 @@ export const projectsApi: ProjectsApi = {
       },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async listRepositories(projectId, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}/repositories', {
       params: { path: { project_id: projectId }, query: pageQuery(cursor) },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
   async listTriggers(projectId, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/projects/{project_id}/trigger-definitions', {
       params: { path: { project_id: projectId }, query: pageQuery(cursor) },
       signal: signal ?? null,
     });
-    return requireResponse(data);
+    return requireManagementResponse(data);
   },
 };
 
@@ -238,17 +238,4 @@ function pageQuery(cursor: string | null) {
     ...(cursor === null ? {} : { after: cursor }),
     limit: PROJECT_PAGE_SIZE,
   };
-}
-
-function requireResponse<T>(data: T | undefined): T {
-  if (data === undefined) {
-    throw new ManagementApiError({
-      code: 'invalid_response',
-      message: 'The management API returned an invalid success response.',
-      requestId: null,
-      retryAfterMilliseconds: null,
-      status: null,
-    });
-  }
-  return data;
 }

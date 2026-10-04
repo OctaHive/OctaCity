@@ -14,7 +14,7 @@ import type {
   TriggerDefinitionDetails,
   TriggerDefinitionSummary,
 } from './api';
-import { formatEnumLabel } from './display';
+import { formatEnumLabel } from '../../shared/display';
 import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import definitionStyles from './ProjectDefinitions.module.css';
 import styles from './Projects.module.css';

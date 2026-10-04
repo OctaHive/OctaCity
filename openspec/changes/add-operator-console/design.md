@@ -114,7 +114,7 @@ The initial route map is:
 
 The root route redirects to `/projects`; it is not a synthetic dashboard. Resource identity and user-selected tab/filter/cursor state are encoded in the URL where sharing or refresh matters. Query keys are centralized by resource identity and filters so a mutation invalidates only affected data.
 
-The Attempt graph renders as SVG using a small deterministic DAG layout dependency and also provides the same nodes, states, and edges as an accessible table. The first slice will not introduce a canvas editor. Job-event follow uses one cancellable bounded-wait loop for the selected active Job, advances only from the last accepted sequence, aborts on route or selection change, and backs off on retryable failure. It does not open one poller per Job.
+The Attempt graph renders as SVG using a small deterministic, UI-independent DAG layout module and also provides the same nodes, states, and edges as an accessible table. Keeping this narrow module inside the application avoids a graph-library runtime dependency while isolating and directly testing topology and geometry policy. The first slice will not introduce a canvas editor. Job-event follow uses one cancellable bounded-wait loop for the selected active Job, advances only from the last accepted sequence, aborts on route or selection change, and backs off on retryable failure. It does not open one poller per Job.
 
 ### 7. Treat mutations as explicit user intents
 
@@ -146,7 +146,7 @@ The release workflow will build one platform-independent `octacity-console` arch
 - **[Live diagnostics create excessive request load]** → Follow only the selected active Job, use the server's bounded wait, cancel hidden views, honor `Retry-After`, and centralize timing constants instead of scattering intervals.
 - **[SPA state drifts from authoritative state]** → Keep durable selection in URLs, server state in bounded queries, and use targeted invalidation plus visible stale/error states rather than optimistic domain transitions.
 - **[Separate console release adds deployment work]** → Provide a checksummed static archive and copy-ready reverse-proxy contract; server-only deployments remain valid and rollback is removing the optional static route.
-- **[DAG visualization adds bundle weight]** → Use only a layout primitive with custom accessible rendering, enforce a bundle budget, and retain the table as the functional baseline.
+- **[DAG visualization adds bundle weight]** → Keep the deterministic layout behind one small internal module with custom accessible rendering, enforce a bundle budget, and retain the table as the functional baseline.
 - **[Visual inspiration becomes copied template surface or dependency]** → Own all tokens and layouts in OctaCity, use no reference assets or code, and review visual snapshots for product-specific information hierarchy rather than pixel imitation.
 - **[Green styling obscures operational severity]** → Reserve semantic warning, danger, and information colors, pair every state with text and an icon, and enforce contrast and non-color accessibility tests.
 

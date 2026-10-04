@@ -1,6 +1,8 @@
 import { Navigate, createBrowserRouter, type RouteObject, useParams } from 'react-router-dom';
 
 import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
+import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
+import { BuildView } from '../features/builds/BuildView';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
 import { ProjectHierarchyView, ProjectView } from '../features/projects/ProjectViews';
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
@@ -32,6 +34,7 @@ function PlaceholderView({ description, parameter, title }: PlaceholderViewProps
 export function createConsoleRoutes(
   readinessProbe: ReadinessProbe = fetchReadiness,
   projectApi: ProjectsApi = projectsApi,
+  buildApi: BuildDiagnosticsApi = buildDiagnosticsApi,
 ): RouteObject[] {
   return [
     {
@@ -50,13 +53,7 @@ export function createConsoleRoutes(
         },
         {
           path: childPath(CONSOLE_PATHS.build),
-          element: (
-            <PlaceholderView
-              description="Attempt, Job, event, output, and retention diagnostics will appear here."
-              parameter="buildId"
-              title="Build"
-            />
-          ),
+          element: <BuildView api={buildApi} />,
         },
         {
           path: childPath(CONSOLE_PATHS.agents),

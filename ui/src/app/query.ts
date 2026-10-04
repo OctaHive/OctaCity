@@ -1,6 +1,26 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  attempt: (attemptId: string) => ['attempts', attemptId] as const,
+  buildArtifacts: (buildId: string) => ['builds', buildId, 'artifacts'] as const,
+  buildCacheSessions: (buildId: string) => ['builds', buildId, 'cache-sessions'] as const,
+  buildLogs: (
+    projectId: string,
+    buildId: string,
+    attemptId: string | null,
+    jobId: string | null,
+    mode: string,
+    query: string,
+    stream: string | null,
+  ) =>
+    [
+      'projects',
+      projectId,
+      'build-logs',
+      { attemptId, buildId, jobId, mode, query, stream },
+    ] as const,
+  build: (buildId: string) => ['builds', buildId] as const,
+  buildResultRetention: (buildId: string) => ['builds', buildId, 'retention'] as const,
   buildConfiguration: (configurationId: string, version: number) =>
     ['build-configurations', configurationId, version] as const,
   pipeline: (pipelineId: string, version: number) => ['pipelines', pipelineId, version] as const,

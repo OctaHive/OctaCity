@@ -23,10 +23,10 @@
 
 ## 4. Build Diagnostics
 
-- [ ] 4.1 Implement the Build and current Attempt view with Job selection, state/failure details, deterministic SVG DAG layout, and an equivalent accessible dependency table; verify failed, active, succeeded, skipped, and mixed dependency fixtures render identical graph/table relationships.
-- [ ] 4.2 Implement one cancellable bounded-wait Job event follower that advances only from the last contiguous sequence and stops on terminal state, route change, or Job change; verify fake-timer and browser tests cover empty waits, appended pages, retry backoff, cancellation, and absence of duplicate events or parallel pollers.
-- [ ] 4.3 Implement scoped redacted log search with freshness warnings and URL-backed filters; verify literal/full-text modes, cursor pages, delayed projection, empty authoritative results, and safe snippets without raw-response logging.
-- [ ] 4.4 Implement Artifact listing/download, cache-session diagnostics, and Build Result retention panels; verify short-lived download URLs are neither rendered nor persisted, cache pages remain secret-free, and absent/held/expired retention states are distinct.
+- [x] 4.1 Implement the Build and current Attempt view with Job selection, state/failure details, deterministic SVG DAG layout, and an equivalent accessible dependency table; verify failed, active, succeeded, skipped, and mixed dependency fixtures render identical graph/table relationships.
+- [x] 4.2 Implement one cancellable bounded-wait Job event follower that advances only from the last contiguous sequence and stops on terminal state, route change, or Job change; verify fake-timer and browser tests cover empty waits, appended pages, retry backoff, cancellation, and absence of duplicate events or parallel pollers.
+- [x] 4.3 Implement scoped redacted log search with freshness warnings and URL-backed filters; verify literal/full-text modes, cursor pages, delayed projection, empty authoritative results, and safe snippets without raw-response logging.
+- [x] 4.4 Implement Artifact listing/download, cache-session diagnostics, and Build Result retention panels; verify short-lived download URLs are neither rendered nor persisted, cache pages remain secret-free, and absent/held/expired retention states are distinct.
 
 ## 5. Safe Operator Commands
 

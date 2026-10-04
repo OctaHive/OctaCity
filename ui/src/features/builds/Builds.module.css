@@ -1,0 +1,688 @@
+.page,
+.attemptStack {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+.heading,
+.panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.heading {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+}
+
+.heading h1,
+.panel h2 {
+  margin: 0.2rem 0 0;
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.heading h1 {
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+
+.panel h2 {
+  font-size: 1.05rem;
+}
+
+.eventsPanel h3 {
+  margin: 0.2rem 0 0;
+  color: var(--color-text-primary);
+  font-size: 0.92rem;
+}
+
+.headingRow,
+.panelHeading,
+.panelActions,
+.buildSummary,
+.staleNotice,
+.failurePanel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.headingRow,
+.panelHeading {
+  justify-content: space-between;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--color-brand-action);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.backLink,
+.jobLink {
+  width: fit-content;
+  color: var(--color-brand-action);
+  font-weight: 750;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+.buildSummary {
+  flex-wrap: wrap;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.definitionGrid,
+.jobDetails {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin: 0;
+}
+
+.definitionGrid > div,
+.jobDetails > div {
+  min-width: 0;
+  padding: 0.65rem;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.definitionGrid dt,
+.jobDetails dt {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.definitionGrid dd,
+.jobDetails dd {
+  overflow-wrap: anywhere;
+  margin: 0.25rem 0 0;
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+}
+
+.panel {
+  overflow: hidden;
+}
+
+.panelHeading {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.monospace {
+  margin: 0.25rem 0 0;
+  color: var(--color-text-muted);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.jobSelector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.jobButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.jobButton[aria-pressed='true'] {
+  border-color: var(--color-brand-action);
+  box-shadow: var(--focus-ring);
+}
+
+.status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.state_success {
+  color: var(--color-success-ink);
+  fill: var(--color-brand-soft);
+}
+
+.state_danger {
+  color: var(--color-danger-ink);
+  fill: var(--color-danger-soft);
+}
+
+.state_info {
+  color: var(--color-information-ink);
+  fill: var(--color-information-soft);
+}
+
+.state_muted {
+  color: var(--color-text-muted);
+  fill: var(--color-surface-subtle);
+}
+
+.graphPanel {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-canvas);
+}
+
+.graphScroller,
+.tableScroller {
+  overflow-x: auto;
+}
+
+.graph {
+  display: block;
+  width: 100%;
+  min-width: 34rem;
+  min-height: 8rem;
+}
+
+.graphNode {
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.nodeTitle,
+.nodeState {
+  pointer-events: none;
+  fill: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+.nodeTitle {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.nodeState {
+  font-size: 11px;
+}
+
+.edge {
+  fill: none;
+  stroke: var(--color-text-muted);
+  stroke-width: 1.5;
+}
+
+.arrow {
+  fill: var(--color-text-muted);
+}
+
+.dependencyTable {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+}
+
+.dependencyTable th,
+.dependencyTable td {
+  padding: 0.7rem var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.dependencyTable thead th {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
+.selectedRow {
+  background: var(--color-brand-soft);
+}
+
+.jobLink {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dependencies {
+  margin: 0;
+  padding-left: var(--space-lg);
+}
+
+.jobDetails {
+  padding: var(--space-lg);
+}
+
+.eventsPanel {
+  border-top: 1px solid var(--color-border);
+}
+
+.eventsHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-md) var(--space-lg);
+}
+
+.eventFollowerState {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.eventsEmpty,
+.eventFailure,
+.eventsNotice {
+  margin: 0;
+  padding: var(--space-lg);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.eventsNotice {
+  border-color: var(--color-information);
+  background: var(--color-information-soft);
+  color: var(--color-information-ink);
+}
+
+.eventFailure {
+  border-color: var(--color-warning);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+}
+
+.eventTable {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-size: 0.74rem;
+}
+
+.eventTable th,
+.eventTable td {
+  padding: 0.6rem var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.eventTable thead th {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.eventPayload {
+  color: var(--color-text-primary);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.logSearchForm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.logSearchForm label {
+  display: grid;
+  flex: 1 1 8rem;
+  gap: 0.3rem;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.logSearchForm .logQueryField {
+  flex-basis: 16rem;
+  flex-grow: 2;
+}
+
+.logSearchForm input,
+.logSearchForm select {
+  width: 100%;
+  min-height: 2.2rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 0.78rem;
+  text-transform: none;
+}
+
+.logSearchForm input:focus-visible,
+.logSearchForm select:focus-visible {
+  border-color: var(--color-brand-action);
+  box-shadow: var(--focus-ring);
+  outline: 0;
+}
+
+.logInitial,
+.logEmpty,
+.logValidation {
+  margin: 0;
+  padding: var(--space-lg);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.logValidation {
+  border-bottom: 1px solid var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+}
+
+.logFreshness {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0.65rem var(--space-lg);
+  border-bottom: 1px solid var(--color-warning);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+  font-size: 0.76rem;
+}
+
+.logHits {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-lg);
+  list-style: none;
+}
+
+.logHit {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.logHitMetadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm) var(--space-md);
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.logHit pre {
+  overflow-x: auto;
+  margin: 0;
+  padding: 0.75rem;
+  color: var(--color-text-primary);
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+}
+
+.resultDiagnostics {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+.diagnosticTable {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--color-text-primary);
+  font-size: 0.74rem;
+}
+
+.diagnosticTable th,
+.diagnosticTable td {
+  padding: 0.7rem var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.diagnosticTable thead th {
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.outputName,
+.secondaryMetadata {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.secondaryMetadata {
+  margin-top: 0.2rem;
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+}
+
+.digest {
+  display: block;
+  max-width: 12rem;
+  overflow: hidden;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnosticEmpty,
+.inlineFailure {
+  margin: 0;
+  padding: var(--space-lg);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.inlineFailure {
+  border-top: 1px solid var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+}
+
+.retentionDetails {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+}
+
+.holdDetails,
+.retentionGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin: 0;
+}
+
+.holdDetails > div,
+.retentionGrid > div {
+  min-width: 0;
+  padding: 0.65rem;
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.holdDetails dt,
+.retentionGrid dt {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.holdDetails dd,
+.retentionGrid dd {
+  overflow-wrap: anywhere;
+  margin: 0.25rem 0 0;
+  color: var(--color-text-primary);
+  font-size: 0.76rem;
+}
+
+.secondaryButton,
+.textButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2.2rem;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-brand-action);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.textButton {
+  min-height: 1.9rem;
+  padding: 0.25rem 0.45rem;
+  border-color: transparent;
+}
+
+.secondaryButton:disabled,
+.textButton:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.statePanel,
+.emptyState {
+  display: grid;
+  min-height: 9rem;
+  place-items: center;
+  align-content: center;
+  gap: var(--space-md);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.emptyState p {
+  margin: 0;
+}
+
+.loadingMark {
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-brand-action);
+  border-radius: 50%;
+  animation: spin var(--motion-fast) linear infinite;
+}
+
+.failurePanel,
+.staleNotice {
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-small);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+}
+
+.failurePanel {
+  align-items: flex-start;
+  min-height: 7rem;
+  padding: var(--space-lg);
+}
+
+.failurePanel p {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.staleNotice {
+  margin: var(--space-md);
+  padding: 0.6rem;
+  font-size: 0.78rem;
+}
+
+.staleNotice span {
+  flex: 1;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loadingMark {
+    animation: none;
+  }
+}
+
+@media (max-width: 48rem) {
+  .headingRow,
+  .panelHeading,
+  .eventsHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .definitionGrid,
+  .jobDetails,
+  .holdDetails,
+  .retentionGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .logSearchForm {
+    align-items: stretch;
+  }
+
+  .logSearchForm .logQueryField {
+    flex-basis: 100%;
+  }
+}

@@ -13,7 +13,7 @@ import type {
   BuildSummaryPage,
   ProjectBuildsApi,
 } from './api';
-import { formatEnumLabel, formatTimestamp } from './display';
+import { formatEnumLabel, formatTimestamp } from '../../shared/display';
 import buildStyles from './ProjectBuilds.module.css';
 import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import styles from './Projects.module.css';
