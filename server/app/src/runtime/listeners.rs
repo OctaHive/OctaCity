@@ -26,6 +26,7 @@ pub(super) struct RuntimeComponents {
   pub(super) workers: Option<DurableWorkers>,
   pub(super) ready_job_notifications: Option<(sqlx::PgPool, Arc<ReadyJobNotificationHub>)>,
   pub(super) metrics: Option<metrics_exporter_prometheus::PrometheusHandle>,
+  pub(super) critical_conditions: Option<Arc<dyn octacity_server_store::CriticalSystemConditionStore>>,
   pub(super) cancellation: CancellationToken,
 }
 
@@ -47,6 +48,7 @@ impl ServerRuntime {
         workers: None,
         ready_job_notifications: None,
         metrics: None,
+        critical_conditions: None,
         cancellation: CancellationToken::new(),
       },
     )
@@ -66,6 +68,7 @@ impl ServerRuntime {
       workers,
       ready_job_notifications,
       metrics,
+      critical_conditions,
       cancellation,
     } = components;
     if config.webhook_bind().is_some() != webhook_router.is_some() {
@@ -95,6 +98,7 @@ impl ServerRuntime {
       checks,
       config.readiness_check_interval(),
       config.readiness_check_timeout(),
+      critical_conditions,
       cancellation.child_token(),
     )
     .await;

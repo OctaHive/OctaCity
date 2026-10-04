@@ -11,7 +11,8 @@ use super::super::{
   object, positive_integer, schema_ref, string_enum, string_map, unique_array, versioned_resource,
 };
 use super::{
-  agent, artifact, audit, cache, definition_discovery, execution, log_search, operational, retention, trigger,
+  agent, artifact, audit, cache, definition_discovery, execution, log_search, operational, operator_attention,
+  resource_search, retention, trigger,
 };
 
 mod agent_schema;
@@ -31,6 +32,8 @@ pub(crate) fn component_schemas() -> Value {
   audit::insert_audit_schemas(&mut schemas);
   insert_project_schemas(&mut schemas);
   definition_discovery::insert_definition_discovery_schemas(&mut schemas);
+  resource_search::insert_resource_search_schemas(&mut schemas);
+  operator_attention::insert_operator_attention_schemas(&mut schemas);
   insert_agent_pool_schemas(&mut schemas);
   agent::insert_agent_detail_schemas(&mut schemas);
   insert_agent_schemas(&mut schemas);

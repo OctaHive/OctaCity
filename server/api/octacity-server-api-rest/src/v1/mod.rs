@@ -17,9 +17,11 @@ mod job_event;
 mod log_search;
 mod openapi;
 mod operations;
+mod operator_attention;
 mod pipeline;
 mod pool;
 mod project;
+mod resource_search;
 mod retention;
 mod trigger;
 
@@ -30,8 +32,9 @@ pub use adapter::{
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
   JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
   ManagementAuthorizationOperation, ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ScheduleManagementApplication,
-  management_authorization_operations, router as management_routes,
+  OperatorAttentionManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ResourceSearchManagementApplication, ScheduleManagementApplication, management_authorization_operations,
+  router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;
@@ -45,9 +48,11 @@ pub use job_event::*;
 pub use log_search::*;
 pub use openapi::{MANAGEMENT_OPERATIONS, ManagementOperation, openapi_document};
 pub use operations::*;
+pub use operator_attention::*;
 pub use pipeline::*;
 pub use pool::*;
 pub use project::*;
+pub use resource_search::*;
 pub use retention::*;
 pub use trigger::*;
 

@@ -133,6 +133,19 @@ impl<'de> Deserialize<'de> for Cursor {
   }
 }
 
+pub(crate) fn validate_url_safe_cursor(value: String, maximum: usize) -> Result<String, ContractValueError> {
+  if visible(&value, maximum)
+    && !value.chars().any(char::is_whitespace)
+    && value
+      .bytes()
+      .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+  {
+    Ok(value)
+  } else {
+    Err(ContractValueError::InvalidCursor)
+  }
+}
+
 /// Validated value of the required `Idempotency-Key` request header.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IdempotencyKey(String);
@@ -240,6 +253,9 @@ pub enum ContractValueError {
   /// An opaque collection cursor is empty, unsafe, or oversized.
   #[error("invalid pagination cursor")]
   InvalidCursor,
+  /// A resource-search kind is outside the closed v1 allowlist.
+  #[error("resource search kind is invalid")]
+  InvalidResourceSearchKind,
   /// An idempotency header is empty, unsafe, or oversized.
   #[error("invalid idempotency key")]
   InvalidIdempotencyKey,

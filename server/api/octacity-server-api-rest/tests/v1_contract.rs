@@ -6,9 +6,9 @@ use octacity_server_api_rest::v1::{
   CreateAgentPoolRequest, CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest,
   CreateProjectRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode,
   ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest, IssueAgentEnrollmentRequest,
-  IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata, PipelineSummaryPage,
-  PlaceBuildResultHoldRequest, ProjectResource, RepositorySummaryPage, TriggerDefinitionSummaryPage,
-  VersionPrecondition,
+  IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata,
+  OperatorAttentionCursor, OperatorAttentionPage, PipelineSummaryPage, PlaceBuildResultHoldRequest, ProjectResource,
+  RepositorySummaryPage, ResourceSearchCursor, ResourceSearchPage, TriggerDefinitionSummaryPage, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -33,6 +33,8 @@ const REPOSITORY_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/repository-su
 const BUILD_CONFIGURATION_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/build-configuration-summary-page.json");
 const TRIGGER_DEFINITION_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/trigger-definition-summary-page.json");
 const BUILD_SUMMARY_PAGE: &str = include_str!("../fixtures/v1/build-summary-page.json");
+const RESOURCE_SEARCH_PAGE: &str = include_str!("../fixtures/v1/resource-search-page.json");
+const OPERATOR_ATTENTION_PAGE: &str = include_str!("../fixtures/v1/operator-attention-page.json");
 
 #[test]
 fn v1_golden_documents_round_trip_without_application_types() {
@@ -56,6 +58,8 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<BuildConfigurationSummaryPage>(BUILD_CONFIGURATION_SUMMARY_PAGE);
   assert_golden::<TriggerDefinitionSummaryPage>(TRIGGER_DEFINITION_SUMMARY_PAGE);
   assert_golden::<BuildSummaryPage>(BUILD_SUMMARY_PAGE);
+  assert_golden::<ResourceSearchPage>(RESOURCE_SEARCH_PAGE);
+  assert_golden::<OperatorAttentionPage>(OPERATOR_ATTENTION_PAGE);
 }
 
 #[test]
@@ -364,6 +368,42 @@ fn opaque_cursors_are_bounded_before_query_dispatch() {
   assert_eq!(Cursor::new("with space"), Err(ContractValueError::InvalidCursor));
   assert_eq!(
     Cursor::new("x".repeat(MAX_CURSOR_BYTES + 1)),
+    Err(ContractValueError::InvalidCursor)
+  );
+}
+
+#[test]
+fn resource_search_cursor_uses_its_larger_url_safe_bound() {
+  let cursor =
+    ResourceSearchCursor::new("a".repeat(octacity_server_application::MAX_RESOURCE_SEARCH_CURSOR_BYTES)).unwrap();
+  assert_eq!(
+    cursor.as_str().len(),
+    octacity_server_application::MAX_RESOURCE_SEARCH_CURSOR_BYTES
+  );
+  assert_eq!(
+    ResourceSearchCursor::new("a".repeat(octacity_server_application::MAX_RESOURCE_SEARCH_CURSOR_BYTES + 1)),
+    Err(ContractValueError::InvalidCursor)
+  );
+  assert_eq!(
+    ResourceSearchCursor::new("not+url/safe"),
+    Err(ContractValueError::InvalidCursor)
+  );
+}
+
+#[test]
+fn operator_attention_cursor_uses_its_route_specific_url_safe_bound() {
+  let cursor =
+    OperatorAttentionCursor::new("a".repeat(octacity_server_application::MAX_OPERATOR_ATTENTION_CURSOR_BYTES)).unwrap();
+  assert_eq!(
+    cursor.as_str().len(),
+    octacity_server_application::MAX_OPERATOR_ATTENTION_CURSOR_BYTES
+  );
+  assert_eq!(
+    OperatorAttentionCursor::new("a".repeat(octacity_server_application::MAX_OPERATOR_ATTENTION_CURSOR_BYTES + 1)),
+    Err(ContractValueError::InvalidCursor)
+  );
+  assert_eq!(
+    OperatorAttentionCursor::new("not+url/safe"),
     Err(ContractValueError::InvalidCursor)
   );
 }

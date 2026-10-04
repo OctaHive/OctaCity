@@ -44,12 +44,15 @@ mod log_search;
 mod management_input;
 mod management_security;
 mod manual_trigger;
+mod opaque_cursor;
 mod operational_metadata;
+mod operator_attention;
 mod pipeline_cqrs;
 mod pool_cqrs;
 mod project_cqrs;
 mod project_policy;
 mod projections;
+mod resource_search;
 mod restore;
 mod retention;
 mod retention_hold;
@@ -71,8 +74,9 @@ pub use octacity_server_store::{
   LogSearchError, LogSearchMode, LogSearchQuery, MAX_AUDIT_ACTOR_IDENTITY_BYTES, MAX_AUDIT_OPERATION_BYTES,
   MAX_AUDIT_PAGE_SIZE, MAX_AUDIT_REQUEST_IDENTITY_BYTES, MAX_AUDIT_TARGET_IDENTITY_BYTES, MAX_AUDIT_TARGET_KIND_BYTES,
   MAX_LOG_SEARCH_PAGE_SIZE, MAX_LOG_SEARCH_QUERY_BYTES, MAX_LOG_SEARCH_SNIPPET_BYTES, MAX_READ_VISIBILITY_IDENTITIES,
+  MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_QUERY_BYTES,
   MutationAuditContext, PipelineListVisibility, ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind,
-  ReadVisibilityView, RepositoryListVisibility, StoreError, TriggerDefinitionListVisibility,
+  ReadVisibilityView, RepositoryListVisibility, ResourceSearchVisibility, StoreError, TriggerDefinitionListVisibility,
 };
 
 pub use agent_cqrs::{
@@ -205,6 +209,13 @@ pub use octacity_server_store::{LeaseGrant, LeaseHeartbeatOutcome};
 pub use operational_metadata::{
   GetOperationalMetadataQuery, ManagementOperationalMetadataProjection, OperationalMetadataQueries,
 };
+pub use operator_attention::{
+  ListOperatorAttentionQuery, MAX_OPERATOR_ATTENTION_CODE_BYTES, MAX_OPERATOR_ATTENTION_CURSOR_BYTES,
+  MAX_OPERATOR_ATTENTION_RESULT_PAGE_SIZE, MAX_OPERATOR_ATTENTION_SCOPE_TARGETS, MAX_OPERATOR_ATTENTION_SUMMARY_BYTES,
+  OperatorAttentionCategory, OperatorAttentionCursor, OperatorAttentionCursorError, OperatorAttentionHandlers,
+  OperatorAttentionId, OperatorAttentionInputError, OperatorAttentionItemProjection, OperatorAttentionPageProjection,
+  OperatorAttentionScopeInput, OperatorAttentionSeverity, OperatorAttentionTarget,
+};
 pub use pipeline_cqrs::{
   CreatePipelineCommand, GetPipelineQuery, PipelineCommandOutcome, PipelineHandlers, PublishPipelineVersionCommand,
 };
@@ -236,6 +247,12 @@ pub use projections::{
   ProjectSummaryProjection, ProjectionError, RepositoryProjection, RepositorySelectionProjection, RetryClassProjection,
   RetryPolicyProjection, RuntimeClassProjection, Sha256DigestProjection, TriggerCauseProjection,
   TriggerHistoryProjection, TriggerKindProjection,
+};
+pub use resource_search::{
+  MAX_RESOURCE_SEARCH_CURSOR_BYTES, MAX_RESOURCE_SEARCH_RESULT_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_RESULT_LABEL_BYTES,
+  MAX_RESOURCE_SEARCH_RESULT_PAGE_SIZE, ResourceSearchCursor, ResourceSearchCursorError, ResourceSearchHandlers,
+  ResourceSearchIdentityProjection, ResourceSearchInputError, ResourceSearchKind, ResourceSearchKinds,
+  ResourceSearchPageProjection, ResourceSearchSummaryProjection, SearchResourcesQuery,
 };
 pub use restore::{RestoreReconciler, RestoreReconciliationError, RestoreReconciliationSummary};
 pub use retention::{BuildRetentionBatchOutcome, BuildRetentionWorker, BuildRetentionWorkerError};

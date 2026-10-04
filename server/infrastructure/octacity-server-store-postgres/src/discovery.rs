@@ -19,7 +19,7 @@ pub(crate) fn requested_row_limit(page_limit: u16) -> i64 {
   i64::from(page_limit) + 1
 }
 
-pub(crate) fn decode_page<R, T, I: Copy>(
+pub(crate) fn decode_page<R, T, I>(
   rows: Vec<R>,
   limit: u16,
   decode: impl FnMut(R) -> Result<T, StoreError>,

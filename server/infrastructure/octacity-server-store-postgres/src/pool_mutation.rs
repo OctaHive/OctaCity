@@ -91,7 +91,7 @@ pub(crate) async fn create(
   crate::mutation::commit(
     transaction,
     &identity,
-    pool_facts(audit, &outcome.pool),
+    pool_facts(audit, &outcome.pool, None),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -145,6 +145,7 @@ pub(crate) async fn publish(
     request.definition.drain_state,
     active_leases,
   )?;
+  let was_available = pool_is_available(&current.definition);
   apply_lease_directive(&mut transaction, request.id, request.definition.drain_state).await?;
   let next_version = current.version.next().map_err(|_| StoreError::Unavailable)?;
   let row = insert_version(
@@ -167,7 +168,7 @@ pub(crate) async fn publish(
   crate::mutation::commit(
     transaction,
     &identity,
-    pool_facts(audit, &outcome.pool),
+    pool_facts(audit, &outcome.pool, Some(was_available)),
     encode_outcome(&outcome)?,
   )
   .await?;
@@ -346,13 +347,27 @@ fn drain_state(state: octacity_server_scheduler::PoolDrainState) -> &'static str
   }
 }
 
-fn pool_facts(audit: &MutationAuditContext, pool: &PublishedAgentPool) -> MutationFacts {
-  MutationFacts::management(
+fn pool_facts(audit: &MutationAuditContext, pool: &PublishedAgentPool, was_available: Option<bool>) -> MutationFacts {
+  let facts = MutationFacts::management(
     audit,
     pool.id.to_string(),
     json!({"version": pool.version.get(), "enabled": pool.definition.enabled, "drain_state": pool.definition.drain_state}),
     json!({"pool_id": pool.id, "version": pool.version.get()}),
-  )
+  );
+  let is_available = pool_is_available(&pool.definition);
+  match (was_available, is_available) {
+    (Some(false), true) => facts.with_attention(crate::operator_attention::TargetAttentionChange::resolve_agent_pool(
+      pool.id,
+    )),
+    (None | Some(true), false) => {
+      facts.with_attention(crate::operator_attention::TargetAttentionChange::agent_pool_unavailable(pool.id))
+    }
+    (None | Some(true), true) | (Some(false), false) => facts,
+  }
+}
+
+fn pool_is_available(definition: &AgentPoolDefinition) -> bool {
+  definition.enabled && definition.drain_state == octacity_server_scheduler::PoolDrainState::Accepting
 }
 
 fn replay_pool(outcome: serde_json::Value) -> Result<AgentPoolMutationOutcome, StoreError> {

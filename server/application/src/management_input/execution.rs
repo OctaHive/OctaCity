@@ -1,6 +1,35 @@
 use super::*;
 
 impl ManagementInputFactory {
+  /// Creates a typed bounded operator-attention scope from transport identities.
+  pub fn operator_attention_scope(
+    &self,
+    build_ids: &[String],
+    agent_ids: &[String],
+    pool_ids: &[String],
+    include_critical_conditions: bool,
+    occurred_from_unix_ms: Option<i64>,
+    occurred_through_unix_ms: Option<i64>,
+  ) -> Result<crate::OperatorAttentionScopeInput, ManagementInputError> {
+    let builds = build_ids
+      .iter()
+      .map(|id| parse(id, "build id").map(crate::OperatorAttentionTarget::Build));
+    let agents = agent_ids
+      .iter()
+      .map(|id| parse(id, "agent id").map(crate::OperatorAttentionTarget::Agent));
+    let pools = pool_ids
+      .iter()
+      .map(|id| parse(id, "agent pool id").map(crate::OperatorAttentionTarget::AgentPool));
+    let targets = builds.chain(agents).chain(pools).collect::<Result<Vec<_>, _>>()?;
+    crate::OperatorAttentionScopeInput::try_new(
+      targets,
+      include_critical_conditions,
+      occurred_from_unix_ms,
+      occurred_through_unix_ms,
+    )
+    .map_err(|_| ManagementInputError::Invalid("operator attention scope"))
+  }
+
   /// Creates a typed Build read query.
   pub fn get_build(&self, id: &str) -> Result<GetBuildQuery, ManagementInputError> {
     Ok(GetBuildQuery {

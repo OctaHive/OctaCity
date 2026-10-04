@@ -4,6 +4,11 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use octacity_server_domain::Timestamp;
+use octacity_server_store::{
+  CriticalSystemConditionChange, CriticalSystemConditionSourceId, CriticalSystemConditionStore,
+};
+use sha2::{Digest as _, Sha256};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -21,6 +26,7 @@ pub(crate) trait ReadinessCheck: Send + Sync {
 }
 
 type SharedCheck = Arc<dyn ReadinessCheck>;
+type CriticalConditionSink = Arc<dyn CriticalSystemConditionStore>;
 
 /// Complete set of dependencies that gate server readiness.
 ///
@@ -159,12 +165,22 @@ impl ReadinessMonitor {
     checks: ReadinessChecks,
     interval: std::time::Duration,
     timeout: std::time::Duration,
+    critical_conditions: Option<CriticalConditionSink>,
     cancellation: CancellationToken,
   ) -> Self {
+    let critical_condition_source = CriticalSystemConditionSourceId::from_uuid(uuid::Uuid::new_v4())
+      .expect("a random UUID is a valid critical-condition source identity");
     let state = Arc::new(ReadinessState::default());
     let mut evaluation = checks.evaluate(timeout).await;
     state.set(evaluation.is_ready());
-    report_transition(None, evaluation);
+    report_transition(
+      None,
+      evaluation,
+      critical_condition_source,
+      critical_conditions.as_ref(),
+      timeout,
+    )
+    .await;
     let task_state = state.clone();
     let task = tokio::spawn(async move {
       let _unready_on_exit = UnreadyOnDrop(task_state.clone());
@@ -184,11 +200,17 @@ impl ReadinessMonitor {
               }
               evaluation = checks.evaluate(timeout) => evaluation,
             };
+            task_state.set(next.is_ready());
             if next != evaluation {
-              report_transition(Some(evaluation), next);
+              report_transition(
+                Some(evaluation),
+                next,
+                critical_condition_source,
+                critical_conditions.as_ref(),
+                timeout,
+              ).await;
               evaluation = next;
             }
-            task_state.set(next.is_ready());
           }
         }
       }
@@ -205,7 +227,13 @@ impl ReadinessMonitor {
   }
 }
 
-fn report_transition(previous: Option<ReadinessEvaluation>, current: ReadinessEvaluation) {
+async fn report_transition(
+  previous: Option<ReadinessEvaluation>,
+  current: ReadinessEvaluation,
+  source: CriticalSystemConditionSourceId,
+  critical_conditions: Option<&CriticalConditionSink>,
+  timeout: std::time::Duration,
+) {
   match current.failure {
     None => tracing::info!(
       recovered = previous.is_some_and(|status| !status.is_ready()),
@@ -217,6 +245,79 @@ fn report_transition(previous: Option<ReadinessEvaluation>, current: ReadinessEv
       "server readiness lost"
     ),
   }
+
+  let Some(critical_conditions) = critical_conditions else {
+    return;
+  };
+  let Some(observed_at) = current_timestamp() else {
+    tracing::warn!("could not timestamp server readiness attention transition");
+    return;
+  };
+  let previous_failure = previous.and_then(|status| status.failure);
+  if let Some(failure) = previous_failure.filter(|failure| Some(*failure) != current.failure) {
+    record_condition(
+      critical_conditions,
+      CriticalSystemConditionChange::resolve(source, condition_code(failure), observed_at),
+      timeout,
+    )
+    .await;
+  }
+  if let Some(failure) = current.failure.filter(|failure| Some(*failure) != previous_failure) {
+    let reason = match failure.kind {
+      ReadinessFailureKind::Unavailable => "unavailable",
+      ReadinessFailureKind::TimedOut => "timed out",
+    };
+    record_condition(
+      critical_conditions,
+      CriticalSystemConditionChange::open(
+        source,
+        condition_code(failure),
+        format!("Server readiness lost: {} is {reason}", failure.dependency),
+        observed_at,
+      ),
+      timeout,
+    )
+    .await;
+  }
+}
+
+async fn record_condition(
+  sink: &CriticalConditionSink,
+  change: Result<CriticalSystemConditionChange, octacity_server_store::OperatorAttentionValueError>,
+  timeout: std::time::Duration,
+) {
+  let Ok(change) = change else {
+    tracing::warn!("server readiness attention transition was not safe to persist");
+    return;
+  };
+  match tokio::time::timeout(timeout, sink.record_critical_system_condition(change)).await {
+    Ok(Ok(())) => {}
+    Ok(Err(_)) => tracing::warn!("could not persist server readiness attention transition"),
+    Err(_) => tracing::warn!("persisting server readiness attention transition timed out"),
+  }
+}
+
+fn condition_code(failure: ReadinessFailure) -> String {
+  let mut digest = Sha256::new();
+  digest.update(b"octacity-server-readiness-v1\0");
+  digest.update(failure.dependency.as_bytes());
+  digest.update([match failure.kind {
+    ReadinessFailureKind::Unavailable => 0,
+    ReadinessFailureKind::TimedOut => 1,
+  }]);
+  let digest = digest.finalize();
+  format!(
+    "server_readiness_{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+    digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
+  )
+}
+
+fn current_timestamp() -> Option<Timestamp> {
+  let milliseconds = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .ok()?
+    .as_millis();
+  Timestamp::from_unix_millis(i64::try_from(milliseconds).ok()?).ok()
 }
 
 struct UnreadyOnDrop(Arc<ReadinessState>);
@@ -254,6 +355,22 @@ mod tests {
   }
 
   struct PendingCheck;
+
+  #[derive(Default)]
+  struct RecordingCriticalConditions {
+    changes: Mutex<Vec<CriticalSystemConditionChange>>,
+  }
+
+  #[async_trait]
+  impl CriticalSystemConditionStore for RecordingCriticalConditions {
+    async fn record_critical_system_condition(
+      &self,
+      change: CriticalSystemConditionChange,
+    ) -> Result<(), octacity_server_store::StoreError> {
+      self.changes.lock().unwrap().push(change);
+      Ok(())
+    }
+  }
 
   #[async_trait]
   impl ReadinessCheck for PendingCheck {
@@ -364,6 +481,7 @@ mod tests {
       checks,
       std::time::Duration::from_millis(2),
       std::time::Duration::from_millis(50),
+      None,
       cancellation.clone(),
     )
     .await;
@@ -382,5 +500,55 @@ mod tests {
     cancellation.cancel();
     monitor.into_task().await.unwrap();
     assert!(!state.is_ready());
+  }
+
+  #[tokio::test]
+  async fn readiness_transitions_publish_and_resolve_critical_conditions() {
+    let database = controlled("postgres", false);
+    let checks = ReadinessChecks::new(
+      controlled("migrations", true),
+      database.clone(),
+      controlled("object-storage", true),
+      controlled("signing-material", true),
+      std::iter::empty(),
+    );
+    let recorded = Arc::new(RecordingCriticalConditions::default());
+    let cancellation = CancellationToken::new();
+    let monitor = ReadinessMonitor::start(
+      checks,
+      std::time::Duration::from_millis(2),
+      std::time::Duration::from_millis(50),
+      Some(recorded.clone()),
+      cancellation.clone(),
+    )
+    .await;
+    let state = monitor.state();
+    assert!(!state.is_ready());
+
+    database.healthy.store(true, Ordering::Release);
+    wait_for(&state, true).await;
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+      while recorded.changes.lock().unwrap().len() != 2 {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+      }
+    })
+    .await
+    .unwrap();
+
+    {
+      let changes = recorded.changes.lock().unwrap();
+      let CriticalSystemConditionChange::Open { code, summary, .. } = &changes[0] else {
+        panic!("initial readiness loss must open a condition");
+      };
+      assert!(code.starts_with("server_readiness_"));
+      assert_eq!(summary, "Server readiness lost: postgres is unavailable");
+      assert!(matches!(
+        &changes[1],
+        CriticalSystemConditionChange::Resolve { code: resolved, .. } if resolved == code
+      ));
+    }
+
+    cancellation.cancel();
+    monitor.into_task().await.unwrap();
   }
 }

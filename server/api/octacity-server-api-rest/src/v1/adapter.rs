@@ -22,14 +22,15 @@ use octacity_server_application::{
   InternalTriggerSourceStrategy as ApplicationInternalTriggerSource, JobEventPageProjection, JobProjection,
   ManagementInputError, ManagementInputFactory, ManualTriggerDefinitionInput, ManualTriggerDefinitionProjection,
   ManualTriggerInput, ManualTriggerOutcome, MutationDisposition as ApplicationMutationDisposition,
-  NetworkPolicyProjection as ApplicationNetworkPolicy, ParameterTypeProjection as ApplicationParameterType,
+  NetworkPolicyProjection as ApplicationNetworkPolicy, OperatorAttentionPageProjection,
+  OperatorAttentionTarget as ApplicationOperatorAttentionTarget, ParameterTypeProjection as ApplicationParameterType,
   PipelineCommandOutcome, PipelinePageProjection, PipelineProjection,
   PlatformArchitectureProjection as ApplicationPlatformArchitecture, PlatformOsProjection as ApplicationPlatformOs,
   ProjectCommandOutcome, ProjectPageProjection, ProjectProjection, RepositoryCommandOutcome, RepositoryPageProjection,
-  RepositoryProjection, RetryBuildCommandOutcome, RetryClassProjection as ApplicationRetryClass,
-  RuntimeClassProjection as ApplicationRuntimeClass, ScheduleProjection, ScheduledTriggerDefinitionInput,
-  TriggerDefinitionKindProjection as ApplicationTriggerDefinitionKind, TriggerDefinitionPageProjection,
-  TriggerKindProjection as ApplicationTriggerKind,
+  RepositoryProjection, ResourceSearchIdentityProjection, ResourceSearchPageProjection, RetryBuildCommandOutcome,
+  RetryClassProjection as ApplicationRetryClass, RuntimeClassProjection as ApplicationRuntimeClass, ScheduleProjection,
+  ScheduledTriggerDefinitionInput, TriggerDefinitionKindProjection as ApplicationTriggerDefinitionKind,
+  TriggerDefinitionPageProjection, TriggerKindProjection as ApplicationTriggerKind,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -41,7 +42,7 @@ use super::{
   AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptStateResource, AttemptSummaryResource,
   BuildConfigurationDefinition, BuildConfigurationResource, BuildConfigurationSummaryPage,
   BuildConfigurationSummaryResource, BuildResource, BuildStateResource, BuildSummaryPage, BuildSummaryResource,
-  CachePolicy, CancelBuildResponse, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
+  CachePolicy, CancelBuildResponse, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
   CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest, CreateRepositoryRequest,
   CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource, DeleteAgentPoolResponse,
   DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode, ExecutionGuarantee, IDEMPOTENCY_KEY_HEADER,
@@ -49,16 +50,18 @@ use super::{
   InternalTriggerSource, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, JobAssignmentResource,
   JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource, JobTerminalResource, ManualSource,
   ManualTriggerDefinitionResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
-  OPTIMISTIC_PRECONDITION_HEADER, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
-  PipelineNode, PipelineResource, PipelineSummaryPage, PipelineSummaryResource, Platform, PlatformArchitecture,
-  PlatformOs, PoolExecutionMode, PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource,
-  PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest,
-  PublishProjectPolicyRequest, PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest,
-  RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage,
-  RepositorySummaryResource, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy,
-  ScheduleResource, TriggerCauseResource, TriggerDefinitionKind, TriggerDefinitionResource,
-  TriggerDefinitionSummaryPage, TriggerDefinitionSummaryResource, TriggerEvaluationResponse, TriggerKind,
-  VersionPrecondition,
+  OPTIMISTIC_PRECONDITION_HEADER, OperatorAttentionCategory, OperatorAttentionCursor, OperatorAttentionItemResource,
+  OperatorAttentionPage, OperatorAttentionSeverity, OperatorAttentionTargetKind, OperatorAttentionTargetResource,
+  ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge, PipelineNode, PipelineResource,
+  PipelineSummaryPage, PipelineSummaryResource, Platform, PlatformArchitecture, PlatformOs, PoolExecutionMode,
+  PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource, PublishAgentPoolVersionRequest,
+  PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest, PublishProjectPolicyRequest,
+  PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition,
+  RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage, RepositorySummaryResource,
+  ResourceSearchCursor as RestResourceSearchCursor, ResourceSearchKind, ResourceSearchPage, ResourceSearchResult,
+  RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, ScheduleResource, TriggerCauseResource,
+  TriggerDefinitionKind, TriggerDefinitionResource, TriggerDefinitionSummaryPage, TriggerDefinitionSummaryResource,
+  TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
 };
 use crate::RequestId;
 
@@ -78,9 +81,11 @@ mod job_event;
 mod log_search;
 mod manual_trigger;
 mod operational;
+mod operator_attention;
 mod pipeline;
 mod project;
 mod representations;
+mod resource_search;
 mod retention;
 mod routes;
 mod schedule;
@@ -100,8 +105,8 @@ pub use application::{
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
   DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
   JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  OperationalMetadataManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ScheduleManagementApplication,
+  OperationalMetadataManagementApplication, OperatorAttentionManagementApplication, PipelineManagementApplication,
+  ProjectManagementApplication, ResourceSearchManagementApplication, ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use audit::list_audit_facts;
@@ -124,11 +129,13 @@ pub(crate) use log_search::DEFAULT_LOG_SEARCH_LIMIT;
 use log_search::search_build_logs;
 use manual_trigger::{accept_manual_trigger, create_manual_trigger_definition, get_manual_trigger_definition};
 use operational::get_operational_metadata;
+use operator_attention::list_operator_attention;
 use pipeline::{create_pipeline, get_pipeline, publish_pipeline};
 use project::{
   create_project, delete_project, get_project, list_projects, move_project, publish_project_policy, rename_project,
 };
 use representations::*;
+use resource_search::search_resources;
 use retention::{get_build_result_retention, place_build_result_hold, release_build_result_hold};
 pub use routes::{ManagementAuthorizationOperation, management_authorization_operations, router};
 use schedule::{create_scheduled_trigger_definition, get_schedule};
@@ -141,6 +148,17 @@ const MAX_MANAGEMENT_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub(super) const DEFAULT_PAGE_LIMIT: u16 = 50;
 pub(super) const DEFAULT_JOB_EVENT_LIMIT: u16 = 100;
 pub(super) const DEFAULT_CACHE_SESSION_LIMIT: u16 = 50;
+
+fn set_once<T, E>(slot: &mut Option<T>, value: T, name: &'static str) -> Result<(), E>
+where
+  E: serde::de::Error,
+{
+  if slot.replace(value).is_some() {
+    Err(E::duplicate_field(name))
+  } else {
+    Ok(())
+  }
+}
 
 /// Typed application handlers used by the v1 management REST adapter.
 ///
@@ -165,6 +183,8 @@ pub struct ManagementApplication {
   retention: BuildResultRetentionManagementApplication,
   audit: AuditManagementApplication,
   operational: OperationalMetadataManagementApplication,
+  resource_search: ResourceSearchManagementApplication,
+  operator_attention: OperatorAttentionManagementApplication,
 }
 
 impl ManagementApplication {
@@ -181,6 +201,8 @@ impl ManagementApplication {
       agents: agent_management,
       execution,
       audit,
+      resource_search,
+      operator_attention,
     } = handlers;
     let CatalogManagementApplication {
       projects,
@@ -226,6 +248,8 @@ impl ManagementApplication {
       retention,
       audit,
       operational,
+      resource_search,
+      operator_attention,
     })
   }
 }

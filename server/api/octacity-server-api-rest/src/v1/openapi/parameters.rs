@@ -130,6 +130,56 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         super::super::adapter::DEFAULT_LOG_SEARCH_LIMIT,
       ),
     ]),
+    ParameterProfile::ResourceSearch => parameters.extend([
+      json!({
+        "name": "query",
+        "in": "query",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "x-max-utf8-bytes": octacity_server_application::MAX_RESOURCE_SEARCH_QUERY_BYTES
+        }
+      }),
+      json!({
+        "name": "kinds",
+        "in": "query",
+        "required": false,
+        "description": "Optional repeatable resource-kind allowlist.",
+        "style": "form",
+        "explode": true,
+        "schema": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": schema_ref("ResourceSearchKind")
+        }
+      }),
+      cursor_parameter_with_max(octacity_server_application::MAX_RESOURCE_SEARCH_CURSOR_BYTES),
+      limit_parameter(
+        octacity_server_application::MAX_RESOURCE_SEARCH_RESULT_PAGE_SIZE,
+        super::super::adapter::DEFAULT_PAGE_LIMIT,
+      ),
+    ]),
+    ParameterProfile::OperatorAttention => parameters.extend([
+      repeated_identity_parameter("build_ids", "Selected Build identities."),
+      repeated_identity_parameter("agent_ids", "Selected Agent identities."),
+      repeated_identity_parameter("pool_ids", "Selected Agent Pool identities."),
+      json!({
+        "name": "include_critical_conditions",
+        "in": "query",
+        "required": false,
+        "schema": {"type": "boolean", "default": false}
+      }),
+      json!({"name": "occurred_from_unix_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}),
+      json!({"name": "occurred_through_unix_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}),
+      cursor_parameter_with_max(octacity_server_application::MAX_OPERATOR_ATTENTION_CURSOR_BYTES),
+      limit_parameter(
+        octacity_server_application::MAX_OPERATOR_ATTENTION_RESULT_PAGE_SIZE,
+        super::super::adapter::DEFAULT_PAGE_LIMIT,
+      ),
+    ]),
     ParameterProfile::AuditFacts => parameters.extend([
       json!({"name": "actor_kind", "in": "query", "required": false, "schema": schema_ref("AuditActorKind")}),
       bounded_utf8_parameter("actor_identity", octacity_server_application::MAX_AUDIT_ACTOR_IDENTITY_BYTES),
@@ -168,6 +218,24 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
 
 fn cursor_parameter() -> Value {
   cursor_parameter_with_max(MAX_CURSOR_BYTES)
+}
+
+fn repeated_identity_parameter(name: &str, description: &str) -> Value {
+  json!({
+    "name": name,
+    "in": "query",
+    "required": false,
+    "description": description,
+    "style": "form",
+    "explode": true,
+    "schema": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": octacity_server_application::MAX_OPERATOR_ATTENTION_SCOPE_TARGETS,
+      "uniqueItems": true,
+      "items": {"type": "string", "format": "uuid"}
+    }
+  })
 }
 
 fn cursor_parameter_with_max(maximum: usize) -> Value {

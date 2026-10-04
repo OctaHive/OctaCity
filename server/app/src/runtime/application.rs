@@ -8,8 +8,9 @@ use octacity_server_api_rest::{
     CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
     DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
     JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-    ManualTriggerManagementApplication, OperationalMetadataManagementApplication, PipelineManagementApplication,
-    ProjectManagementApplication, ScheduleManagementApplication,
+    ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
+    OperatorAttentionManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+    ResourceSearchManagementApplication, ScheduleManagementApplication,
   },
 };
 use octacity_server_application::{
@@ -17,10 +18,10 @@ use octacity_server_application::{
   AuthorizedQueryHandler, BuildConfigurationHandlers, BuildHandlers, BuildLogSearch, BuildResultRetentionHandlers,
   CacheSessionHandlers, DefinitionHandlers, DurableManualTriggerService, DurableRetryPolicy, InternalTriggerHandlers,
   JobEventLongPoll, JobSpecToolchainPolicy, ManagementAuthorizationPolicy, ManagementOperationalMetadataProjection,
-  ManualTriggerRetryWorker, ManualTriggerService, OperationalMetadataQueries, PipelineHandlers, ProjectHandlers,
-  RevisionResolver, ScheduleHandlers, StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext,
-  TrustedNetworkManagementPolicy, WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider,
-  WebhookManagementService,
+  ManualTriggerRetryWorker, ManualTriggerService, OperationalMetadataQueries, OperatorAttentionHandlers,
+  PipelineHandlers, ProjectHandlers, ResourceSearchHandlers, RevisionResolver, ScheduleHandlers,
+  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, TrustedNetworkManagementPolicy,
+  WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use octacity_server_webhook::WebhookAdapterRegistry;
@@ -146,6 +147,8 @@ pub(super) fn management_application(
   ));
   let retention = Arc::new(BuildResultRetentionHandlers::new(store.clone()));
   let audit = Arc::new(AuditQueries::new(store.clone()));
+  let resource_search = Arc::new(ResourceSearchHandlers::new(store.clone()));
+  let operator_attention = Arc::new(OperatorAttentionHandlers::new(store.clone()));
   let log_search = Arc::new(BuildLogSearch::new(store, log_search_index));
   let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let management_policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
@@ -177,6 +180,8 @@ pub(super) fn management_application(
   let log_search_queries = authorized_queries(&management_policy, log_search);
   let retention_queries = authorized_queries(&management_policy, retention);
   let audit_queries = authorized_queries(&management_policy, audit);
+  let resource_search_queries = authorized_queries(&management_policy, resource_search);
+  let operator_attention_queries = authorized_queries(&management_policy, operator_attention);
   let operational_queries = authorized_queries(&management_policy, operational_metadata);
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
@@ -209,6 +214,8 @@ pub(super) fn management_application(
         BuildResultRetentionManagementApplication::new(retention_commands, retention_queries),
       ),
       AuditManagementApplication::new(audit_queries),
+      ResourceSearchManagementApplication::new(resource_search_queries),
+      OperatorAttentionManagementApplication::new(operator_attention_queries),
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;

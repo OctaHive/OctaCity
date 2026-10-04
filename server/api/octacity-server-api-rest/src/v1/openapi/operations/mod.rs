@@ -91,6 +91,8 @@ pub(crate) enum ParameterProfile {
   CacheSessionList,
   InternalTriggerList,
   BuildLogSearch,
+  ResourceSearch,
+  OperatorAttention,
   AuditFacts,
 }
 
@@ -163,10 +165,12 @@ mod artifacts;
 mod builds;
 mod core;
 mod definitions;
+mod search;
 mod triggers;
 
 const GROUPS: &[&[ManagementOperation]] = &[
   core::OPERATIONS,
+  search::OPERATIONS,
   definitions::OPERATIONS,
   triggers::OPERATIONS,
   builds::OPERATIONS,
@@ -175,6 +179,7 @@ const GROUPS: &[&[ManagementOperation]] = &[
 ];
 
 const OPERATION_COUNT: usize = core::OPERATIONS.len()
+  + search::OPERATIONS.len()
   + definitions::OPERATIONS.len()
   + triggers::OPERATIONS.len()
   + builds::OPERATIONS.len()

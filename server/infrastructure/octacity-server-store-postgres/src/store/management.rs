@@ -45,6 +45,27 @@ impl ProjectStore for PostgresStore {
 }
 
 #[async_trait]
+impl ResourceSearchStore for PostgresStore {
+  async fn search_resources(&self, request: SearchResources) -> Result<ResourceSearchPage, StoreError> {
+    crate::resource_search::search(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl OperatorAttentionStore for PostgresStore {
+  async fn list_operator_attention(&self, request: ListOperatorAttention) -> Result<OperatorAttentionPage, StoreError> {
+    crate::operator_attention::list(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl CriticalSystemConditionStore for PostgresStore {
+  async fn record_critical_system_condition(&self, change: CriticalSystemConditionChange) -> Result<(), StoreError> {
+    crate::operator_attention::record_critical_system_condition(&self.pool, change).await
+  }
+}
+
+#[async_trait]
 impl ProjectPolicyStore for PostgresStore {
   async fn project_policy_lineage(&self, project_id: ProjectId) -> Result<Vec<ProjectPolicyDocument>, StoreError> {
     crate::project_policy_query::lineage(&self.pool, project_id).await

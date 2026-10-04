@@ -369,6 +369,7 @@ impl ServerRuntime {
         }),
         ready_job_notifications: Some((notification_pool, ready_jobs)),
         metrics,
+        critical_conditions: Some(registration_store),
         cancellation,
       },
     )

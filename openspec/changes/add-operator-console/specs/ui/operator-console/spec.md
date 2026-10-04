@@ -34,8 +34,85 @@ The console SHALL pin its supported Node, package-manager, compiler, formatter, 
 - **WHEN** a supported text source file is edited on a platform with different editor or line-ending defaults
 - **THEN** repository policy normalizes the committed text to the declared UTF-8 and LF conventions
 
+### Requirement: Contextual operator workbench navigation
+The console SHALL use one compact utility header, one primary section rail with large icon-and-short-label controls, one collapsible and resizable contextual explorer, and one primary resource detail area. The utility header SHALL expose bounded global resource search through a keyboard-accessible command center, deployment readiness, a direct theme control, a notification-center control, and a neutral operator menu containing the less-frequent language control. The section rail SHALL switch between Projects, Builds, Agents, and Audit without consuming the contextual explorer with duplicate global navigation or relying on unlabeled icons. The explorer SHALL default to 288 pixels, SHALL be pointer- and keyboard-resizable only within 240–480 pixels, and SHALL persist only a validated clamped width. Its sticky header SHALL identify the active section and provide search and collapse controls. The search control SHALL open the same command center as global search with the active resource kinds preselected. A Favorites section SHALL precede the active section's lazily paginated resource hierarchy or filters. Selecting an explorer resource SHALL update the directly addressable detail view without discarding the explorer context.
+
+#### Scenario: Operator switches workbench activity
+- **WHEN** an operator activates Projects, Builds, Agents, or Audit from the primary section rail
+- **THEN** the explorer changes to that section's navigation model, the large selected control and explorer title remain visibly and semantically identified, and the primary detail area preserves or opens the resource addressed by the URL
+
+#### Scenario: Operator explores Builds
+- **WHEN** the operator expands the Build explorer
+- **THEN** it presents Favorites before lazily loading visible Projects, their Build Configurations, and newest Builds as a bounded `Project -> Build Configuration -> Build` hierarchy with non-color state text
+
+#### Scenario: Operator explores Agents
+- **WHEN** the operator expands the Agent explorer
+- **THEN** it lazily presents visible Agent Pools and their assigned Agents as a bounded `Agent Pool -> Agent` hierarchy, presents unassigned Agents separately, and distinguishes readiness and drain state without client-side scheduling inference
+
+#### Scenario: Operator opens the command center
+- **WHEN** the operator focuses global search or presses `Command/Ctrl+K`
+- **THEN** the console offers keyboard-navigable, type-grouped, authorization-filtered results for Projects, Builds, Agents, and Agent Pools plus non-destructive navigation and presentation commands
+
+#### Scenario: Operator searches from the explorer
+- **WHEN** the operator activates the search control in the Build, Agent, or Project explorer header
+- **THEN** the shared command center opens with the corresponding resource kinds preselected and permits explicitly clearing that scope for a global search
+
+#### Scenario: Operator resizes the explorer
+- **WHEN** the operator drags the explorer separator or adjusts it with the keyboard
+- **THEN** its width changes only within 240–480 pixels, the detail area remains usable, and the validated clamped width is restored on the next browser load
+
+#### Scenario: Stored explorer width is invalid
+- **WHEN** the persisted width is malformed or outside the supported bounds
+- **THEN** the console clamps or resets it to the 288-pixel default without breaking workbench layout or focus order
+
+#### Scenario: Explorer space is constrained
+- **WHEN** the operator collapses the explorer or uses a supported narrow viewport
+- **THEN** the primary detail remains usable and the explorer can be reopened as a bounded overlay without hiding the active section, losing its title, search, or Favorites controls, or trapping keyboard focus
+
+### Requirement: Localized themes and bounded local preferences
+The console SHALL provide complete English and Russian operator-facing translations and light, dark, and system-following variants of the evergreen token system. It SHALL update document language and locale-sensitive formatting with the language selected from the operator menu and SHALL preserve non-secret presentation preferences in one versioned, validated, bounded browser-local record. That record MAY contain only language, theme mode, explorer visibility or width, expanded hierarchy identities, recent resource identities, favorite resource identities, and the locally generated time at which the notification center was last opened. The console SHALL NOT persist API payloads, notification items, query caches, mutation bodies, logs, request identities, credentials, download capabilities, or other server-derived content. Without browser authentication or forwarded identity, the operator menu SHALL NOT claim a personal profile or offer a misleading sign-out action.
+
+#### Scenario: Operator changes presentation preferences
+- **WHEN** the operator selects a language or theme and later reloads the console in the same browser
+- **THEN** the validated preference is restored without persisting server data or weakening the trusted-network warning
+
+#### Scenario: System theme changes
+- **WHEN** theme mode is `system` and the operating-system color preference changes
+- **THEN** the console applies the corresponding complete token palette while preserving contrast, state meaning, and reduced-motion behavior
+
+#### Scenario: Local preference data is malformed or excessive
+- **WHEN** the stored preference record has an unknown version, invalid resource kind, invalid identifier, or exceeds its declared bounds
+- **THEN** the console discards the unsafe portion or resets the record without sending it to the server or preventing application startup
+
+#### Scenario: No authenticated browser identity exists
+- **WHEN** the console runs in its declared trusted-network mode
+- **THEN** the header presents a neutral operator menu for language, local preferences, documentation, and deployment information without fabricating a name, email address, profile, or logout flow
+
+### Requirement: Relevant operator notification center
+The console SHALL expose a header notification center containing only three bounded categories: outcomes of commands issued by the current browser session, attention-worthy state changes for locally favorited Builds, Agents, and Agent Pools, and server-classified critical system conditions. It SHALL NOT display all Builds, all audit facts, ordinary unrelated successes, raw Job events, or informational system activity as notifications. A command outcome SHALL first appear as immediate accessible feedback and MAY also remain in the in-memory current-session notification history. Favorite-resource and critical-system items SHALL come from the published bounded attention feed rather than from client-side severity inference. The badge SHALL represent locally unseen relevant items, not a server-side personal unread count, and opening the center SHALL update only its locally generated last-opened time.
+
+#### Scenario: Current-browser command completes
+- **WHEN** a confirmed command issued by the current browser receives a definitive success, rejection, conflict, or failure response
+- **THEN** the console presents immediate accessible feedback and records a bounded in-memory notification correlated to that intent without persisting its request identity or response payload
+
+#### Scenario: Favorite resource needs attention
+- **WHEN** the bounded attention feed reports an attention-worthy transition for a Build, Agent, or Agent Pool whose identity is in the local favorites list
+- **THEN** the notification center presents the safe typed item and links to the canonical resource view without treating the favorite as authority
+
+#### Scenario: Critical system condition is active
+- **WHEN** the server reports a current or newly observed critical system condition
+- **THEN** every console may surface it regardless of local favorites while preserving the server-provided severity and resolution state
+
+#### Scenario: Unrelated activity occurs
+- **WHEN** another operator performs an ordinary action or an unrelated resource changes normally
+- **THEN** the notification center does not add that event merely because it exists in audit or operational history
+
+#### Scenario: Notification center is reopened after reload
+- **WHEN** the browser reloads without an authenticated identity
+- **THEN** favorite-resource and critical items are reconstructed from the bounded feed, current-session command history is not fabricated, and seen state is described as local to that browser
+
 ### Requirement: URL-addressable operator navigation
-The console SHALL provide stable, directly addressable views for the Project hierarchy, one Project, one Build, Agents, Agent Pools, and audit facts. A Project view SHALL discover its current Pipelines, Repositories, Build Configurations, Trigger definitions, and recent Builds through bounded REST collections rather than requiring an operator to enter opaque identifiers.
+The console SHALL provide stable, directly addressable views for the Project hierarchy, one Project, one Build, Agents, Agent Pools, and audit facts. A Project view SHALL discover its current Pipelines, Repositories, Build Configurations, Trigger definitions, and recent Builds through bounded REST collections rather than requiring an operator to enter opaque identifiers. Activity, selected resource, shareable filters, and durable diagnostic selection SHALL remain URL-addressable; presentation-only explorer expansion, width, theme, language, favorites, recents, and notification-center last-opened time SHALL remain local preferences rather than URL state.
 
 #### Scenario: Operator navigates from a Project to a Build
 - **WHEN** an operator selects a Build from a Project's recent Build collection
@@ -84,7 +161,7 @@ The console SHALL support manual Build triggering, Build cancellation and retry,
 - **THEN** the console preserves the operator's context, explains the conflict, and offers a refresh instead of silently resubmitting against a newer version
 
 ### Requirement: Capacity and audit visibility
-The console SHALL expose bounded Agent and Agent Pool collections, Agent inventory and state, pool assignment and version, drain state, and searchable audit facts using only the published management representations. Audit filtering SHALL support the server's actor, operation, target, request identity, and time-range filters without reconstructing authority from UI state.
+The console SHALL expose bounded Agent and Agent Pool collections, their contextual `Agent Pool -> Agent` explorer hierarchy, Agent inventory and state, pool assignment and version, drain state, and searchable audit facts using only the published management representations. Audit filtering SHALL support the server's actor, operation, target, request identity, and time-range filters without reconstructing authority from UI state.
 
 #### Scenario: Operator diagnoses unavailable capacity
 - **WHEN** an operator opens an Agent or Agent Pool associated with unavailable capacity

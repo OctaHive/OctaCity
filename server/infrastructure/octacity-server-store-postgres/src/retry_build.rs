@@ -130,7 +130,9 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(audit, &outcome),
+    facts(audit, &outcome).with_attention(crate::operator_attention::TargetAttentionChange::resolve_build(
+      request.build_id,
+    )),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;

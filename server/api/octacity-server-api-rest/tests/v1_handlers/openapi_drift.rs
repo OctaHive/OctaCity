@@ -192,6 +192,24 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     create_project.authorization,
     <CreateProjectCommand as ManagementAuthorizationTarget>::AUTHORIZATION
   );
+  let search = registered
+    .iter()
+    .find(|operation| operation.operation_id == "searchResources")
+    .unwrap();
+  assert_eq!(
+    search.authorization,
+    <SearchResourcesQuery as ManagementAuthorizationTarget>::AUTHORIZATION
+  );
+  assert_eq!(search.authorization.action(), ManagementAction::Search);
+  let attention = registered
+    .iter()
+    .find(|operation| operation.operation_id == "listOperatorAttention")
+    .unwrap();
+  assert_eq!(
+    attention.authorization,
+    <ListOperatorAttentionQuery as ManagementAuthorizationTarget>::AUTHORIZATION
+  );
+  assert_eq!(attention.authorization.action(), ManagementAction::View);
   for (operation_id, expected, action) in [
     (
       "observeManagedWebhookIntegration",
@@ -499,6 +517,137 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       .unwrap();
     assert_eq!(limit["schema"]["maximum"], 200);
     assert_json_matches_component(&document, page_schema, &serde_json::from_str(fixture).unwrap());
+  }
+
+  let resource_search = &document["paths"]["/api/v1/search"]["get"];
+  assert_eq!(resource_search["operationId"], "searchResources");
+  assert_eq!(
+    resource_search["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+    "#/components/schemas/ResourceSearchPage"
+  );
+  let search_parameters = resource_search["parameters"].as_array().unwrap();
+  let search_parameter = |name| {
+    search_parameters
+      .iter()
+      .find(|parameter| parameter["name"] == name)
+      .unwrap()
+  };
+  assert_eq!(search_parameter("query")["required"], true);
+  assert_eq!(
+    search_parameter("query")["schema"]["x-max-utf8-bytes"],
+    octacity_server_application::MAX_RESOURCE_SEARCH_QUERY_BYTES
+  );
+  assert_eq!(search_parameter("kinds")["style"], "form");
+  assert_eq!(search_parameter("kinds")["explode"], true);
+  assert_eq!(search_parameter("kinds")["schema"]["maxItems"], 4);
+  assert_eq!(search_parameter("kinds")["schema"]["uniqueItems"], true);
+  assert_eq!(
+    search_parameter("kinds")["schema"]["items"]["$ref"],
+    "#/components/schemas/ResourceSearchKind"
+  );
+  assert_eq!(
+    search_parameter("after")["schema"]["maxLength"],
+    octacity_server_application::MAX_RESOURCE_SEARCH_CURSOR_BYTES
+  );
+  assert_eq!(
+    search_parameter("limit")["schema"]["maximum"],
+    octacity_server_application::MAX_RESOURCE_SEARCH_RESULT_PAGE_SIZE
+  );
+  assert_eq!(
+    document["components"]["schemas"]["ResourceSearchKind"]["enum"],
+    serde_json::json!(["project", "build", "agent", "agent_pool"])
+  );
+  assert_json_matches_component(
+    &document,
+    "ResourceSearchPage",
+    &serde_json::from_str(include_str!("../../fixtures/v1/resource-search-page.json")).unwrap(),
+  );
+  let search_result = document["components"]["schemas"]["ResourceSearchResult"]["properties"]
+    .as_object()
+    .unwrap();
+  assert_eq!(
+    search_result.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+    BTreeSet::from(["context", "id", "kind", "label"]),
+    "search results must expose only stable navigation and safe display fields"
+  );
+  for forbidden in [
+    "credential",
+    "secret",
+    "token",
+    "url",
+    "parameters",
+    "effective_policy",
+    "inventory",
+  ] {
+    assert!(search_result.get(forbidden).is_none());
+  }
+
+  let attention = &document["paths"]["/api/v1/operator-attention"]["get"];
+  assert_eq!(attention["operationId"], "listOperatorAttention");
+  assert_eq!(
+    attention["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+    "#/components/schemas/OperatorAttentionPage"
+  );
+  let attention_parameters = attention["parameters"].as_array().unwrap();
+  let attention_parameter = |name| {
+    attention_parameters
+      .iter()
+      .find(|parameter| parameter["name"] == name)
+      .unwrap()
+  };
+  for name in ["build_ids", "agent_ids", "pool_ids"] {
+    assert_eq!(attention_parameter(name)["style"], "form");
+    assert_eq!(attention_parameter(name)["explode"], true);
+    assert_eq!(
+      attention_parameter(name)["schema"]["maxItems"],
+      octacity_server_application::MAX_OPERATOR_ATTENTION_SCOPE_TARGETS
+    );
+    assert_eq!(attention_parameter(name)["schema"]["uniqueItems"], true);
+  }
+  assert_eq!(
+    attention_parameter("after")["schema"]["maxLength"],
+    octacity_server_application::MAX_OPERATOR_ATTENTION_CURSOR_BYTES
+  );
+  assert_eq!(
+    attention_parameter("limit")["schema"]["maximum"],
+    octacity_server_application::MAX_OPERATOR_ATTENTION_RESULT_PAGE_SIZE
+  );
+  assert_json_matches_component(
+    &document,
+    "OperatorAttentionPage",
+    &serde_json::from_str(include_str!("../../fixtures/v1/operator-attention-page.json")).unwrap(),
+  );
+  let attention_item = document["components"]["schemas"]["OperatorAttentionItem"]["properties"]
+    .as_object()
+    .unwrap();
+  assert_eq!(
+    attention_item.keys().map(String::as_str).collect::<BTreeSet<_>>(),
+    BTreeSet::from([
+      "category",
+      "code",
+      "id",
+      "occurred_at_unix_ms",
+      "resolved_at_unix_ms",
+      "severity",
+      "summary",
+      "target",
+    ])
+  );
+  for forbidden in ["recipient", "unread", "read_at", "request_identity", "raw_event"] {
+    assert!(attention_item.get(forbidden).is_none());
+  }
+
+  for (path, response_schema) in [
+    ("/api/v1/projects/{project_id}", "ProjectDetails"),
+    ("/api/v1/builds/{build_id}", "BuildResource"),
+    ("/api/v1/agents/{agent_id}", "AgentResource"),
+    ("/api/v1/agent-pools/{pool_id}/versions/{version}", "AgentPoolResource"),
+  ] {
+    assert_eq!(
+      document["paths"][path]["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+      format!("#/components/schemas/{response_schema}"),
+      "global search must remain additive to existing detail contracts"
+    );
   }
 
   let build_list = &document["paths"]["/api/v1/projects/{project_id}/builds"]["get"];

@@ -1,9 +1,9 @@
 use crate::{
   ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
-  ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectPipelinesQuery,
-  ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery, ManagementAuthorizationGrant,
-  ManagementResource, ManagementResourceKind, ManagementVisibilityView, Query, ReadJobEventsQuery,
-  SearchBuildLogsQuery,
+  ListInternalTriggersQuery, ListOperatorAttentionQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery,
+  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
+  ManagementAuthorizationGrant, ManagementResource, ManagementResourceKind, ManagementVisibilityView, Query,
+  ReadJobEventsQuery, SearchBuildLogsQuery, SearchResourcesQuery,
 };
 use octacity_server_domain::{
   AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, JobId, PipelineId, PoolId,
@@ -12,8 +12,9 @@ use octacity_server_domain::{
 use octacity_server_store::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
-  InternalTriggerListVisibility, JobEventReadVisibility, PipelineListVisibility, ProjectListVisibility,
-  RepositoryListVisibility, TriggerDefinitionListVisibility,
+  InternalTriggerListVisibility, JobEventReadVisibility, OperatorAttentionTarget, OperatorAttentionVisibility,
+  PipelineListVisibility, ProjectListVisibility, RepositoryListVisibility, ResourceSearchResource,
+  ResourceSearchVisibility, TriggerDefinitionListVisibility,
 };
 use thiserror::Error;
 
@@ -109,14 +110,14 @@ macro_rules! implement_instance_scoped_queries {
 
       impl ManagementVisibilityTarget for $query {
         type Visibility = $visibility;
-        const RESTRICTED_RESOURCE_KIND: ManagementResourceKind = $kind;
+        const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[$kind];
 
         fn visibility_from(
           grant: &ManagementAuthorizationGrant,
         ) -> Result<Self::Visibility, ManagementVisibilityError> {
           translate_visibility(
             grant,
-            |resource| instance_identity::<$identity>(resource, Self::RESTRICTED_RESOURCE_KIND),
+            |resource| instance_identity::<$identity>(resource, $kind),
             <$visibility>::all,
             <$visibility>::none,
             <$visibility>::restricted,
@@ -132,14 +133,70 @@ pub trait ManagementVisibilityTarget: Query {
   /// Query-specific visibility type that adapters must apply before page derivation.
   type Visibility: ManagementVisibilityInput;
 
-  /// Resource identity kind accepted by a restricted grant for this query.
-  const RESTRICTED_RESOURCE_KIND: ManagementResourceKind;
+  /// Resource identity kinds accepted by a restricted grant for this query.
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind];
 
   /// Translates the policy grant without widening unsupported resource scopes.
   fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError>;
 }
 
 instance_scoped_query_registry!(implement_instance_scoped_queries);
+
+impl sealed::VisibilityInput for ResourceSearchVisibility {}
+impl ManagementVisibilityInput for ResourceSearchVisibility {}
+
+impl ManagementVisibilityTarget for SearchResourcesQuery {
+  type Visibility = ResourceSearchVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[
+    ManagementResourceKind::Project,
+    ManagementResourceKind::Build,
+    ManagementResourceKind::Agent,
+    ManagementResourceKind::AgentPool,
+  ];
+
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    translate_visibility(
+      grant,
+      search_resource_identity,
+      ResourceSearchVisibility::all,
+      ResourceSearchVisibility::none,
+      ResourceSearchVisibility::restricted,
+    )
+  }
+}
+
+impl sealed::VisibilityInput for OperatorAttentionVisibility {}
+impl ManagementVisibilityInput for OperatorAttentionVisibility {}
+
+impl ManagementVisibilityTarget for ListOperatorAttentionQuery {
+  type Visibility = OperatorAttentionVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[
+    ManagementResourceKind::ControlPlane,
+    ManagementResourceKind::Build,
+    ManagementResourceKind::Agent,
+    ManagementResourceKind::AgentPool,
+  ];
+
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    match grant.visibility().view() {
+      ManagementVisibilityView::All => Ok(OperatorAttentionVisibility::all()),
+      ManagementVisibilityView::None => Ok(OperatorAttentionVisibility::none()),
+      ManagementVisibilityView::Restricted(resources) => {
+        let mut targets = Vec::new();
+        let mut critical_conditions = false;
+        for resource in resources {
+          if resource.kind() == ManagementResourceKind::ControlPlane && resource.is_collection() {
+            critical_conditions = true;
+          } else {
+            targets.push(attention_target_identity(resource)?);
+          }
+        }
+        OperatorAttentionVisibility::restricted(targets, critical_conditions)
+          .map_err(|_| ManagementVisibilityError::InvalidRestrictedScope)
+      }
+    }
+  }
+}
 
 impl ManagementAuthorizationGrant {
   /// Produces the query-specific read scope selected by this authorization grant.
@@ -189,6 +246,45 @@ where
     .map_err(|_| ManagementVisibilityError::InvalidIdentity)
 }
 
+fn search_resource_identity(
+  resource: &ManagementResource,
+) -> Result<ResourceSearchResource, ManagementVisibilityError> {
+  if resource.owner().is_some() {
+    return Err(ManagementVisibilityError::UnsupportedScope);
+  }
+  let identity = resource
+    .identity()
+    .ok_or(ManagementVisibilityError::UnsupportedScope)?
+    .as_str();
+  match resource.kind() {
+    ManagementResourceKind::Project => identity.parse().map(ResourceSearchResource::Project),
+    ManagementResourceKind::Build => identity.parse().map(ResourceSearchResource::Build),
+    ManagementResourceKind::Agent => identity.parse().map(ResourceSearchResource::Agent),
+    ManagementResourceKind::AgentPool => identity.parse().map(ResourceSearchResource::AgentPool),
+    _ => return Err(ManagementVisibilityError::UnsupportedScope),
+  }
+  .map_err(|_| ManagementVisibilityError::InvalidIdentity)
+}
+
+fn attention_target_identity(
+  resource: &ManagementResource,
+) -> Result<OperatorAttentionTarget, ManagementVisibilityError> {
+  if resource.owner().is_some() || resource.is_collection() {
+    return Err(ManagementVisibilityError::UnsupportedScope);
+  }
+  let identity = resource
+    .identity()
+    .ok_or(ManagementVisibilityError::UnsupportedScope)?
+    .as_str();
+  match resource.kind() {
+    ManagementResourceKind::Build => identity.parse().map(OperatorAttentionTarget::Build),
+    ManagementResourceKind::Agent => identity.parse().map(OperatorAttentionTarget::Agent),
+    ManagementResourceKind::AgentPool => identity.parse().map(OperatorAttentionTarget::AgentPool),
+    _ => return Err(ManagementVisibilityError::UnsupportedScope),
+  }
+  .map_err(|_| ManagementVisibilityError::InvalidIdentity)
+}
+
 #[cfg(test)]
 mod tests {
   use std::any::TypeId;
@@ -236,7 +332,7 @@ mod tests {
       ($(($query:ty, $visibility:ty, $identity:ty, $kind:expr, $sample:literal)),+ $(,)?) => {
         $(
           let identity = <$identity>::from_uuid(uuid::Uuid::from_u128($sample)).unwrap();
-          assert_eq!(<$query>::RESTRICTED_RESOURCE_KIND, $kind);
+          assert_eq!(<$query>::RESTRICTED_RESOURCE_KINDS, &[$kind]);
           let grant = restricted(instance($kind, identity));
           assert!(grant.visibility_for::<$query>().unwrap().allows(&identity));
         )+
@@ -244,6 +340,24 @@ mod tests {
     }
 
     instance_scoped_query_registry!(assert_registered_mappings);
+  }
+
+  #[test]
+  fn global_search_translates_a_mixed_restricted_scope_without_widening_it() {
+    let project = ProjectId::generate();
+    let agent = AgentId::generate();
+    let grant = ManagementAuthorizationGrant::new(
+      crate::ManagementVisibility::restricted([
+        instance(ManagementResourceKind::Project, project),
+        instance(ManagementResourceKind::Agent, agent),
+      ])
+      .unwrap(),
+    );
+    let visibility = grant.visibility_for::<SearchResourcesQuery>().unwrap();
+
+    assert!(visibility.allows(&ResourceSearchResource::Project(project)));
+    assert!(visibility.allows(&ResourceSearchResource::Agent(agent)));
+    assert!(!visibility.allows(&ResourceSearchResource::Build(BuildId::generate())));
   }
 
   #[test]

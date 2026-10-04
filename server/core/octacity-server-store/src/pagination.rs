@@ -1,6 +1,6 @@
 use std::num::NonZeroU16;
 
-pub(crate) fn finish_bounded_page<T, C: Copy>(
+pub(crate) fn finish_bounded_page<T, C>(
   items: &mut Vec<T>,
   limit: NonZeroU16,
   cursor_of: impl Fn(&T) -> C,

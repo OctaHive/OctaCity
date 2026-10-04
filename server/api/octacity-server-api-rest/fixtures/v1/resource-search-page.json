@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "kind": "project",
+      "id": "11111111-1111-4111-8111-111111111111",
+      "label": "Alpha",
+      "context": null
+    },
+    {
+      "kind": "build",
+      "id": "99999999-9999-4999-8999-999999999999",
+      "label": "Alpha Release",
+      "context": "Root Project"
+    }
+  ],
+  "next_cursor": "eyJ2ZXJzaW9uIjoxLCJxdWVyeSI6ImFscGhhIiwia2luZHMiOlsicHJvamVjdCIsImJ1aWxkIiwiYWdlbnQiLCJhZ2VudF9wb29sIl0sInBvc2l0aW9uIjp7InJhbmsiOiJuYW1lX3ByZWZpeCIsImtpbmQiOiJidWlsZCIsIm5vcm1hbGl6ZWRfbGFiZWwiOiJhbHBoYSByZWxlYXNlIiwicmVzb3VyY2UiOnsia2luZCI6ImJ1aWxkIiwiaWQiOiI5OTk5OTk5OS05OTk5LTQ5OTktODk5OS05OTk5OTk5OTk5OTkifX19"
+}

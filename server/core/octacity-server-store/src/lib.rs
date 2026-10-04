@@ -39,6 +39,8 @@ mod log_search;
 mod log_search_port;
 mod management_mutation;
 mod model;
+mod operator_attention_model;
+mod operator_attention_port;
 mod pipeline_model;
 mod pipeline_port;
 mod pool_model;
@@ -49,6 +51,8 @@ mod project_policy;
 mod project_policy_port;
 mod project_port;
 mod read_visibility;
+mod resource_search_model;
+mod resource_search_port;
 mod schedule_model;
 mod schedule_port;
 mod trigger_evaluation_model;
@@ -85,6 +89,12 @@ mod build_discovery_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod build_discovery_contract_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod resource_search_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod operator_attention_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod pagination;
@@ -277,6 +287,15 @@ pub use octacity_server_trigger::{
   TriggerDefinitionRef, TriggerEventKind, TriggerInputError, TriggerKind, TriggerMetadata, TriggerOccurrenceIntent,
   TriggerOccurrenceState, TriggerTarget, derive_internal_causality, validate_internal_ancestry,
 };
+pub use operator_attention_model::{
+  CriticalSystemConditionChange, CriticalSystemConditionSourceId, ListOperatorAttention,
+  MAX_OPERATOR_ATTENTION_CODE_BYTES, MAX_OPERATOR_ATTENTION_PAGE_SIZE, MAX_OPERATOR_ATTENTION_SUMMARY_BYTES,
+  MAX_OPERATOR_ATTENTION_TARGETS, OperatorAttentionCategory, OperatorAttentionEvent, OperatorAttentionEventKind,
+  OperatorAttentionId, OperatorAttentionItem, OperatorAttentionPage, OperatorAttentionPagePosition,
+  OperatorAttentionScope, OperatorAttentionSeverity, OperatorAttentionTarget, OperatorAttentionValueError,
+  OperatorAttentionVisibility,
+};
+pub use operator_attention_port::{CriticalSystemConditionStore, OperatorAttentionStore};
 pub use pipeline_model::{CreatePipeline, PipelineMutationOutcome, PublishPipelineVersion, PublishedPipeline};
 pub use pipeline_port::PipelineStore;
 pub use pool_model::{
@@ -304,6 +323,14 @@ pub use read_visibility::{
   ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
   TriggerDefinitionListVisibility,
 };
+pub use resource_search_model::{
+  MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
+  MAX_RESOURCE_SEARCH_QUERY_BYTES, NormalizedResourceSearchQuery, ResourceSearchKind, ResourceSearchPage,
+  ResourceSearchPagePosition, ResourceSearchRank, ResourceSearchResource, ResourceSearchSummary,
+  ResourceSearchValueError, ResourceSearchVisibility, ResourceSearchVisibilityError, ResourceSearchVisibilityView,
+  SearchResources, normalize_resource_search_text,
+};
+pub use resource_search_port::ResourceSearchStore;
 pub use restore::{
   MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
   RestoreInventoryStore, RestoreLogChunkPage,

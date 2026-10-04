@@ -67,6 +67,8 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   verify_security_scoped_idempotency(&previous.pool).await?;
   verify_definition_discovery_indexes(&previous.pool).await?;
   verify_build_discovery_indexes(&previous.pool).await?;
+  verify_resource_search_indexes(&previous.pool).await?;
+  verify_operator_attention_schema(&previous.pool).await?;
   assert_snapshot_marker(&previous.pool).await?;
 
   let failed = snapshot.restore().await;
@@ -98,7 +100,10 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   assert!(authenticated_management_actor_is_allowed(&rollback.pool).await?);
   verify_security_scoped_idempotency(&rollback.pool).await?;
   verify_definition_discovery_indexes(&rollback.pool).await?;
-  assert!(build_discovery_index_definitions(&rollback.pool).await?.is_empty());
+  verify_build_discovery_indexes(&rollback.pool).await?;
+  verify_resource_search_indexes(&rollback.pool).await?;
+  assert!(!table_exists(&rollback.pool, "operator_attention_events").await?);
+  assert!(operator_attention_index_definitions(&rollback.pool).await?.is_empty());
   assert_legacy_idempotency_record(&rollback.pool).await?;
   assert_snapshot_marker(&rollback.pool).await?;
 
@@ -359,6 +364,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "log_search_project_positions",
     "managed_webhook_operations",
     "outbox_entries",
+    "operator_attention_events",
     "orphan_log_chunk_work",
     "pipeline_versions",
     "pipelines",
@@ -420,6 +426,8 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   verify_security_scoped_idempotency(pool).await?;
   verify_definition_discovery_indexes(pool).await?;
   verify_build_discovery_indexes(pool).await?;
+  verify_resource_search_indexes(pool).await?;
+  verify_operator_attention_schema(pool).await?;
   Ok(())
 }
 
@@ -481,6 +489,99 @@ async fn build_discovery_index_definitions(pool: &sqlx::PgPool) -> Result<Vec<(S
       "builds_project_configuration_discovery_idx",
       "builds_project_discovery_idx",
       "builds_project_state_discovery_idx",
+    ]
+    .as_slice(),
+  )
+  .fetch_all(pool)
+  .await
+}
+
+async fn verify_resource_search_indexes(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  let extension_exists: bool =
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+      .fetch_one(pool)
+      .await?;
+  assert!(extension_exists);
+
+  let definitions = resource_search_index_definitions(pool).await?;
+  assert_eq!(definitions.len(), 5);
+  for (name, definition) in &definitions {
+    if name == "builds_configuration_resource_search_idx" {
+      assert!(definition.contains("(build_configuration_id, id)"));
+      assert!(definition.contains("WHERE metadata_visible"));
+    } else {
+      assert!(definition.contains("USING gin"));
+      assert!(definition.contains("gin_trgm_ops"));
+      assert!(definition.contains("octacity_normalize_resource_search_text"));
+    }
+  }
+  let normalization: String = sqlx::query_scalar("SELECT octacity_normalize_resource_search_text(E'  ALPHA\\tBeta  ')")
+    .fetch_one(pool)
+    .await?;
+  assert_eq!(normalization, "alpha beta");
+  Ok(())
+}
+
+async fn resource_search_index_definitions(pool: &sqlx::PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+  sqlx::query_as(
+    "SELECT indexname, indexdef FROM pg_indexes \
+     WHERE schemaname = 'public' AND indexname = ANY($1::text[]) ORDER BY indexname",
+  )
+  .bind(
+    [
+      "agents_resource_search_name_idx",
+      "build_configurations_resource_search_name_idx",
+      "builds_configuration_resource_search_idx",
+      "pools_resource_search_name_idx",
+      "projects_resource_search_name_idx",
+    ]
+    .as_slice(),
+  )
+  .fetch_all(pool)
+  .await
+}
+
+async fn verify_operator_attention_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  assert!(table_exists(pool, "operator_attention_events").await?);
+  let definitions = operator_attention_index_definitions(pool).await?;
+  assert_eq!(definitions.len(), 3);
+  assert!(
+    definitions
+      .iter()
+      .find(|(name, _)| name == "operator_attention_critical_order_idx")
+      .unwrap()
+      .1
+      .contains("(occurred_at DESC, id DESC) WHERE (source_kind = 'critical_system_condition'::text)")
+  );
+  assert!(
+    definitions
+      .iter()
+      .find(|(name, _)| name == "operator_attention_active_critical_code_idx")
+      .unwrap()
+      .1
+      .contains("UNIQUE INDEX")
+  );
+  let target = definitions
+    .iter()
+    .find(|(name, _)| name == "operator_attention_target_order_idx")
+    .unwrap();
+  assert!(target.1.contains("(target_kind, target_id, occurred_at DESC, id DESC)"));
+  assert!(target.1.contains("build_failed"));
+  assert!(target.1.contains("agent_unavailable"));
+  assert!(target.1.contains("agent_pool_unavailable"));
+  Ok(())
+}
+
+async fn operator_attention_index_definitions(pool: &sqlx::PgPool) -> Result<Vec<(String, String)>, sqlx::Error> {
+  sqlx::query_as(
+    "SELECT indexname, indexdef FROM pg_indexes \
+     WHERE schemaname = 'public' AND indexname = ANY($1::text[]) ORDER BY indexname",
+  )
+  .bind(
+    [
+      "operator_attention_critical_order_idx",
+      "operator_attention_active_critical_code_idx",
+      "operator_attention_target_order_idx",
     ]
     .as_slice(),
   )

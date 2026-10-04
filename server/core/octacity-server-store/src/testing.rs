@@ -85,6 +85,7 @@ pub use crate::log_search_contract_testing::{
   verify_in_memory_log_search_index_contract, verify_log_search_index_contract,
 };
 pub use crate::log_search_testing::InMemoryLogSearchIndex;
+pub use crate::operator_attention_testing::{InMemoryOperatorAttentionStore, OperatorAttentionSeedError};
 pub use crate::pipeline_contract_testing::{verify_in_memory_pipeline_store_contract, verify_pipeline_store_contract};
 pub use crate::pipeline_testing::InMemoryPipelineStore;
 pub use crate::pool_contract_testing::{verify_agent_pool_store_contract, verify_in_memory_agent_pool_store_contract};
@@ -93,6 +94,7 @@ pub use crate::project_contract_testing::{
   verify_in_memory_project_store_contract, verify_project_store_contract, verify_security_scoped_project_replay,
 };
 pub use crate::project_testing::InMemoryProjectStore;
+pub use crate::resource_search_testing::{InMemoryResourceSearchStore, ResourceSearchSeedError};
 
 /// Counts of transactional evidence produced by accepted mutations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

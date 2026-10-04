@@ -200,6 +200,7 @@ pub(crate) struct MutationFacts {
   target_identity: String,
   safe_metadata: Value,
   outbox_payload: Value,
+  attention: Option<crate::operator_attention::TargetAttentionChange>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -238,6 +239,7 @@ impl MutationFacts {
       target_identity,
       safe_metadata,
       outbox_payload,
+      attention: None,
     }
   }
 
@@ -256,7 +258,13 @@ impl MutationFacts {
       target_identity,
       safe_metadata,
       outbox_payload,
+      attention: None,
     }
+  }
+
+  pub(crate) fn with_attention(mut self, change: crate::operator_attention::TargetAttentionChange) -> Self {
+    self.attention = Some(change);
+    self
   }
 }
 
@@ -683,6 +691,15 @@ pub(crate) async fn commit(
   facts: MutationFacts,
   outcome: Value,
 ) -> Result<(), StoreError> {
+  if let Some(change) = facts.attention.as_ref() {
+    crate::operator_attention::apply_change(
+      &mut transaction,
+      stable_record_id("operator-attention", identity),
+      identity.occurred_at,
+      change,
+    )
+    .await?;
+  }
   let safe_metadata = AuditMetadata::try_new(facts.safe_metadata).map_err(|_| StoreError::Unavailable)?;
   sqlx::query(
     "INSERT INTO audit_facts \

@@ -213,24 +213,27 @@ pub(crate) async fn reassign(
     disposition: MutationDisposition::Applied,
     agent: updated.try_into()?,
   };
-  crate::mutation::commit(
-    transaction,
-    &identity,
-    MutationFacts::management(
-      audit,
-      request.agent_id.to_string(),
-      json!({"source_pool_id": source_pool_id, "target_pool_id": request.target_pool_id}),
-      json!({"agent_id": request.agent_id, "pool_id": request.target_pool_id, "pool_version": target.version}),
-    ),
-    encode_outcome(&outcome)?,
-  )
-  .await?;
+  let facts = MutationFacts::management(
+    audit,
+    request.agent_id.to_string(),
+    json!({"source_pool_id": source_pool_id, "target_pool_id": request.target_pool_id}),
+    json!({"agent_id": request.agent_id, "pool_id": request.target_pool_id, "pool_version": target.version}),
+  );
+  let facts = if agent.state == "offline" {
+    facts
+  } else {
+    facts.with_attention(crate::operator_attention::TargetAttentionChange::agent_unavailable(
+      request.agent_id,
+    ))
+  };
+  crate::mutation::commit(transaction, &identity, facts, encode_outcome(&outcome)?).await?;
   Ok(outcome)
 }
 
 struct LockedAgent {
   pool_id: uuid::Uuid,
   version: i64,
+  state: String,
   platform: Option<AgentPlatform>,
 }
 
@@ -270,8 +273,8 @@ async fn lock_pools(
 }
 
 async fn lock_agent(transaction: &mut Transaction<'_, Postgres>, agent_id: AgentId) -> Result<LockedAgent, StoreError> {
-  let row: (uuid::Uuid, i64, Option<String>, Option<String>) = sqlx::query_as(
-    "SELECT pool_id, version, platform_operating_system, platform_architecture FROM agents WHERE id = $1 FOR UPDATE",
+  let row: (uuid::Uuid, i64, String, Option<String>, Option<String>) = sqlx::query_as(
+    "SELECT pool_id, version, state, platform_operating_system, platform_architecture FROM agents WHERE id = $1 FOR UPDATE",
   )
   .bind(agent_id.as_uuid())
   .fetch_optional(&mut **transaction)
@@ -280,7 +283,7 @@ async fn lock_agent(transaction: &mut Transaction<'_, Postgres>, agent_id: Agent
   .ok_or(StoreError::NotFound {
     entity: EntityKind::Agent,
   })?;
-  let platform = match (row.2, row.3) {
+  let platform = match (row.3, row.4) {
     (Some(os), Some(architecture)) => Some(AgentPlatform::new(os, architecture).map_err(|_| StoreError::Unavailable)?),
     (None, None) => None,
     _ => return Err(StoreError::Unavailable),
@@ -288,6 +291,7 @@ async fn lock_agent(transaction: &mut Transaction<'_, Postgres>, agent_id: Agent
   Ok(LockedAgent {
     pool_id: row.0,
     version: row.1,
+    state: row.2,
     platform,
   })
 }

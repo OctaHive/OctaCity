@@ -29,18 +29,22 @@ use octacity_server_application::{
   GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery, GetManualTriggerDefinitionQuery,
   GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery,
-  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
-  LogSearchError, ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant,
-  ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementCommandUseCase,
-  ManagementOperationalMetadataProjection, ManagementQueryUseCase, ManagementRequestContext, ManagementResource,
-  ManualTriggerDefinitionProjection, ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand,
+  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListOperatorAttentionQuery,
+  ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
+  ListProjectTriggerDefinitionsQuery, ListProjectsQuery, LogSearchError, ManagementAction,
+  ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
+  ManagementAuthorizationTarget, ManagementCommandUseCase, ManagementOperationalMetadataProjection,
+  ManagementQueryUseCase, ManagementRequestContext, ManagementResource, ManualTriggerDefinitionProjection,
+  ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand, OperatorAttentionCategory,
+  OperatorAttentionId, OperatorAttentionItemProjection, OperatorAttentionPageProjection, OperatorAttentionSeverity,
   PipelinePageProjection, PipelineSummaryProjection, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
   PublishProjectPolicyCommand, PublishRepositoryVersionCommand, Query, ReadJobEventsQuery, ReassignAgentPoolCommand,
   ReleaseBuildResultHoldCommand, RenameProjectCommand, RepositoryPageProjection, RepositorySummaryProjection,
-  RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery, Timestamp, TriggerCauseProjection,
-  TriggerDefinitionKindProjection, TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
+  ResourceSearchCursor, ResourceSearchIdentityProjection, ResourceSearchPageProjection,
+  ResourceSearchSummaryProjection, RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
+  SearchResourcesQuery, Timestamp, TriggerCauseProjection, TriggerDefinitionKindProjection,
+  TriggerDefinitionPageProjection, TriggerDefinitionSummaryProjection,
 };
 use tower::ServiceExt as _;
 
@@ -54,6 +58,10 @@ mod definition_discovery;
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
 mod openapi_drift;
+#[path = "v1_handlers/operator_attention.rs"]
+mod operator_attention;
+#[path = "v1_handlers/resource_search.rs"]
+mod resource_search;
 #[path = "v1_handlers/retention.rs"]
 mod retention;
 mod support;
@@ -86,6 +94,8 @@ struct RecordingApplication {
   protected_side_effects: Mutex<ProtectedSideEffectCounts>,
   log_search_queries: Mutex<Vec<SearchBuildLogsQuery>>,
   build_list_queries: Mutex<Vec<ListProjectBuildsQuery>>,
+  resource_search_queries: Mutex<Vec<SearchResourcesQuery>>,
+  operator_attention_queries: Mutex<Vec<ListOperatorAttentionQuery>>,
   build_summary_states: Option<(BuildState, AttemptState)>,
   successful_workflow: bool,
   capability_unavailable_for_managed: bool,
@@ -98,6 +108,8 @@ impl RecordingApplication {
       protected_side_effects: Mutex::default(),
       log_search_queries: Mutex::default(),
       build_list_queries: Mutex::default(),
+      resource_search_queries: Mutex::default(),
+      operator_attention_queries: Mutex::default(),
       build_summary_states: Some((BuildState::Succeeded, AttemptState::Succeeded)),
       successful_workflow: true,
       capability_unavailable_for_managed: false,
@@ -448,6 +460,105 @@ impl ManagementQueryUseCase<ListProjectBuildsQuery> for RecordingApplication {
 }
 
 #[async_trait]
+impl ManagementQueryUseCase<SearchResourcesQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: SearchResourcesQuery,
+  ) -> Result<ResourceSearchPageProjection, Self::Error> {
+    self.record("search_resources");
+    let has_cursor = query.after().is_some();
+    let kinds = query.kinds().clone();
+    let limit = usize::from(query.limit());
+    self.resource_search_queries.lock().unwrap().push(query);
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(ResourceSearchPageProjection {
+      items: if has_cursor {
+        Vec::new()
+      } else {
+        vec![
+          ResourceSearchSummaryProjection {
+            resource: ResourceSearchIdentityProjection::Project(
+              "11111111-1111-4111-8111-111111111111".parse().unwrap(),
+            ),
+            label: "Alpha".to_owned(),
+            context: None,
+          },
+          ResourceSearchSummaryProjection {
+            resource: ResourceSearchIdentityProjection::Build(
+              "99999999-9999-4999-8999-999999999999".parse().unwrap(),
+            ),
+            label: "Alpha Release".to_owned(),
+            context: Some("Root Project".to_owned()),
+          },
+        ]
+        .into_iter()
+        .filter(|item| kinds.as_set().contains(&match item.resource {
+          ResourceSearchIdentityProjection::Project(_) => octacity_server_application::ResourceSearchKind::Project,
+          ResourceSearchIdentityProjection::Build(_) => octacity_server_application::ResourceSearchKind::Build,
+          ResourceSearchIdentityProjection::Agent(_) => octacity_server_application::ResourceSearchKind::Agent,
+          ResourceSearchIdentityProjection::AgentPool(_) => {
+            octacity_server_application::ResourceSearchKind::AgentPool
+          }
+        }))
+        .take(limit)
+        .collect()
+      },
+      next_cursor: (!has_cursor && kinds == octacity_server_application::ResourceSearchKinds::all() && limit >= 2)
+        .then(|| {
+        ResourceSearchCursor::decode(
+          "eyJ2ZXJzaW9uIjoxLCJxdWVyeSI6ImFscGhhIiwia2luZHMiOlsicHJvamVjdCIsImJ1aWxkIiwiYWdlbnQiLCJhZ2VudF9wb29sIl0sInBvc2l0aW9uIjp7InJhbmsiOiJuYW1lX3ByZWZpeCIsImtpbmQiOiJidWlsZCIsIm5vcm1hbGl6ZWRfbGFiZWwiOiJhbHBoYSByZWxlYXNlIiwicmVzb3VyY2UiOnsia2luZCI6ImJ1aWxkIiwiaWQiOiI5OTk5OTk5OS05OTk5LTQ5OTktODk5OS05OTk5OTk5OTk5OTkifX19",
+        )
+        .expect("fixture cursor is canonical")
+      }),
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListOperatorAttentionQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListOperatorAttentionQuery,
+  ) -> Result<OperatorAttentionPageProjection, Self::Error> {
+    self.record("list_operator_attention");
+    let has_cursor = query.after().is_some();
+    self.operator_attention_queries.lock().unwrap().push(query);
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(OperatorAttentionPageProjection {
+      items: if has_cursor {
+        Vec::new()
+      } else {
+        vec![OperatorAttentionItemProjection {
+          id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            .parse::<OperatorAttentionId>()
+            .unwrap(),
+          category: OperatorAttentionCategory::CriticalSystem,
+          severity: OperatorAttentionSeverity::Critical,
+          code: "storage_pressure".to_owned(),
+          summary: "Artifact storage is approaching its configured limit".to_owned(),
+          occurred_at_unix_ms: 1_700_000_001_000,
+          resolved_at_unix_ms: None,
+          target: None,
+        }]
+      },
+      next_cursor: None,
+    })
+  }
+}
+
+#[async_trait]
 impl ManagementQueryUseCase<SearchBuildLogsQuery> for RecordingApplication {
   type Error = BuildLogSearchError;
 
@@ -729,6 +840,12 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   vec![
     empty_request("GET", "/api/v1/operations/metadata", None),
     empty_request("GET", "/api/v1/audit-facts?limit=10", None),
+    empty_request("GET", "/api/v1/search?query=alpha&limit=10", None),
+    empty_request(
+      "GET",
+      &format!("/api/v1/operator-attention?build_ids={build_id}&limit=10"),
+      None,
+    ),
     json_request(
       "POST",
       "/api/v1/projects",
@@ -1037,6 +1154,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
     [
       "get_operational_metadata",
       "list_audit_facts",
+      "search_resources",
+      "list_operator_attention",
       "create_project",
       "rename_project",
       "move_project",

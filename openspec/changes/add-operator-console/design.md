@@ -11,9 +11,10 @@ The existing release system produces deterministic checksummed native server bun
 **Goals:**
 
 - Establish one browser-to-server boundary: the published management REST API.
-- Deliver a small data-dense operator SPA with deep links, accessible alternatives, and explicit asynchronous states.
-- Add only the bounded discovery queries needed by that SPA and keep authorization visibility inside application/store reads before pagination.
+- Deliver a small data-dense operator SPA with deep links, accessible alternatives, explicit asynchronous states, contextual resource exploration, and keyboard-first global navigation.
+- Add only the bounded discovery, resource-search, and operator-attention queries needed by that SPA and keep authorization visibility inside application/store reads before classification, ranking, or pagination.
 - Preserve mutation idempotency, optimistic concurrency, audit correlation, and secret-safe transfer behavior in browser workflows.
+- Provide complete English and Russian presentation plus light, dark, and system-following evergreen themes without introducing authenticated browser identity.
 - Produce a reproducible platform-independent console release artifact and a documented same-origin proxy contract.
 
 **Non-Goals:**
@@ -48,17 +49,17 @@ The source tree is organized by product feature (`projects`, `builds`, `capacity
 
 ### 3. Establish an original evergreen operator visual system
 
-The console will adapt the calm green, data-dense character of the supplied visual references without copying their branding, assets, screen composition, authentication pages, or template code. The result is an OctaCity-owned token system, provisionally named `evergreen`, with one light workspace theme in the first release. A full dark theme and a theme switcher are deferred until a second complete palette has its own contrast and state validation.
+The console will adapt the calm green, data-dense character of the supplied visual references without copying their branding, assets, screen composition, authentication pages, or template code. The result is an OctaCity-owned token system, provisionally named `evergreen`, with complete light and dark palettes in the first release. A three-state selector chooses light, dark, or the current operating-system preference; both palettes independently pass contrast, non-color state, screenshot, and accessibility checks before release.
 
-The initial semantic palette is:
+The light palette starts from these semantic values; the dark palette maps the same roles rather than allowing components to branch on literal colors:
 
 | Token role | Initial value | Use |
 | --- | --- | --- |
 | Canvas | `#F5F7F6` | Application background |
 | Surface | `#FFFFFF` | Cards, tables, dialogs, and top bar |
 | Subtle surface | `#EEF2F0` | Grouped rows and secondary panels |
-| Evergreen 950 | `#10251D` | Primary sidebar |
-| Evergreen 800 | `#1C3B30` | Sidebar selection and dark feature panels |
+| Evergreen 950 | `#10251D` | Activity rail and dark context surfaces |
+| Evergreen 800 | `#1C3B30` | Active rail selection and dark feature panels |
 | Brand action | `#2F765E` | Primary controls and accessible links |
 | Brand accent | `#4BA786` | Progress, focus accents, and decorative data marks |
 | Brand soft | `#DFF2EA` | Selected, positive, and contextual backgrounds |
@@ -71,9 +72,9 @@ The initial semantic palette is:
 
 All final foreground/background pairs must pass the declared accessibility checks; token values may be adjusted centrally to meet contrast without changing component APIs. Green is not a generic status color: it represents brand emphasis and successful/healthy state, while warning, danger, and information retain distinct semantic tokens plus icons and text labels.
 
-The desktop shell uses an approximately 224-pixel collapsible dark sidebar, a compact white sticky top bar, and a fluid light canvas. Cards use 8–10 pixel radii, one-pixel neutral borders, and shadows only when elevation communicates behavior. Tables remain the primary representation for operational collections; cards group summaries and actions rather than turning every value into a dashboard metric. Project and Build identity may use one dark-evergreen or soft-mint context panel, but the root still redirects to Projects and no unsupported KPI dashboard is invented.
+The desktop shell uses one compact sticky utility header, an approximately 88–96-pixel primary section rail, an independently collapsible and resizable contextual explorer, and a fluid detail canvas. The rail presents large icon-and-short-label controls for Projects, Builds, Agents, and Audit rather than a dense text menu or ambiguous icon-only strip. The explorer defaults to 288 pixels, is pointer- and keyboard-resizable between 240 and 480 pixels, persists only its clamped width, and becomes a focus-managed overlay at the supported narrow width. Its sticky header contains the active section title, a search button, and collapse control; a Favorites section precedes the lazily loaded resource hierarchy. The header owns the global command-center search entry, readiness, direct theme control, notification bell, and neutral operator controls; the lower-frequency language control stays inside the operator menu. Cards use 8–10 pixel radii, one-pixel neutral borders, and shadows only when elevation communicates behavior. Tables remain the primary representation for operational collections; cards group summaries and actions rather than turning every value into a dashboard metric. Project and Build identity may use one dark-evergreen or soft-mint context panel, but the root still redirects to Projects and no unsupported KPI dashboard is invented.
 
-Typography uses the native system sans-serif stack to avoid a remote font request or another shipped font dependency. One tree-shaken SVG icon package supplies the consistent outline vocabulary; icon fonts, copied template icons, ornamental avatar imagery, and a general theme customizer are excluded. Visual regressions are tested at representative desktop and narrow supported widths, with motion disabled and deterministic data.
+Typography uses the native system sans-serif stack to avoid a remote font request or another shipped font dependency. One tree-shaken SVG icon package supplies the consistent outline vocabulary; icon fonts, copied template icons, ornamental avatar imagery, and an unbounded custom-color editor are excluded. Rail icons always have accessible names and tooltips rather than relying on symbol recognition. Visual regressions cover both palettes at representative desktop and narrow supported widths, with motion disabled and deterministic data.
 
 ### 4. Generate types from the Rust-owned OpenAPI document
 
@@ -83,7 +84,7 @@ One narrow API module will combine the generated types with `openapi-fetch`, nor
 
 Generating handwritten endpoint clients was rejected because it creates schema duplication. Generating a large method-per-operation SDK was rejected because the typed-fetch layer provides the required safety with less generated code and a smaller review surface.
 
-### 5. Add five project-scoped collection routes
+### 5. Add bounded discovery, search, and attention-feed routes
 
 The REST adapter will add these additive reads:
 
@@ -92,14 +93,20 @@ The REST adapter will add these additive reads:
 - `GET /api/v1/projects/{project_id}/build-configurations`
 - `GET /api/v1/projects/{project_id}/trigger-definitions`
 - `GET /api/v1/projects/{project_id}/builds`
+- `GET /api/v1/search`
+- `GET /api/v1/operator-attention`
 
 Every route accepts the existing bounded `limit` and exclusive `cursor` convention. The Build collection additionally accepts optional exact `configuration_id` and `state` filters. Definition pages contain only current-version summaries; exact immutable content continues to come from existing version-addressed detail endpoints. Trigger summaries use a tagged `kind` (`manual`, `scheduled`, or `internal`) rather than merging their full definitions into an untyped object.
 
-Definition collections use stable identity ordering. Builds use `(created_at DESC, build_id DESC)` and a bounded versioned cursor carrying that composite position. Cursor decoding is strict and does not authorize a resource. The owning Project and optional configuration filter are validated before querying.
+Definition collections use stable identity ordering. Builds use `(created_at DESC, build_id DESC)` and a bounded versioned cursor carrying that composite position. Global search accepts bounded normalized query text, an allowlisted resource-kind set, `limit`, and an exclusive cursor bound to the normalized query and kinds. Typed Project, Build, Agent, and Agent Pool hits rank exact stable identifiers before normalized name-prefix and other normalized name matches, then use resource kind, normalized label, and stable identity for deterministic ties. Cursor decoding is strict and does not authorize a resource. The owning Project and optional configuration filter are validated before querying.
 
-Application queries receive typed Project ownership, filters, page bounds, and authorization visibility. Store ports return UI-neutral summary projections rather than REST DTOs. In-memory and PostgreSQL adapters apply ownership, visibility, filters, ordering, cursor comparison, and limit in that order; REST performs no post-fetch security filtering. PostgreSQL adds only the indexes justified by the selected predicates and ordering, with migration and query-plan contract coverage.
+The operator-attention route accepts a bounded set of Build, Agent, and Agent Pool targets, an explicit critical-condition selector, bounded time constraints, `limit`, and a scope-bound exclusive cursor. It returns only safe typed attention-worthy transitions for visible requested targets and server-classified critical conditions. It is not a general activity feed, does not accept or infer a recipient, does not expose arbitrary audit or Job events, and does not assign personal read state. Submitting a favorite identity selects an authorized query target but never grants visibility.
 
-A global dashboard endpoint and aggregate counts were rejected for this slice: Project-scoped collections are sufficient for the agreed navigation and avoid creating a premature reporting model.
+The existing readiness monitor is the initial production source of critical system conditions. A transition to an unavailable or timed-out required dependency opens one idempotent condition with a stable server classification code, an internal runtime-source UUID, and a bounded non-secret summary; a transition away from that exact failure resolves only the same runtime source's condition. The source UUID is persistence-only and is not exposed through REST. This prevents one recovered replica from resolving another replica's active failure. Persistence is bounded by the readiness timeout and remains best-effort when PostgreSQL itself is unavailable, so attention reporting can neither stall the monitor indefinitely nor falsely restore readiness.
+
+Application queries receive typed Project ownership, filters, search inputs, attention scope, page bounds, and authorization visibility. Store ports return UI-neutral summary/search/attention projections rather than REST DTOs. In-memory and PostgreSQL adapters apply ownership, visibility, matching or classification, ranking or ordering, cursor comparison, and limit in that order; REST performs no post-fetch security filtering. PostgreSQL owns one immutable normalization function shared by the production search query and its expression indexes, and representative plan checks execute that exact production query. PostgreSQL adds only the indexes justified by the selected predicates, matching rules, classification, and ordering, with migration and query-plan contract coverage.
+
+A global dashboard endpoint and aggregate counts remain rejected: typed resource search supports navigation without creating a premature reporting model or computing operational KPIs.
 
 ### 6. Compose screens from existing detail resources
 
@@ -114,6 +121,14 @@ The initial route map is:
 
 The root route redirects to `/projects`; it is not a synthetic dashboard. Resource identity and user-selected tab/filter/cursor state are encoded in the URL where sharing or refresh matters. Query keys are centralized by resource identity and filters so a mutation invalidates only affected data.
 
+The workbench separates global section selection from resource exploration. A compact utility header contains one command-center trigger and search field, readiness, a direct light/dark/system theme control, the notification-center bell, and a neutral operator menu. English/Russian selection lives inside that menu because it is a low-frequency preference. Because the browser supplies no authenticated or forwarded identity, the menu exposes language, preferences, documentation, and deployment information but never fabricates a profile, email address, or logout action. A stable rail of large labeled controls changes among Projects, Builds, Agents, and Audit. The adjacent explorer is contextual, independently collapsible and resizable, keyboard navigable, and does not duplicate the section list.
+
+The Build explorer lazily composes existing bounded reads as `Project -> Build Configuration -> Build`, shows non-color state labels, and paginates each expanded branch independently. The Agent explorer composes bounded Agent Pool and Agent reads as `Agent Pool -> Agent` with a separate unassigned section. Audit uses contextual filters and favorite views instead of inventing a hierarchy. Every explorer places Favorites before its primary tree or filter content. Its header search button opens the same command center as the global header but preselects the active resource kinds; clearing that scope promotes the search to global rather than creating a second search implementation. Global search queries the typed search route, groups hits by resource kind, and supports navigation plus non-destructive presentation commands. Destructive or state-changing operations remain in confirmed resource context rather than the command center.
+
+Favorites and recents are local shortcuts, not authority or cached domain state. Favorites occupy the explicit section above the explorer hierarchy; recents remain available through the shared command center instead of consuming permanent explorer space. Selecting an explorer or command-center result navigates to its canonical resource URL. Shareable identity and filters stay in the URL; explorer width, visibility, expanded nodes, favorites, recents, theme, and language are presentation preferences.
+
+The notification center is an attention surface, not a firehose or a personal inbox. It merges three bounded sources: definitive outcomes for commands issued during the current browser session, server-published attention-worthy transitions for locally favorited Builds, Agents, and Agent Pools, and server-classified critical system conditions. Current-session command outcomes first use accessible toast/status feedback and remain only in bounded memory; request identities and response payloads are never persisted. Favorite and critical items are fetched from the scoped operator-attention route. Ordinary unrelated successes, all-system Build activity, audit history, and raw Job events are excluded. The badge counts items newer than the browser-local last-opened time and is explicitly not presented as a server-side per-user unread count.
+
 The Attempt graph renders as SVG using a small deterministic, UI-independent DAG layout module and also provides the same nodes, states, and edges as an accessible table. Keeping this narrow module inside the application avoids a graph-library runtime dependency while isolating and directly testing topology and geometry policy. The first slice will not introduce a canvas editor. Job-event follow uses one cancellable bounded-wait loop for the selected active Job, advances only from the last accepted sequence, aborts on route or selection change, and backs off on retryable failure. It does not open one poller per Job.
 
 ### 7. Treat mutations as explicit user intents
@@ -124,9 +139,9 @@ Confirmation dialogs name the target and consequence for cancellation, retry, ho
 
 Persistent replay journals were rejected for the initial release because storing arbitrary command bodies in browser storage broadens the data-retention and secret-review surface. The console guarantees safe retry while the confirmed intent remains active; a later durable outbox would require a separate explicit security design.
 
-### 8. Keep browser handling secret-safe and policy-neutral
+### 8. Keep browser handling and local preferences secret-safe and policy-neutral
 
-The console never stores API responses, mutation bodies, download capabilities, or query caches in local or session storage. Error rendering uses the stable code, safe message, and request identity only; raw response bodies, headers, and URLs are not sent to browser logging or analytics. No analytics SDK is included.
+The console never stores API responses, notification items, mutation bodies, download capabilities, query caches, logs, request identities, credentials, or other server-derived content in local or session storage. One versioned preference adapter may persist only language, theme mode, explorer visibility or width, bounded expanded hierarchy identities, bounded recent resource identities, bounded favorite resource identities, and the locally generated notification-center last-opened time. It validates resource kind, identifier shape, timestamps, version, and aggregate limits on every read, discards invalid data, and exposes no general storage API to features. Error rendering uses the stable code, safe message, and request identity only; raw response bodies, headers, and URLs are not sent to browser logging or analytics. No analytics SDK is included.
 
 Artifact download obtains the existing short-lived capability immediately before navigation, uses `noopener`/`noreferrer` behavior where a new context is required, and never renders or copies the private URL. Audit data is displayed as evidence, not interpreted as an authorization grant. A `403` remains a terminal denied operation and never starts a login flow.
 
@@ -134,7 +149,7 @@ Artifact download obtains the existing short-lived capability immediately before
 
 Backend discovery work follows the existing contract layers: application query tests, in-memory store behavior, PostgreSQL adapter and migration contracts, REST handler tests, authorization coverage, OpenAPI drift, and architecture checks. Fixtures cover hidden rows around every page boundary, exact filters, invalid cursors, empty visible pages, and concurrent inserts at equal timestamps.
 
-Frontend verification includes TypeScript strict checking, lint/format checks, unit tests for API error and idempotency behavior, component tests for loading/empty/stale/error/keyboard states, accessibility assertions, and Playwright flows against a deterministic management fixture. A released-product browser slice will serve the built assets through the documented same-origin proxy and exercise Project discovery, Build navigation, one safe mutation replay, bounded Job following, and absence of CORS or browser credentials.
+Frontend verification includes TypeScript strict checking, lint/format checks, unit tests for API error, preference bounds, localization completeness, token contrast, notification scoping, and idempotency behavior, component tests for loading/empty/stale/error/keyboard states, accessibility assertions, and Playwright flows against a deterministic management fixture. Workbench coverage exercises large labeled section controls, rail switching, pointer and keyboard explorer resize with min/max clamping, persisted width, collapse and overlay behavior, sticky explorer controls, independent lazy branch pagination, favorites, global versus pre-scoped search through the shared command center, current-session action outcomes, favorite and critical attention items, unrelated-event exclusion, local seen state, both languages, and light/dark/system theme resolution. A released-product browser slice will serve the built assets through the documented same-origin proxy and exercise Project discovery, Build navigation, one safe mutation replay, bounded Job following, and absence of CORS or browser credentials.
 
 The release workflow will build one platform-independent `octacity-console` archive containing content-hashed assets, a release manifest, checksums, license, and deployment guide. It will be versioned from the same release tag and source revision as server artifacts but remain a separate downloadable and deployable product. The archive contains no Node runtime, source map with repository sources, or environment-specific API address.
 
@@ -142,6 +157,9 @@ The release workflow will build one platform-independent `octacity-console` arch
 
 - **[Unauthenticated console is mistaken for public-safe software]** → Display the security mode in the shell and deployment guide, keep the management listener private, ship restrictive proxy examples, and add a released deployment check that no credential or CORS path is required.
 - **[New collection queries become expensive]** → Require bounded pages and typed filters, add predicate/order indexes, inspect representative PostgreSQL plans, and omit aggregate dashboard queries.
+- **[Global search becomes an unbounded cross-domain scan]** → Bound normalized input, kinds, page size, result context, and cursor; apply visibility before deterministic ranking and prove representative PostgreSQL plans.
+- **[Notification bell becomes a noisy all-system feed]** → Admit only current-browser command outcomes, attention transitions for explicitly favorited targets, and server-classified critical conditions; reject empty server feed scopes and exclude ordinary audit or Job activity.
+- **[Local notification state is mistaken for personal delivery]** → Label it as browser-local, retain command history only in memory, persist only a local last-opened time, and defer recipient/read semantics until authenticated actor identity reaches the browser.
 - **[OpenAPI generation couples frontend builds to Rust tooling]** → Keep the exporter small and deterministic, pin JavaScript generators, generate once before frontend checks, and package only static output.
 - **[Live diagnostics create excessive request load]** → Follow only the selected active Job, use the server's bounded wait, cancel hidden views, honor `Retry-After`, and centralize timing constants instead of scattering intervals.
 - **[SPA state drifts from authoritative state]** → Keep durable selection in URLs, server state in bounded queries, and use targeted invalidation plus visible stale/error states rather than optimistic domain transitions.
@@ -149,6 +167,8 @@ The release workflow will build one platform-independent `octacity-console` arch
 - **[DAG visualization adds bundle weight]** → Keep the deterministic layout behind one small internal module with custom accessible rendering, enforce a bundle budget, and retain the table as the functional baseline.
 - **[Visual inspiration becomes copied template surface or dependency]** → Own all tokens and layouts in OctaCity, use no reference assets or code, and review visual snapshots for product-specific information hierarchy rather than pixel imitation.
 - **[Green styling obscures operational severity]** → Reserve semantic warning, danger, and information colors, pair every state with text and an icon, and enforce contrast and non-color accessibility tests.
+- **[Local favorites become an accidental data cache]** → Persist only bounded validated resource identities and presentation values through one allowlisted adapter; prohibit labels, payloads, request identities, logs, and capabilities.
+- **[Theme or translation coverage drifts]** → Require semantic tokens rather than component literals, typed English/Russian message catalogs with identical keys, locale-aware tests, and deterministic snapshots for both complete palettes.
 
 ## Migration Plan
 

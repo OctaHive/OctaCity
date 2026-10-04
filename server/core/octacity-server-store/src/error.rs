@@ -18,6 +18,10 @@ pub enum StoreOperation {
   ReadProject,
   /// List one bounded page of direct child Projects.
   ListProjects,
+  /// Search one bounded page across top-level management resources.
+  SearchResources,
+  /// List one bounded page of scoped operator attention.
+  ListOperatorAttention,
   /// Create one static Agent Pool and its initial version.
   CreateAgentPool,
   /// Append the next immutable Agent Pool version.
@@ -245,6 +249,18 @@ pub enum StoreInputError {
   /// A Project page size is zero or exceeds the store contract bound.
   #[error("a project page size is outside its allowed range")]
   InvalidProjectPageSize,
+  /// A global resource-search kind set is empty or exceeds its fixed bound.
+  #[error("a resource search kind set is outside its allowed range")]
+  InvalidResourceSearchKinds,
+  /// A global resource-search page size is zero or exceeds its fixed bound.
+  #[error("a resource search page size is outside its allowed range")]
+  InvalidResourceSearchPageSize,
+  /// A global resource-search continuation position is malformed or outside its selected kinds.
+  #[error("a resource search cursor is invalid")]
+  InvalidResourceSearchCursor,
+  /// An operator-attention page size is zero or exceeds its fixed bound.
+  #[error("an operator attention page size is outside its allowed range")]
+  InvalidOperatorAttentionPageSize,
   /// A current-definition page size was zero or exceeded its fixed bound.
   #[error("a current-definition page size is outside its allowed range")]
   InvalidCurrentDefinitionPageSize,

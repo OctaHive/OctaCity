@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "category": "critical_system",
+      "severity": "critical",
+      "code": "storage_pressure",
+      "summary": "Artifact storage is approaching its configured limit",
+      "occurred_at_unix_ms": 1700000001000,
+      "resolved_at_unix_ms": null,
+      "target": null
+    }
+  ],
+  "next_cursor": null
+}

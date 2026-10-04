@@ -179,6 +179,89 @@ pub(super) fn cursor_page<T>(
   })
 }
 
+pub(super) fn resource_search_page(
+  page: ResourceSearchPageProjection,
+  request_id: &RequestId,
+) -> Result<ResourceSearchPage, ApiError> {
+  Ok(ResourceSearchPage {
+    items: page
+      .items
+      .into_iter()
+      .map(|item| {
+        let (kind, id) = match item.resource {
+          ResourceSearchIdentityProjection::Project(identity) => (ResourceSearchKind::Project, identity.to_string()),
+          ResourceSearchIdentityProjection::Build(identity) => (ResourceSearchKind::Build, identity.to_string()),
+          ResourceSearchIdentityProjection::Agent(identity) => (ResourceSearchKind::Agent, identity.to_string()),
+          ResourceSearchIdentityProjection::AgentPool(identity) => {
+            (ResourceSearchKind::AgentPool, identity.to_string())
+          }
+        };
+        ResourceSearchResult {
+          kind,
+          id,
+          label: item.label,
+          context: item.context,
+        }
+      })
+      .collect(),
+    next_cursor: page
+      .next_cursor
+      .map(|cursor| RestResourceSearchCursor::new(cursor.encode()))
+      .transpose()
+      .map_err(|_| internal_conversion(request_id))?,
+  })
+}
+
+pub(super) fn operator_attention_page(
+  page: OperatorAttentionPageProjection,
+  request_id: &RequestId,
+) -> Result<OperatorAttentionPage, ApiError> {
+  Ok(OperatorAttentionPage {
+    items: page
+      .items
+      .into_iter()
+      .map(|item| OperatorAttentionItemResource {
+        id: item.id.to_string(),
+        category: match item.category {
+          octacity_server_application::OperatorAttentionCategory::Build => OperatorAttentionCategory::Build,
+          octacity_server_application::OperatorAttentionCategory::Agent => OperatorAttentionCategory::Agent,
+          octacity_server_application::OperatorAttentionCategory::AgentPool => OperatorAttentionCategory::AgentPool,
+          octacity_server_application::OperatorAttentionCategory::CriticalSystem => {
+            OperatorAttentionCategory::CriticalSystem
+          }
+        },
+        severity: match item.severity {
+          octacity_server_application::OperatorAttentionSeverity::Warning => OperatorAttentionSeverity::Warning,
+          octacity_server_application::OperatorAttentionSeverity::Critical => OperatorAttentionSeverity::Critical,
+        },
+        code: item.code,
+        summary: item.summary,
+        occurred_at_unix_ms: item.occurred_at_unix_ms,
+        resolved_at_unix_ms: item.resolved_at_unix_ms,
+        target: item.target.map(|target| match target {
+          ApplicationOperatorAttentionTarget::Build(id) => OperatorAttentionTargetResource {
+            kind: OperatorAttentionTargetKind::Build,
+            id: id.to_string(),
+          },
+          ApplicationOperatorAttentionTarget::Agent(id) => OperatorAttentionTargetResource {
+            kind: OperatorAttentionTargetKind::Agent,
+            id: id.to_string(),
+          },
+          ApplicationOperatorAttentionTarget::AgentPool(id) => OperatorAttentionTargetResource {
+            kind: OperatorAttentionTargetKind::AgentPool,
+            id: id.to_string(),
+          },
+        }),
+      })
+      .collect(),
+    next_cursor: page
+      .next_cursor
+      .map(|cursor| OperatorAttentionCursor::new(cursor.encode()))
+      .transpose()
+      .map_err(|_| internal_conversion(request_id))?,
+  })
+}
+
 fn project_resource(project: octacity_server_application::ProjectSummaryProjection) -> ProjectResource {
   ProjectResource {
     id: project.id.to_string(),

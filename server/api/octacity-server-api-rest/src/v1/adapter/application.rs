@@ -10,13 +10,14 @@ use octacity_server_application::{
   GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
   GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
   GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery,
-  ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListProjectBuildConfigurationsQuery,
-  ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery,
-  ListProjectsQuery, ManualTriggerError, MoveProjectCommand, ObserveManagedWebhookRegistrationCommand,
-  PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand,
-  PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand, PublishProjectPolicyCommand,
-  PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand,
-  RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand, SearchBuildLogsQuery,
+  ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListOperatorAttentionQuery,
+  ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
+  ListProjectTriggerDefinitionsQuery, ListProjectsQuery, ManualTriggerError, MoveProjectCommand,
+  ObserveManagedWebhookRegistrationCommand, PlaceBuildResultHoldCommand, PublishAgentPoolVersionCommand,
+  PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
+  PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
+  ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
+  SearchBuildLogsQuery, SearchResourcesQuery,
 };
 
 type ProjectCreate = dyn AuthorizedManagementCommandHandler<CreateProjectCommand, Error = ApplicationError>;
@@ -102,6 +103,8 @@ type BuildRetentionRelease =
 type AuditFactList = dyn AuthorizedManagementQueryHandler<ListAuditFactsQuery, Error = ApplicationError>;
 type OperationalMetadataGet =
   dyn AuthorizedManagementQueryHandler<GetOperationalMetadataQuery, Error = ApplicationError>;
+type ResourceSearch = dyn AuthorizedManagementQueryHandler<SearchResourcesQuery, Error = ApplicationError>;
+type OperatorAttention = dyn AuthorizedManagementQueryHandler<ListOperatorAttentionQuery, Error = ApplicationError>;
 
 /// Type-erased operational metadata query consumed by REST.
 pub struct OperationalMetadataManagementApplication(pub(super) Arc<OperationalMetadataGet>);
@@ -113,6 +116,32 @@ impl OperationalMetadataManagementApplication {
     Q: AuthorizedManagementQueryHandler<GetOperationalMetadataQuery, Error = ApplicationError> + 'static,
   {
     Self(queries)
+  }
+}
+
+/// Type-erased global resource-search query consumed by REST.
+pub struct ResourceSearchManagementApplication(pub(super) Arc<ResourceSearch>);
+
+impl ResourceSearchManagementApplication {
+  /// Erases one global resource-search service behind its query capability.
+  pub fn new<S>(service: Arc<S>) -> Self
+  where
+    S: AuthorizedManagementQueryHandler<SearchResourcesQuery, Error = ApplicationError> + 'static,
+  {
+    Self(service)
+  }
+}
+
+/// Type-erased scoped operator-attention query consumed by REST.
+pub struct OperatorAttentionManagementApplication(pub(super) Arc<OperatorAttention>);
+
+impl OperatorAttentionManagementApplication {
+  /// Erases one operator-attention service behind its query capability.
+  pub fn new<S>(service: Arc<S>) -> Self
+  where
+    S: AuthorizedManagementQueryHandler<ListOperatorAttentionQuery, Error = ApplicationError> + 'static,
+  {
+    Self(service)
   }
 }
 
@@ -603,6 +632,8 @@ pub struct ManagementApplicationHandlers {
   pub(super) agents: AgentManagementApplication,
   pub(super) execution: ExecutionManagementApplication,
   pub(super) audit: AuditManagementApplication,
+  pub(super) resource_search: ResourceSearchManagementApplication,
+  pub(super) operator_attention: OperatorAttentionManagementApplication,
 }
 
 impl ManagementApplicationHandlers {
@@ -613,6 +644,8 @@ impl ManagementApplicationHandlers {
     agents: AgentManagementApplication,
     execution: ExecutionManagementApplication,
     audit: AuditManagementApplication,
+    resource_search: ResourceSearchManagementApplication,
+    operator_attention: OperatorAttentionManagementApplication,
   ) -> Self {
     Self {
       operational,
@@ -620,6 +653,8 @@ impl ManagementApplicationHandlers {
       agents,
       execution,
       audit,
+      resource_search,
+      operator_attention,
     }
   }
 }

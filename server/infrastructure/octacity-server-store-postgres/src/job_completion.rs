@@ -56,6 +56,7 @@ pub(crate) async fn execute(
     .ok_or(StoreError::Fenced {
       lease: request.lease.lease_id,
     })?;
+  let attention_build_id = octacity_server_domain::BuildId::from_uuid(build_id).map_err(|_| StoreError::Unavailable)?;
   lock_build_and_attempt(&mut transaction, build_id, attempt_id).await?;
   let lease = lease::load(&mut transaction, request.lease, StoreOperation::CompleteJob).await?;
   if lease.attempt_id != attempt_id {
@@ -92,7 +93,7 @@ pub(crate) async fn execute(
       crate::mutation::commit(
         transaction,
         &identity,
-        facts(&request, &outcome),
+        facts(&request, &outcome, attention_build_id),
         encode_outcome(&StoredOutcome::from(&outcome))?,
       )
       .await?;
@@ -145,7 +146,7 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(&request, &outcome),
+    facts(&request, &outcome, attention_build_id),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
@@ -466,8 +467,12 @@ async fn ready_pools(
     .collect()
 }
 
-fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFacts {
-  MutationFacts::non_management(
+fn facts(
+  request: &JobCompletion,
+  outcome: &CompletionDisposition,
+  build_id: octacity_server_domain::BuildId,
+) -> MutationFacts {
+  let facts = MutationFacts::non_management(
     NonManagementActor::Agent(request.lease.agent_id.to_string()),
     outcome.job_id.to_string(),
     json!({
@@ -493,7 +498,12 @@ fn facts(request: &JobCompletion, outcome: &CompletionDisposition) -> MutationFa
       "build_state": build_state(outcome.build_state),
       "schema_version": 2,
     }),
-  )
+  );
+  if outcome.disposition == MutationDisposition::Applied && outcome.build_state == BuildState::Failed {
+    facts.with_attention(crate::operator_attention::TargetAttentionChange::build_failed(build_id))
+  } else {
+    facts
+  }
 }
 
 const fn completion_kind(kind: JobCompletionKind) -> &'static str {

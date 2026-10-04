@@ -169,7 +169,10 @@ pub(crate) async fn execute(pool: &PgPool, request: RegisterAgent) -> Result<Age
         "registration_epoch": authority.epoch,
         "pool_id": authority.pool_id,
       }),
-    ),
+    )
+    .with_attention(crate::operator_attention::TargetAttentionChange::resolve_agent(
+      request.agent_id,
+    )),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
