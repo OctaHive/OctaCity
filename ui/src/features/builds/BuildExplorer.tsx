@@ -100,14 +100,12 @@ const emptySelectedPath: SelectedPath = { build: null, configuration: null, proj
 
 /** Renders bounded, independently paginated Project -> Configuration -> Build branches. */
 export function BuildExplorer({ api }: { api: BuildExplorerApi }) {
-  const { t } = usePresentation();
   const location = useLocation();
   const selectedBuildId = matchPath(CONSOLE_PATHS.build, location.pathname)?.params.buildId ?? null;
   const selectedPath = useSelectedBuildPath(api, selectedBuildId);
 
   return (
     <div className={styles.explorerTree}>
-      <p className={styles.boundedNotice}>{t('explorer.boundedBuilds')}</p>
       {selectedPath.failure === null ? null : <BranchFailure {...selectedPath.failure} />}
       {selectedPath.background === null ? null : <BranchBackground {...selectedPath.background} />}
       <BuildTree api={api} selectedBuildId={selectedBuildId} selectedPath={selectedPath.path} />

@@ -372,15 +372,15 @@ describe('Build explorer', () => {
     expect(screen.getByRole('link', { name: 'selected-build' })).toBeTruthy();
   });
 
-  it('states that explorer results are bounded rather than globally complete', async () => {
+  it('does not clutter the hierarchy with pagination implementation guidance', async () => {
     const api = fakeApi();
     renderExplorer('/builds', api);
 
     expect(
-      screen.getByText(
+      screen.queryByText(
         'Loaded bounded pages are shown. Use search to find Builds outside expanded branches.',
       ),
-    ).toBeTruthy();
+    ).toBeNull();
     expect(await screen.findByText('No Project branches are available.')).toBeTruthy();
   });
 });

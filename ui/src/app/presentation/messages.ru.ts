@@ -290,8 +290,6 @@ export const ruMessages = {
   'explorer.agentCapacityHierarchy': 'Иерархия ресурсов агентов',
   'explorer.agentPoolData': 'Данные пула агентов {name}',
   'explorer.agentsInPool': 'Агенты пула {name}',
-  'explorer.boundedBuilds':
-    'Показаны загруженные ограниченные страницы. Используйте поиск для сборок вне раскрытых ветвей.',
   'explorer.buildConfigurationsInProject': 'Конфигурации сборки проекта {name}',
   'explorer.buildHierarchy': 'Иерархия сборок',
   'explorer.buildsForConfiguration': 'Сборки конфигурации {name}',

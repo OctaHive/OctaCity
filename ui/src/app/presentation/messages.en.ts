@@ -288,8 +288,6 @@ export const enMessages = {
   'explorer.agentCapacityHierarchy': 'Agent capacity hierarchy',
   'explorer.agentPoolData': '{name} Agent Pool data',
   'explorer.agentsInPool': '{name} Agents',
-  'explorer.boundedBuilds':
-    'Loaded bounded pages are shown. Use search to find Builds outside expanded branches.',
   'explorer.buildConfigurationsInProject': '{name} Build Configurations',
   'explorer.buildHierarchy': 'Build hierarchy',
   'explorer.buildsForConfiguration': '{name} Builds',
