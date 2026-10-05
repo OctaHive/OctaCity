@@ -112,8 +112,8 @@ async function expectVisibleKeyboardFocus(page: Page) {
 }
 
 async function viewportOverflow(page: Page): Promise<number> {
-  return page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  return page.evaluate(() =>
+    Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
   );
 }
 

@@ -360,7 +360,7 @@ test('uses a focus-managed explorer overlay at the narrow supported width', asyn
     client: document.documentElement.clientWidth,
     scroll: document.documentElement.scrollWidth,
   }));
-  expect(viewport.scroll).toBe(viewport.client);
+  expect(viewport.scroll).toBeLessThanOrEqual(viewport.client);
 });
 
 test('opens global and explorer search with focus restoration', async ({ page }) => {

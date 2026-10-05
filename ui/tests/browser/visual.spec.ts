@@ -79,7 +79,7 @@ const visualCases = [
 
 for (const visual of visualCases) {
   test(`${visual.name} remains visually stable`, async ({ page }, testInfo) => {
-    testInfo.snapshotSuffix = '';
+    testInfo.snapshotSuffix = process.platform;
     await installOperatorFixture(page);
     await page.setViewportSize(visual.viewport);
     await page.goto(visual.path);
