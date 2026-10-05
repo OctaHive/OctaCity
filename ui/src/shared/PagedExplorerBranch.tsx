@@ -36,6 +36,11 @@ interface PagedBranchProps<T extends { id: string }> {
   revealed?: T | null | undefined;
 }
 
+interface CursorPageOptions {
+  enabled?: boolean;
+  refetchStaleOnMount?: boolean;
+}
+
 /** Owns loading, stale, empty, reveal, and continuation behavior for an explorer branch. */
 export function PagedExplorerBranch<T extends { id: string }>({
   children,
@@ -89,7 +94,7 @@ export function PagedExplorerBranch<T extends { id: string }>({
 export function useCursorPage<T, TQueryKey extends QueryKey>(
   queryKey: TQueryKey,
   read: (cursor: string | null, signal: AbortSignal) => Promise<CursorPage<T>>,
-  enabled = true,
+  { enabled = true, refetchStaleOnMount = true }: CursorPageOptions = {},
 ) {
   return useInfiniteQuery<
     CursorPage<T>,
@@ -103,6 +108,7 @@ export function useCursorPage<T, TQueryKey extends QueryKey>(
     initialPageParam: null,
     queryFn: ({ pageParam, signal }) => read(pageParam, signal),
     queryKey,
+    refetchOnMount: refetchStaleOnMount ? true : (query) => query.state.isInvalidated,
   });
 }
 

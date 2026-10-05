@@ -205,20 +205,20 @@ function useSelectedBuildPath(
     return { background: null, failure: null, path: emptySelectedPath };
   }
 
+  const backgroundError = stale?.error ?? selectedBuild.error;
   return {
-    background: {
-      error: stale?.error ?? selectedBuild.error,
-      fetching:
-        selectedBuild.isFetching ||
-        selectedProject.isFetching ||
-        selectedConfiguration.isFetching ||
-        selectedProjectChildren.isFetching,
-      label: t('explorer.selectedBuildPath'),
-      onRetry: () => {
-        if (stale !== undefined) void stale.refetch();
-        else if (selectedBuild.error !== null) void selectedBuild.refetch();
-      },
-    },
+    background:
+      backgroundError === null
+        ? null
+        : {
+            error: backgroundError,
+            fetching: false,
+            label: t('explorer.selectedBuildPath'),
+            onRetry: () => {
+              if (stale !== undefined) void stale.refetch();
+              else void selectedBuild.refetch();
+            },
+          },
     failure: null,
     path: {
       build: {
@@ -346,6 +346,7 @@ function ConfigurationBranch({ project, tree }: { project: ProjectItem; tree: Bu
   const configurations = useCursorPage(
     queryKeys.projectBuildConfigurations(project.id),
     (cursor, signal) => api.listBuildConfigurations(project.id, cursor, signal),
+    { refetchStaleOnMount: false },
   );
   const selectedProject = selectedPath.projects.at(-1);
   const revealed = selectedProject?.id === project.id ? selectedPath.configuration : null;
@@ -410,6 +411,7 @@ function BuildBranch({
         cursor,
         signal,
       ),
+    { refetchStaleOnMount: false },
   );
   const revealed = selectedPath.configuration?.id === configuration.id ? selectedPath.build : null;
 
@@ -491,7 +493,7 @@ function useProjectPage(api: BuildExplorerApi, parentId: string | null, enabled 
   return useCursorPage(
     queryKeys.projectChildren(parentId),
     (cursor, signal) => api.listProjects(parentId, cursor, signal),
-    enabled,
+    { enabled, refetchStaleOnMount: false },
   );
 }
 

@@ -233,6 +233,84 @@ describe('Build explorer', () => {
     expect(api.listBuilds).toHaveBeenCalledTimes(1);
   });
 
+  it('reuses loaded branches when an operator collapses and expands them again', async () => {
+    const api = fakeApi();
+    api.listProjects.mockResolvedValue(
+      page([project('selected-project', 'Selected Project')], null),
+    );
+    api.listBuildConfigurations.mockResolvedValue(
+      page([configuration('selected-config', 'Selected Configuration', 'selected-project')], null),
+    );
+    api.listBuilds.mockResolvedValue(
+      page([build('selected-build', 'selected-config', 'selected-project', 'succeeded')], null),
+    );
+    const { queryClient } = renderExplorer('/builds', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand Selected Project' }));
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Expand Selected Configuration' }),
+    );
+    expect(await screen.findByRole('link', { name: 'selected-build' })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse Selected Project' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand Selected Project' }));
+    expect(
+      await screen.findByRole('button', { name: 'Collapse Selected Configuration' }),
+    ).toBeTruthy();
+    expect(await screen.findByRole('link', { name: 'selected-build' })).toBeTruthy();
+
+    expect(api.listBuildConfigurations).toHaveBeenCalledTimes(1);
+    expect(api.listBuilds).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse Selected Project' }));
+    await act(async () => {
+      await queryClient.invalidateQueries({
+        exact: true,
+        queryKey: queryKeys.projectBuildConfigurations('selected-project'),
+      });
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Expand Selected Project' }));
+    await waitFor(() => expect(api.listBuildConfigurations).toHaveBeenCalledTimes(2));
+    expect(api.listBuilds).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps cached selected-path refreshes from displacing the hierarchy', async () => {
+    const api = fakeApi();
+    configureSelectedBuild(api);
+    api.getBuild.mockImplementation(pendingRead);
+    api.getProject.mockImplementation(pendingRead);
+    api.getBuildConfiguration.mockImplementation(pendingRead);
+    api.listProjects.mockImplementation((parentId) =>
+      parentId === null ? Promise.resolve(page([], null)) : pendingRead(),
+    );
+    renderExplorer('/builds/selected-build', api, (queryClient) => {
+      queryClient.setQueryData(queryKeys.build('selected-build'), {
+        configuration_id: 'selected-config',
+        configuration_version: 7,
+        id: 'selected-build',
+        project_id: 'selected-project',
+        state: 'succeeded',
+      });
+      queryClient.setQueryData(queryKeys.project('selected-project'), {
+        ancestors: [],
+        project: projectResource('selected-project', 'Selected Project'),
+      });
+      queryClient.setQueryData(
+        queryKeys.buildConfiguration('selected-config', 7),
+        configuration('selected-config', 'Selected Configuration', 'selected-project', 7),
+      );
+      queryClient.setQueryData(queryKeys.projectChildren('selected-project'), {
+        pageParams: [null],
+        pages: [page([], null)],
+      });
+    });
+
+    expect(await screen.findByRole('link', { name: 'selected-build' })).toBeTruthy();
+    expect(
+      screen.queryByText('Refreshing selected Build path. Previously loaded data remains visible.'),
+    ).toBeNull();
+  });
+
   it('reports a selected Build lookup failure with request correlation while retaining browsing', async () => {
     const api = fakeApi();
     api.getBuild.mockRejectedValue(managementError('request-selected-build'));
@@ -307,17 +385,26 @@ describe('Build explorer', () => {
   });
 });
 
-function renderExplorer(path: string, api: BuildExplorerApi) {
+function renderExplorer(
+  path: string,
+  api: BuildExplorerApi,
+  prepare?: (queryClient: ReturnType<typeof createConsoleQueryClient>) => void,
+) {
   const router = createMemoryRouter([{ path: '*', element: <BuildExplorer api={api} /> }], {
     initialEntries: [path],
   });
   const queryClient = createConsoleQueryClient();
+  prepare?.(queryClient);
   render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
   return { queryClient, router };
+}
+
+function pendingRead<T>(): Promise<T> {
+  return new Promise(() => undefined);
 }
 
 function rootProjectReads(api: ReturnType<typeof fakeApi>): number {
