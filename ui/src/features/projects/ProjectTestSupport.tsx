@@ -16,6 +16,7 @@ import type {
   ProjectPage,
   ProjectSummary,
   ProjectsApi,
+  RepositoryResource,
   RepositorySummary,
   TriggerDefinitionSummary,
 } from './api';
@@ -41,7 +42,9 @@ export function fakeProjectsApi() {
     getBuildConfiguration: vi.fn<ProjectsApi['getBuildConfiguration']>(),
     getPipeline: vi.fn<ProjectsApi['getPipeline']>(),
     getProject: vi.fn<ProjectsApi['getProject']>(),
-    getRepository: vi.fn<ProjectsApi['getRepository']>(),
+    getRepository: vi
+      .fn<ProjectsApi['getRepository']>()
+      .mockResolvedValue(repositoryDetails('repository-a', 'Application Source')),
     getTrigger: vi.fn<ProjectsApi['getTrigger']>(),
     listBuildConfigurations: vi
       .fn<ProjectsApi['listBuildConfigurations']>()
@@ -173,6 +176,29 @@ export function definitionPage<T>(items: T[], nextCursor: string | null) {
 export function pipelineDetails(id: string, name: string): PipelineResource {
   return {
     dag: { edges: [], nodes: [] },
+    id,
+    name,
+    project_id: 'delivery',
+    published_at_unix_ms: 1_700_000_000_000,
+    version: 3,
+  };
+}
+
+export function repositoryDetails(
+  id: string,
+  name: string,
+  selection: RepositoryResource['definition']['selection'] = {
+    allow_exact_revision: true,
+    allowed_references: ['refs/heads/main'],
+    default_reference: 'refs/heads/main',
+  },
+): RepositoryResource {
+  return {
+    definition: {
+      repository_locator: 'https://example.test/source.git',
+      selection,
+      vcs_integration_id: 'integration-a',
+    },
     id,
     name,
     project_id: 'delivery',

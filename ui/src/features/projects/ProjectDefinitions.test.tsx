@@ -15,6 +15,7 @@ import {
   pipelineDetails,
   project,
   renderProjects,
+  repositoryDetails,
   trigger,
 } from './ProjectTestSupport';
 
@@ -155,6 +156,60 @@ describe('Project definitions', () => {
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(api.triggerBuild).not.toHaveBeenCalled();
+  });
+
+  it('offers only source selections allowed by the published Repository', async () => {
+    vi.stubGlobal('crypto', {
+      randomUUID: vi.fn(() => '44444444-4444-4444-8444-444444444444'),
+    });
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });
+    api.listBuildConfigurations.mockResolvedValue(
+      definitionPage([configuration('configuration-a', 'Production')], null),
+    );
+    api.listTriggers.mockResolvedValue(definitionPage([trigger('manual-trigger', 'manual')], null));
+    api.getBuildConfiguration.mockResolvedValue(
+      configurationDetails('configuration-a', 'Production'),
+    );
+    api.getRepository.mockResolvedValue(
+      repositoryDetails('repository-a', 'Application Source', {
+        allow_exact_revision: true,
+        allowed_references: [],
+        default_reference: null,
+      }),
+    );
+    api.triggerBuild.mockResolvedValue({
+      attempt_id: 'attempt-new',
+      build_id: 'build-new',
+      disposition: 'applied',
+      outcome: 'accepted',
+      ready_job_ids: ['job-new'],
+      trigger_occurrence_id: 'occurrence-new',
+    });
+    renderProjects('/projects/delivery', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'View Production details' }));
+
+    expect((await screen.findByRole('combobox', { name: 'Source' })).textContent).toContain(
+      'Exact revision',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Review Build' }));
+    expect(await screen.findByText('Exact revision is required.')).toBeTruthy();
+
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'Exact revision' }),
+      '0123456789abcdef',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Review Build' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Start Build from Production?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Start Build' }));
+
+    expect(api.triggerBuild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: { kind: 'exact_revision', value: '0123456789abcdef' },
+      }),
+      { 'Idempotency-Key': '44444444-4444-4444-8444-444444444444' },
+    );
   });
 
   it('paginates every definition section with an independent server cursor', async () => {

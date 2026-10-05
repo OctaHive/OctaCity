@@ -526,6 +526,7 @@ export const ruMessages = {
   'manualBuild.false': 'Нет',
   'manualBuild.noTrigger': 'Для этой конфигурации нет включённого ручного триггера.',
   'manualBuild.noTriggerLoaded': 'На загруженных страницах нет включённого ручного триггера.',
+  'manualBuild.noSource': 'Этот репозиторий не разрешает источник для ручных сборок.',
   'manualBuild.open': 'Открыть сборку {id}',
   'manualBuild.priority': 'Приоритет',
   'manualBuild.reference': 'Ссылка',

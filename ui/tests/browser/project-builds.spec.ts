@@ -62,6 +62,46 @@ test('replays one confirmed manual Build with an unchanged identity after a lost
   expect(requests[0]?.body.configuration_id).toBe(CONFIGURATION_ID);
 });
 
+test('submits only a source selection allowed by the published Repository', async ({ page }) => {
+  let requestBody: Record<string, unknown> | null = null;
+  await mockProjectApi(page, {
+    onManualTrigger: async (route) => {
+      requestBody = route.request().postDataJSON() as Record<string, unknown>;
+      await fulfillJson(route, {
+        attempt_id: 'attempt-new',
+        build_id: 'build-new',
+        disposition: 'applied',
+        outcome: 'accepted',
+        ready_job_ids: [],
+        trigger_occurrence_id: 'occurrence-new',
+      });
+    },
+    repositorySelection: {
+      allow_exact_revision: true,
+      allowed_references: [],
+      default_reference: null,
+    },
+  });
+
+  await page.goto(`/projects/${PROJECT_ID}`);
+  await page.getByRole('button', { name: 'View Release details' }).click();
+  await expect(page.getByRole('combobox', { name: 'Source' })).toContainText('Exact revision');
+  await page.getByRole('textbox', { name: 'Environment' }).fill('staging');
+  await page.getByRole('textbox', { name: 'Exact revision' }).fill('0123456789abcdef');
+  await page.getByRole('button', { name: 'Review Build' }).click();
+  await page
+    .getByRole('dialog', { name: 'Start Build from Release?' })
+    .getByRole('button', { name: 'Start Build' })
+    .click();
+
+  await expect
+    .poll(() => requestBody?.source)
+    .toEqual({
+      kind: 'exact_revision',
+      value: '0123456789abcdef',
+    });
+});
+
 test('round-trips copied Build filters, preserves server order, and follows the cursor', async ({
   page,
 }) => {
@@ -118,6 +158,7 @@ async function mockProjectApi(
     buildRequests?: URL[];
     onBuilds?: (route: Route, url: URL) => Promise<void>;
     onManualTrigger?: (route: Route) => Promise<void>;
+    repositorySelection?: RepositorySelection;
   } = {},
 ) {
   await page.route('**/health/ready', async (route) => {
@@ -168,6 +209,10 @@ async function mockProjectApi(
       await fulfillJson(route, buildConfiguration());
       return;
     }
+    if (url.pathname === '/api/v1/repositories/repository-1/versions/1') {
+      await fulfillJson(route, repository(handlers.repositorySelection));
+      return;
+    }
     if (url.pathname === `${projectPath}/builds`) {
       handlers.buildRequests?.push(url);
       if (handlers.onBuilds !== undefined) {
@@ -208,6 +253,31 @@ async function mockProjectApi(
     }
     await route.fulfill({ body: '{}', contentType: 'application/json', status: 404 });
   });
+}
+
+interface RepositorySelection {
+  allow_exact_revision: boolean;
+  allowed_references: string[];
+  default_reference: string | null;
+}
+
+function repository(selection?: RepositorySelection) {
+  return {
+    definition: {
+      repository_locator: 'https://example.test/source.git',
+      selection: selection ?? {
+        allow_exact_revision: true,
+        allowed_references: ['refs/heads/main'],
+        default_reference: 'refs/heads/main',
+      },
+      vcs_integration_id: 'integration-1',
+    },
+    id: 'repository-1',
+    name: 'Application Source',
+    project_id: PROJECT_ID,
+    published_at_unix_ms: 1_700_000_000_000,
+    version: 1,
+  };
 }
 
 function buildConfiguration() {

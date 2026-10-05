@@ -526,6 +526,7 @@ export const enMessages = {
   'manualBuild.false': 'False',
   'manualBuild.noTrigger': 'No enabled manual Trigger is available for this configuration.',
   'manualBuild.noTriggerLoaded': 'No enabled manual Trigger is present in the loaded pages.',
+  'manualBuild.noSource': 'This Repository does not allow a source for manual Builds.',
   'manualBuild.open': 'Open Build {id}',
   'manualBuild.priority': 'Priority',
   'manualBuild.reference': 'Reference',

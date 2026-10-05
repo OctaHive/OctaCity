@@ -96,8 +96,11 @@ export interface ProjectDefinitionReadsApi {
   ): Promise<TriggerDefinitionSummaryPage>;
 }
 
-/** Minimal command seam used by the manual Build form. */
-export interface ManualBuildApi extends Pick<ProjectDefinitionReadsApi, 'listTriggers'> {
+/** Minimal read and command seam used by the manual Build form. */
+export interface ManualBuildApi extends Pick<
+  ProjectDefinitionReadsApi,
+  'getRepository' | 'listTriggers'
+> {
   triggerBuild(
     request: Readonly<ManualBuildRequest>,
     headers: IdempotencyRequestHeaders,

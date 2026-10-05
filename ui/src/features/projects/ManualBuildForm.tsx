@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -19,6 +19,7 @@ import type {
   BuildConfigurationResource,
   ManualBuildApi,
   ManualBuildRequest,
+  RepositoryResource,
   TriggerDefinitionSummary,
 } from './api';
 import styles from './ProjectDefinitions.module.css';
@@ -29,6 +30,7 @@ interface TriggerPage {
 }
 
 type ParameterValue = string | number | boolean;
+type ManualSourceKind = ManualBuildRequest['source']['kind'];
 
 /** Collects one typed manual invocation for the selected immutable Build Configuration. */
 export function ManualBuildForm({
@@ -58,10 +60,21 @@ export function ManualBuildForm({
         item.configuration_id === configuration.id &&
         item.configuration_version === configuration.version,
     );
+  const repository = useQuery({
+    queryFn: ({ signal }) =>
+      api.getRepository(
+        configuration.definition.repository_id,
+        configuration.definition.repository_version,
+        signal,
+      ),
+    queryKey: queryKeys.repository(
+      configuration.definition.repository_id,
+      configuration.definition.repository_version,
+    ),
+  });
   const initialValues = useMemo(() => initialParameterValues(configuration), [configuration]);
   const [values, setValues] = useState<Record<string, ParameterValue>>(initialValues);
-  const [sourceKind, setSourceKind] =
-    useState<ManualBuildRequest['source']['kind']>('default_reference');
+  const [sourceKind, setSourceKind] = useState<ManualSourceKind>('default_reference');
   const [sourceValue, setSourceValue] = useState('');
   const [priority, setPriority] = useState('0');
   const [validation, setValidation] = useState<string[]>([]);
@@ -69,16 +82,26 @@ export function ManualBuildForm({
     request: ManualBuildRequest;
     returnFocus: HTMLElement;
   } | null>(null);
+  const sourceOptions =
+    repository.data === undefined ? [] : manualSourceOptions(repository.data, t);
+  const selectedSourceKind = sourceOptions.some((option) => option.value === sourceKind)
+    ? sourceKind
+    : (sourceOptions[0]?.value ?? null);
+  const allowedReferences = repository.data?.definition.selection.allowed_references ?? [];
+  const selectedReference = allowedReferences.includes(sourceValue)
+    ? sourceValue
+    : (allowedReferences[0] ?? '');
+  const selectedSourceValue = selectedSourceKind === 'reference' ? selectedReference : sourceValue;
 
   const prepare = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (manualTrigger === undefined) return;
+    if (manualTrigger === undefined || selectedSourceKind === null) return;
     const parsed = parseManualBuildRequest(
       configuration,
       manualTrigger,
       values,
-      sourceKind,
-      sourceValue,
+      selectedSourceKind,
+      selectedSourceValue,
       priority,
       t,
     );
@@ -107,32 +130,18 @@ export function ManualBuildForm({
           valueType={parameter.value_type}
         />
       ))}
-      <div className={commandFormStyles.field}>
-        <span>{t('manualBuild.source')}</span>
-        <SelectMenu
-          ariaLabel={t('manualBuild.source')}
-          onValueChange={setSourceKind}
-          options={[
-            { label: t('manualBuild.defaultReference'), value: 'default_reference' },
-            { label: t('manualBuild.reference'), value: 'reference' },
-            { label: t('manualBuild.exactRevision'), value: 'exact_revision' },
-          ]}
-          value={sourceKind}
+      {repository.data === undefined || selectedSourceKind === null ? null : (
+        <ManualSourceFields
+          allowedReferences={allowedReferences}
+          kind={selectedSourceKind}
+          onKindChange={(kind) => {
+            setSourceKind(kind);
+            setSourceValue(kind === 'reference' ? (allowedReferences[0] ?? '') : '');
+          }}
+          onValueChange={setSourceValue}
+          options={sourceOptions}
+          value={selectedSourceValue}
         />
-      </div>
-      {sourceKind === 'default_reference' ? null : (
-        <label className={commandFormStyles.field}>
-          <span>
-            {sourceKind === 'reference'
-              ? t('manualBuild.reference')
-              : t('manualBuild.exactRevision')}
-          </span>
-          <input
-            className={commandFormStyles.control}
-            onChange={(event) => setSourceValue(event.target.value)}
-            value={sourceValue}
-          />
-        </label>
       )}
       <label className={commandFormStyles.field}>
         <span>{t('manualBuild.priority')}</span>
@@ -188,6 +197,16 @@ export function ManualBuildForm({
             </button>
           ) : null}
         </div>
+      ) : repository.isPending ? (
+        <QueryLoadingNotice label={t('definitions.repository')} />
+      ) : repository.data === undefined ? (
+        <QueryFailureNotice
+          error={repository.error}
+          onRetry={repository.refetch}
+          title={t('definitions.detailsLoadFailure', { label: t('definitions.repository') })}
+        />
+      ) : selectedSourceKind === null ? (
+        <QueryEmptyNotice>{t('manualBuild.noSource')}</QueryEmptyNotice>
       ) : (
         <>
           <QueryBackgroundNotice
@@ -195,6 +214,12 @@ export function ManualBuildForm({
             fetching={triggers.isFetching && !triggers.isFetchingNextPage}
             label={t('manualBuild.triggerData')}
             onRetry={triggers.refetch}
+          />
+          <QueryBackgroundNotice
+            error={repository.error}
+            fetching={repository.isFetching}
+            label={t('definitions.data', { title: t('definitions.repository') })}
+            onRetry={repository.refetch}
           />
           <button className={styles.commandButton} type="submit">
             {t('manualBuild.review')}
@@ -243,6 +268,57 @@ export function ManualBuildForm({
         />
       )}
     </form>
+  );
+}
+
+function ManualSourceFields({
+  allowedReferences,
+  kind,
+  onKindChange,
+  onValueChange,
+  options,
+  value,
+}: {
+  allowedReferences: readonly string[];
+  kind: ManualSourceKind;
+  onKindChange: (kind: ManualSourceKind) => void;
+  onValueChange: (value: string) => void;
+  options: { label: string; value: ManualSourceKind }[];
+  value: string;
+}) {
+  const { t } = usePresentation();
+  return (
+    <>
+      <div className={commandFormStyles.field}>
+        <span>{t('manualBuild.source')}</span>
+        <SelectMenu
+          ariaLabel={t('manualBuild.source')}
+          onValueChange={onKindChange}
+          options={options}
+          value={kind}
+        />
+      </div>
+      {kind === 'reference' ? (
+        <div className={commandFormStyles.field}>
+          <span>{t('manualBuild.reference')}</span>
+          <SelectMenu
+            ariaLabel={t('manualBuild.reference')}
+            onValueChange={onValueChange}
+            options={allowedReferences.map((reference) => ({ label: reference, value: reference }))}
+            value={value}
+          />
+        </div>
+      ) : kind === 'exact_revision' ? (
+        <label className={commandFormStyles.field}>
+          <span>{t('manualBuild.exactRevision')}</span>
+          <input
+            className={commandFormStyles.control}
+            onChange={(event) => onValueChange(event.target.value)}
+            value={value}
+          />
+        </label>
+      ) : null}
+    </>
   );
 }
 
@@ -297,6 +373,24 @@ function initialParameterValues(configuration: BuildConfigurationResource) {
       parameter.default ?? '',
     ]),
   ) as Record<string, ParameterValue>;
+}
+
+function manualSourceOptions(
+  repository: RepositoryResource,
+  t: ReturnType<typeof usePresentation>['t'],
+): { label: string; value: ManualSourceKind }[] {
+  const options: { label: string; value: ManualSourceKind }[] = [];
+  const selection = repository.definition.selection;
+  if (selection.default_reference !== null) {
+    options.push({ label: t('manualBuild.defaultReference'), value: 'default_reference' });
+  }
+  if (selection.allowed_references.length > 0) {
+    options.push({ label: t('manualBuild.reference'), value: 'reference' });
+  }
+  if (selection.allow_exact_revision) {
+    options.push({ label: t('manualBuild.exactRevision'), value: 'exact_revision' });
+  }
+  return options;
 }
 
 function parseManualBuildRequest(
