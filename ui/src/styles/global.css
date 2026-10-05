@@ -6,6 +6,7 @@
 
 html {
   min-width: 20rem;
+  scrollbar-gutter: stable;
   background: var(--color-canvas);
   color: var(--color-text-primary);
   font-family: var(--font-sans);

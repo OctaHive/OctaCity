@@ -55,6 +55,15 @@ test('renders the semantic contextual workbench', async ({ page }) => {
 
   const explorer = page.getByRole('complementary', { name: 'Projects explorer' });
   await expect(explorer).toBeVisible();
+  expect(
+    await page.locator('html').evaluate((element) => getComputedStyle(element).scrollbarGutter),
+  ).toBe('stable');
+  expect(
+    await explorer
+      .locator(':scope > div')
+      .first()
+      .evaluate((element) => getComputedStyle(element).scrollbarGutter),
+  ).toBe('stable');
   await expect(explorer.getByRole('heading', { name: 'Favorites' })).toBeVisible();
   await expect(explorer.getByRole('heading', { name: 'Browse' })).toBeVisible();
   await expect(explorer.getByRole('link', { name: 'Platform' })).toBeVisible();

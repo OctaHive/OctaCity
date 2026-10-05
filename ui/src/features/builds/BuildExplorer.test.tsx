@@ -194,7 +194,7 @@ describe('Build explorer', () => {
     );
   });
 
-  it('keeps the rendered hierarchy mounted while selecting a Build', async () => {
+  it('keeps loaded hierarchy nodes mounted and cached while selecting a Build', async () => {
     const api = fakeApi();
     configureSelectedBuild(api);
     api.listProjects.mockResolvedValue(
@@ -216,6 +216,9 @@ describe('Build explorer', () => {
       await screen.findByRole('button', { name: 'Expand Selected Configuration' }),
     );
     const hierarchy = await screen.findByRole('tree', { name: 'Build hierarchy' });
+    expect(rootProjectReads(api)).toBe(1);
+    expect(api.listBuildConfigurations).toHaveBeenCalledTimes(1);
+    expect(api.listBuilds).toHaveBeenCalledTimes(1);
     await userEvent.click(await screen.findByRole('link', { name: 'selected-build' }));
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/builds/selected-build'));
@@ -225,6 +228,9 @@ describe('Build explorer', () => {
       ).toBe('page'),
     );
     expect(screen.getByRole('tree', { name: 'Build hierarchy' })).toBe(hierarchy);
+    expect(rootProjectReads(api)).toBe(1);
+    expect(api.listBuildConfigurations).toHaveBeenCalledTimes(1);
+    expect(api.listBuilds).toHaveBeenCalledTimes(1);
   });
 
   it('reports a selected Build lookup failure with request correlation while retaining browsing', async () => {
@@ -312,6 +318,10 @@ function renderExplorer(path: string, api: BuildExplorerApi) {
     </QueryClientProvider>,
   );
   return { queryClient, router };
+}
+
+function rootProjectReads(api: ReturnType<typeof fakeApi>): number {
+  return api.listProjects.mock.calls.filter(([parentId]) => parentId === null).length;
 }
 
 function fakeApi() {

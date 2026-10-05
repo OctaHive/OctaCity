@@ -76,6 +76,7 @@
 
 .explorerBody {
   overflow: auto;
+  scrollbar-gutter: stable;
   padding: var(--space-md);
 }
 

@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 const tokens = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8');
 const globalStyles = readFileSync(new URL('./global.css', import.meta.url), 'utf8');
 const shellStyles = readFileSync(new URL('../app/shell/Shell.module.css', import.meta.url), 'utf8');
+const explorerStyles = readFileSync(
+  new URL('../app/shell/ContextExplorer.module.css', import.meta.url),
+  'utf8',
+);
 
 const darkSelector = ":root[data-resolved-theme='dark']";
 const darkStart = tokens.indexOf(darkSelector);
@@ -104,6 +108,11 @@ describe('evergreen tokens', () => {
     expect(globalStyles).toContain('animation-iteration-count: 1 !important');
     expect(globalStyles).toContain('transition-duration: 0.01ms !important');
     expect(globalStyles).toContain('scroll-behavior: auto !important');
+  });
+
+  it('reserves scrollbar space so expanding or selecting tree nodes does not shift the shell', () => {
+    expect(globalStyles).toMatch(/html\s*\{[^}]*scrollbar-gutter:\s*stable;/s);
+    expect(explorerStyles).toMatch(/\.explorerBody\s*\{[^}]*scrollbar-gutter:\s*stable;/s);
   });
 });
 
