@@ -69,8 +69,10 @@ impl ReleaseContract {
       return Err(invalid("unsupported OctaCity release contract"));
     }
     for (product, contract) in &self.products {
-      if contract.required_components.is_empty() || contract.protocols.is_empty() {
-        return Err(invalid(format!("release contract for '{product}' is empty")));
+      if contract.required_components.is_empty() {
+        return Err(invalid(format!(
+          "release contract for '{product}' has no required components"
+        )));
       }
       for (name, range) in &contract.protocols {
         range.validate(name)?;
@@ -109,6 +111,38 @@ mod tests {
       "webhook_provider",
       octacity_webhook_provider_protocol::WEBHOOK_PROTOCOL_VERSION,
     );
+  }
+
+  #[test]
+  fn canonical_contract_allows_a_static_product_without_protocols() {
+    let contract = ReleaseContract::canonical().unwrap();
+    let console = contract.product("octacity-console").unwrap();
+
+    assert_eq!(
+      console.required_components,
+      ["application".to_owned()].into_iter().collect()
+    );
+    assert!(console.protocols.is_empty());
+  }
+
+  #[test]
+  fn contract_rejects_a_product_without_required_components() {
+    let error = ReleaseContract::parse(
+      br#"{
+        "format_version": 1,
+        "manifest": "release-manifest.json",
+        "checksums": "SHA256SUMS",
+        "products": {
+          "empty": {
+            "required_components": [],
+            "protocols": {}
+          }
+        }
+      }"#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("has no required components"));
   }
 
   fn assert_exact(product: &ProductContract, name: &str, expected: u16) {
