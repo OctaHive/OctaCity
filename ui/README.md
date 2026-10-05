@@ -95,9 +95,13 @@ and each Configuration's newest Builds with an independent cursor per expanded b
 deep link reveals its Project ancestry without flattening nested Projects, and every explorer makes
 its bounded-page scope explicit rather than claiming global completeness.
 
-The header exposes readiness,
-Command/Ctrl+K search, system/light/dark theme selection, a neutral notification placeholder, and
-an operator menu for browser-local preferences and deployment references. It deliberately has no
+The header exposes readiness, Command/Ctrl+K resource search and safe navigation/presentation
+commands, system/light/dark theme selection, and a notification center. Notifications combine
+three bounded sources: current-tab definitive command outcomes, favorite-resource attention, and
+critical system attention. Notification items and request identities stay in memory; only the
+center's last-opened timestamp is stored in the versioned browser-local preference record. The
+operator menu owns the infrequently changed language selection plus deployment references. The
+console deliberately has no
 login route, browser credential storage, fabricated browser identity, or logout action, and it
 visibly identifies the unauthenticated trusted-network boundary.
 Explorer search entries pass typed server resource kinds into the shared command center; clearing

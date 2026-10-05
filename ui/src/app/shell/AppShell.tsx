@@ -10,27 +10,35 @@ import {
 import {
   useCallback,
   useEffect,
+  lazy,
   useRef,
   useState,
+  Suspense,
   type CSSProperties,
   type ReactNode,
 } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import type { ReadinessProbe } from '../../api/readiness';
+import type { ResourceSearchApi } from '../../api/resourceSearch';
+import type { OperatorAttentionApi } from '../../api/operatorAttention';
 import { queryKeys, READINESS_REFRESH_MILLISECONDS } from '../query';
-import { CommandCenter } from './CommandCenter';
 import { ContextExplorer } from './ContextExplorer';
-import { isNarrowWorkbench, observeNarrowWorkbench, useNarrowWorkbench } from './layout';
-import { loadExplorerWidth, saveExplorerWidth } from './preferences';
+import { usePresentation } from '../presentation/PresentationProvider';
+import { useNarrowWorkbench } from './layout';
 import {
   GLOBAL_RESOURCE_SEARCH_SCOPE,
   searchScopeForSection,
   type ResourceSearchScope,
 } from './searchScope';
-import { consoleSections, sectionForPath, type ConsoleSectionId } from './sections';
+import { consoleSections, sectionForPath, sectionLabel, type ConsoleSectionId } from './sections';
 import styles from './Shell.module.css';
 import { UtilityHeader } from './UtilityHeader';
+
+const CommandCenter = lazy(async () => {
+  const module = await import('./CommandCenter');
+  return { default: module.CommandCenter };
+});
 
 const sectionIcons = {
   agents: ServerCog,
@@ -41,7 +49,9 @@ const sectionIcons = {
 
 interface AppShellProps {
   explorerContent?: Partial<Record<ConsoleSectionId, ReactNode>>;
+  operatorAttentionApi: OperatorAttentionApi;
   readinessProbe: ReadinessProbe;
+  resourceSearchApi: ResourceSearchApi;
 }
 
 interface SearchOverlayState {
@@ -49,12 +59,24 @@ interface SearchOverlayState {
   scope: ResourceSearchScope;
 }
 
-export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps) {
+export function AppShell({
+  explorerContent = {},
+  operatorAttentionApi,
+  readinessProbe,
+  resourceSearchApi,
+}: AppShellProps) {
   const location = useLocation();
+  const {
+    preferences,
+    setExplorerOpen,
+    setExplorerWidth: persistExplorerWidth,
+    t,
+  } = usePresentation();
   const activeSection = sectionForPath(location.pathname);
+  const activeSectionLabel = sectionLabel(activeSection.id, t);
   const narrowWorkbench = useNarrowWorkbench();
-  const [explorerOpen, setExplorerOpen] = useState(() => !isNarrowWorkbench());
-  const [explorerWidth, setExplorerWidth] = useState(loadExplorerWidth);
+  const [narrowExplorerOpen, setNarrowExplorerOpen] = useState(false);
+  const [explorerWidth, setExplorerWidth] = useState(preferences.explorerWidth);
   const [searchOverlay, setSearchOverlay] = useState<SearchOverlayState | null>(null);
   const explorerHeadingRef = useRef<HTMLHeadingElement>(null);
   const focusExplorerOnOpenRef = useRef(false);
@@ -67,10 +89,11 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
   });
   const readinessState = readiness.data ?? 'unreachable';
   const readinessLabel = readiness.isPending
-    ? 'Checking readiness'
-    : readinessLabels[readinessState];
+    ? t('readiness.checking')
+    : t(readinessMessageKeys[readinessState]);
   const readinessTone = readiness.isPending ? 'checking' : readinessState;
   const explorerAvailable = activeSection.explorerMode !== null;
+  const explorerOpen = narrowWorkbench ? narrowExplorerOpen : preferences.explorerOpen;
   const explorerVisible = explorerAvailable && explorerOpen;
   const shellStyle = { '--explorer-width': `${explorerWidth}px` } as CSSProperties;
   const shellClassName = [
@@ -83,14 +106,6 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
   const closeSearch = useCallback(() => setSearchOverlay(null), []);
   const restoreExplorerFocus = useCallback(() => {
     globalThis.requestAnimationFrame(() => explorerOpenButtonRef.current?.focus());
-  }, []);
-
-  useEffect(() => {
-    return observeNarrowWorkbench((narrow) => {
-      if (narrow) {
-        setExplorerOpen(false);
-      }
-    });
   }, []);
 
   useEffect(() => {
@@ -119,20 +134,23 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
 
   const openExplorer = useCallback(() => {
     focusExplorerOnOpenRef.current = true;
-    setExplorerOpen(true);
-  }, []);
+    if (narrowWorkbench) setNarrowExplorerOpen(true);
+    else setExplorerOpen(true);
+  }, [narrowWorkbench, setExplorerOpen]);
 
   const collapseExplorer = useCallback(() => {
-    setExplorerOpen(false);
+    if (narrowWorkbench) setNarrowExplorerOpen(false);
+    else setExplorerOpen(false);
     globalThis.requestAnimationFrame(() => explorerOpenButtonRef.current?.focus());
-  }, []);
+  }, [narrowWorkbench, setExplorerOpen]);
 
   return (
     <div className={shellClassName} style={shellStyle}>
       <a className={styles.skipLink} href="#console-content">
-        Skip to content
+        {t('shell.skipToContent')}
       </a>
       <UtilityHeader
+        operatorAttentionApi={operatorAttentionApi}
         onOpenSearch={(trigger) =>
           setSearchOverlay({ returnFocus: trigger, scope: GLOBAL_RESOURCE_SEARCH_SCOPE })
         }
@@ -141,36 +159,40 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
       />
 
       <aside className={styles.sectionRail}>
-        <nav aria-label="Primary sections">
+        <nav aria-label={t('shell.primarySections')}>
           {consoleSections.map((section) => {
             const Icon = sectionIcons[section.id];
             const active = section.id === activeSection.id;
+            const label = sectionLabel(section.id, t);
             return (
               <Link
                 aria-current={active ? 'page' : undefined}
                 className={active ? `${styles.railLink} ${styles.activeRailLink}` : styles.railLink}
                 key={section.id}
-                onClick={() => setExplorerOpen(section.explorerMode !== null)}
-                title={section.label}
+                onClick={() => {
+                  if (narrowWorkbench) setNarrowExplorerOpen(false);
+                  else setExplorerOpen(section.explorerMode !== null);
+                }}
+                title={label}
                 to={section.path}
               >
                 <Icon aria-hidden="true" size={22} strokeWidth={1.7} />
-                <span>{section.label}</span>
+                <span>{label}</span>
               </Link>
             );
           })}
         </nav>
         {explorerAvailable && !explorerOpen ? (
           <button
-            aria-label={`Open ${activeSection.label} explorer`}
+            aria-label={t('shell.openSectionExplorer', { section: activeSectionLabel })}
             className={styles.openExplorerButton}
             onClick={openExplorer}
             ref={explorerOpenButtonRef}
-            title="Open explorer"
+            title={t('shell.openExplorer')}
             type="button"
           >
             <PanelLeftOpen aria-hidden="true" size={21} />
-            <span>Explorer</span>
+            <span>{t('common.explorer')}</span>
           </button>
         ) : null}
       </aside>
@@ -195,7 +217,10 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
               })
             }
             onWidthChange={setExplorerWidth}
-            onWidthCommit={(width) => setExplorerWidth(saveExplorerWidth(width))}
+            onWidthCommit={(width) => {
+              persistExplorerWidth(width);
+              setExplorerWidth(width);
+            }}
             restoreFocus={restoreExplorerFocus}
             section={activeSection}
             width={explorerWidth}
@@ -208,13 +233,12 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
       <div className={styles.workspace}>
         <aside
           className={styles.securityBanner}
-          aria-label="Security notice"
+          aria-label={t('security.label')}
           id="trusted-network-notice"
         >
           <ShieldAlert aria-hidden="true" size={18} strokeWidth={1.9} />
           <p>
-            <strong>Trusted network only.</strong> This console is unauthenticated and must not be
-            exposed to an untrusted network.
+            <strong>{t('security.title')}</strong> {t('security.description')}
           </p>
         </aside>
 
@@ -224,26 +248,29 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
       </div>
 
       {searchOverlay === null ? null : (
-        <CommandCenter
-          onClose={closeSearch}
-          {...(searchOverlay.scope.length === 0
-            ? {}
-            : {
-                onClearScope: () =>
-                  setSearchOverlay((current) =>
-                    current === null ? null : { ...current, scope: GLOBAL_RESOURCE_SEARCH_SCOPE },
-                  ),
-              })}
-          returnFocus={searchOverlay.returnFocus}
-          scope={searchOverlay.scope}
-        />
+        <Suspense fallback={<span role="status">{t('route.loadingView')}</span>}>
+          <CommandCenter
+            api={resourceSearchApi}
+            onClose={closeSearch}
+            {...(searchOverlay.scope.length === 0
+              ? {}
+              : {
+                  onClearScope: () =>
+                    setSearchOverlay((current) =>
+                      current === null ? null : { ...current, scope: GLOBAL_RESOURCE_SEARCH_SCOPE },
+                    ),
+                })}
+            returnFocus={searchOverlay.returnFocus}
+            scope={searchOverlay.scope}
+          />
+        </Suspense>
       )}
     </div>
   );
 }
 
-const readinessLabels = {
-  ready: 'Server ready',
-  unavailable: 'Server unavailable',
-  unreachable: 'Server unreachable',
+const readinessMessageKeys = {
+  ready: 'readiness.ready',
+  unavailable: 'readiness.unavailable',
+  unreachable: 'readiness.unreachable',
 } as const;

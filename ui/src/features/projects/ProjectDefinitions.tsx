@@ -3,6 +3,7 @@ import { GitBranch, SlidersHorizontal, Workflow, Zap, type LucideIcon } from 'lu
 import { useState, type ReactNode } from 'react';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import type {
   BuildConfigurationResource,
   BuildConfigurationSummary,
@@ -56,45 +57,44 @@ interface DefinitionSectionProps<TItem extends DefinitionSummary, TDetails> {
 }
 
 export function ProjectDefinitions({ api, projectId }: ProjectDefinitionsProps) {
+  const { t } = usePresentation();
   return (
     <section aria-labelledby="definitions-heading" className={definitionStyles.section}>
       <div className={styles.sectionHeading}>
         <div>
-          <p className={styles.eyebrow}>Project workspace</p>
-          <h2 id="definitions-heading">Current definitions</h2>
+          <p className={styles.eyebrow}>{t('projects.workspace')}</p>
+          <h2 id="definitions-heading">{t('definitions.current')}</h2>
         </div>
       </div>
-      <p className={styles.sectionDescription}>
-        Browse the current published versions and inspect their immutable details.
-      </p>
+      <p className={styles.sectionDescription}>{t('definitions.description')}</p>
       <div className={definitionStyles.grid}>
         <DefinitionSection<PipelineSummary, PipelineResource>
           detailKey={(item) => queryKeys.pipeline(item.id, item.version)}
-          emptyLabel="No current Pipelines are available."
+          emptyLabel={t('definitions.noPipelines')}
           getDetails={(item, signal) => api.getPipeline(item.id, item.version, signal)}
           getPage={(cursor, signal) => api.listPipelines(projectId, cursor, signal)}
           headingId="pipelines-heading"
           icon={Workflow}
           itemLabel={(item) => item.name}
           queryKey={queryKeys.projectPipelines(projectId)}
-          renderDetails={renderPipelineDetails}
-          title="Pipelines"
+          renderDetails={(details) => renderPipelineDetails(details, t)}
+          title={t('definitions.pipelines')}
         />
         <DefinitionSection<RepositorySummary, RepositoryResource>
           detailKey={(item) => queryKeys.repository(item.id, item.version)}
-          emptyLabel="No current Repositories are available."
+          emptyLabel={t('definitions.noRepositories')}
           getDetails={(item, signal) => api.getRepository(item.id, item.version, signal)}
           getPage={(cursor, signal) => api.listRepositories(projectId, cursor, signal)}
           headingId="repositories-heading"
           icon={GitBranch}
           itemLabel={(item) => item.name}
           queryKey={queryKeys.projectRepositories(projectId)}
-          renderDetails={renderRepositoryDetails}
-          title="Repositories"
+          renderDetails={(details) => renderRepositoryDetails(details, t)}
+          title={t('definitions.repositories')}
         />
         <DefinitionSection<BuildConfigurationSummary, BuildConfigurationResource>
           detailKey={(item) => queryKeys.buildConfiguration(item.id, item.version)}
-          emptyLabel="No current Build Configurations are available."
+          emptyLabel={t('definitions.noConfigurations')}
           getDetails={(item, signal) => api.getBuildConfiguration(item.id, item.version, signal)}
           getPage={(cursor, signal) => api.listBuildConfigurations(projectId, cursor, signal)}
           headingId="build-configurations-heading"
@@ -109,25 +109,27 @@ export function ProjectDefinitions({ api, projectId }: ProjectDefinitionsProps) 
             />
           )}
           renderTags={(item) => <EnabledTag enabled={item.enabled} />}
-          title="Build Configurations"
+          title={t('definitions.configurations')}
         />
         <DefinitionSection<TriggerDefinitionSummary, TriggerDefinitionDetails>
           detailKey={(item) => queryKeys.trigger(item.kind, item.id, item.version)}
-          emptyLabel="No current Trigger definitions are available."
+          emptyLabel={t('definitions.noTriggers')}
           getDetails={(item, signal) => api.getTrigger(item, signal)}
           getPage={(cursor, signal) => api.listTriggers(projectId, cursor, signal)}
           headingId="triggers-heading"
           icon={Zap}
-          itemLabel={(item) => `${formatEnumLabel(item.kind)} trigger`}
+          itemLabel={(item) =>
+            t('definitions.triggerLabel', { kind: formatEnumLabel(item.kind, t) })
+          }
           queryKey={queryKeys.projectTriggers(projectId)}
-          renderDetails={renderTriggerDetails}
+          renderDetails={(details) => renderTriggerDetails(details, t)}
           renderTags={(item) => (
             <>
-              <span className={definitionStyles.kindTag}>{formatEnumLabel(item.kind)}</span>
+              <span className={definitionStyles.kindTag}>{formatEnumLabel(item.kind, t)}</span>
               <EnabledTag enabled={item.enabled} />
             </>
           )}
-          title="Triggers"
+          title={t('definitions.triggers')}
         />
       </div>
     </section>
@@ -147,6 +149,7 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
   renderTags,
   title,
 }: DefinitionSectionProps<TItem, TDetails>) {
+  const { t } = usePresentation();
   const [selected, setSelected] = useState<TItem | null>(null);
   const collection = useInfiniteQuery({
     getNextPageParam: (page: DefinitionPage<TItem>) => page.next_cursor ?? undefined,
@@ -169,7 +172,9 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
           <Icon size={18} strokeWidth={1.8} />
         </span>
         <h3 id={headingId}>{title}</h3>
-        {collection.data === undefined ? null : <span>{items.length} loaded</span>}
+        {collection.data === undefined ? null : (
+          <span>{t('definitions.loaded', { count: items.length })}</span>
+        )}
       </header>
       {collection.isPending ? (
         <QueryLoadingNotice className={definitionStyles.detailState} label={title} />
@@ -178,7 +183,7 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
           className={styles.compactFailure}
           error={collection.error}
           onRetry={collection.refetch}
-          title={`${title} could not be loaded.`}
+          title={t('definitions.loadFailure', { title })}
         />
       ) : items.length === 0 ? (
         <QueryEmptyNotice className={definitionStyles.empty}>{emptyLabel}</QueryEmptyNotice>
@@ -190,7 +195,11 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
             return (
               <li key={`${item.id}:${item.version}`}>
                 <button
-                  aria-label={`${expanded ? 'Hide' : 'View'} ${label} details`}
+                  aria-label={
+                    expanded
+                      ? t('definitions.hideLabelDetails', { label })
+                      : t('definitions.viewLabelDetails', { label })
+                  }
                   aria-expanded={expanded}
                   className={definitionStyles.itemButton}
                   onClick={() => setSelected(expanded ? null : item)}
@@ -198,11 +207,13 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
                 >
                   <span className={definitionStyles.summary}>
                     <strong>{label}</strong>
-                    <span>Version {item.version}</span>
+                    <span>{t('builds.version', { version: item.version })}</span>
                   </span>
                   <span className={definitionStyles.tags}>{renderTags?.(item)}</span>
                   <span className={definitionStyles.detailsAction}>
-                    {expanded ? 'Hide details' : `View ${label} details`}
+                    {expanded
+                      ? t('definitions.hideDetails')
+                      : t('definitions.viewDetails', { label })}
                   </span>
                 </button>
                 {expanded ? (
@@ -226,7 +237,7 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
           className={styles.staleNotice}
           error={collection.error}
           fetching={collection.isFetching && !collection.isFetchingNextPage}
-          label={`${title} data`}
+          label={t('definitions.data', { title })}
           onRetry={collection.isFetchNextPageError ? collection.fetchNextPage : collection.refetch}
         />
       )}
@@ -237,7 +248,9 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
           onClick={() => void collection.fetchNextPage()}
           type="button"
         >
-          {collection.isFetchingNextPage ? `Loading ${title}` : `Load more ${title}`}
+          {collection.isFetchingNextPage
+            ? t('definitions.loading', { title })
+            : t('definitions.loadMore', { title })}
         </button>
       ) : null}
     </section>
@@ -261,9 +274,13 @@ function DefinitionDetails<TDetails>({
   onRetry: () => unknown;
   render: (details: TDetails) => ReactNode;
 }) {
+  const { t } = usePresentation();
   if (isPending) {
     return (
-      <QueryLoadingNotice className={definitionStyles.detailState} label={`${label} details`} />
+      <QueryLoadingNotice
+        className={definitionStyles.detailState}
+        label={t('definitions.labelDetails', { label })}
+      />
     );
   }
   if (details === undefined) {
@@ -272,7 +289,7 @@ function DefinitionDetails<TDetails>({
         className={styles.compactFailure}
         error={error}
         onRetry={onRetry}
-        title={`${label} details could not be loaded.`}
+        title={t('definitions.detailsLoadFailure', { label })}
       />
     );
   }
@@ -283,7 +300,7 @@ function DefinitionDetails<TDetails>({
         className={styles.staleNotice}
         error={error}
         fetching={isFetching}
-        label={`${label} details data`}
+        label={t('definitions.detailsData', { label })}
         onRetry={onRetry}
       />
     </>
@@ -291,31 +308,40 @@ function DefinitionDetails<TDetails>({
 }
 
 function EnabledTag({ enabled }: { enabled: boolean }) {
+  const { t } = usePresentation();
   return (
     <span className={enabled ? definitionStyles.enabledTag : definitionStyles.disabledTag}>
-      {enabled ? 'Enabled' : 'Disabled'}
+      {enabled ? t('definitions.enabled') : t('definitions.disabled')}
     </span>
   );
 }
 
-function renderPipelineDetails(pipeline: PipelineResource) {
+type Translate = ReturnType<typeof usePresentation>['t'];
+
+function renderPipelineDetails(pipeline: PipelineResource, t: Translate) {
   return (
     <DetailList
       items={[
-        ['Jobs', `${pipeline.dag.nodes.length} Jobs`],
-        ['Dependencies', String(pipeline.dag.edges.length)],
+        [t('definitions.jobs'), t('definitions.jobCount', { count: pipeline.dag.nodes.length })],
+        [t('definitions.dependencies'), String(pipeline.dag.edges.length)],
       ]}
     />
   );
 }
 
-function renderRepositoryDetails(repository: RepositoryResource) {
+function renderRepositoryDetails(repository: RepositoryResource, t: Translate) {
   return (
     <DetailList
       items={[
-        ['Locator', repository.definition.repository_locator],
-        ['Default reference', repository.definition.selection.default_reference ?? 'None'],
-        ['Allowed references', String(repository.definition.selection.allowed_references.length)],
+        [t('definitions.locator'), repository.definition.repository_locator],
+        [
+          t('definitions.defaultReference'),
+          repository.definition.selection.default_reference ?? t('common.none'),
+        ],
+        [
+          t('definitions.allowedReferences'),
+          String(repository.definition.selection.allowed_references.length),
+        ],
       ]}
     />
   );
@@ -330,19 +356,20 @@ function BuildConfigurationDetails({
   configuration: BuildConfigurationResource;
   projectId: string;
 }) {
+  const { t } = usePresentation();
   return (
     <div className={definitionStyles.configurationDetails}>
       <DetailList
         items={[
           [
-            'Pipeline',
+            t('definitions.pipeline'),
             `${configuration.definition.pipeline_id} v${configuration.definition.pipeline_version}`,
           ],
           [
-            'Repository',
+            t('definitions.repository'),
             `${configuration.definition.repository_id} v${configuration.definition.repository_version}`,
           ],
-          ['Job concurrency', String(configuration.definition.job_concurrency_limit)],
+          [t('definitions.jobConcurrency'), String(configuration.definition.job_concurrency_limit)],
         ]}
       />
       <ManualBuildForm api={api} configuration={configuration} projectId={projectId} />
@@ -350,14 +377,14 @@ function BuildConfigurationDetails({
   );
 }
 
-function renderTriggerDetails(details: TriggerDefinitionDetails) {
+function renderTriggerDetails(details: TriggerDefinitionDetails, t: Translate) {
   if (details.kind === 'scheduled') {
     return (
       <DetailList
         items={[
-          ['Schedule', details.resource.schedule.expression],
-          ['Timezone', details.resource.schedule.timezone],
-          ['Build Configuration', formatConfiguration(details.resource)],
+          [t('definitions.schedule'), details.resource.schedule.expression],
+          [t('definitions.timezone'), details.resource.schedule.timezone],
+          [t('builds.configuration'), formatConfiguration(details.resource)],
         ]}
       />
     );
@@ -366,17 +393,19 @@ function renderTriggerDetails(details: TriggerDefinitionDetails) {
     return (
       <DetailList
         items={[
-          ['Outcome', formatEnumLabel(details.resource.outcome)],
+          [t('definitions.outcome'), formatEnumLabel(details.resource.outcome, t)],
           [
-            'Upstream Configuration',
+            t('definitions.upstreamConfiguration'),
             `${details.resource.upstream_configuration_id} v${details.resource.upstream_configuration_version}`,
           ],
-          ['Build Configuration', formatConfiguration(details.resource)],
+          [t('builds.configuration'), formatConfiguration(details.resource)],
         ]}
       />
     );
   }
-  return <DetailList items={[['Build Configuration', formatConfiguration(details.resource)]]} />;
+  return (
+    <DetailList items={[[t('builds.configuration'), formatConfiguration(details.resource)]]} />
+  );
 }
 
 function DetailList({ items }: { items: [string, string][] }) {

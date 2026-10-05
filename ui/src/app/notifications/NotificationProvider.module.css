@@ -1,0 +1,71 @@
+.feedback {
+  position: fixed;
+  z-index: 120;
+  right: var(--space-lg);
+  bottom: var(--space-lg);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-md);
+  width: min(24rem, calc(100vw - 2 * var(--space-lg)));
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-left: 0.3rem solid currentColor;
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-floating);
+  color: var(--color-text-primary);
+}
+
+.feedback > span {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.feedback strong,
+.feedback small {
+  overflow-wrap: anywhere;
+}
+
+.feedback small {
+  color: var(--color-text-muted);
+  line-height: 1.35;
+}
+
+.feedback button {
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.feedback_success {
+  color: var(--color-success-ink);
+}
+
+.feedback_rejected {
+  color: var(--color-warning-ink);
+}
+
+.feedback_indeterminate {
+  color: var(--color-information-ink);
+}
+
+.feedback_conflict,
+.feedback_failure {
+  color: var(--color-danger-ink);
+}
+
+@media (max-width: 42rem) {
+  .feedback {
+    right: var(--space-md);
+    bottom: var(--space-md);
+    width: calc(100vw - 2 * var(--space-md));
+  }
+}

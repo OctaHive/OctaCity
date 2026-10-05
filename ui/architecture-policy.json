@@ -30,7 +30,7 @@
   "allowedProductAssets": [],
   "networkBoundaries": ["src/api/client.ts", "src/api/readiness.ts"],
   "testSupportFiles": ["src/features/projects/ProjectTestSupport.tsx"],
-  "persistenceBoundary": "src/app/shell/preferences.ts",
+  "persistenceBoundary": "src/app/presentation/preferences.ts",
   "queryKeyBoundary": "src/app/query.ts",
   "designTokenStylesheet": "src/styles/tokens.css",
   "bundleBudgets": {

@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { formatTimestamp } from '../../shared/display';
 import {
   QueryBackgroundNotice,
@@ -46,13 +47,14 @@ interface LogSearchDraft {
 
 /** Searches only server-redacted logs belonging to the Build shown by this route. */
 export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: BuildLogSearchProps) {
+  const { locale, t } = usePresentation();
   const [searchParameters, setSearchParameters] = useSearchParams();
   const urlState = searchParameters.toString();
   const filters = readFilters(searchParameters, buildId, attemptId, jobs);
   const draft = readDraft(searchParameters, jobs);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const urlValidationError = filters.query === '' ? null : validateQuery(filters.query);
-  const scopeValidationError = validateScope(searchParameters, jobs);
+  const urlValidationError = filters.query === '' ? null : validateQuery(filters.query, t);
+  const scopeValidationError = validateScope(searchParameters, jobs, t);
   const visibleValidationError = validationError ?? urlValidationError ?? scopeValidationError;
 
   const search = useInfiniteQuery<
@@ -88,7 +90,7 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
     const scope = String(fields.get(LOG_SCOPE_PARAMETER) ?? 'build');
     const streamValue = fields.get(LOG_STREAM_PARAMETER);
     const stream = streamValue === 'stdout' || streamValue === 'stderr' ? streamValue : '';
-    const queryError = validateQuery(query);
+    const queryError = validateQuery(query, t);
     if (queryError !== null) {
       setValidationError(queryError);
       return;
@@ -113,21 +115,21 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
   }
 
   return (
-    <section aria-label="Redacted log search" className={styles.panel}>
+    <section aria-label={t('logs.label')} className={styles.panel}>
       <div className={styles.panelHeading}>
         <div>
-          <p className={styles.eyebrow}>Server-redacted evidence</p>
-          <h2>Log search</h2>
+          <p className={styles.eyebrow}>{t('logs.eyebrow')}</p>
+          <h2>{t('logs.title')}</h2>
         </div>
         {filters.query === '' ? null : (
           <button className={styles.textButton} onClick={clear} type="button">
-            Clear search
+            {t('logs.clear')}
           </button>
         )}
       </div>
       <form className={styles.logSearchForm} key={urlState} onSubmit={submit}>
         <label className={styles.logQueryField}>
-          <span>Log query</span>
+          <span>{t('logs.query')}</span>
           <input
             aria-invalid={
               validationError === null && urlValidationError === null ? undefined : true
@@ -139,35 +141,35 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
           />
         </label>
         <label>
-          <span>Search mode</span>
+          <span>{t('logs.searchMode')}</span>
           <select defaultValue={draft.mode} name={LOG_MODE_PARAMETER}>
-            <option value="literal">Literal</option>
-            <option value="full_text">Full text</option>
+            <option value="literal">{t('logs.literal')}</option>
+            <option value="full_text">{t('logs.fullText')}</option>
           </select>
         </label>
         <label>
-          <span>Search scope</span>
+          <span>{t('logs.scope')}</span>
           <select defaultValue={draft.scope} name={LOG_SCOPE_PARAMETER}>
-            <option value="build">Entire Build</option>
-            <option value="attempt">Current Attempt</option>
+            <option value="build">{t('logs.buildScope')}</option>
+            <option value="attempt">{t('logs.attemptScope')}</option>
             {jobs.map((job) => (
               <option key={job.id} value={`job:${job.id}`}>
-                Job: {job.pipeline_node_id}
+                {t('logs.jobScope', { name: job.pipeline_node_id })}
               </option>
             ))}
           </select>
         </label>
         <label>
-          <span>Log stream</span>
+          <span>{t('logs.stream')}</span>
           <select defaultValue={draft.stream} name={LOG_STREAM_PARAMETER}>
-            <option value="">All streams</option>
+            <option value="">{t('logs.allStreams')}</option>
             <option value="stdout">stdout</option>
             <option value="stderr">stderr</option>
           </select>
         </label>
         <button className={styles.secondaryButton} type="submit">
           <Search aria-hidden="true" size={15} />
-          Search logs
+          {t('logs.search')}
         </button>
       </form>
       {visibleValidationError === null ? null : (
@@ -176,15 +178,15 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
         </p>
       )}
       {filters.query === '' ? (
-        <p className={styles.logInitial}>Search bounded, server-redacted Build output.</p>
+        <p className={styles.logInitial}>{t('logs.initial')}</p>
       ) : urlValidationError !== null || scopeValidationError !== null ? null : search.isPending ? (
-        <QueryLoadingNotice className={styles.statePanel} label="redacted logs" />
+        <QueryLoadingNotice className={styles.statePanel} label={t('logs.label')} />
       ) : search.data === undefined ? (
         <QueryFailureNotice
           className={styles.failurePanel}
           error={search.error}
           onRetry={search.refetch}
-          title="Redacted logs could not be loaded."
+          title={t('logs.loadFailure')}
         />
       ) : (
         <>
@@ -192,18 +194,16 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
             className={styles.staleNotice}
             error={search.error}
             fetching={search.isFetching && !search.isFetchingNextPage}
-            label="redacted log search data"
+            label={t('logs.data')}
             onRetry={search.refetch}
           />
           {freshness?.caught_up === false ? <FreshnessWarning freshness={freshness} /> : null}
           {hits.length === 0 ? (
             <QueryEmptyNotice className={styles.diagnosticEmpty}>
-              {freshness?.caught_up === false
-                ? 'The search projection is still catching up; no matches are authoritative yet.'
-                : 'No redacted log matches the selected filters.'}
+              {freshness?.caught_up === false ? t('logs.emptyWhileCatchingUp') : t('logs.empty')}
             </QueryEmptyNotice>
           ) : (
-            <LogHits hits={hits} />
+            <LogHits hits={hits} locale={locale} />
           )}
           {search.hasNextPage ? (
             <button
@@ -212,7 +212,7 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
               onClick={() => void search.fetchNextPage()}
               type="button"
             >
-              {search.isFetchingNextPage ? 'Loading more matches' : 'Load more log matches'}
+              {search.isFetchingNextPage ? t('logs.loadingMore') : t('logs.loadMore')}
             </button>
           ) : null}
         </>
@@ -222,26 +222,33 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
 }
 
 function FreshnessWarning({ freshness }: { freshness: BuildLogSearchPage['freshness'] }) {
+  const { t } = usePresentation();
   return (
     <div className={styles.logFreshness} role="status">
       <AlertTriangle aria-hidden="true" size={16} />
-      Results may be incomplete. Indexed through {watermark(freshness.indexed_through)}; committed
-      through {watermark(freshness.committed_through)}.
+      {t('logs.freshness', {
+        committed: watermark(freshness.committed_through, t),
+        indexed: watermark(freshness.indexed_through, t),
+      })}
     </div>
   );
 }
 
-function LogHits({ hits }: { hits: BuildLogSearchPage['items'] }) {
+function LogHits({ hits, locale }: { hits: BuildLogSearchPage['items']; locale: string }) {
+  const { t } = usePresentation();
   return (
     <ol className={styles.logHits}>
       {hits.map((hit) => {
-        const occurred = formatTimestamp(hit.occurred_at_unix_ms);
+        const occurred = formatTimestamp(hit.occurred_at_unix_ms, locale);
         return (
           <li className={styles.logHit} key={hit.chunk_id}>
             <div className={styles.logHitMetadata}>
               <strong>{hit.stream}</strong>
               <span>
-                sequences {hit.first_sequence}–{hit.last_sequence}
+                {t('logs.sequenceRange', {
+                  first: hit.first_sequence,
+                  last: hit.last_sequence,
+                })}
               </span>
               <span>{hit.job_id}</span>
               <time dateTime={occurred.machine ?? undefined}>{occurred.display}</time>
@@ -293,12 +300,14 @@ function jobIdFromScope(scope: string, jobs: JobOption[]): string | null {
   return jobs.some((job) => job.id === jobId) ? jobId : null;
 }
 
-function validateScope(parameters: URLSearchParams, jobs: JobOption[]): string | null {
+function validateScope(
+  parameters: URLSearchParams,
+  jobs: JobOption[],
+  t: ReturnType<typeof usePresentation>['t'],
+): string | null {
   const scope = parameters.get(LOG_SCOPE_PARAMETER);
   if (scope === null || scope === 'build' || scope === 'attempt') return null;
-  return jobIdFromScope(scope, jobs) === null
-    ? 'The Job selected by this log-search URL is not available in the current Attempt.'
-    : null;
+  return jobIdFromScope(scope, jobs) === null ? t('logs.scopeUnavailable') : null;
 }
 
 function withoutLogParameters(parameters: URLSearchParams): URLSearchParams {
@@ -314,13 +323,13 @@ function withoutLogParameters(parameters: URLSearchParams): URLSearchParams {
   return next;
 }
 
-function watermark(value: number | null): string {
-  return value === null ? 'none' : String(value);
+function watermark(value: number | null, t: ReturnType<typeof usePresentation>['t']): string {
+  return value === null ? t('logs.none') : String(value);
 }
 
-function validateQuery(query: string): string | null {
-  if (query.length === 0) return 'Enter a log query.';
+function validateQuery(query: string, t: ReturnType<typeof usePresentation>['t']): string | null {
+  if (query.length === 0) return t('logs.enterQuery');
   return new TextEncoder().encode(query).length > MAX_LOG_QUERY_BYTES
-    ? `Log query must be at most ${MAX_LOG_QUERY_BYTES} UTF-8 bytes.`
+    ? t('logs.queryTooLong', { maximum: MAX_LOG_QUERY_BYTES })
     : null;
 }

@@ -1,4 +1,5 @@
 import { CONSOLE_PATHS } from '../routes';
+import type { MessageKey } from '../presentation/messages';
 
 export type ConsoleSectionId = 'projects' | 'builds' | 'agents' | 'audit';
 export type ContextExplorerMode = 'navigation' | 'tools';
@@ -8,6 +9,12 @@ export interface ConsoleSection {
   id: ConsoleSectionId;
   label: string;
   path: string;
+}
+
+type Translate = (key: MessageKey) => string;
+
+export function sectionLabel(section: ConsoleSectionId, t: Translate): string {
+  return t(`section.${section}`);
 }
 
 const projectsSection: ConsoleSection = {

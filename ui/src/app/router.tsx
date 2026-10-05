@@ -2,11 +2,15 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { Navigate, createBrowserRouter, type RouteObject } from 'react-router-dom';
 
 import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
+import { resourceSearchApi, type ResourceSearchApi } from '../api/resourceSearch';
+import { operatorAttentionApi, type OperatorAttentionApi } from '../api/operatorAttention';
 import { auditApi, type AuditApi } from '../features/audit/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
+import { usePresentation } from './presentation/PresentationProvider';
+import type { MessageKey } from './presentation/messages';
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
 import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
@@ -58,35 +62,53 @@ const ProjectView = lazy(async () => {
 });
 
 interface PlaceholderViewProps {
-  description: string;
-  title: string;
+  description: MessageKey;
+  title: MessageKey;
 }
 
 function PlaceholderView({ description, title }: PlaceholderViewProps) {
+  const { t } = usePresentation();
   return (
     <section className={styles.placeholder} aria-labelledby="page-title">
-      <p className={styles.eyebrow}>Operator workspace</p>
-      <h1 id="page-title">{title}</h1>
-      <p className={styles.placeholderDescription}>{description}</p>
+      <p className={styles.eyebrow}>{t('route.operatorWorkspace')}</p>
+      <h1 id="page-title">{t(title)}</h1>
+      <p className={styles.placeholderDescription}>{t(description)}</p>
     </section>
   );
 }
 
-/** Returns the complete first-release route tree for browser and memory routers. */
+export interface ConsoleRouteDependencies {
+  readonly attentionApi: OperatorAttentionApi;
+  readonly auditApi: AuditApi;
+  readonly buildApi: BuildDiagnosticsApi;
+  readonly capacityApi: CapacityApi;
+  readonly projectsApi: ProjectsApi;
+  readonly readinessProbe: ReadinessProbe;
+  readonly searchApi: ResourceSearchApi;
+}
+
+const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
+  attentionApi: operatorAttentionApi,
+  auditApi,
+  buildApi: buildDiagnosticsApi,
+  capacityApi,
+  projectsApi,
+  readinessProbe: fetchReadiness,
+  searchApi: resourceSearchApi,
+};
+
+/** Returns the complete first-release route tree with named, independently replaceable boundaries. */
 export function createConsoleRoutes(
-  readinessProbe: ReadinessProbe = fetchReadiness,
-  projectApi: ProjectsApi = projectsApi,
-  buildApi: BuildDiagnosticsApi = buildDiagnosticsApi,
-  agentCapacityApi: CapacityApi = capacityApi,
-  auditFactsApi: AuditApi = auditApi,
+  overrides: Partial<ConsoleRouteDependencies> = {},
 ): RouteObject[] {
+  const dependencies = { ...DEFAULT_ROUTE_DEPENDENCIES, ...overrides };
   const buildExplorerApi: BuildExplorerApi = {
-    getBuild: buildApi.getBuild,
-    getBuildConfiguration: projectApi.getBuildConfiguration,
-    getProject: projectApi.getProject,
-    listBuildConfigurations: projectApi.listBuildConfigurations,
-    listBuilds: projectApi.listBuilds,
-    listProjects: projectApi.listProjects,
+    getBuild: dependencies.buildApi.getBuild,
+    getBuildConfiguration: dependencies.projectsApi.getBuildConfiguration,
+    getProject: dependencies.projectsApi.getProject,
+    listBuildConfigurations: dependencies.projectsApi.listBuildConfigurations,
+    listBuilds: dependencies.projectsApi.listBuilds,
+    listProjects: dependencies.projectsApi.listProjects,
   };
   return [
     {
@@ -96,10 +118,12 @@ export function createConsoleRoutes(
           explorerContent={{
             audit: defer(<AuditFilterPanel />),
             builds: defer(<BuildExplorer api={buildExplorerApi} />),
-            agents: defer(<CapacityExplorer api={agentCapacityApi} />),
-            projects: defer(<ProjectExplorer api={projectApi} />),
+            agents: defer(<CapacityExplorer api={dependencies.capacityApi} />),
+            projects: defer(<ProjectExplorer api={dependencies.projectsApi} />),
           }}
-          readinessProbe={readinessProbe}
+          readinessProbe={dependencies.readinessProbe}
+          operatorAttentionApi={dependencies.attentionApi}
+          resourceSearchApi={dependencies.searchApi}
         />
       ),
       errorElement: <RouteErrorBoundary />,
@@ -111,20 +135,15 @@ export function createConsoleRoutes(
         },
         {
           path: childPath(CONSOLE_PATHS.project),
-          element: defer(<ProjectView api={projectApi} />),
+          element: defer(<ProjectView api={dependencies.projectsApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.builds),
-          element: (
-            <PlaceholderView
-              description="Choose a Build from the contextual explorer or global search."
-              title="Builds"
-            />
-          ),
+          element: <PlaceholderView description="route.chooseBuild" title="section.builds" />,
         },
         {
           path: childPath(CONSOLE_PATHS.build),
-          element: defer(<BuildView api={buildApi} />),
+          element: defer(<BuildView api={dependencies.buildApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.agents),
@@ -132,19 +151,19 @@ export function createConsoleRoutes(
         },
         {
           path: childPath(CONSOLE_PATHS.agent),
-          element: defer(<AgentView api={agentCapacityApi} />),
+          element: defer(<AgentView api={dependencies.capacityApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.agentPools),
-          element: defer(<CapacityLandingView title="Agent Pools" />),
+          element: defer(<CapacityLandingView kind="pools" />),
         },
         {
           path: childPath(CONSOLE_PATHS.agentPool),
-          element: defer(<AgentPoolView api={agentCapacityApi} />),
+          element: defer(<AgentPoolView api={dependencies.capacityApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.audit),
-          element: defer(<AuditView api={auditFactsApi} />),
+          element: defer(<AuditView api={dependencies.auditApi} />),
         },
         { path: '*', element: <NotFoundView /> },
       ],
@@ -161,15 +180,20 @@ function childPath(path: ConsolePath): string {
 }
 
 function defer(view: ReactNode): ReactNode {
+  return <DeferredView>{view}</DeferredView>;
+}
+
+function DeferredView({ children }: { children: ReactNode }) {
+  const { t } = usePresentation();
   return (
     <Suspense
       fallback={
         <p className={styles.deferred} role="status">
-          Loading view…
+          {t('route.loadingView')}
         </p>
       }
     >
-      {view}
+      {children}
     </Suspense>
   );
 }

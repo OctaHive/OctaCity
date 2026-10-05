@@ -38,3 +38,20 @@ export function agentPoolPath(poolId: string): string {
 export function projectPath(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}`;
 }
+
+/** Returns the canonical detail route for a globally searchable resource. */
+export function searchableResourcePath(
+  kind: 'agent' | 'agent_pool' | 'build' | 'project',
+  id: string,
+): string {
+  switch (kind) {
+    case 'agent':
+      return agentPath(id);
+    case 'agent_pool':
+      return agentPoolPath(id);
+    case 'build':
+      return buildPath(id);
+    case 'project':
+      return projectPath(id);
+  }
+}

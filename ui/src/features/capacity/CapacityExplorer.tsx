@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Server, ServerCog } from 'lucide-react';
 import { Link, matchPath, useLocation } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { agentPath, agentPoolPath, CONSOLE_PATHS } from '../../app/routes';
 import { formatEnumLabel } from '../../shared/display';
 import {
@@ -25,6 +26,7 @@ const emptySelection: SelectedCapacity = { agent: null, pool: null };
 
 /** Renders independently paginated Agent Pool -> Agent capacity navigation. */
 export function CapacityExplorer({ api }: { api: CapacityApi }) {
+  const { t } = usePresentation();
   const location = useLocation();
   const selectedAgentId = matchPath(CONSOLE_PATHS.agent, location.pathname)?.params.agentId ?? null;
   const selectedPoolId =
@@ -32,9 +34,7 @@ export function CapacityExplorer({ api }: { api: CapacityApi }) {
 
   return (
     <div className={styles.explorer}>
-      <p className={styles.notice}>
-        Capacity facts are authoritative; workload compatibility is decided by the server.
-      </p>
+      <p className={styles.notice}>{t('explorer.capacityAuthority')}</p>
       {selectedAgentId !== null ? (
         <SelectedAgentTree api={api} agentId={selectedAgentId} />
       ) : selectedPoolId !== null ? (
@@ -47,15 +47,20 @@ export function CapacityExplorer({ api }: { api: CapacityApi }) {
 }
 
 function SelectedAgentTree({ api, agentId }: { api: CapacityApi; agentId: string }) {
+  const { t } = usePresentation();
   const agent = useQuery({
     queryFn: ({ signal }) => api.getAgent(agentId, signal),
     queryKey: queryKeys.agent(agentId),
   });
-  if (agent.isPending) return <ExplorerBranchLoading label="selected Agent path" />;
+  if (agent.isPending) return <ExplorerBranchLoading label={t('explorer.selectedAgentPath')} />;
   if (agent.data === undefined) {
     return (
       <>
-        <ExplorerBranchFailure error={agent.error} label="Selected Agent" onRetry={agent.refetch} />
+        <ExplorerBranchFailure
+          error={agent.error}
+          label={t('explorer.selectedAgent')}
+          onRetry={agent.refetch}
+        />
         <CapacityTree api={api} selection={emptySelection} />
       </>
     );
@@ -84,17 +89,18 @@ function SelectedPoolForAgent({
   retryAgent: () => unknown;
   staleError: Error | null;
 }) {
+  const { t } = usePresentation();
   const pool = useQuery({
     queryFn: ({ signal }) => api.getAgentPool(agent.pool_id, signal),
     queryKey: queryKeys.agentPool(agent.pool_id),
   });
-  if (pool.isPending) return <ExplorerBranchLoading label="selected Agent Pool" />;
+  if (pool.isPending) return <ExplorerBranchLoading label={t('explorer.selectedPool')} />;
   if (pool.data === undefined) {
     return (
       <>
         <ExplorerBranchFailure
           error={pool.error}
-          label="Selected Agent Pool"
+          label={t('explorer.selectedPool')}
           onRetry={pool.refetch}
         />
         <CapacityTree api={api} selection={{ agent, pool: null }} />
@@ -106,7 +112,7 @@ function SelectedPoolForAgent({
       <ExplorerBranchBackground
         error={staleError ?? pool.error}
         fetching={fetchingAgent || pool.isFetching}
-        label="selected Agent path"
+        label={t('explorer.selectedAgentPath')}
         onRetry={() => {
           void retryAgent();
           void pool.refetch();
@@ -118,17 +124,18 @@ function SelectedPoolForAgent({
 }
 
 function SelectedPoolTree({ api, poolId }: { api: CapacityApi; poolId: string }) {
+  const { t } = usePresentation();
   const pool = useQuery({
     queryFn: ({ signal }) => api.getAgentPool(poolId, signal),
     queryKey: queryKeys.agentPool(poolId),
   });
-  if (pool.isPending) return <ExplorerBranchLoading label="selected Agent Pool" />;
+  if (pool.isPending) return <ExplorerBranchLoading label={t('explorer.selectedPool')} />;
   if (pool.data === undefined) {
     return (
       <>
         <ExplorerBranchFailure
           error={pool.error}
-          label="Selected Agent Pool"
+          label={t('explorer.selectedPool')}
           onRetry={pool.refetch}
         />
         <CapacityTree api={api} selection={emptySelection} />
@@ -140,7 +147,7 @@ function SelectedPoolTree({ api, poolId }: { api: CapacityApi; poolId: string })
       <ExplorerBranchBackground
         error={pool.error}
         fetching={pool.isFetching}
-        label="selected Agent Pool"
+        label={t('explorer.selectedPool')}
         onRetry={pool.refetch}
       />
       <CapacityTree api={api} selection={{ agent: null, pool: pool.data }} />
@@ -149,25 +156,26 @@ function SelectedPoolTree({ api, poolId }: { api: CapacityApi; poolId: string })
 }
 
 function CapacityTree({ api, selection }: { api: CapacityApi; selection: SelectedCapacity }) {
-  const expansion = useExpansionOverrides();
+  const { t } = usePresentation();
+  const expansion = useExpansionOverrides('agent_pool');
   const pools = useCursorPage(queryKeys.agentPools, (cursor, signal) =>
     api.listAgentPools(cursor, signal),
   );
   return (
     <PagedExplorerBranch
-      empty="No Agent Pools are available."
+      empty={t('explorer.noPools')}
       labels={{
-        failure: 'Agent Pools',
-        loading: 'Agent Pools',
-        loadMore: 'Load more Agent Pools',
-        loadingMore: 'Loading Agent Pools',
-        stale: 'Agent Pools',
+        failure: t('capacity.pools'),
+        loading: t('capacity.pools'),
+        loadMore: t('agentCommands.loadMore'),
+        loadingMore: t('agentCommands.loadingMore'),
+        stale: t('capacity.pools'),
       }}
       query={pools}
       revealed={selection.pool}
     >
       {(items) => (
-        <ul aria-label="Agent capacity hierarchy" className={styles.tree} role="tree">
+        <ul aria-label={t('explorer.agentCapacityHierarchy')} className={styles.tree} role="tree">
           {items.map((pool) => {
             const expanded = expansion.isExpanded(pool.id, selection.pool?.id === pool.id);
             return (
@@ -178,7 +186,9 @@ function CapacityTree({ api, selection }: { api: CapacityApi; selection: Selecte
                   }
                 >
                   <button
-                    aria-label={`${expanded ? 'Collapse' : 'Expand'} ${pool.name}`}
+                    aria-label={t(expanded ? 'explorer.collapse' : 'explorer.expand', {
+                      name: pool.name,
+                    })}
                     onClick={() => expansion.toggle(pool.id, expanded)}
                     type="button"
                   >
@@ -218,19 +228,20 @@ function AgentBranch({
   pool: AgentPoolResource;
   selected: AgentResource | null;
 }) {
+  const { t } = usePresentation();
   const agents = useCursorPage(queryKeys.agentPoolAgents(pool.id), (cursor, signal) =>
     api.listAgents(pool.id, cursor, signal),
   );
   const revealed = selected?.pool_id === pool.id ? selected : null;
   return (
     <PagedExplorerBranch
-      empty={`No Agents are enrolled in ${pool.name}.`}
+      empty={t('explorer.noAgents', { name: pool.name })}
       labels={{
-        failure: `${pool.name} Agents`,
-        loading: `${pool.name} Agents`,
-        loadMore: `Load more Agents in ${pool.name}`,
-        loadingMore: `Loading Agents in ${pool.name}`,
-        stale: `${pool.name} Agents`,
+        failure: t('explorer.agentsInPool', { name: pool.name }),
+        loading: t('explorer.agentsInPool', { name: pool.name }),
+        loadMore: t('explorer.loadMoreAgents', { name: pool.name }),
+        loadingMore: t('explorer.loadingAgents', { name: pool.name }),
+        stale: t('explorer.agentsInPool', { name: pool.name }),
       }}
       query={agents}
       revealed={revealed}
@@ -264,10 +275,15 @@ function AgentBranch({
   );
 }
 
-function State({ value }: { value: string }) {
+function State({
+  value,
+}: {
+  value: AgentResource['status'] | AgentPoolResource['definition']['drain_state'];
+}) {
+  const { t } = usePresentation();
   return (
     <span className={styles.status} data-state={value}>
-      {formatEnumLabel(value)}
+      {formatEnumLabel(value, t)}
     </span>
   );
 }

@@ -32,6 +32,7 @@ const CONTRAST_PAIRS = [
   ['color-success-ink', 'color-brand-soft'],
   ['color-on-brand', 'color-brand-action'],
   ['color-security-ink', 'color-brand-soft'],
+  ['color-on-notification-badge', 'color-notification-badge'],
 ] as const;
 
 function parseColors(source: string): Record<string, string> {
@@ -67,6 +68,13 @@ describe('evergreen tokens', () => {
     expect(tokens).toContain('--color-sidebar-hover: rgb(255 255 255 / 7%)');
   });
 
+  it('defines every color-bearing token explicitly in both palettes', () => {
+    const lightNames = parseTokenNames(lightTokens);
+    const darkNames = parseTokenNames(darkTokens);
+
+    expect(darkNames).toEqual(lightNames);
+  });
+
   it.each(CONTRAST_PAIRS)(
     '%s has WCAG AA text contrast on %s',
     (foregroundName, backgroundName) => {
@@ -98,6 +106,12 @@ describe('evergreen tokens', () => {
     expect(globalStyles).toContain('scroll-behavior: auto !important');
   });
 });
+
+function parseTokenNames(source: string): string[] {
+  return [...source.matchAll(/--(?<name>(?:color-[a-z0-9-]+|focus-ring|shadow-floating)):/g)]
+    .map((match) => match.groups?.name ?? '')
+    .sort();
+}
 
 function contrast(first: string, second: string): number {
   const [lighter, darker] = [luminance(first), luminance(second)].sort(

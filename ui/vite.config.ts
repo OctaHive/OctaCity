@@ -4,6 +4,18 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   plugins: [react()],
   build: {
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'message-catalogs',
+              test: /src\/app\/presentation\/messages\.(?:en|ru)\.ts$/u,
+            },
+          ],
+        },
+      },
+    },
     sourcemap: false,
   },
   test: {

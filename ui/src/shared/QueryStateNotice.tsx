@@ -2,6 +2,7 @@ import { AlertTriangle, Inbox, LoaderCircle, RefreshCw } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { ManagementApiError } from '../api/client';
+import { usePresentation } from '../app/presentation/PresentationProvider';
 import styles from './QueryStateNotice.module.css';
 
 interface NoticeProps {
@@ -52,10 +53,11 @@ export function QueryLoadingNotice({
   className?: string | undefined;
   label: string;
 }) {
+  const { t } = usePresentation();
   return (
     <div className={noticeClassName(styles.loading, className)} role="status">
       <LoaderCircle aria-hidden="true" size={18} />
-      <span className={styles.content}>Loading {label}…</span>
+      <span className={styles.content}>{t('query.loading', { label })}</span>
     </div>
   );
 }
@@ -84,12 +86,11 @@ export function QueryRefreshingNotice({
   className?: string | undefined;
   label: string;
 }) {
+  const { t } = usePresentation();
   return (
     <div className={noticeClassName(styles.refreshing, className)} role="status">
       <RefreshCw aria-hidden="true" size={16} />
-      <span className={styles.content}>
-        Refreshing {label}. Previously loaded data remains visible.
-      </span>
+      <span className={styles.content}>{t('query.refreshing', { label })}</span>
     </div>
   );
 }
@@ -102,12 +103,13 @@ export function QueryBackgroundNotice({
   label,
   onRetry,
 }: NoticeProps & { error: Error | null; fetching: boolean; label: string }) {
+  const { t } = usePresentation();
   if (error !== null) {
     return (
       <StaleQueryNotice
         className={className}
         error={error}
-        message={`Refresh failed. Showing the last loaded ${label}.`}
+        message={t('query.stale', { label })}
         onRetry={onRetry}
       />
     );
@@ -156,24 +158,32 @@ export function StaleQueryNotice({
 }
 
 function FailureDetails({ error }: { error: Error | null }) {
+  const { t } = usePresentation();
   if (!(error instanceof ManagementApiError)) {
-    return <span>The management request failed safely.</span>;
+    return <span>{t('query.safeFailure')}</span>;
   }
   return (
     <span className={styles.failureDetails}>
       <span>{error.message}</span>
-      <span>Error code: {error.code}</span>
+      <span>{t('query.errorCode', { code: error.code })}</span>
       {error.requestId === null ? null : (
-        <span className={styles.requestIdentity}>Request ID: {error.requestId}</span>
+        <span className={styles.requestIdentity}>
+          {t('query.requestId', { id: error.requestId })}
+        </span>
       )}
       {error.retryAfterMilliseconds === null ? null : (
-        <span>Retry delay: {Math.ceil(error.retryAfterMilliseconds / 1_000)} seconds</span>
+        <span>
+          {t('query.retryDelay', {
+            seconds: Math.ceil(error.retryAfterMilliseconds / 1_000),
+          })}
+        </span>
       )}
     </span>
   );
 }
 
 function RetryButton({ error, onRetry }: { error: Error | null; onRetry: () => unknown }) {
+  const { t } = usePresentation();
   const retryAfter =
     error instanceof ManagementApiError && error.code === 'rate_limited'
       ? error.retryAfterMilliseconds
@@ -193,7 +203,9 @@ function RetryButton({ error, onRetry }: { error: Error | null; onRetry: () => u
       onClick={() => void onRetry()}
       type="button"
     >
-      {waiting && retryAfter !== null ? `Retry in ${Math.ceil(retryAfter / 1_000)}s` : 'Retry'}
+      {waiting && retryAfter !== null
+        ? t('query.retryIn', { seconds: Math.ceil(retryAfter / 1_000) })
+        : t('query.retry')}
     </button>
   );
 }

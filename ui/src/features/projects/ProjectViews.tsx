@@ -3,6 +3,7 @@ import { ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
 import {
@@ -20,15 +21,13 @@ interface ProjectsViewProps {
 }
 
 export function ProjectsLandingView() {
+  const { t } = usePresentation();
   return (
     <section aria-labelledby="page-title" className={styles.page}>
-      <PageHeading
-        description="Choose a Project from the contextual explorer to inspect its current definitions and recent Builds."
-        title="Projects"
-      />
+      <PageHeading description={t('projects.choose')} title={t('section.projects')} />
       <div className={styles.emptyState}>
         <FolderTree aria-hidden="true" size={28} strokeWidth={1.6} />
-        <p>Select a Project from the hierarchy on the left.</p>
+        <p>{t('projects.selectLeft')}</p>
       </div>
     </section>
   );
@@ -43,6 +42,7 @@ export function ProjectView({ api }: ProjectsViewProps) {
 }
 
 function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: string }) {
+  const { t } = usePresentation();
   const project = useQuery({
     queryFn: ({ signal }) => api.getProject(projectId, signal),
     queryKey: queryKeys.project(projectId),
@@ -59,7 +59,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         className={styles.failurePanel}
         error={project.error}
         onRetry={project.refetch}
-        title="Project could not be loaded."
+        title={t('projects.loadFailure')}
       />
     );
   }
@@ -68,10 +68,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
     <section aria-labelledby="page-title" className={styles.page}>
       <ProjectBreadcrumbs details={project.data} />
       <div className={styles.headingRow}>
-        <PageHeading
-          description="Inspect the current Project workspace."
-          title={project.data.project.name}
-        />
+        <PageHeading description={t('projects.inspect')} title={project.data.project.name} />
         <button
           className={styles.secondaryButton}
           disabled={project.isFetching}
@@ -79,7 +76,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
           type="button"
         >
           <RefreshCw aria-hidden="true" size={16} />
-          {project.isFetching ? 'Refreshing' : 'Refresh'}
+          {project.isFetching ? t('common.refreshing') : t('common.refresh')}
         </button>
       </div>
       <p className={styles.identity}>{project.data.project.id}</p>
@@ -87,7 +84,7 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         className={styles.staleNotice}
         error={project.error}
         fetching={project.isFetching}
-        label="Project data"
+        label={t('projects.data')}
         onRetry={project.refetch}
       />
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
@@ -97,12 +94,13 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
 }
 
 function ProjectBreadcrumbs({ details }: { details: ProjectDetails }) {
+  const { t } = usePresentation();
   const trail = [...details.ancestors, details.project];
   return (
-    <nav aria-label="Project breadcrumb" className={styles.breadcrumbs}>
+    <nav aria-label={t('projects.breadcrumb')} className={styles.breadcrumbs}>
       <ol>
         <li>
-          <Link to={CONSOLE_PATHS.projects}>Projects</Link>
+          <Link to={CONSOLE_PATHS.projects}>{t('section.projects')}</Link>
         </li>
         {trail.map((project, index) => {
           const current = index === trail.length - 1;
@@ -123,9 +121,10 @@ function ProjectBreadcrumbs({ details }: { details: ProjectDetails }) {
 }
 
 function PageHeading({ description, title }: { description: string; title: string }) {
+  const { t } = usePresentation();
   return (
     <header className={styles.pageHeading}>
-      <p className={styles.eyebrow}>Project workspace</p>
+      <p className={styles.eyebrow}>{t('projects.workspace')}</p>
       <h1 id="page-title">{title}</h1>
       <p>{description}</p>
     </header>
@@ -133,10 +132,11 @@ function PageHeading({ description, title }: { description: string; title: strin
 }
 
 function ProjectLoading() {
+  const { t } = usePresentation();
   return (
     <section aria-labelledby="page-title" className={styles.page}>
-      <PageHeading description="Loading the selected Project and its ancestry." title="Project" />
-      <QueryLoadingNotice className={styles.statePanel} label="Projects" />
+      <PageHeading description={t('projects.loadingSelected')} title={t('projects.project')} />
+      <QueryLoadingNotice className={styles.statePanel} label={t('section.projects')} />
     </section>
   );
 }
@@ -148,22 +148,20 @@ function ProjectNotFound({
   error?: Error | null;
   onRetry?: (() => unknown) | undefined;
 } = {}) {
+  const { t } = usePresentation();
   return (
     <section aria-labelledby="page-title" className={styles.page}>
-      <PageHeading
-        description="The Project does not exist or is not visible from this management context."
-        title="Project not found"
-      />
+      <PageHeading description={t('projects.notFoundDescription')} title={t('projects.notFound')} />
       {onRetry === undefined ? null : (
         <QueryFailureNotice
           className={styles.failurePanel}
           error={error}
           onRetry={onRetry}
-          title="Project could not be loaded."
+          title={t('projects.loadFailure')}
         />
       )}
       <Link className={styles.primaryLink} to={CONSOLE_PATHS.projects}>
-        Return to Projects
+        {t('route.returnProjects')}
       </Link>
     </section>
   );

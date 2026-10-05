@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { buildPath } from '../../app/routes';
 import type {
   BuildConfigurationSummaryPage,
@@ -32,6 +33,7 @@ interface ProjectBuildsProps {
 }
 
 export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
+  const { t } = usePresentation();
   const [searchParameters, setSearchParameters] = useSearchParams();
   const filters = readBuildFilters(searchParameters);
   const canonicalSearch = canonicalizeBuildFilters(searchParameters, filters).toString();
@@ -85,19 +87,21 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
     <section aria-labelledby="recent-builds-heading" className={buildStyles.section}>
       <div className={`${styles.sectionHeading} ${buildStyles.sectionHeading}`}>
         <div>
-          <p className={styles.eyebrow}>Execution history</p>
-          <h2 id="recent-builds-heading">Recent Builds</h2>
+          <p className={styles.eyebrow}>{t('builds.executionHistory')}</p>
+          <h2 id="recent-builds-heading">{t('builds.recent')}</h2>
         </div>
-        {builds.data === undefined ? null : <span>{buildItems.length} loaded · newest first</span>}
+        {builds.data === undefined ? null : (
+          <span>{t('builds.loadedNewest', { count: buildItems.length })}</span>
+        )}
       </div>
       <form className={buildStyles.filters} onSubmit={(event) => event.preventDefault()}>
         <label>
-          <span>Build Configuration</span>
+          <span>{t('builds.configuration')}</span>
           <select
             onChange={(event) => updateFilter('configuration_id', event.currentTarget.value)}
             value={filters.configurationId ?? ''}
           >
-            <option value="">All configurations</option>
+            <option value="">{t('builds.allConfigurations')}</option>
             {filters.configurationId === null || selectedConfigurationIsKnown ? null : (
               <option value={filters.configurationId}>{filters.configurationId}</option>
             )}
@@ -109,15 +113,15 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           </select>
         </label>
         <label>
-          <span>Build state</span>
+          <span>{t('builds.state')}</span>
           <select
             onChange={(event) => updateFilter('state', event.currentTarget.value)}
             value={filters.state ?? ''}
           >
-            <option value="">All states</option>
-            {Object.entries(BUILD_STATE_PRESENTATIONS).map(([state, presentation]) => (
+            <option value="">{t('builds.allStates')}</option>
+            {(Object.keys(BUILD_STATE_PRESENTATIONS) as BuildState[]).map((state) => (
               <option key={state} value={state}>
-                {presentation.label}
+                {formatEnumLabel(state, t)}
               </option>
             ))}
           </select>
@@ -129,7 +133,9 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           type="button"
         >
           <RefreshCw aria-hidden="true" size={15} />
-          {builds.isFetching && !builds.isFetchingNextPage ? 'Refreshing' : 'Refresh'}
+          {builds.isFetching && !builds.isFetchingNextPage
+            ? t('common.refreshing')
+            : t('common.refresh')}
         </button>
       </form>
       {configurations.hasNextPage ? (
@@ -140,8 +146,8 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           type="button"
         >
           {configurations.isFetchingNextPage
-            ? 'Loading filter options'
-            : 'Load more Build Configuration filter options'}
+            ? t('builds.loadingFilterOptions')
+            : t('builds.loadMoreFilterOptions')}
         </button>
       ) : null}
       {configurations.data === undefined && configurations.error !== null ? (
@@ -149,14 +155,14 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           className={styles.compactFailure}
           error={configurations.error}
           onRetry={configurations.refetch}
-          title="Build Configuration filter options could not be loaded."
+          title={t('builds.filterLoadFailure')}
         />
       ) : configurations.data === undefined ? null : (
         <QueryBackgroundNotice
           className={styles.staleNotice}
           error={configurations.error}
           fetching={configurations.isFetching && !configurations.isFetchingNextPage}
-          label="Build Configuration filter option data"
+          label={t('builds.filterData')}
           onRetry={
             configurations.isFetchNextPageError
               ? configurations.fetchNextPage
@@ -169,23 +175,21 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           className={styles.staleNotice}
           error={builds.error}
           fetching={builds.isFetching && !builds.isFetchingNextPage}
-          label="Build data"
+          label={t('builds.data')}
           onRetry={builds.isFetchNextPageError ? builds.fetchNextPage : builds.refetch}
         />
       )}
       {builds.isPending ? (
-        <QueryLoadingNotice className={styles.statePanel} label="recent Builds" />
+        <QueryLoadingNotice className={styles.statePanel} label={t('builds.recentLower')} />
       ) : builds.data === undefined ? (
         <QueryFailureNotice
           className={styles.failurePanel}
           error={builds.error}
           onRetry={builds.refetch}
-          title="Recent Builds could not be loaded."
+          title={t('builds.recentLoadFailure')}
         />
       ) : buildItems.length === 0 ? (
-        <QueryEmptyNotice className={styles.emptyState}>
-          No Builds match the selected filters.
-        </QueryEmptyNotice>
+        <QueryEmptyNotice className={styles.emptyState}>{t('builds.noMatches')}</QueryEmptyNotice>
       ) : (
         <BuildTable builds={buildItems} configurations={configurationItems} />
       )}
@@ -196,7 +200,7 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           onClick={() => void builds.fetchNextPage()}
           type="button"
         >
-          {builds.isFetchingNextPage ? 'Loading Builds' : 'Load more Builds'}
+          {builds.isFetchingNextPage ? t('builds.loading') : t('builds.loadMore')}
         </button>
       ) : null}
     </section>
@@ -210,24 +214,25 @@ function BuildTable({
   builds: BuildSummary[];
   configurations: BuildConfigurationSummaryPage['items'];
 }) {
+  const { locale, t } = usePresentation();
   return (
     <div className={buildStyles.tableFrame}>
       <table className={buildStyles.table}>
-        <caption>Recent Builds in server-provided newest-first order</caption>
+        <caption>{t('builds.caption')}</caption>
         <thead>
           <tr>
-            <th scope="col">Build</th>
-            <th scope="col">Configuration</th>
-            <th scope="col">Cause</th>
-            <th scope="col">Attempt</th>
-            <th scope="col">Created</th>
-            <th scope="col">State</th>
+            <th scope="col">{t('builds.build')}</th>
+            <th scope="col">{t('builds.configurationShort')}</th>
+            <th scope="col">{t('builds.cause')}</th>
+            <th scope="col">{t('builds.attempt')}</th>
+            <th scope="col">{t('builds.created')}</th>
+            <th scope="col">{t('builds.stateShort')}</th>
           </tr>
         </thead>
         <tbody>
           {builds.map((build) => {
             const configuration = configurations.find((item) => item.id === build.configuration_id);
-            const timestamp = formatTimestamp(build.created_at_unix_ms);
+            const timestamp = formatTimestamp(build.created_at_unix_ms, locale);
             return (
               <tr key={build.id}>
                 <td>
@@ -238,12 +243,14 @@ function BuildTable({
                 </td>
                 <td>
                   <strong>{configuration?.name ?? build.configuration_id}</strong>
-                  <span>Version {build.configuration_version}</span>
+                  <span>{t('builds.version', { version: build.configuration_version })}</span>
                 </td>
-                <td>{formatEnumLabel(build.cause.kind)}</td>
+                <td>{formatEnumLabel(build.cause.kind, t)}</td>
                 <td>
-                  <strong>Attempt {build.current_attempt_number}</strong>
-                  <span>{formatEnumLabel(build.current_attempt_state)}</span>
+                  <strong>
+                    {t('builds.attemptNumber', { number: build.current_attempt_number })}
+                  </strong>
+                  <span>{formatEnumLabel(build.current_attempt_state, t)}</span>
                 </td>
                 <td>
                   {timestamp.machine === null ? (
@@ -256,7 +263,7 @@ function BuildTable({
                   <span
                     className={`${buildStyles.state} ${BUILD_STATE_PRESENTATIONS[build.state].className}`}
                   >
-                    {BUILD_STATE_PRESENTATIONS[build.state].label}
+                    {formatEnumLabel(build.state, t)}
                   </span>
                 </td>
               </tr>
@@ -301,13 +308,10 @@ function isBuildState(value: string | null): value is BuildState {
   return value !== null && Object.hasOwn(BUILD_STATE_PRESENTATIONS, value);
 }
 
-const BUILD_STATE_PRESENTATIONS: Record<
-  BuildState,
-  { className: string | undefined; label: string }
-> = {
-  queued: { className: buildStyles.stateActive, label: 'Queued' },
-  running: { className: buildStyles.stateActive, label: 'Running' },
-  succeeded: { className: buildStyles.stateSucceeded, label: 'Succeeded' },
-  failed: { className: buildStyles.stateFailed, label: 'Failed' },
-  cancelled: { className: buildStyles.stateFailed, label: 'Cancelled' },
+const BUILD_STATE_PRESENTATIONS: Record<BuildState, { className: string | undefined }> = {
+  queued: { className: buildStyles.stateActive },
+  running: { className: buildStyles.stateActive },
+  succeeded: { className: buildStyles.stateSucceeded },
+  failed: { className: buildStyles.stateFailed },
+  cancelled: { className: buildStyles.stateFailed },
 };

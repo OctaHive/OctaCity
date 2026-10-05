@@ -110,13 +110,23 @@
 }
 
 .explorerSection a {
-  display: block;
+  display: grid;
+  gap: 0.15rem;
   padding: 0.55rem 0.65rem;
   border-radius: var(--radius-small);
   color: var(--color-text-primary);
   font-size: 0.78rem;
   font-weight: 650;
   text-decoration: none;
+}
+
+.explorerSection a small {
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.66rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .explorerSection a:hover {

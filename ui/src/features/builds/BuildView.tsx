@@ -5,6 +5,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
 import { queryInvalidations, queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { projectPath } from '../../app/routes';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
@@ -37,6 +38,7 @@ export function BuildView({ api }: { api: BuildDiagnosticsApi }) {
 }
 
 function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: string }) {
+  const { t } = usePresentation();
   const build = useQuery({
     queryFn: ({ signal }) => api.getBuild(buildId, signal),
     queryKey: queryKeys.build(buildId),
@@ -51,7 +53,7 @@ function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: st
         className={styles.failurePanel}
         error={build.error}
         onRetry={build.refetch}
-        title="Build could not be loaded."
+        title={t('diagnostics.buildLoadFailure')}
       />
     );
   }
@@ -68,7 +70,7 @@ function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: st
         className={styles.staleNotice}
         error={build.error}
         fetching={build.isFetching}
-        label="Build data"
+        label={t('diagnostics.buildData')}
         onRetry={build.refetch}
       />
       <AttemptPanel api={api} build={build.data} />
@@ -88,26 +90,27 @@ function BuildHeading({
   isFetching: boolean;
   onRefresh: () => unknown;
 }) {
+  const { locale, t } = usePresentation();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const queryClient = useQueryClient();
   const [command, setCommand] = useState<{
     kind: 'cancel' | 'retry';
     returnFocus: HTMLElement;
   } | null>(null);
-  const created = formatTimestamp(build.created_at_unix_ms);
+  const created = formatTimestamp(build.created_at_unix_ms, locale);
   const openCommand = (kind: 'cancel' | 'retry', returnFocus: HTMLElement) =>
     setCommand({ kind, returnFocus });
   return (
     <header className={styles.heading}>
       <Link className={styles.backLink} to={projectPath(build.project_id)}>
         <ArrowLeft aria-hidden="true" size={15} />
-        Project
+        {t('diagnostics.project')}
       </Link>
       <div className={styles.headingRow}>
         <div>
-          <p className={styles.eyebrow}>Build diagnostics</p>
+          <p className={styles.eyebrow}>{t('diagnostics.eyebrow')}</p>
           <h1 id="page-title" ref={headingRef} tabIndex={-1}>
-            Build {build.id}
+            {t('diagnostics.buildTitle', { id: build.id })}
           </h1>
         </div>
         <div className={styles.headingActions}>
@@ -117,7 +120,7 @@ function BuildHeading({
               onClick={(event) => openCommand('cancel', event.currentTarget)}
               type="button"
             >
-              Cancel Build
+              {t('diagnostics.cancelBuild')}
             </button>
           ) : null}
           {build.state === 'failed' ? (
@@ -126,7 +129,7 @@ function BuildHeading({
               onClick={(event) => openCommand('retry', event.currentTarget)}
               type="button"
             >
-              Retry Build
+              {t('diagnostics.retryBuild')}
             </button>
           ) : null}
           <button
@@ -136,32 +139,35 @@ function BuildHeading({
             type="button"
           >
             <RefreshCw aria-hidden="true" size={15} />
-            {isFetching ? 'Refreshing' : 'Refresh'}
+            {isFetching ? t('common.refreshing') : t('common.refresh')}
           </button>
         </div>
       </div>
       <div className={styles.buildSummary}>
         <Status state={build.state} />
-        <span>Attempt {build.current_attempt.number}</span>
-        <span>Priority {build.priority}</span>
+        <span>{t('builds.attemptNumber', { number: build.current_attempt.number })}</span>
+        <span>{t('diagnostics.priority', { priority: build.priority })}</span>
         <time dateTime={created.machine ?? undefined}>{created.display}</time>
       </div>
       <dl className={styles.definitionGrid}>
         <Definition
-          label="Configuration"
+          label={t('builds.configurationShort')}
           value={`${build.configuration_id} v${build.configuration_version}`}
         />
-        <Definition label="Pipeline" value={`${build.pipeline_id} v${build.pipeline_version}`} />
         <Definition
-          label="Repository"
+          label={t('diagnostics.pipeline')}
+          value={`${build.pipeline_id} v${build.pipeline_version}`}
+        />
+        <Definition
+          label={t('diagnostics.repository')}
           value={`${build.repository_id} v${build.repository_version}`}
         />
-        <Definition label="Revision" value={build.immutable_revision} />
+        <Definition label={t('diagnostics.revision')} value={build.immutable_revision} />
       </dl>
       {command === null ? null : command.kind === 'cancel' ? (
         <ConfirmedCommand
-          confirmLabel="Cancel Build"
-          consequence={`This requests cancellation of active Build ${build.id} and its unfinished Jobs.`}
+          confirmLabel={t('diagnostics.cancelBuild')}
+          consequence={t('diagnostics.cancelConsequence', { id: build.id })}
           execute={({ headers, request }) => api.cancelBuild(request.buildId, headers)}
           fallbackFocusRef={headingRef}
           invalidations={[
@@ -172,16 +178,20 @@ function BuildHeading({
           onClose={() => setCommand(null)}
           queryClient={queryClient}
           renderSuccess={(result) => (
-            <span>Cancellation accepted ({formatEnumLabel(result.disposition)}).</span>
+            <span>
+              {t('diagnostics.cancelAccepted', {
+                disposition: formatEnumLabel(result.disposition, t),
+              })}
+            </span>
           )}
           request={{ buildId: build.id }}
           returnFocus={command.returnFocus}
-          title={`Cancel Build ${build.id}?`}
+          title={t('diagnostics.cancelTitle', { id: build.id })}
         />
       ) : (
         <ConfirmedCommand
-          confirmLabel="Retry Build"
-          consequence={`This creates the next Attempt from failed Build ${build.id}.`}
+          confirmLabel={t('diagnostics.retryBuild')}
+          consequence={t('diagnostics.retryConsequence', { id: build.id })}
           execute={({ headers, request }) => api.retryBuild(request.buildId, headers)}
           fallbackFocusRef={headingRef}
           invalidations={[
@@ -193,12 +203,15 @@ function BuildHeading({
           queryClient={queryClient}
           renderSuccess={(result) => (
             <span>
-              Retry Attempt {result.attempt_number} created ({formatEnumLabel(result.disposition)}).
+              {t('diagnostics.retryAccepted', {
+                disposition: formatEnumLabel(result.disposition, t),
+                number: result.attempt_number,
+              })}
             </span>
           )}
           request={{ buildId: build.id }}
           returnFocus={command.returnFocus}
-          title={`Retry Build ${build.id}?`}
+          title={t('diagnostics.retryTitle', { id: build.id })}
         />
       )}
     </header>
@@ -206,6 +219,7 @@ function BuildHeading({
 }
 
 function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildResource }) {
+  const { t } = usePresentation();
   const attemptId = build.current_attempt.id;
   const attempt = useQuery({
     queryFn: ({ signal }) => api.getAttempt(attemptId, signal),
@@ -213,7 +227,12 @@ function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildRe
   });
 
   if (attempt.isPending) {
-    return <QueryLoadingNotice className={styles.statePanel} label="current Attempt" />;
+    return (
+      <QueryLoadingNotice
+        className={styles.statePanel}
+        label={t('diagnostics.currentAttemptLower')}
+      />
+    );
   }
   if (attempt.data === undefined) {
     return (
@@ -221,7 +240,7 @@ function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildRe
         className={styles.failurePanel}
         error={attempt.error}
         onRetry={attempt.refetch}
-        title="Current Attempt could not be loaded."
+        title={t('diagnostics.attemptLoadFailure')}
       />
     );
   }
@@ -252,6 +271,7 @@ function AttemptDiagnostics({
   onRefresh: () => unknown;
   refreshError: Error | null;
 }) {
+  const { t } = usePresentation();
   const [searchParameters, setSearchParameters] = useSearchParams();
   const queryClient = useQueryClient();
   const requestedJobId = searchParameters.get(JOB_SELECTION_PARAMETER);
@@ -293,8 +313,10 @@ function AttemptDiagnostics({
       <section aria-labelledby="attempt-heading" className={styles.panel}>
         <div className={styles.panelHeading}>
           <div>
-            <p className={styles.eyebrow}>Current Attempt</p>
-            <h2 id="attempt-heading">Attempt {attempt.attempt.number}</h2>
+            <p className={styles.eyebrow}>{t('diagnostics.currentAttempt')}</p>
+            <h2 id="attempt-heading">
+              {t('builds.attemptNumber', { number: attempt.attempt.number })}
+            </h2>
             <p className={styles.monospace}>{attempt.attempt.id}</p>
           </div>
           <div className={styles.panelActions}>
@@ -306,7 +328,7 @@ function AttemptDiagnostics({
               type="button"
             >
               <RefreshCw aria-hidden="true" size={14} />
-              {isFetching ? 'Refreshing' : 'Refresh Attempt'}
+              {isFetching ? t('common.refreshing') : t('diagnostics.refreshAttempt')}
             </button>
           </div>
         </div>
@@ -314,19 +336,22 @@ function AttemptDiagnostics({
           className={styles.staleNotice}
           error={refreshError}
           fetching={isFetching}
-          label="Attempt data"
+          label={t('diagnostics.attemptData')}
           onRetry={onRefresh}
         />
         {attempt.jobs.length === 0 ? (
           <QueryEmptyNotice className={styles.diagnosticEmpty}>
-            This Attempt has no Jobs.
+            {t('diagnostics.noJobs')}
           </QueryEmptyNotice>
         ) : (
           <>
-            <nav aria-label="Jobs" className={styles.jobSelector}>
+            <nav aria-label={t('diagnostics.jobs')} className={styles.jobSelector}>
               {attempt.jobs.map((job) => (
                 <button
-                  aria-label={`Select ${job.pipeline_node_id}, ${stateLabel(job.state)}`}
+                  aria-label={t('diagnostics.selectJobWithState', {
+                    name: job.pipeline_node_id,
+                    state: stateLabel(job.state, t),
+                  })}
                   aria-pressed={job.id === selectedJobId}
                   className={styles.jobButton}
                   key={job.id}
@@ -368,16 +393,17 @@ function DependencyTable({
   onSelect: (jobId: string) => void;
   selectedJobId: string | null;
 }) {
+  const { t } = usePresentation();
   const jobsById = new Map(attempt.jobs.map((job) => [job.id, job]));
   return (
     <div className={styles.tableScroller}>
-      <table aria-label="Attempt dependency table" className={styles.dependencyTable}>
+      <table aria-label={t('diagnostics.dependencyTable')} className={styles.dependencyTable}>
         <thead>
           <tr>
-            <th scope="col">Job</th>
-            <th scope="col">State</th>
-            <th scope="col">Depends on</th>
-            <th scope="col">Policy</th>
+            <th scope="col">{t('diagnostics.job')}</th>
+            <th scope="col">{t('diagnostics.state')}</th>
+            <th scope="col">{t('diagnostics.dependsOn')}</th>
+            <th scope="col">{t('diagnostics.policy')}</th>
           </tr>
         </thead>
         <tbody>
@@ -390,12 +416,11 @@ function DependencyTable({
               >
                 <th scope="row">
                   <button
-                    aria-label={`Select ${job.pipeline_node_id}`}
+                    aria-label={t('diagnostics.selectJob', { name: job.pipeline_node_id })}
                     className={styles.jobLink}
                     onClick={() => onSelect(job.id)}
                     type="button"
                   >
-                    <span className={styles.visuallyHidden}>Select </span>
                     {job.pipeline_node_id}
                   </button>
                 </th>
@@ -404,12 +429,12 @@ function DependencyTable({
                 </td>
                 <td>
                   {incomingEdges.length === 0 ? (
-                    'None'
+                    t('diagnostics.none')
                   ) : (
                     <ul className={styles.dependencies}>
                       {incomingEdges.map((edge) => (
                         <li
-                          aria-label={edgeLabel(edge, attempt.jobs)}
+                          aria-label={edgeLabel(edge, attempt.jobs, t)}
                           key={edge.predecessor_job_id}
                         >
                           {jobsById.get(edge.predecessor_job_id)?.pipeline_node_id ??
@@ -419,7 +444,7 @@ function DependencyTable({
                     </ul>
                   )}
                 </td>
-                <td>{policyLabel(job.dependency_policy)}</td>
+                <td>{policyLabel(job.dependency_policy, t)}</td>
               </tr>
             );
           })}
@@ -438,37 +463,47 @@ function JobDetails({
   job: JobResource;
   onJobUpdate: (job: JobEventTarget) => void;
 }) {
+  const { t } = usePresentation();
   const failure =
     job.terminal === null
-      ? 'Not terminal'
+      ? t('diagnostics.notTerminal')
       : job.terminal.failure_classification === null
-        ? 'None'
-        : formatEnumLabel(job.terminal.failure_classification);
+        ? t('diagnostics.none')
+        : formatEnumLabel(job.terminal.failure_classification, t);
   return (
-    <section aria-label="Selected Job" className={styles.panel}>
+    <section aria-label={t('diagnostics.selectedJob')} className={styles.panel}>
       <div className={styles.panelHeading}>
         <div>
-          <p className={styles.eyebrow}>Selected Job</p>
+          <p className={styles.eyebrow}>{t('diagnostics.selectedJob')}</p>
           <h2 id="selected-job-heading">{job.pipeline_node_id}</h2>
           <p className={styles.monospace}>{job.id}</p>
         </div>
         <Status state={job.state} />
       </div>
       <dl className={styles.jobDetails}>
-        <Definition label="State" value={stateLabel(job.state)} />
-        <Definition label="Failure classification" value={failure} />
-        <Definition label="Dependency policy" value={policyLabel(job.dependency_policy)} />
-        <Definition label="Dependencies" value={String(job.dependency_job_ids.length)} />
-        <Definition label="Event cursor" value={String(job.event_cursor)} />
+        <Definition label={t('diagnostics.state')} value={stateLabel(job.state, t)} />
+        <Definition label={t('diagnostics.failureClassification')} value={failure} />
         <Definition
-          label="Assigned Agent"
-          value={job.assignment?.assigned_agent_id ?? 'Unassigned'}
+          label={t('diagnostics.dependencyPolicy')}
+          value={policyLabel(job.dependency_policy, t)}
         />
         <Definition
-          label="Selected pool"
-          value={job.assignment?.selected_pool_id ?? 'Unassigned'}
+          label={t('diagnostics.dependencies')}
+          value={String(job.dependency_job_ids.length)}
         />
-        <Definition label="Runtime" value={formatEnumLabel(job.placement.runtime_class)} />
+        <Definition label={t('diagnostics.eventCursor')} value={String(job.event_cursor)} />
+        <Definition
+          label={t('diagnostics.assignedAgent')}
+          value={job.assignment?.assigned_agent_id ?? t('diagnostics.unassigned')}
+        />
+        <Definition
+          label={t('diagnostics.selectedAgentPool')}
+          value={job.assignment?.selected_pool_id ?? t('diagnostics.unassigned')}
+        />
+        <Definition
+          label={t('diagnostics.runtime')}
+          value={formatEnumLabel(job.placement.runtime_class, t)}
+        />
       </dl>
       <JobEvents api={api} job={job} key={job.id} onJobUpdate={onJobUpdate} />
     </section>
@@ -480,10 +515,11 @@ function Status({
 }: {
   state: BuildResource['state'] | AttemptResource['attempt']['state'] | JobResource['state'];
 }) {
+  const { t } = usePresentation();
   const family = stateFamily(state);
   return (
     <span className={`${styles.status} ${styles[`state_${family}`]}`}>
-      {formatEnumLabel(state)}
+      {formatEnumLabel(state, t)}
     </span>
   );
 }
@@ -498,13 +534,14 @@ function Definition({ label, value }: { label: string; value: string }) {
 }
 
 function BuildLoading() {
+  const { t } = usePresentation();
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <header className={styles.heading}>
-        <p className={styles.eyebrow}>Build diagnostics</p>
-        <h1 id="page-title">Build</h1>
+        <p className={styles.eyebrow}>{t('diagnostics.eyebrow')}</p>
+        <h1 id="page-title">{t('diagnostics.build')}</h1>
       </header>
-      <QueryLoadingNotice className={styles.statePanel} label="Build" />
+      <QueryLoadingNotice className={styles.statePanel} label={t('diagnostics.build')} />
     </section>
   );
 }
@@ -516,19 +553,20 @@ function BuildNotFound({
   error?: Error | null;
   onRetry?: (() => unknown) | undefined;
 } = {}) {
+  const { t } = usePresentation();
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <header className={styles.heading}>
-        <p className={styles.eyebrow}>Build diagnostics</p>
-        <h1 id="page-title">Build not found</h1>
-        <p>The Build does not exist or is not visible from this management context.</p>
+        <p className={styles.eyebrow}>{t('diagnostics.eyebrow')}</p>
+        <h1 id="page-title">{t('diagnostics.buildNotFound')}</h1>
+        <p>{t('diagnostics.buildNotFoundDescription')}</p>
       </header>
       {onRetry === undefined ? null : (
         <QueryFailureNotice
           className={styles.failurePanel}
           error={error}
           onRetry={onRetry}
-          title="Build could not be loaded."
+          title={t('diagnostics.buildLoadFailure')}
         />
       )}
     </section>

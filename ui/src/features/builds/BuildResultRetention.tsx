@@ -3,6 +3,7 @@ import { useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { auditRequestPath } from '../../app/routes';
 import { formatTimestamp } from '../../shared/display';
 import {
@@ -21,30 +22,31 @@ export function BuildResultRetention({
   api: BuildResultHoldApi;
   buildId: string;
 }) {
+  const { t } = usePresentation();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const retention = useQuery({
     queryFn: ({ signal }) => api.getBuildResultRetention(buildId, signal),
     queryKey: queryKeys.buildResultRetention(buildId),
   });
   return (
-    <section aria-label="Build Result retention" className={styles.panel}>
+    <section aria-label={t('retention.label')} className={styles.panel}>
       <div className={styles.panelHeading}>
         <div>
-          <p className={styles.eyebrow}>Lifecycle evidence</p>
+          <p className={styles.eyebrow}>{t('retention.eyebrow')}</p>
           <h2 ref={headingRef} tabIndex={-1}>
-            Build Result retention
+            {t('retention.label')}
           </h2>
         </div>
         {retention.data === undefined ? null : <HoldStatus retention={retention.data} />}
       </div>
       {retention.isPending ? (
-        <QueryLoadingNotice className={styles.statePanel} label="Build Result retention" />
+        <QueryLoadingNotice className={styles.statePanel} label={t('retention.label')} />
       ) : retention.data === undefined ? (
         <QueryFailureNotice
           className={styles.failurePanel}
           error={retention.error}
           onRetry={retention.refetch}
-          title="Build Result retention could not be loaded."
+          title={t('retention.loadFailure')}
         />
       ) : (
         <>
@@ -63,7 +65,7 @@ export function BuildResultRetention({
           className={styles.staleNotice}
           error={retention.error}
           fetching={retention.isFetching}
-          label="Build Result retention data"
+          label={t('retention.data')}
           onRetry={retention.refetch}
         />
       )}
@@ -72,42 +74,44 @@ export function BuildResultRetention({
 }
 
 function HoldStatus({ retention }: { retention: BuildResultRetentionResource }) {
+  const { t } = usePresentation();
   const state = retention.hold?.state ?? 'absent';
   const label =
     state === 'absent'
-      ? 'No hold'
+      ? t('retention.emptyHold')
       : state === 'active'
-        ? 'Active hold'
+        ? t('retention.activeHold')
         : state === 'expired'
-          ? 'Expired hold'
-          : 'Released hold';
+          ? t('retention.expiredHold')
+          : t('retention.releasedHold');
   const family = state === 'active' ? 'info' : state === 'expired' ? 'danger' : 'muted';
   return <span className={`${styles.status} ${styles[`state_${family}`]}`}>{label}</span>;
 }
 
 function RetentionDetails({ retention }: { retention: BuildResultRetentionResource }) {
+  const { locale, t } = usePresentation();
   const hold = retention.hold;
   return (
     <div className={styles.retentionDetails}>
       {hold === null ? null : (
         <dl className={styles.holdDetails}>
-          <DefinitionTerm label="Reason" value={hold.reason} />
+          <DefinitionTerm label={t('retention.holdReason')} value={hold.reason} />
           <DefinitionTerm
-            label="Hold expiry"
+            label={t('retention.expiry')}
             value={
               hold.expires_at_unix_ms === null
-                ? 'Permanent'
-                : formatTimestamp(hold.expires_at_unix_ms).display
+                ? t('retention.permanent')
+                : formatTimestamp(hold.expires_at_unix_ms, locale).display
             }
           />
-          <DefinitionTerm label="Version" value={String(hold.version)} />
+          <DefinitionTerm label={t('retention.version')} value={String(hold.version)} />
           <AuditTerm
-            label="Placement request"
+            label={t('retention.placementRequest')}
             requestIdentity={hold.creation_audit.request_identity}
           />
           {hold.release_audit === null ? null : (
             <AuditTerm
-              label="Release request"
+              label={t('retention.releaseRequest')}
               requestIdentity={hold.release_audit.request_identity}
             />
           )}
@@ -116,22 +120,26 @@ function RetentionDetails({ retention }: { retention: BuildResultRetentionResour
       <dl className={styles.retentionGrid}>
         <RetentionComponent
           deadline={retention.deadlines.metadata_at_unix_ms}
-          label="Metadata"
+          label={t('retention.metadata')}
+          locale={locale}
           visible={retention.visibility.metadata}
         />
         <RetentionComponent
           deadline={retention.deadlines.logs_at_unix_ms}
-          label="Logs"
+          label={t('retention.logs')}
+          locale={locale}
           visible={retention.visibility.logs}
         />
         <RetentionComponent
           deadline={retention.deadlines.artifacts_at_unix_ms}
-          label="Artifacts"
+          label={t('retention.artifacts')}
+          locale={locale}
           visible={retention.visibility.artifacts}
         />
         <RetentionComponent
           deadline={retention.deadlines.reports_at_unix_ms}
-          label="Reports"
+          label={t('retention.reports')}
+          locale={locale}
           visible={retention.visibility.reports}
         />
       </dl>
@@ -142,19 +150,23 @@ function RetentionDetails({ retention }: { retention: BuildResultRetentionResour
 function RetentionComponent({
   deadline,
   label,
+  locale,
   visible,
 }: {
   deadline: number;
   label: string;
+  locale: string;
   visible: boolean;
 }) {
-  const timestamp = formatTimestamp(deadline);
+  const { t } = usePresentation();
+  const timestamp = formatTimestamp(deadline, locale);
   return (
     <div>
       <dt>{label}</dt>
-      <dd>{visible ? 'Visible' : 'Unavailable'}</dd>
+      <dd>{visible ? t('retention.visible') : t('retention.unavailable')}</dd>
       <dd className={styles.secondaryMetadata}>
-        Deadline <time dateTime={timestamp.machine ?? undefined}>{timestamp.display}</time>
+        {t('retention.deadline')}{' '}
+        <time dateTime={timestamp.machine ?? undefined}>{timestamp.display}</time>
       </dd>
     </div>
   );

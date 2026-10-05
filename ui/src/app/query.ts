@@ -43,8 +43,16 @@ export const queryKeys = {
   disabledDefinitionDetail: (collectionKey: readonly unknown[]) =>
     [...collectionKey, 'detail', null] as const,
   readiness: ['system', 'readiness'] as const,
+  operatorAttention: (
+    buildIds: readonly string[],
+    agentIds: readonly string[],
+    poolIds: readonly string[],
+  ) => ['operator-attention', [...buildIds], [...agentIds], [...poolIds]] as const,
   repository: (repositoryId: string, version: number) =>
     ['repositories', repositoryId, version] as const,
+  resourceSearchRoot: ['resource-search'] as const,
+  resourceSearch: (query: string, kinds: readonly string[]) =>
+    ['resource-search', query, [...kinds]] as const,
   trigger: (kind: string, triggerId: string, version: number) =>
     ['triggers', kind, triggerId, version] as const,
 };
@@ -55,6 +63,8 @@ export const queryInvalidations = {
 } as const;
 
 export const READINESS_REFRESH_MILLISECONDS = 10_000;
+export const OPERATOR_ATTENTION_REFRESH_MILLISECONDS = 15_000;
+export const RESOURCE_SEARCH_DEBOUNCE_MILLISECONDS = 250;
 
 /** Creates an in-memory query client with conservative automatic retry behavior. */
 export function createConsoleQueryClient() {

@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { CONSOLE_PATHS } from '../../src/app/routes';
 
-async function openReadyConsole(page: Page, path: string) {
+async function openReadyConsole(page: Page, path: string, attentionItems: readonly object[] = []) {
   await page.route('**/health/ready', async (route) => {
     await route.fulfill({
       body: JSON.stringify({ status: 'ready' }),
@@ -21,6 +21,13 @@ async function openReadyConsole(page: Page, path: string) {
           : [];
     await route.fulfill({
       body: JSON.stringify({ items, next_cursor: null }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await page.route('**/api/v1/operator-attention*', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ items: attentionItems, next_cursor: null }),
       contentType: 'application/json',
       status: 200,
     });
@@ -57,6 +64,82 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(page.getByRole('main').getByRole('link', { name: 'Platform' })).toHaveCount(0);
   await expect(page.locator('#console-content')).toBeVisible();
   await expect(page.getByLabel('Security notice')).toContainText('Trusted network only');
+});
+
+test('persists Russian presentation without storing resource content', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await openReadyConsole(page, CONSOLE_PATHS.projects);
+
+  await page.getByLabel('Operator menu').click();
+  await page.getByRole('combobox', { name: 'Language' }).selectOption('ru');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+  await expect(page.getByRole('link', { name: 'Проекты', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByText('Выберите проект в иерархии слева.')).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
+  const record = await page.evaluate(() => localStorage.getItem('octacity.console.preferences'));
+  expect(record).not.toMatch(/Platform|Delivery|payload|requestId|credential/i);
+});
+
+test('keeps relevant notifications browser-local and rebuilds attention after reload', async ({
+  page,
+}) => {
+  const favoriteBuildId = '77777777-7777-4777-8777-777777777777';
+  const unrelatedBuildId = '88888888-8888-4888-8888-888888888888';
+  const attentionItems = [
+    browserAttention('favorite-build-event', 'build', favoriteBuildId, null),
+    browserAttention('unrelated-build-event', 'build', unrelatedBuildId, null),
+    browserAttention('critical-active', 'critical_system', null, null),
+    browserAttention('critical-resolved', 'critical_system', null, 1_700_000_001_000),
+  ];
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await openReadyConsole(page, CONSOLE_PATHS.projects, attentionItems);
+  await page.evaluate((buildId) => {
+    localStorage.setItem(
+      'octacity.console.preferences',
+      JSON.stringify({
+        expanded: [],
+        explorerOpen: true,
+        explorerWidth: 288,
+        favorites: [{ id: buildId, kind: 'build' }],
+        language: 'en',
+        notificationLastOpenedAt: null,
+        recents: [],
+        theme: 'system',
+        version: 2,
+      }),
+    );
+  }, favoriteBuildId);
+  await page.reload();
+
+  const bell = page.getByRole('button', { name: 'Notifications, 3 unseen' });
+  await expect(bell).toBeVisible();
+  await bell.click();
+  const center = page.getByRole('dialog', { name: 'Notification center' });
+  await expect(center.getByText('favorite-build-event summary')).toBeVisible();
+  await expect(center.getByText('critical-active summary')).toBeVisible();
+  await expect(center.getByText('critical-resolved summary')).toBeVisible();
+  await expect(center.getByText('unrelated-build-event summary')).toHaveCount(0);
+  await expect(center.getByText('Resolved', { exact: true })).toBeVisible();
+  await expect(center.getByRole('link', { name: /favorite-build-event summary/u })).toHaveAttribute(
+    'href',
+    `/builds/${favoriteBuildId}`,
+  );
+  await expect(page.getByRole('button', { name: 'Close notification center' })).toBeFocused();
+  const stored = await page.evaluate(() => localStorage.getItem('octacity.console.preferences'));
+  expect(stored ?? '').not.toMatch(/favorite-build-event|critical-active|request[_-]?id/iu);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Notifications' })).toBeFocused();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Notifications' })).toBeVisible();
+  await page.getByRole('button', { name: 'Notifications' }).click();
+  await expect(page.getByText('No commands were completed in this browser session.')).toBeVisible();
+  await expect(page.getByText('favorite-build-event summary')).toBeVisible();
 });
 
 test('uses a contextual Audit filter panel without generic navigation groups', async ({ page }) => {
@@ -127,6 +210,24 @@ function browserAuditFact() {
     request_identity: `append-job-events:${'1'.repeat(64)}:25-25`,
     target_identity: 'job-layout',
     target_kind: 'job',
+  };
+}
+
+function browserAttention(
+  id: string,
+  category: 'build' | 'critical_system',
+  targetId: string | null,
+  resolvedAt: number | null,
+) {
+  return {
+    category,
+    code: category === 'critical_system' ? 'required_dependency_unavailable' : 'build_failed',
+    id,
+    occurred_at_unix_ms: 1_700_000_000_000,
+    resolved_at_unix_ms: resolvedAt,
+    severity: category === 'critical_system' ? 'critical' : 'warning',
+    summary: `${id} summary`,
+    target: targetId === null ? null : { id: targetId, kind: category },
   };
 }
 
@@ -204,6 +305,24 @@ test('uses a focus-managed explorer overlay at the narrow supported width', asyn
 });
 
 test('opens global and explorer search with focus restoration', async ({ page }) => {
+  const searchableBuildId = '22222222-2222-4222-8222-222222222222';
+  await page.route('**/api/v1/search*', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({
+        items: [
+          {
+            context: 'Succeeded',
+            id: searchableBuildId,
+            kind: 'build',
+            label: 'Alpha Build',
+          },
+        ],
+        next_cursor: null,
+      }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
   await page.setViewportSize({ height: 900, width: 1_280 });
   await openReadyConsole(page, CONSOLE_PATHS.projects);
 
@@ -212,6 +331,14 @@ test('opens global and explorer search with focus restoration', async ({ page })
   await expect(page.getByRole('dialog', { name: 'Search resources' })).toBeVisible();
   await expect(page.getByRole('searchbox', { name: 'Search query' })).toBeFocused();
   await expect(page.getByText('Scope: All resources')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Navigate' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Presentation commands' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Close command center' }).getByText('Esc', { exact: true }),
+  ).toBeVisible();
+  await page.getByRole('searchbox', { name: 'Search query' }).fill('alpha');
+  await expect(page.getByRole('button', { name: 'Open Alpha Build' })).toBeVisible();
+  await page.getByRole('button', { name: 'Add Alpha Build to favorites' }).click();
   await page.keyboard.press('Escape');
   await expect(globalSearch).toBeFocused();
 
@@ -219,7 +346,7 @@ test('opens global and explorer search with focus restoration', async ({ page })
   await page.keyboard.press('Control+k');
   await expect(page.getByRole('searchbox', { name: 'Search query' })).toBeFocused();
   await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { exact: true, name: 'Close' })).toBeFocused();
+  await expect(page.getByRole('button', { name: 'Close command center' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('link', { name: 'Builds' })).toBeFocused();
 
@@ -230,6 +357,7 @@ test('opens global and explorer search with focus restoration', async ({ page })
   await page.keyboard.press('Escape');
 
   await page.getByRole('link', { name: 'Builds' }).click();
+  await expect(page.getByRole('link', { name: `Open Builds ${searchableBuildId}` })).toBeVisible();
   await page.getByRole('button', { name: 'Search Builds' }).click();
   await expect(page.getByText('Scope: Builds')).toBeVisible();
   await page.getByRole('button', { name: 'Search all resources' }).click();

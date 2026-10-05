@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { formatBytes, formatEnumLabel, formatTimestamp } from '../../shared/display';
 import {
   QueryBackgroundNotice,
@@ -18,40 +19,39 @@ export function BuildCacheSessions({
   api: BuildResultDiagnosticsApi;
   buildId: string;
 }) {
+  const { locale, t } = usePresentation();
   const sessions = useQuery({
     queryFn: ({ signal }) => api.listBuildCacheSessions(buildId, signal),
     queryKey: queryKeys.buildCacheSessions(buildId),
   });
   return (
-    <section aria-label="Cache sessions" className={styles.panel}>
+    <section aria-label={t('cache.label')} className={styles.panel}>
       <div className={styles.panelHeading}>
         <div>
-          <p className={styles.eyebrow}>Secret-free authority</p>
-          <h2>Cache sessions</h2>
+          <p className={styles.eyebrow}>{t('cache.eyebrow')}</p>
+          <h2>{t('cache.label')}</h2>
         </div>
       </div>
       {sessions.isPending ? (
-        <QueryLoadingNotice className={styles.statePanel} label="cache sessions" />
+        <QueryLoadingNotice className={styles.statePanel} label={t('cache.label')} />
       ) : sessions.data === undefined ? (
         <QueryFailureNotice
           className={styles.failurePanel}
           error={sessions.error}
           onRetry={sessions.refetch}
-          title="Cache sessions could not be loaded."
+          title={t('cache.loadFailure')}
         />
       ) : sessions.data.items.length === 0 ? (
-        <QueryEmptyNotice className={styles.diagnosticEmpty}>
-          No cache sessions were issued for this Build.
-        </QueryEmptyNotice>
+        <QueryEmptyNotice className={styles.diagnosticEmpty}>{t('cache.empty')}</QueryEmptyNotice>
       ) : (
-        <CacheSessionTable items={sessions.data.items} />
+        <CacheSessionTable items={sessions.data.items} locale={locale} />
       )}
       {sessions.data === undefined ? null : (
         <QueryBackgroundNotice
           className={styles.staleNotice}
           error={sessions.error}
           fetching={sessions.isFetching}
-          label="cache sessions data"
+          label={t('cache.data')}
           onRetry={sessions.refetch}
         />
       )}
@@ -59,24 +59,31 @@ export function BuildCacheSessions({
   );
 }
 
-function CacheSessionTable({ items }: { items: CacheSessionPage['items'] }) {
+function CacheSessionTable({
+  items,
+  locale,
+}: {
+  items: CacheSessionPage['items'];
+  locale: string;
+}) {
+  const { t } = usePresentation();
   return (
     <div className={styles.tableScroller}>
-      <table aria-label="Build cache sessions" className={styles.diagnosticTable}>
+      <table aria-label={t('cache.label')} className={styles.diagnosticTable}>
         <thead>
           <tr>
-            <th scope="col">Namespace</th>
-            <th scope="col">State</th>
-            <th scope="col">Access</th>
-            <th scope="col">Quota</th>
-            <th scope="col">Binding</th>
-            <th scope="col">Lifecycle</th>
+            <th scope="col">{t('cache.namespace')}</th>
+            <th scope="col">{t('cache.state')}</th>
+            <th scope="col">{t('cache.access')}</th>
+            <th scope="col">{t('cache.quota')}</th>
+            <th scope="col">{t('cache.binding')}</th>
+            <th scope="col">{t('cache.lifecycle')}</th>
           </tr>
         </thead>
         <tbody>
           {items.map((session) => {
-            const expires = formatTimestamp(session.expires_at_unix_ms);
-            const retained = formatTimestamp(session.retention_until_unix_ms);
+            const expires = formatTimestamp(session.expires_at_unix_ms, locale);
+            const retained = formatTimestamp(session.retention_until_unix_ms, locale);
             return (
               <tr key={session.id}>
                 <th scope="row">
@@ -89,21 +96,26 @@ function CacheSessionTable({ items }: { items: CacheSessionPage['items'] }) {
                       session.state === 'active' ? styles.state_success : styles.state_danger
                     }`}
                   >
-                    {formatEnumLabel(session.state)}
+                    {formatEnumLabel(session.state, t)}
                   </span>
                 </td>
-                <td>{cacheAccessLabel(session)}</td>
-                <td>{formatBytes(session.quota_bytes)}</td>
+                <td>{cacheAccessLabel(session, t)}</td>
+                <td>{formatBytes(session.quota_bytes, locale)}</td>
                 <td>
-                  <span className={styles.outputName}>Agent {session.agent_id}</span>
-                  <span className={styles.secondaryMetadata}>Job {session.job_id}</span>
+                  <span className={styles.outputName}>
+                    {t('cache.agentBinding', { id: session.agent_id })}
+                  </span>
+                  <span className={styles.secondaryMetadata}>
+                    {t('cache.jobBinding', { id: session.job_id })}
+                  </span>
                 </td>
                 <td>
                   <span className={styles.outputName}>
-                    Expires <time dateTime={expires.machine ?? undefined}>{expires.display}</time>
+                    {t('cache.expires')}{' '}
+                    <time dateTime={expires.machine ?? undefined}>{expires.display}</time>
                   </span>
                   <span className={styles.secondaryMetadata}>
-                    Retained through{' '}
+                    {t('cache.retainedThrough')}{' '}
                     <time dateTime={retained.machine ?? undefined}>{retained.display}</time>
                   </span>
                 </td>
@@ -116,9 +128,12 @@ function CacheSessionTable({ items }: { items: CacheSessionPage['items'] }) {
   );
 }
 
-function cacheAccessLabel(session: CacheSessionPage['items'][number]): string {
-  if (session.read && session.write) return 'Read and write';
-  if (session.read) return 'Read only';
-  if (session.write) return 'Write only';
-  return 'No access';
+function cacheAccessLabel(
+  session: CacheSessionPage['items'][number],
+  t: ReturnType<typeof usePresentation>['t'],
+): string {
+  if (session.read && session.write) return t('cache.readWrite');
+  if (session.read) return t('cache.readOnly');
+  if (session.write) return t('cache.writeOnly');
+  return t('cache.noAccess');
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { formatTimestamp } from '../../shared/display';
 import {
   QueryEmptyNotice,
@@ -40,6 +41,7 @@ export function JobEvents({
   job: JobResource;
   onJobUpdate: (job: JobEventTarget) => void;
 }) {
+  const { locale, t } = usePresentation();
   const initialJob = useRef<JobEventTarget>({
     event_cursor: job.event_cursor,
     id: job.id,
@@ -67,8 +69,8 @@ export function JobEvents({
     <section aria-labelledby="job-events-heading" className={styles.eventsPanel}>
       <div className={styles.eventsHeading}>
         <div>
-          <p className={styles.eyebrow}>Ordered diagnostics</p>
-          <h3 id="job-events-heading">Job events</h3>
+          <p className={styles.eyebrow}>{t('events.ordered')}</p>
+          <h3 id="job-events-heading">{t('events.title')}</h3>
         </div>
         <EventFollowerState snapshot={snapshot} />
       </div>
@@ -81,32 +83,32 @@ export function JobEvents({
       ) : null}
       {snapshot.discardedEventCount === 0 ? null : (
         <p className={styles.eventsNotice} role="status">
-          Showing the latest {snapshot.events.length} events; {snapshot.discardedEventCount} older
-          events were removed from this live view.
+          {t('events.discarded', {
+            discarded: snapshot.discardedEventCount,
+            visible: snapshot.events.length,
+          })}
         </p>
       )}
       {snapshot.events.length === 0 ? (
         snapshot.phase === 'complete' ? (
-          <QueryEmptyNotice className={styles.eventsEmpty}>
-            No Job events were recorded.
-          </QueryEmptyNotice>
+          <QueryEmptyNotice className={styles.eventsEmpty}>{t('events.noEvents')}</QueryEmptyNotice>
         ) : snapshot.phase === 'failed' ? null : (
-          <QueryLoadingNotice className={styles.eventsEmpty} label="the first Job event" />
+          <QueryLoadingNotice className={styles.eventsEmpty} label={t('events.first')} />
         )
       ) : (
         <div className={styles.tableScroller}>
-          <table aria-label="Ordered Job events" className={styles.eventTable}>
+          <table aria-label={t('events.label')} className={styles.eventTable}>
             <thead>
               <tr>
-                <th scope="col">Sequence</th>
-                <th scope="col">Time</th>
-                <th scope="col">Kind</th>
-                <th scope="col">Payload</th>
+                <th scope="col">{t('events.sequence')}</th>
+                <th scope="col">{t('events.time')}</th>
+                <th scope="col">{t('events.kind')}</th>
+                <th scope="col">{t('events.payload')}</th>
               </tr>
             </thead>
             <tbody>
               {snapshot.events.map((event) => (
-                <EventRow event={event} key={event.sequence} />
+                <EventRow event={event} key={event.sequence} locale={locale} />
               ))}
             </tbody>
           </table>
@@ -117,12 +119,13 @@ export function JobEvents({
 }
 
 function EventFollowerState({ snapshot }: { snapshot: JobEventFollowerSnapshot }) {
-  let label = 'Following live events';
-  if (snapshot.phase === 'complete') label = 'Event history complete';
-  if (snapshot.phase === 'failed') label = 'Event follow stopped';
+  const { t } = usePresentation();
+  let label = t('events.following');
+  if (snapshot.phase === 'complete') label = t('events.complete');
+  if (snapshot.phase === 'failed') label = t('events.failed');
   if (snapshot.phase === 'retrying') {
     const seconds = Math.ceil((snapshot.retryDelayMilliseconds ?? 0) / 1_000);
-    label = `Event stream interrupted. Retrying in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}`;
+    label = t('events.retrying', { seconds });
   }
   return (
     <span aria-live="polite" className={styles.eventFollowerState} role="status">
@@ -140,11 +143,12 @@ function EventFailure({
   onRetry: () => unknown;
   stale: boolean;
 }) {
+  const { t } = usePresentation();
   return stale ? (
     <StaleQueryNotice
       className={styles.eventFailure}
       error={error}
-      message="Event follow stopped. Showing the last contiguous Job events."
+      message={t('events.stale')}
       onRetry={onRetry}
     />
   ) : (
@@ -152,13 +156,13 @@ function EventFailure({
       className={styles.eventFailure}
       error={error}
       onRetry={onRetry}
-      title="Job events could not be loaded."
+      title={t('events.loadFailure')}
     />
   );
 }
 
-function EventRow({ event }: { event: JobEventResource }) {
-  const occurred = formatTimestamp(event.occurred_at_unix_ms);
+function EventRow({ event, locale }: { event: JobEventResource; locale: string }) {
+  const occurred = formatTimestamp(event.occurred_at_unix_ms, locale);
   return (
     <tr>
       <th scope="row">{event.sequence}</th>

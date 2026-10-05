@@ -4,6 +4,7 @@ import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { formatTimestamp } from '../../shared/display';
 import {
   BUILD_A,
   BUILD_B,
@@ -80,7 +81,9 @@ describe('Project Builds', () => {
       BUILD_B,
       BUILD_A,
     ]);
-    expect(within(builds).getAllByText('2023-11-14 22:13:20.123 UTC')).toHaveLength(2);
+    expect(
+      within(builds).getAllByText(formatTimestamp(1_700_000_000_123, 'en-US').display),
+    ).toHaveLength(2);
 
     await userEvent.click(await within(builds).findByRole('button', { name: 'Load more Builds' }));
     expect(await within(builds).findByRole('link', { name: BUILD_C })).toBeTruthy();

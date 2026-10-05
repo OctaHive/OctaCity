@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
 import { Link, matchPath, useLocation } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
 import {
   QueryBackgroundNotice,
@@ -24,7 +25,7 @@ type RevealedChildren = ReadonlyMap<string | null, ProjectSummary>;
 /** Renders the bounded server-owned Project hierarchy in the contextual explorer. */
 export function ProjectExplorer({ api }: ProjectExplorerProps) {
   const location = useLocation();
-  const expansion = useExpansionOverrides();
+  const expansion = useExpansionOverrides('project');
   const selectedProjectId =
     matchPath(CONSOLE_PATHS.project, location.pathname)?.params.projectId ?? null;
 
@@ -111,10 +112,13 @@ function ProjectBranch({
   revealedIds: ReadonlySet<string>;
   selectedProjectId: string | null;
 }) {
+  const { t } = usePresentation();
   const projects = useProjectPage(api, parentId);
 
   if (projects.isPending) {
-    return <QueryLoadingNotice className={projectStyles.statePanel} label="Projects" />;
+    return (
+      <QueryLoadingNotice className={projectStyles.statePanel} label={t('explorer.projects')} />
+    );
   }
   if (projects.data === undefined) {
     return (
@@ -122,7 +126,12 @@ function ProjectBranch({
         className={projectStyles.compactFailure}
         error={projects.error}
         onRetry={projects.refetch}
-        title={`${parentLabel === null ? 'Projects' : `${parentLabel} children`} could not be loaded.`}
+        title={t('definitions.loadFailure', {
+          title:
+            parentLabel === null
+              ? t('explorer.projects')
+              : t('explorer.projectChildren', { name: parentLabel }),
+        })}
       />
     );
   }
@@ -133,15 +142,18 @@ function ProjectBranch({
     revealedChild === undefined || pageItems.some(({ id }) => id === revealedChild.id)
       ? pageItems
       : [...pageItems, revealedChild];
-  const listLabel = parentLabel === null ? 'Project hierarchy' : `${parentLabel} child Projects`;
+  const listLabel =
+    parentLabel === null
+      ? t('explorer.projectHierarchy')
+      : t('explorer.childProjects', { name: parentLabel });
 
   return (
     <div className={depth === 0 ? styles.rootBranch : styles.childBranch}>
       {depth === 0 ? (
         <div className={styles.treeToolbar}>
-          <span>Project hierarchy</span>
+          <span>{t('explorer.projectHierarchy')}</span>
           <button
-            aria-label="Refresh Project hierarchy"
+            aria-label={t('explorer.refreshProjectHierarchy')}
             disabled={projects.isFetching}
             onClick={() => void projects.refetch()}
             type="button"
@@ -154,12 +166,12 @@ function ProjectBranch({
         className={projectStyles.staleNotice}
         error={projects.error}
         fetching={projects.isFetching && !projects.isFetchingNextPage}
-        label="Project hierarchy data"
+        label={t('explorer.projectHierarchyData')}
         onRetry={projects.isFetchNextPageError ? projects.fetchNextPage : projects.refetch}
       />
       {items.length === 0 && parentLabel === null ? (
         <QueryEmptyNotice className={projectStyles.emptyState}>
-          No root Projects are available.
+          {t('explorer.noRootProjects')}
         </QueryEmptyNotice>
       ) : items.length > 0 ? (
         <ul aria-label={depth === 0 ? listLabel : undefined} role={depth === 0 ? 'tree' : 'group'}>
@@ -180,7 +192,9 @@ function ProjectBranch({
                 >
                   {project.has_children ? (
                     <button
-                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${project.name}`}
+                      aria-label={t(expanded ? 'explorer.collapse' : 'explorer.expand', {
+                        name: project.name,
+                      })}
                       onClick={() => expansion.toggle(project.id, expanded)}
                       type="button"
                     >
@@ -219,15 +233,17 @@ function ProjectBranch({
         <button
           aria-label={
             parentLabel === null
-              ? 'Load more root Projects'
-              : `Load more children of ${parentLabel}`
+              ? t('explorer.loadMoreRootProjects')
+              : t('explorer.loadMoreChildren', { name: parentLabel })
           }
           className={styles.loadMore}
           disabled={projects.isFetchingNextPage}
           onClick={() => void projects.fetchNextPage()}
           type="button"
         >
-          {projects.isFetchingNextPage ? 'Loading Projects' : 'Load more Projects'}
+          {projects.isFetchingNextPage
+            ? t('explorer.loadingProjects')
+            : t('explorer.loadMoreProjects')}
         </button>
       ) : null}
     </div>

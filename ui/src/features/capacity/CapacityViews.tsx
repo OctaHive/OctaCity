@@ -4,6 +4,7 @@ import { useRef, type ReactNode, type RefObject } from 'react';
 import { Link, useParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import { agentPoolPath, buildPath } from '../../app/routes';
 import { formatBytes, formatEnumLabel, formatTimestamp } from '../../shared/display';
@@ -16,40 +17,40 @@ import type { AgentPoolResource, AgentResource, CapacityApi } from './api';
 import { AgentCommands } from './AgentCommands';
 import styles from './CapacityViews.module.css';
 
-export function CapacityLandingView({ title = 'Agents' }: { title?: string }) {
+export function CapacityLandingView({ kind = 'agents' }: { kind?: 'agents' | 'pools' }) {
+  const { t } = usePresentation();
+  const title = kind === 'agents' ? t('section.agents') : t('capacity.pools');
   return (
     <section aria-labelledby="page-title" className={styles.landing}>
-      <p className={styles.eyebrow}>Capacity</p>
+      <p className={styles.eyebrow}>{t('capacity.title')}</p>
       <h1 id="page-title">{title}</h1>
-      <p className={styles.description}>
-        Select an Agent Pool or Agent in the explorer. The console presents server-published
-        capacity facts and does not predict scheduling decisions.
-      </p>
+      <p className={styles.description}>{t('capacity.choose')}</p>
     </section>
   );
 }
 
 export function AgentView({ api }: { api: CapacityApi }) {
   const { agentId } = useParams<'agentId'>();
-  if (agentId === undefined) return <CapacityNotFound resource="Agent" />;
+  if (agentId === undefined) return <CapacityNotFound resource="agent" />;
   return <SelectedAgent agentId={agentId} api={api} />;
 }
 
 function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) {
+  const { t } = usePresentation();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const agent = useQuery({
     queryFn: ({ signal }) => api.getAgent(agentId, signal),
     queryKey: queryKeys.agent(agentId),
   });
-  if (agent.isPending) return <CapacityLoading resource="Agent" />;
+  if (agent.isPending) return <CapacityLoading resource="agent" />;
   if (agent.data === undefined) {
     return isNotFound(agent.error) ? (
-      <CapacityNotFound error={agent.error} onRetry={agent.refetch} resource="Agent" />
+      <CapacityNotFound error={agent.error} onRetry={agent.refetch} resource="agent" />
     ) : (
       <QueryFailureNotice
         error={agent.error}
         onRetry={agent.refetch}
-        title="Agent could not be loaded."
+        title={t('capacity.agentLoadFailure')}
       />
     );
   }
@@ -60,14 +61,14 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
         identity={agent.data.id}
         onRefresh={agent.refetch}
         state={agent.data.status}
-        subtitle="Agent capacity"
+        subtitle={t('capacity.agentCapacity')}
         title={agent.data.name}
         titleRef={headingRef}
       />
       <QueryBackgroundNotice
         error={agent.error}
         fetching={agent.isFetching}
-        label="Agent"
+        label={t('capacity.agent')}
         onRetry={agent.refetch}
       />
       <AgentFacts agent={agent.data} />
@@ -83,24 +84,25 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
 
 export function AgentPoolView({ api }: { api: CapacityApi }) {
   const { poolId } = useParams<'poolId'>();
-  if (poolId === undefined) return <CapacityNotFound resource="Agent Pool" />;
+  if (poolId === undefined) return <CapacityNotFound resource="pool" />;
   return <SelectedAgentPool api={api} poolId={poolId} />;
 }
 
 function SelectedAgentPool({ api, poolId }: { api: CapacityApi; poolId: string }) {
+  const { t } = usePresentation();
   const pool = useQuery({
     queryFn: ({ signal }) => api.getAgentPool(poolId, signal),
     queryKey: queryKeys.agentPool(poolId),
   });
-  if (pool.isPending) return <CapacityLoading resource="Agent Pool" />;
+  if (pool.isPending) return <CapacityLoading resource="pool" />;
   if (pool.data === undefined) {
     return isNotFound(pool.error) ? (
-      <CapacityNotFound error={pool.error} onRetry={pool.refetch} resource="Agent Pool" />
+      <CapacityNotFound error={pool.error} onRetry={pool.refetch} resource="pool" />
     ) : (
       <QueryFailureNotice
         error={pool.error}
         onRetry={pool.refetch}
-        title="Agent Pool could not be loaded."
+        title={t('capacity.poolLoadFailure')}
       />
     );
   }
@@ -111,13 +113,13 @@ function SelectedAgentPool({ api, poolId }: { api: CapacityApi; poolId: string }
         identity={pool.data.id}
         onRefresh={pool.refetch}
         state={pool.data.definition.drain_state}
-        subtitle="Agent Pool capacity"
+        subtitle={t('capacity.poolCapacity')}
         title={pool.data.name}
       />
       <QueryBackgroundNotice
         error={pool.error}
         fetching={pool.isFetching}
-        label="Agent Pool"
+        label={t('capacity.pool')}
         onRetry={pool.refetch}
       />
       <PoolFacts pool={pool.data} />
@@ -137,11 +139,12 @@ function CapacityHeading({
   fetching: boolean;
   identity: string;
   onRefresh: () => unknown;
-  state: string;
+  state: AgentResource['status'] | AgentPoolResource['definition']['drain_state'];
   subtitle: string;
   title: string;
   titleRef?: RefObject<HTMLHeadingElement | null>;
 }) {
+  const { t } = usePresentation();
   return (
     <header className={styles.heading}>
       <div className={styles.headingRow}>
@@ -158,69 +161,83 @@ function CapacityHeading({
           type="button"
         >
           <RefreshCw aria-hidden="true" size={15} />
-          {fetching ? 'Refreshing' : 'Refresh'}
+          {fetching ? t('common.refreshing') : t('common.refresh')}
         </button>
       </div>
       <p className={styles.identity}>{identity}</p>
       <span className={styles.status} data-state={state}>
-        {formatEnumLabel(state)}
+        {formatEnumLabel(state, t)}
       </span>
     </header>
   );
 }
 
 function AgentFacts({ agent }: { agent: AgentResource }) {
-  const lastSeen = formatTimestamp(agent.last_seen_at_unix_ms);
+  const { locale, t } = usePresentation();
+  const lastSeen = formatTimestamp(agent.last_seen_at_unix_ms, locale);
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
-          <h2>Assignment and readiness</h2>
+          <h2>{t('capacity.assignment')}</h2>
         </div>
         <dl className={styles.grid}>
           <Fact
-            label="Pool"
+            label={t('capacity.pool')}
             value={<Link to={agentPoolPath(agent.pool_id)}>{agent.pool_id}</Link>}
           />
-          <Fact label="Pool version" value={agent.pool_version} />
-          <Fact label="Agent version" value={agent.version} />
+          <Fact label={t('capacity.poolVersion')} value={agent.pool_version} />
+          <Fact label={t('capacity.agentVersion')} value={agent.version} />
           <Fact
-            label="Last seen"
+            label={t('capacity.lastSeen')}
             value={<time dateTime={lastSeen.machine ?? undefined}>{lastSeen.display}</time>}
           />
-          <Fact label="Release" value={agent.inventory.agent_version} />
+          <Fact label={t('capacity.release')} value={agent.inventory.agent_version} />
           <Fact
-            label="Host"
+            label={t('capacity.host')}
             value={`${agent.inventory.host_platform.os}/${agent.inventory.host_platform.architecture}`}
           />
         </dl>
       </section>
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
-          <h2>Inventory and capacity</h2>
+          <h2>{t('capacity.inventory')}</h2>
         </div>
         <dl className={styles.grid}>
-          <Fact label="Logical CPUs" value={agent.capacity.logical_cpu_count} />
-          <Fact label="Memory" value={formatBytes(agent.capacity.total_memory_bytes)} />
-          <Fact label="Work disk" value={formatBytes(agent.capacity.work_disk_total_bytes)} />
-          <Fact label="State disk" value={formatBytes(agent.capacity.state_disk_total_bytes)} />
+          <Fact label={t('capacity.logicalCpus')} value={agent.capacity.logical_cpu_count} />
           <Fact
-            label="Virtualization"
-            value={agent.capacity.virtualization_available ? 'Available' : 'Unavailable'}
+            label={t('capacity.memory')}
+            value={formatBytes(agent.capacity.total_memory_bytes, locale)}
           />
-          <Fact label="Runtime count" value={agent.inventory.runtimes.length} />
+          <Fact
+            label={t('capacity.workDisk')}
+            value={formatBytes(agent.capacity.work_disk_total_bytes, locale)}
+          />
+          <Fact
+            label={t('capacity.stateDisk')}
+            value={formatBytes(agent.capacity.state_disk_total_bytes, locale)}
+          />
+          <Fact
+            label={t('capacity.virtualization')}
+            value={
+              agent.capacity.virtualization_available
+                ? t('capacity.available')
+                : t('capacity.unavailable')
+            }
+          />
+          <Fact label={t('capacity.runtimeCount')} value={agent.inventory.runtimes.length} />
         </dl>
         {agent.inventory.runtimes.length === 0 ? (
-          <p className={styles.empty}>No execution runtimes were published.</p>
+          <p className={styles.empty}>{t('capacity.noRuntimes')}</p>
         ) : (
-          <ul className={styles.list} aria-label="Execution runtimes">
+          <ul className={styles.list} aria-label={t('capacity.runtimes')}>
             {agent.inventory.runtimes.map((runtime) => (
               <li
                 key={`${runtime.backend}:${runtime.mode}:${runtime.platform.os}:${runtime.platform.architecture}`}
               >
-                {runtime.backend} · {formatEnumLabel(runtime.mode)} · {runtime.platform.os}/
+                {runtime.backend} · {formatEnumLabel(runtime.mode, t)} · {runtime.platform.os}/
                 {runtime.platform.architecture}
-                {runtime.isolation === null ? '' : ` · ${formatEnumLabel(runtime.isolation)}`}
+                {runtime.isolation === null ? '' : ` · ${formatEnumLabel(runtime.isolation, t)}`}
               </li>
             ))}
           </ul>
@@ -228,26 +245,26 @@ function AgentFacts({ agent }: { agent: AgentResource }) {
       </section>
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
-          <h2>Current execution</h2>
+          <h2>{t('capacity.currentExecution')}</h2>
         </div>
         {agent.current_execution === null ? (
-          <p className={styles.empty}>Idle — no current execution is published.</p>
+          <p className={styles.empty}>{t('capacity.idle')}</p>
         ) : (
           <dl className={styles.grid}>
             <Fact
-              label="Build"
+              label={t('capacity.build')}
               value={
                 <Link to={buildPath(agent.current_execution.build_id)}>
                   {agent.current_execution.build_id}
                 </Link>
               }
             />
-            <Fact label="Attempt" value={agent.current_execution.attempt_id} />
-            <Fact label="Job" value={agent.current_execution.job_id} />
-            <Fact label="Lease" value={agent.current_execution.lease_id} />
+            <Fact label={t('capacity.attempt')} value={agent.current_execution.attempt_id} />
+            <Fact label={t('capacity.job')} value={agent.current_execution.job_id} />
+            <Fact label={t('capacity.lease')} value={agent.current_execution.lease_id} />
             <Fact
-              label="Lease state"
-              value={formatEnumLabel(agent.current_execution.lease_state)}
+              label={t('capacity.leaseState')}
+              value={formatEnumLabel(agent.current_execution.lease_state, t)}
             />
           </dl>
         )}
@@ -257,30 +274,43 @@ function AgentFacts({ agent }: { agent: AgentResource }) {
 }
 
 function PoolFacts({ pool }: { pool: AgentPoolResource }) {
-  const published = formatTimestamp(pool.published_at_unix_ms);
+  const { locale, t } = usePresentation();
+  const published = formatTimestamp(pool.published_at_unix_ms, locale);
   return (
     <div className={styles.stack}>
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
-          <h2>Pool policy</h2>
+          <h2>{t('capacity.poolPolicy')}</h2>
         </div>
         <dl className={styles.grid}>
-          <Fact label="Version" value={pool.version} />
-          <Fact label="Enabled" value={pool.definition.enabled ? 'Yes' : 'No'} />
-          <Fact label="Drain state" value={formatEnumLabel(pool.definition.drain_state)} />
-          <Fact label="Concurrency limit" value={pool.definition.concurrency_limit} />
-          <Fact label="Static capacity limit" value={pool.definition.static_capacity_limit} />
-          <Fact label="Fairness" value={formatEnumLabel(pool.definition.fairness_policy)} />
+          <Fact label={t('capacity.version')} value={pool.version} />
           <Fact
-            label="Published"
+            label={t('capacity.enabled')}
+            value={pool.definition.enabled ? t('common.yes') : t('common.no')}
+          />
+          <Fact
+            label={t('capacity.drainState')}
+            value={formatEnumLabel(pool.definition.drain_state, t)}
+          />
+          <Fact label={t('capacity.concurrencyLimit')} value={pool.definition.concurrency_limit} />
+          <Fact label={t('capacity.staticLimit')} value={pool.definition.static_capacity_limit} />
+          <Fact
+            label={t('capacity.fairness')}
+            value={formatEnumLabel(pool.definition.fairness_policy, t)}
+          />
+          <Fact
+            label={t('capacity.published')}
             value={<time dateTime={published.machine ?? undefined}>{published.display}</time>}
           />
-          <Fact label="Admission" value={admissionLabel(pool)} />
+          <Fact
+            label={t('capacity.admission')}
+            value={formatEnumLabel(pool.definition.admission_policy.mode, t)}
+          />
         </dl>
       </section>
       <section className={styles.panel}>
         <div className={styles.panelHeading}>
-          <h2>Admission facts</h2>
+          <h2>{t('capacity.admissionFacts')}</h2>
         </div>
         <AdmissionFacts pool={pool} />
       </section>
@@ -289,12 +319,13 @@ function PoolFacts({ pool }: { pool: AgentPoolResource }) {
 }
 
 function AdmissionFacts({ pool }: { pool: AgentPoolResource }) {
+  const { t } = usePresentation();
   const policy = pool.definition.admission_policy;
   if (policy.mode === 'any') {
-    return <p className={styles.empty}>Any valid Agent platform may enroll.</p>;
+    return <p className={styles.empty}>{t('capacity.anyPlatform')}</p>;
   }
   return (
-    <ul className={styles.list} aria-label="Admitted platforms">
+    <ul className={styles.list} aria-label={t('capacity.admittedPlatforms')}>
       {policy.platforms.map((platform) => (
         <li key={`${platform.operating_system}:${platform.architecture}`}>
           {platform.operating_system}/{platform.architecture}
@@ -305,19 +336,17 @@ function AdmissionFacts({ pool }: { pool: AgentPoolResource }) {
             <li
               key={`${target.mode}:${target.host_platform.os}:${target.host_platform.architecture}:${target.target_platform.os}:${target.target_platform.architecture}`}
             >
-              {formatEnumLabel(target.mode)}: {target.host_platform.os}/
+              {formatEnumLabel(target.mode, t)}: {target.host_platform.os}/
               {target.host_platform.architecture} → {target.target_platform.os}/
-              {target.target_platform.architecture}; guarantees{' '}
-              {target.required_guarantees.map(formatEnumLabel).join(', ') || 'none'}
+              {target.target_platform.architecture}; {t('capacity.guarantees')}{' '}
+              {target.required_guarantees
+                .map((guarantee) => formatEnumLabel(guarantee, t))
+                .join(', ') || t('common.none')}
             </li>
           ))
         : null}
     </ul>
   );
-}
-
-function admissionLabel(pool: AgentPoolResource) {
-  return formatEnumLabel(pool.definition.admission_policy.mode);
 }
 
 function Fact({ label, value }: { label: string; value: ReactNode }) {
@@ -329,12 +358,14 @@ function Fact({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function CapacityLoading({ resource }: { resource: string }) {
+function CapacityLoading({ resource }: { resource: 'agent' | 'pool' }) {
+  const { t } = usePresentation();
+  const label = resource === 'agent' ? t('capacity.agent') : t('capacity.pool');
   return (
     <section className={styles.landing}>
-      <p className={styles.eyebrow}>Capacity</p>
-      <h1 id="page-title">{resource}</h1>
-      <QueryLoadingNotice className={styles.description} label={resource} />
+      <p className={styles.eyebrow}>{t('capacity.title')}</p>
+      <h1 id="page-title">{label}</h1>
+      <QueryLoadingNotice className={styles.description} label={label} />
     </section>
   );
 }
@@ -346,14 +377,20 @@ function CapacityNotFound({
 }: {
   error?: Error | null;
   onRetry?: (() => unknown) | undefined;
-  resource: string;
+  resource: 'agent' | 'pool';
 }) {
+  const { t } = usePresentation();
+  const label = resource === 'agent' ? t('capacity.agent') : t('capacity.pool');
   return (
     <section className={styles.landing}>
-      <p className={styles.eyebrow}>Not found</p>
-      <h1 id="page-title">{resource} not found</h1>
+      <p className={styles.eyebrow}>{t('route.notFound')}</p>
+      <h1 id="page-title">{t('capacity.notFound', { resource: label })}</h1>
       {onRetry === undefined ? null : (
-        <QueryFailureNotice error={error} onRetry={onRetry} title={`${resource} was not found.`} />
+        <QueryFailureNotice
+          error={error}
+          onRetry={onRetry}
+          title={t('capacity.wasNotFound', { resource: label })}
+        />
       )}
     </section>
   );

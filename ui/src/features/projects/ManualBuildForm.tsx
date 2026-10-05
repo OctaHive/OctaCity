@@ -3,6 +3,7 @@ import { useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 
 import { queryInvalidations, queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { buildPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { formatEnumLabel } from '../../shared/display';
@@ -38,6 +39,7 @@ export function ManualBuildForm({
   configuration: BuildConfigurationResource;
   projectId: string;
 }) {
+  const { t } = usePresentation();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const queryClient = useQueryClient();
   const triggers = useInfiniteQuery({
@@ -77,6 +79,7 @@ export function ManualBuildForm({
       sourceKind,
       sourceValue,
       priority,
+      t,
     );
     if ('errors' in parsed) {
       setValidation(parsed.errors);
@@ -92,7 +95,7 @@ export function ManualBuildForm({
   return (
     <form className={styles.manualBuild} onSubmit={prepare}>
       <h4 ref={headingRef} tabIndex={-1}>
-        Start a Build
+        {t('manualBuild.start')}
       </h4>
       {Object.entries(configuration.definition.parameters.parameters).map(([name, parameter]) => (
         <ParameterField
@@ -104,7 +107,7 @@ export function ManualBuildForm({
         />
       ))}
       <label className={commandFormStyles.field}>
-        <span>Source</span>
+        <span>{t('manualBuild.source')}</span>
         <select
           className={commandFormStyles.control}
           onChange={(event) =>
@@ -112,14 +115,18 @@ export function ManualBuildForm({
           }
           value={sourceKind}
         >
-          <option value="default_reference">Default reference</option>
-          <option value="reference">Reference</option>
-          <option value="exact_revision">Exact revision</option>
+          <option value="default_reference">{t('manualBuild.defaultReference')}</option>
+          <option value="reference">{t('manualBuild.reference')}</option>
+          <option value="exact_revision">{t('manualBuild.exactRevision')}</option>
         </select>
       </label>
       {sourceKind === 'default_reference' ? null : (
         <label className={commandFormStyles.field}>
-          <span>{sourceKind === 'reference' ? 'Reference' : 'Exact revision'}</span>
+          <span>
+            {sourceKind === 'reference'
+              ? t('manualBuild.reference')
+              : t('manualBuild.exactRevision')}
+          </span>
           <input
             className={commandFormStyles.control}
             onChange={(event) => setSourceValue(event.target.value)}
@@ -128,7 +135,7 @@ export function ManualBuildForm({
         </label>
       )}
       <label className={commandFormStyles.field}>
-        <span>Priority</span>
+        <span>{t('manualBuild.priority')}</span>
         <input
           className={commandFormStyles.control}
           inputMode="numeric"
@@ -147,25 +154,25 @@ export function ManualBuildForm({
       {manualTrigger === undefined ? (
         <div className={styles.commandUnavailable}>
           {triggers.isPending ? (
-            <QueryLoadingNotice label="manual Triggers" />
+            <QueryLoadingNotice label={t('manualBuild.triggers')} />
           ) : triggers.data === undefined ? (
             <QueryFailureNotice
               error={triggers.error}
               onRetry={triggers.refetch}
-              title="Manual Triggers could not be loaded."
+              title={t('manualBuild.triggerLoadFailure')}
             />
           ) : (
             <>
               <QueryBackgroundNotice
                 error={triggers.error}
                 fetching={triggers.isFetching && !triggers.isFetchingNextPage}
-                label="manual Trigger data"
+                label={t('manualBuild.triggerData')}
                 onRetry={triggers.isFetchNextPageError ? triggers.fetchNextPage : triggers.refetch}
               />
               <QueryEmptyNotice>
                 {triggers.hasNextPage
-                  ? 'No enabled manual Trigger is present in the loaded pages.'
-                  : 'No enabled manual Trigger is available for this configuration.'}
+                  ? t('manualBuild.noTriggerLoaded')
+                  : t('manualBuild.noTrigger')}
               </QueryEmptyNotice>
             </>
           )}
@@ -175,7 +182,9 @@ export function ManualBuildForm({
               onClick={() => void triggers.fetchNextPage()}
               type="button"
             >
-              {triggers.isFetchingNextPage ? 'Searching…' : 'Search next Trigger page'}
+              {triggers.isFetchingNextPage
+                ? t('manualBuild.searching')
+                : t('manualBuild.searchNext')}
             </button>
           ) : null}
         </div>
@@ -184,18 +193,21 @@ export function ManualBuildForm({
           <QueryBackgroundNotice
             error={triggers.error}
             fetching={triggers.isFetching && !triggers.isFetchingNextPage}
-            label="manual Trigger data"
+            label={t('manualBuild.triggerData')}
             onRetry={triggers.refetch}
           />
           <button className={styles.commandButton} type="submit">
-            Review Build
+            {t('manualBuild.review')}
           </button>
         </>
       )}
       {review === null ? null : (
         <ConfirmedCommand
-          confirmLabel="Start Build"
-          consequence={`This starts one Build from configuration ${configuration.name} version ${configuration.version}.`}
+          confirmLabel={t('manualBuild.start')}
+          consequence={t('manualBuild.consequence', {
+            name: configuration.name,
+            version: configuration.version,
+          })}
           execute={({ headers, request }) => api.triggerBuild(request, headers)}
           fallbackFocusRef={headingRef}
           invalidations={[
@@ -208,17 +220,26 @@ export function ManualBuildForm({
             result.outcome === 'accepted' ? (
               <>
                 <span>
-                  Build {result.build_id} accepted ({formatEnumLabel(result.disposition)}).
+                  {t('manualBuild.accepted', {
+                    disposition: formatEnumLabel(result.disposition, t),
+                    id: result.build_id,
+                  })}
                 </span>
-                <Link to={buildPath(result.build_id)}>Open Build {result.build_id}</Link>
+                <Link to={buildPath(result.build_id)}>
+                  {t('manualBuild.open', { id: result.build_id })}
+                </Link>
               </>
             ) : (
-              <span>Build suppressed ({formatEnumLabel(result.disposition)}).</span>
+              <span>
+                {t('manualBuild.suppressed', {
+                  disposition: formatEnumLabel(result.disposition, t),
+                })}
+              </span>
             )
           }
           request={review.request}
           returnFocus={review.returnFocus}
-          title={`Start Build from ${configuration.name}?`}
+          title={t('manualBuild.confirmTitle', { name: configuration.name })}
         />
       )}
     </form>
@@ -236,6 +257,7 @@ function ParameterField({
   value: ParameterValue;
   valueType: 'boolean' | 'integer' | 'string';
 }) {
+  const { t } = usePresentation();
   const label = formatParameterName(name);
   if (valueType === 'boolean') {
     return (
@@ -248,9 +270,9 @@ function ParameterField({
           }
           value={String(value)}
         >
-          <option value="">Select…</option>
-          <option value="false">False</option>
-          <option value="true">True</option>
+          <option value="">{t('manualBuild.select')}</option>
+          <option value="false">{t('manualBuild.false')}</option>
+          <option value="true">{t('manualBuild.true')}</option>
         </select>
       </label>
     );
@@ -285,20 +307,21 @@ function parseManualBuildRequest(
   sourceKind: ManualBuildRequest['source']['kind'],
   sourceValue: string,
   priorityValue: string,
+  t: ReturnType<typeof usePresentation>['t'],
 ): { errors: string[] } | { request: ManualBuildRequest } {
   const errors: string[] = [];
   const parameters: Record<string, ParameterValue> = {};
   for (const [name, definition] of Object.entries(configuration.definition.parameters.parameters)) {
     const value = values[name];
     if (definition.required && (value === undefined || value === '')) {
-      errors.push(`${formatParameterName(name)} is required.`);
+      errors.push(t('manualBuild.required', { field: formatParameterName(name) }));
       continue;
     }
     if (value === undefined || value === '') continue;
     if (definition.value_type === 'integer') {
       const parsed = typeof value === 'number' ? value : Number(value);
       if (!Number.isSafeInteger(parsed)) {
-        errors.push(`${formatParameterName(name)} must be a whole number.`);
+        errors.push(t('manualBuild.wholeNumber', { field: formatParameterName(name) }));
       } else {
         parameters[name] = parsed;
       }
@@ -307,10 +330,17 @@ function parseManualBuildRequest(
     }
   }
   const priority = Number(priorityValue);
-  if (!Number.isSafeInteger(priority)) errors.push('Priority must be a whole number.');
+  if (!Number.isSafeInteger(priority)) {
+    errors.push(t('manualBuild.wholeNumber', { field: t('manualBuild.priority') }));
+  }
   const trimmedSource = sourceValue.trim();
   if (sourceKind !== 'default_reference' && trimmedSource.length === 0) {
-    errors.push(`${sourceKind === 'reference' ? 'Reference' : 'Exact revision'} is required.`);
+    errors.push(
+      t('manualBuild.required', {
+        field:
+          sourceKind === 'reference' ? t('manualBuild.reference') : t('manualBuild.exactRevision'),
+      }),
+    );
   }
   if (errors.length > 0) return { errors };
   return {

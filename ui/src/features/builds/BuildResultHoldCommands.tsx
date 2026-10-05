@@ -3,6 +3,7 @@ import { useState, type FormEvent, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 
 import { queryInvalidations, queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { auditRequestPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
@@ -46,6 +47,7 @@ export function BuildResultHoldCommands({
   onRefresh: () => unknown | Promise<unknown>;
   retention: BuildResultRetentionResource;
 }) {
+  const { locale, t } = usePresentation();
   const queryClient = useQueryClient();
   const [duration, setDuration] = useState<'permanent' | 'time_bounded'>('permanent');
   const [expiry, setExpiry] = useState('');
@@ -56,7 +58,7 @@ export function BuildResultHoldCommands({
 
   const preparePlacement = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const parsed = parsePlacement(reason, duration, expiry);
+    const parsed = parsePlacement(reason, duration, expiry, t);
     if ('errors' in parsed) {
       setValidation(parsed.errors);
       return;
@@ -83,13 +85,13 @@ export function BuildResultHoldCommands({
           onClick={(event) => prepareRelease(event.currentTarget, hold.version)}
           type="button"
         >
-          Release hold
+          {t('retention.release')}
         </button>
       ) : (
         <form className={styles.holdForm} onSubmit={preparePlacement}>
-          <h3>Place retention hold</h3>
+          <h3>{t('retention.place')}</h3>
           <label className={`${commandFormStyles.field} ${styles.holdReasonField}`}>
-            <span>Hold reason</span>
+            <span>{t('retention.holdReason')}</span>
             <input
               className={commandFormStyles.control}
               onChange={(event) => setReason(event.target.value)}
@@ -97,19 +99,19 @@ export function BuildResultHoldCommands({
             />
           </label>
           <label className={commandFormStyles.field}>
-            <span>Hold duration</span>
+            <span>{t('retention.holdDuration')}</span>
             <select
               className={commandFormStyles.control}
               onChange={(event) => setDuration(event.target.value as typeof duration)}
               value={duration}
             >
-              <option value="permanent">Permanent</option>
-              <option value="time_bounded">Time bounded</option>
+              <option value="permanent">{t('retention.permanent')}</option>
+              <option value="time_bounded">{t('retention.timeBounded')}</option>
             </select>
           </label>
           {duration === 'time_bounded' ? (
             <label className={commandFormStyles.field}>
-              <span>Hold expiry</span>
+              <span>{t('retention.expiry')}</span>
               <input
                 className={commandFormStyles.control}
                 onChange={(event) => setExpiry(event.target.value)}
@@ -126,14 +128,14 @@ export function BuildResultHoldCommands({
             </ul>
           )}
           <button className={styles.secondaryButton} type="submit">
-            Review hold
+            {t('retention.review')}
           </button>
         </form>
       )}
       {review?.kind === 'placement' ? (
         <ConfirmedCommand
-          confirmLabel="Place hold"
-          consequence={placementConsequence(buildId, review.request.body)}
+          confirmLabel={t('retention.place')}
+          consequence={placementConsequence(buildId, review.request.body, locale, t)}
           execute={({ headers, request }) =>
             api.placeBuildResultHold(request.buildId, request.body, headers)
           }
@@ -144,17 +146,15 @@ export function BuildResultHoldCommands({
           ]}
           onClose={() => setReview(null)}
           queryClient={queryClient}
-          renderSuccess={(result) => (
-            <MutationSuccess action="Retention hold placed" auditKind="placement" result={result} />
-          )}
+          renderSuccess={(result) => <MutationSuccess auditKind="placement" result={result} />}
           request={review.request}
           returnFocus={review.returnFocus}
-          title={`Place hold on Build ${buildId}?`}
+          title={t('retention.placeTitle', { id: buildId })}
         />
       ) : review?.kind === 'release' ? (
         <ConfirmedCommand
-          confirmLabel="Release hold"
-          consequence={`This releases the hold on Build ${buildId}. Any overdue Build Result data becomes eligible for deletion by the next retention pass.`}
+          confirmLabel={t('retention.release')}
+          consequence={t('retention.releaseConsequence', { id: buildId })}
           execute={({ headers, request }) =>
             api.releaseBuildResultHold(request.buildId, requireVersionedMutationHeaders(headers))
           }
@@ -166,12 +166,10 @@ export function BuildResultHoldCommands({
           onClose={() => setReview(null)}
           onRefresh={onRefresh}
           queryClient={queryClient}
-          renderSuccess={(result) => (
-            <MutationSuccess action="Retention hold released" auditKind="release" result={result} />
-          )}
+          renderSuccess={(result) => <MutationSuccess auditKind="release" result={result} />}
           request={review.request}
           returnFocus={review.returnFocus}
-          title={`Release hold on Build ${buildId}?`}
+          title={t('retention.releaseTitle', { id: buildId })}
           version={review.request.version}
         />
       ) : null}
@@ -183,20 +181,21 @@ function parsePlacement(
   reason: string,
   duration: 'permanent' | 'time_bounded',
   expiry: string,
+  t: ReturnType<typeof usePresentation>['t'],
 ): { errors: string[] } | { request: PlaceBuildResultHoldRequest } {
   const errors: string[] = [];
-  if (reason.length === 0) errors.push('A hold reason is required.');
+  if (reason.length === 0) errors.push(t('retention.reasonRequired'));
   else if (reason.trim() !== reason || [...reason].some((character) => isControl(character))) {
-    errors.push('The hold reason cannot contain control or surrounding whitespace.');
+    errors.push(t('retention.reasonControl'));
   } else if (new TextEncoder().encode(reason).byteLength > MAX_REASON_UTF8_BYTES) {
-    errors.push(`The hold reason cannot exceed ${MAX_REASON_UTF8_BYTES} UTF-8 bytes.`);
+    errors.push(t('retention.reasonTooLong', { maximum: MAX_REASON_UTF8_BYTES }));
   }
   if (duration === 'permanent') {
     return errors.length === 0 ? { request: { reason } } : { errors };
   }
   const expiresAt = new Date(expiry).getTime();
   if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) {
-    errors.push('Hold expiry must be a valid future date and time.');
+    errors.push(t('retention.expiryInvalid'));
   }
   return errors.length === 0 ? { request: { expires_at_unix_ms: expiresAt, reason } } : { errors };
 }
@@ -206,23 +205,29 @@ function isControl(character: string) {
   return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
 }
 
-function placementConsequence(buildId: string, request: PlaceBuildResultHoldRequest) {
+function placementConsequence(
+  buildId: string,
+  request: PlaceBuildResultHoldRequest,
+  locale: string,
+  t: ReturnType<typeof usePresentation>['t'],
+) {
   const duration =
     request.expires_at_unix_ms === undefined || request.expires_at_unix_ms === null
-      ? 'permanently'
-      : `until ${formatTimestamp(request.expires_at_unix_ms).display}`;
-  return `This protects metadata, logs, Artifacts, and reports for Build ${buildId} ${duration}.`;
+      ? t('retention.permanently')
+      : t('retention.until', {
+          timestamp: formatTimestamp(request.expires_at_unix_ms, locale).display,
+        });
+  return t('retention.placeConsequence', { duration, id: buildId });
 }
 
 function MutationSuccess({
-  action,
   auditKind,
   result,
 }: {
-  action: string;
   auditKind: 'placement' | 'release';
   result: BuildResultRetentionMutationResponse;
 }) {
+  const { t } = usePresentation();
   const audit =
     auditKind === 'placement'
       ? result.retention.hold?.creation_audit
@@ -230,10 +235,13 @@ function MutationSuccess({
   return (
     <>
       <span>
-        {action} ({formatEnumLabel(result.disposition)}).
+        {t(auditKind === 'placement' ? 'retention.placeAction' : 'retention.releaseAction')} (
+        {formatEnumLabel(result.disposition, t)}).
       </span>
       {audit === null || audit === undefined ? null : (
-        <Link to={auditRequestPath(audit.request_identity)}>View {auditKind} audit evidence</Link>
+        <Link to={auditRequestPath(audit.request_identity)}>
+          {t(auditKind === 'placement' ? 'retention.placementAudit' : 'retention.releaseAudit')}
+        </Link>
       )}
     </>
   );

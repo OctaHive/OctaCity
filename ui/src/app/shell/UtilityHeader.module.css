@@ -175,12 +175,10 @@
   color: var(--color-brand-action);
 }
 
-.popoverAnchor,
 .operatorMenu {
   position: relative;
 }
 
-.headerPopover,
 .operatorMenuPanel {
   position: absolute;
   z-index: 70;
@@ -195,7 +193,6 @@
   color: var(--color-text-primary);
 }
 
-.headerPopover p,
 .operatorMenuPanel p {
   margin: 0.55rem 0 0;
   color: var(--color-text-muted);

@@ -21,6 +21,8 @@
   --color-information: #477fae;
   --color-warning-ink: #704b08;
   --color-danger-ink: #963d39;
+  --color-notification-badge: #963d39;
+  --color-on-notification-badge: #ffffff;
   --color-information-ink: #35658c;
   --color-success-ink: #24634e;
   --color-sidebar-text: #f4faf7;
@@ -63,17 +65,26 @@
   --color-text-primary: #ecf5f1;
   --color-text-muted: #afc2ba;
   --color-border: #30463d;
+  --color-warning: #e0aa4d;
+  --color-danger: #dc7771;
+  --color-information: #6da4d1;
   --color-warning-soft: #3d2f16;
   --color-danger-soft: #432321;
   --color-information-soft: #1d3242;
   --color-warning-ink: #f0c36e;
   --color-danger-ink: #f09a94;
+  --color-notification-badge: #f09a94;
+  --color-on-notification-badge: #10251d;
   --color-information-ink: #91c3e9;
   --color-success-ink: #82d5b4;
   --color-sidebar-text: #f4faf7;
   --color-sidebar-muted: #b8c9c1;
+  --color-sidebar-outline: rgb(255 255 255 / 25%);
+  --color-sidebar-hover: rgb(255 255 255 / 7%);
   --color-topbar-surface: rgb(13 23 19 / 96%);
   --color-security-border: #356a56;
   --color-security-ink: #d6f4e7;
   --color-overlay: rgb(4 10 7 / 68%);
+  --focus-ring: 0 0 0 3px rgb(85 179 142 / 45%);
+  --shadow-floating: 0 1rem 2.5rem rgb(0 0 0 / 42%);
 }

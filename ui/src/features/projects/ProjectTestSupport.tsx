@@ -28,7 +28,7 @@ export const BUILD_C = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3';
 export function renderProjects(path: string, api: ProjectsApi) {
   const queryClient = createConsoleQueryClient();
   const router = createMemoryRouter(
-    createConsoleRoutes(async () => 'ready', api),
+    createConsoleRoutes({ projectsApi: api, readinessProbe: async () => 'ready' }),
     {
       initialEntries: [path],
     },

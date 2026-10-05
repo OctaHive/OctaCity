@@ -1,60 +1,55 @@
 import { Bell, Boxes, ChevronDown, Search, SunMoon, UserRound } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { lazy, Suspense } from 'react';
 import { Link } from 'react-router-dom';
 
+import type { OperatorAttentionApi } from '../../api/operatorAttention';
+import { usePresentation } from '../presentation/PresentationProvider';
 import { CONSOLE_PATHS } from '../routes';
+import type { Language, ThemeMode } from '../presentation/preferences';
 import styles from './UtilityHeader.module.css';
 
-type ReadinessTone = 'checking' | 'ready' | 'unavailable' | 'unreachable';
-type ThemeMode = 'system' | 'light' | 'dark';
+const NotificationCenter = lazy(async () => {
+  const module = await import('./NotificationCenter');
+  return { default: module.NotificationCenter };
+});
 
+type ReadinessTone = 'checking' | 'ready' | 'unavailable' | 'unreachable';
 interface UtilityHeaderProps {
   onOpenSearch: (trigger: HTMLElement) => void;
+  operatorAttentionApi: OperatorAttentionApi;
   readinessLabel: string;
   readinessTone: ReadinessTone;
 }
 
-export function UtilityHeader({ onOpenSearch, readinessLabel, readinessTone }: UtilityHeaderProps) {
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [theme, setTheme] = useState<ThemeMode>('system');
-
-  useEffect(() => {
-    const colorScheme = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
-    const applyTheme = () => {
-      document.documentElement.dataset.theme = theme;
-      document.documentElement.dataset.resolvedTheme =
-        theme === 'system' ? (colorScheme?.matches === true ? 'dark' : 'light') : theme;
-    };
-    applyTheme();
-    colorScheme?.addEventListener('change', applyTheme);
-    return () => {
-      colorScheme?.removeEventListener('change', applyTheme);
-      delete document.documentElement.dataset.theme;
-      delete document.documentElement.dataset.resolvedTheme;
-    };
-  }, [theme]);
+export function UtilityHeader({
+  onOpenSearch,
+  operatorAttentionApi,
+  readinessLabel,
+  readinessTone,
+}: UtilityHeaderProps) {
+  const { preferences, setLanguage, setTheme, t } = usePresentation();
 
   return (
     <header className={styles.utilityHeader}>
-      <Link aria-label="OctaCity Projects" className={styles.brand} to={CONSOLE_PATHS.projects}>
+      <Link aria-label={t('brand.home')} className={styles.brand} to={CONSOLE_PATHS.projects}>
         <span className={styles.brandMark} aria-hidden="true">
           <Boxes size={21} strokeWidth={1.8} />
         </span>
         <span className={styles.brandText}>
           <strong>OctaCity</strong>
-          <small>Operator Console</small>
+          <small>{t('brand.product')}</small>
         </span>
       </Link>
 
       <button
         aria-haspopup="dialog"
-        aria-label="Search resources"
+        aria-label={t('shell.searchResources')}
         className={styles.globalSearch}
         onClick={(event) => onOpenSearch(event.currentTarget)}
         type="button"
       >
         <Search aria-hidden="true" size={17} />
-        <span>Search resources</span>
+        <span>{t('shell.searchResources')}</span>
         <kbd>Ctrl/⌘ K</kbd>
       </button>
 
@@ -71,72 +66,73 @@ export function UtilityHeader({ onOpenSearch, readinessLabel, readinessTone }: U
 
         <label className={styles.themeControl}>
           <SunMoon aria-hidden="true" size={17} />
-          <span className={styles.visuallyHidden}>Theme</span>
+          <span className={styles.visuallyHidden}>{t('theme.label')}</span>
           <select
-            aria-label="Theme"
+            aria-label={t('theme.label')}
             onChange={(event) => setTheme(event.currentTarget.value as ThemeMode)}
-            value={theme}
+            value={preferences.theme}
           >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
+            <option value="system">{t('theme.system')}</option>
+            <option value="light">{t('theme.light')}</option>
+            <option value="dark">{t('theme.dark')}</option>
           </select>
         </label>
 
-        <div className={styles.popoverAnchor}>
-          <button
-            aria-expanded={notificationsOpen}
-            aria-haspopup="dialog"
-            aria-label="Notifications"
-            className={styles.iconButton}
-            onClick={() => setNotificationsOpen((current) => !current)}
-            type="button"
-          >
-            <Bell aria-hidden="true" size={18} />
-          </button>
-          {notificationsOpen ? (
-            <section
-              aria-label="Notification center"
-              className={styles.headerPopover}
-              role="dialog"
+        <Suspense
+          fallback={
+            <button
+              aria-label={t('notification.label')}
+              className={styles.iconButton}
+              disabled
+              type="button"
             >
-              <strong>Notifications</strong>
-              <p>Notification sources are not enabled in this console build.</p>
-            </section>
-          ) : null}
-        </div>
+              <Bell aria-hidden="true" size={18} />
+            </button>
+          }
+        >
+          <NotificationCenter
+            api={operatorAttentionApi}
+            icon={<Bell aria-hidden="true" size={18} />}
+            triggerClassName={styles.iconButton}
+          />
+        </Suspense>
 
         <details className={styles.operatorMenu}>
-          <summary aria-label="Operator menu">
+          <summary aria-label={t('operator.menu')}>
             <UserRound aria-hidden="true" size={18} />
-            <span>Operator</span>
+            <span>{t('common.operator')}</span>
             <ChevronDown aria-hidden="true" size={14} />
           </summary>
           <div className={styles.operatorMenuPanel}>
-            <strong>Local console settings</strong>
+            <strong>{t('operator.localSettings')}</strong>
             <label className={styles.operatorLanguage}>
-              <span>Language</span>
-              <select aria-label="Language" defaultValue="en">
-                <option value="en">English</option>
+              <span>{t('language.label')}</span>
+              <select
+                aria-label={t('language.label')}
+                onChange={(event) => setLanguage(event.currentTarget.value as Language)}
+                value={preferences.language}
+              >
+                <option value="en">{t('language.english')}</option>
+                <option value="ru">{t('language.russian')}</option>
               </select>
             </label>
             <dl>
               <div>
-                <dt>Access</dt>
-                <dd>Trusted network</dd>
+                <dt>{t('operator.access')}</dt>
+                <dd>{t('operator.trustedNetwork')}</dd>
               </div>
               <div>
-                <dt>Preferences</dt>
-                <dd>Browser local</dd>
+                <dt>{t('operator.preferences')}</dt>
+                <dd>{t('operator.browserLocal')}</dd>
               </div>
             </dl>
-            <nav aria-label="Operator resources" className={styles.operatorResources}>
+            <nav aria-label={t('operator.resources')} className={styles.operatorResources}>
               <a href="/api/v1/openapi.json" rel="noreferrer" target="_blank">
-                API documentation
+                {t('operator.apiDocumentation')}
               </a>
-              <a href="#trusted-network-notice">Deployment information</a>
+              <a href="#trusted-network-notice">{t('operator.deploymentInformation')}</a>
             </nav>
-            <p>No browser identity or session is active.</p>
+            <p>{t('operator.noIdentity')}</p>
           </div>
         </details>
       </div>

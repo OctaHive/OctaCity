@@ -1,4 +1,6 @@
 import type { DagEdge, JobResource } from './api';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
+import type { MessageKey } from '../../app/presentation/messages';
 import { formatEnumLabel } from '../../shared/display';
 import { layoutDag } from './dagLayout';
 import styles from './Builds.module.css';
@@ -10,6 +12,7 @@ interface AttemptGraphProps {
 
 /** Renders a stable, read-only DAG whose semantics are repeated in the adjacent table. */
 export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
+  const { t } = usePresentation();
   const layout = layoutDag({
     edges: edges.map((edge) => ({
       from: edge.predecessor_job_id,
@@ -23,7 +26,7 @@ export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
   return (
     <div className={styles.graphScroller}>
       <svg
-        aria-label="Attempt dependency graph"
+        aria-label={t('diagnostics.dependencyGraph')}
         className={styles.graph}
         height={layout.height}
         role="img"
@@ -55,7 +58,7 @@ export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
           const midpoint = startX + (endX - startX) / 2;
           return (
             <path
-              aria-label={edgeLabel(edge, jobs)}
+              aria-label={edgeLabel(edge, jobs, t)}
               className={styles.edge}
               d={`M ${startX} ${startY} C ${midpoint} ${startY}, ${midpoint} ${endY}, ${endX} ${endY}`}
               key={`${edge.predecessor_job_id}:${edge.dependent_job_id}`}
@@ -67,7 +70,7 @@ export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
           const job = jobsById.get(id);
           if (job === undefined) return null;
           return (
-            <g aria-label={`${job.pipeline_node_id}, ${stateLabel(job.state)}`} key={job.id}>
+            <g aria-label={`${job.pipeline_node_id}, ${stateLabel(job.state, t)}`} key={job.id}>
               <rect
                 className={`${styles.graphNode} ${styles[`state_${stateFamily(job.state)}`]}`}
                 height={layout.nodeHeight}
@@ -80,7 +83,7 @@ export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
                 {truncate(job.pipeline_node_id)}
               </text>
               <text className={styles.nodeState} x={x + 12} y={y + 49}>
-                {stateLabel(job.state)}
+                {stateLabel(job.state, t)}
               </text>
             </g>
           );
@@ -91,17 +94,23 @@ export function AttemptGraph({ edges, jobs }: AttemptGraphProps) {
 }
 
 /** Gives both graph and table a single operator-facing relationship description. */
-export function edgeLabel(edge: DagEdge, jobs: JobResource[]): string {
+type Translate = (key: MessageKey, values?: Readonly<Record<string, number | string>>) => string;
+
+export function edgeLabel(edge: DagEdge, jobs: JobResource[], t: Translate): string {
   const names = new Map(jobs.map((job) => [job.id, job.pipeline_node_id]));
-  return `${names.get(edge.predecessor_job_id) ?? edge.predecessor_job_id} precedes ${names.get(edge.dependent_job_id) ?? edge.dependent_job_id} (${policyLabel(edge.dependency_policy)})`;
+  return t('diagnostics.precedes', {
+    dependent: names.get(edge.dependent_job_id) ?? edge.dependent_job_id,
+    policy: policyLabel(edge.dependency_policy, t),
+    predecessor: names.get(edge.predecessor_job_id) ?? edge.predecessor_job_id,
+  });
 }
 
-export function policyLabel(policy: DagEdge['dependency_policy']): string {
-  return formatEnumLabel(policy);
+export function policyLabel(policy: DagEdge['dependency_policy'], t: Translate): string {
+  return formatEnumLabel(policy, t);
 }
 
-export function stateLabel(state: JobResource['state']): string {
-  return formatEnumLabel(state);
+export function stateLabel(state: JobResource['state'], t: Translate): string {
+  return formatEnumLabel(state, t);
 }
 
 export function stateFamily(state: string): 'danger' | 'info' | 'muted' | 'success' {

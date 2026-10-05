@@ -2,37 +2,40 @@ import {
   AUDIT_ACTOR_KINDS as GENERATED_AUDIT_ACTOR_KINDS,
   AUDIT_QUERY_CONSTRAINTS,
 } from '../../../.generated/api/constraints';
+import type { MessageKey, MessageValues } from '../../app/presentation/messages';
 import type { AuditActorKind, AuditFilters } from './api';
 
 export const AUDIT_ACTOR_KINDS = GENERATED_AUDIT_ACTOR_KINDS satisfies readonly AuditActorKind[];
 
 export const AUDIT_TEXT_FILTERS = [
   {
-    label: 'Actor identity',
+    label: 'audit.actorIdentity',
     maximumBytes: AUDIT_QUERY_CONSTRAINTS.actorIdentityMaximumBytes,
     name: 'actor_identity',
   },
   {
-    label: 'Operation',
+    label: 'audit.operation',
     maximumBytes: AUDIT_QUERY_CONSTRAINTS.operationMaximumBytes,
     name: 'operation',
   },
   {
-    label: 'Target kind',
+    label: 'audit.targetKind',
     maximumBytes: AUDIT_QUERY_CONSTRAINTS.targetKindMaximumBytes,
     name: 'target_kind',
   },
   {
-    label: 'Target identity',
+    label: 'audit.targetIdentity',
     maximumBytes: AUDIT_QUERY_CONSTRAINTS.targetIdentityMaximumBytes,
     name: 'target_identity',
   },
   {
-    label: 'Request identity',
+    label: 'audit.requestIdentity',
     maximumBytes: AUDIT_QUERY_CONSTRAINTS.requestIdentityMaximumBytes,
     name: 'request_identity',
   },
 ] as const;
+
+type Translate = (key: MessageKey, values?: MessageValues) => string;
 
 const FILTER_PARAMETERS = [
   'actor_kind',
@@ -49,22 +52,26 @@ export interface ParsedAuditFilters {
 }
 
 /** Decodes and bounds every shareable audit filter before a server query is enabled. */
-export function readAuditFilters(parameters: URLSearchParams): ParsedAuditFilters {
+export function readAuditFilters(parameters: URLSearchParams, t: Translate): ParsedAuditFilters {
   const actorKindValue = parameters.get('actor_kind');
   const actorKind =
     actorKindValue === null || actorKindValue === ''
       ? null
       : AUDIT_ACTOR_KINDS.find((kind) => kind === actorKindValue);
-  if (actorKind === undefined) return invalidFilters('Actor kind is not supported.');
+  if (actorKind === undefined) return invalidFilters(t('audit.actorKindUnsupported'));
 
-  const text = readTextFilters(parameters);
+  const text = readTextFilters(parameters, t);
   if (text.error !== null) return invalidFilters(text.error);
-  const from = readUnixTime(parameters.get('occurred_from_unix_ms'), 'Occurred from');
+  const from = readUnixTime(parameters.get('occurred_from_unix_ms'), t('audit.occurredFrom'), t);
   if (from.error !== null) return invalidFilters(from.error);
-  const through = readUnixTime(parameters.get('occurred_through_unix_ms'), 'Occurred through');
+  const through = readUnixTime(
+    parameters.get('occurred_through_unix_ms'),
+    t('audit.occurredThrough'),
+    t,
+  );
   if (through.error !== null) return invalidFilters(through.error);
   if (from.value !== null && through.value !== null && from.value > through.value) {
-    return invalidFilters('Occurred from must not be later than occurred through.');
+    return invalidFilters(t('audit.occurredRangeInvalid'));
   }
 
   return {
@@ -83,7 +90,7 @@ export function readAuditFilters(parameters: URLSearchParams): ParsedAuditFilter
 }
 
 /** Converts the filter form into the same validated representation used for copied URLs. */
-export function auditFiltersFromForm(data: FormData): ParsedAuditFilters {
+export function auditFiltersFromForm(data: FormData, t: Translate): ParsedAuditFilters {
   const parameters = new URLSearchParams();
   const actorKind = String(data.get('actor_kind') ?? '');
   if (actorKind !== '') parameters.set('actor_kind', actorKind);
@@ -91,16 +98,21 @@ export function auditFiltersFromForm(data: FormData): ParsedAuditFilters {
     const value = String(data.get(name) ?? '');
     if (value !== '') parameters.set(name, value);
   }
-  const from = dateInputToUnixTime(String(data.get('occurred_from') ?? ''), 'Occurred from');
+  const from = dateInputToUnixTime(
+    String(data.get('occurred_from') ?? ''),
+    t('audit.occurredFrom'),
+    t,
+  );
   if (from.error !== null) return invalidFilters(from.error);
   const through = dateInputToUnixTime(
     String(data.get('occurred_through') ?? ''),
-    'Occurred through',
+    t('audit.occurredThrough'),
+    t,
   );
   if (through.error !== null) return invalidFilters(through.error);
   if (from.value !== null) parameters.set('occurred_from_unix_ms', String(from.value));
   if (through.value !== null) parameters.set('occurred_through_unix_ms', String(through.value));
-  return readAuditFilters(parameters);
+  return readAuditFilters(parameters, t);
 }
 
 /** Replaces only audit-owned URL parameters with one canonical bounded filter set. */
@@ -137,14 +149,18 @@ export function hasAuditFilters(parameters: URLSearchParams): boolean {
 
 /** Converts a validated Unix-millisecond filter to a lossless local datetime control value. */
 export function auditTimeInputValue(value: string | null): string {
-  const parsed = readUnixTime(value, 'Time');
-  if (parsed.error !== null || parsed.value === null) return '';
-  const date = new Date(parsed.value);
+  if (value === null || !/^-?\d+$/u.test(value)) return '';
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || Number.isNaN(new Date(parsed).getTime())) return '';
+  const date = new Date(parsed);
   const pad = (part: number) => String(part).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${String(date.getMilliseconds()).padStart(3, '0')}`;
 }
 
-function readTextFilters(parameters: URLSearchParams): {
+function readTextFilters(
+  parameters: URLSearchParams,
+  t: Translate,
+): {
   error: string | null;
   values: Record<TextFilterName, string | null>;
 } {
@@ -161,7 +177,7 @@ function readTextFilters(parameters: URLSearchParams): {
       new TextEncoder().encode(value).byteLength > maximumBytes
     ) {
       return {
-        error: `${label} must contain 1–${maximumBytes} UTF-8 bytes without surrounding whitespace or control characters.`,
+        error: t('audit.filterInvalid', { label: t(label), maximum: maximumBytes }),
         values,
       };
     }
@@ -180,13 +196,13 @@ function hasControlCharacter(value: string): boolean {
 function readUnixTime(
   value: string | null,
   label: string,
+  t: Translate,
 ): { error: string | null; value: number | null } {
   if (value === null || value === '') return { error: null, value: null };
-  if (!/^-?\d+$/u.test(value))
-    return { error: `${label} must be a Unix millisecond value.`, value: null };
+  if (!/^-?\d+$/u.test(value)) return { error: t('audit.timeUnixInvalid', { label }), value: null };
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || Number.isNaN(new Date(parsed).getTime())) {
-    return { error: `${label} must be a representable Unix millisecond value.`, value: null };
+    return { error: t('audit.timeUnixUnrepresentable', { label }), value: null };
   }
   return { error: null, value: parsed };
 }
@@ -210,10 +226,11 @@ function invalidFilters(error: string): ParsedAuditFilters {
 function dateInputToUnixTime(
   value: string,
   label: string,
+  t: Translate,
 ): { error: string | null; value: number | null } {
   if (value === '') return { error: null, value: null };
   const parsed = Date.parse(value);
   return Number.isNaN(parsed)
-    ? { error: `${label} must be a valid local date and time.`, value: null }
+    ? { error: t('audit.timeLocalInvalid', { label }), value: null }
     : { error: null, value: parsed };
 }

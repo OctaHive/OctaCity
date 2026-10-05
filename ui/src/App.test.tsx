@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from './App';
 import type { ReadinessProbe } from './api/readiness';
+import type { OperatorAttentionApi } from './api/operatorAttention';
 import { createConsoleQueryClient } from './app/query';
 import { createConsoleRoutes } from './app/router';
 import { CONSOLE_PATHS } from './app/routes';
@@ -15,6 +16,11 @@ import { NARROW_WORKBENCH_MEDIA_QUERY } from './app/shell/layout';
 import { RouteErrorBoundary } from './app/shell/RouteErrorBoundary';
 
 const queryClients: QueryClient[] = [];
+const emptyAttentionApi: OperatorAttentionApi = {
+  async listOperatorAttention() {
+    return { items: [], next_cursor: null };
+  },
+};
 
 afterEach(() => {
   cleanup();
@@ -31,9 +37,12 @@ afterEach(() => {
 function renderConsole(path: string, readinessProbe: ReadinessProbe = async () => 'ready') {
   const queryClient = createConsoleQueryClient();
   queryClients.push(queryClient);
-  const router = createMemoryRouter(createConsoleRoutes(readinessProbe), {
-    initialEntries: [path],
-  });
+  const router = createMemoryRouter(
+    createConsoleRoutes({ attentionApi: emptyAttentionApi, readinessProbe }),
+    {
+      initialEntries: [path],
+    },
+  );
   const result = render(<App queryClient={queryClient} router={router} />);
   return { ...result, router };
 }
@@ -58,6 +67,30 @@ describe('App', () => {
     expect(favorites.compareDocumentPosition(browse) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it('renders identity-only favorites in the matching contextual explorer', () => {
+    const projectId = '11111111-1111-4111-8111-111111111111';
+    localStorage.setItem(
+      'octacity.console.preferences',
+      JSON.stringify({
+        expanded: [],
+        explorerOpen: true,
+        explorerWidth: 288,
+        favorites: [{ id: projectId, kind: 'project' }],
+        language: 'en',
+        notificationLastOpenedAt: null,
+        recents: [],
+        theme: 'system',
+        version: 2,
+      }),
+    );
+    renderConsole(CONSOLE_PATHS.projects);
+
+    const favorites = screen.getByRole('region', { name: 'Favorites' });
+    const link = within(favorites).getByRole('link', { name: `Open Projects ${projectId}` });
+    expect(link.getAttribute('href')).toBe(`/projects/${projectId}`);
+    expect(localStorage.getItem('octacity.console.preferences')).not.toContain('label');
   });
 
   it('uses a tool-focused explorer for Audit without generic navigation groups', async () => {
@@ -100,15 +133,11 @@ describe('App', () => {
     separator.focus();
     await user.keyboard('{End}{ArrowRight}');
     expect(separator.getAttribute('aria-valuenow')).toBe('480');
-    expect(localStorage.getItem('octacity.console.preferences')).toBe(
-      '{"explorerWidth":480,"version":1}',
-    );
+    expect(storedPreferences()).toMatchObject({ explorerWidth: 480, version: 2 });
 
     await user.keyboard('{Home}{ArrowLeft}');
     expect(separator.getAttribute('aria-valuenow')).toBe('240');
-    expect(localStorage.getItem('octacity.console.preferences')).toBe(
-      '{"explorerWidth":240,"version":1}',
-    );
+    expect(storedPreferences()).toMatchObject({ explorerWidth: 240, version: 2 });
   });
 
   it('persists the last pointer width even when pointer move and release are consecutive', () => {
@@ -120,9 +149,7 @@ describe('App', () => {
     fireEvent.pointerUp(separator, { clientX: 420, pointerId: 1 });
 
     expect(separator.getAttribute('aria-valuenow')).toBe('420');
-    expect(localStorage.getItem('octacity.console.preferences')).toBe(
-      '{"explorerWidth":420,"version":1}',
-    );
+    expect(storedPreferences()).toMatchObject({ explorerWidth: 420, version: 2 });
   });
 
   it('clamps a persisted explorer width before rendering', () => {
@@ -159,7 +186,7 @@ describe('App', () => {
     const globalSearch = screen.getByRole('button', { name: 'Search resources' });
 
     await user.click(globalSearch);
-    expect(screen.getByRole('dialog', { name: 'Search resources' })).toBeTruthy();
+    expect(await screen.findByRole('dialog', { name: 'Search resources' })).toBeTruthy();
     expect(screen.getByText('Scope: All resources')).toBeTruthy();
     expect(document.activeElement).toBe(screen.getByRole('searchbox', { name: 'Search query' }));
     await user.keyboard('{Escape}');
@@ -194,8 +221,8 @@ describe('App', () => {
 
     await user.keyboard('{Control>}k{/Control}');
 
-    const search = screen.getByRole('searchbox', { name: 'Search query' });
-    const close = screen.getByRole('button', { name: 'Close' });
+    const search = await screen.findByRole('searchbox', { name: 'Search query' });
+    const close = screen.getByRole('button', { name: 'Close command center' });
     expect(document.activeElement).toBe(search);
     await user.tab();
     expect(document.activeElement).toBe(close);
@@ -247,11 +274,26 @@ describe('App', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: 'Theme' }), 'dark');
     expect(document.documentElement.dataset.resolvedTheme).toBe('dark');
 
-    await user.click(screen.getByRole('button', { name: 'Notifications' }));
+    const notifications = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => expect((notifications as HTMLButtonElement).disabled).toBe(false));
+    await user.click(notifications);
     expect(screen.getByRole('dialog', { name: 'Notification center' })).toBeTruthy();
-    expect(
-      screen.getByText('Notification sources are not enabled in this console build.'),
-    ).toBeTruthy();
+    expect(await screen.findByText('No relevant notifications.')).toBeTruthy();
+    expect(screen.getByText('No commands were completed in this browser session.')).toBeTruthy();
+    expect(storedPreferences()).toMatchObject({ notificationLastOpenedAt: expect.any(Number) });
+  });
+
+  it('persists language and explorer visibility in the bounded preference record', async () => {
+    const user = userEvent.setup();
+    renderConsole(CONSOLE_PATHS.projects);
+
+    await user.click(screen.getByLabelText('Operator menu'));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'ru');
+    expect(document.documentElement.lang).toBe('ru');
+    expect(screen.getByRole('link', { current: 'page', name: 'Проекты' })).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Свернуть проводник раздела «Проекты»' }));
+    expect(storedPreferences()).toMatchObject({ explorerOpen: false, language: 'ru' });
   });
 
   it('keeps the operator menu neutral and free of fabricated identity actions', async () => {
@@ -347,4 +389,11 @@ function stubMatchMedia(narrow: boolean): void {
       removeListener: vi.fn(),
     })),
   );
+}
+
+function storedPreferences(): Record<string, unknown> {
+  return JSON.parse(localStorage.getItem('octacity.console.preferences') ?? '{}') as Record<
+    string,
+    unknown
+  >;
 }

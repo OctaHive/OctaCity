@@ -9,14 +9,16 @@ import {
 } from 'react';
 import { Link } from 'react-router-dom';
 
-import { CONSOLE_PATHS } from '../routes';
+import { usePresentation } from '../presentation/PresentationProvider';
+import { CONSOLE_PATHS, searchableResourcePath } from '../routes';
 import {
   EXPLORER_MAX_WIDTH,
   EXPLORER_MIN_WIDTH,
   EXPLORER_RESIZE_STEP,
   clampExplorerWidth,
-} from './preferences';
-import type { ConsoleSection } from './sections';
+} from '../presentation/preferences';
+import { sectionLabel, type ConsoleSection } from './sections';
+import { resourceKindMessageKeys, searchScopeForSection } from './searchScope';
 import styles from './ContextExplorer.module.css';
 import { useOverlayFocus } from '../../shared/useOverlayFocus';
 
@@ -45,6 +47,8 @@ export function ContextExplorer({
   section,
   width,
 }: ContextExplorerProps) {
+  const { addRecent, preferences, t } = usePresentation();
+  const localizedSection = sectionLabel(section.id, t);
   const explorerRef = useRef<HTMLElement>(null);
   const resizingRef = useRef(false);
   const latestWidthRef = useRef(width);
@@ -93,7 +97,7 @@ export function ContextExplorer({
 
   return (
     <aside
-      aria-label={`${section.label} explorer`}
+      aria-label={`${localizedSection} ${t('common.explorer').toLocaleLowerCase()}`}
       aria-modal={modal || undefined}
       className={modal ? `${styles.explorer} ${styles.modalExplorer}` : styles.explorer}
       ref={explorerRef}
@@ -101,25 +105,25 @@ export function ContextExplorer({
     >
       <header className={styles.explorerHeader}>
         <div>
-          <p>Explorer</p>
+          <p>{t('common.explorer')}</p>
           <h2 ref={headingRef} tabIndex={-1}>
-            {section.label}
+            {localizedSection}
           </h2>
         </div>
         <div className={styles.explorerActions}>
           <button
             aria-haspopup="dialog"
-            aria-label={`Search ${section.label}`}
+            aria-label={t('shell.searchSection', { section: localizedSection })}
             onClick={(event) => onOpenSearch(event.currentTarget)}
-            title={`Search ${section.label}`}
+            title={t('shell.searchSection', { section: localizedSection })}
             type="button"
           >
             <Search aria-hidden="true" size={17} />
           </button>
           <button
-            aria-label={`Collapse ${section.label} explorer`}
+            aria-label={t('shell.collapseSectionExplorer', { section: localizedSection })}
             onClick={onCollapse}
-            title="Collapse explorer"
+            title={t('shell.collapseExplorer')}
             type="button"
           >
             <ChevronLeft aria-hidden="true" size={18} />
@@ -135,14 +139,18 @@ export function ContextExplorer({
             <section aria-labelledby={`${section.id}-favorites`} className={styles.explorerSection}>
               <h3 id={`${section.id}-favorites`}>
                 <Star aria-hidden="true" size={15} />
-                Favorites
+                {t('common.favorites')}
               </h3>
-              <p>No favorites yet.</p>
+              <FavoriteLinks
+                favorites={preferences.favorites}
+                onOpen={addRecent}
+                section={section}
+              />
             </section>
             <section aria-labelledby={`${section.id}-browse`} className={styles.explorerSection}>
               <h3 id={`${section.id}-browse`}>
                 <FolderOpen aria-hidden="true" size={15} />
-                Browse
+                {t('common.browse')}
               </h3>
               {children === undefined ? <ExplorerLinks section={section} /> : children}
             </section>
@@ -152,7 +160,7 @@ export function ContextExplorer({
 
       {modal ? null : (
         <div
-          aria-label={`Resize ${section.label} explorer`}
+          aria-label={t('shell.resizeSectionExplorer', { section: localizedSection })}
           aria-orientation="vertical"
           aria-valuemax={EXPLORER_MAX_WIDTH}
           aria-valuemin={EXPLORER_MIN_WIDTH}
@@ -175,16 +183,56 @@ export function ContextExplorer({
   );
 }
 
+function FavoriteLinks({
+  favorites,
+  onOpen,
+  section,
+}: {
+  favorites: ReturnType<typeof usePresentation>['preferences']['favorites'];
+  onOpen: ReturnType<typeof usePresentation>['addRecent'];
+  section: ConsoleSection;
+}) {
+  const { t } = usePresentation();
+  const scope = searchScopeForSection(section.id);
+  const visible = favorites.filter(
+    (identity) => identity.kind !== 'build_configuration' && scope.includes(identity.kind),
+  );
+  if (visible.length === 0) return <p>{t('common.noFavorites')}</p>;
+  return (
+    <ul>
+      {visible.map((identity) => {
+        if (identity.kind === 'build_configuration') return null;
+        return (
+          <li key={`${identity.kind}:${identity.id}`}>
+            <Link
+              aria-label={t('command.openResource', {
+                label: `${t(resourceKindMessageKeys[identity.kind])} ${identity.id}`,
+              })}
+              onClick={() => onOpen(identity)}
+              title={identity.id}
+              to={searchableResourcePath(identity.kind, identity.id)}
+            >
+              <span>{t(resourceKindMessageKeys[identity.kind])}</span>
+              <small>{identity.id}</small>
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function ExplorerLinks({ section }: { section: ConsoleSection }) {
+  const { t } = usePresentation();
   switch (section.id) {
     case 'agents':
       return (
         <ul>
           <li>
-            <Link to={CONSOLE_PATHS.agents}>All Agents</Link>
+            <Link to={CONSOLE_PATHS.agents}>{t('shell.allAgents')}</Link>
           </li>
           <li>
-            <Link to={CONSOLE_PATHS.agentPools}>Agent Pools</Link>
+            <Link to={CONSOLE_PATHS.agentPools}>{t('shell.agentPools')}</Link>
           </li>
         </ul>
       );
@@ -194,7 +242,7 @@ function ExplorerLinks({ section }: { section: ConsoleSection }) {
       return (
         <ul>
           <li>
-            <Link to={CONSOLE_PATHS.builds}>Build workspace</Link>
+            <Link to={CONSOLE_PATHS.builds}>{t('shell.buildWorkspace')}</Link>
           </li>
         </ul>
       );
@@ -202,7 +250,7 @@ function ExplorerLinks({ section }: { section: ConsoleSection }) {
       return (
         <ul>
           <li>
-            <Link to={CONSOLE_PATHS.projects}>All Projects</Link>
+            <Link to={CONSOLE_PATHS.projects}>{t('shell.allProjects')}</Link>
           </li>
         </ul>
       );

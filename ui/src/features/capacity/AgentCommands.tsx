@@ -3,6 +3,7 @@ import { useState, type FormEvent, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 
 import { queryInvalidations, queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { auditRequestPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
@@ -51,6 +52,7 @@ export function AgentCommands({
   fallbackFocusRef: RefObject<HTMLElement | null>;
   onRefresh: () => unknown | Promise<unknown>;
 }) {
+  const { t } = usePresentation();
   const queryClient = useQueryClient();
   const [drainMode, setDrainMode] = useState<DrainAgentRequest['mode']>('graceful');
   const [review, setReview] = useState<AgentCommandReview | null>(null);
@@ -59,21 +61,19 @@ export function AgentCommands({
     <section className={styles.panel}>
       <div className={styles.panelHeading}>
         <div>
-          <h2>Agent commands</h2>
-          <p className={styles.panelDescription}>
-            Commands use the displayed Agent version and require explicit confirmation.
-          </p>
+          <h2>{t('agentCommands.title')}</h2>
+          <p className={styles.panelDescription}>{t('agentCommands.description')}</p>
         </div>
       </div>
       <div className={styles.commandGrid}>
         <div className={styles.commandCard}>
-          <h3>Drain</h3>
+          <h3>{t('agentCommands.drain')}</h3>
           {agent.status === 'draining' ? (
-            <p className={styles.empty}>This Agent is already draining.</p>
+            <p className={styles.empty}>{t('agentCommands.alreadyDraining')}</p>
           ) : (
             <>
               <label className={commandFormStyles.field}>
-                <span>Drain mode</span>
+                <span>{t('agentCommands.drainMode')}</span>
                 <select
                   className={commandFormStyles.control}
                   onChange={(event) =>
@@ -81,8 +81,8 @@ export function AgentCommands({
                   }
                   value={drainMode}
                 >
-                  <option value="graceful">Graceful — finish current execution</option>
-                  <option value="forced">Forced — request current execution cancellation</option>
+                  <option value="graceful">{t('agentCommands.graceful')}</option>
+                  <option value="forced">{t('agentCommands.forced')}</option>
                 </select>
               </label>
               <button
@@ -96,7 +96,7 @@ export function AgentCommands({
                 }
                 type="button"
               >
-                Drain Agent
+                {t('agentCommands.drainAgent')}
               </button>
             </>
           )}
@@ -105,17 +105,19 @@ export function AgentCommands({
           <IdlePoolReassignment agent={agent} api={api} onReview={setReview} />
         ) : (
           <div className={styles.commandCard}>
-            <h3>Pool assignment</h3>
-            <p className={styles.empty}>
-              Pool reassignment is available only while the Agent is idle.
-            </p>
+            <h3>{t('agentCommands.poolAssignment')}</h3>
+            <p className={styles.empty}>{t('agentCommands.reassignIdleOnly')}</p>
           </div>
         )}
       </div>
       {review?.kind === 'drain' ? (
         <ConfirmedCommand
-          confirmLabel={review.mode === 'graceful' ? 'Start graceful drain' : 'Start forced drain'}
-          consequence={drainConsequence(agent, review.mode)}
+          confirmLabel={
+            review.mode === 'graceful'
+              ? t('agentCommands.startGraceful')
+              : t('agentCommands.startForced')
+          }
+          consequence={drainConsequence(agent, review.mode, t)}
           execute={({ headers, request }) =>
             api.drainAgent(
               request.agentId,
@@ -132,18 +134,20 @@ export function AgentCommands({
           onClose={() => setReview(null)}
           onRefresh={onRefresh}
           queryClient={queryClient}
-          renderSuccess={(result) => (
-            <AgentCommandSuccess action="Drain accepted" auditLabel="drain" result={result} />
-          )}
+          renderSuccess={(result) => <AgentCommandSuccess action="drain" result={result} />}
           request={{ agentId: agent.id, mode: review.mode }}
           returnFocus={review.returnFocus}
-          title={`Drain Agent ${agent.name}?`}
+          title={t('agentCommands.drainTitle', { name: agent.name })}
           version={agent.version}
         />
       ) : review?.kind === 'reassign' ? (
         <ConfirmedCommand
-          confirmLabel="Move Agent"
-          consequence={`This stops assigning the Agent through ${review.sourceName} and moves ${agent.name} to ${review.target.name}. The server will reject an ineligible target Pool.`}
+          confirmLabel={t('agentCommands.move')}
+          consequence={t('agentCommands.moveConsequence', {
+            agent: agent.name,
+            source: review.sourceName,
+            target: review.target.name,
+          })}
           execute={({ headers, request }) =>
             api.reassignAgentPool(
               request.agentId,
@@ -161,16 +165,13 @@ export function AgentCommands({
           onClose={() => setReview(null)}
           onRefresh={onRefresh}
           queryClient={queryClient}
-          renderSuccess={(result) => (
-            <AgentCommandSuccess
-              action="Pool reassigned"
-              auditLabel="reassignment"
-              result={result}
-            />
-          )}
+          renderSuccess={(result) => <AgentCommandSuccess action="reassignment" result={result} />}
           request={{ agentId: agent.id, targetPoolId: review.target.id }}
           returnFocus={review.returnFocus}
-          title={`Move ${agent.name} to ${review.target.name}?`}
+          title={t('agentCommands.moveTitle', {
+            agent: agent.name,
+            target: review.target.name,
+          })}
           version={agent.version}
         />
       ) : null}
@@ -187,6 +188,7 @@ function IdlePoolReassignment({
   api: CapacityApi;
   onReview: (review: ReassignReview) => void;
 }) {
+  const { t } = usePresentation();
   const [targetPoolId, setTargetPoolId] = useState('');
   const pools = useCursorPage(queryKeys.agentPools, (cursor, signal) =>
     api.listAgentPools(cursor, signal),
@@ -202,33 +204,35 @@ function IdlePoolReassignment({
     onReview({
       kind: 'reassign',
       returnFocus: submitter,
-      sourceName: loaded.find((pool) => pool.id === agent.pool_id)?.name ?? `Pool ${agent.pool_id}`,
+      sourceName:
+        loaded.find((pool) => pool.id === agent.pool_id)?.name ??
+        t('agentCommands.poolFallback', { id: agent.pool_id }),
       target,
     });
   }
 
   return (
     <form className={styles.commandCard} onSubmit={prepare}>
-      <h3>Pool assignment</h3>
+      <h3>{t('agentCommands.poolAssignment')}</h3>
       {pools.isPending ? (
-        <QueryLoadingNotice className={styles.empty} label="Agent Pools" />
+        <QueryLoadingNotice className={styles.empty} label={t('agentCommands.agentPools')} />
       ) : pools.data === undefined ? (
         <QueryFailureNotice
           className={styles.inlineFailure}
           error={pools.error}
           onRetry={pools.refetch}
-          title="Agent Pools could not be loaded."
+          title={t('agentCommands.loadFailure')}
         />
       ) : targets.length === 0 && !pools.hasNextPage ? (
         <>
           <QueryBackgroundNotice
             error={pools.error}
             fetching={pools.isFetching && !pools.isFetchingNextPage}
-            label="Agent Pool data"
+            label={t('agentCommands.poolData')}
             onRetry={pools.refetch}
           />
           <QueryEmptyNotice className={styles.empty}>
-            No other Agent Pool is available.
+            {t('agentCommands.noOtherPool')}
           </QueryEmptyNotice>
         </>
       ) : (
@@ -236,17 +240,17 @@ function IdlePoolReassignment({
           <QueryBackgroundNotice
             error={pools.error}
             fetching={pools.isFetching && !pools.isFetchingNextPage}
-            label="Agent Pool data"
+            label={t('agentCommands.poolData')}
             onRetry={pools.isFetchNextPageError ? pools.fetchNextPage : pools.refetch}
           />
           <label className={commandFormStyles.field}>
-            <span>Target Agent Pool</span>
+            <span>{t('agentCommands.targetPool')}</span>
             <select
               className={commandFormStyles.control}
               onChange={(event) => setTargetPoolId(event.target.value)}
               value={targetPoolId}
             >
-              <option value="">Select an Agent Pool</option>
+              <option value="">{t('agentCommands.selectPool')}</option>
               {targets.map((pool) => (
                 <option key={pool.id} value={pool.id}>
                   {pool.name}
@@ -261,11 +265,13 @@ function IdlePoolReassignment({
               onClick={() => void pools.fetchNextPage()}
               type="button"
             >
-              {pools.isFetchingNextPage ? 'Loading Agent Pools…' : 'Load more Agent Pools'}
+              {pools.isFetchingNextPage
+                ? t('agentCommands.loadingMore')
+                : t('agentCommands.loadMore')}
             </button>
           ) : null}
           <button className={styles.commandButton} disabled={targetPoolId === ''} type="submit">
-            Review pool reassignment
+            {t('agentCommands.reviewReassignment')}
           </button>
         </>
       )}
@@ -275,27 +281,38 @@ function IdlePoolReassignment({
 
 function AgentCommandSuccess({
   action,
-  auditLabel,
   result,
 }: {
-  action: string;
-  auditLabel: string;
+  action: 'drain' | 'reassignment';
   result: AgentCommandResult;
 }) {
+  const { t } = usePresentation();
   return (
     <>
       <span>
-        {action} ({formatEnumLabel(result.response.disposition)}).
+        {t('agentCommands.success', {
+          action:
+            action === 'drain'
+              ? t('agentCommands.drainAccepted')
+              : t('agentCommands.poolReassigned'),
+          disposition: formatEnumLabel(result.response.disposition, t),
+        })}
       </span>
       {result.requestId === null ? null : (
-        <Link to={auditRequestPath(result.requestId)}>View {auditLabel} audit evidence</Link>
+        <Link to={auditRequestPath(result.requestId)}>
+          {t(action === 'drain' ? 'agentCommands.auditDrain' : 'agentCommands.auditReassignment')}
+        </Link>
       )}
     </>
   );
 }
 
-function drainConsequence(agent: AgentResource, mode: DrainAgentRequest['mode']): string {
+function drainConsequence(
+  agent: AgentResource,
+  mode: DrainAgentRequest['mode'],
+  t: ReturnType<typeof usePresentation>['t'],
+): string {
   return mode === 'graceful'
-    ? `This stops new assignments to ${agent.name} and lets it finish its current execution.`
-    : `This stops new assignments to ${agent.name} and requests cancellation of its current execution.`;
+    ? t('agentCommands.drainConsequenceGraceful', { name: agent.name })
+    : t('agentCommands.drainConsequenceForced', { name: agent.name });
 }

@@ -5,7 +5,7 @@
   display: grid;
   align-items: start;
   justify-items: center;
-  padding: min(14vh, 8rem) var(--space-lg) var(--space-lg);
+  padding: min(10vh, 5rem) var(--space-lg) var(--space-lg);
 }
 
 .modalScrim {
@@ -17,78 +17,84 @@
 
 .commandCenter {
   position: relative;
-  width: min(42rem, 100%);
-  padding: var(--space-lg);
+  display: flex;
+  width: min(46rem, 100%);
+  max-height: min(48rem, 82vh);
+  flex-direction: column;
+  overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);
   background: var(--color-surface);
   box-shadow: var(--shadow-floating);
 }
 
-.commandCenter header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-lg);
+.searchRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-md);
+  min-height: 4.25rem;
+  padding: 0 var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
 }
 
-.commandCenter header p,
-.commandCenter h2 {
-  margin: 0;
+.searchRow label {
+  min-width: 0;
 }
 
-.commandCenter header p {
-  color: var(--color-brand-action);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+.searchRow input {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 1.05rem;
 }
 
-.commandCenter h2 {
-  margin-top: 0.25rem;
-  font-size: 1.25rem;
+.searchRow input::placeholder {
+  color: var(--color-text-muted);
 }
 
-.commandCenter header button {
+.escapeButton {
+  padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-brand-action);
-  font-size: 0.78rem;
-  font-weight: 750;
   cursor: pointer;
 }
 
-.commandCenter label {
-  display: block;
-  margin-top: var(--space-lg);
-}
-
-.commandCenter input {
-  width: 100%;
-  min-height: 2.8rem;
-  padding: 0.55rem 0.75rem;
+.escapeButton kbd {
+  display: inline-flex;
+  min-width: 2.5rem;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-small);
-  background: var(--color-canvas);
-  color: var(--color-text-primary);
-  font: inherit;
-}
-
-.commandHint {
+  background: var(--color-surface-subtle);
+  box-shadow: inset 0 -1px 0 var(--color-border);
   color: var(--color-text-muted);
-  font-size: 0.76rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
 }
 
 .commandScope {
   display: flex;
+  min-height: 2.25rem;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-md);
-  margin: 0.65rem 0 0;
+  padding: 0.4rem var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
   color: var(--color-text-muted);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 700;
+}
+
+.commandScope span:nth-child(2) {
+  margin-left: auto;
 }
 
 .commandScope button {
@@ -101,11 +107,156 @@
   cursor: pointer;
 }
 
-.commandHint {
-  margin: var(--space-lg) 0 0;
+.validation {
+  margin: 0;
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: 1px solid var(--color-danger);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+  font-size: 0.78rem;
+}
+
+.commandBody {
+  min-height: 10rem;
+  overflow-y: auto;
   padding: var(--space-md);
+}
+
+.commandGroup + .commandGroup {
+  margin-top: var(--space-lg);
+}
+
+.commandGroup h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin: 0 0 var(--space-xs);
+  padding: 0 var(--space-sm);
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.commandGroup ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.commandButton,
+.resultButton {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-md);
+  padding: 0.65rem var(--space-sm);
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.commandButton:hover,
+.commandButton:focus-visible,
+.resultButton:hover,
+.resultButton:focus-visible {
+  background: var(--color-brand-soft);
+}
+
+.commandButton svg {
+  flex: 0 0 auto;
+  color: var(--color-brand-action);
+}
+
+.commandButton small,
+.resultButton small {
+  overflow: hidden;
+  margin-left: auto;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.resultButton {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: var(--space-md);
+}
+
+.resultButton strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resultButton span {
+  grid-column: 1 / -1;
+  color: var(--color-text-muted);
+  font-size: 0.76rem;
+}
+
+.resultButton small {
+  grid-column: 2;
+  grid-row: 1;
+  max-width: 13rem;
+}
+
+.favoriteButton {
+  display: inline-grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-brand-action);
+  cursor: pointer;
+}
+
+.favoriteButton:hover,
+.favoriteButton:focus-visible {
+  background: var(--color-brand-soft);
+}
+
+.emptyShortcut {
+  margin: 0;
+  padding: 0.55rem var(--space-sm);
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.loadMore {
+  width: 100%;
+  margin-top: var(--space-md);
+  padding: 0.65rem;
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-small);
   background: var(--color-surface-subtle);
+  color: var(--color-brand-action);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.commandHint {
+  margin: 0;
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
   line-height: 1.45;
 }
 
@@ -116,4 +267,22 @@
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+@media (max-width: 48rem) {
+  .modalLayer {
+    padding: var(--space-md);
+  }
+
+  .commandCenter {
+    max-height: calc(100vh - (2 * var(--space-md)));
+  }
+
+  .commandScope span:nth-child(2) {
+    display: none;
+  }
+
+  .resultButton small {
+    max-width: 7rem;
+  }
 }

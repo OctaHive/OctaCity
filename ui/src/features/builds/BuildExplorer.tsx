@@ -4,6 +4,7 @@ import { Link, matchPath, useLocation } from 'react-router-dom';
 
 import type { components } from '../../../.generated/api/schema';
 import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { buildPath, CONSOLE_PATHS } from '../../app/routes';
 import { formatEnumLabel } from '../../shared/display';
 import {
@@ -84,14 +85,13 @@ const emptySelectedPath: SelectedPath = { build: null, configuration: null, proj
 
 /** Renders bounded, independently paginated Project -> Configuration -> Build branches. */
 export function BuildExplorer({ api }: { api: BuildExplorerApi }) {
+  const { t } = usePresentation();
   const location = useLocation();
   const selectedBuildId = matchPath(CONSOLE_PATHS.build, location.pathname)?.params.buildId ?? null;
 
   return (
     <div className={styles.explorerTree}>
-      <p className={styles.boundedNotice}>
-        Loaded bounded pages are shown. Use search to find Builds outside expanded branches.
-      </p>
+      <p className={styles.boundedNotice}>{t('explorer.boundedBuilds')}</p>
       {selectedBuildId === null ? (
         <BuildTree api={api} selectedBuildId={null} selectedPath={emptySelectedPath} />
       ) : (
@@ -108,6 +108,7 @@ function SelectedBuildTree({
   api: BuildExplorerApi;
   selectedBuildId: string;
 }) {
+  const { t } = usePresentation();
   const selectedBuild = useQuery({
     queryFn: ({ signal }) => api.getBuild(selectedBuildId, signal),
     queryKey: queryKeys.build(selectedBuildId),
@@ -116,7 +117,7 @@ function SelectedBuildTree({
   if (selectedBuild.isPending) {
     return (
       <>
-        <BranchLoading label="selected Build path" />
+        <BranchLoading label={t('explorer.selectedBuildPath')} />
         <BuildTree api={api} selectedBuildId={selectedBuildId} selectedPath={emptySelectedPath} />
       </>
     );
@@ -126,7 +127,7 @@ function SelectedBuildTree({
       <>
         <BranchFailure
           error={selectedBuild.error}
-          label="Selected Build"
+          label={t('explorer.selectedBuild')}
           onRetry={selectedBuild.refetch}
         />
         <BuildTree api={api} selectedBuildId={selectedBuildId} selectedPath={emptySelectedPath} />
@@ -139,7 +140,7 @@ function SelectedBuildTree({
       <BranchBackground
         error={selectedBuild.error}
         fetching={selectedBuild.isFetching}
-        label="selected Build path"
+        label={t('explorer.selectedBuildPath')}
         onRetry={selectedBuild.refetch}
       />
       <SelectedBuildAncestors api={api} build={selectedBuild.data} />
@@ -148,6 +149,7 @@ function SelectedBuildTree({
 }
 
 function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: SelectedBuild }) {
+  const { t } = usePresentation();
   const selectedProject = useQuery({
     queryFn: ({ signal }) => api.getProject(build.project_id, signal),
     queryKey: queryKeys.project(build.project_id),
@@ -163,9 +165,9 @@ function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: 
     selectedConfiguration.isPending ||
     selectedProjectChildren.isPending;
   const failed = [
-    { label: 'Selected Project', query: selectedProject },
-    { label: 'Selected Build Configuration', query: selectedConfiguration },
-    { label: 'Selected Project children', query: selectedProjectChildren },
+    { label: t('explorer.selectedProject'), query: selectedProject },
+    { label: t('explorer.selectedBuildConfiguration'), query: selectedConfiguration },
+    { label: t('explorer.selectedProjectChildren'), query: selectedProjectChildren },
   ].find(({ query }) => !query.isPending && query.data === undefined);
   const stale = [selectedProject, selectedConfiguration, selectedProjectChildren].find(
     (query) => query.error !== null && query.data !== undefined,
@@ -174,7 +176,7 @@ function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: 
   if (pending) {
     return (
       <>
-        <BranchLoading label="selected Build path" />
+        <BranchLoading label={t('explorer.selectedBuildPath')} />
         <BuildTree api={api} selectedBuildId={build.id} selectedPath={emptySelectedPath} />
       </>
     );
@@ -218,7 +220,7 @@ function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: 
           selectedConfiguration.isFetching ||
           selectedProjectChildren.isFetching
         }
-        label="selected Build path"
+        label={t('explorer.selectedBuildPath')}
         onRetry={() => {
           if (stale !== undefined) void stale.refetch();
         }}
@@ -237,8 +239,8 @@ function BuildTree({
   selectedBuildId: string | null;
   selectedPath: SelectedPath;
 }) {
-  const projectExpansion = useExpansionOverrides();
-  const configurationExpansion = useExpansionOverrides();
+  const projectExpansion = useExpansionOverrides('project');
+  const configurationExpansion = useExpansionOverrides('build_configuration');
   const revealedChildren = new Map(
     selectedPath.projects.map((project) => [project.parent_id, project] as const),
   );
@@ -265,27 +267,33 @@ function ProjectBranch({
   parentLabel: string | null;
   tree: BuildTreeState;
 }) {
+  const { t } = usePresentation();
   const { api, projectExpansion, revealedChildren, revealedProjectIds } = tree;
   const projects = useProjectPage(api, parentId);
-  const branchLabel = parentLabel === null ? 'Projects' : `${parentLabel} child Projects`;
+  const branchLabel =
+    parentLabel === null
+      ? t('explorer.projects')
+      : t('explorer.childProjects', { name: parentLabel });
 
   return (
     <PagedBranch<ProjectItem>
       className={parentId === null ? undefined : styles.childBranch}
       empty={
         parentLabel === null
-          ? 'No Project branches are available.'
-          : `No child Projects in ${parentLabel}.`
+          ? t('explorer.noProjectBranches')
+          : t('explorer.noChildProjects', { name: parentLabel })
       }
       labels={{
         failure: branchLabel,
         loading: branchLabel,
         loadMore:
           parentLabel === null
-            ? 'Load more Projects'
-            : `Load more child Projects in ${parentLabel}`,
+            ? t('explorer.loadMoreProjects')
+            : t('explorer.loadMoreChildProjects', { name: parentLabel }),
         loadingMore:
-          parentLabel === null ? 'Loading Projects' : `Loading child Projects in ${parentLabel}`,
+          parentLabel === null
+            ? t('explorer.loadingProjects')
+            : t('explorer.loadingChildProjects', { name: parentLabel }),
         stale: branchLabel,
       }}
       query={projects}
@@ -293,7 +301,7 @@ function ProjectBranch({
     >
       {(items) => (
         <ul
-          aria-label={parentId === null ? 'Build hierarchy' : undefined}
+          aria-label={parentId === null ? t('explorer.buildHierarchy') : undefined}
           role={parentId === null ? 'tree' : 'group'}
         >
           {items.map((project) => {
@@ -327,6 +335,7 @@ function ProjectBranch({
 }
 
 function ConfigurationBranch({ project, tree }: { project: ProjectItem; tree: BuildTreeState }) {
+  const { t } = usePresentation();
   const { api, configurationExpansion, selectedPath } = tree;
   const configurations = useCursorPage(
     queryKeys.projectBuildConfigurations(project.id),
@@ -338,13 +347,13 @@ function ConfigurationBranch({ project, tree }: { project: ProjectItem; tree: Bu
   return (
     <PagedBranch<ConfigurationItem>
       className={styles.childBranch}
-      empty={`No Build Configurations in ${project.name}.`}
+      empty={t('explorer.noConfigurations', { name: project.name })}
       labels={{
-        failure: `${project.name} Build Configurations`,
-        loading: `${project.name} configurations`,
-        loadMore: `Load more Build Configurations in ${project.name}`,
-        loadingMore: `Loading Build Configurations in ${project.name}`,
-        stale: `${project.name} Build Configurations`,
+        failure: t('explorer.buildConfigurationsInProject', { name: project.name }),
+        loading: t('explorer.buildConfigurationsInProject', { name: project.name }),
+        loadMore: t('explorer.loadMoreConfigurations', { name: project.name }),
+        loadingMore: t('explorer.loadingConfigurations', { name: project.name }),
+        stale: t('explorer.buildConfigurationsInProject', { name: project.name }),
       }}
       query={configurations}
       revealed={revealed}
@@ -384,6 +393,7 @@ function BuildBranch({
   project: ProjectItem;
   tree: BuildTreeState;
 }) {
+  const { t } = usePresentation();
   const { api, selectedBuildId, selectedPath } = tree;
   const builds = useCursorPage(
     queryKeys.projectBuilds(project.id, configuration.id, null),
@@ -400,13 +410,13 @@ function BuildBranch({
   return (
     <PagedBranch<BuildItem>
       className={styles.childBranch}
-      empty={`No Builds for ${configuration.name}.`}
+      empty={t('explorer.noBuilds', { name: configuration.name })}
       labels={{
-        failure: `${configuration.name} Builds`,
-        loading: `${configuration.name} Builds`,
-        loadMore: `Load more Builds for ${configuration.name}`,
-        loadingMore: `Loading Builds for ${configuration.name}`,
-        stale: `${configuration.name} Builds`,
+        failure: t('explorer.buildsForConfiguration', { name: configuration.name }),
+        loading: t('explorer.buildsForConfiguration', { name: configuration.name }),
+        loadMore: t('explorer.loadMoreBuilds', { name: configuration.name }),
+        loadingMore: t('explorer.loadingBuilds', { name: configuration.name }),
+        stale: t('explorer.buildsForConfiguration', { name: configuration.name }),
       }}
       query={builds}
       revealed={revealed}
@@ -425,7 +435,7 @@ function BuildBranch({
                     {build.id}
                   </Link>
                   <span className={styles.buildState} data-state={build.state}>
-                    {formatEnumLabel(build.state)}
+                    {formatEnumLabel(build.state, t)}
                   </span>
                 </div>
               </li>
@@ -450,10 +460,11 @@ function TreeRow({
   meta?: string;
   onToggle: () => void;
 }) {
+  const { t } = usePresentation();
   return (
     <div className={styles.branchRow}>
       <button
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`}
+        aria-label={t(expanded ? 'explorer.collapse' : 'explorer.expand', { name: label })}
         onClick={onToggle}
         type="button"
       >

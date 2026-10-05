@@ -4,6 +4,11 @@ import { Link } from 'react-router-dom';
 
 import { ManagementApiError } from '../api/client';
 import { auditRequestPath } from '../app/routes';
+import { usePresentation } from '../app/presentation/PresentationProvider';
+import {
+  type CommandOutcomeKind,
+  useNotifications,
+} from '../app/notifications/NotificationProvider';
 import {
   createConfirmedMutationIntent,
   type ConfirmedMutationAttempt,
@@ -49,6 +54,9 @@ export function ConfirmedCommand<Request, Result>({
   title,
   version,
 }: ConfirmedCommandProps<Request, Result>) {
+  const { t } = usePresentation();
+  const { reportCommandIndeterminate, reportCommandOutcome } = useNotifications();
+  const notificationIntentRef = useRef(Symbol('confirmed-command'));
   const dialogRef = useRef<HTMLElement>(null);
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
   const terminalButtonRef = useRef<HTMLButtonElement>(null);
@@ -90,8 +98,15 @@ export function ConfirmedCommand<Request, Result>({
     setError(null);
     setPhase({ kind: 'pending' });
     try {
-      setPhase({ kind: 'succeeded', result: await intent.submit() });
+      const result = await intent.submit();
+      reportCommandOutcome(notificationIntentRef.current, title, 'success');
+      setPhase({ kind: 'succeeded', result });
     } catch (caught) {
+      if (isIndeterminateOutcome(caught)) {
+        reportCommandIndeterminate(title);
+      } else {
+        reportCommandOutcome(notificationIntentRef.current, title, commandFailureOutcome(caught));
+      }
       setError(caught);
       setPhase({ kind: 'error' });
     }
@@ -116,7 +131,7 @@ export function ConfirmedCommand<Request, Result>({
   return (
     <div className={styles.layer}>
       <button
-        aria-label="Close confirmation"
+        aria-label={t('command.closeConfirmation')}
         className={styles.scrim}
         onClick={dismiss}
         tabIndex={-1}
@@ -140,7 +155,7 @@ export function ConfirmedCommand<Request, Result>({
         <div className={styles.actions}>
           {phase.kind === 'error' && staleVersion && onRefresh !== undefined ? (
             <button onClick={() => void refresh()} ref={terminalButtonRef} type="button">
-              Refresh current data
+              {t('command.refreshCurrent')}
             </button>
           ) : null}
           {phase.kind === 'succeeded' || (phase.kind === 'error' && !retryable) ? null : (
@@ -152,9 +167,9 @@ export function ConfirmedCommand<Request, Result>({
               type="button"
             >
               {phase.kind === 'pending'
-                ? 'Submitting…'
+                ? t('command.submitting')
                 : retryable
-                  ? 'Retry same command'
+                  ? t('command.retrySame')
                   : confirmLabel}
             </button>
           )}
@@ -168,7 +183,7 @@ export function ConfirmedCommand<Request, Result>({
             }
             type="button"
           >
-            {phase.kind === 'succeeded' ? 'Close' : 'Abandon'}
+            {phase.kind === 'succeeded' ? t('common.close') : t('command.abandon')}
           </button>
         </div>
       </section>
@@ -176,25 +191,45 @@ export function ConfirmedCommand<Request, Result>({
   );
 }
 
+function commandFailureOutcome(error: unknown): CommandOutcomeKind {
+  if (!(error instanceof ManagementApiError)) return 'failure';
+  if (
+    error.code === 'conflict' ||
+    error.code === 'idempotency_conflict' ||
+    error.code === 'precondition_failed' ||
+    error.code === 'precondition_required'
+  ) {
+    return 'conflict';
+  }
+  return error.status !== null && error.status >= 400 && error.status < 500
+    ? 'rejected'
+    : 'failure';
+}
+
+function isIndeterminateOutcome(error: unknown): boolean {
+  return (
+    error instanceof ManagementApiError &&
+    (error.code === 'transport_failure' ||
+      (error.code === 'invalid_response' && error.status !== null && error.status >= 500))
+  );
+}
+
 function CommandFailure({ error, retryable }: { error: unknown; retryable: boolean }) {
+  const { t } = usePresentation();
   if (!(error instanceof ManagementApiError)) {
-    return <p className={styles.error}>The command failed safely. No automatic retry was made.</p>;
+    return <p className={styles.error}>{t('command.safeFailure')}</p>;
   }
   return (
     <div className={styles.error} role="alert">
       <strong>{error.message}</strong>
-      <span>Error code: {error.code}</span>
+      <span>{t('query.errorCode', { code: error.code })}</span>
       {error.requestId === null ? null : (
         <>
-          <span>Request ID: {error.requestId}</span>
-          <Link to={auditRequestPath(error.requestId)}>View audit evidence</Link>
+          <span>{t('query.requestId', { id: error.requestId })}</span>
+          <Link to={auditRequestPath(error.requestId)}>{t('command.viewAudit')}</Link>
         </>
       )}
-      <span>
-        {retryable
-          ? 'The same command can be retried safely.'
-          : 'Review the request before trying again.'}
-      </span>
+      <span>{retryable ? t('command.retrySafe') : t('command.reviewRequest')}</span>
     </div>
   );
 }
