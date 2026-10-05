@@ -9,6 +9,12 @@ import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { formatEnumLabel } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
 import { useCursorPage } from '../../shared/PagedExplorerBranch';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type {
   AgentCommandResult,
   AgentPoolResource,
@@ -205,20 +211,34 @@ function IdlePoolReassignment({
     <form className={styles.commandCard} onSubmit={prepare}>
       <h3>Pool assignment</h3>
       {pools.isPending ? (
-        <p className={styles.empty} role="status">
-          Loading Agent Pools…
-        </p>
+        <QueryLoadingNotice className={styles.empty} label="Agent Pools" />
       ) : pools.data === undefined ? (
-        <div className={styles.inlineFailure} role="alert">
-          <span>Agent Pools could not be loaded.</span>
-          <button onClick={() => void pools.refetch()} type="button">
-            Retry
-          </button>
-        </div>
+        <QueryFailureNotice
+          className={styles.inlineFailure}
+          error={pools.error}
+          onRetry={pools.refetch}
+          title="Agent Pools could not be loaded."
+        />
       ) : targets.length === 0 && !pools.hasNextPage ? (
-        <p className={styles.empty}>No other Agent Pool is available.</p>
+        <>
+          <QueryBackgroundNotice
+            error={pools.error}
+            fetching={pools.isFetching && !pools.isFetchingNextPage}
+            label="Agent Pool data"
+            onRetry={pools.refetch}
+          />
+          <QueryEmptyNotice className={styles.empty}>
+            No other Agent Pool is available.
+          </QueryEmptyNotice>
+        </>
       ) : (
         <>
+          <QueryBackgroundNotice
+            error={pools.error}
+            fetching={pools.isFetching && !pools.isFetchingNextPage}
+            label="Agent Pool data"
+            onRetry={pools.isFetchNextPageError ? pools.fetchNextPage : pools.refetch}
+          />
           <label className={commandFormStyles.field}>
             <span>Target Agent Pool</span>
             <select

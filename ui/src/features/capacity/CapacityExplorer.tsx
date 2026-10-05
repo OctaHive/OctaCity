@@ -8,7 +8,7 @@ import { formatEnumLabel } from '../../shared/display';
 import {
   ExplorerBranchFailure,
   ExplorerBranchLoading,
-  ExplorerBranchStale,
+  ExplorerBranchBackground,
   PagedExplorerBranch,
   useCursorPage,
 } from '../../shared/PagedExplorerBranch';
@@ -64,8 +64,9 @@ function SelectedAgentTree({ api, agentId }: { api: CapacityApi; agentId: string
     <SelectedPoolForAgent
       agent={agent.data}
       api={api}
+      fetchingAgent={agent.isFetching}
       retryAgent={agent.refetch}
-      stale={agent.error !== null}
+      staleError={agent.error}
     />
   );
 }
@@ -73,13 +74,15 @@ function SelectedAgentTree({ api, agentId }: { api: CapacityApi; agentId: string
 function SelectedPoolForAgent({
   agent,
   api,
+  fetchingAgent,
   retryAgent,
-  stale,
+  staleError,
 }: {
   agent: AgentResource;
   api: CapacityApi;
+  fetchingAgent: boolean;
   retryAgent: () => unknown;
-  stale: boolean;
+  staleError: Error | null;
 }) {
   const pool = useQuery({
     queryFn: ({ signal }) => api.getAgentPool(agent.pool_id, signal),
@@ -100,15 +103,15 @@ function SelectedPoolForAgent({
   }
   return (
     <>
-      {stale || pool.error !== null ? (
-        <ExplorerBranchStale
-          label="selected Agent path"
-          onRetry={() => {
-            void retryAgent();
-            void pool.refetch();
-          }}
-        />
-      ) : null}
+      <ExplorerBranchBackground
+        error={staleError ?? pool.error}
+        fetching={fetchingAgent || pool.isFetching}
+        label="selected Agent path"
+        onRetry={() => {
+          void retryAgent();
+          void pool.refetch();
+        }}
+      />
       <CapacityTree api={api} selection={{ agent, pool: pool.data }} />
     </>
   );
@@ -134,9 +137,12 @@ function SelectedPoolTree({ api, poolId }: { api: CapacityApi; poolId: string })
   }
   return (
     <>
-      {pool.error === null ? null : (
-        <ExplorerBranchStale label="selected Agent Pool" onRetry={pool.refetch} />
-      )}
+      <ExplorerBranchBackground
+        error={pool.error}
+        fetching={pool.isFetching}
+        label="selected Agent Pool"
+        onRetry={pool.refetch}
+      />
       <CapacityTree api={api} selection={{ agent: null, pool: pool.data }} />
     </>
   );

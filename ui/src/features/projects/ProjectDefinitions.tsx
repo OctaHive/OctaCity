@@ -15,8 +15,13 @@ import type {
   TriggerDefinitionSummary,
 } from './api';
 import { formatEnumLabel } from '../../shared/display';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import { ManualBuildForm } from './ManualBuildForm';
-import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import definitionStyles from './ProjectDefinitions.module.css';
 import styles from './Projects.module.css';
 
@@ -152,7 +157,8 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
   const details = useQuery({
     enabled: selected !== null,
     queryFn: ({ signal }) => getDetails(requireSelection(selected), signal),
-    queryKey: selected === null ? [...queryKey, 'detail', null] : detailKey(selected),
+    queryKey:
+      selected === null ? queryKeys.disabledDefinitionDetail(queryKey) : detailKey(selected),
   });
 
   const items = collection.data?.pages.flatMap((page) => page.items) ?? [];
@@ -166,16 +172,16 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
         {collection.data === undefined ? null : <span>{items.length} loaded</span>}
       </header>
       {collection.isPending ? (
-        <DefinitionLoading label={title} />
+        <QueryLoadingNotice className={definitionStyles.detailState} label={title} />
       ) : collection.data === undefined ? (
-        <ProjectDataFailure
-          compact
+        <QueryFailureNotice
+          className={styles.compactFailure}
           error={collection.error}
-          label={title}
           onRetry={collection.refetch}
+          title={`${title} could not be loaded.`}
         />
       ) : items.length === 0 ? (
-        <p className={definitionStyles.empty}>{emptyLabel}</p>
+        <QueryEmptyNotice className={definitionStyles.empty}>{emptyLabel}</QueryEmptyNotice>
       ) : (
         <ul className={definitionStyles.list}>
           {items.map((item) => {
@@ -203,6 +209,7 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
                   <DefinitionDetails
                     details={details.data}
                     error={details.error}
+                    isFetching={details.isFetching}
                     isPending={details.isPending}
                     label={label}
                     onRetry={details.refetch}
@@ -214,9 +221,12 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
           })}
         </ul>
       )}
-      {collection.error === null || collection.data === undefined ? null : (
-        <ProjectDataStale
-          label={title}
+      {collection.data === undefined ? null : (
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={collection.error}
+          fetching={collection.isFetching && !collection.isFetchingNextPage}
+          label={`${title} data`}
           onRetry={collection.isFetchNextPageError ? collection.fetchNextPage : collection.refetch}
         />
       )}
@@ -237,6 +247,7 @@ function DefinitionSection<TItem extends DefinitionSummary, TDetails>({
 function DefinitionDetails<TDetails>({
   details,
   error,
+  isFetching,
   isPending,
   label,
   onRetry,
@@ -244,27 +255,38 @@ function DefinitionDetails<TDetails>({
 }: {
   details: TDetails | undefined;
   error: Error | null;
+  isFetching: boolean;
   isPending: boolean;
   label: string;
   onRetry: () => unknown;
   render: (details: TDetails) => ReactNode;
 }) {
   if (isPending) {
-    return <p className={definitionStyles.detailState}>Loading {label} details…</p>;
+    return (
+      <QueryLoadingNotice className={definitionStyles.detailState} label={`${label} details`} />
+    );
   }
   if (details === undefined) {
     return (
-      <ProjectDataFailure compact error={error} label={`${label} details`} onRetry={onRetry} />
+      <QueryFailureNotice
+        className={styles.compactFailure}
+        error={error}
+        onRetry={onRetry}
+        title={`${label} details could not be loaded.`}
+      />
     );
   }
-  return <div className={definitionStyles.details}>{render(details)}</div>;
-}
-
-function DefinitionLoading({ label }: { label: string }) {
   return (
-    <p aria-live="polite" className={definitionStyles.detailState} role="status">
-      Loading {label}…
-    </p>
+    <>
+      <div className={definitionStyles.details}>{render(details)}</div>
+      <QueryBackgroundNotice
+        className={styles.staleNotice}
+        error={error}
+        fetching={isFetching}
+        label={`${label} details data`}
+        onRetry={onRetry}
+      />
+    </>
   );
 }
 

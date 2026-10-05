@@ -7,6 +7,12 @@ import { buildPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { formatEnumLabel } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type {
   BuildConfigurationResource,
   ManualBuildApi,
@@ -140,12 +146,30 @@ export function ManualBuildForm({
       )}
       {manualTrigger === undefined ? (
         <div className={styles.commandUnavailable}>
-          <p>
-            {triggers.isPending
-              ? 'Finding an enabled manual Trigger…'
-              : 'No enabled manual Trigger is loaded for this configuration.'}
-          </p>
-          {triggers.hasNextPage ? (
+          {triggers.isPending ? (
+            <QueryLoadingNotice label="manual Triggers" />
+          ) : triggers.data === undefined ? (
+            <QueryFailureNotice
+              error={triggers.error}
+              onRetry={triggers.refetch}
+              title="Manual Triggers could not be loaded."
+            />
+          ) : (
+            <>
+              <QueryBackgroundNotice
+                error={triggers.error}
+                fetching={triggers.isFetching && !triggers.isFetchingNextPage}
+                label="manual Trigger data"
+                onRetry={triggers.isFetchNextPageError ? triggers.fetchNextPage : triggers.refetch}
+              />
+              <QueryEmptyNotice>
+                {triggers.hasNextPage
+                  ? 'No enabled manual Trigger is present in the loaded pages.'
+                  : 'No enabled manual Trigger is available for this configuration.'}
+              </QueryEmptyNotice>
+            </>
+          )}
+          {triggers.data !== undefined && triggers.hasNextPage ? (
             <button
               disabled={triggers.isFetchingNextPage}
               onClick={() => void triggers.fetchNextPage()}
@@ -156,9 +180,17 @@ export function ManualBuildForm({
           ) : null}
         </div>
       ) : (
-        <button className={styles.commandButton} type="submit">
-          Review Build
-        </button>
+        <>
+          <QueryBackgroundNotice
+            error={triggers.error}
+            fetching={triggers.isFetching && !triggers.isFetchingNextPage}
+            label="manual Trigger data"
+            onRetry={triggers.refetch}
+          />
+          <button className={styles.commandButton} type="submit">
+            Review Build
+          </button>
+        </>
       )}
       {review === null ? null : (
         <ConfirmedCommand

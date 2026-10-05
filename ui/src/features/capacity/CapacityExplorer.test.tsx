@@ -85,7 +85,7 @@ describe('Capacity explorer', () => {
     await screen.findByRole('link', { name: 'Agent One' });
     await userEvent.click(screen.getByRole('button', { name: 'Load more Agents in Stale Pool' }));
     expect(
-      await screen.findByText('Refresh failed. Showing loaded Stale Pool Agents.'),
+      await screen.findByText('Refresh failed. Showing the last loaded Stale Pool Agents.'),
     ).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Agent One' })).toBeTruthy();
   });

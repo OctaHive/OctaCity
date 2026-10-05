@@ -10,6 +10,23 @@
   font-size: 0.78rem;
 }
 
+.loading,
+.empty,
+.refreshing {
+  border-color: var(--color-border);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+}
+
+.loading,
+.empty {
+  min-height: 4rem;
+}
+
+.refreshing {
+  padding-block: var(--space-sm);
+}
+
 .failure {
   align-items: flex-start;
 }
@@ -29,6 +46,11 @@
   overflow-wrap: anywhere;
 }
 
+.failureDetails {
+  display: grid;
+  gap: var(--space-xs);
+}
+
 .retry {
   border: 0;
   background: transparent;
@@ -36,4 +58,9 @@
   font: inherit;
   font-weight: 760;
   cursor: pointer;
+}
+
+.retry:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }

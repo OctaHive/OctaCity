@@ -2,8 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 
 import { queryKeys } from '../../app/query';
 import { formatBytes, formatEnumLabel, formatTimestamp } from '../../shared/display';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { BuildResultDiagnosticsApi, CacheSessionPage } from './api';
-import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
 import styles from './Builds.module.css';
 
 export function BuildCacheSessions({
@@ -26,20 +31,29 @@ export function BuildCacheSessions({
         </div>
       </div>
       {sessions.isPending ? (
-        <DiagnosticLoading label="cache sessions" />
+        <QueryLoadingNotice className={styles.statePanel} label="cache sessions" />
       ) : sessions.data === undefined ? (
-        <DiagnosticFailure
+        <QueryFailureNotice
+          className={styles.failurePanel}
           error={sessions.error}
-          label="Cache sessions"
           onRetry={sessions.refetch}
+          title="Cache sessions could not be loaded."
         />
       ) : sessions.data.items.length === 0 ? (
-        <p className={styles.diagnosticEmpty}>No cache sessions were issued for this Build.</p>
+        <QueryEmptyNotice className={styles.diagnosticEmpty}>
+          No cache sessions were issued for this Build.
+        </QueryEmptyNotice>
       ) : (
         <CacheSessionTable items={sessions.data.items} />
       )}
-      {sessions.data === undefined || sessions.error === null ? null : (
-        <DiagnosticStale label="cache sessions" onRetry={sessions.refetch} />
+      {sessions.data === undefined ? null : (
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={sessions.error}
+          fetching={sessions.isFetching}
+          label="cache sessions data"
+          onRetry={sessions.refetch}
+        />
       )}
     </section>
   );

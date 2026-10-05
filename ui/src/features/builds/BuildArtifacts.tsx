@@ -5,8 +5,13 @@ import { useEffect, useRef, useState } from 'react';
 import { ManagementApiError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { formatBytes, formatEnumLabel, formatTimestamp } from '../../shared/display';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { ArtifactPage, BuildResultDiagnosticsApi } from './api';
-import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
 import styles from './Builds.module.css';
 
 export function BuildArtifacts({
@@ -68,15 +73,18 @@ export function BuildArtifacts({
         </div>
       </div>
       {artifacts.isPending ? (
-        <DiagnosticLoading label="published outputs" />
+        <QueryLoadingNotice className={styles.statePanel} label="published outputs" />
       ) : artifacts.data === undefined ? (
-        <DiagnosticFailure
+        <QueryFailureNotice
+          className={styles.failurePanel}
           error={artifacts.error}
-          label="Published outputs"
           onRetry={artifacts.refetch}
+          title="Published outputs could not be loaded."
         />
       ) : artifacts.data.items.length === 0 ? (
-        <p className={styles.diagnosticEmpty}>No published Artifacts or reports.</p>
+        <QueryEmptyNotice className={styles.diagnosticEmpty}>
+          No published Artifacts or reports.
+        </QueryEmptyNotice>
       ) : (
         <ArtifactTable
           downloadingId={downloadingId}
@@ -84,8 +92,14 @@ export function BuildArtifacts({
           onDownload={download}
         />
       )}
-      {artifacts.data === undefined || artifacts.error === null ? null : (
-        <DiagnosticStale label="published outputs" onRetry={artifacts.refetch} />
+      {artifacts.data === undefined ? null : (
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={artifacts.error}
+          fetching={artifacts.isFetching}
+          label="published outputs data"
+          onRetry={artifacts.refetch}
+        />
       )}
       {downloadError === null ? null : (
         <p className={styles.inlineFailure} role="alert">

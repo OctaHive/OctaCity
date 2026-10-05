@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, GitBranch, RefreshCw } from 'lucide-react';
+import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 
@@ -8,6 +8,12 @@ import { queryInvalidations, queryKeys } from '../../app/query';
 import { projectPath } from '../../app/routes';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import { AttemptGraph, edgeLabel, policyLabel, stateFamily, stateLabel } from './AttemptGraph';
 import type {
   AttemptResource,
@@ -17,7 +23,6 @@ import type {
   JobResource,
 } from './api';
 import { BuildLogSearch } from './BuildLogSearch';
-import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
 import { BuildResultDiagnostics } from './BuildResultDiagnostics';
 import styles from './Builds.module.css';
 import { JobEvents } from './JobEvents';
@@ -40,9 +45,14 @@ function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: st
   if (build.isPending) return <BuildLoading />;
   if (build.data === undefined) {
     return isNotFound(build.error) ? (
-      <BuildNotFound />
+      <BuildNotFound error={build.error} onRetry={build.refetch} />
     ) : (
-      <DiagnosticFailure error={build.error} label="Build" onRetry={build.refetch} />
+      <QueryFailureNotice
+        className={styles.failurePanel}
+        error={build.error}
+        onRetry={build.refetch}
+        title="Build could not be loaded."
+      />
     );
   }
 
@@ -54,7 +64,13 @@ function SelectedBuild({ api, buildId }: { api: BuildDiagnosticsApi; buildId: st
         isFetching={build.isFetching}
         onRefresh={build.refetch}
       />
-      {build.error === null ? null : <DiagnosticStale label="Build" onRetry={build.refetch} />}
+      <QueryBackgroundNotice
+        className={styles.staleNotice}
+        error={build.error}
+        fetching={build.isFetching}
+        label="Build data"
+        onRetry={build.refetch}
+      />
       <AttemptPanel api={api} build={build.data} />
       <BuildResultDiagnostics api={api} buildId={build.data.id} />
     </section>
@@ -196,10 +212,17 @@ function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildRe
     queryKey: queryKeys.attempt(attemptId),
   });
 
-  if (attempt.isPending) return <DiagnosticLoading label="current Attempt" />;
+  if (attempt.isPending) {
+    return <QueryLoadingNotice className={styles.statePanel} label="current Attempt" />;
+  }
   if (attempt.data === undefined) {
     return (
-      <DiagnosticFailure error={attempt.error} label="Current Attempt" onRetry={attempt.refetch} />
+      <QueryFailureNotice
+        className={styles.failurePanel}
+        error={attempt.error}
+        onRetry={attempt.refetch}
+        title="Current Attempt could not be loaded."
+      />
     );
   }
   return (
@@ -209,7 +232,7 @@ function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildRe
       build={build}
       isFetching={attempt.isFetching}
       onRefresh={attempt.refetch}
-      stale={attempt.error !== null}
+      refreshError={attempt.error}
     />
   );
 }
@@ -220,14 +243,14 @@ function AttemptDiagnostics({
   build,
   isFetching,
   onRefresh,
-  stale,
+  refreshError,
 }: {
   api: BuildDiagnosticsApi;
   attempt: AttemptResource;
   build: BuildResource;
   isFetching: boolean;
   onRefresh: () => unknown;
-  stale: boolean;
+  refreshError: Error | null;
 }) {
   const [searchParameters, setSearchParameters] = useSearchParams();
   const queryClient = useQueryClient();
@@ -287,12 +310,17 @@ function AttemptDiagnostics({
             </button>
           </div>
         </div>
-        {stale ? <DiagnosticStale label="Attempt" onRetry={onRefresh} /> : null}
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={refreshError}
+          fetching={isFetching}
+          label="Attempt data"
+          onRetry={onRefresh}
+        />
         {attempt.jobs.length === 0 ? (
-          <div className={styles.emptyState}>
-            <GitBranch aria-hidden="true" size={26} />
-            <p>This Attempt has no Jobs.</p>
-          </div>
+          <QueryEmptyNotice className={styles.diagnosticEmpty}>
+            This Attempt has no Jobs.
+          </QueryEmptyNotice>
         ) : (
           <>
             <nav aria-label="Jobs" className={styles.jobSelector}>
@@ -476,12 +504,18 @@ function BuildLoading() {
         <p className={styles.eyebrow}>Build diagnostics</p>
         <h1 id="page-title">Build</h1>
       </header>
-      <DiagnosticLoading label="Build" />
+      <QueryLoadingNotice className={styles.statePanel} label="Build" />
     </section>
   );
 }
 
-function BuildNotFound() {
+function BuildNotFound({
+  error = null,
+  onRetry,
+}: {
+  error?: Error | null;
+  onRetry?: (() => unknown) | undefined;
+} = {}) {
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <header className={styles.heading}>
@@ -489,6 +523,14 @@ function BuildNotFound() {
         <h1 id="page-title">Build not found</h1>
         <p>The Build does not exist or is not visible from this management context.</p>
       </header>
+      {onRetry === undefined ? null : (
+        <QueryFailureNotice
+          className={styles.failurePanel}
+          error={error}
+          onRetry={onRetry}
+          title="Build could not be loaded."
+        />
+      )}
     </section>
   );
 }

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
-import { ArrowUpRight, History, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, RefreshCw } from 'lucide-react';
 import { useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 
@@ -14,8 +14,13 @@ import type {
   ProjectBuildsApi,
 } from './api';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import buildStyles from './ProjectBuilds.module.css';
-import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import styles from './Projects.module.css';
 
 const UUID_PATTERN = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -139,16 +144,19 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
             : 'Load more Build Configuration filter options'}
         </button>
       ) : null}
-      {configurations.error === null ? null : configurations.data === undefined ? (
-        <ProjectDataFailure
-          compact
+      {configurations.data === undefined && configurations.error !== null ? (
+        <QueryFailureNotice
+          className={styles.compactFailure}
           error={configurations.error}
-          label="Build Configuration filter options"
           onRetry={configurations.refetch}
+          title="Build Configuration filter options could not be loaded."
         />
-      ) : (
-        <ProjectDataStale
-          label="Build Configuration filter option"
+      ) : configurations.data === undefined ? null : (
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={configurations.error}
+          fetching={configurations.isFetching && !configurations.isFetchingNextPage}
+          label="Build Configuration filter option data"
           onRetry={
             configurations.isFetchNextPageError
               ? configurations.fetchNextPage
@@ -156,21 +164,28 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
           }
         />
       )}
-      {builds.error === null || builds.data === undefined ? null : (
-        <ProjectDataStale
-          label="Build"
+      {builds.data === undefined ? null : (
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={builds.error}
+          fetching={builds.isFetching && !builds.isFetchingNextPage}
+          label="Build data"
           onRetry={builds.isFetchNextPageError ? builds.fetchNextPage : builds.refetch}
         />
       )}
       {builds.isPending ? (
-        <BuildsLoading />
+        <QueryLoadingNotice className={styles.statePanel} label="recent Builds" />
       ) : builds.data === undefined ? (
-        <ProjectDataFailure error={builds.error} label="Recent Builds" onRetry={builds.refetch} />
+        <QueryFailureNotice
+          className={styles.failurePanel}
+          error={builds.error}
+          onRetry={builds.refetch}
+          title="Recent Builds could not be loaded."
+        />
       ) : buildItems.length === 0 ? (
-        <div className={styles.emptyState}>
-          <History aria-hidden="true" size={28} strokeWidth={1.6} />
-          <p>No Builds match the selected filters.</p>
-        </div>
+        <QueryEmptyNotice className={styles.emptyState}>
+          No Builds match the selected filters.
+        </QueryEmptyNotice>
       ) : (
         <BuildTable builds={buildItems} configurations={configurationItems} />
       )}
@@ -249,15 +264,6 @@ function BuildTable({
           })}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function BuildsLoading() {
-  return (
-    <div aria-live="polite" className={styles.statePanel} role="status">
-      <span className={styles.loadingMark} aria-hidden="true" />
-      Loading recent Builds…
     </div>
   );
 }

@@ -5,7 +5,12 @@ import { useSearchParams } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
-import { QueryFailureNotice, StaleQueryNotice } from '../../shared/QueryStateNotice';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { AuditApi, AuditFactPage, AuditFilters } from './api';
 import {
   AUDIT_ACTOR_KINDS,
@@ -186,9 +191,7 @@ export function AuditView({ api }: { api: AuditApi }) {
           </p>
         )}
         {parsed.error !== null ? null : audit.isPending ? (
-          <div className={styles.state} role="status">
-            Loading audit facts…
-          </div>
+          <QueryLoadingNotice className={styles.state} label="audit facts" />
         ) : audit.data === undefined ? (
           <QueryFailureNotice
             className={styles.resultNotice}
@@ -198,15 +201,17 @@ export function AuditView({ api }: { api: AuditApi }) {
           />
         ) : (
           <>
-            {audit.error === null ? null : (
-              <StaleQueryNotice
-                className={styles.resultNotice}
-                message="Refresh failed. Showing the last loaded audit facts."
-                onRetry={audit.refetch}
-              />
-            )}
+            <QueryBackgroundNotice
+              className={styles.resultNotice}
+              error={audit.error}
+              fetching={audit.isFetching && !audit.isFetchingNextPage}
+              label="audit facts"
+              onRetry={audit.refetch}
+            />
             {facts.length === 0 ? (
-              <p className={styles.empty}>No audit facts match the selected filters.</p>
+              <QueryEmptyNotice className={styles.empty}>
+                No audit facts match the selected filters.
+              </QueryEmptyNotice>
             ) : (
               <AuditTable facts={facts} />
             )}

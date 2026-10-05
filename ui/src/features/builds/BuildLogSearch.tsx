@@ -5,6 +5,12 @@ import { useSearchParams } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
 import { formatTimestamp } from '../../shared/display';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type {
   BuildLogSearchApi,
   BuildLogSearchFilters,
@@ -13,7 +19,6 @@ import type {
   BuildLogStream,
   JobResource,
 } from './api';
-import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
 import styles from './Builds.module.css';
 
 const MAX_LOG_QUERY_BYTES = 1_024;
@@ -173,21 +178,30 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
       {filters.query === '' ? (
         <p className={styles.logInitial}>Search bounded, server-redacted Build output.</p>
       ) : urlValidationError !== null || scopeValidationError !== null ? null : search.isPending ? (
-        <DiagnosticLoading label="redacted logs" />
+        <QueryLoadingNotice className={styles.statePanel} label="redacted logs" />
       ) : search.data === undefined ? (
-        <DiagnosticFailure error={search.error} label="Redacted logs" onRetry={search.refetch} />
+        <QueryFailureNotice
+          className={styles.failurePanel}
+          error={search.error}
+          onRetry={search.refetch}
+          title="Redacted logs could not be loaded."
+        />
       ) : (
         <>
-          {search.error === null ? null : (
-            <DiagnosticStale label="redacted log search" onRetry={search.refetch} />
-          )}
+          <QueryBackgroundNotice
+            className={styles.staleNotice}
+            error={search.error}
+            fetching={search.isFetching && !search.isFetchingNextPage}
+            label="redacted log search data"
+            onRetry={search.refetch}
+          />
           {freshness?.caught_up === false ? <FreshnessWarning freshness={freshness} /> : null}
           {hits.length === 0 ? (
-            <p className={styles.logEmpty}>
+            <QueryEmptyNotice className={styles.diagnosticEmpty}>
               {freshness?.caught_up === false
                 ? 'The search projection is still catching up; no matches are authoritative yet.'
                 : 'No redacted log matches the selected filters.'}
-            </p>
+            </QueryEmptyNotice>
           ) : (
             <LogHits hits={hits} />
           )}

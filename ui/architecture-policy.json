@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "allowedRuntimeDependencies": [
+    "@tanstack/react-query",
+    "lucide-react",
+    "openapi-fetch",
+    "react",
+    "react-dom",
+    "react-router-dom"
+  ],
+  "allowedDevelopmentDependencies": [
+    "@eslint-react/eslint-plugin",
+    "@eslint/js",
+    "@playwright/test",
+    "@testing-library/react",
+    "@testing-library/user-event",
+    "@types/node",
+    "@types/react",
+    "@types/react-dom",
+    "@vitejs/plugin-react",
+    "eslint",
+    "jsdom",
+    "openapi-typescript",
+    "prettier",
+    "typescript",
+    "typescript-eslint",
+    "vite",
+    "vitest"
+  ],
+  "allowedProductAssets": [],
+  "networkBoundaries": ["src/api/client.ts", "src/api/readiness.ts"],
+  "testSupportFiles": ["src/features/projects/ProjectTestSupport.tsx"],
+  "persistenceBoundary": "src/app/shell/preferences.ts",
+  "queryKeyBoundary": "src/app/query.ts",
+  "designTokenStylesheet": "src/styles/tokens.css",
+  "bundleBudgets": {
+    "entryJavaScriptBytes": 460800,
+    "totalJavaScriptBytes": 655360,
+    "totalCssBytes": 81920,
+    "totalStaticBytes": 786432,
+    "assetCount": 40
+  }
+}

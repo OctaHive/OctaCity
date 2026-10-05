@@ -5,8 +5,12 @@ import { Link, useParams } from 'react-router-dom';
 import { ManagementApiError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
+import {
+  QueryBackgroundNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { ProjectDetails, ProjectsApi } from './api';
-import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import { ProjectBuilds } from './ProjectBuilds';
 import { ProjectDefinitions } from './ProjectDefinitions';
 import styles from './Projects.module.css';
@@ -49,9 +53,14 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
   }
   if (project.data === undefined) {
     return isNotFound(project.error) ? (
-      <ProjectNotFound />
+      <ProjectNotFound error={project.error} onRetry={project.refetch} />
     ) : (
-      <ProjectDataFailure error={project.error} label="Project" onRetry={project.refetch} />
+      <QueryFailureNotice
+        className={styles.failurePanel}
+        error={project.error}
+        onRetry={project.refetch}
+        title="Project could not be loaded."
+      />
     );
   }
 
@@ -74,9 +83,13 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         </button>
       </div>
       <p className={styles.identity}>{project.data.project.id}</p>
-      {project.error === null ? null : (
-        <ProjectDataStale label="Project" onRetry={project.refetch} />
-      )}
+      <QueryBackgroundNotice
+        className={styles.staleNotice}
+        error={project.error}
+        fetching={project.isFetching}
+        label="Project data"
+        onRetry={project.refetch}
+      />
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
       <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />
     </section>
@@ -123,27 +136,32 @@ function ProjectLoading() {
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <PageHeading description="Loading the selected Project and its ancestry." title="Project" />
-      <LoadingPanel />
+      <QueryLoadingNotice className={styles.statePanel} label="Projects" />
     </section>
   );
 }
 
-function LoadingPanel() {
-  return (
-    <div aria-live="polite" className={styles.statePanel} role="status">
-      <span className={styles.loadingMark} aria-hidden="true" />
-      Loading Projects…
-    </div>
-  );
-}
-
-function ProjectNotFound() {
+function ProjectNotFound({
+  error = null,
+  onRetry,
+}: {
+  error?: Error | null;
+  onRetry?: (() => unknown) | undefined;
+} = {}) {
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <PageHeading
         description="The Project does not exist or is not visible from this management context."
         title="Project not found"
       />
+      {onRetry === undefined ? null : (
+        <QueryFailureNotice
+          className={styles.failurePanel}
+          error={error}
+          onRetry={onRetry}
+          title="Project could not be loaded."
+        />
+      )}
       <Link className={styles.primaryLink} to={CONSOLE_PATHS.projects}>
         Return to Projects
       </Link>

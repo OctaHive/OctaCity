@@ -33,7 +33,9 @@ describe('Project hierarchy', () => {
     expect(api.listProjects).toHaveBeenNthCalledWith(2, null, 'next-page', expect.any(AbortSignal));
     expect(screen.queryByRole('button', { name: 'Load more root Projects' })).toBeNull();
     expect(within(screen.getByRole('main')).queryByRole('link', { name: 'Alpha' })).toBeNull();
-    expect(screen.getByText('Select a Project from the hierarchy on the left.')).toBeTruthy();
+    expect(
+      await screen.findByText('Select a Project from the hierarchy on the left.'),
+    ).toBeTruthy();
   });
 
   it('uses returned ancestry for breadcrumbs and child selection deep links', async () => {
@@ -133,9 +135,9 @@ describe('Project hierarchy', () => {
     renderProjects('/projects/delivery', api);
 
     expect(screen.getByRole('heading', { name: 'Project' })).toBeTruthy();
-    expect(
-      within(screen.getByRole('main')).getByText('Loading Projects…').getAttribute('role'),
-    ).toBe('status');
+    expect(within(screen.getByRole('main')).getByRole('status').textContent).toContain(
+      'Loading Projects…',
+    );
   });
 
   it('distinguishes an empty root collection from a request failure', async () => {

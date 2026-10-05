@@ -6,7 +6,12 @@ import {
 } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
-import { ManagementApiError } from '../api/client';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from './QueryStateNotice';
 import styles from './PagedExplorerBranch.module.css';
 
 export interface CursorPage<T> {
@@ -55,14 +60,15 @@ export function PagedExplorerBranch<T extends { id: string }>({
 
   return (
     <div className={className}>
-      {query.error === null ? null : (
-        <ExplorerBranchStale
-          label={labels.stale}
-          onRetry={query.isFetchNextPageError ? query.fetchNextPage : query.refetch}
-        />
-      )}
+      <QueryBackgroundNotice
+        className={styles.stale}
+        error={query.error}
+        fetching={query.isFetching && !query.isFetchingNextPage}
+        label={labels.stale}
+        onRetry={query.isFetchNextPageError ? query.fetchNextPage : query.refetch}
+      />
       {items.length === 0 ? (
-        <p className={`${styles.state} ${styles.empty}`}>{empty}</p>
+        <QueryEmptyNotice className={`${styles.state} ${styles.empty}`}>{empty}</QueryEmptyNotice>
       ) : (
         children(items)
       )}
@@ -99,11 +105,7 @@ export function useCursorPage<T, TQueryKey extends QueryKey>(
 }
 
 export function ExplorerBranchLoading({ label }: { label: string }) {
-  return (
-    <p className={styles.state} role="status">
-      Loading {label}…
-    </p>
-  );
+  return <QueryLoadingNotice className={styles.state} label={label} />;
 }
 
 export function ExplorerBranchFailure({
@@ -115,27 +117,34 @@ export function ExplorerBranchFailure({
   label: string;
   onRetry: () => unknown;
 }) {
-  const requestId = error instanceof ManagementApiError ? error.requestId : null;
   return (
-    <div className={styles.failure} role="alert">
-      <span>
-        {label} could not be loaded.
-        {requestId === null ? null : ` Request ID: ${requestId}`}
-      </span>
-      <button onClick={() => void onRetry()} type="button">
-        Retry
-      </button>
-    </div>
+    <QueryFailureNotice
+      className={styles.failure}
+      error={error}
+      onRetry={onRetry}
+      title={`${label} could not be loaded.`}
+    />
   );
 }
 
-export function ExplorerBranchStale({ label, onRetry }: { label: string; onRetry: () => unknown }) {
+export function ExplorerBranchBackground({
+  error,
+  fetching,
+  label,
+  onRetry,
+}: {
+  error: Error | null;
+  fetching: boolean;
+  label: string;
+  onRetry: () => unknown;
+}) {
   return (
-    <div className={styles.stale}>
-      <span role="status">Refresh failed. Showing loaded {label}.</span>
-      <button onClick={() => void onRetry()} type="button">
-        Retry
-      </button>
-    </div>
+    <QueryBackgroundNotice
+      className={styles.stale}
+      error={error}
+      fetching={fetching}
+      label={label}
+      onRetry={onRetry}
+    />
   );
 }

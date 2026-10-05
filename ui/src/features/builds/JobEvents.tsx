@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { ManagementApiError } from '../../api/client';
 import { formatTimestamp } from '../../shared/display';
+import {
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+  StaleQueryNotice,
+} from '../../shared/QueryStateNotice';
 import type { BuildDiagnosticsApi, JobEventResource, JobResource } from './api';
 import styles from './Builds.module.css';
 import {
@@ -42,6 +47,7 @@ export function JobEvents({
     terminal: job.terminal,
   }).current;
   const [snapshot, setSnapshot] = useState(INITIAL_SNAPSHOT);
+  const [generation, setGeneration] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -55,7 +61,7 @@ export function JobEvents({
       source: api,
     });
     return () => controller.abort();
-  }, [api, initialJob, onJobUpdate]);
+  }, [api, generation, initialJob, onJobUpdate]);
 
   return (
     <section aria-labelledby="job-events-heading" className={styles.eventsPanel}>
@@ -66,7 +72,13 @@ export function JobEvents({
         </div>
         <EventFollowerState snapshot={snapshot} />
       </div>
-      {snapshot.phase === 'failed' ? <EventFailure error={snapshot.error} /> : null}
+      {snapshot.phase === 'failed' ? (
+        <EventFailure
+          error={snapshot.error}
+          onRetry={() => setGeneration((current) => current + 1)}
+          stale={snapshot.events.length > 0}
+        />
+      ) : null}
       {snapshot.discardedEventCount === 0 ? null : (
         <p className={styles.eventsNotice} role="status">
           Showing the latest {snapshot.events.length} events; {snapshot.discardedEventCount} older
@@ -74,11 +86,13 @@ export function JobEvents({
         </p>
       )}
       {snapshot.events.length === 0 ? (
-        <p className={styles.eventsEmpty}>
-          {snapshot.phase === 'complete'
-            ? 'No Job events were recorded.'
-            : 'Waiting for the first Job event…'}
-        </p>
+        snapshot.phase === 'complete' ? (
+          <QueryEmptyNotice className={styles.eventsEmpty}>
+            No Job events were recorded.
+          </QueryEmptyNotice>
+        ) : snapshot.phase === 'failed' ? null : (
+          <QueryLoadingNotice className={styles.eventsEmpty} label="the first Job event" />
+        )
       ) : (
         <div className={styles.tableScroller}>
           <table aria-label="Ordered Job events" className={styles.eventTable}>
@@ -117,13 +131,29 @@ function EventFollowerState({ snapshot }: { snapshot: JobEventFollowerSnapshot }
   );
 }
 
-function EventFailure({ error }: { error: Error | null }) {
-  const requestId = error instanceof ManagementApiError ? error.requestId : null;
-  return (
-    <div className={styles.eventFailure} role="alert">
-      Job events could not be loaded.
-      {requestId === null ? null : ` Request ID: ${requestId}`}
-    </div>
+function EventFailure({
+  error,
+  onRetry,
+  stale,
+}: {
+  error: Error | null;
+  onRetry: () => unknown;
+  stale: boolean;
+}) {
+  return stale ? (
+    <StaleQueryNotice
+      className={styles.eventFailure}
+      error={error}
+      message="Event follow stopped. Showing the last contiguous Job events."
+      onRetry={onRetry}
+    />
+  ) : (
+    <QueryFailureNotice
+      className={styles.eventFailure}
+      error={error}
+      onRetry={onRetry}
+      title="Job events could not be loaded."
+    />
   );
 }
 

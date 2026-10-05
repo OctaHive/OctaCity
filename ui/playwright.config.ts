@@ -3,6 +3,13 @@ import { defineConfig } from '@playwright/test';
 const CONSOLE_ORIGIN = 'http://127.0.0.1:4173';
 
 export default defineConfig({
+  expect: {
+    toHaveScreenshot: {
+      animations: 'disabled',
+      caret: 'hide',
+      maxDiffPixelRatio: 0.02,
+    },
+  },
   forbidOnly: process.env.CI === 'true',
   fullyParallel: true,
   reporter: 'list',
@@ -13,6 +20,7 @@ export default defineConfig({
     locale: 'en-US',
     reducedMotion: 'reduce',
     serviceWorkers: 'block',
+    timezoneId: 'UTC',
     trace: 'retain-on-failure',
   },
   webServer: {

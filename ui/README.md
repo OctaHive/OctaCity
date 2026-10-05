@@ -26,18 +26,31 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm exec playwright install chromium
 corepack pnpm api:generate
 corepack pnpm dev
+corepack pnpm check:architecture
 corepack pnpm format
 corepack pnpm lint
 corepack pnpm typecheck
 corepack pnpm test
+corepack pnpm test:accessibility
+corepack pnpm test:visual
 corepack pnpm build
 ```
+
+The automated checks are complemented by the keyboard-only journeys in
+[`ACCESSIBILITY.md`](./ACCESSIBILITY.md).
 
 The one-time Playwright install supplies the pinned Chromium runtime used by browser layout and
 semantic shell snapshots. `pnpm test` runs both unit/component tests and these browser checks;
 `pnpm test:unit` and `pnpm test:browser` remain available for focused local runs.
 
 The production application is written to `dist/` as an `index.html`-rooted static bundle.
+`build` also verifies the reviewed dependency allowlists and the byte and asset-count budgets in
+`architecture-policy.json`. The same policy keeps browser networking, persistence, query keys,
+timing constants, colors, and SVG icon imports behind their intended boundaries and rejects
+external fonts, icon fonts, analytics integrations, and copied template assets. Run
+`check:architecture` for the source-only gate or `check:bundle` against an existing `dist/`.
+`architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
+the build reports any measured value that exceeds them.
 
 `api:generate` runs the development-only Rust exporter for the same OpenAPI document served at
 `/api/v1/openapi.json`, then writes TypeScript declarations and the small runtime constraint

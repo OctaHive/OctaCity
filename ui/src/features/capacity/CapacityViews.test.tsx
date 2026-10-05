@@ -80,9 +80,10 @@ describe('Capacity detail views', () => {
     const unavailableApi = fakeCapacityApi();
     unavailableApi.getAgent.mockRejectedValue(managementError('request-unavailable'));
     renderView('/agents/agent-a', <AgentView api={unavailableApi} />);
-    expect((await screen.findByRole('alert')).textContent).toContain(
-      'Agent could not be loaded. Request ID: request-unavailable',
-    );
+    const unavailable = await screen.findByRole('alert');
+    expect(unavailable.textContent).toContain('Agent could not be loaded.');
+    expect(unavailable.textContent).toContain('Error code: unavailable');
+    expect(unavailable.textContent).toContain('Request ID: request-unavailable');
     cleanup();
 
     const staleApi = fakeCapacityApi();

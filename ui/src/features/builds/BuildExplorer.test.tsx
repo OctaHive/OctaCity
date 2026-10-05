@@ -148,7 +148,9 @@ describe('Build explorer', () => {
       screen.getByRole('button', { name: 'Load more Build Configurations in Stale' }),
     );
     expect(
-      await screen.findByText('Refresh failed. Showing loaded Stale Build Configurations.'),
+      await screen.findByText(
+        'Refresh failed. Showing the last loaded Stale Build Configurations.',
+      ),
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Collapse Stale release' })).toBeTruthy();
   });
@@ -197,11 +199,10 @@ describe('Build explorer', () => {
     api.getBuild.mockRejectedValue(managementError('request-selected-build'));
     renderExplorer('/builds/selected-build', api);
 
-    expect(
-      await screen.findByText(
-        'Selected Build could not be loaded. Request ID: request-selected-build',
-      ),
-    ).toBeTruthy();
+    const selectedBuildFailure = await screen.findByRole('alert');
+    expect(selectedBuildFailure.textContent).toContain('Selected Build could not be loaded.');
+    expect(selectedBuildFailure.textContent).toContain('Error code: unavailable');
+    expect(selectedBuildFailure.textContent).toContain('Request ID: request-selected-build');
     expect(await screen.findByText('No Project branches are available.')).toBeTruthy();
   });
 
@@ -210,11 +211,10 @@ describe('Build explorer', () => {
     configureSelectedBuild(projectApi);
     projectApi.getProject.mockRejectedValue(managementError('request-selected-project'));
     renderExplorer('/builds/selected-build', projectApi);
-    expect(
-      await screen.findByText(
-        'Selected Project could not be loaded. Request ID: request-selected-project',
-      ),
-    ).toBeTruthy();
+    const selectedProjectFailure = await screen.findByRole('alert');
+    expect(selectedProjectFailure.textContent).toContain('Selected Project could not be loaded.');
+    expect(selectedProjectFailure.textContent).toContain('Error code: unavailable');
+    expect(selectedProjectFailure.textContent).toContain('Request ID: request-selected-project');
     cleanup();
 
     const configurationApi = fakeApi();
@@ -223,11 +223,14 @@ describe('Build explorer', () => {
       managementError('request-selected-configuration'),
     );
     renderExplorer('/builds/selected-build', configurationApi);
-    expect(
-      await screen.findByText(
-        'Selected Build Configuration could not be loaded. Request ID: request-selected-configuration',
-      ),
-    ).toBeTruthy();
+    const selectedConfigurationFailure = await screen.findByRole('alert');
+    expect(selectedConfigurationFailure.textContent).toContain(
+      'Selected Build Configuration could not be loaded.',
+    );
+    expect(selectedConfigurationFailure.textContent).toContain('Error code: unavailable');
+    expect(selectedConfigurationFailure.textContent).toContain(
+      'Request ID: request-selected-configuration',
+    );
   });
 
   it('retains a revealed selected path when an ancestor refresh fails', async () => {
@@ -247,7 +250,7 @@ describe('Build explorer', () => {
     });
 
     expect(
-      await screen.findByText('Refresh failed. Showing loaded selected Build path.'),
+      await screen.findByText('Refresh failed. Showing the last loaded selected Build path.'),
     ).toBeTruthy();
     expect(screen.getByRole('link', { name: 'selected-build' })).toBeTruthy();
   });

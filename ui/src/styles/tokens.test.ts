@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const tokens = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8');
+const globalStyles = readFileSync(new URL('./global.css', import.meta.url), 'utf8');
 const shellStyles = readFileSync(new URL('../app/shell/Shell.module.css', import.meta.url), 'utf8');
 
 const darkSelector = ":root[data-resolved-theme='dark']";
@@ -11,6 +12,27 @@ const darkTokens = tokens.slice(darkStart);
 
 const colors = parseColors(lightTokens);
 const darkColors = { ...colors, ...parseColors(darkTokens) };
+const CONTRAST_PAIRS = [
+  ['color-text-primary', 'color-canvas'],
+  ['color-text-primary', 'color-surface'],
+  ['color-text-primary', 'color-surface-subtle'],
+  ['color-text-muted', 'color-canvas'],
+  ['color-text-muted', 'color-surface'],
+  ['color-text-muted', 'color-surface-subtle'],
+  ['color-brand-action', 'color-surface'],
+  ['color-sidebar-text', 'color-evergreen-950'],
+  ['color-sidebar-muted', 'color-evergreen-950'],
+  ['color-warning-ink', 'color-surface'],
+  ['color-warning-ink', 'color-warning-soft'],
+  ['color-danger-ink', 'color-surface'],
+  ['color-danger-ink', 'color-danger-soft'],
+  ['color-information-ink', 'color-surface'],
+  ['color-information-ink', 'color-information-soft'],
+  ['color-success-ink', 'color-surface'],
+  ['color-success-ink', 'color-brand-soft'],
+  ['color-on-brand', 'color-brand-action'],
+  ['color-security-ink', 'color-brand-soft'],
+] as const;
 
 function parseColors(source: string): Record<string, string> {
   return Object.fromEntries(
@@ -45,45 +67,35 @@ describe('evergreen tokens', () => {
     expect(tokens).toContain('--color-sidebar-hover: rgb(255 255 255 / 7%)');
   });
 
-  it.each([
-    ['color-text-primary', 'color-surface'],
-    ['color-text-muted', 'color-surface'],
-    ['color-brand-action', 'color-surface'],
-    ['color-sidebar-text', 'color-evergreen-950'],
-    ['color-sidebar-muted', 'color-evergreen-950'],
-    ['color-warning-ink', 'color-surface'],
-    ['color-warning-ink', 'color-warning-soft'],
-    ['color-danger-ink', 'color-surface'],
-    ['color-information-ink', 'color-surface'],
-    ['color-success-ink', 'color-surface'],
-    ['color-on-brand', 'color-brand-action'],
-    ['color-security-ink', 'color-brand-soft'],
-  ])('%s has WCAG AA text contrast on %s', (foregroundName, backgroundName) => {
-    const foreground = colors[foregroundName];
-    const background = colors[backgroundName];
-    expect(foreground).toBeDefined();
-    expect(background).toBeDefined();
-    expect(contrast(foreground ?? '', background ?? '')).toBeGreaterThanOrEqual(4.5);
-  });
+  it.each(CONTRAST_PAIRS)(
+    '%s has WCAG AA text contrast on %s',
+    (foregroundName, backgroundName) => {
+      const foreground = colors[foregroundName];
+      const background = colors[backgroundName];
+      expect(foreground).toBeDefined();
+      expect(background).toBeDefined();
+      expect(contrast(foreground ?? '', background ?? '')).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 
-  it.each([
-    ['color-text-primary', 'color-surface'],
-    ['color-text-muted', 'color-surface'],
-    ['color-brand-action', 'color-surface'],
-    ['color-sidebar-text', 'color-evergreen-950'],
-    ['color-sidebar-muted', 'color-evergreen-950'],
-    ['color-warning-ink', 'color-surface'],
-    ['color-danger-ink', 'color-surface'],
-    ['color-information-ink', 'color-surface'],
-    ['color-success-ink', 'color-surface'],
-    ['color-on-brand', 'color-brand-action'],
-    ['color-security-ink', 'color-brand-soft'],
-  ])('dark %s has WCAG AA text contrast on %s', (foregroundName, backgroundName) => {
-    const foreground = darkColors[foregroundName];
-    const background = darkColors[backgroundName];
-    expect(foreground).toBeDefined();
-    expect(background).toBeDefined();
-    expect(contrast(foreground ?? '', background ?? '')).toBeGreaterThanOrEqual(4.5);
+  it.each(CONTRAST_PAIRS)(
+    'dark %s has WCAG AA text contrast on %s',
+    (foregroundName, backgroundName) => {
+      const foreground = darkColors[foregroundName];
+      const background = darkColors[backgroundName];
+      expect(foreground).toBeDefined();
+      expect(background).toBeDefined();
+      expect(contrast(foreground ?? '', background ?? '')).toBeGreaterThanOrEqual(4.5);
+    },
+  );
+
+  it('keeps keyboard focus visible and suppresses motion without hiding state changes', () => {
+    expect(globalStyles).toMatch(/:focus-visible\s*\{[^}]*outline:/s);
+    expect(globalStyles).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+    expect(globalStyles).toContain('animation-duration: 0.01ms !important');
+    expect(globalStyles).toContain('animation-iteration-count: 1 !important');
+    expect(globalStyles).toContain('transition-duration: 0.01ms !important');
+    expect(globalStyles).toContain('scroll-behavior: auto !important');
   });
 });
 

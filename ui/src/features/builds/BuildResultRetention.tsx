@@ -5,8 +5,12 @@ import { Link } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { auditRequestPath } from '../../app/routes';
 import { formatTimestamp } from '../../shared/display';
+import {
+  QueryBackgroundNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { BuildResultHoldApi, BuildResultRetentionResource } from './api';
-import { DiagnosticFailure, DiagnosticLoading, DiagnosticStale } from './BuildDiagnosticState';
 import { BuildResultHoldCommands } from './BuildResultHoldCommands';
 import styles from './Builds.module.css';
 
@@ -34,12 +38,13 @@ export function BuildResultRetention({
         {retention.data === undefined ? null : <HoldStatus retention={retention.data} />}
       </div>
       {retention.isPending ? (
-        <DiagnosticLoading label="Build Result retention" />
+        <QueryLoadingNotice className={styles.statePanel} label="Build Result retention" />
       ) : retention.data === undefined ? (
-        <DiagnosticFailure
+        <QueryFailureNotice
+          className={styles.failurePanel}
           error={retention.error}
-          label="Build Result retention"
           onRetry={retention.refetch}
+          title="Build Result retention could not be loaded."
         />
       ) : (
         <>
@@ -53,8 +58,14 @@ export function BuildResultRetention({
           />
         </>
       )}
-      {retention.data === undefined || retention.error === null ? null : (
-        <DiagnosticStale label="Build Result retention" onRetry={retention.refetch} />
+      {retention.data === undefined ? null : (
+        <QueryBackgroundNotice
+          className={styles.staleNotice}
+          error={retention.error}
+          fetching={retention.isFetching}
+          label="Build Result retention data"
+          onRetry={retention.refetch}
+        />
       )}
     </section>
   );

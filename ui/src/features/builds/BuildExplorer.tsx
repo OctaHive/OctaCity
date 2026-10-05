@@ -9,7 +9,7 @@ import { formatEnumLabel } from '../../shared/display';
 import {
   ExplorerBranchFailure as BranchFailure,
   ExplorerBranchLoading as BranchLoading,
-  ExplorerBranchStale as BranchStale,
+  ExplorerBranchBackground as BranchBackground,
   PagedExplorerBranch as PagedBranch,
   useCursorPage,
   type CursorPage,
@@ -136,9 +136,12 @@ function SelectedBuildTree({
 
   return (
     <>
-      {selectedBuild.error === null ? null : (
-        <BranchStale label="selected Build path" onRetry={selectedBuild.refetch} />
-      )}
+      <BranchBackground
+        error={selectedBuild.error}
+        fetching={selectedBuild.isFetching}
+        label="selected Build path"
+        onRetry={selectedBuild.refetch}
+      />
       <SelectedBuildAncestors api={api} build={selectedBuild.data} />
     </>
   );
@@ -208,9 +211,18 @@ function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: 
   };
   return (
     <>
-      {stale === undefined ? null : (
-        <BranchStale label="selected Build path" onRetry={stale.refetch} />
-      )}
+      <BranchBackground
+        error={stale?.error ?? null}
+        fetching={
+          selectedProject.isFetching ||
+          selectedConfiguration.isFetching ||
+          selectedProjectChildren.isFetching
+        }
+        label="selected Build path"
+        onRetry={() => {
+          if (stale !== undefined) void stale.refetch();
+        }}
+      />
       <BuildTree api={api} selectedBuildId={build.id} selectedPath={selectedPath} />
     </>
   );

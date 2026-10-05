@@ -4,10 +4,16 @@ import { Link, matchPath, useLocation } from 'react-router-dom';
 
 import { queryKeys } from '../../app/query';
 import { CONSOLE_PATHS, projectPath } from '../../app/routes';
+import {
+  QueryBackgroundNotice,
+  QueryEmptyNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import { useExpansionOverrides } from '../../shared/useExpansionOverrides';
 import type { ProjectDetails, ProjectHierarchyApi, ProjectPage, ProjectSummary } from './api';
-import { ProjectDataFailure, ProjectDataStale } from './ProjectDataState';
 import styles from './ProjectExplorer.module.css';
+import projectStyles from './Projects.module.css';
 
 interface ProjectExplorerProps {
   api: ProjectHierarchyApi;
@@ -108,15 +114,15 @@ function ProjectBranch({
   const projects = useProjectPage(api, parentId);
 
   if (projects.isPending) {
-    return <p className={styles.state}>Loading Projects…</p>;
+    return <QueryLoadingNotice className={projectStyles.statePanel} label="Projects" />;
   }
   if (projects.data === undefined) {
     return (
-      <ProjectDataFailure
-        compact
+      <QueryFailureNotice
+        className={projectStyles.compactFailure}
         error={projects.error}
-        label={parentLabel === null ? 'Projects' : `${parentLabel} children`}
         onRetry={projects.refetch}
+        title={`${parentLabel === null ? 'Projects' : `${parentLabel} children`} could not be loaded.`}
       />
     );
   }
@@ -144,14 +150,17 @@ function ProjectBranch({
           </button>
         </div>
       ) : null}
-      {projects.error === null ? null : (
-        <ProjectDataStale
-          label="Project hierarchy"
-          onRetry={projects.isFetchNextPageError ? projects.fetchNextPage : projects.refetch}
-        />
-      )}
+      <QueryBackgroundNotice
+        className={projectStyles.staleNotice}
+        error={projects.error}
+        fetching={projects.isFetching && !projects.isFetchingNextPage}
+        label="Project hierarchy data"
+        onRetry={projects.isFetchNextPageError ? projects.fetchNextPage : projects.refetch}
+      />
       {items.length === 0 && parentLabel === null ? (
-        <p className={styles.empty}>No root Projects are available.</p>
+        <QueryEmptyNotice className={projectStyles.emptyState}>
+          No root Projects are available.
+        </QueryEmptyNotice>
       ) : items.length > 0 ? (
         <ul aria-label={depth === 0 ? listLabel : undefined} role={depth === 0 ? 'tree' : 'group'}>
           {items.map((project) => {

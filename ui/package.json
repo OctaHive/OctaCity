@@ -11,14 +11,18 @@
   "scripts": {
     "api:generate": "node scripts/generate-api.mjs",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/verify-architecture.mjs --dist dist",
+    "check:architecture": "node scripts/verify-architecture.mjs",
+    "check:bundle": "node scripts/verify-architecture.mjs --dist dist",
     "preview": "vite preview",
     "format": "prettier --check .",
     "lint": "eslint . --max-warnings=0 --report-unused-disable-directives",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run && playwright test",
+    "test": "node --test scripts/verify-architecture.test.mjs && vitest run && playwright test",
+    "test:accessibility": "playwright test tests/browser/accessibility.spec.ts",
     "test:browser": "playwright test",
-    "test:unit": "vitest run"
+    "test:unit": "node --test scripts/verify-architecture.test.mjs && vitest run",
+    "test:visual": "playwright test tests/browser/visual.spec.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "5.104.0",

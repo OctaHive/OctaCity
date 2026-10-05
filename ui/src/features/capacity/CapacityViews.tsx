@@ -7,7 +7,11 @@ import { ManagementApiError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { agentPoolPath, buildPath } from '../../app/routes';
 import { formatBytes, formatEnumLabel, formatTimestamp } from '../../shared/display';
-import { QueryFailureNotice, StaleQueryNotice } from '../../shared/QueryStateNotice';
+import {
+  QueryBackgroundNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { AgentPoolResource, AgentResource, CapacityApi } from './api';
 import { AgentCommands } from './AgentCommands';
 import styles from './CapacityViews.module.css';
@@ -40,7 +44,7 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
   if (agent.isPending) return <CapacityLoading resource="Agent" />;
   if (agent.data === undefined) {
     return isNotFound(agent.error) ? (
-      <CapacityNotFound resource="Agent" />
+      <CapacityNotFound error={agent.error} onRetry={agent.refetch} resource="Agent" />
     ) : (
       <QueryFailureNotice
         error={agent.error}
@@ -60,12 +64,12 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
         title={agent.data.name}
         titleRef={headingRef}
       />
-      {agent.error === null ? null : (
-        <StaleQueryNotice
-          message="Refresh failed. Showing the last loaded Agent."
-          onRetry={agent.refetch}
-        />
-      )}
+      <QueryBackgroundNotice
+        error={agent.error}
+        fetching={agent.isFetching}
+        label="Agent"
+        onRetry={agent.refetch}
+      />
       <AgentFacts agent={agent.data} />
       <AgentCommands
         agent={agent.data}
@@ -91,7 +95,7 @@ function SelectedAgentPool({ api, poolId }: { api: CapacityApi; poolId: string }
   if (pool.isPending) return <CapacityLoading resource="Agent Pool" />;
   if (pool.data === undefined) {
     return isNotFound(pool.error) ? (
-      <CapacityNotFound resource="Agent Pool" />
+      <CapacityNotFound error={pool.error} onRetry={pool.refetch} resource="Agent Pool" />
     ) : (
       <QueryFailureNotice
         error={pool.error}
@@ -110,12 +114,12 @@ function SelectedAgentPool({ api, poolId }: { api: CapacityApi; poolId: string }
         subtitle="Agent Pool capacity"
         title={pool.data.name}
       />
-      {pool.error === null ? null : (
-        <StaleQueryNotice
-          message="Refresh failed. Showing the last loaded Agent Pool."
-          onRetry={pool.refetch}
-        />
-      )}
+      <QueryBackgroundNotice
+        error={pool.error}
+        fetching={pool.isFetching}
+        label="Agent Pool"
+        onRetry={pool.refetch}
+      />
       <PoolFacts pool={pool.data} />
     </section>
   );
@@ -330,18 +334,27 @@ function CapacityLoading({ resource }: { resource: string }) {
     <section className={styles.landing}>
       <p className={styles.eyebrow}>Capacity</p>
       <h1 id="page-title">{resource}</h1>
-      <p className={styles.description} role="status">
-        Loading {resource}…
-      </p>
+      <QueryLoadingNotice className={styles.description} label={resource} />
     </section>
   );
 }
 
-function CapacityNotFound({ resource }: { resource: string }) {
+function CapacityNotFound({
+  error = null,
+  onRetry,
+  resource,
+}: {
+  error?: Error | null;
+  onRetry?: (() => unknown) | undefined;
+  resource: string;
+}) {
   return (
     <section className={styles.landing}>
       <p className={styles.eyebrow}>Not found</p>
       <h1 id="page-title">{resource} not found</h1>
+      {onRetry === undefined ? null : (
+        <QueryFailureNotice error={error} onRetry={onRetry} title={`${resource} was not found.`} />
+      )}
     </section>
   );
 }

@@ -40,6 +40,8 @@ export const queryKeys = {
   projectPipelines: (projectId: string) => ['projects', projectId, 'pipelines'] as const,
   projectRepositories: (projectId: string) => ['projects', projectId, 'repositories'] as const,
   projectTriggers: (projectId: string) => ['projects', projectId, 'triggers'] as const,
+  disabledDefinitionDetail: (collectionKey: readonly unknown[]) =>
+    [...collectionKey, 'detail', null] as const,
   readiness: ['system', 'readiness'] as const,
   repository: (repositoryId: string, version: number) =>
     ['repositories', repositoryId, version] as const,

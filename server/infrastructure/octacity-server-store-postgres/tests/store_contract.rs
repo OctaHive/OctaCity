@@ -806,7 +806,11 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   let pool_agents = management
     .list_agents(ListAgents::new(None, 10, AgentListVisibility::all())?.for_pool(Some(fixture.allowed_pool)))
     .await?;
-  assert_eq!(pool_agents.agents.len(), 1);
+  assert_eq!(
+    pool_agents.agents.iter().map(|agent| agent.id).collect::<Vec<_>>(),
+    vec![fixture.agent_id, fixture.expired_agent_id, fixture.revoked_agent_id],
+    "Pool discovery includes every enrolled Agent regardless of registration readiness"
+  );
   assert_eq!(pool_agents.agents[0].id, fixture.agent_id);
   let other_pool_agents = management
     .list_agents(ListAgents::new(None, 10, AgentListVisibility::all())?.for_pool(Some(id(999))))

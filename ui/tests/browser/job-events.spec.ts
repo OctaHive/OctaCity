@@ -82,7 +82,7 @@ test('keeps a single-Job Attempt graph compact', async ({ page }) => {
   await page.goto(`/builds/${BUILD_ID}`);
 
   const graph = page.getByRole('img', { name: 'Attempt dependency graph' });
-  const nodeBounds = await graph.getByLabel('compile, Running').locator('rect').boundingBox();
+  const nodeBounds = await graph.locator('g[aria-label^="compile, "] > rect').boundingBox();
   if (nodeBounds === null) throw new Error('single Job graph node was not rendered');
   expect(nodeBounds.width).toBeLessThanOrEqual(180);
   expect(nodeBounds.height).toBeLessThanOrEqual(80);
