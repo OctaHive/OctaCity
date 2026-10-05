@@ -641,6 +641,7 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     ("/api/v1/projects/{project_id}", "ProjectDetails"),
     ("/api/v1/builds/{build_id}", "BuildResource"),
     ("/api/v1/agents/{agent_id}", "AgentResource"),
+    ("/api/v1/agent-pools/{pool_id}", "AgentPoolResource"),
     ("/api/v1/agent-pools/{pool_id}/versions/{version}", "AgentPoolResource"),
   ] {
     assert_eq!(

@@ -48,6 +48,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       limit_parameter(MAX_AGENT_POOL_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
     ]),
     ParameterProfile::AgentList => parameters.extend([
+      json!({"name": "pool_id", "in": "query", "required": false, "schema": non_empty_string()}),
       cursor_parameter(),
       limit_parameter(MAX_AGENT_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
     ]),

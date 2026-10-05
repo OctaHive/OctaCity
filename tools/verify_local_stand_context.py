@@ -73,6 +73,7 @@ FORBIDDEN_CONTEXT_PATHS = (
     "target/debug/octacity-server",
     "agent/octacity-agent/target/debug/octacity-agent",
     "ui/dist/index.html",
+    "ui/.generated/api/constraints.ts",
     "ui/.generated/api/schema.d.ts",
     "ui/node_modules/react/index.js",
     "ui/.env.local",

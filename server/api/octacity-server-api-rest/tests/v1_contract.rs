@@ -95,6 +95,22 @@ fn pool_execution_allowlist_has_an_explicit_strict_wire_shape() {
 }
 
 #[test]
+fn agent_current_execution_is_bounded_and_rejects_fencing_material() {
+  let mut page: Value = serde_json::from_str(AGENT_PAGE).unwrap();
+  page["items"][0]["current_execution"] = json!({
+    "lease_id": "88888888-8888-4888-8888-888888888888",
+    "build_id": "99999999-9999-4999-8999-999999999999",
+    "attempt_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "job_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "lease_state": "active"
+  });
+  assert!(serde_json::from_value::<CursorPage<AgentResource>>(page.clone()).is_ok());
+
+  page["items"][0]["current_execution"]["fencing_token"] = json!("must-never-leak");
+  assert!(serde_json::from_value::<CursorPage<AgentResource>>(page).is_err());
+}
+
+#[test]
 fn managed_webhook_request_debug_output_redacts_protected_handles() {
   let request: CreateManagedWebhookRequest = serde_json::from_str(CREATE_MANAGED_WEBHOOK).unwrap();
   let debug = format!("{request:?}");

@@ -62,3 +62,10 @@
   font-weight: 700;
   text-decoration: none;
 }
+
+.deferred {
+  margin: 0;
+  padding: var(--space-lg);
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}

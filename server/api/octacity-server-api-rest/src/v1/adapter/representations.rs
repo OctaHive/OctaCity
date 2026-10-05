@@ -479,6 +479,21 @@ pub(super) fn agent_resource(projection: AgentProjection, request_id: &RequestId
       octacity_server_application::AgentStatusProjection::Draining => AgentStatus::Draining,
     },
     last_seen_at_unix_ms: projection.last_seen_at.unix_millis(),
+    current_execution: projection.current_execution.map(|execution| AgentCurrentExecution {
+      lease_id: execution.lease_id.to_string(),
+      build_id: execution.build_id.to_string(),
+      attempt_id: execution.attempt_id.to_string(),
+      job_id: execution.job_id.to_string(),
+      lease_state: match execution.lease_state {
+        octacity_server_application::AgentCurrentLeaseStateProjection::Active => AgentCurrentLeaseState::Active,
+        octacity_server_application::AgentCurrentLeaseStateProjection::CancellationRequested => {
+          AgentCurrentLeaseState::CancellationRequested
+        }
+        octacity_server_application::AgentCurrentLeaseStateProjection::DrainRequested => {
+          AgentCurrentLeaseState::DrainRequested
+        }
+      },
+    }),
   })
 }
 

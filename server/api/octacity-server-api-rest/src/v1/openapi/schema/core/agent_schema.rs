@@ -80,6 +80,23 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "AgentCurrentLeaseState".to_owned(),
+    string_enum(&["active", "cancellation_requested", "drain_requested"]),
+  );
+  schemas.insert(
+    "AgentCurrentExecution".to_owned(),
+    object(
+      [
+        ("lease_id", non_empty_string()),
+        ("build_id", non_empty_string()),
+        ("attempt_id", non_empty_string()),
+        ("job_id", non_empty_string()),
+        ("lease_state", schema_ref("AgentCurrentLeaseState")),
+      ],
+      &["lease_id", "build_id", "attempt_id", "job_id", "lease_state"],
+    ),
+  );
+  schemas.insert(
     "AgentResource".to_owned(),
     object(
       [
@@ -92,6 +109,7 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
         ("capacity", schema_ref("AgentCapacity")),
         ("status", schema_ref("AgentStatus")),
         ("last_seen_at_unix_ms", integer()),
+        ("current_execution", nullable(schema_ref("AgentCurrentExecution"))),
       ],
       &[
         "id",
@@ -103,6 +121,7 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
         "capacity",
         "status",
         "last_seen_at_unix_ms",
+        "current_execution",
       ],
     ),
   );

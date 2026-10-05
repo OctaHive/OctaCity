@@ -40,9 +40,11 @@ semantic shell snapshots. `pnpm test` runs both unit/component tests and these b
 The production application is written to `dist/` as an `index.html`-rooted static bundle.
 
 `api:generate` runs the development-only Rust exporter for the same OpenAPI document served at
-`/api/v1/openapi.json`, then writes TypeScript declarations to
-`.generated/api/schema.d.ts`. The generated directory is intentionally ignored: regenerate it
-before type checking or building instead of editing or committing its contents.
+`/api/v1/openapi.json`, then writes TypeScript declarations and the small runtime constraint
+projection to `.generated/api/`. The generated directory is intentionally ignored: regenerate it
+before type checking or building instead of editing or committing its contents. Filter enums,
+UTF-8 bounds, and default page sizes consumed at runtime therefore remain derived from the server
+contract rather than duplicated in feature code.
 
 Locked container builds set `OCTACITY_OPENAPI_SCHEMA_FILE` to a bounded regular JSON file that
 was exported by an earlier Rust build stage. When the variable is absent, the generator runs the

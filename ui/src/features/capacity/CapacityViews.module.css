@@ -1,0 +1,260 @@
+.page,
+.stack {
+  display: grid;
+  gap: var(--space-lg);
+}
+
+.heading,
+.panel,
+.landing {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+}
+
+.heading,
+.landing {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-xl);
+}
+
+.headingRow,
+.panelHeading,
+.statusLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.headingRow,
+.panelHeading {
+  justify-content: space-between;
+}
+
+.heading h1,
+.landing h1,
+.panel h2,
+.panel h3 {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.heading h1,
+.landing h1 {
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+
+.panel h2 {
+  font-size: 1.05rem;
+}
+
+.panel h3 {
+  font-size: 0.9rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.2rem;
+  color: var(--color-brand-action);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.identity,
+.description,
+.empty,
+.panelDescription {
+  margin: 0;
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.identity {
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.description,
+.empty,
+.panelDescription {
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.panelDescription {
+  margin: 0.25rem 0 0;
+}
+
+.button {
+  border: 0;
+  background: transparent;
+  color: var(--color-brand-action);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+}
+
+.status {
+  width: fit-content;
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  background: var(--color-surface-subtle);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.status[data-state='online'],
+.status[data-state='accepting'],
+.status[data-state='active'] {
+  background: var(--color-brand-soft);
+  color: var(--color-success-ink);
+}
+
+.status[data-state='offline'],
+.status[data-state='forced_drain'],
+.status[data-state='cancellation_requested'] {
+  background: var(--color-danger-soft);
+  color: var(--color-danger-ink);
+}
+
+.panel {
+  overflow: hidden;
+}
+
+.panelHeading {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+  margin: 0;
+  padding: var(--space-lg);
+}
+
+.grid > div {
+  min-width: 0;
+  padding: var(--space-md);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.grid dt {
+  color: var(--color-text-muted);
+  font-size: 0.67rem;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.grid dd {
+  margin: 0.3rem 0 0;
+  color: var(--color-text-primary);
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+
+.grid a {
+  color: var(--color-brand-action);
+}
+
+.list {
+  display: grid;
+  gap: var(--space-sm);
+  margin: 0;
+  padding: var(--space-lg);
+  list-style: none;
+}
+
+.list li {
+  padding: var(--space-md);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+}
+
+.commandGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-md);
+  padding: var(--space-lg);
+}
+
+.commandCard {
+  display: grid;
+  align-content: start;
+  gap: var(--space-md);
+  margin: 0;
+  padding: var(--space-lg);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-subtle);
+}
+
+.commandButton {
+  width: fit-content;
+  min-height: 2.25rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--color-brand-action);
+  border-radius: var(--radius-small);
+  background: var(--color-brand-action);
+  color: var(--color-on-brand);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.button:disabled,
+.commandButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.inlineFailure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  color: var(--color-danger-ink);
+  font-size: 0.78rem;
+}
+
+.inlineFailure button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+@media (max-width: 760px) {
+  .headingRow,
+  .panelHeading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .commandGrid {
+    grid-template-columns: 1fr;
+  }
+}

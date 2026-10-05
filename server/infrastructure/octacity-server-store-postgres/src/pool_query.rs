@@ -24,6 +24,22 @@ pub(crate) async fn read(
   .try_into()
 }
 
+pub(crate) async fn read_current(pool: &sqlx::PgPool, pool_id: PoolId) -> Result<PublishedAgentPool, StoreError> {
+  sqlx::query_as::<_, PoolRow>(
+    "SELECT id, name, version, enabled, drain_state, admission_policy, concurrency_limit, fairness_policy, \
+       static_capacity_limit, FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS published_at_millis \
+     FROM pools WHERE id = $1 ORDER BY version DESC LIMIT 1",
+  )
+  .bind(pool_id.as_uuid())
+  .fetch_optional(pool)
+  .await
+  .map_err(unavailable)?
+  .ok_or(StoreError::NotFound {
+    entity: EntityKind::Pool,
+  })?
+  .try_into()
+}
+
 pub(crate) async fn list(pool: &sqlx::PgPool, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
   if request.visibility().kind() == octacity_server_store::ReadVisibilityKind::None {
     return Ok(AgentPoolPage {

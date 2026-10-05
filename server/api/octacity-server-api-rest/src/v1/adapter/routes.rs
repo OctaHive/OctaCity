@@ -30,9 +30,9 @@ use super::{
   create_manual_trigger_definition, create_pipeline, create_project, create_repository,
   create_scheduled_trigger_definition, create_unmanaged_webhook, delete_agent_pool, delete_managed_webhook,
   delete_project, drain_agent, get_agent, get_agent_pool, get_artifact, get_attempt, get_build,
-  get_build_configuration, get_build_result_retention, get_cache_session, get_internal_trigger, get_job,
-  get_manual_trigger_definition, get_operational_metadata, get_pipeline, get_project, get_repository, get_schedule,
-  issue_agent_enrollment, list_agent_pools, list_agents, list_audit_facts, list_build_artifacts,
+  get_build_configuration, get_build_result_retention, get_cache_session, get_current_agent_pool, get_internal_trigger,
+  get_job, get_manual_trigger_definition, get_operational_metadata, get_pipeline, get_project, get_repository,
+  get_schedule, issue_agent_enrollment, list_agent_pools, list_agents, list_audit_facts, list_build_artifacts,
   list_build_cache_sessions, list_internal_triggers, list_operator_attention, list_project_build_configurations,
   list_project_builds, list_project_pipelines, list_project_repositories, list_project_trigger_definitions,
   list_projects, move_project, observe_managed_webhook, openapi, place_build_result_hold, publish_agent_pool,
@@ -257,6 +257,7 @@ fn registered_routes() -> ManagementRoutes {
     .get::<GetAttemptQuery, _, _>("getAttempt", get_attempt)
     .post::<CreateAgentPoolCommand, _, _>("createAgentPool", create_agent_pool)
     .get::<ListAgentPoolsQuery, _, _>("listAgentPools", list_agent_pools)
+    .get::<GetAgentPoolQuery, _, _>("getCurrentAgentPool", get_current_agent_pool)
     .delete::<DeleteAgentPoolCommand, _, _>("deleteAgentPool", delete_agent_pool)
     .post::<PublishAgentPoolVersionCommand, _, _>("publishAgentPoolVersion", publish_agent_pool)
     .get::<GetAgentPoolQuery, _, _>("getAgentPoolVersion", get_agent_pool)

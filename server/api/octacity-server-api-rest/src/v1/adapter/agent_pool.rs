@@ -82,6 +82,24 @@ pub(super) async fn get_agent_pool(
   Ok((StatusCode::OK, Json(agent_pool_resource(projection))))
 }
 
+pub(super) async fn get_current_agent_pool(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path(pool_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+  let query = application
+    .inputs
+    .get_current_agent_pool(&pool_id)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let projection = application
+    .agent_pools
+    .get
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  Ok((StatusCode::OK, Json(agent_pool_resource(projection))))
+}
+
 pub(super) async fn list_agent_pools(
   State(application): State<Arc<ManagementApplication>>,
   Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,

@@ -84,6 +84,34 @@ pub enum AgentStatus {
   Draining,
 }
 
+/// Stable non-terminal state of an Agent's current lease.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCurrentLeaseState {
+  /// The Agent may continue executing and renewing the lease.
+  Active,
+  /// The coordinator has requested cancellation.
+  CancellationRequested,
+  /// The coordinator has requested draining after execution stops.
+  DrainRequested,
+}
+
+/// Safe identity-only projection of an Agent's current execution.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentCurrentExecution {
+  /// Active lease identity without fencing material.
+  pub lease_id: String,
+  /// Build containing the current Job.
+  pub build_id: String,
+  /// Attempt containing the current Job.
+  pub attempt_id: String,
+  /// Current Job identity.
+  pub job_id: String,
+  /// Authoritative non-terminal lease state.
+  pub lease_state: AgentCurrentLeaseState,
+}
+
 /// Static host capacity reported by an Agent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -122,4 +150,6 @@ pub struct AgentResource {
   pub status: AgentStatus,
   /// Last authoritative contact as Unix milliseconds.
   pub last_seen_at_unix_ms: i64,
+  /// Current non-terminal execution, or `null` when the Agent is idle.
+  pub current_execution: Option<AgentCurrentExecution>,
 }

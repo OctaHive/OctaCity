@@ -8,9 +8,10 @@ use octacity_server_domain::{AgentId, EntityKind, PoolId, PoolVersion};
 
 use crate::testing::{ManagementAuditProbe, RecordedManagementAuditFact, recorded_management_audit};
 use crate::{
-  AgentDrainMode, AgentPage, AgentPlatform, AgentPoolDefinition, AgentStore, DrainAgent, DrainAgentOutcome,
-  EnrolledAgent, ListAgents, ManagementIdempotencyKey, ManagementMutation, MutationDisposition, PoolAdmissionPolicy,
-  ReassignAgentPool, ReassignAgentPoolOutcome, StoreError, StoreOperation,
+  AgentCurrentExecution, AgentCurrentLeaseState, AgentDetail, AgentDrainMode, AgentPage, AgentPlatform,
+  AgentPoolDefinition, AgentStore, DrainAgent, DrainAgentOutcome, EnrolledAgent, ListAgents, ManagementIdempotencyKey,
+  ManagementMutation, MutationDisposition, PoolAdmissionPolicy, ReassignAgentPool, ReassignAgentPoolOutcome,
+  StoreError, StoreOperation,
 };
 
 /// Deterministic process-local Agent management adapter.
@@ -24,7 +25,7 @@ struct State {
   agents: BTreeMap<AgentId, (EnrolledAgent, AgentPlatform)>,
   pools: BTreeMap<(PoolId, PoolVersion), AgentPoolDefinition>,
   current_pools: BTreeMap<PoolId, PoolVersion>,
-  active_leases: BTreeSet<AgentId>,
+  current_executions: BTreeMap<AgentId, AgentCurrentExecution>,
   mutations: BTreeMap<ManagementIdempotencyKey, (Fingerprint, ReassignAgentPoolOutcome)>,
   drain_mutations: BTreeMap<ManagementIdempotencyKey, (DrainFingerprint, DrainAgentOutcome)>,
   audit: BTreeSet<RecordedManagementAuditFact>,
@@ -85,18 +86,22 @@ impl InMemoryAgentStore {
     Ok(())
   }
 
-  /// Marks whether an Agent owns an active Lease.
-  pub fn set_active_lease(&self, agent_id: AgentId, active: bool) -> Result<(), StoreError> {
+  /// Seeds or clears the safe projection of an Agent's current execution.
+  pub fn set_current_execution(
+    &self,
+    agent_id: AgentId,
+    execution: Option<AgentCurrentExecution>,
+  ) -> Result<(), StoreError> {
     let mut state = self.lock()?;
     if !state.agents.contains_key(&agent_id) {
       return Err(StoreError::NotFound {
         entity: EntityKind::Agent,
       });
     }
-    if active {
-      state.active_leases.insert(agent_id);
+    if let Some(execution) = execution {
+      state.current_executions.insert(agent_id, execution);
     } else {
-      state.active_leases.remove(&agent_id);
+      state.current_executions.remove(&agent_id);
     }
     Ok(())
   }
@@ -108,15 +113,19 @@ impl InMemoryAgentStore {
 
 #[async_trait]
 impl AgentStore for InMemoryAgentStore {
-  async fn agent(&self, agent_id: AgentId) -> Result<EnrolledAgent, StoreError> {
-    self
-      .lock()?
+  async fn agent_detail(&self, agent_id: AgentId) -> Result<AgentDetail, StoreError> {
+    let state = self.lock()?;
+    let agent = state
       .agents
       .get(&agent_id)
       .map(|record| record.0.clone())
       .ok_or(StoreError::NotFound {
         entity: EntityKind::Agent,
-      })
+      })?;
+    Ok(AgentDetail {
+      agent,
+      current_execution: state.current_executions.get(&agent_id).cloned(),
+    })
   }
 
   async fn list_agents(&self, request: ListAgents) -> Result<AgentPage, StoreError> {
@@ -132,6 +141,7 @@ impl AgentStore for InMemoryAgentStore {
       .agents
       .iter()
       .filter(|(id, _)| request.visibility().allows(id))
+      .filter(|(_, record)| request.pool_id().is_none_or(|pool_id| record.0.pool_id == pool_id))
       .filter(|(id, _)| request.after().is_none_or(|after| **id > after))
       .map(|(_, record)| record.0.clone())
       .take(limit + 1)
@@ -188,7 +198,7 @@ impl AgentStore for InMemoryAgentStore {
         entity: EntityKind::Agent,
       });
     }
-    if state.active_leases.contains(&request.agent_id) {
+    if state.current_executions.contains_key(&request.agent_id) {
       return Err(StoreError::Conflict {
         entity: EntityKind::Lease,
       });
@@ -269,9 +279,17 @@ impl AgentStore for InMemoryAgentStore {
     agent.status = crate::AgentStatus::Draining;
     agent.updated_at = request.requested_at;
     state.agents.insert(agent.id, (agent.clone(), platform));
+    let current_execution = state.current_executions.get_mut(&request.agent_id).map(|execution| {
+      execution.lease_state = match request.mode {
+        AgentDrainMode::Graceful => AgentCurrentLeaseState::DrainRequested,
+        AgentDrainMode::Forced => AgentCurrentLeaseState::CancellationRequested,
+      };
+      execution.clone()
+    });
     let outcome = DrainAgentOutcome {
       disposition: MutationDisposition::Applied,
       agent,
+      current_execution,
     };
     state
       .drain_mutations
@@ -294,7 +312,7 @@ mod tests {
     AgentInventory, COORDINATOR_PROTOCOL_VERSION, HostCapacity, OctaInventory, PlatformArchitecture, PlatformOs,
     PlatformSpec,
   };
-  use octacity_server_domain::{AgentName, AgentVersion, Timestamp};
+  use octacity_server_domain::{AgentName, AgentVersion, AttemptId, BuildId, JobId, LeaseId, Timestamp};
   use octacity_server_scheduler::PoolDrainState;
 
   use super::*;
@@ -344,15 +362,32 @@ mod tests {
           .unwrap();
         assert_eq!(restricted.agents, vec![second_agent]);
         assert_eq!(restricted.next_cursor, None);
+        let pool_filtered = store
+          .list_agents(
+            ListAgents::new(None, 10, crate::AgentListVisibility::all())
+              .unwrap()
+              .for_pool(Some(target)),
+          )
+          .await
+          .unwrap();
+        assert!(pool_filtered.agents.is_empty());
+        assert_eq!(pool_filtered.next_cursor, None);
         let none = store
           .list_agents(ListAgents::new(None, 1, crate::AgentListVisibility::none()).unwrap())
           .await
           .unwrap();
         assert!(none.agents.is_empty());
         assert_eq!(none.next_cursor, None);
-        assert_eq!(store.agent(agent_id).await.unwrap().pool_id, source);
+        assert_eq!(store.agent_detail(agent_id).await.unwrap().agent.pool_id, source);
 
-        store.set_active_lease(agent_id, true).unwrap();
+        let active_execution = current_execution();
+        store
+          .set_current_execution(agent_id, Some(active_execution.clone()))
+          .unwrap();
+        assert_eq!(
+          store.agent_detail(agent_id).await.unwrap().current_execution,
+          Some(active_execution.clone())
+        );
         assert_eq!(
           store
             .reassign_agent_pool(crate::testing::management_mutation(reassign(
@@ -366,9 +401,9 @@ mod tests {
             entity: EntityKind::Lease
           },
         );
-        assert_eq!(store.agent(agent_id).await.unwrap().pool_id, source);
+        assert_eq!(store.agent_detail(agent_id).await.unwrap().agent.pool_id, source);
 
-        store.set_active_lease(agent_id, false).unwrap();
+        store.set_current_execution(agent_id, None).unwrap();
         let moved = store
           .reassign_agent_pool(crate::testing::management_mutation(reassign(
             agent_id,
@@ -396,7 +431,9 @@ mod tests {
         assert_eq!(replay.disposition, MutationDisposition::Replayed);
         assert_eq!(replay.agent, moved.agent);
 
-        store.set_active_lease(agent_id, true).unwrap();
+        store
+          .set_current_execution(agent_id, Some(active_execution.clone()))
+          .unwrap();
         let drained = store
           .drain_agent(crate::testing::management_mutation(DrainAgent {
             agent_id,
@@ -409,6 +446,26 @@ mod tests {
           .unwrap();
         assert_eq!(drained.agent.status, crate::AgentStatus::Draining);
         assert_eq!(drained.agent.last_seen_at, time(10));
+        assert_eq!(
+          drained
+            .current_execution
+            .as_ref()
+            .map(|execution| execution.lease_state),
+          Some(AgentCurrentLeaseState::DrainRequested)
+        );
+        store.set_current_execution(agent_id, None).unwrap();
+        let replayed = store
+          .drain_agent(crate::testing::management_mutation(DrainAgent {
+            agent_id,
+            expected_version: moved.agent.version,
+            mode: AgentDrainMode::Graceful,
+            idempotency_key: crate::IdempotencyKey::new("drain-agent").unwrap(),
+            requested_at: time(30),
+          }))
+          .await
+          .unwrap();
+        assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+        assert_eq!(replayed.current_execution, drained.current_execution);
         assert_management_audit_facts(
           store.as_ref(),
           [
@@ -429,6 +486,16 @@ mod tests {
       target_pool_id,
       idempotency_key: crate::IdempotencyKey::new(key_value).unwrap(),
       reassigned_at: time(20),
+    }
+  }
+
+  fn current_execution() -> AgentCurrentExecution {
+    AgentCurrentExecution {
+      lease_id: id::<LeaseId>(20),
+      build_id: id::<BuildId>(21),
+      attempt_id: id::<AttemptId>(22),
+      job_id: id::<JobId>(23),
+      lease_state: AgentCurrentLeaseState::Active,
     }
   }
 

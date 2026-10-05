@@ -24,6 +24,9 @@ pub trait AgentPoolStore: Send + Sync {
   /// Reads one exact immutable Pool version.
   async fn agent_pool_version(&self, pool_id: PoolId, version: PoolVersion) -> Result<PublishedAgentPool, StoreError>;
 
+  /// Reads the current immutable version of one Pool.
+  async fn current_agent_pool(&self, pool_id: PoolId) -> Result<PublishedAgentPool, StoreError>;
+
   /// Lists current Pool versions in stable identity order.
   async fn list_agent_pools(&self, request: ListAgentPools) -> Result<AgentPoolPage, StoreError>;
 

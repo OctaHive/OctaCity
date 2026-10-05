@@ -88,13 +88,16 @@ class LocalStandContextTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(VERIFY.docker_path_included(path, rules))
 
-    def test_ui_schema_is_generated_inside_the_builder(self):
+    def test_ui_api_contract_is_generated_inside_the_builder(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
         self.assertTrue(
             VERIFY.docker_path_included("ui/scripts/generate-api.mjs", rules)
         )
         self.assertFalse(
             VERIFY.docker_path_included("ui/.generated/api/schema.d.ts", rules)
+        )
+        self.assertFalse(
+            VERIFY.docker_path_included("ui/.generated/api/constraints.ts", rules)
         )
 
     def test_developer_state_build_outputs_and_secrets_are_excluded(self):

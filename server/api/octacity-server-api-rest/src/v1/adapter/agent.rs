@@ -3,6 +3,7 @@ use super::*;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AgentListParameters {
+  pool_id: Option<String>,
   after: Option<Cursor>,
   #[serde(default = "default_page_limit")]
   limit: u16,
@@ -80,7 +81,11 @@ pub(super) async fn list_agents(
   let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
   let query = application
     .inputs
-    .list_agents(parameters.after.as_ref().map(Cursor::as_str), parameters.limit)
+    .list_agents(
+      parameters.pool_id.as_deref(),
+      parameters.after.as_ref().map(Cursor::as_str),
+      parameters.limit,
+    )
     .map_err(|error| invalid_input(error, &request_id))?;
   let page = application
     .agents

@@ -148,6 +148,10 @@ impl AgentPoolStore for PostgresStore {
     crate::pool_query::read(&self.pool, pool_id, version).await
   }
 
+  async fn current_agent_pool(&self, pool_id: PoolId) -> Result<PublishedAgentPool, StoreError> {
+    crate::pool_query::read_current(&self.pool, pool_id).await
+  }
+
   async fn list_agent_pools(&self, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
     crate::pool_query::list(&self.pool, request).await
   }
@@ -163,11 +167,11 @@ impl AgentPoolStore for PostgresStore {
 
 #[async_trait]
 impl AgentStore for PostgresStore {
-  async fn agent(
+  async fn agent_detail(
     &self,
     agent_id: octacity_server_domain::AgentId,
-  ) -> Result<octacity_server_store::EnrolledAgent, StoreError> {
-    crate::agent_query::read(&self.pool, agent_id).await
+  ) -> Result<octacity_server_store::AgentDetail, StoreError> {
+    crate::agent_query::read_detail(&self.pool, agent_id).await
   }
 
   async fn list_agents(&self, request: ListAgents) -> Result<AgentPage, StoreError> {

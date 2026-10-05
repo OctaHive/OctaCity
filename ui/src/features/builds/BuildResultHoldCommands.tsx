@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { queryInvalidations, queryKeys } from '../../app/query';
 import { auditRequestPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
+import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
 import type {
@@ -155,7 +156,7 @@ export function BuildResultHoldCommands({
           confirmLabel="Release hold"
           consequence={`This releases the hold on Build ${buildId}. Any overdue Build Result data becomes eligible for deletion by the next retention pass.`}
           execute={({ headers, request }) =>
-            api.releaseBuildResultHold(request.buildId, requireVersionedHeaders(headers))
+            api.releaseBuildResultHold(request.buildId, requireVersionedMutationHeaders(headers))
           }
           fallbackFocusRef={fallbackFocusRef}
           invalidations={[
@@ -176,16 +177,6 @@ export function BuildResultHoldCommands({
       ) : null}
     </div>
   );
-}
-
-function requireVersionedHeaders(
-  headers: Readonly<{ 'Idempotency-Key': string; 'If-Match'?: string }>,
-) {
-  const ifMatch = headers['If-Match'];
-  if (ifMatch === undefined) {
-    throw new TypeError('Retention hold release requires a resource version');
-  }
-  return { ...headers, 'If-Match': ifMatch };
 }
 
 function parsePlacement(

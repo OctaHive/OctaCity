@@ -1,0 +1,39 @@
+.notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-small);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+  font-size: 0.78rem;
+}
+
+.failure {
+  align-items: flex-start;
+}
+
+.stale {
+  align-items: center;
+}
+
+.content {
+  display: grid;
+  flex: 1;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.requestIdentity {
+  overflow-wrap: anywhere;
+}
+
+.retry {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 760;
+  cursor: pointer;
+}

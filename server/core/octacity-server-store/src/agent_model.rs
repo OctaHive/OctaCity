@@ -1,7 +1,9 @@
 use std::num::NonZeroU16;
 
 use octacity_protocol::AgentInventory;
-use octacity_server_domain::{AgentId, AgentName, AgentVersion, PoolId, PoolVersion, Timestamp};
+use octacity_server_domain::{
+  AgentId, AgentName, AgentVersion, AttemptId, BuildId, JobId, LeaseId, PoolId, PoolVersion, Timestamp,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{AgentListVisibility, IdempotencyKey, MutationDisposition, StoreError, StoreInputError, StoreOperation};
@@ -56,12 +58,49 @@ pub struct EnrolledAgent {
   pub updated_at: Timestamp,
 }
 
+/// Safe facts about the non-terminal execution currently owned by an Agent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AgentCurrentExecution {
+  /// Active lease identity without its fencing material.
+  pub lease_id: LeaseId,
+  /// Build containing the current Job.
+  pub build_id: BuildId,
+  /// Attempt containing the current Job.
+  pub attempt_id: AttemptId,
+  /// Current Job identity.
+  pub job_id: JobId,
+  /// Authoritative non-terminal lease state.
+  pub lease_state: AgentCurrentLeaseState,
+}
+
+/// Non-terminal lease states visible through Agent capacity reads.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCurrentLeaseState {
+  /// The Agent may continue executing and renewing the lease.
+  Active,
+  /// The coordinator has requested cancellation.
+  CancellationRequested,
+  /// The coordinator has requested draining after execution stops.
+  DrainRequested,
+}
+
+/// One enrolled Agent together with its optional current execution.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentDetail {
+  /// Authoritative enrolled Agent state.
+  pub agent: EnrolledAgent,
+  /// Current non-terminal execution, or `None` when the Agent is idle.
+  pub current_execution: Option<AgentCurrentExecution>,
+}
+
 /// Bounded deterministic query over enrolled Agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListAgents {
   after: Option<AgentId>,
   limit: NonZeroU16,
   visibility: AgentListVisibility,
+  pool_id: Option<PoolId>,
 }
 
 impl ListAgents {
@@ -74,7 +113,15 @@ impl ListAgents {
       after,
       limit,
       visibility,
+      pool_id: None,
     })
+  }
+
+  /// Restricts the page to Agents assigned to one exact Pool.
+  #[must_use]
+  pub const fn for_pool(mut self, pool_id: Option<PoolId>) -> Self {
+    self.pool_id = pool_id;
+    self
   }
 
   /// Exclusive stable-identity cursor.
@@ -93,6 +140,12 @@ impl ListAgents {
   #[must_use]
   pub const fn visibility(&self) -> &AgentListVisibility {
     &self.visibility
+  }
+
+  /// Optional exact current Pool filter applied before cursor pagination.
+  #[must_use]
+  pub const fn pool_id(&self) -> Option<PoolId> {
+    self.pool_id
   }
 }
 
@@ -151,4 +204,7 @@ pub struct DrainAgentOutcome {
   pub disposition: MutationDisposition,
   /// Complete normalized Agent state committed by the original command.
   pub agent: EnrolledAgent,
+  /// Safe execution state committed with the original command.
+  #[serde(default)]
+  pub current_execution: Option<AgentCurrentExecution>,
 }

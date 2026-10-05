@@ -41,7 +41,15 @@ impl ManagementInputFactory {
   pub fn get_agent_pool(&self, id: &str, version_value: u64) -> Result<GetAgentPoolQuery, ManagementInputError> {
     Ok(GetAgentPoolQuery {
       pool_id: parse(id, "agent pool id")?,
-      version: version(version_value, "agent pool version")?,
+      version: Some(version(version_value, "agent pool version")?),
+    })
+  }
+
+  /// Creates a typed current Agent Pool query.
+  pub fn get_current_agent_pool(&self, id: &str) -> Result<GetAgentPoolQuery, ManagementInputError> {
+    Ok(GetAgentPoolQuery {
+      pool_id: parse(id, "agent pool id")?,
+      version: None,
     })
   }
 
@@ -77,8 +85,14 @@ impl ManagementInputFactory {
   }
 
   /// Creates a typed bounded Agent-list query.
-  pub fn list_agents(&self, after: Option<&str>, limit: u16) -> Result<ListAgentsQuery, ManagementInputError> {
+  pub fn list_agents(
+    &self,
+    pool_id: Option<&str>,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<ListAgentsQuery, ManagementInputError> {
     Ok(ListAgentsQuery {
+      pool_id: optional_parse(pool_id, "agent pool id")?,
       after: optional_parse(after, "agent cursor")?,
       limit,
     })

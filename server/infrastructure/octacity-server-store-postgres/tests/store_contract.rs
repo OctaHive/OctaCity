@@ -12,12 +12,12 @@ use octacity_server_domain::{
 use octacity_server_job::{JobFailureClass, JobState};
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
-  AgentCredentialStore as _, AgentListVisibility, AgentRegistrationProof, AgentStore as _, AppendJobEvents, AuditActor,
-  AuditActorKind, BuildControlStore as _, BuildQueryStore as _, CreateProject, CredentialSecret, DurableJobEvent,
-  EventSequence, FreshRegistrationCredential, IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion,
-  JobCompletionKind, JobEventKind, JobEventReadStore as _, JobExecutionStore as _, LeaseAccess, LeaseFence,
-  LeaseWindow, ListAgents, ManagementMutation, MutationAuditContext, MutationDisposition, ProjectStore as _,
-  ReadJobEvents, ReassignAgentPool, RegisterAgent, RegistrationValidity, StoreError, StoreOperation,
+  AgentCredentialStore as _, AgentListVisibility, AgentPoolStore as _, AgentRegistrationProof, AgentStore as _,
+  AppendJobEvents, AuditActor, AuditActorKind, BuildControlStore as _, BuildQueryStore as _, CreateProject,
+  CredentialSecret, DurableJobEvent, EventSequence, FreshRegistrationCredential, IdempotencyKey, JobClaim,
+  JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobEventReadStore as _, JobExecutionStore as _,
+  LeaseAccess, LeaseFence, LeaseWindow, ListAgents, ManagementMutation, MutationAuditContext, MutationDisposition,
+  ProjectStore as _, ReadJobEvents, ReassignAgentPool, RegisterAgent, RegistrationValidity, StoreError, StoreOperation,
   TriggerAcceptanceStore as _,
   testing::{
     ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
@@ -803,6 +803,19 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
   assert_eq!(restricted_agents.agents.len(), 1);
   assert_eq!(restricted_agents.agents[0].id, fixture.agent_id);
   assert_eq!(restricted_agents.next_cursor, None);
+  let pool_agents = management
+    .list_agents(ListAgents::new(None, 10, AgentListVisibility::all())?.for_pool(Some(fixture.allowed_pool)))
+    .await?;
+  assert_eq!(pool_agents.agents.len(), 1);
+  assert_eq!(pool_agents.agents[0].id, fixture.agent_id);
+  let other_pool_agents = management
+    .list_agents(ListAgents::new(None, 10, AgentListVisibility::all())?.for_pool(Some(id(999))))
+    .await?;
+  assert!(other_pool_agents.agents.is_empty());
+  assert_eq!(
+    management.current_agent_pool(fixture.allowed_pool).await?.id,
+    fixture.allowed_pool
+  );
   for visibility in [AgentListVisibility::restricted([id(999)])?, AgentListVisibility::none()] {
     let hidden = management.list_agents(ListAgents::new(None, 10, visibility)?).await?;
     assert!(hidden.agents.is_empty());
@@ -827,6 +840,16 @@ async fn verify_mutation_envelopes(pool: &PgPool) -> Result<(), Box<dyn std::err
     JobClaimOutcome::Claimed(grant) => *grant,
     JobClaimOutcome::Empty => return Err("seeded root Job was not claimable".into()),
   };
+  let detail = management.agent_detail(fixture.agent_id).await?;
+  let current_execution = detail.current_execution.expect("claimed Job is the current execution");
+  assert_eq!(current_execution.lease_id, grant.lease_id);
+  assert_eq!(current_execution.job_id, grant.job_id);
+  assert_eq!(current_execution.attempt_id, accepted.attempt_id);
+  assert_eq!(current_execution.build_id, accepted.build_id);
+  assert_eq!(
+    current_execution.lease_state,
+    octacity_server_store::AgentCurrentLeaseState::Active
+  );
   let access = LeaseAccess {
     lease_id: grant.lease_id,
     fence: grant.fence,

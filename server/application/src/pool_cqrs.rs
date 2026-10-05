@@ -60,13 +60,13 @@ pub struct DeleteAgentPoolCommand {
   pub deleted_at: Timestamp,
 }
 
-/// Reads one exact immutable Agent Pool version.
+/// Reads the current or one exact immutable Agent Pool version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GetAgentPoolQuery {
   /// Stable Pool identity.
   pub pool_id: PoolId,
-  /// Exact immutable version.
-  pub version: PoolVersion,
+  /// Exact immutable version, or `None` for the current version.
+  pub version: Option<PoolVersion>,
 }
 
 impl Query for GetAgentPoolQuery {
@@ -431,13 +431,11 @@ where
     _grant: &crate::ManagementAuthorizationGrant,
     query: GetAgentPoolQuery,
   ) -> Result<AgentPoolProjection, Self::Error> {
-    Ok(
-      self
-        .store
-        .agent_pool_version(query.pool_id, query.version)
-        .await?
-        .into(),
-    )
+    let pool = match query.version {
+      Some(version) => self.store.agent_pool_version(query.pool_id, version).await?,
+      None => self.store.current_agent_pool(query.pool_id).await?,
+    };
+    Ok(pool.into())
   }
 }
 

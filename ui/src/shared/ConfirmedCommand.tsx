@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { QueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 
 import { ManagementApiError } from '../api/client';
+import { auditRequestPath } from '../app/routes';
 import {
   createConfirmedMutationIntent,
   type ConfirmedMutationAttempt,
@@ -182,7 +184,12 @@ function CommandFailure({ error, retryable }: { error: unknown; retryable: boole
     <div className={styles.error} role="alert">
       <strong>{error.message}</strong>
       <span>Error code: {error.code}</span>
-      {error.requestId === null ? null : <span>Request ID: {error.requestId}</span>}
+      {error.requestId === null ? null : (
+        <>
+          <span>Request ID: {error.requestId}</span>
+          <Link to={auditRequestPath(error.requestId)}>View audit evidence</Link>
+        </>
+      )}
       <span>
         {retryable
           ? 'The same command can be retried safely.'

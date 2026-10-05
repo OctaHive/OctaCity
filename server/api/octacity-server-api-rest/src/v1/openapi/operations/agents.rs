@@ -36,6 +36,19 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   .with_parameters(ParameterProfile::AgentPoolList)
   .with_visibility::<ListAgentPoolsQuery>(),
   operation!(
+    GetAgentPoolQuery,
+    "GET",
+    "/api/v1/agent-pools/{pool_id}",
+    "getCurrentAgentPool",
+    "Agent Pools",
+    "Get the current Agent Pool version",
+    None,
+    "AgentPoolResource",
+    "200",
+    false,
+    false
+  ),
+  operation!(
     PublishAgentPoolVersionCommand,
     "POST",
     "/api/v1/agent-pools/{pool_id}/versions",

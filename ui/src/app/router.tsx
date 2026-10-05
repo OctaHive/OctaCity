@@ -1,32 +1,68 @@
-import { Navigate, createBrowserRouter, type RouteObject, useParams } from 'react-router-dom';
+import { lazy, Suspense, type ReactNode } from 'react';
+import { Navigate, createBrowserRouter, type RouteObject } from 'react-router-dom';
 
 import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
+import { auditApi, type AuditApi } from '../features/audit/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
-import { BuildExplorer, type BuildExplorerApi } from '../features/builds/BuildExplorer';
-import { BuildView } from '../features/builds/BuildView';
+import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
+import { capacityApi, type CapacityApi } from '../features/capacity/api';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
-import { ProjectExplorer } from '../features/projects/ProjectExplorer';
-import { ProjectsLandingView, ProjectView } from '../features/projects/ProjectViews';
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
 import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
 import styles from './shell/RouteView.module.css';
 
+const AuditView = lazy(async () => {
+  const module = await import('../features/audit/AuditView');
+  return { default: module.AuditView };
+});
+const BuildExplorer = lazy(async () => {
+  const module = await import('../features/builds/BuildExplorer');
+  return { default: module.BuildExplorer };
+});
+const BuildView = lazy(async () => {
+  const module = await import('../features/builds/BuildView');
+  return { default: module.BuildView };
+});
+const CapacityExplorer = lazy(async () => {
+  const module = await import('../features/capacity/CapacityExplorer');
+  return { default: module.CapacityExplorer };
+});
+const AgentPoolView = lazy(async () => {
+  const module = await import('../features/capacity/CapacityViews');
+  return { default: module.AgentPoolView };
+});
+const AgentView = lazy(async () => {
+  const module = await import('../features/capacity/CapacityViews');
+  return { default: module.AgentView };
+});
+const CapacityLandingView = lazy(async () => {
+  const module = await import('../features/capacity/CapacityViews');
+  return { default: module.CapacityLandingView };
+});
+const ProjectExplorer = lazy(async () => {
+  const module = await import('../features/projects/ProjectExplorer');
+  return { default: module.ProjectExplorer };
+});
+const ProjectsLandingView = lazy(async () => {
+  const module = await import('../features/projects/ProjectViews');
+  return { default: module.ProjectsLandingView };
+});
+const ProjectView = lazy(async () => {
+  const module = await import('../features/projects/ProjectViews');
+  return { default: module.ProjectView };
+});
+
 interface PlaceholderViewProps {
   description: string;
-  parameter?: 'projectId' | 'buildId' | 'agentId' | 'poolId';
   title: string;
 }
 
-function PlaceholderView({ description, parameter, title }: PlaceholderViewProps) {
-  const parameters = useParams();
-  const identity = parameter === undefined ? undefined : parameters[parameter];
-
+function PlaceholderView({ description, title }: PlaceholderViewProps) {
   return (
     <section className={styles.placeholder} aria-labelledby="page-title">
       <p className={styles.eyebrow}>Operator workspace</p>
       <h1 id="page-title">{title}</h1>
-      {identity === undefined ? null : <p className={styles.identity}>{identity}</p>}
       <p className={styles.placeholderDescription}>{description}</p>
     </section>
   );
@@ -37,6 +73,8 @@ export function createConsoleRoutes(
   readinessProbe: ReadinessProbe = fetchReadiness,
   projectApi: ProjectsApi = projectsApi,
   buildApi: BuildDiagnosticsApi = buildDiagnosticsApi,
+  agentCapacityApi: CapacityApi = capacityApi,
+  auditFactsApi: AuditApi = auditApi,
 ): RouteObject[] {
   const buildExplorerApi: BuildExplorerApi = {
     getBuild: buildApi.getBuild,
@@ -52,8 +90,9 @@ export function createConsoleRoutes(
       element: (
         <AppShell
           explorerContent={{
-            builds: <BuildExplorer api={buildExplorerApi} />,
-            projects: <ProjectExplorer api={projectApi} />,
+            builds: defer(<BuildExplorer api={buildExplorerApi} />),
+            agents: defer(<CapacityExplorer api={agentCapacityApi} />),
+            projects: defer(<ProjectExplorer api={projectApi} />),
           }}
           readinessProbe={readinessProbe}
         />
@@ -63,11 +102,11 @@ export function createConsoleRoutes(
         { index: true, element: <Navigate replace to={CONSOLE_PATHS.projects} /> },
         {
           path: childPath(CONSOLE_PATHS.projects),
-          element: <ProjectsLandingView />,
+          element: defer(<ProjectsLandingView />),
         },
         {
           path: childPath(CONSOLE_PATHS.project),
-          element: <ProjectView api={projectApi} />,
+          element: defer(<ProjectView api={projectApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.builds),
@@ -80,54 +119,27 @@ export function createConsoleRoutes(
         },
         {
           path: childPath(CONSOLE_PATHS.build),
-          element: <BuildView api={buildApi} />,
+          element: defer(<BuildView api={buildApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.agents),
-          element: (
-            <PlaceholderView
-              description="Inspect bounded Agent capacity and readiness."
-              title="Agents"
-            />
-          ),
+          element: defer(<CapacityLandingView />),
         },
         {
           path: childPath(CONSOLE_PATHS.agent),
-          element: (
-            <PlaceholderView
-              description="Inventory, assignment, drain, and current execution will appear here."
-              parameter="agentId"
-              title="Agent"
-            />
-          ),
+          element: defer(<AgentView api={agentCapacityApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.agentPools),
-          element: (
-            <PlaceholderView
-              description="Inspect versioned Agent Pool capacity and drain state."
-              title="Agent Pools"
-            />
-          ),
+          element: defer(<CapacityLandingView title="Agent Pools" />),
         },
         {
           path: childPath(CONSOLE_PATHS.agentPool),
-          element: (
-            <PlaceholderView
-              description="Pool definition, admitted inventory, and capacity will appear here."
-              parameter="poolId"
-              title="Agent Pool"
-            />
-          ),
+          element: defer(<AgentPoolView api={agentCapacityApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.audit),
-          element: (
-            <PlaceholderView
-              description="Search immutable audit evidence without treating it as authorization state."
-              title="Audit"
-            />
-          ),
+          element: defer(<AuditView api={auditFactsApi} />),
         },
         { path: '*', element: <NotFoundView /> },
       ],
@@ -141,4 +153,18 @@ export function createConsoleBrowserRouter() {
 
 function childPath(path: ConsolePath): string {
   return path.slice(1);
+}
+
+function defer(view: ReactNode): ReactNode {
+  return (
+    <Suspense
+      fallback={
+        <p className={styles.deferred} role="status">
+          Loading view…
+        </p>
+      }
+    >
+      {view}
+    </Suspense>
+  );
 }

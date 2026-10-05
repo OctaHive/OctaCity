@@ -147,8 +147,8 @@ mod test_support;
 pub mod testing;
 
 pub use agent_model::{
-  AgentDrainMode, AgentPage, AgentStatus, DrainAgent, DrainAgentOutcome, EnrolledAgent, ListAgents,
-  MAX_AGENT_PAGE_SIZE, ReassignAgentPool, ReassignAgentPoolOutcome,
+  AgentCurrentExecution, AgentCurrentLeaseState, AgentDetail, AgentDrainMode, AgentPage, AgentStatus, DrainAgent,
+  DrainAgentOutcome, EnrolledAgent, ListAgents, MAX_AGENT_PAGE_SIZE, ReassignAgentPool, ReassignAgentPoolOutcome,
 };
 pub use agent_port::AgentStore;
 pub use artifact_model::{

@@ -268,6 +268,18 @@ impl AgentPoolStore for InMemoryAgentPoolStore {
       })
   }
 
+  async fn current_agent_pool(&self, pool_id: PoolId) -> Result<PublishedAgentPool, StoreError> {
+    let state = self.lock()?;
+    let version = state.current.get(&pool_id).copied().ok_or(StoreError::NotFound {
+      entity: EntityKind::Pool,
+    })?;
+    state
+      .versions
+      .get(&(pool_id, version))
+      .cloned()
+      .ok_or(StoreError::Unavailable)
+  }
+
   async fn list_agent_pools(&self, request: ListAgentPools) -> Result<AgentPoolPage, StoreError> {
     if request.visibility().kind() == crate::ReadVisibilityKind::None {
       return Ok(AgentPoolPage {

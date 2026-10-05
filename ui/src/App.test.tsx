@@ -44,7 +44,7 @@ describe('App', () => {
 
     await screen.findByText('Server ready');
     expect(router.state.location.pathname).toBe(CONSOLE_PATHS.projects);
-    expect(screen.getByRole('heading', { level: 1, name: 'Projects' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Projects' })).toBeTruthy();
     expect(screen.getByRole('complementary', { name: 'Projects explorer' })).toBeTruthy();
     expect(screen.getByRole('link', { current: 'page', name: 'Projects' })).toBeTruthy();
     expect(screen.getByLabelText('Security notice')).toBeTruthy();
@@ -134,7 +134,7 @@ describe('App', () => {
     await user.keyboard('{Enter}');
 
     await waitFor(() => expect(router.state.location.pathname).toBe(CONSOLE_PATHS.builds));
-    expect(screen.getByRole('heading', { level: 1, name: 'Builds' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Builds' })).toBeTruthy();
     expect(screen.getByRole('complementary', { name: 'Builds explorer' })).toBeTruthy();
     expect(screen.getByRole('link', { current: 'page', name: 'Builds' })).toBeTruthy();
   });
@@ -161,6 +161,13 @@ describe('App', () => {
     await user.click(screen.getByRole('link', { name: 'Builds' }));
     await user.click(screen.getByRole('button', { name: 'Search Builds' }));
     expect(screen.getByText('Scope: Builds')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Search all resources' }));
+    expect(screen.getByText('Scope: All resources')).toBeTruthy();
+
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByRole('link', { name: 'Agents' }));
+    await user.click(await screen.findByRole('button', { name: 'Search Agents' }));
+    expect(screen.getByText('Scope: Agents and Agent Pools')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Search all resources' }));
     expect(screen.getByText('Scope: All resources')).toBeTruthy();
   });
@@ -190,7 +197,7 @@ describe('App', () => {
     stubMatchMedia(true);
     renderConsole(CONSOLE_PATHS.audit);
 
-    expect(screen.getByRole('heading', { level: 1, name: 'Audit' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Audit' })).toBeTruthy();
     expect(screen.queryByRole('dialog', { name: 'Audit explorer' })).toBeNull();
     const open = screen.getByRole('button', { name: 'Open Audit explorer' });
 

@@ -1,7 +1,12 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  agent: (agentId: string) => ['agents', agentId] as const,
+  agentPool: (poolId: string) => ['agent-pools', poolId] as const,
+  agentPoolAgents: (poolId: string) => ['agent-pools', poolId, 'agents'] as const,
+  agentPools: ['agent-pools'] as const,
   audit: ['audit'] as const,
+  auditFacts: (filters: object) => ['audit', 'facts', filters] as const,
   attempt: (attemptId: string) => ['attempts', attemptId] as const,
   buildArtifacts: (buildId: string) => ['builds', buildId, 'artifacts'] as const,
   buildCacheSessions: (buildId: string) => ['builds', buildId, 'cache-sessions'] as const,

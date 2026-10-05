@@ -16,20 +16,20 @@ use octacity_server_api_rest::{
   v1::{ErrorCode, MANAGEMENT_OPERATIONS, management_authorization_operations, openapi_document},
 };
 use octacity_server_application::{
-  AcceptManualTriggerCommand, ApplicationError, AttemptState, AuditActorKind, AuditActorProjection,
-  AuditFactPageProjection, AuditFactProjection, AuditOutcome, AuthorizeArtifactDownloadQuery,
-  BuildConfigurationPageProjection, BuildConfigurationSummaryProjection, BuildLogSearchCursorProjection,
-  BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection, BuildLogSearchPageProjection,
-  BuildLogStream, BuildPageCursor, BuildPageProjection, BuildState, BuildSummaryProjection, CancelBuildCommand,
-  Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand, CreateInternalTriggerCommand,
-  CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand, CreateRepositoryCommand,
-  CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand,
-  DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery,
-  GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery, GetBuildResultRetentionQuery,
-  GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery, GetManualTriggerDefinitionQuery,
-  GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery, GetScheduleQuery,
-  IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery,
-  ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListOperatorAttentionQuery,
+  AcceptManualTriggerCommand, AgentPageProjection, AgentPoolProjection, AgentProjection, ApplicationError,
+  AttemptState, AuditActorKind, AuditActorProjection, AuditFactPageProjection, AuditFactProjection, AuditOutcome,
+  AuthorizeArtifactDownloadQuery, BuildConfigurationPageProjection, BuildConfigurationSummaryProjection,
+  BuildLogSearchCursorProjection, BuildLogSearchError, BuildLogSearchFreshnessProjection, BuildLogSearchHitProjection,
+  BuildLogSearchPageProjection, BuildLogStream, BuildPageCursor, BuildPageProjection, BuildState,
+  BuildSummaryProjection, CancelBuildCommand, Command, CreateAgentPoolCommand, CreateBuildConfigurationCommand,
+  CreateInternalTriggerCommand, CreateManagedWebhookCommand, CreatePipelineCommand, CreateProjectCommand,
+  CreateRepositoryCommand, CreateScheduleCommand, CreateTriggerDefinitionCommand, CreateUnmanagedWebhookCommand,
+  DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand, DrainAgentCommand,
+  GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery, GetBuildQuery,
+  GetBuildResultRetentionQuery, GetCacheSessionQuery, GetInternalTriggerQuery, GetJobQuery,
+  GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
+  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery,
+  ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListInternalTriggersQuery, ListOperatorAttentionQuery,
   ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
   ListProjectTriggerDefinitionsQuery, ListProjectsQuery, LogSearchError, ManagementAction,
   ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
@@ -48,6 +48,8 @@ use octacity_server_application::{
 };
 use tower::ServiceExt as _;
 
+#[path = "v1_handlers/agent_capacity.rs"]
+mod agent_capacity;
 #[path = "v1_handlers/audit.rs"]
 mod audit;
 #[path = "v1_handlers/build_discovery.rs"]
@@ -96,6 +98,9 @@ struct RecordingApplication {
   build_list_queries: Mutex<Vec<ListProjectBuildsQuery>>,
   resource_search_queries: Mutex<Vec<SearchResourcesQuery>>,
   operator_attention_queries: Mutex<Vec<ListOperatorAttentionQuery>>,
+  agent_queries: Mutex<Vec<GetAgentQuery>>,
+  agent_list_queries: Mutex<Vec<ListAgentsQuery>>,
+  agent_pool_queries: Mutex<Vec<GetAgentPoolQuery>>,
   build_summary_states: Option<(BuildState, AttemptState)>,
   successful_workflow: bool,
   capability_unavailable_for_managed: bool,
@@ -110,6 +115,9 @@ impl RecordingApplication {
       build_list_queries: Mutex::default(),
       resource_search_queries: Mutex::default(),
       operator_attention_queries: Mutex::default(),
+      agent_queries: Mutex::default(),
+      agent_list_queries: Mutex::default(),
+      agent_pool_queries: Mutex::default(),
       build_summary_states: Some((BuildState::Succeeded, AttemptState::Succeeded)),
       successful_workflow: true,
       capability_unavailable_for_managed: false,
@@ -237,10 +245,7 @@ unavailable_query!(ReadJobEventsQuery, "read_job_events");
 unavailable_command!(CreateAgentPoolCommand, "create_agent_pool");
 unavailable_command!(PublishAgentPoolVersionCommand, "publish_agent_pool");
 unavailable_command!(DeleteAgentPoolCommand, "delete_agent_pool");
-unavailable_query!(GetAgentPoolQuery, "get_agent_pool");
 unavailable_query!(ListAgentPoolsQuery, "list_agent_pools");
-unavailable_query!(GetAgentQuery, "get_agent");
-unavailable_query!(ListAgentsQuery, "list_agents");
 unavailable_command!(ReassignAgentPoolCommand, "reassign_agent_pool");
 unavailable_command!(DrainAgentCommand, "drain_agent");
 unavailable_command!(IssueAgentEnrollmentCommand, "issue_agent_enrollment");
@@ -257,6 +262,131 @@ unavailable_query!(ListBuildCacheSessionsQuery, "list_build_cache_sessions");
 unavailable_query!(GetBuildResultRetentionQuery, "get_build_result_retention");
 unavailable_command!(PlaceBuildResultHoldCommand, "place_build_result_hold");
 unavailable_command!(ReleaseBuildResultHoldCommand, "release_build_result_hold");
+
+#[async_trait]
+impl ManagementQueryUseCase<GetAgentQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: GetAgentQuery,
+  ) -> Result<AgentProjection, Self::Error> {
+    self.record("get_agent");
+    self.agent_queries.lock().unwrap().push(query);
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(agent_projection(query.agent_id))
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListAgentsQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: ListAgentsQuery,
+  ) -> Result<AgentPageProjection, Self::Error> {
+    self.record("list_agents");
+    self.agent_list_queries.lock().unwrap().push(query);
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(AgentPageProjection {
+      agents: vec![agent_projection(
+        query
+          .after
+          .unwrap_or_else(|| "77777777-7777-4777-8777-777777777777".parse().unwrap()),
+      )],
+      next_cursor: None,
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<GetAgentPoolQuery> for RecordingApplication {
+  type Error = ApplicationError;
+
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: GetAgentPoolQuery,
+  ) -> Result<AgentPoolProjection, Self::Error> {
+    self.record("get_agent_pool");
+    self.agent_pool_queries.lock().unwrap().push(query);
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(
+      serde_json::from_value(serde_json::json!({
+        "id": query.pool_id,
+        "name": "linux-native",
+      "version": query.version.map_or(2, |version| version.get()),
+        "enabled": true,
+        "drain_state": "accepting",
+        "admission_policy": {"mode": "any"},
+        "concurrency_limit": 2,
+        "fairness_policy": "priority_fifo",
+        "static_capacity_limit": 4,
+        "published_at": 1_700_000_000_000_i64
+      }))
+      .expect("static Agent Pool projection must be valid"),
+    )
+  }
+}
+
+fn agent_projection(agent_id: impl serde::Serialize) -> AgentProjection {
+  serde_json::from_value(serde_json::json!({
+    "id": agent_id,
+    "name": "linux-builder-1",
+    "version": 3,
+    "pool_id": "66666666-6666-4666-8666-666666666666",
+    "pool_version": 2,
+    "inventory": {
+      "agent_version": "0.1.0",
+      "coordinator_protocols": [1],
+      "labels": {"region": "local"},
+      "host_platform": {"os": "linux", "architecture": "amd64"},
+      "runtimes": [],
+      "octa": {
+        "version": "0.1.0",
+        "runner_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "build_commit": null,
+        "runner_protocols": [1],
+        "event_schemas": [1],
+        "plugin_protocols": [1],
+        "octafile_versions": [1],
+        "features": [],
+        "plugins": []
+      },
+      "source_plugins": [],
+      "cache": null
+    },
+    "capacity": {
+      "logical_cpu_count": 8,
+      "total_memory_bytes": 17179869184_u64,
+      "work_disk_total_bytes": 107374182400_u64,
+      "state_disk_total_bytes": 53687091200_u64,
+      "virtualization_available": true
+    },
+    "status": "online",
+    "last_seen_at": 1_789_750_800_000_i64,
+    "current_execution": {
+      "lease_id": "88888888-8888-4888-8888-888888888888",
+      "build_id": "99999999-9999-4999-8999-999999999999",
+      "attempt_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "job_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "lease_state": "active"
+    }
+  }))
+  .expect("static Agent projection must be valid")
+}
 
 #[async_trait]
 impl ManagementQueryUseCase<GetManualTriggerDefinitionQuery> for RecordingApplication {
@@ -1104,6 +1234,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
       agent_pool_publish_body(),
     ),
     empty_request("GET", &format!("/api/v1/agent-pools/{pool_id}/versions/1"), None),
+    empty_request("GET", &format!("/api/v1/agent-pools/{pool_id}"), None),
     empty_request("GET", "/api/v1/agent-pools?limit=10", None),
     empty_request(
       "DELETE",
@@ -1209,6 +1340,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "issue_agent_enrollment",
       "create_agent_pool",
       "publish_agent_pool",
+      "get_agent_pool",
       "get_agent_pool",
       "list_agent_pools",
       "delete_agent_pool",

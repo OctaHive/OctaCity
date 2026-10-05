@@ -24,6 +24,16 @@ export function buildPath(buildId: string): string {
   return `/builds/${encodeURIComponent(buildId)}`;
 }
 
+/** Returns the stable deep link for one Agent identity. */
+export function agentPath(agentId: string): string {
+  return `/agents/${encodeURIComponent(agentId)}`;
+}
+
+/** Returns the stable deep link for one Agent Pool identity. */
+export function agentPoolPath(poolId: string): string {
+  return `/agent-pools/${encodeURIComponent(poolId)}`;
+}
+
 /** Returns the stable deep link for one Project identity. */
 export function projectPath(projectId: string): string {
   return `/projects/${encodeURIComponent(projectId)}`;

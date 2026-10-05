@@ -22,6 +22,21 @@ export interface ConfirmedMutationAttempt<Request> {
   readonly request: Immutable<Request>;
 }
 
+export type VersionedMutationHeaders = Readonly<{
+  'Idempotency-Key': string;
+  'If-Match': string;
+}>;
+
+/** Narrows headers created for a confirmed command that carries a resource version. */
+export function requireVersionedMutationHeaders(
+  headers: ConfirmedMutationAttempt<unknown>['headers'],
+): VersionedMutationHeaders {
+  if (headers['If-Match'] === undefined) {
+    throw new TypeError('Versioned mutation headers are required');
+  }
+  return headers as VersionedMutationHeaders;
+}
+
 export interface QueryInvalidation {
   readonly exact?: boolean;
   readonly queryKey: QueryKey;

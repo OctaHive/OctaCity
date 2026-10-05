@@ -104,9 +104,11 @@ pub(crate) async fn drain(
   .fetch_one(&mut *transaction)
   .await
   .map_err(unavailable)?;
+  let current_execution = crate::agent_query::read_current_execution(&mut transaction, request.agent_id).await?;
   let outcome = DrainAgentOutcome {
     disposition: MutationDisposition::Applied,
     agent: row.try_into()?,
+    current_execution,
   };
   crate::mutation::commit(
     transaction,

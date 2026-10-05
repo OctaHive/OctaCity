@@ -6,8 +6,8 @@ import {
 } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 
-import { ManagementApiError } from '../../api/client';
-import styles from './BuildExplorer.module.css';
+import { ManagementApiError } from '../api/client';
+import styles from './PagedExplorerBranch.module.css';
 
 export interface CursorPage<T> {
   items: T[];
@@ -31,8 +31,8 @@ interface PagedBranchProps<T extends { id: string }> {
   revealed?: T | null | undefined;
 }
 
-/** Owns the repeated loading, stale, empty, and continuation behavior of one explorer branch. */
-export function PagedBranch<T extends { id: string }>({
+/** Owns loading, stale, empty, reveal, and continuation behavior for an explorer branch. */
+export function PagedExplorerBranch<T extends { id: string }>({
   children,
   className,
   empty,
@@ -40,9 +40,11 @@ export function PagedBranch<T extends { id: string }>({
   query,
   revealed = null,
 }: PagedBranchProps<T>) {
-  if (query.isPending) return <BranchLoading label={labels.loading} />;
+  if (query.isPending) return <ExplorerBranchLoading label={labels.loading} />;
   if (query.data === undefined) {
-    return <BranchFailure error={query.error} label={labels.failure} onRetry={query.refetch} />;
+    return (
+      <ExplorerBranchFailure error={query.error} label={labels.failure} onRetry={query.refetch} />
+    );
   }
 
   const loaded = query.data.pages.flatMap((page) => page.items);
@@ -54,18 +56,25 @@ export function PagedBranch<T extends { id: string }>({
   return (
     <div className={className}>
       {query.error === null ? null : (
-        <BranchStale
+        <ExplorerBranchStale
           label={labels.stale}
           onRetry={query.isFetchNextPageError ? query.fetchNextPage : query.refetch}
         />
       )}
-      {items.length === 0 ? <BranchEmpty>{empty}</BranchEmpty> : children(items)}
+      {items.length === 0 ? (
+        <p className={`${styles.state} ${styles.empty}`}>{empty}</p>
+      ) : (
+        children(items)
+      )}
       {query.hasNextPage ? (
-        <LoadMore
-          label={query.isFetchingNextPage ? labels.loadingMore : labels.loadMore}
-          loading={query.isFetchingNextPage}
-          onLoad={query.fetchNextPage}
-        />
+        <button
+          className={styles.loadMore}
+          disabled={query.isFetchingNextPage}
+          onClick={() => void query.fetchNextPage()}
+          type="button"
+        >
+          {query.isFetchingNextPage ? labels.loadingMore : labels.loadMore}
+        </button>
       ) : null}
     </div>
   );
@@ -89,15 +98,15 @@ export function useCursorPage<T, TQueryKey extends QueryKey>(
   });
 }
 
-export function BranchLoading({ label }: { label: string }) {
+export function ExplorerBranchLoading({ label }: { label: string }) {
   return (
-    <p className={styles.branchState} role="status">
+    <p className={styles.state} role="status">
       Loading {label}…
     </p>
   );
 }
 
-export function BranchFailure({
+export function ExplorerBranchFailure({
   error,
   label,
   onRetry,
@@ -108,7 +117,7 @@ export function BranchFailure({
 }) {
   const requestId = error instanceof ManagementApiError ? error.requestId : null;
   return (
-    <div className={styles.branchFailure} role="alert">
+    <div className={styles.failure} role="alert">
       <span>
         {label} could not be loaded.
         {requestId === null ? null : ` Request ID: ${requestId}`}
@@ -120,38 +129,13 @@ export function BranchFailure({
   );
 }
 
-function BranchEmpty({ children }: { children: ReactNode }) {
-  return <p className={`${styles.branchState} ${styles.emptyBranch}`}>{children}</p>;
-}
-
-export function BranchStale({ label, onRetry }: { label: string; onRetry: () => unknown }) {
+export function ExplorerBranchStale({ label, onRetry }: { label: string; onRetry: () => unknown }) {
   return (
-    <div className={styles.branchStale}>
+    <div className={styles.stale}>
       <span role="status">Refresh failed. Showing loaded {label}.</span>
       <button onClick={() => void onRetry()} type="button">
         Retry
       </button>
     </div>
-  );
-}
-
-function LoadMore({
-  label,
-  loading,
-  onLoad,
-}: {
-  label: string;
-  loading: boolean;
-  onLoad: () => unknown;
-}) {
-  return (
-    <button
-      className={styles.loadMore}
-      disabled={loading}
-      onClick={() => void onLoad()}
-      type="button"
-    >
-      {label}
-    </button>
   );
 }

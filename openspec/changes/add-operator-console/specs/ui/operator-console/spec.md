@@ -51,7 +51,7 @@ The console SHALL use one compact utility header, one primary section rail with 
 
 #### Scenario: Operator explores Agents
 - **WHEN** the operator expands the Agent explorer
-- **THEN** it lazily presents visible Agent Pools and their assigned Agents as a bounded `Agent Pool -> Agent` hierarchy, presents unassigned Agents separately, and distinguishes readiness and drain state without client-side scheduling inference
+- **THEN** it lazily presents visible Agent Pools and their assigned Agents as a bounded `Agent Pool -> Agent` hierarchy, places every enrolled Agent under its authoritative current Pool without a synthetic unassigned section, and distinguishes readiness and drain state without client-side scheduling inference
 
 #### Scenario: Operator opens the command center
 - **WHEN** the operator focuses global search or presses `Command/Ctrl+K`
@@ -165,11 +165,15 @@ The console SHALL support manual Build triggering, Build cancellation and retry,
 - **THEN** the console preserves the operator's context, explains the conflict, and offers a refresh instead of silently resubmitting against a newer version
 
 ### Requirement: Capacity and audit visibility
-The console SHALL expose bounded Agent and Agent Pool collections, their contextual `Agent Pool -> Agent` explorer hierarchy, Agent inventory and state, pool assignment and version, drain state, and searchable audit facts using only the published management representations. Audit filtering SHALL support the server's actor, operation, target, request identity, and time-range filters without reconstructing authority from UI state.
+The console SHALL expose bounded Agent and Agent Pool collections, their contextual `Agent Pool -> Agent` explorer hierarchy, Agent inventory and state, pool assignment and version, drain state, optional current execution, and searchable audit facts using only the published management representations. Every enrolled Agent SHALL appear under its authoritative current Pool; the console SHALL NOT synthesize an unassigned state or derive workload scheduling compatibility from capacity facts. Audit filtering SHALL support the server's actor, operation, target, request identity, and time-range filters without reconstructing authority from UI state.
 
 #### Scenario: Operator diagnoses unavailable capacity
 - **WHEN** an operator opens an Agent or Agent Pool associated with unavailable capacity
 - **THEN** the console shows the published inventory, readiness, assignment, drain, and current execution information needed to distinguish capacity from scheduling policy
+
+#### Scenario: Operator opens an idle Agent
+- **WHEN** the selected Agent has no published current execution
+- **THEN** the console identifies the Agent as idle without treating it as unassigned or claiming that it can satisfy a particular workload
 
 #### Scenario: Operator follows a failed mutation to audit evidence
 - **WHEN** a management response includes a safe request identity

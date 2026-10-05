@@ -80,8 +80,9 @@ pub use octacity_server_store::{
 };
 
 pub use agent_cqrs::{
-  AgentCapacityProjection, AgentCommandOutcome, AgentHandlers, AgentInventoryProjection, AgentPageProjection,
-  AgentProjection, AgentStatusProjection, DrainAgentCommand, GetAgentQuery, ListAgentsQuery, ReassignAgentPoolCommand,
+  AgentCapacityProjection, AgentCommandOutcome, AgentCurrentExecutionProjection, AgentCurrentLeaseStateProjection,
+  AgentHandlers, AgentInventoryProjection, AgentPageProjection, AgentProjection, AgentStatusProjection,
+  DrainAgentCommand, GetAgentQuery, ListAgentsQuery, ReassignAgentPoolCommand,
 };
 pub use agent_enrollment::{AgentEnrollmentHandler, IssueAgentEnrollmentCommand, IssueAgentEnrollmentCommandOutcome};
 pub use agent_execution::{

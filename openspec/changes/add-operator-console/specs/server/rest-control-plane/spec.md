@@ -45,6 +45,29 @@ The management REST API SHALL expose an authorization-safe, project-scoped, curs
 - **WHEN** a client continues to use the existing Build detail endpoint
 - **THEN** its request and representation remain compatible and do not require use of the discovery collection
 
+### Requirement: Agent capacity discovery
+The management REST API SHALL expose authorization-safe, cursor-paginated Agent and Agent Pool collections for the capacity explorer. The Agent collection SHALL accept an optional exact Agent Pool identity and SHALL apply that filter before ordering, pagination, and cursor production. Because every enrolled Agent belongs to exactly one current Agent Pool, the API SHALL NOT invent an unassigned-Agent state. The API SHALL expose the current Agent Pool representation by stable Pool identity in addition to the existing immutable version-addressed read. An Agent detail representation SHALL include an optional bounded, non-secret projection of its current execution sufficient to identify the active Build, Attempt, Job, and lease state without exposing fencing material or requiring the console to reconstruct coordinator state. These reads SHALL publish capacity and execution facts, not a client-facing scheduling-compatibility decision.
+
+#### Scenario: Client expands one Agent Pool
+- **WHEN** a client lists Agents with a visible Agent Pool identity
+- **THEN** the server returns only visible Agents currently assigned to that Pool in deterministic cursor order
+
+#### Scenario: Client opens the current Agent Pool
+- **WHEN** a client requests a visible Agent Pool by stable identity without a version
+- **THEN** the server returns its current immutable version while the existing version-addressed endpoint remains available for exact historical reads
+
+#### Scenario: Agent has a current execution
+- **WHEN** a visible Agent owns a current non-terminal lease
+- **THEN** its detail representation contains the safe Build, Attempt, Job, and lease-state projection and no credential, bearer, or fencing token
+
+#### Scenario: Agent is idle
+- **WHEN** a visible Agent has no current non-terminal lease
+- **THEN** its detail representation reports no current execution rather than fabricating an unassigned or compatible-capacity state
+
+#### Scenario: Capacity cannot satisfy a workload
+- **WHEN** published Agent or Pool capacity facts differ from a workload's requirements
+- **THEN** the API returns the authoritative facts without publishing a derived scheduling decision for the console to reproduce
+
 ### Requirement: Bounded operator resource search
 The management REST API SHALL expose an authorization-safe, cursor-paginated resource search for Projects, Builds, Agents, and Agent Pools. Search SHALL accept a bounded normalized query, an optional bounded set of resource kinds, a bounded page size, and an exclusive cursor bound to the normalized query and kinds. Results SHALL be typed and SHALL contain only the stable identity, safe operator-facing label, resource kind, and bounded non-secret context needed to distinguish and open the corresponding existing detail resource. Matching SHALL cover stable identifiers and the operator-facing Project, Build Configuration, Agent, and Agent Pool names available to the search projection. Exact identifier matches SHALL rank before normalized name-prefix matches and other normalized name matches, with resource kind, normalized label, and stable identity providing deterministic tie ordering. Authorization visibility SHALL be applied before ranking, pagination, and cursor production.
 

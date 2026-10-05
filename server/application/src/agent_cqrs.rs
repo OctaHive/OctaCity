@@ -4,9 +4,12 @@ use async_trait::async_trait;
 use octacity_protocol::{
   CacheCapability, HostCapacity, OctaInventory, PlatformSpec, RuntimeCapability, SourcePluginInventory,
 };
-use octacity_server_domain::{AgentId, AgentVersion, PoolId, PoolVersion, Timestamp};
+use octacity_server_domain::{
+  AgentId, AgentVersion, AttemptId, BuildId, JobId, LeaseId, PoolId, PoolVersion, Timestamp,
+};
 use octacity_server_store::{
-  AgentDrainMode, AgentStatus, AgentStore, DrainAgent, IdempotencyKey, ListAgents, ReassignAgentPool,
+  AgentCurrentLeaseState, AgentDrainMode, AgentStatus, AgentStore, DrainAgent, IdempotencyKey, ListAgents,
+  ReassignAgentPool,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +43,8 @@ impl ManagementAuthorizationTarget for GetAgentQuery {
 /// Lists enrolled Agents using deterministic pagination.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ListAgentsQuery {
+  /// Optional exact current Pool filter.
+  pub pool_id: Option<PoolId>,
   /// Exclusive stable-identity cursor.
   pub after: Option<AgentId>,
   /// Positive bounded page size.
@@ -136,6 +141,35 @@ pub struct AgentProjection {
   pub status: AgentStatusProjection,
   /// Last authoritative Agent contact time.
   pub last_seen_at: Timestamp,
+  /// Current non-terminal execution, or `None` when the Agent is idle.
+  pub current_execution: Option<AgentCurrentExecutionProjection>,
+}
+
+/// Safe management projection of the execution currently owned by an Agent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AgentCurrentExecutionProjection {
+  /// Active lease identity without fencing material.
+  pub lease_id: LeaseId,
+  /// Build containing the current Job.
+  pub build_id: BuildId,
+  /// Attempt containing the current Job.
+  pub attempt_id: AttemptId,
+  /// Current Job identity.
+  pub job_id: JobId,
+  /// Authoritative non-terminal lease state.
+  pub lease_state: AgentCurrentLeaseStateProjection,
+}
+
+/// Stable non-terminal current-lease states exposed to management clients.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCurrentLeaseStateProjection {
+  /// The Agent may continue executing and renewing the lease.
+  Active,
+  /// The coordinator has requested cancellation.
+  CancellationRequested,
+  /// The coordinator has requested draining after execution stops.
+  DrainRequested,
 }
 
 /// Scheduler-visible inventory that does not duplicate Agent identity or capacity.
@@ -287,7 +321,11 @@ where
       .await?;
     Ok(AgentCommandOutcome {
       disposition: outcome.disposition.into(),
-      agent: outcome.agent.into(),
+      agent: octacity_server_store::AgentDetail {
+        agent: outcome.agent,
+        current_execution: outcome.current_execution,
+      }
+      .into(),
     })
   }
 }
@@ -316,7 +354,7 @@ impl<S: AgentStore + 'static> crate::ManagementQueryUseCase<GetAgentQuery> for A
     _grant: &crate::ManagementAuthorizationGrant,
     query: GetAgentQuery,
   ) -> Result<AgentProjection, Self::Error> {
-    Ok(self.store.agent(query.agent_id).await?.into())
+    Ok(self.store.agent_detail(query.agent_id).await?.into())
   }
 }
 
@@ -332,13 +370,16 @@ impl<S: AgentStore + 'static> crate::ManagementQueryUseCase<ListAgentsQuery> for
   ) -> Result<AgentPageProjection, Self::Error> {
     let page = self
       .store
-      .list_agents(ListAgents::new(
-        query.after,
-        query.limit,
-        grant
-          .visibility_for::<ListAgentsQuery>()
-          .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
-      )?)
+      .list_agents(
+        ListAgents::new(
+          query.after,
+          query.limit,
+          grant
+            .visibility_for::<ListAgentsQuery>()
+            .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?,
+        )?
+        .for_pool(query.pool_id),
+      )
       .await?;
     Ok(AgentPageProjection {
       agents: page.agents.into_iter().map(Into::into).collect(),
@@ -374,7 +415,28 @@ impl From<octacity_server_store::EnrolledAgent> for AgentProjection {
         AgentStatus::Draining => AgentStatusProjection::Draining,
       },
       last_seen_at: agent.last_seen_at,
+      current_execution: None,
     }
+  }
+}
+
+impl From<octacity_server_store::AgentDetail> for AgentProjection {
+  fn from(detail: octacity_server_store::AgentDetail) -> Self {
+    let mut projection = Self::from(detail.agent);
+    projection.current_execution = detail
+      .current_execution
+      .map(|execution| AgentCurrentExecutionProjection {
+        lease_id: execution.lease_id,
+        build_id: execution.build_id,
+        attempt_id: execution.attempt_id,
+        job_id: execution.job_id,
+        lease_state: match execution.lease_state {
+          AgentCurrentLeaseState::Active => AgentCurrentLeaseStateProjection::Active,
+          AgentCurrentLeaseState::CancellationRequested => AgentCurrentLeaseStateProjection::CancellationRequested,
+          AgentCurrentLeaseState::DrainRequested => AgentCurrentLeaseStateProjection::DrainRequested,
+        },
+      });
+    projection
   }
 }
 

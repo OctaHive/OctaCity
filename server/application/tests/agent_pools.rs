@@ -64,12 +64,16 @@ fn typed_agent_pool_handlers_preserve_versions_and_guard_references() {
       &handlers,
       GetAgentPoolQuery {
         pool_id,
-        version: PoolVersion::INITIAL,
+        version: Some(PoolVersion::INITIAL),
       },
     )
     .await
     .unwrap();
     assert_eq!(original.drain_state, AgentPoolDrainStateProjection::Accepting);
+    let current_by_identity = management_query(&handlers, GetAgentPoolQuery { pool_id, version: None })
+      .await
+      .unwrap();
+    assert_eq!(current_by_identity, published.pool);
     let current = management_query(&handlers, ListAgentPoolsQuery { after: None, limit: 10 })
       .await
       .unwrap();

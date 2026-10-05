@@ -44,9 +44,9 @@
 
 ## 6. Capacity and Audit Workflows
 
-- [ ] 6.1 Implement paged Agent and Agent Pool reads, the contextual bounded `Agent Pool -> Agent` explorer with Favorites first, a separate unassigned section, and a header search button that opens the shared command center pre-scoped to Agents and Agent Pools, plus deep-linked detail views with inventory, readiness, assignment, drain, version, and current execution information; verify independent lazy pagination, scoped-search clearing, selection reveal, empty, unavailable, stale, and incompatible-capacity fixtures are distinguishable without client-side scheduling inference.
-- [ ] 6.2 Add confirmed Agent drain and idle-Agent pool reassignment through the shared mutation helper; verify active/ineligible conflicts, strong preconditions, duplicate prevention, targeted Agent/Pool invalidation, and audit correlation.
-- [ ] 6.3 Implement the audit view with URL-backed actor, operation, target, request-identity, and time filters plus cursor pagination; verify request-identity handoff from an error/action, bounded filter encoding, empty pages, and absence of authority decisions derived from audit data.
+- [x] 6.1 Add Pool-filtered Agent pagination, a current Agent Pool read, and a safe current-execution projection to the management REST API; implement the contextual bounded `Agent Pool -> Agent` explorer with Favorites first, every enrolled Agent under its authoritative Pool, and a header search button that opens the shared command center pre-scoped to Agents and Agent Pools, plus deep-linked detail views with inventory, readiness, assignment, drain, version, and current execution information; verify independent lazy pagination, scoped-search clearing, selection reveal, empty, unavailable, stale, idle, and incompatible-capacity fixtures are distinguishable without client-side scheduling inference.
+- [x] 6.2 Add confirmed Agent drain and idle-Agent pool reassignment through the shared mutation helper; verify active/ineligible conflicts, strong preconditions, duplicate prevention, targeted Agent/Pool invalidation, and audit correlation.
+- [x] 6.3 Implement the audit view with URL-backed actor, operation, target, request-identity, and time filters plus cursor pagination; verify request-identity handoff from an error/action, bounded filter encoding, empty pages, and absence of authority decisions derived from audit data.
 
 ## 7. UX, Accessibility, and Security Hardening
 

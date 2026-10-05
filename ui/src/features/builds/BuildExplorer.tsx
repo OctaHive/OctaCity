@@ -6,16 +6,16 @@ import type { components } from '../../../.generated/api/schema';
 import { queryKeys } from '../../app/query';
 import { buildPath, CONSOLE_PATHS } from '../../app/routes';
 import { formatEnumLabel } from '../../shared/display';
-import { useExpansionOverrides } from '../../shared/useExpansionOverrides';
-import styles from './BuildExplorer.module.css';
 import {
-  BranchFailure,
-  BranchLoading,
-  BranchStale,
-  PagedBranch,
+  ExplorerBranchFailure as BranchFailure,
+  ExplorerBranchLoading as BranchLoading,
+  ExplorerBranchStale as BranchStale,
+  PagedExplorerBranch as PagedBranch,
   useCursorPage,
   type CursorPage,
-} from './BuildExplorerBranch';
+} from '../../shared/PagedExplorerBranch';
+import { useExpansionOverrides } from '../../shared/useExpansionOverrides';
+import styles from './BuildExplorer.module.css';
 
 type BuildState = components['schemas']['BuildState'];
 type ProjectResource = components['schemas']['ProjectResource'];

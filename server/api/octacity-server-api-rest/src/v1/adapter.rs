@@ -37,31 +37,32 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
-  AcceptManualTriggerRequest, AgentCapacity, AgentDrainMode, AgentPlatform, AgentPoolAdmissionPolicy,
-  AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy, AgentPoolResource, AgentRequirements,
-  AgentResource, AgentStatus, ArtifactPolicy, AttemptResource, AttemptStateResource, AttemptSummaryResource,
-  BuildConfigurationDefinition, BuildConfigurationResource, BuildConfigurationSummaryPage,
-  BuildConfigurationSummaryResource, BuildResource, BuildStateResource, BuildSummaryPage, BuildSummaryResource,
-  CachePolicy, CancelBuildResponse, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
-  CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest, CreateRepositoryRequest,
-  CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource, DeleteAgentPoolResponse,
-  DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode, ExecutionGuarantee, IDEMPOTENCY_KEY_HEADER,
-  IdempotencyKey, InternalTriggerDefinitionRequest, InternalTriggerOutcome, InternalTriggerResource,
-  InternalTriggerSource, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, JobAssignmentResource,
-  JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource, JobTerminalResource, ManualSource,
-  ManualTriggerDefinitionResource, MoveProjectRequest, MutationDisposition, MutationResponse, NetworkPolicy,
-  OPTIMISTIC_PRECONDITION_HEADER, OperatorAttentionCategory, OperatorAttentionCursor, OperatorAttentionItemResource,
-  OperatorAttentionPage, OperatorAttentionSeverity, OperatorAttentionTargetKind, OperatorAttentionTargetResource,
-  ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge, PipelineNode, PipelineResource,
-  PipelineSummaryPage, PipelineSummaryResource, Platform, PlatformArchitecture, PlatformOs, PoolExecutionMode,
-  PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource, ProjectSummaryResource,
-  PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest, PublishPipelineVersionRequest,
-  PublishProjectPolicyRequest, PublishRepositoryVersionRequest, ReassignAgentPoolRequest, RenameProjectRequest,
-  RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy, RepositorySummaryPage,
-  RepositorySummaryResource, ResourceSearchCursor as RestResourceSearchCursor, ResourceSearchKind, ResourceSearchPage,
-  ResourceSearchResult, RetryBuildResponse, RetryClass, RetryPolicy, RuntimeClass, RuntimePolicy, ScheduleResource,
-  TriggerCauseResource, TriggerDefinitionKind, TriggerDefinitionResource, TriggerDefinitionSummaryPage,
-  TriggerDefinitionSummaryResource, TriggerEvaluationResponse, TriggerKind, VersionPrecondition,
+  AcceptManualTriggerRequest, AgentCapacity, AgentCurrentExecution, AgentCurrentLeaseState, AgentDrainMode,
+  AgentPlatform, AgentPoolAdmissionPolicy, AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy,
+  AgentPoolResource, AgentRequirements, AgentResource, AgentStatus, ArtifactPolicy, AttemptResource,
+  AttemptStateResource, AttemptSummaryResource, BuildConfigurationDefinition, BuildConfigurationResource,
+  BuildConfigurationSummaryPage, BuildConfigurationSummaryResource, BuildResource, BuildStateResource,
+  BuildSummaryPage, BuildSummaryResource, CachePolicy, CancelBuildResponse, ContractValueError, CreateAgentPoolRequest,
+  CreateBuildConfigurationRequest, CreateManualTriggerDefinitionRequest, CreatePipelineRequest, CreateProjectRequest,
+  CreateRepositoryRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DagEdgeResource,
+  DeleteAgentPoolResponse, DeleteProjectResponse, DependencyPolicy, DrainAgentRequest, ErrorCode, ExecutionGuarantee,
+  IDEMPOTENCY_KEY_HEADER, IdempotencyKey, InternalTriggerDefinitionRequest, InternalTriggerOutcome,
+  InternalTriggerResource, InternalTriggerSource, IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse,
+  JobAssignmentResource, JobEventPage, JobEventResource, JobExecution, JobQueueResource, JobResource,
+  JobTerminalResource, ManualSource, ManualTriggerDefinitionResource, MoveProjectRequest, MutationDisposition,
+  MutationResponse, NetworkPolicy, OPTIMISTIC_PRECONDITION_HEADER, OperatorAttentionCategory, OperatorAttentionCursor,
+  OperatorAttentionItemResource, OperatorAttentionPage, OperatorAttentionSeverity, OperatorAttentionTargetKind,
+  OperatorAttentionTargetResource, ParameterDefinition, ParameterSchema, ParameterType, PipelineDag, PipelineEdge,
+  PipelineNode, PipelineResource, PipelineSummaryPage, PipelineSummaryResource, Platform, PlatformArchitecture,
+  PlatformOs, PoolExecutionMode, PoolExecutionTarget, ProjectDetails, ProjectPolicyResource, ProjectResource,
+  ProjectSummaryResource, PublishAgentPoolVersionRequest, PublishBuildConfigurationVersionRequest,
+  PublishPipelineVersionRequest, PublishProjectPolicyRequest, PublishRepositoryVersionRequest,
+  ReassignAgentPoolRequest, RenameProjectRequest, RepositoryDefinition, RepositoryResource, RepositorySelectionPolicy,
+  RepositorySummaryPage, RepositorySummaryResource, ResourceSearchCursor as RestResourceSearchCursor,
+  ResourceSearchKind, ResourceSearchPage, ResourceSearchResult, RetryBuildResponse, RetryClass, RetryPolicy,
+  RuntimeClass, RuntimePolicy, ScheduleResource, TriggerCauseResource, TriggerDefinitionKind,
+  TriggerDefinitionResource, TriggerDefinitionSummaryPage, TriggerDefinitionSummaryResource, TriggerEvaluationResponse,
+  TriggerKind, VersionPrecondition,
 };
 use crate::RequestId;
 
@@ -97,7 +98,9 @@ pub(crate) use artifact::DEFAULT_ARTIFACT_LIMIT;
 pub(crate) use audit::DEFAULT_AUDIT_LIMIT;
 
 use agent::{drain_agent, get_agent, issue_agent_enrollment, list_agents, reassign_agent_pool};
-use agent_pool::{create_agent_pool, delete_agent_pool, get_agent_pool, list_agent_pools, publish_agent_pool};
+use agent_pool::{
+  create_agent_pool, delete_agent_pool, get_agent_pool, get_current_agent_pool, list_agent_pools, publish_agent_pool,
+};
 use application::{AgentEndpoints, AgentPoolManagementApplication};
 pub use application::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
