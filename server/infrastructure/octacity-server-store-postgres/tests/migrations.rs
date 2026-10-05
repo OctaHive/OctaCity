@@ -102,8 +102,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   verify_definition_discovery_indexes(&rollback.pool).await?;
   verify_build_discovery_indexes(&rollback.pool).await?;
   verify_resource_search_indexes(&rollback.pool).await?;
-  assert!(!table_exists(&rollback.pool, "operator_attention_events").await?);
-  assert!(operator_attention_index_definitions(&rollback.pool).await?.is_empty());
+  verify_operator_attention_schema(&rollback.pool).await?;
   assert_legacy_idempotency_record(&rollback.pool).await?;
   assert_snapshot_marker(&rollback.pool).await?;
 
