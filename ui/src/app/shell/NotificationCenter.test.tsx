@@ -57,7 +57,12 @@ describe('NotificationCenter', () => {
     expect(screen.getByText('critical-active summary')).toBeTruthy();
     expect(screen.getByText('critical-resolved summary')).toBeTruthy();
     expect(screen.queryByText('unrelated-event summary')).toBeNull();
-    expect(screen.getByText('Resolved')).toBeTruthy();
+    const activeCondition = screen.getByText('critical-active summary').closest('li');
+    const resolvedCondition = screen.getByText('critical-resolved summary').closest('li');
+    expect(activeCondition?.getAttribute('data-tone')).toBe('critical');
+    expect(resolvedCondition?.getAttribute('data-tone')).toBe('resolved');
+    expect(within(resolvedCondition as HTMLElement).getByText('Resolved')).toBeTruthy();
+    expect(within(resolvedCondition as HTMLElement).queryByText('Critical')).toBeNull();
     expect(screen.getByRole('link', { name: /favorite-event summary/u }).getAttribute('href')).toBe(
       `/builds/${FAVORITE_BUILD}`,
     );

@@ -223,26 +223,31 @@ function SessionActionItem({ item, locale }: { item: SessionActionOutcome; local
 
 function AttentionItem({ item, locale }: { item: OperatorAttentionItem; locale: string }) {
   const { t } = usePresentation();
+  const resolved = item.resolved_at_unix_ms !== null;
   const latestAt = latestAttentionTime(item);
   const timestamp = formatTimestamp(latestAt, locale);
   const content = (
     <>
       <span className={styles.itemHeading}>
         <strong>{item.summary}</strong>
-        <em>{t(attentionSeverityMessageKeys[item.severity])}</em>
+        <em>
+          {resolved
+            ? t('notification.resolvedCondition')
+            : t(attentionSeverityMessageKeys[item.severity])}
+        </em>
       </span>
       <small>{item.code}</small>
-      <small>
-        {item.resolved_at_unix_ms === null
-          ? t('notification.activeCondition')
-          : t('notification.resolvedCondition')}
-      </small>
+      {resolved ? null : <small>{t('notification.activeCondition')}</small>}
       <time dateTime={timestamp.machine ?? undefined}>{timestamp.display}</time>
     </>
   );
   return (
-    <li className={styles.item} data-tone={item.severity}>
-      <CircleAlert aria-hidden="true" size={18} />
+    <li className={styles.item} data-tone={resolved ? 'resolved' : item.severity}>
+      {resolved ? (
+        <CircleCheck aria-hidden="true" size={18} />
+      ) : (
+        <CircleAlert aria-hidden="true" size={18} />
+      )}
       {item.target === null ? (
         <span>{content}</span>
       ) : (

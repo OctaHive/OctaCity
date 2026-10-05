@@ -176,7 +176,14 @@ test('keeps relevant notifications browser-local and rebuilds attention after re
   await expect(center.getByText('critical-active summary')).toBeVisible();
   await expect(center.getByText('critical-resolved summary')).toBeVisible();
   await expect(center.getByText('unrelated-build-event summary')).toHaveCount(0);
-  await expect(center.getByText('Resolved', { exact: true })).toBeVisible();
+  const activeCondition = center.getByText('critical-active summary').locator('xpath=ancestor::li');
+  const resolvedCondition = center
+    .getByText('critical-resolved summary')
+    .locator('xpath=ancestor::li');
+  await expect(activeCondition).toHaveAttribute('data-tone', 'critical');
+  await expect(resolvedCondition).toHaveAttribute('data-tone', 'resolved');
+  await expect(resolvedCondition.getByText('Resolved', { exact: true })).toBeVisible();
+  await expect(resolvedCondition.getByText('Critical', { exact: true })).toHaveCount(0);
   await expect(center.getByRole('link', { name: /favorite-build-event summary/u })).toHaveAttribute(
     'href',
     `/builds/${favoriteBuildId}`,

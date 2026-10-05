@@ -151,7 +151,9 @@
   overflow-wrap: anywhere;
 }
 
-.item[data-tone='success'] > svg {
+.item[data-tone='success'] > svg,
+.item[data-tone='resolved'] > svg,
+.item[data-tone='resolved'] .itemHeading em {
   color: var(--color-success-ink);
 }
 
