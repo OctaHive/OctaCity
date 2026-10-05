@@ -6,7 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
 import { QueryFailureNotice, StaleQueryNotice } from '../../shared/QueryStateNotice';
-import type { AuditApi, AuditFactPage } from './api';
+import type { AuditApi, AuditFactPage, AuditFilters } from './api';
 import {
   AUDIT_ACTOR_KINDS,
   AUDIT_TEXT_FILTERS,
@@ -19,27 +19,11 @@ import {
 } from './auditFilters';
 import styles from './AuditView.module.css';
 
-/** Lists immutable audit evidence without interpreting it as current authorization state. */
-export function AuditView({ api }: { api: AuditApi }) {
+/** Owns the URL-backed Audit filter controls rendered in the contextual tool panel. */
+export function AuditFilterPanel() {
   const [parameters, setParameters] = useSearchParams();
   const [formError, setFormError] = useState<{ message: string; urlState: string } | null>(null);
   const urlState = parameters.toString();
-  const parsed = readAuditFilters(parameters);
-  const audit = useInfiniteQuery<
-    AuditFactPage,
-    Error,
-    InfiniteData<AuditFactPage>,
-    ReturnType<typeof queryKeys.auditFacts>,
-    string | null
-  >({
-    enabled: parsed.error === null,
-    getNextPageParam: (page) => page.next_cursor ?? undefined,
-    initialPageParam: null,
-    queryFn: ({ pageParam, signal }) => api.listAuditFacts(parsed.filters, pageParam, signal),
-    queryKey: queryKeys.auditFacts(parsed.filters),
-  });
-  const facts = audit.data?.pages.flatMap((page) => page.items) ?? [];
-  const visibleFormError = formError?.urlState === urlState ? formError.message : null;
 
   function apply(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -56,6 +40,106 @@ export function AuditView({ api }: { api: AuditApi }) {
     setFormError(null);
     setParameters(withoutAuditFilters(parameters));
   }
+
+  const visibleFormError = formError?.urlState === urlState ? formError.message : null;
+  return (
+    <section aria-labelledby="audit-explorer-filter-heading" className={styles.explorerFilterPanel}>
+      <div className={styles.explorerFilterHeading}>
+        <div>
+          <p className={styles.eyebrow}>Bounded exact matching</p>
+          <h3 id="audit-explorer-filter-heading">Filters</h3>
+        </div>
+        {hasAuditFilters(parameters) ? (
+          <button
+            aria-label="Clear audit filters"
+            className={styles.textButton}
+            onClick={clear}
+            type="button"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <p className={styles.filterHelp}>
+        Filters are stored in the URL for repeatable investigations.
+      </p>
+      <form
+        aria-label="Audit filters"
+        className={styles.explorerFilters}
+        key={urlState}
+        onSubmit={apply}
+      >
+        <label>
+          <span>Actor kind</span>
+          <select defaultValue={parameters.get('actor_kind') ?? ''} name="actor_kind">
+            <option value="">All actor kinds</option>
+            {AUDIT_ACTOR_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {formatEnumLabel(kind)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {AUDIT_TEXT_FILTERS.map(({ label, maximumBytes, name }) => (
+          <FilterField
+            defaultValue={parameters.get(name) ?? ''}
+            key={name}
+            label={label}
+            maximumLength={maximumBytes}
+            name={name}
+          />
+        ))}
+        <label>
+          <span>Occurred from</span>
+          <input
+            defaultValue={auditTimeInputValue(parameters.get('occurred_from_unix_ms'))}
+            name="occurred_from"
+            step="0.001"
+            type="datetime-local"
+          />
+        </label>
+        <label>
+          <span>Occurred through</span>
+          <input
+            defaultValue={auditTimeInputValue(parameters.get('occurred_through_unix_ms'))}
+            name="occurred_through"
+            step="0.001"
+            type="datetime-local"
+          />
+        </label>
+        <button aria-label="Apply audit filters" className={styles.applyButton} type="submit">
+          <Filter aria-hidden="true" size={15} />
+          Apply filters
+        </button>
+      </form>
+      {visibleFormError === null ? null : (
+        <p className={styles.explorerValidation} role="alert">
+          {visibleFormError}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Lists immutable audit evidence without interpreting it as current authorization state. */
+export function AuditView({ api }: { api: AuditApi }) {
+  const [parameters] = useSearchParams();
+  const parsed = readAuditFilters(parameters);
+  const audit = useInfiniteQuery<
+    AuditFactPage,
+    Error,
+    InfiniteData<AuditFactPage>,
+    ReturnType<typeof queryKeys.auditFacts>,
+    string | null
+  >({
+    enabled: parsed.error === null,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    initialPageParam: null,
+    queryFn: ({ pageParam, signal }) => api.listAuditFacts(parsed.filters, pageParam, signal),
+    queryKey: queryKeys.auditFacts(parsed.filters),
+  });
+  const facts = audit.data?.pages.flatMap((page) => page.items) ?? [];
+  const activeFilters = auditFilterLabels(parsed.filters);
 
   return (
     <div className={styles.page}>
@@ -79,68 +163,7 @@ export function AuditView({ api }: { api: AuditApi }) {
         </button>
       </header>
 
-      <section aria-labelledby="audit-filter-heading" className={styles.panel}>
-        <div className={styles.panelHeading}>
-          <div>
-            <p className={styles.eyebrow}>Bounded exact matching</p>
-            <h2 id="audit-filter-heading">Audit filters</h2>
-          </div>
-          {hasAuditFilters(parameters) ? (
-            <button className={styles.textButton} onClick={clear} type="button">
-              Clear audit filters
-            </button>
-          ) : null}
-        </div>
-        <form aria-label="Audit filters" className={styles.filters} key={urlState} onSubmit={apply}>
-          <label>
-            <span>Actor kind</span>
-            <select defaultValue={parameters.get('actor_kind') ?? ''} name="actor_kind">
-              <option value="">All actor kinds</option>
-              {AUDIT_ACTOR_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {formatEnumLabel(kind)}
-                </option>
-              ))}
-            </select>
-          </label>
-          {AUDIT_TEXT_FILTERS.map(({ label, maximumBytes, name }) => (
-            <FilterField
-              defaultValue={parameters.get(name) ?? ''}
-              key={name}
-              label={label}
-              maximumLength={maximumBytes}
-              name={name}
-            />
-          ))}
-          <label>
-            <span>Occurred from</span>
-            <input
-              defaultValue={auditTimeInputValue(parameters.get('occurred_from_unix_ms'))}
-              name="occurred_from"
-              step="0.001"
-              type="datetime-local"
-            />
-          </label>
-          <label>
-            <span>Occurred through</span>
-            <input
-              defaultValue={auditTimeInputValue(parameters.get('occurred_through_unix_ms'))}
-              name="occurred_through"
-              step="0.001"
-              type="datetime-local"
-            />
-          </label>
-          <button className={styles.applyButton} type="submit">
-            <Filter aria-hidden="true" size={15} />
-            Apply audit filters
-          </button>
-        </form>
-        {visibleFormError === null && parsed.error === null ? null : (
-          <p className={styles.validation} role="alert">
-            {visibleFormError ?? parsed.error}
-          </p>
-        )}
-      </section>
+      <ActiveAuditFilters labels={activeFilters} />
 
       <section aria-labelledby="audit-results-heading" className={styles.panel}>
         <div className={styles.panelHeading}>
@@ -157,6 +180,11 @@ export function AuditView({ api }: { api: AuditApi }) {
             authority.
           </span>
         </div>
+        {parsed.error === null ? null : (
+          <p className={styles.validation} role="alert">
+            {parsed.error}
+          </p>
+        )}
         {parsed.error !== null ? null : audit.isPending ? (
           <div className={styles.state} role="status">
             Loading audit facts…
@@ -197,6 +225,49 @@ export function AuditView({ api }: { api: AuditApi }) {
       </section>
     </div>
   );
+}
+
+function ActiveAuditFilters({ labels }: { labels: readonly string[] }) {
+  return (
+    <aside aria-label="Active audit filters" className={styles.activeFilters}>
+      <strong>{labels.length === 0 ? 'All audit facts' : `${labels.length} active filters`}</strong>
+      {labels.length === 0 ? (
+        <span>No filters applied.</span>
+      ) : (
+        <ul>
+          {labels.map((label) => (
+            <li key={label} title={label}>
+              {label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </aside>
+  );
+}
+
+function auditFilterLabels(filters: AuditFilters): string[] {
+  const values: Array<[string, string | number | null]> = [
+    ['Actor kind', filters.actorKind === null ? null : formatEnumLabel(filters.actorKind)],
+    ['Actor', filters.actorIdentity],
+    ['Operation', filters.operation],
+    ['Target kind', filters.targetKind],
+    ['Target', filters.targetIdentity],
+    ['Request', filters.requestIdentity],
+    [
+      'From',
+      filters.occurredFromUnixMs === null
+        ? null
+        : formatTimestamp(filters.occurredFromUnixMs).display,
+    ],
+    [
+      'Through',
+      filters.occurredThroughUnixMs === null
+        ? null
+        : formatTimestamp(filters.occurredThroughUnixMs).display,
+    ],
+  ];
+  return values.flatMap(([label, value]) => (value === null ? [] : [`${label}: ${value}`]));
 }
 
 function FilterField({

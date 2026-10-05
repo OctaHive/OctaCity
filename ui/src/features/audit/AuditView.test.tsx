@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createConsoleQueryClient } from '../../app/query';
 import type { AuditApi, AuditFactPage, AuditFactResource } from './api';
-import { AuditView } from './AuditView';
+import { AuditFilterPanel, AuditView } from './AuditView';
 
 afterEach(cleanup);
 
@@ -80,6 +80,7 @@ describe('Audit view', () => {
         expect.any(AbortSignal),
       ),
     );
+    expect(screen.getByText('8 active filters')).toBeTruthy();
 
     await userEvent.click(screen.getByRole('button', { name: 'Clear audit filters' }));
     await waitFor(() => expect(router.state.location.search).toBe(''));
@@ -139,9 +140,20 @@ describe('Audit view', () => {
 });
 
 function renderAudit(path: string, api: AuditApi) {
-  const router = createMemoryRouter([{ path: '/audit', element: <AuditView api={api} /> }], {
-    initialEntries: [path],
-  });
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/audit',
+        element: (
+          <>
+            <AuditFilterPanel />
+            <AuditView api={api} />
+          </>
+        ),
+      },
+    ],
+    { initialEntries: [path] },
+  );
   render(
     <QueryClientProvider client={createConsoleQueryClient()}>
       <RouterProvider router={router} />

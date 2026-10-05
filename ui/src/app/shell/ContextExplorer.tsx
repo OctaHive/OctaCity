@@ -128,20 +128,26 @@ export function ContextExplorer({
       </header>
 
       <div className={styles.explorerBody}>
-        <section aria-labelledby={`${section.id}-favorites`} className={styles.explorerSection}>
-          <h3 id={`${section.id}-favorites`}>
-            <Star aria-hidden="true" size={15} />
-            Favorites
-          </h3>
-          <p>No favorites yet.</p>
-        </section>
-        <section aria-labelledby={`${section.id}-browse`} className={styles.explorerSection}>
-          <h3 id={`${section.id}-browse`}>
-            <FolderOpen aria-hidden="true" size={15} />
-            Browse
-          </h3>
-          {children === undefined ? <ExplorerLinks section={section} /> : children}
-        </section>
+        {section.explorerMode === 'tools' ? (
+          children
+        ) : (
+          <>
+            <section aria-labelledby={`${section.id}-favorites`} className={styles.explorerSection}>
+              <h3 id={`${section.id}-favorites`}>
+                <Star aria-hidden="true" size={15} />
+                Favorites
+              </h3>
+              <p>No favorites yet.</p>
+            </section>
+            <section aria-labelledby={`${section.id}-browse`} className={styles.explorerSection}>
+              <h3 id={`${section.id}-browse`}>
+                <FolderOpen aria-hidden="true" size={15} />
+                Browse
+              </h3>
+              {children === undefined ? <ExplorerLinks section={section} /> : children}
+            </section>
+          </>
+        )}
       </div>
 
       {modal ? null : (
@@ -183,13 +189,7 @@ function ExplorerLinks({ section }: { section: ConsoleSection }) {
         </ul>
       );
     case 'audit':
-      return (
-        <ul>
-          <li>
-            <Link to={CONSOLE_PATHS.audit}>Audit filters</Link>
-          </li>
-        </ul>
-      );
+      return null;
     case 'builds':
       return (
         <ul>

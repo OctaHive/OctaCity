@@ -16,6 +16,10 @@ const AuditView = lazy(async () => {
   const module = await import('../features/audit/AuditView');
   return { default: module.AuditView };
 });
+const AuditFilterPanel = lazy(async () => {
+  const module = await import('../features/audit/AuditView');
+  return { default: module.AuditFilterPanel };
+});
 const BuildExplorer = lazy(async () => {
   const module = await import('../features/builds/BuildExplorer');
   return { default: module.BuildExplorer };
@@ -90,6 +94,7 @@ export function createConsoleRoutes(
       element: (
         <AppShell
           explorerContent={{
+            audit: defer(<AuditFilterPanel />),
             builds: defer(<BuildExplorer api={buildExplorerApi} />),
             agents: defer(<CapacityExplorer api={agentCapacityApi} />),
             projects: defer(<ProjectExplorer api={projectApi} />),

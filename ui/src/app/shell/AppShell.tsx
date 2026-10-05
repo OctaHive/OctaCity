@@ -70,10 +70,12 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
     ? 'Checking readiness'
     : readinessLabels[readinessState];
   const readinessTone = readiness.isPending ? 'checking' : readinessState;
+  const explorerAvailable = activeSection.explorerMode !== null;
+  const explorerVisible = explorerAvailable && explorerOpen;
   const shellStyle = { '--explorer-width': `${explorerWidth}px` } as CSSProperties;
   const shellClassName = [
     styles.shell,
-    explorerOpen ? null : styles.explorerCollapsed,
+    explorerVisible ? null : styles.explorerCollapsed,
     narrowWorkbench ? styles.narrowWorkbench : null,
   ]
     .filter((className): className is string => className !== null)
@@ -125,10 +127,6 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
     globalThis.requestAnimationFrame(() => explorerOpenButtonRef.current?.focus());
   }, []);
 
-  const selectSection = () => {
-    setExplorerOpen(true);
-  };
-
   return (
     <div className={shellClassName} style={shellStyle}>
       <a className={styles.skipLink} href="#console-content">
@@ -152,7 +150,7 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
                 aria-current={active ? 'page' : undefined}
                 className={active ? `${styles.railLink} ${styles.activeRailLink}` : styles.railLink}
                 key={section.id}
-                onClick={selectSection}
+                onClick={() => setExplorerOpen(section.explorerMode !== null)}
                 title={section.label}
                 to={section.path}
               >
@@ -162,7 +160,7 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
             );
           })}
         </nav>
-        {!explorerOpen ? (
+        {explorerAvailable && !explorerOpen ? (
           <button
             aria-label={`Open ${activeSection.label} explorer`}
             className={styles.openExplorerButton}
@@ -177,7 +175,7 @@ export function AppShell({ explorerContent = {}, readinessProbe }: AppShellProps
         ) : null}
       </aside>
 
-      {explorerOpen ? (
+      {explorerVisible ? (
         <>
           <button
             aria-hidden="true"

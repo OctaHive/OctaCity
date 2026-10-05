@@ -139,12 +139,20 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+.panelHeading + .empty {
+  padding: var(--space-lg);
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-md);
   margin: 0;
   padding: var(--space-lg);
+}
+
+.grid + .empty {
+  padding: 0 var(--space-lg) var(--space-lg);
 }
 
 .grid > div {

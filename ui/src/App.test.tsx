@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -58,6 +58,20 @@ describe('App', () => {
     expect(favorites.compareDocumentPosition(browse) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it('uses a tool-focused explorer for Audit without generic navigation groups', async () => {
+    renderConsole(CONSOLE_PATHS.audit);
+
+    expect(await screen.findByRole('heading', { level: 1, name: /^Audit$/ })).toBeTruthy();
+    const explorer = screen.getByRole('complementary', { name: 'Audit explorer' });
+    expect(within(explorer).queryByRole('heading', { level: 3, name: 'Favorites' })).toBeNull();
+    expect(within(explorer).queryByRole('heading', { level: 3, name: 'Browse' })).toBeNull();
+    expect(await within(explorer).findByRole('form', { name: 'Audit filters' })).toBeTruthy();
+    expect(
+      within(screen.getByRole('main')).queryByRole('form', { name: 'Audit filters' }),
+    ).toBeNull();
+    expect(screen.getByRole('separator', { name: 'Resize Audit explorer' })).toBeTruthy();
   });
 
   it('collapses and restores the explorer with deterministic focus', async () => {
@@ -195,33 +209,33 @@ describe('App', () => {
   it('keeps narrow deep links usable until the focus-managed explorer is requested', async () => {
     const user = userEvent.setup();
     stubMatchMedia(true);
-    renderConsole(CONSOLE_PATHS.audit);
+    renderConsole(CONSOLE_PATHS.builds);
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'Audit' })).toBeTruthy();
-    expect(screen.queryByRole('dialog', { name: 'Audit explorer' })).toBeNull();
-    const open = screen.getByRole('button', { name: 'Open Audit explorer' });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Builds' })).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Builds explorer' })).toBeNull();
+    const open = screen.getByRole('button', { name: 'Open Builds explorer' });
 
     await user.click(open);
-    const explorer = screen.getByRole('dialog', { name: 'Audit explorer' });
+    const explorer = screen.getByRole('dialog', { name: 'Builds explorer' });
     expect(explorer).toBeTruthy();
-    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Audit' }));
-    expect(screen.queryByRole('separator', { name: 'Resize Audit explorer' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 2, name: 'Builds' }));
+    expect(screen.queryByRole('separator', { name: 'Resize Builds explorer' })).toBeNull();
 
     await user.tab();
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search Audit' }));
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search Builds' }));
     await user.tab({ shift: true });
-    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Audit filters' }));
+    expect(explorer.contains(document.activeElement)).toBe(true);
 
-    await user.click(screen.getByRole('button', { name: 'Search Audit' }));
+    await user.click(screen.getByRole('button', { name: 'Search Builds' }));
     expect(screen.getByRole('dialog', { name: 'Search resources' })).toBeTruthy();
     await user.keyboard('{Escape}');
-    expect(screen.getByRole('dialog', { name: 'Audit explorer' })).toBeTruthy();
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search Audit' }));
+    expect(screen.getByRole('dialog', { name: 'Builds explorer' })).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Search Builds' }));
 
     await user.keyboard('{Escape}');
     await waitFor(() =>
       expect(document.activeElement).toBe(
-        screen.getByRole('button', { name: 'Open Audit explorer' }),
+        screen.getByRole('button', { name: 'Open Builds explorer' }),
       ),
     );
   });
