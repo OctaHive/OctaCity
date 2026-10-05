@@ -7,7 +7,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ManagementApiError } from '../../api/client';
-import { createConsoleQueryClient } from '../../app/query';
+import { createConsoleQueryClient, queryKeys } from '../../app/query';
 import type { AgentPoolResource, AgentResource, CapacityApi } from './api';
 import { CapacityExplorer } from './CapacityExplorer';
 
@@ -88,6 +88,69 @@ describe('Capacity explorer', () => {
       await screen.findByText('Refresh failed. Showing the last loaded Stale Pool Agents.'),
     ).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Agent One' })).toBeTruthy();
+  });
+
+  it('reuses a loaded Agent branch after it is collapsed and expanded again', async () => {
+    const api = fakeCapacityApi();
+    api.listAgentPools.mockResolvedValue(page([pool('pool-a', 'Linux')], null));
+    api.listAgents.mockResolvedValue(page([agent('agent-a', 'Builder A', 'pool-a')], null));
+    renderExplorer('/agents', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand Linux' }));
+    expect(await screen.findByRole('link', { name: 'Builder A' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse Linux' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Expand Linux' }));
+    expect(await screen.findByRole('link', { name: 'Builder A' })).toBeTruthy();
+
+    expect(api.listAgents).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes a loaded Agent branch after explicit invalidation', async () => {
+    const api = fakeCapacityApi();
+    api.listAgentPools.mockResolvedValue(page([pool('pool-a', 'Linux')], null));
+    api.listAgents.mockResolvedValue(page([agent('agent-a', 'Builder A', 'pool-a')], null));
+    const { queryClient } = renderExplorer('/agents', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand Linux' }));
+    await screen.findByRole('link', { name: 'Builder A' });
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse Linux' }));
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.agentPoolAgents('pool-a'),
+      refetchType: 'none',
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Expand Linux' }));
+
+    await vi.waitFor(() => expect(api.listAgents).toHaveBeenCalledTimes(2));
+  });
+
+  it('keeps the existing capacity hierarchy mounted while an Agent selection loads', async () => {
+    const api = fakeCapacityApi();
+    api.listAgentPools.mockResolvedValue(page([pool('pool-a', 'Linux')], null));
+    api.listAgents.mockResolvedValue(page([agent('agent-a', 'Builder A', 'pool-a')], null));
+    api.getAgent.mockImplementation(() => new Promise(() => undefined));
+    const { router } = renderExplorer('/agents', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand Linux' }));
+    const hierarchy = screen.getByRole('tree');
+    await userEvent.click(await screen.findByRole('link', { name: 'Builder A' }));
+
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/agents/agent-a'));
+    expect(screen.getByRole('tree')).toBe(hierarchy);
+    expect(screen.getByRole('link', { name: 'Builder A' })).toBeTruthy();
+  });
+
+  it('keeps the existing capacity hierarchy mounted while an Agent Pool selection loads', async () => {
+    const api = fakeCapacityApi();
+    api.listAgentPools.mockResolvedValue(page([pool('pool-a', 'Linux')], null));
+    api.getAgentPool.mockImplementation(() => new Promise(() => undefined));
+    const { router } = renderExplorer('/agents', api);
+
+    const hierarchy = await screen.findByRole('tree');
+    await userEvent.click(screen.getByRole('link', { name: 'Linux' }));
+
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/agent-pools/pool-a'));
+    expect(screen.getByRole('tree')).toBe(hierarchy);
+    expect(screen.getByRole('link', { name: 'Linux' })).toBeTruthy();
   });
 });
 

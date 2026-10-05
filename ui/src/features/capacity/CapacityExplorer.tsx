@@ -8,7 +8,6 @@ import { agentPath, agentPoolPath, CONSOLE_PATHS } from '../../app/routes';
 import { formatEnumLabel } from '../../shared/display';
 import {
   ExplorerBranchFailure,
-  ExplorerBranchLoading,
   ExplorerBranchBackground,
   PagedExplorerBranch,
   useCursorPage,
@@ -22,6 +21,18 @@ interface SelectedCapacity {
   pool: AgentPoolResource | null;
 }
 
+interface SelectedCapacityFailure {
+  error: Error | null;
+  label: string;
+  onRetry: () => unknown;
+}
+
+interface SelectedCapacityState {
+  background: SelectedCapacityFailure | null;
+  failure: SelectedCapacityFailure | null;
+  selection: SelectedCapacity;
+}
+
 const emptySelection: SelectedCapacity = { agent: null, pool: null };
 
 /** Renders independently paginated Agent Pool -> Agent capacity navigation. */
@@ -31,135 +42,95 @@ export function CapacityExplorer({ api }: { api: CapacityApi }) {
   const selectedAgentId = matchPath(CONSOLE_PATHS.agent, location.pathname)?.params.agentId ?? null;
   const selectedPoolId =
     matchPath(CONSOLE_PATHS.agentPool, location.pathname)?.params.poolId ?? null;
+  const selected = useSelectedCapacity(api, selectedAgentId, selectedPoolId);
 
   return (
     <div className={styles.explorer}>
       <p className={styles.notice}>{t('explorer.capacityAuthority')}</p>
-      {selectedAgentId !== null ? (
-        <SelectedAgentTree api={api} agentId={selectedAgentId} />
-      ) : selectedPoolId !== null ? (
-        <SelectedPoolTree api={api} poolId={selectedPoolId} />
-      ) : (
-        <CapacityTree api={api} selection={emptySelection} />
+      {selected.failure === null ? null : <ExplorerBranchFailure {...selected.failure} />}
+      {selected.background === null ? null : (
+        <ExplorerBranchBackground {...selected.background} fetching={false} />
       )}
+      <CapacityTree api={api} selection={selected.selection} />
     </div>
   );
 }
 
-function SelectedAgentTree({ api, agentId }: { api: CapacityApi; agentId: string }) {
+function useSelectedCapacity(
+  api: CapacityApi,
+  selectedAgentId: string | null,
+  selectedPoolId: string | null,
+): SelectedCapacityState {
   const { t } = usePresentation();
   const agent = useQuery({
-    queryFn: ({ signal }) => api.getAgent(agentId, signal),
-    queryKey: queryKeys.agent(agentId),
+    enabled: selectedAgentId !== null,
+    queryFn: ({ signal }) => api.getAgent(requireSelection(selectedAgentId), signal),
+    queryKey:
+      selectedAgentId === null
+        ? queryKeys.disabledExplorerDetail('agent')
+        : queryKeys.agent(selectedAgentId),
   });
-  if (agent.isPending) return <ExplorerBranchLoading label={t('explorer.selectedAgentPath')} />;
-  if (agent.data === undefined) {
-    return (
-      <>
-        <ExplorerBranchFailure
-          error={agent.error}
-          label={t('explorer.selectedAgent')}
-          onRetry={agent.refetch}
-        />
-        <CapacityTree api={api} selection={emptySelection} />
-      </>
-    );
-  }
-  return (
-    <SelectedPoolForAgent
-      agent={agent.data}
-      api={api}
-      fetchingAgent={agent.isFetching}
-      retryAgent={agent.refetch}
-      staleError={agent.error}
-    />
-  );
-}
-
-function SelectedPoolForAgent({
-  agent,
-  api,
-  fetchingAgent,
-  retryAgent,
-  staleError,
-}: {
-  agent: AgentResource;
-  api: CapacityApi;
-  fetchingAgent: boolean;
-  retryAgent: () => unknown;
-  staleError: Error | null;
-}) {
-  const { t } = usePresentation();
+  const resolvedPoolId = selectedPoolId ?? agent.data?.pool_id ?? null;
   const pool = useQuery({
-    queryFn: ({ signal }) => api.getAgentPool(agent.pool_id, signal),
-    queryKey: queryKeys.agentPool(agent.pool_id),
+    enabled: resolvedPoolId !== null,
+    queryFn: ({ signal }) => api.getAgentPool(requireSelection(resolvedPoolId), signal),
+    queryKey:
+      resolvedPoolId === null
+        ? queryKeys.disabledExplorerDetail('agent-pool')
+        : queryKeys.agentPool(resolvedPoolId),
   });
-  if (pool.isPending) return <ExplorerBranchLoading label={t('explorer.selectedPool')} />;
-  if (pool.data === undefined) {
-    return (
-      <>
-        <ExplorerBranchFailure
-          error={pool.error}
-          label={t('explorer.selectedPool')}
-          onRetry={pool.refetch}
-        />
-        <CapacityTree api={api} selection={{ agent, pool: null }} />
-      </>
-    );
-  }
-  return (
-    <>
-      <ExplorerBranchBackground
-        error={staleError ?? pool.error}
-        fetching={fetchingAgent || pool.isFetching}
-        label={t('explorer.selectedAgentPath')}
-        onRetry={() => {
-          void retryAgent();
-          void pool.refetch();
-        }}
-      />
-      <CapacityTree api={api} selection={{ agent, pool: pool.data }} />
-    </>
-  );
-}
 
-function SelectedPoolTree({ api, poolId }: { api: CapacityApi; poolId: string }) {
-  const { t } = usePresentation();
-  const pool = useQuery({
-    queryFn: ({ signal }) => api.getAgentPool(poolId, signal),
-    queryKey: queryKeys.agentPool(poolId),
-  });
-  if (pool.isPending) return <ExplorerBranchLoading label={t('explorer.selectedPool')} />;
-  if (pool.data === undefined) {
-    return (
-      <>
-        <ExplorerBranchFailure
-          error={pool.error}
-          label={t('explorer.selectedPool')}
-          onRetry={pool.refetch}
-        />
-        <CapacityTree api={api} selection={emptySelection} />
-      </>
-    );
+  if (selectedAgentId === null && selectedPoolId === null) {
+    return { background: null, failure: null, selection: emptySelection };
   }
-  return (
-    <>
-      <ExplorerBranchBackground
-        error={pool.error}
-        fetching={pool.isFetching}
-        label={t('explorer.selectedPool')}
-        onRetry={pool.refetch}
-      />
-      <CapacityTree api={api} selection={{ agent: null, pool: pool.data }} />
-    </>
-  );
+  if (selectedAgentId !== null && !agent.isPending && agent.data === undefined) {
+    return {
+      background: null,
+      failure: {
+        error: agent.error,
+        label: t('explorer.selectedAgent'),
+        onRetry: agent.refetch,
+      },
+      selection: emptySelection,
+    };
+  }
+  if (resolvedPoolId !== null && !pool.isPending && pool.data === undefined) {
+    return {
+      background: null,
+      failure: {
+        error: pool.error,
+        label: t('explorer.selectedPool'),
+        onRetry: pool.refetch,
+      },
+      selection: { agent: agent.data ?? null, pool: null },
+    };
+  }
+
+  const stale = [agent, pool].find((query) => query.error !== null && query.data !== undefined);
+  return {
+    background:
+      stale === undefined
+        ? null
+        : {
+            error: stale.error,
+            label:
+              selectedAgentId === null
+                ? t('explorer.selectedPool')
+                : t('explorer.selectedAgentPath'),
+            onRetry: stale.refetch,
+          },
+    failure: null,
+    selection: { agent: agent.data ?? null, pool: pool.data ?? null },
+  };
 }
 
 function CapacityTree({ api, selection }: { api: CapacityApi; selection: SelectedCapacity }) {
   const { t } = usePresentation();
   const expansion = useExpansionOverrides('agent_pool');
-  const pools = useCursorPage(queryKeys.agentPools, (cursor, signal) =>
-    api.listAgentPools(cursor, signal),
+  const pools = useCursorPage(
+    queryKeys.agentPools,
+    (cursor, signal) => api.listAgentPools(cursor, signal),
+    { refetchStaleOnMount: false },
   );
   return (
     <PagedExplorerBranch
@@ -229,8 +200,10 @@ function AgentBranch({
   selected: AgentResource | null;
 }) {
   const { t } = usePresentation();
-  const agents = useCursorPage(queryKeys.agentPoolAgents(pool.id), (cursor, signal) =>
-    api.listAgents(pool.id, cursor, signal),
+  const agents = useCursorPage(
+    queryKeys.agentPoolAgents(pool.id),
+    (cursor, signal) => api.listAgents(pool.id, cursor, signal),
+    { refetchStaleOnMount: false },
   );
   const revealed = selected?.pool_id === pool.id ? selected : null;
   return (
@@ -273,6 +246,11 @@ function AgentBranch({
       )}
     </PagedExplorerBranch>
   );
+}
+
+function requireSelection(selection: string | null): string {
+  if (selection === null) throw new Error('selected capacity identifier is unavailable');
+  return selection;
 }
 
 function State({
