@@ -305,6 +305,7 @@ class ConsoleWorkflowTests(unittest.TestCase):
     def assert_ci_policy(self, workflow: str) -> None:
         job = self.console_job(workflow, "  console:\n", "  quality:\n")
         required = (
+            "uses: ./octacity/.github/actions/checkout-octa",
             "node-version-file: octacity/ui/.node-version",
             "package_json_file: octacity/ui/package.json",
             "pnpm install --frozen-lockfile --ignore-scripts",
@@ -328,6 +329,10 @@ class ConsoleWorkflowTests(unittest.TestCase):
         self.assertNotIn("version: 12.8.1", job)
         self.assertEqual(job.count("pnpm typecheck"), 0)
         self.assertEqual(job.count("pnpm test:accessibility"), 0)
+        self.assertLess(
+            job.index("uses: ./octacity/.github/actions/checkout-octa"),
+            job.index("pnpm api:generate"),
+        )
         self.assertLess(job.index("pnpm build"), job.index("package_console_release.py package"))
         self.assertLess(
             job.index("package_console_release.py package"),
@@ -370,6 +375,10 @@ class ConsoleWorkflowTests(unittest.TestCase):
 
     def test_ci_policy_rejects_stale_lockfile_generation_test_and_archive_gaps(self):
         failures = (
+            (
+                "uses: ./octacity/.github/actions/checkout-octa",
+                "run: echo octa-checkout-skipped",
+            ),
             (
                 "pnpm install --frozen-lockfile --ignore-scripts",
                 "pnpm install --ignore-scripts",
