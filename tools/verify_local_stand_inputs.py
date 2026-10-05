@@ -383,10 +383,9 @@ def validate_repository_pins(
     if tags["rust"] != f"{rust_version}-bookworm":
         raise InputError("Rust image tag differs from rust-toolchain.toml")
 
-    ui_package = json.loads((repository / "ui/package.json").read_text(encoding="utf-8"))
-    node_version = ui_package["engines"]["node"]
+    node_version = (repository / "ui/.node-version").read_text(encoding="ascii").strip()
     if tags["node"] != f"{node_version}-bookworm-slim":
-        raise InputError("Node image tag differs from ui/package.json")
+        raise InputError("Node image tag differs from ui/.node-version")
 
     workspace = tomllib.loads((repository / "Cargo.toml").read_text(encoding="utf-8"))
     native = document["native"]

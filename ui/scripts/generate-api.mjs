@@ -18,7 +18,15 @@ const generatedConstraints = path.join(generatedDirectory, 'constraints.ts');
 async function exportOpenApi() {
   const { stdout } = await execFileAsync(
     'cargo',
-    ['run', '--quiet', '--package', 'octacity-server-api-rest', '--example', 'export_openapi'],
+    [
+      'run',
+      '--quiet',
+      '--locked',
+      '--package',
+      'octacity-server-api-rest',
+      '--example',
+      'export_openapi',
+    ],
     {
       cwd: repositoryRoot,
       encoding: 'utf8',

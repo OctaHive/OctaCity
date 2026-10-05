@@ -130,20 +130,17 @@ def workspace_version(repository: Path) -> str:
 
 
 def ui_toolchain(repository: Path) -> tuple[str, str]:
-    """Return the internally consistent pinned Node and pnpm versions."""
+    """Return the Node and pnpm versions from their canonical pins."""
 
     ui = repository / "ui"
     package = json.loads((ui / "package.json").read_text(encoding="utf-8"))
     node_version = (ui / ".node-version").read_text(encoding="utf-8").strip()
-    engines = package.get("engines")
     manager = package.get("packageManager")
     if (
         not node_version
-        or not isinstance(engines, dict)
-        or engines.get("node") != node_version
         or not isinstance(manager, str)
         or not manager.startswith("pnpm@")
-        or engines.get("pnpm") != manager.removeprefix("pnpm@")
+        or not manager.removeprefix("pnpm@")
     ):
         raise LocalStandBuildError("UI Node and pnpm pins are inconsistent")
     npmrc = (ui / ".npmrc").read_text(encoding="utf-8").splitlines()

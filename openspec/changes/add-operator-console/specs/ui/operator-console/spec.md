@@ -5,11 +5,11 @@ Defines the trusted-network browser console through which operators discover, ob
 ## ADDED Requirements
 
 ### Requirement: Trusted same-origin console deployment
-The operator console SHALL be a separately deployable static browser application whose source and toolchain are rooted directly at `ui/`, without an additional single-application directory or repository-level JavaScript workspace. It SHALL be served from the same trusted origin that proxies `/api/v1` to the private management listener. It SHALL own an application entry point and browser bootstrap and SHALL produce a directly deployable SPA bundle containing `index.html` and content-hashed static assets. It SHALL NOT expose a reusable library entry point, package export surface, or registry publication contract. It SHALL use relative management URLs, SHALL NOT require or collect an operator credential, and SHALL identify the deployment as unauthenticated trusted-network access. The deployment contract SHALL NOT require cross-origin management access or expose the management listener directly to an untrusted network.
+The operator console SHALL be a separately deployable static browser application whose source and toolchain are rooted directly at `ui/`, without an additional single-application directory or repository-level JavaScript workspace. It SHALL be served from the same trusted origin that proxies `/api/v1` to the private management listener. It SHALL own an application entry point and browser bootstrap and SHALL produce a directly deployable SPA bundle containing `index.html` and content-hashed static assets. Its release archive SHALL include the copy-ready same-origin proxy fixture referenced by its deployment guide so deployment does not depend on a repository checkout. It SHALL NOT expose a reusable library entry point, package export surface, or registry publication contract. It SHALL use relative management URLs and SHALL NOT require or collect an operator credential. Operator deployment documentation SHALL identify the deployment as unauthenticated trusted-network access. The deployment contract SHALL NOT require cross-origin management access or expose the management listener directly to an untrusted network.
 
 #### Scenario: Operator opens the console on the trusted network
 - **WHEN** an operator opens the configured console origin
-- **THEN** static application assets load from that origin, management requests use its `/api/v1` path, and the console visibly identifies the trusted-network security mode without presenting a login flow
+- **THEN** static application assets load from that origin, management requests use its `/api/v1` path, and the console presents no login flow or persistent trusted-network warning banner
 
 #### Scenario: Deep link is refreshed
 - **WHEN** an operator refreshes a console URL for a Project, Build, Agent, or Agent Pool
@@ -23,6 +23,10 @@ The operator console SHALL be a separately deployable static browser application
 - **WHEN** the console production build completes
 - **THEN** it emits a runnable static SPA rooted at `index.html` without a library bundle, public component exports, package-registry artifact, or Node runtime
 
+#### Scenario: Released console is deployed without source checkout
+- **WHEN** an operator verifies and extracts the console release archive
+- **THEN** the archive provides both the static SPA and the copy-ready same-origin proxy fixture referenced by its deployment guide
+
 ### Requirement: Deterministic frontend authoring boundary
 The console SHALL pin its supported Node, package-manager, compiler, formatter, linter, and test tool versions. Its lint gate SHALL cover JavaScript, TypeScript, React, React Hooks, and browser DOM correctness and SHALL reject unused lint suppressions. Repository-level editor and Git text rules SHALL normalize UTF-8 source text, final newlines, trailing whitespace, and LF line endings without introducing UI-only policy for shared file types.
 
@@ -35,7 +39,7 @@ The console SHALL pin its supported Node, package-manager, compiler, formatter, 
 - **THEN** repository policy normalizes the committed text to the declared UTF-8 and LF conventions
 
 ### Requirement: Contextual operator workbench navigation
-The console SHALL use one compact utility header, one primary section rail with large icon-and-short-label controls, one collapsible and resizable contextual explorer, and one primary resource detail area. The utility header SHALL expose bounded global resource search through a keyboard-accessible command center, deployment readiness, a direct theme control, a notification-center control, and a neutral operator menu containing the less-frequent language control. The section rail SHALL switch between Projects, Builds, Agents, and Audit without consuming the contextual explorer with duplicate global navigation or relying on unlabeled icons. The explorer SHALL default to 288 pixels, SHALL be pointer- and keyboard-resizable only within 240–480 pixels, and SHALL persist only a validated clamped width. Its sticky header SHALL identify the active section and provide search and collapse controls. The search control SHALL open the same command center as global search with the active resource kinds preselected. A Favorites section SHALL precede the active section's lazily paginated resource hierarchy or filters. Selecting an explorer resource SHALL update the directly addressable detail view without discarding the explorer context.
+The console SHALL use one compact utility header, one primary section rail with large icon-and-short-label controls, one collapsible and resizable contextual explorer, and one primary resource detail area. The utility header SHALL expose bounded global resource search through a keyboard-accessible command center, deployment readiness, a direct theme control, a notification-center control, and a neutral operator menu containing the less-frequent language control. Selection controls SHALL use the console's token-owned listbox presentation rather than browser-native select popups. Non-modal popups SHALL close when pointer or focus interaction moves outside them and SHALL remain dismissible with the keyboard. The section rail SHALL switch between Projects, Builds, Agents, and Audit without consuming the contextual explorer with duplicate global navigation or relying on unlabeled icons. The explorer SHALL default to 288 pixels, SHALL be pointer- and keyboard-resizable only within 240–480 pixels, and SHALL persist only a validated clamped width. Its sticky header SHALL identify the active section and provide search and collapse controls. The search control SHALL open the same command center as global search with the active resource kinds preselected. A Favorites section SHALL precede the active section's lazily paginated resource hierarchy or filters. Selecting an explorer resource SHALL update the directly addressable detail view without discarding the explorer context.
 
 #### Scenario: Operator switches workbench activity
 - **WHEN** an operator activates Projects, Builds, Agents, or Audit from the primary section rail
@@ -56,6 +60,10 @@ The console SHALL use one compact utility header, one primary section rail with 
 #### Scenario: Operator opens the command center
 - **WHEN** the operator focuses global search or presses `Command/Ctrl+K`
 - **THEN** the console offers keyboard-navigable, type-grouped, authorization-filtered results for Projects, Builds, Agents, and Agent Pools plus non-destructive navigation and presentation commands
+
+#### Scenario: Operator uses a selection popup
+- **WHEN** the operator opens a theme, language, filter, or command selection control
+- **THEN** the console presents a consistently styled keyboard-navigable listbox and closes it after selection, `Escape`, or interaction outside the popup
 
 #### Scenario: Operator searches from the explorer
 - **WHEN** the operator activates the search control in the Build, Agent, or Project explorer header
@@ -78,7 +86,7 @@ The console SHALL provide complete English and Russian operator-facing translati
 
 #### Scenario: Operator changes presentation preferences
 - **WHEN** the operator selects a language or theme and later reloads the console in the same browser
-- **THEN** the validated preference is restored without persisting server data or weakening the trusted-network warning
+- **THEN** the validated preference is restored without persisting server data or weakening the trusted same-origin deployment boundary
 
 #### Scenario: System theme changes
 - **WHEN** theme mode is `system` and the operating-system color preference changes

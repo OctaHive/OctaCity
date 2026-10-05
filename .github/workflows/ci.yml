@@ -221,6 +221,84 @@ jobs:
           path: ${{ runner.temp }}/octacity-local-stand-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
 
+  console:
+    name: operator console
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: octacity
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: 1.99.0
+      - name: Install protobuf compiler
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: protoc
+          fallback: none
+      - name: Install pinned Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: octacity/ui/.node-version
+          check-latest: false
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: octacity/ui/package.json
+          run_install: false
+      - name: Install locked console dependencies
+        working-directory: octacity/ui
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Generate the management API boundary
+        working-directory: octacity/ui
+        run: pnpm api:generate
+      - name: Check console formatting
+        working-directory: octacity/ui
+        run: pnpm format
+      - name: Check console lint rules
+        working-directory: octacity/ui
+        run: pnpm lint
+      - name: Run console unit and component tests
+        working-directory: octacity/ui
+        run: pnpm test:unit
+      - name: Install the pinned browser runtime
+        working-directory: octacity/ui
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run console browser, accessibility, and visual tests
+        working-directory: octacity/ui
+        env:
+          CI: "true"
+        run: pnpm test:browser
+      - name: Build the console and enforce architecture and bundle budgets
+        working-directory: octacity/ui
+        run: pnpm build
+      - name: Package and verify the console release candidate
+        working-directory: octacity
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"])')
+          mkdir -p dist-ci
+          archive="dist-ci/octacity-console-${version}.tar.gz"
+          python3 tools/package_console_release.py package \
+            --distribution ui/dist \
+            --version "${version}" \
+            --octacity-revision "${{ github.sha }}" \
+            --output "${archive}"
+          python3 tools/package_console_release.py verify \
+            --archive "${archive}" \
+            --expected-version "${version}" \
+            --expected-octacity-revision "${{ github.sha }}"
+      - name: Retain the verified console release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: octacity-console-ci-${{ github.run_id }}
+          path: octacity/dist-ci/*
+          if-no-files-found: error
+          overwrite: true
+
   quality:
     strategy:
       fail-fast: false

@@ -4,10 +4,6 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@12.8.1",
-  "engines": {
-    "node": "24.21.0",
-    "pnpm": "12.8.1"
-  },
   "scripts": {
     "api:generate": "node scripts/generate-api.mjs",
     "dev": "vite",

@@ -7,8 +7,8 @@ workspace.
 
 ## Toolchain
 
-- Node.js 24.21.0
-- pnpm 12.8.1
+- Node.js from `.node-version`
+- pnpm from `package.json#packageManager`
 
 Dependency lifecycle scripts are disabled by `.npmrc`. Keep them disabled unless a reviewed
 dependency has a documented, narrowly scoped build requirement.
@@ -52,6 +52,31 @@ external fonts, icon fonts, analytics integrations, and copied template assets. 
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
 the build reports any measured value that exceeds them.
 
+Release packaging consumes this exact `dist/` directory without rebuilding the application:
+
+```sh
+python3 ../tools/package_console_release.py package \
+  --distribution dist \
+  --version 0.1.0 \
+  --octacity-revision "$(git -C .. rev-parse HEAD)" \
+  --output ../dist/octacity-console-0.1.0.tar.gz
+python3 ../tools/package_console_release.py verify \
+  --archive ../dist/octacity-console-0.1.0.tar.gz \
+  --expected-version 0.1.0 \
+  --expected-octacity-revision "$(git -C .. rev-parse HEAD)"
+```
+
+The same `dist/` is copied directly into the existing local-stand gateway image; release packaging
+therefore adds no second UI build path and is not required by `tools/local-stand up`.
+
+CI installs the exact Node.js and pnpm versions above, rejects lockfile drift, regenerates the API
+boundary with Cargo's workspace lockfile, and runs format, lint, type, unit/component,
+accessibility, browser/visual, architecture, bundle-budget, package, and archive-verification
+gates. Release automation promotes that exact tested archive as the platform-independent
+`octacity-console` product and includes it in the repository's GitHub artifact attestation instead
+of rebuilding it. The local stand and release workflow therefore share one application build
+contract even though the release archive remains optional at deployment time.
+
 `api:generate` runs the development-only Rust exporter for the same OpenAPI document served at
 `/api/v1/openapi.json`, then writes TypeScript declarations and the small runtime constraint
 projection to `.generated/api/`. The generated directory is intentionally ignored: regenerate it
@@ -84,7 +109,9 @@ The root route redirects to `/projects`. The first-release shell declares deep l
 
 The static host must return `index.html` for these non-file browser routes so a copied deep link
 survives refresh. `/api/v1` and `/health` are reserved proxy prefixes and must never use the SPA
-fallback.
+fallback. The checked-in configuration, TLS boundary, cache policy, security headers, and
+deployment verification commands are documented in the
+[operator console runbook](../docs/operations/operator-console.md).
 
 The shell uses a compact utility header, a labeled section rail, a contextual explorer, and a
 detail workbench. The explorer starts closed as a focus-managed overlay at the supported narrow
@@ -103,6 +130,7 @@ center's last-opened timestamp is stored in the versioned browser-local preferen
 operator menu owns the infrequently changed language selection plus deployment references. The
 console deliberately has no
 login route, browser credential storage, fabricated browser identity, or logout action, and it
-visibly identifies the unauthenticated trusted-network boundary.
+keeps the unauthenticated trusted-network boundary in deployment and management documentation
+rather than a persistent application banner.
 Explorer search entries pass typed server resource kinds into the shared command center; clearing
 that scope returns the same command center to global search.
