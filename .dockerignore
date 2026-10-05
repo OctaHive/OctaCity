@@ -109,6 +109,13 @@ ui/scripts/*
 # Repository-owned local-stand build definitions and immutable input policy.
 !deployment/
 deployment/*
+!deployment/console/
+deployment/console/*
+!deployment/console/nginx/
+deployment/console/nginx/*
+!deployment/console/nginx/cache-map.conf
+!deployment/console/nginx/routes.conf
+!deployment/console/nginx/security-headers.conf
 !deployment/local-stand/
 deployment/local-stand/*
 !deployment/local-stand/*.Dockerfile

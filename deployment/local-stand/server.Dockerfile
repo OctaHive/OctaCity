@@ -73,6 +73,9 @@ LABEL org.opencontainers.image.title="OctaCity local gateway" \
       dev.octacity.node.version="${NODE_VERSION}" \
       dev.octacity.pnpm.version="${PNPM_VERSION}"
 COPY --from=ui-builder /workspace/ui/dist/ /srv/octacity-ui/
+COPY deployment/console/nginx/cache-map.conf /etc/nginx/octacity-console/cache-map.conf
+COPY deployment/console/nginx/routes.conf /etc/nginx/octacity-console/routes.conf
+COPY deployment/console/nginx/security-headers.conf /etc/nginx/octacity-console/security-headers.conf
 COPY deployment/local-stand/nginx.conf /etc/nginx/nginx.conf
 USER 101:101
 EXPOSE 8443

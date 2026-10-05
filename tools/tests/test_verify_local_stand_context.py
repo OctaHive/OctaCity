@@ -104,6 +104,19 @@ class LocalStandContextTests(unittest.TestCase):
             VERIFY.docker_path_included("ui/.generated/api/constraints.ts", rules)
         )
 
+    def test_console_proxy_contract_is_included_in_the_build_context(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        for path in (
+            "deployment/console/nginx/cache-map.conf",
+            "deployment/console/nginx/routes.conf",
+            "deployment/console/nginx/security-headers.conf",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(VERIFY.docker_path_included(path, rules))
+        self.assertFalse(
+            VERIFY.docker_path_included("deployment/console/nginx/nginx.conf", rules)
+        )
+
     def test_developer_state_build_outputs_and_secrets_are_excluded(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
         for path in VERIFY.FORBIDDEN_CONTEXT_PATHS:

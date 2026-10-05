@@ -12,6 +12,8 @@ from unittest import mock
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 MANIFEST = REPOSITORY / "deployment/local-stand/inputs.json"
+CONSOLE_NGINX = REPOSITORY / "deployment/console/nginx"
+CONSOLE_ROUTES = CONSOLE_NGINX / "routes.conf"
 sys.path.insert(0, str(REPOSITORY / "tools"))
 SPEC = importlib.util.spec_from_file_location(
     "build_local_stand_gateway", REPOSITORY / "tools/build_local_stand_gateway.py"
@@ -95,6 +97,13 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
             "COPY deployment/local-stand/nginx.conf /etc/nginx/nginx.conf",
             dockerfile,
         )
+        for name in ("cache-map.conf", "routes.conf", "security-headers.conf"):
+            self.assertIn(
+                f"COPY deployment/console/nginx/{name} "
+                f"/etc/nginx/octacity-console/{name}",
+                dockerfile,
+            )
+        self.assertNotIn("COPY deployment/console/nginx/nginx.conf", dockerfile)
         gateway = dockerfile.split("FROM ${NGINX_IMAGE} AS gateway", 1)[1]
         self.assertIn("USER 101:101", gateway)
         self.assertIn("EXPOSE 8443", gateway)
@@ -124,7 +133,15 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         self.assertIn('cmp /tmp/javascript "$javascript"', contract)
         self.assertIn("/api/v1/management-only", contract)
         self.assertIn("/api/v1/unknown", contract)
+        self.assertIn("/builds/example-build", contract)
         self.assertIn("/health/unknown", contract)
+        self.assertIn("/health/ready", contract)
+        self.assertIn("/missing.js", contract)
+        self.assertIn("frame-ancestors 'none'", contract)
+        self.assertIn("max-age=31536000, immutable", contract)
+        self.assertIn("cmp /tmp/deep-link /srv/octacity-ui/index.html", contract)
+        self.assertIn("! cmp -s /tmp/api-response /srv/octacity-ui/index.html", contract)
+        self.assertIn("! cmp -s /tmp/health-response /srv/octacity-ui/index.html", contract)
         self.assertIn(
             "objects.localhost:8443|/bucket/key%%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host",
             contract,
@@ -157,8 +174,13 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         ):
             self.assertIn("listen 8443 ssl", nginx_server(config, host))
         console = nginx_server(config, "octacity.localhost")
-        self.assertIn("try_files $uri $uri/ /index.html", console)
-        self.assertEqual(config.count("try_files $uri $uri/ /index.html"), 1)
+        self.assertIn(
+            "include /etc/nginx/octacity-console/security-headers.conf", console
+        )
+        self.assertIn("include /etc/nginx/octacity-console/routes.conf", console)
+        routes = CONSOLE_ROUTES.read_text(encoding="utf-8")
+        self.assertIn("try_files $uri $uri/ /index.html", routes)
+        self.assertEqual(routes.count("try_files $uri $uri/ /index.html"), 1)
         self.assertIn("pid /tmp/nginx.pid", config)
 
     def test_access_log_never_records_presigned_query_credentials(self):
@@ -184,16 +206,18 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
             encoding="utf-8"
         )
         console = nginx_server(config, "octacity.localhost")
+        routes = CONSOLE_ROUTES.read_text(encoding="utf-8")
 
         for location in (
             "location = /api/v1",
             "location ^~ /api/v1/",
             "location = /health",
             "location ^~ /health/",
-            "location = /metrics",
         ):
-            self.assertIn(location, console)
-        self.assertEqual(console.count("proxy_pass http://server:8080;"), 5)
+            self.assertIn(location, routes)
+        self.assertIn("location = /metrics", console)
+        self.assertEqual(routes.count("proxy_pass http://octacity_management;"), 4)
+        self.assertEqual(console.count("proxy_pass http://octacity_management;"), 1)
         self.assertNotIn("return 404", console)
 
     def test_protocol_and_object_hosts_cannot_reach_management_listener(self):

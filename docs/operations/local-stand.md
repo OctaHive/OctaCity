@@ -122,6 +122,12 @@ for the cache and object-transfer hosts are restricted to process-critical
 events because lower-level proxy diagnostics can embed complete presigned URLs.
 Management and Agent hosts retain the normal diagnostic level.
 
+The console virtual host imports the same routing, caching, MIME, CSP, framing,
+and referrer-policy snippets as the supported production fixture. See the
+[operator console deployment runbook](operator-console.md) for the shared
+same-origin contract. The local certificate and loopback-only exposure remain
+development conveniences, not a production topology.
+
 Stop the exact native Agent process group and the Compose project while
 preserving PostgreSQL, MinIO, enrollment, Agent, cache, and Microsandbox state:
 

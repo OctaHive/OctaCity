@@ -105,6 +105,7 @@ http {
   server {
     listen 8080;
     location = /api/v1/management-only { return 200 "management"; }
+    location = /health/ready { default_type application/json; return 200 '{"status":"ready"}'; }
     location / { return 404; }
   }
   server { listen 8081; location / { return 404; } }
@@ -133,10 +134,24 @@ until curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
 done
 cmp /tmp/index.html __STATIC_ROOT__/index.html
 
+curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
+  --dump-header /tmp/deep-link-headers \
+  https://octacity.localhost:__HTTPS_PORT__/builds/example-build \
+  --output /tmp/deep-link
+cmp /tmp/deep-link __STATIC_ROOT__/index.html
+grep -Eiq '^content-type:[[:space:]]*text/html' /tmp/deep-link-headers
+grep -Eiq '^cache-control:[[:space:]]*no-store' /tmp/deep-link-headers
+grep -Eiq "^content-security-policy:.*frame-ancestors 'none'" /tmp/deep-link-headers
+grep -Eiq '^referrer-policy:[[:space:]]*no-referrer' /tmp/deep-link-headers
+grep -Eiq '^strict-transport-security:[[:space:]]*max-age=31536000' /tmp/deep-link-headers
+grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' /tmp/deep-link-headers
+grep -Eiq '^x-frame-options:[[:space:]]*DENY' /tmp/deep-link-headers
+
 javascript=$(find __STATIC_ROOT__/assets -maxdepth 1 -type f -name '*.js' -print -quit)
 test -n "$javascript"
 javascript_url=${javascript#__STATIC_ROOT__}
 javascript_type=$(curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
+  --dump-header /tmp/javascript-headers \
   --output /tmp/javascript --write-out '%{content_type}' \
   "https://octacity.localhost:__HTTPS_PORT__${javascript_url}")
 case "$javascript_type" in
@@ -144,11 +159,17 @@ case "$javascript_type" in
   *) echo "gateway returned an invalid JavaScript MIME type: $javascript_type" >&2; exit 1 ;;
 esac
 cmp /tmp/javascript "$javascript"
+grep -Eiq '^cache-control:.*max-age=31536000, immutable' /tmp/javascript-headers
+grep -Eiq '^x-content-type-options:[[:space:]]*nosniff' /tmp/javascript-headers
 
 curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
   https://octacity.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/management
 printf management >/tmp/expected-management
 cmp /tmp/management /tmp/expected-management
+curl --fail --silent --show-error --cacert /run/secrets/gateway.pem \
+  https://octacity.localhost:__HTTPS_PORT__/health/ready --output /tmp/health-ready
+printf '{"status":"ready"}' >/tmp/expected-health-ready
+cmp /tmp/health-ready /tmp/expected-health-ready
 if curl --fail --silent --cacert /run/secrets/gateway.pem \
   https://agent.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/agent-management; then
   exit 1
@@ -157,14 +178,21 @@ if curl --fail --silent --cacert /run/secrets/gateway.pem \
   https://cache.localhost:__HTTPS_PORT__/api/v1/management-only --output /tmp/cache-management; then
   exit 1
 fi
-if curl --fail --silent --cacert /run/secrets/gateway.pem \
-  https://octacity.localhost:__HTTPS_PORT__/api/v1/unknown --output /tmp/api-response; then
-  exit 1
-fi
-if curl --fail --silent --cacert /run/secrets/gateway.pem \
-  https://octacity.localhost:__HTTPS_PORT__/health/unknown --output /tmp/health-response; then
-  exit 1
-fi
+api_status=$(curl --silent --show-error --cacert /run/secrets/gateway.pem \
+  --write-out '%{http_code}' \
+  https://octacity.localhost:__HTTPS_PORT__/api/v1/unknown --output /tmp/api-response)
+test "$api_status" = 404
+! cmp -s /tmp/api-response __STATIC_ROOT__/index.html
+health_status=$(curl --silent --show-error --cacert /run/secrets/gateway.pem \
+  --write-out '%{http_code}' \
+  https://octacity.localhost:__HTTPS_PORT__/health/unknown --output /tmp/health-response)
+test "$health_status" = 404
+! cmp -s /tmp/health-response __STATIC_ROOT__/index.html
+asset_status=$(curl --silent --show-error --cacert /run/secrets/gateway.pem \
+  --write-out '%{http_code}' \
+  https://octacity.localhost:__HTTPS_PORT__/missing.js --output /tmp/missing-asset)
+test "$asset_status" = 404
+! cmp -s /tmp/missing-asset __STATIC_ROOT__/index.html
 
 object_path='/bucket/key%2Fsegment?partNumber=7&X-Amz-SignedHeaders=host'
 curl --fail --silent --show-error --path-as-is --cacert /run/secrets/gateway.pem \

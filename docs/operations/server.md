@@ -26,6 +26,8 @@ not deploy this release until native TLS is implemented and qualified.
 The corresponding CI-validated configurations are
 [`server.reverse-proxy.example.toml`](../reference/examples/server.reverse-proxy.example.toml) and
 [`server.trusted-network.example.toml`](../reference/examples/server.trusted-network.example.toml).
+Deploying the browser console additionally requires the same-origin TLS and
+fallback controls in the [operator console runbook](operator-console.md).
 Replace sample hosts, paths, bucket, region, and key identifiers before use,
 then run:
 
