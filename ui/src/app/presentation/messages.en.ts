@@ -677,6 +677,9 @@ export const enMessages = {
   'theme.label': 'Theme',
   'theme.light': 'Light',
   'theme.system': 'System',
+  'workspace.agentsIllustration': 'Agent capacity illustration',
+  'workspace.buildsIllustration': 'Build pipeline illustration',
+  'workspace.projectsIllustration': 'Project workspace illustration',
 } as const;
 
 export type MessageKey = keyof typeof enMessages;

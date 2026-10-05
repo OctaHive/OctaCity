@@ -677,4 +677,7 @@ export const ruMessages = {
   'theme.label': 'Тема',
   'theme.light': 'Светлая',
   'theme.system': 'Системная',
+  'workspace.agentsIllustration': 'Иллюстрация ресурсов агентов',
+  'workspace.buildsIllustration': 'Иллюстрация конвейера сборки',
+  'workspace.projectsIllustration': 'Иллюстрация рабочей области проектов',
 } as const satisfies MessageCatalog;

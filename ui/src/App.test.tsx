@@ -59,6 +59,18 @@ describe('App', () => {
     expect(screen.queryByLabelText('Security notice')).toBeNull();
   });
 
+  it.each([
+    [CONSOLE_PATHS.projects, 'Project workspace illustration'],
+    [CONSOLE_PATHS.builds, 'Build pipeline illustration'],
+    [CONSOLE_PATHS.agents, 'Agent capacity illustration'],
+    [CONSOLE_PATHS.agentPools, 'Agent capacity illustration'],
+  ])('renders a full-workspace illustration for the unselected route %s', async (path, label) => {
+    renderConsole(path);
+
+    const illustration = await screen.findByRole('img', { name: label });
+    expect(illustration.closest('section')?.getAttribute('data-workspace-welcome')).toBe('true');
+  });
+
   it('keeps Favorites before the contextual browse content', () => {
     renderConsole(CONSOLE_PATHS.projects);
     const favorites = screen.getByRole('heading', { level: 3, name: 'Favorites' });

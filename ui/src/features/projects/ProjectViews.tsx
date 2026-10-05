@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ChevronRight, FolderTree, RefreshCw } from 'lucide-react';
+import { ChevronRight, RefreshCw } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 
 import { ManagementApiError } from '../../api/client';
@@ -11,6 +11,7 @@ import {
   QueryFailureNotice,
   QueryLoadingNotice,
 } from '../../shared/QueryStateNotice';
+import { WorkspaceWelcome } from '../../shared/WorkspaceWelcome';
 import type { ProjectDetails, ProjectsApi } from './api';
 import { ProjectBuilds } from './ProjectBuilds';
 import { ProjectDefinitions } from './ProjectDefinitions';
@@ -23,13 +24,13 @@ interface ProjectsViewProps {
 export function ProjectsLandingView() {
   const { t } = usePresentation();
   return (
-    <section aria-labelledby="page-title" className={styles.page}>
-      <PageHeading description={t('projects.choose')} title={t('section.projects')} />
-      <div className={styles.emptyState}>
-        <FolderTree aria-hidden="true" size={28} strokeWidth={1.6} />
-        <p>{t('projects.selectLeft')}</p>
-      </div>
-    </section>
+    <WorkspaceWelcome
+      description={t('projects.choose')}
+      eyebrow={t('projects.workspace')}
+      illustrationLabel={t('workspace.projectsIllustration')}
+      kind="projects"
+      title={t('section.projects')}
+    />
   );
 }
 

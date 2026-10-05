@@ -1,0 +1,233 @@
+.welcome {
+  position: relative;
+  display: grid;
+  min-height: calc(100vh - var(--utility-header-height) - (2 * var(--space-xl)));
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background:
+    radial-gradient(
+      circle at 20% 18%,
+      color-mix(in srgb, var(--color-brand-soft) 72%, transparent),
+      transparent 28%
+    ),
+    radial-gradient(
+      circle at 83% 80%,
+      color-mix(in srgb, var(--color-information-soft) 68%, transparent),
+      transparent 30%
+    ),
+    var(--color-surface);
+}
+
+.welcome::before {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--color-border) 0.7px, transparent 0.7px);
+  background-size: 20px 20px;
+  content: '';
+  mask-image: linear-gradient(to bottom, black, transparent 76%);
+  opacity: 0.22;
+}
+
+.inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: min(100%, 58rem);
+  justify-items: center;
+  padding: clamp(1.5rem, 4vw, 3.5rem);
+}
+
+.illustration {
+  display: block;
+  width: min(100%, 50rem);
+  max-height: min(48vh, 27rem);
+  color: var(--color-text-primary);
+}
+
+.copy {
+  max-width: 43rem;
+  margin-top: clamp(-1rem, -1.5vw, -0.35rem);
+  text-align: center;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: var(--color-brand-action);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.copy h1 {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: clamp(1.55rem, 4vw, 2.35rem);
+  letter-spacing: -0.035em;
+}
+
+.description {
+  margin: 0.75rem 0 0;
+  color: var(--color-text-muted);
+  font-size: clamp(0.82rem, 1.5vw, 0.96rem);
+  line-height: 1.6;
+}
+
+.halo {
+  fill: var(--color-brand-soft);
+  opacity: 0.72;
+}
+
+.orbit,
+.orbitSoft {
+  fill: none;
+  stroke: var(--color-brand-accent);
+  stroke-dasharray: 4 12;
+  stroke-linecap: round;
+  stroke-width: 2;
+  opacity: 0.42;
+}
+
+.orbitSoft {
+  stroke: var(--color-information);
+  opacity: 0.28;
+}
+
+.windowShadow {
+  fill: var(--color-evergreen-950);
+  opacity: 0.11;
+}
+
+.window,
+.nodeCard,
+.pipelineCard,
+.agentNode {
+  fill: var(--color-surface);
+  stroke: var(--color-border);
+  stroke-width: 2;
+}
+
+.windowBar,
+.connectionLines,
+.networkLines {
+  fill: none;
+  stroke: var(--color-border);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.windowDot {
+  fill: var(--color-brand-accent);
+}
+
+.windowDotSoft {
+  fill: var(--color-border);
+}
+
+.sidebar,
+.console rect,
+.capacityBars rect {
+  fill: var(--color-surface-subtle);
+}
+
+.sidebarActive {
+  fill: var(--color-brand-soft);
+}
+
+.sidebarLine,
+.nodeLine,
+.console path,
+.serverRack path {
+  fill: none;
+  stroke: var(--color-text-muted);
+  stroke-linecap: round;
+  stroke-width: 3;
+  opacity: 0.65;
+}
+
+.nodeMark,
+.agentStatus,
+.done,
+.console circle {
+  fill: var(--color-brand-accent);
+}
+
+.folder {
+  fill: var(--color-brand-soft);
+  stroke: var(--color-brand-action);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.pipelineLine {
+  fill: none;
+  stroke: var(--color-brand-accent);
+  stroke-dasharray: 7 8;
+  stroke-linecap: round;
+  stroke-width: 4;
+}
+
+.running {
+  fill: var(--color-warning);
+}
+
+.queued {
+  fill: var(--color-information);
+}
+
+.buildBadge circle,
+.agentCore {
+  fill: var(--color-brand-action);
+}
+
+.buildBadge path {
+  fill: none;
+  stroke: var(--color-on-brand);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 5;
+}
+
+.serverRack {
+  fill: var(--color-evergreen-950);
+  stroke: var(--color-brand-accent);
+  stroke-width: 2;
+}
+
+.serverRack path {
+  stroke: var(--color-sidebar-muted);
+}
+
+.serverRack circle {
+  fill: var(--color-brand-accent);
+}
+
+.agentCoreSoft {
+  fill: var(--color-brand-soft);
+  stroke: var(--color-brand-action);
+  stroke-width: 2;
+}
+
+.sparkles {
+  fill: var(--color-brand-accent);
+  opacity: 0.8;
+}
+
+@media (max-width: 42rem) {
+  .welcome {
+    min-height: calc(100vh - var(--utility-header-height) - 1.7rem);
+  }
+
+  .inner {
+    padding: 1.25rem 1rem 1.75rem;
+  }
+
+  .illustration {
+    min-width: 28rem;
+    transform: scale(0.92);
+  }
+}

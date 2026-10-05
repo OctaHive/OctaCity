@@ -13,6 +13,7 @@ import {
   QueryFailureNotice,
   QueryLoadingNotice,
 } from '../../shared/QueryStateNotice';
+import { WorkspaceWelcome } from '../../shared/WorkspaceWelcome';
 import type { AgentPoolResource, AgentResource, CapacityApi } from './api';
 import { AgentCommands } from './AgentCommands';
 import styles from './CapacityViews.module.css';
@@ -21,11 +22,13 @@ export function CapacityLandingView({ kind = 'agents' }: { kind?: 'agents' | 'po
   const { t } = usePresentation();
   const title = kind === 'agents' ? t('section.agents') : t('capacity.pools');
   return (
-    <section aria-labelledby="page-title" className={styles.landing}>
-      <p className={styles.eyebrow}>{t('capacity.title')}</p>
-      <h1 id="page-title">{title}</h1>
-      <p className={styles.description}>{t('capacity.choose')}</p>
-    </section>
+    <WorkspaceWelcome
+      description={t('capacity.choose')}
+      eyebrow={t('capacity.title')}
+      illustrationLabel={t('workspace.agentsIllustration')}
+      kind="agents"
+      title={title}
+    />
   );
 }
 

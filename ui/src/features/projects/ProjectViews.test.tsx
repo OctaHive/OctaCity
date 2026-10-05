@@ -34,7 +34,9 @@ describe('Project hierarchy', () => {
     expect(screen.queryByRole('button', { name: 'Load more root Projects' })).toBeNull();
     expect(within(screen.getByRole('main')).queryByRole('link', { name: 'Alpha' })).toBeNull();
     expect(
-      await screen.findByText('Select a Project from the hierarchy on the left.'),
+      await screen.findByText(
+        'Choose a Project from the contextual explorer to inspect its current definitions and recent Builds.',
+      ),
     ).toBeTruthy();
   });
 
@@ -149,7 +151,11 @@ describe('Project hierarchy', () => {
 
     expect(await screen.findByText('No root Projects are available.')).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByText('Select a Project from the hierarchy on the left.')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Choose a Project from the contextual explorer to inspect its current definitions and recent Builds.',
+      ),
+    ).toBeTruthy();
   });
 
   it('renders a not-found deep link without converting it to an empty collection', async () => {

@@ -102,7 +102,11 @@ test('persists Russian presentation without storing resource content', async ({ 
     'aria-current',
     'page',
   );
-  await expect(page.getByText('Выберите проект в иерархии слева.')).toBeVisible();
+  await expect(
+    page.getByText(
+      'Выберите проект в проводнике, чтобы изучить его текущие определения и недавние сборки.',
+    ),
+  ).toBeVisible();
 
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');

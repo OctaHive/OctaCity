@@ -6,12 +6,14 @@ import { primaryRoute } from './primaryRoutes';
 const visualCases = [
   {
     ...primaryRoute('projects'),
+    illustrationLabel: 'Project workspace illustration',
     name: 'projects-desktop-light.png',
     theme: 'light',
     viewport: { height: 900, width: 1_440 },
   },
   {
     ...primaryRoute('projects'),
+    illustrationLabel: 'Project workspace illustration',
     name: 'projects-desktop-dark.png',
     theme: 'dark',
     viewport: { height: 900, width: 1_440 },
@@ -36,6 +38,7 @@ const visualCases = [
   },
   {
     ...primaryRoute('builds'),
+    illustrationLabel: 'Build pipeline illustration',
     name: 'builds-desktop-dark.png',
     theme: 'dark',
     viewport: { height: 900, width: 1_440 },
@@ -48,6 +51,7 @@ const visualCases = [
   },
   {
     ...primaryRoute('agents'),
+    illustrationLabel: 'Agent capacity illustration',
     name: 'agents-desktop-light.png',
     theme: 'light',
     viewport: { height: 900, width: 1_440 },
@@ -60,6 +64,7 @@ const visualCases = [
   },
   {
     ...primaryRoute('agent-pools'),
+    illustrationLabel: 'Agent capacity illustration',
     name: 'agent-pools-desktop-dark.png',
     theme: 'dark',
     viewport: { height: 900, width: 1_440 },
@@ -86,6 +91,9 @@ for (const visual of visualCases) {
         name: visual.heading,
       }),
     ).toBeVisible();
+    if ('illustrationLabel' in visual) {
+      await expect(page.getByRole('img', { name: visual.illustrationLabel })).toBeVisible();
+    }
     await selectTheme(page, visual.theme);
     if (visual.viewport.width === 640) {
       await expect(page.getByRole('button', { name: /Open .* explorer/u })).toBeVisible();

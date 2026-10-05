@@ -9,6 +9,7 @@ import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/build
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
+import { WorkspaceWelcome, type WorkspaceWelcomeKind } from '../shared/WorkspaceWelcome';
 import { usePresentation } from './presentation/PresentationProvider';
 import type { MessageKey } from './presentation/messages';
 import { CONSOLE_PATHS, type ConsolePath } from './routes';
@@ -61,19 +62,28 @@ const ProjectView = lazy(async () => {
   return { default: module.ProjectView };
 });
 
-interface PlaceholderViewProps {
+interface WorkspaceLandingViewProps {
   description: MessageKey;
+  illustrationLabel: MessageKey;
+  kind: WorkspaceWelcomeKind;
   title: MessageKey;
 }
 
-function PlaceholderView({ description, title }: PlaceholderViewProps) {
+function WorkspaceLandingView({
+  description,
+  illustrationLabel,
+  kind,
+  title,
+}: WorkspaceLandingViewProps) {
   const { t } = usePresentation();
   return (
-    <section className={styles.placeholder} aria-labelledby="page-title">
-      <p className={styles.eyebrow}>{t('route.operatorWorkspace')}</p>
-      <h1 id="page-title">{t(title)}</h1>
-      <p className={styles.placeholderDescription}>{t(description)}</p>
-    </section>
+    <WorkspaceWelcome
+      description={t(description)}
+      eyebrow={t('route.operatorWorkspace')}
+      illustrationLabel={t(illustrationLabel)}
+      kind={kind}
+      title={t(title)}
+    />
   );
 }
 
@@ -139,7 +149,14 @@ export function createConsoleRoutes(
         },
         {
           path: childPath(CONSOLE_PATHS.builds),
-          element: <PlaceholderView description="route.chooseBuild" title="section.builds" />,
+          element: (
+            <WorkspaceLandingView
+              description="route.chooseBuild"
+              illustrationLabel="workspace.buildsIllustration"
+              kind="builds"
+              title="section.builds"
+            />
+          ),
         },
         {
           path: childPath(CONSOLE_PATHS.build),
