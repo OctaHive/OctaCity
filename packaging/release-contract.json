@@ -35,6 +35,12 @@
         "source_git"
       ]
     },
+    "octacity-console": {
+      "protocols": {},
+      "required_components": [
+        "application"
+      ]
+    },
     "octacity-server": {
       "protocols": {
         "agent": {
