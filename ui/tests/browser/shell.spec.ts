@@ -75,6 +75,21 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(page.getByLabel('Security notice')).toHaveCount(0);
 });
 
+test('centers the compact theme icon inside its trigger', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await openReadyConsole(page, CONSOLE_PATHS.projects);
+
+  const offset = await page.getByRole('combobox', { name: 'Theme' }).evaluate((trigger) => {
+    const icon = trigger.querySelector('svg');
+    if (icon === null) throw new Error('theme trigger icon is absent');
+    const triggerBox = trigger.getBoundingClientRect();
+    const iconBox = icon.getBoundingClientRect();
+    return iconBox.left + iconBox.width / 2 - (triggerBox.left + triggerBox.width / 2);
+  });
+
+  expect(Math.abs(offset)).toBeLessThanOrEqual(0.5);
+});
+
 test('persists Russian presentation without storing resource content', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1_440 });
   await openReadyConsole(page, CONSOLE_PATHS.projects);
