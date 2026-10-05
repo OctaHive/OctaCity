@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { formatTimestamp } from '../../shared/display';
+import { SelectMenu } from '../../shared/SelectMenu';
 import {
   QueryBackgroundNotice,
   QueryEmptyNotice,
@@ -140,33 +141,47 @@ export function BuildLogSearch({ api, attemptId, buildId, jobs, projectId }: Bui
             type="search"
           />
         </label>
-        <label>
+        <div className={styles.logSelectField}>
           <span>{t('logs.searchMode')}</span>
-          <select defaultValue={draft.mode} name={LOG_MODE_PARAMETER}>
-            <option value="literal">{t('logs.literal')}</option>
-            <option value="full_text">{t('logs.fullText')}</option>
-          </select>
-        </label>
-        <label>
+          <SelectMenu
+            ariaLabel={t('logs.searchMode')}
+            defaultValue={draft.mode}
+            name={LOG_MODE_PARAMETER}
+            options={[
+              { label: t('logs.literal'), value: 'literal' },
+              { label: t('logs.fullText'), value: 'full_text' },
+            ]}
+          />
+        </div>
+        <div className={styles.logSelectField}>
           <span>{t('logs.scope')}</span>
-          <select defaultValue={draft.scope} name={LOG_SCOPE_PARAMETER}>
-            <option value="build">{t('logs.buildScope')}</option>
-            <option value="attempt">{t('logs.attemptScope')}</option>
-            {jobs.map((job) => (
-              <option key={job.id} value={`job:${job.id}`}>
-                {t('logs.jobScope', { name: job.pipeline_node_id })}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
+          <SelectMenu
+            ariaLabel={t('logs.scope')}
+            defaultValue={draft.scope}
+            name={LOG_SCOPE_PARAMETER}
+            options={[
+              { label: t('logs.buildScope'), value: 'build' },
+              { label: t('logs.attemptScope'), value: 'attempt' },
+              ...jobs.map((job) => ({
+                label: t('logs.jobScope', { name: job.pipeline_node_id }),
+                value: `job:${job.id}`,
+              })),
+            ]}
+          />
+        </div>
+        <div className={styles.logSelectField}>
           <span>{t('logs.stream')}</span>
-          <select defaultValue={draft.stream} name={LOG_STREAM_PARAMETER}>
-            <option value="">{t('logs.allStreams')}</option>
-            <option value="stdout">stdout</option>
-            <option value="stderr">stderr</option>
-          </select>
-        </label>
+          <SelectMenu
+            ariaLabel={t('logs.stream')}
+            defaultValue={draft.stream}
+            name={LOG_STREAM_PARAMETER}
+            options={[
+              { label: t('logs.allStreams'), value: '' },
+              { label: 'stdout', value: 'stdout' },
+              { label: 'stderr', value: 'stderr' },
+            ]}
+          />
+        </div>
         <button className={styles.secondaryButton} type="submit">
           <Search aria-hidden="true" size={15} />
           {t('logs.search')}

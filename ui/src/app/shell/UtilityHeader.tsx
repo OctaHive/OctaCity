@@ -1,11 +1,13 @@
-import { Bell, Boxes, ChevronDown, Search, SunMoon, UserRound } from 'lucide-react';
-import { lazy, Suspense } from 'react';
+import { Bell, Boxes, ChevronDown, Monitor, Moon, Search, Sun, UserRound } from 'lucide-react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import type { OperatorAttentionApi } from '../../api/operatorAttention';
 import { usePresentation } from '../presentation/PresentationProvider';
 import { CONSOLE_PATHS } from '../routes';
 import type { Language, ThemeMode } from '../presentation/preferences';
+import { SelectMenu, type SelectMenuOption } from '../../shared/SelectMenu';
+import { useDismissibleLayer } from '../../shared/useDismissibleLayer';
 import styles from './UtilityHeader.module.css';
 
 const NotificationCenter = lazy(async () => {
@@ -28,6 +30,25 @@ export function UtilityHeader({
   readinessTone,
 }: UtilityHeaderProps) {
   const { preferences, setLanguage, setTheme, t } = usePresentation();
+  const [operatorOpen, setOperatorOpen] = useState(false);
+  const operatorTriggerRef = useRef<HTMLButtonElement>(null);
+  const operatorPanelRef = useRef<HTMLDivElement>(null);
+  const themeOptions: readonly SelectMenuOption<ThemeMode>[] = [
+    { icon: <Sun aria-hidden="true" size={18} />, label: t('theme.light'), value: 'light' },
+    { icon: <Moon aria-hidden="true" size={18} />, label: t('theme.dark'), value: 'dark' },
+    { icon: <Monitor aria-hidden="true" size={18} />, label: t('theme.system'), value: 'system' },
+  ];
+  const languageOptions: readonly SelectMenuOption<Language>[] = [
+    { label: t('language.english'), value: 'en' },
+    { label: t('language.russian'), value: 'ru' },
+  ];
+
+  useDismissibleLayer({
+    active: operatorOpen,
+    layerRef: operatorPanelRef,
+    onDismiss: () => setOperatorOpen(false),
+    triggerRef: operatorTriggerRef,
+  });
 
   return (
     <header className={styles.utilityHeader}>
@@ -64,19 +85,14 @@ export function UtilityHeader({
           <span className={styles.readinessLabel}>{readinessLabel}</span>
         </div>
 
-        <label className={styles.themeControl}>
-          <SunMoon aria-hidden="true" size={17} />
-          <span className={styles.visuallyHidden}>{t('theme.label')}</span>
-          <select
-            aria-label={t('theme.label')}
-            onChange={(event) => setTheme(event.currentTarget.value as ThemeMode)}
-            value={preferences.theme}
-          >
-            <option value="system">{t('theme.system')}</option>
-            <option value="light">{t('theme.light')}</option>
-            <option value="dark">{t('theme.dark')}</option>
-          </select>
-        </label>
+        <SelectMenu
+          ariaLabel={t('theme.label')}
+          className={styles.themeControl}
+          compact
+          onValueChange={setTheme}
+          options={themeOptions}
+          value={preferences.theme}
+        />
 
         <Suspense
           fallback={
@@ -97,44 +113,64 @@ export function UtilityHeader({
           />
         </Suspense>
 
-        <details className={styles.operatorMenu}>
-          <summary aria-label={t('operator.menu')}>
+        <div
+          className={styles.operatorMenu}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            event.preventDefault();
+            setOperatorOpen(false);
+            operatorTriggerRef.current?.focus();
+          }}
+        >
+          <button
+            aria-expanded={operatorOpen}
+            aria-haspopup="dialog"
+            aria-label={t('operator.menu')}
+            className={styles.operatorMenuTrigger}
+            onClick={() => setOperatorOpen((current) => !current)}
+            ref={operatorTriggerRef}
+            type="button"
+          >
             <UserRound aria-hidden="true" size={18} />
             <span>{t('common.operator')}</span>
             <ChevronDown aria-hidden="true" size={14} />
-          </summary>
-          <div className={styles.operatorMenuPanel}>
-            <strong>{t('operator.localSettings')}</strong>
-            <label className={styles.operatorLanguage}>
-              <span>{t('language.label')}</span>
-              <select
-                aria-label={t('language.label')}
-                onChange={(event) => setLanguage(event.currentTarget.value as Language)}
-                value={preferences.language}
-              >
-                <option value="en">{t('language.english')}</option>
-                <option value="ru">{t('language.russian')}</option>
-              </select>
-            </label>
-            <dl>
-              <div>
-                <dt>{t('operator.access')}</dt>
-                <dd>{t('operator.trustedNetwork')}</dd>
+          </button>
+          {operatorOpen ? (
+            <div
+              aria-label={t('operator.menu')}
+              className={styles.operatorMenuPanel}
+              ref={operatorPanelRef}
+              role="dialog"
+            >
+              <strong>{t('operator.localSettings')}</strong>
+              <div className={styles.operatorLanguage}>
+                <span>{t('language.label')}</span>
+                <SelectMenu
+                  ariaLabel={t('language.label')}
+                  onValueChange={setLanguage}
+                  options={languageOptions}
+                  value={preferences.language}
+                />
               </div>
-              <div>
-                <dt>{t('operator.preferences')}</dt>
-                <dd>{t('operator.browserLocal')}</dd>
-              </div>
-            </dl>
-            <nav aria-label={t('operator.resources')} className={styles.operatorResources}>
-              <a href="/api/v1/openapi.json" rel="noreferrer" target="_blank">
-                {t('operator.apiDocumentation')}
-              </a>
-              <a href="#trusted-network-notice">{t('operator.deploymentInformation')}</a>
-            </nav>
-            <p>{t('operator.noIdentity')}</p>
-          </div>
-        </details>
+              <dl>
+                <div>
+                  <dt>{t('operator.access')}</dt>
+                  <dd>{t('operator.trustedNetwork')}</dd>
+                </div>
+                <div>
+                  <dt>{t('operator.preferences')}</dt>
+                  <dd>{t('operator.browserLocal')}</dd>
+                </div>
+              </dl>
+              <nav aria-label={t('operator.resources')} className={styles.operatorResources}>
+                <a href="/api/v1/openapi.json" rel="noreferrer" target="_blank">
+                  {t('operator.apiDocumentation')}
+                </a>
+              </nav>
+              <p>{t('operator.noIdentity')}</p>
+            </div>
+          ) : null}
+        </div>
       </div>
     </header>
   );

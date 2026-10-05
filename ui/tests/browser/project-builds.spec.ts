@@ -73,10 +73,10 @@ test('round-trips copied Build filters, preserves server order, and follows the 
   await expect(page.getByRole('status').filter({ hasText: 'Server ready' })).toHaveText(
     'Server ready',
   );
-  await expect(page.getByRole('combobox', { name: 'Build Configuration' })).toHaveValue(
-    CONFIGURATION_ID,
+  await expect(page.getByRole('combobox', { name: 'Build Configuration' })).toContainText(
+    'Release · v4',
   );
-  await expect(page.getByRole('combobox', { name: 'Build state' })).toHaveValue('failed');
+  await expect(page.getByRole('combobox', { name: 'Build state' })).toContainText('Failed');
   await expect
     .poll(() => buildRequestFilters(buildRequests.at(-1)))
     .toEqual({ configurationId: CONFIGURATION_ID, cursor: null, state: 'failed' });
@@ -87,10 +87,10 @@ test('round-trips copied Build filters, preserves server order, and follows the 
   const copiedUrl = page.url();
   await page.goto(CONSOLE_PATHS.projects);
   await page.goto(copiedUrl);
-  await expect(page.getByRole('combobox', { name: 'Build Configuration' })).toHaveValue(
-    CONFIGURATION_ID,
+  await expect(page.getByRole('combobox', { name: 'Build Configuration' })).toContainText(
+    'Release · v4',
   );
-  await expect(page.getByRole('combobox', { name: 'Build state' })).toHaveValue('failed');
+  await expect(page.getByRole('combobox', { name: 'Build state' })).toContainText('Failed');
 
   await builds.getByRole('button', { name: 'Load more Builds' }).click();
   await expect(builds.getByRole('link', { name: BUILD_C })).toBeVisible();
@@ -99,8 +99,10 @@ test('round-trips copied Build filters, preserves server order, and follows the 
     .poll(() => buildRequestFilters(buildRequests.at(-1)))
     .toEqual({ configurationId: CONFIGURATION_ID, cursor: PAGE_CURSOR, state: 'failed' });
 
-  await page.getByRole('combobox', { name: 'Build Configuration' }).selectOption('');
-  await page.getByRole('combobox', { name: 'Build state' }).selectOption('');
+  await page.getByRole('combobox', { name: 'Build Configuration' }).click();
+  await page.getByRole('option', { name: 'All configurations' }).click();
+  await page.getByRole('combobox', { name: 'Build state' }).click();
+  await page.getByRole('option', { name: 'All states' }).click();
   await expect(page).toHaveURL(`/projects/${PROJECT_ID}`);
   await expect
     .poll(() => buildRequestFilters(buildRequests.at(-1)))

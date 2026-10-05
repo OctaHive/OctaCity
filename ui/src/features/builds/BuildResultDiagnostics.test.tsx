@@ -129,10 +129,8 @@ describe('Build Result diagnostics', () => {
 
     await userEvent.clear(reason);
     await userEvent.type(reason, 'incident evidence');
-    await userEvent.selectOptions(
-      within(panel).getByRole('combobox', { name: 'Hold duration' }),
-      'time_bounded',
-    );
+    await userEvent.click(within(panel).getByRole('combobox', { name: 'Hold duration' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Time bounded' }));
     const expiry = within(panel).getByLabelText('Hold expiry');
     await userEvent.type(expiry, '2000-01-02T03:04');
     await userEvent.click(within(panel).getByRole('button', { name: 'Review hold' }));

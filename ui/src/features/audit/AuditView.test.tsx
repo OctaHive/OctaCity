@@ -45,7 +45,8 @@ describe('Audit view', () => {
     const { router } = renderAudit('/audit', api);
     await screen.findByText('No audit facts match the selected filters.');
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Actor kind' }), 'agent');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Actor kind' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Agent' }));
     await userEvent.type(screen.getByRole('textbox', { name: 'Actor identity' }), 'agent-7');
     await userEvent.type(screen.getByRole('textbox', { name: 'Operation' }), 'drain_agent');
     await userEvent.type(screen.getByRole('textbox', { name: 'Target kind' }), 'agent');

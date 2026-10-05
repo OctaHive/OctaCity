@@ -8,6 +8,7 @@ import { buildPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { formatEnumLabel } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
+import { SelectMenu } from '../../shared/SelectMenu';
 import {
   QueryBackgroundNotice,
   QueryEmptyNotice,
@@ -106,20 +107,19 @@ export function ManualBuildForm({
           valueType={parameter.value_type}
         />
       ))}
-      <label className={commandFormStyles.field}>
+      <div className={commandFormStyles.field}>
         <span>{t('manualBuild.source')}</span>
-        <select
-          className={commandFormStyles.control}
-          onChange={(event) =>
-            setSourceKind(event.target.value as ManualBuildRequest['source']['kind'])
-          }
+        <SelectMenu
+          ariaLabel={t('manualBuild.source')}
+          onValueChange={setSourceKind}
+          options={[
+            { label: t('manualBuild.defaultReference'), value: 'default_reference' },
+            { label: t('manualBuild.reference'), value: 'reference' },
+            { label: t('manualBuild.exactRevision'), value: 'exact_revision' },
+          ]}
           value={sourceKind}
-        >
-          <option value="default_reference">{t('manualBuild.defaultReference')}</option>
-          <option value="reference">{t('manualBuild.reference')}</option>
-          <option value="exact_revision">{t('manualBuild.exactRevision')}</option>
-        </select>
-      </label>
+        />
+      </div>
       {sourceKind === 'default_reference' ? null : (
         <label className={commandFormStyles.field}>
           <span>
@@ -261,20 +261,19 @@ function ParameterField({
   const label = formatParameterName(name);
   if (valueType === 'boolean') {
     return (
-      <label className={commandFormStyles.field}>
+      <div className={commandFormStyles.field}>
         <span>{label}</span>
-        <select
-          className={commandFormStyles.control}
-          onChange={(event) =>
-            onChange(event.target.value === '' ? '' : event.target.value === 'true')
-          }
+        <SelectMenu
+          ariaLabel={label}
+          onValueChange={(nextValue) => onChange(nextValue === '' ? '' : nextValue === 'true')}
+          options={[
+            { label: t('manualBuild.select'), value: '' },
+            { label: t('manualBuild.false'), value: 'false' },
+            { label: t('manualBuild.true'), value: 'true' },
+          ]}
           value={String(value)}
-        >
-          <option value="">{t('manualBuild.select')}</option>
-          <option value="false">{t('manualBuild.false')}</option>
-          <option value="true">{t('manualBuild.true')}</option>
-        </select>
-      </label>
+        />
+      </div>
     );
   }
   return (

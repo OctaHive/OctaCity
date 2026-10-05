@@ -112,8 +112,10 @@ describe('Project hierarchy', () => {
     expect(await screen.findByRole('link', { name: 'Alpha two' })).toBeTruthy();
     expect(api.listProjects).toHaveBeenCalledWith('alpha', 'alpha-next', expect.any(AbortSignal));
 
+    const hierarchy = screen.getByRole('tree', { name: 'Project hierarchy' });
     await userEvent.click(screen.getByRole('link', { name: 'Alpha one' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/projects/alpha-one'));
+    expect(screen.getByRole('tree', { name: 'Project hierarchy' })).toBe(hierarchy);
     expect(screen.getByRole('link', { name: 'Beta one' })).toBeTruthy();
   });
 

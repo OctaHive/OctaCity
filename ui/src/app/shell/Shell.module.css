@@ -119,37 +119,10 @@
   grid-area: workspace;
 }
 
-.securityBanner {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.65rem;
-  margin: var(--space-lg) var(--space-xl) 0;
-  padding: var(--space-md) 0.9rem;
-  border: 1px solid var(--color-security-border);
-  border-radius: var(--radius-small);
-  background: var(--color-brand-soft);
-  color: var(--color-security-ink);
-  font-size: 0.8rem;
-}
-
-.securityBanner svg {
-  flex: 0 0 auto;
-  margin-top: 0.05rem;
-}
-
-.securityBanner p {
-  margin: 0;
-  line-height: 1.45;
-}
-
 .content {
   max-width: 100rem;
   min-height: calc(100vh - var(--utility-header-height));
   padding: var(--space-xl);
-}
-
-.narrowWorkbench .securityBanner {
-  margin: var(--space-md) 0.85rem 0;
 }
 
 .narrowWorkbench .content {

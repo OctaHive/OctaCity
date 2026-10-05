@@ -9,6 +9,7 @@ import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
+import { SelectMenu } from '../../shared/SelectMenu';
 import type {
   BuildResultHoldApi,
   BuildResultRetentionMutationResponse,
@@ -98,17 +99,18 @@ export function BuildResultHoldCommands({
               value={reason}
             />
           </label>
-          <label className={commandFormStyles.field}>
+          <div className={commandFormStyles.field}>
             <span>{t('retention.holdDuration')}</span>
-            <select
-              className={commandFormStyles.control}
-              onChange={(event) => setDuration(event.target.value as typeof duration)}
+            <SelectMenu
+              ariaLabel={t('retention.holdDuration')}
+              onValueChange={setDuration}
+              options={[
+                { label: t('retention.permanent'), value: 'permanent' },
+                { label: t('retention.timeBounded'), value: 'time_bounded' },
+              ]}
               value={duration}
-            >
-              <option value="permanent">{t('retention.permanent')}</option>
-              <option value="time_bounded">{t('retention.timeBounded')}</option>
-            </select>
-          </label>
+            />
+          </div>
           {duration === 'time_bounded' ? (
             <label className={commandFormStyles.field}>
               <span>{t('retention.expiry')}</span>

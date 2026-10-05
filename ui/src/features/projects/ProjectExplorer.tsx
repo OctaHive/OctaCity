@@ -28,29 +28,17 @@ export function ProjectExplorer({ api }: ProjectExplorerProps) {
   const expansion = useExpansionOverrides('project');
   const selectedProjectId =
     matchPath(CONSOLE_PATHS.project, location.pathname)?.params.projectId ?? null;
-
-  return selectedProjectId === null ? (
-    <ProjectTree api={api} expansion={expansion} revealedProjects={[]} selectedProjectId={null} />
-  ) : (
-    <SelectedProjectTree api={api} expansion={expansion} selectedProjectId={selectedProjectId} />
-  );
-}
-
-function SelectedProjectTree({
-  api,
-  expansion,
-  selectedProjectId,
-}: ProjectExplorerProps & {
-  expansion: ReturnType<typeof useExpansionOverrides>;
-  selectedProjectId: string;
-}) {
   const selectedProject = useQuery({
-    queryFn: ({ signal }) => api.getProject(selectedProjectId, signal),
-    queryKey: queryKeys.project(selectedProjectId),
+    enabled: selectedProjectId !== null,
+    queryFn: ({ signal }) => api.getProject(requireSelection(selectedProjectId), signal),
+    queryKey:
+      selectedProjectId === null
+        ? queryKeys.disabledExplorerDetail('project')
+        : queryKeys.project(selectedProjectId),
   });
-  const selectedChildren = useProjectPage(api, selectedProjectId);
+  const selectedChildren = useProjectPage(api, selectedProjectId, selectedProjectId !== null);
   const revealedProjects =
-    selectedProject.data === undefined
+    selectedProjectId === null || selectedProject.data === undefined
       ? []
       : projectTrail(
           selectedProject.data,
@@ -250,7 +238,7 @@ function ProjectBranch({
   );
 }
 
-function useProjectPage(api: ProjectHierarchyApi, parentId: string | null) {
+function useProjectPage(api: ProjectHierarchyApi, parentId: string | null, enabled = true) {
   return useInfiniteQuery<
     ProjectPage,
     Error,
@@ -258,11 +246,17 @@ function useProjectPage(api: ProjectHierarchyApi, parentId: string | null) {
     ReturnType<typeof queryKeys.projectChildren>,
     string | null
   >({
+    enabled,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     initialPageParam: null,
     queryFn: ({ pageParam, signal }) => api.listProjects(parentId, pageParam, signal),
     queryKey: queryKeys.projectChildren(parentId),
   });
+}
+
+function requireSelection(selectedProjectId: string | null): string {
+  if (selectedProjectId === null) throw new Error('selected Project query is disabled');
+  return selectedProjectId;
 }
 
 function projectTrail(

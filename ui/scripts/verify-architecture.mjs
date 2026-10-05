@@ -218,8 +218,16 @@ function verifyModule(relativePath, contents, policy, violations) {
     if (isExternalJsxResource(node)) {
       found.add('external stylesheet and font requests are forbidden');
     }
+    if (isJsxElementNamed(node, 'select')) {
+      found.add('browser-native select elements are forbidden; use the shared SelectMenu');
+    }
   });
   for (const message of found) violations.push(`${relativePath}: ${message}`);
+}
+
+function isJsxElementNamed(node, name) {
+  if (!ts.isJsxOpeningElement(node) && !ts.isJsxSelfClosingElement(node)) return false;
+  return ts.isIdentifier(node.tagName) && node.tagName.text === name;
 }
 
 function verifyHtml(relativePath, contents, violations) {

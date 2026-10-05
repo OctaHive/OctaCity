@@ -43,18 +43,18 @@ describe('Project Builds', () => {
       ),
     );
 
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Build state' }), 'running');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Build state' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Running' }));
     await waitFor(() =>
       expect(router.state.location.search).toBe(
         `?configuration_id=${CONFIGURATION_A}&state=running`,
       ),
     );
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: 'Build Configuration' }),
-      '',
-    );
+    await userEvent.click(screen.getByRole('combobox', { name: 'Build Configuration' }));
+    await userEvent.click(screen.getByRole('option', { name: 'All configurations' }));
     await waitFor(() => expect(router.state.location.search).toBe('?state=running'));
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Build state' }), '');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Build state' }));
+    await userEvent.click(screen.getByRole('option', { name: 'All states' }));
     await waitFor(() => expect(router.state.location.search).toBe(''));
   });
 

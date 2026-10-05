@@ -63,7 +63,7 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(explorer.getByRole('button', { name: 'Expand Delivery' })).toHaveCount(0);
   await expect(page.getByRole('main').getByRole('link', { name: 'Platform' })).toHaveCount(0);
   await expect(page.locator('#console-content')).toBeVisible();
-  await expect(page.getByLabel('Security notice')).toContainText('Trusted network only');
+  await expect(page.getByLabel('Security notice')).toHaveCount(0);
 });
 
 test('persists Russian presentation without storing resource content', async ({ page }) => {
@@ -71,7 +71,8 @@ test('persists Russian presentation without storing resource content', async ({ 
   await openReadyConsole(page, CONSOLE_PATHS.projects);
 
   await page.getByLabel('Operator menu').click();
-  await page.getByRole('combobox', { name: 'Language' }).selectOption('ru');
+  await page.getByRole('combobox', { name: 'Language' }).click();
+  await page.getByRole('option', { name: 'Russian' }).click();
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
   await expect(page.getByRole('link', { name: 'Проекты', exact: true })).toHaveAttribute(
     'aria-current',
@@ -83,6 +84,29 @@ test('persists Russian presentation without storing resource content', async ({ 
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
   const record = await page.evaluate(() => localStorage.getItem('octacity.console.preferences'));
   expect(record).not.toMatch(/Platform|Delivery|payload|requestId|credential/i);
+});
+
+test('light-dismisses header popups after an outside click', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await openReadyConsole(page, CONSOLE_PATHS.projects);
+  const outside = page
+    .getByRole('navigation', { name: 'Primary sections' })
+    .getByRole('link', { name: 'Projects' });
+
+  await page.getByRole('combobox', { name: 'Theme' }).click();
+  await expect(page.getByRole('listbox', { name: 'Theme' })).toBeVisible();
+  await outside.click();
+  await expect(page.getByRole('listbox', { name: 'Theme' })).toHaveCount(0);
+
+  await page.getByLabel('Operator menu').click();
+  await expect(page.getByRole('dialog', { name: 'Operator menu' })).toBeVisible();
+  await outside.click();
+  await expect(page.getByRole('dialog', { name: 'Operator menu' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Notifications' }).click();
+  await expect(page.getByRole('dialog', { name: 'Notification center' })).toBeVisible();
+  await outside.click();
+  await expect(page.getByRole('dialog', { name: 'Notification center' })).toHaveCount(0);
 });
 
 test('keeps relevant notifications browser-local and rebuilds attention after reload', async ({

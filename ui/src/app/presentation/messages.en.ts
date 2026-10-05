@@ -570,7 +570,6 @@ export const enMessages = {
   'operator.access': 'Access',
   'operator.apiDocumentation': 'API documentation',
   'operator.browserLocal': 'Browser local',
-  'operator.deploymentInformation': 'Deployment information',
   'operator.localSettings': 'Local console settings',
   'operator.menu': 'Operator menu',
   'operator.noIdentity': 'No browser identity or session is active.',
@@ -661,10 +660,6 @@ export const enMessages = {
   'section.audit': 'Audit',
   'section.builds': 'Builds',
   'section.projects': 'Projects',
-  'security.description':
-    'This console is unauthenticated and must not be exposed to an untrusted network.',
-  'security.label': 'Security notice',
-  'security.title': 'Trusted network only.',
   'shell.allAgents': 'All Agents',
   'shell.allProjects': 'All Projects',
   'shell.agentPools': 'Agent Pools',

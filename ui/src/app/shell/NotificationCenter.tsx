@@ -24,6 +24,7 @@ import { usePresentation } from '../presentation/PresentationProvider';
 import { OPERATOR_ATTENTION_REFRESH_MILLISECONDS, queryKeys } from '../query';
 import { searchableResourcePath } from '../routes';
 import { useOverlayFocus } from '../../shared/useOverlayFocus';
+import { useDismissibleLayer } from '../../shared/useDismissibleLayer';
 import { formatTimestamp } from '../../shared/display';
 import styles from './NotificationCenter.module.css';
 
@@ -68,6 +69,12 @@ export function NotificationCenter({ api, icon, triggerClassName }: Notification
     initialFocusRef: closeRef,
     onDismiss: dismiss,
     restoreFocus: () => triggerRef.current?.focus(),
+  });
+  useDismissibleLayer({
+    active: open,
+    layerRef: panelRef,
+    onDismiss: dismiss,
+    triggerRef,
   });
 
   const toggle = () => {

@@ -29,6 +29,8 @@ export const queryKeys = {
   buildResultRetention: (buildId: string) => ['builds', buildId, 'retention'] as const,
   buildConfiguration: (configurationId: string, version: number) =>
     ['build-configurations', configurationId, version] as const,
+  disabledExplorerDetail: (kind: 'build' | 'build-configuration' | 'project') =>
+    ['explorer', 'disabled-detail', kind] as const,
   pipeline: (pipelineId: string, version: number) => ['pipelines', pipelineId, version] as const,
   project: (projectId: string) => ['projects', 'detail', projectId] as const,
   projectBuildConfigurations: (projectId: string) =>

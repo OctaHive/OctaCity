@@ -169,7 +169,8 @@ describe('Capacity detail views', () => {
 
     const target = await screen.findByRole('combobox', { name: 'Target Agent Pool' });
     expect(within(target).queryByRole('option', { name: 'Current Pool' })).toBeNull();
-    await userEvent.selectOptions(target, 'pool-b');
+    await userEvent.click(target);
+    await userEvent.click(screen.getByRole('option', { name: 'Target Pool' }));
     await userEvent.click(screen.getByRole('button', { name: 'Review pool reassignment' }));
     const dialog = screen.getByRole('dialog', { name: 'Move Builder A to Target Pool?' });
     expect(within(dialog).getByText(/stops assigning the Agent through Current Pool/)).toBeTruthy();
@@ -243,10 +244,8 @@ describe('Capacity detail views', () => {
     );
     renderView('/agents/agent-a', <AgentView api={api} />);
 
-    await userEvent.selectOptions(
-      await screen.findByRole('combobox', { name: 'Target Agent Pool' }),
-      'pool-b',
-    );
+    await userEvent.click(await screen.findByRole('combobox', { name: 'Target Agent Pool' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Ineligible Pool' }));
     await userEvent.click(screen.getByRole('button', { name: 'Review pool reassignment' }));
     const dialog = screen.getByRole('dialog', { name: 'Move Builder A to Ineligible Pool?' });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Move Agent' }));

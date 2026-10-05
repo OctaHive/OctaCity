@@ -1,12 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import {
-  ClipboardList,
-  FolderKanban,
-  Hammer,
-  PanelLeftOpen,
-  ServerCog,
-  ShieldAlert,
-} from 'lucide-react';
+import { ClipboardList, FolderKanban, Hammer, PanelLeftOpen, ServerCog } from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -231,17 +224,6 @@ export function AppShell({
       ) : null}
 
       <div className={styles.workspace}>
-        <aside
-          className={styles.securityBanner}
-          aria-label={t('security.label')}
-          id="trusted-network-notice"
-        >
-          <ShieldAlert aria-hidden="true" size={18} strokeWidth={1.9} />
-          <p>
-            <strong>{t('security.title')}</strong> {t('security.description')}
-          </p>
-        </aside>
-
         <main className={styles.content} id="console-content" tabIndex={-1}>
           <Outlet />
         </main>

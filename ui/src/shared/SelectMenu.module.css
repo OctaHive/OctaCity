@@ -1,0 +1,118 @@
+.root {
+  position: relative;
+  min-width: 0;
+}
+
+.trigger {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.value,
+.optionLabel {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.value > span,
+.optionLabel > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  transition: transform 120ms ease;
+}
+
+.trigger[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+
+.compact .trigger {
+  display: inline-grid;
+  width: 2.3rem;
+  min-width: 2.3rem;
+  padding: 0;
+  place-items: center;
+  border-radius: 50%;
+}
+
+.compact .value > span,
+.compact .chevron {
+  display: none;
+}
+
+.compact .listbox {
+  right: 0;
+  left: auto;
+}
+
+.listbox {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  width: max(100%, max-content);
+  min-width: 11rem;
+  max-width: min(24rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.35rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-floating);
+  list-style: none;
+}
+
+.option {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-lg);
+  width: 100%;
+  min-height: 2.4rem;
+  padding: 0.45rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.option:hover,
+.option:focus-visible {
+  background: var(--color-surface-subtle);
+}
+
+.option[aria-selected='true'] {
+  color: var(--color-brand-action);
+  font-weight: 750;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

@@ -6,6 +6,7 @@ import { useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
+import { SelectMenu } from '../../shared/SelectMenu';
 import {
   QueryBackgroundNotice,
   QueryEmptyNotice,
@@ -74,17 +75,21 @@ export function AuditFilterPanel() {
         key={urlState}
         onSubmit={apply}
       >
-        <label>
+        <div className={styles.filterField}>
           <span>{t('audit.actorKind')}</span>
-          <select defaultValue={parameters.get('actor_kind') ?? ''} name="actor_kind">
-            <option value="">{t('audit.allActorKinds')}</option>
-            {AUDIT_ACTOR_KINDS.map((kind) => (
-              <option key={kind} value={kind}>
-                {formatEnumLabel(kind, t)}
-              </option>
-            ))}
-          </select>
-        </label>
+          <SelectMenu
+            ariaLabel={t('audit.actorKind')}
+            defaultValue={parameters.get('actor_kind') ?? ''}
+            name="actor_kind"
+            options={[
+              { label: t('audit.allActorKinds'), value: '' },
+              ...AUDIT_ACTOR_KINDS.map((kind) => ({
+                label: formatEnumLabel(kind, t),
+                value: kind,
+              })),
+            ]}
+          />
+        </div>
         {AUDIT_TEXT_FILTERS.map(({ label, maximumBytes, name }) => (
           <FilterField
             defaultValue={parameters.get(name) ?? ''}

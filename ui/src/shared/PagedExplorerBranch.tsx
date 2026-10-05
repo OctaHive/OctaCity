@@ -89,6 +89,7 @@ export function PagedExplorerBranch<T extends { id: string }>({
 export function useCursorPage<T, TQueryKey extends QueryKey>(
   queryKey: TQueryKey,
   read: (cursor: string | null, signal: AbortSignal) => Promise<CursorPage<T>>,
+  enabled = true,
 ) {
   return useInfiniteQuery<
     CursorPage<T>,
@@ -97,6 +98,7 @@ export function useCursorPage<T, TQueryKey extends QueryKey>(
     TQueryKey,
     string | null
   >({
+    enabled,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     initialPageParam: null,
     queryFn: ({ pageParam, signal }) => read(pageParam, signal),

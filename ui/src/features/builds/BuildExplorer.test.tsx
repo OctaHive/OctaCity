@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -192,6 +192,39 @@ describe('Build explorer', () => {
       null,
       expect.any(AbortSignal),
     );
+  });
+
+  it('keeps the rendered hierarchy mounted while selecting a Build', async () => {
+    const api = fakeApi();
+    configureSelectedBuild(api);
+    api.listProjects.mockResolvedValue(
+      page([project('selected-project', 'Selected Project')], null),
+    );
+    api.listBuildConfigurations.mockResolvedValue(
+      page(
+        [configuration('selected-config', 'Selected Configuration', 'selected-project', 7)],
+        null,
+      ),
+    );
+    api.listBuilds.mockResolvedValue(
+      page([build('selected-build', 'selected-config', 'selected-project', 'succeeded')], null),
+    );
+    const { router } = renderExplorer('/builds', api);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Expand Selected Project' }));
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Expand Selected Configuration' }),
+    );
+    const hierarchy = await screen.findByRole('tree', { name: 'Build hierarchy' });
+    await userEvent.click(await screen.findByRole('link', { name: 'selected-build' }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/builds/selected-build'));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('link', { name: 'selected-build' }).getAttribute('aria-current'),
+      ).toBe('page'),
+    );
+    expect(screen.getByRole('tree', { name: 'Build hierarchy' })).toBe(hierarchy);
   });
 
   it('reports a selected Build lookup failure with request correlation while retaining browsing', async () => {

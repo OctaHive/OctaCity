@@ -9,7 +9,6 @@ import { buildPath, CONSOLE_PATHS } from '../../app/routes';
 import { formatEnumLabel } from '../../shared/display';
 import {
   ExplorerBranchFailure as BranchFailure,
-  ExplorerBranchLoading as BranchLoading,
   ExplorerBranchBackground as BranchBackground,
   PagedExplorerBranch as PagedBranch,
   useCursorPage,
@@ -71,6 +70,22 @@ interface SelectedPath {
   projects: readonly ProjectItem[];
 }
 
+interface SelectedPathFailure {
+  error: Error | null;
+  label: string;
+  onRetry: () => unknown;
+}
+
+interface SelectedPathBackground extends SelectedPathFailure {
+  fetching: boolean;
+}
+
+interface SelectedPathState {
+  background: SelectedPathBackground | null;
+  failure: SelectedPathFailure | null;
+  path: SelectedPath;
+}
+
 interface BuildTreeState {
   api: BuildExplorerApi;
   configurationExpansion: ReturnType<typeof useExpansionOverrides>;
@@ -88,78 +103,74 @@ export function BuildExplorer({ api }: { api: BuildExplorerApi }) {
   const { t } = usePresentation();
   const location = useLocation();
   const selectedBuildId = matchPath(CONSOLE_PATHS.build, location.pathname)?.params.buildId ?? null;
+  const selectedPath = useSelectedBuildPath(api, selectedBuildId);
 
   return (
     <div className={styles.explorerTree}>
       <p className={styles.boundedNotice}>{t('explorer.boundedBuilds')}</p>
-      {selectedBuildId === null ? (
-        <BuildTree api={api} selectedBuildId={null} selectedPath={emptySelectedPath} />
-      ) : (
-        <SelectedBuildTree api={api} selectedBuildId={selectedBuildId} />
-      )}
+      {selectedPath.failure === null ? null : <BranchFailure {...selectedPath.failure} />}
+      {selectedPath.background === null ? null : <BranchBackground {...selectedPath.background} />}
+      <BuildTree api={api} selectedBuildId={selectedBuildId} selectedPath={selectedPath.path} />
     </div>
   );
 }
 
-function SelectedBuildTree({
-  api,
-  selectedBuildId,
-}: {
-  api: BuildExplorerApi;
-  selectedBuildId: string;
-}) {
+function useSelectedBuildPath(
+  api: BuildExplorerApi,
+  selectedBuildId: string | null,
+): SelectedPathState {
   const { t } = usePresentation();
   const selectedBuild = useQuery({
-    queryFn: ({ signal }) => api.getBuild(selectedBuildId, signal),
-    queryKey: queryKeys.build(selectedBuildId),
+    enabled: selectedBuildId !== null,
+    queryFn: ({ signal }) => api.getBuild(requireSelection(selectedBuildId), signal),
+    queryKey:
+      selectedBuildId === null
+        ? queryKeys.disabledExplorerDetail('build')
+        : queryKeys.build(selectedBuildId),
   });
-
-  if (selectedBuild.isPending) {
-    return (
-      <>
-        <BranchLoading label={t('explorer.selectedBuildPath')} />
-        <BuildTree api={api} selectedBuildId={selectedBuildId} selectedPath={emptySelectedPath} />
-      </>
-    );
-  }
-  if (selectedBuild.data === undefined) {
-    return (
-      <>
-        <BranchFailure
-          error={selectedBuild.error}
-          label={t('explorer.selectedBuild')}
-          onRetry={selectedBuild.refetch}
-        />
-        <BuildTree api={api} selectedBuildId={selectedBuildId} selectedPath={emptySelectedPath} />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <BranchBackground
-        error={selectedBuild.error}
-        fetching={selectedBuild.isFetching}
-        label={t('explorer.selectedBuildPath')}
-        onRetry={selectedBuild.refetch}
-      />
-      <SelectedBuildAncestors api={api} build={selectedBuild.data} />
-    </>
-  );
-}
-
-function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: SelectedBuild }) {
-  const { t } = usePresentation();
+  const build = selectedBuild.data;
   const selectedProject = useQuery({
-    queryFn: ({ signal }) => api.getProject(build.project_id, signal),
-    queryKey: queryKeys.project(build.project_id),
+    enabled: build !== undefined,
+    queryFn: ({ signal }) => api.getProject(requireBuild(build).project_id, signal),
+    queryKey:
+      build === undefined
+        ? queryKeys.disabledExplorerDetail('project')
+        : queryKeys.project(build.project_id),
   });
   const selectedConfiguration = useQuery({
     queryFn: ({ signal }) =>
-      api.getBuildConfiguration(build.configuration_id, build.configuration_version, signal),
-    queryKey: queryKeys.buildConfiguration(build.configuration_id, build.configuration_version),
+      api.getBuildConfiguration(
+        requireBuild(build).configuration_id,
+        requireBuild(build).configuration_version,
+        signal,
+      ),
+    enabled: build !== undefined,
+    queryKey:
+      build === undefined
+        ? queryKeys.disabledExplorerDetail('build-configuration')
+        : queryKeys.buildConfiguration(build.configuration_id, build.configuration_version),
   });
-  const selectedProjectChildren = useProjectPage(api, build.project_id);
+  const selectedProjectChildren = useProjectPage(
+    api,
+    build?.project_id ?? null,
+    build !== undefined,
+  );
+
+  if (selectedBuildId === null || selectedBuild.isPending) {
+    return { background: null, failure: null, path: emptySelectedPath };
+  }
+  if (build === undefined) {
+    return {
+      background: null,
+      failure: {
+        error: selectedBuild.error,
+        label: t('explorer.selectedBuild'),
+        onRetry: selectedBuild.refetch,
+      },
+      path: emptySelectedPath,
+    };
+  }
+
   const pending =
     selectedProject.isPending ||
     selectedConfiguration.isPending ||
@@ -174,60 +185,55 @@ function SelectedBuildAncestors({ api, build }: { api: BuildExplorerApi; build: 
   );
 
   if (pending) {
-    return (
-      <>
-        <BranchLoading label={t('explorer.selectedBuildPath')} />
-        <BuildTree api={api} selectedBuildId={build.id} selectedPath={emptySelectedPath} />
-      </>
-    );
+    return { background: null, failure: null, path: emptySelectedPath };
   }
   if (failed !== undefined) {
-    return (
-      <>
-        <BranchFailure
-          error={failed.query.error}
-          label={failed.label}
-          onRetry={failed.query.refetch}
-        />
-        <BuildTree api={api} selectedBuildId={build.id} selectedPath={emptySelectedPath} />
-      </>
-    );
+    return {
+      background: null,
+      failure: {
+        error: failed.query.error,
+        label: failed.label,
+        onRetry: failed.query.refetch,
+      },
+      path: emptySelectedPath,
+    };
   }
 
   const projectDetails = selectedProject.data;
   const configuration = selectedConfiguration.data;
-  if (projectDetails === undefined || configuration === undefined) return null;
+  if (projectDetails === undefined || configuration === undefined) {
+    return { background: null, failure: null, path: emptySelectedPath };
+  }
 
-  const selectedPath: SelectedPath = {
-    build: {
-      configuration_id: build.configuration_id,
-      id: build.id,
-      project_id: build.project_id,
-      state: build.state,
+  return {
+    background: {
+      error: stale?.error ?? selectedBuild.error,
+      fetching:
+        selectedBuild.isFetching ||
+        selectedProject.isFetching ||
+        selectedConfiguration.isFetching ||
+        selectedProjectChildren.isFetching,
+      label: t('explorer.selectedBuildPath'),
+      onRetry: () => {
+        if (stale !== undefined) void stale.refetch();
+        else if (selectedBuild.error !== null) void selectedBuild.refetch();
+      },
     },
-    configuration,
-    projects: projectTrail(
-      projectDetails,
-      (selectedProjectChildren.data?.pages[0]?.items.length ?? 0) > 0,
-    ),
+    failure: null,
+    path: {
+      build: {
+        configuration_id: build.configuration_id,
+        id: build.id,
+        project_id: build.project_id,
+        state: build.state,
+      },
+      configuration,
+      projects: projectTrail(
+        projectDetails,
+        (selectedProjectChildren.data?.pages[0]?.items.length ?? 0) > 0,
+      ),
+    },
   };
-  return (
-    <>
-      <BranchBackground
-        error={stale?.error ?? null}
-        fetching={
-          selectedProject.isFetching ||
-          selectedConfiguration.isFetching ||
-          selectedProjectChildren.isFetching
-        }
-        label={t('explorer.selectedBuildPath')}
-        onRetry={() => {
-          if (stale !== undefined) void stale.refetch();
-        }}
-      />
-      <BuildTree api={api} selectedBuildId={build.id} selectedPath={selectedPath} />
-    </>
-  );
 }
 
 function BuildTree({
@@ -481,10 +487,22 @@ function TreeRow({
   );
 }
 
-function useProjectPage(api: BuildExplorerApi, parentId: string | null) {
-  return useCursorPage(queryKeys.projectChildren(parentId), (cursor, signal) =>
-    api.listProjects(parentId, cursor, signal),
+function useProjectPage(api: BuildExplorerApi, parentId: string | null, enabled = true) {
+  return useCursorPage(
+    queryKeys.projectChildren(parentId),
+    (cursor, signal) => api.listProjects(parentId, cursor, signal),
+    enabled,
   );
+}
+
+function requireSelection(selectedBuildId: string | null): string {
+  if (selectedBuildId === null) throw new Error('selected Build query is disabled');
+  return selectedBuildId;
+}
+
+function requireBuild(build: SelectedBuild | undefined): SelectedBuild {
+  if (build === undefined) throw new Error('selected Build dependency query is disabled');
+  return build;
 }
 
 function projectTrail(details: ProjectSelection, selectedHasChildren: boolean): ProjectItem[] {

@@ -81,15 +81,12 @@ describe('Build log search', () => {
 
     expect(api.searchBuildLogs).not.toHaveBeenCalled();
     await userEvent.type(screen.getByRole('searchbox', { name: 'Log query' }), 'compile failed');
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: 'Search mode' }),
-      'full_text',
-    );
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: 'Search scope' }),
-      'attempt',
-    );
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Log stream' }), 'stdout');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Search mode' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Full text' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Search scope' }));
+    await userEvent.click(screen.getByRole('option', { name: 'Current Attempt' }));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Log stream' }));
+    await userEvent.click(screen.getByRole('option', { name: 'stdout' }));
     await userEvent.click(screen.getByRole('button', { name: 'Search logs' }));
 
     await waitFor(() =>

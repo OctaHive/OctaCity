@@ -15,6 +15,7 @@ import type {
   ProjectBuildsApi,
 } from './api';
 import { formatEnumLabel, formatTimestamp } from '../../shared/display';
+import { SelectMenu } from '../../shared/SelectMenu';
 import {
   QueryBackgroundNotice,
   QueryEmptyNotice,
@@ -95,37 +96,39 @@ export function ProjectBuilds({ api, projectId }: ProjectBuildsProps) {
         )}
       </div>
       <form className={buildStyles.filters} onSubmit={(event) => event.preventDefault()}>
-        <label>
+        <div className={buildStyles.filterField}>
           <span>{t('builds.configuration')}</span>
-          <select
-            onChange={(event) => updateFilter('configuration_id', event.currentTarget.value)}
+          <SelectMenu
+            ariaLabel={t('builds.configuration')}
+            onValueChange={(value) => updateFilter('configuration_id', value)}
+            options={[
+              { label: t('builds.allConfigurations'), value: '' },
+              ...(filters.configurationId === null || selectedConfigurationIsKnown
+                ? []
+                : [{ label: filters.configurationId, value: filters.configurationId }]),
+              ...configurationItems.map((configuration) => ({
+                label: `${configuration.name} · v${configuration.version}`,
+                value: configuration.id,
+              })),
+            ]}
             value={filters.configurationId ?? ''}
-          >
-            <option value="">{t('builds.allConfigurations')}</option>
-            {filters.configurationId === null || selectedConfigurationIsKnown ? null : (
-              <option value={filters.configurationId}>{filters.configurationId}</option>
-            )}
-            {configurationItems.map((configuration) => (
-              <option key={configuration.id} value={configuration.id}>
-                {configuration.name} · v{configuration.version}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
+          />
+        </div>
+        <div className={buildStyles.filterField}>
           <span>{t('builds.state')}</span>
-          <select
-            onChange={(event) => updateFilter('state', event.currentTarget.value)}
+          <SelectMenu
+            ariaLabel={t('builds.state')}
+            onValueChange={(value) => updateFilter('state', value)}
+            options={[
+              { label: t('builds.allStates'), value: '' },
+              ...(Object.keys(BUILD_STATE_PRESENTATIONS) as BuildState[]).map((state) => ({
+                label: formatEnumLabel(state, t),
+                value: state,
+              })),
+            ]}
             value={filters.state ?? ''}
-          >
-            <option value="">{t('builds.allStates')}</option>
-            {(Object.keys(BUILD_STATE_PRESENTATIONS) as BuildState[]).map((state) => (
-              <option key={state} value={state}>
-                {formatEnumLabel(state, t)}
-              </option>
-            ))}
-          </select>
-        </label>
+          />
+        </div>
         <button
           className={styles.textButton}
           disabled={builds.isFetching}

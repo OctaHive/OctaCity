@@ -96,6 +96,7 @@ for (const visual of visualCases) {
 }
 
 async function selectTheme(page: Page, theme: 'dark' | 'light') {
-  await page.getByRole('combobox', { name: 'Theme' }).selectOption(theme);
+  await page.getByRole('combobox', { name: 'Theme' }).click();
+  await page.getByRole('option', { name: theme === 'dark' ? 'Dark' : 'Light' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', theme);
 }

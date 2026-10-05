@@ -9,6 +9,7 @@ import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { formatEnumLabel } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
+import { SelectMenu } from '../../shared/SelectMenu';
 import { useCursorPage } from '../../shared/PagedExplorerBranch';
 import {
   QueryBackgroundNotice,
@@ -72,19 +73,18 @@ export function AgentCommands({
             <p className={styles.empty}>{t('agentCommands.alreadyDraining')}</p>
           ) : (
             <>
-              <label className={commandFormStyles.field}>
+              <div className={commandFormStyles.field}>
                 <span>{t('agentCommands.drainMode')}</span>
-                <select
-                  className={commandFormStyles.control}
-                  onChange={(event) =>
-                    setDrainMode(event.target.value as DrainAgentRequest['mode'])
-                  }
+                <SelectMenu
+                  ariaLabel={t('agentCommands.drainMode')}
+                  onValueChange={setDrainMode}
+                  options={[
+                    { label: t('agentCommands.graceful'), value: 'graceful' },
+                    { label: t('agentCommands.forced'), value: 'forced' },
+                  ]}
                   value={drainMode}
-                >
-                  <option value="graceful">{t('agentCommands.graceful')}</option>
-                  <option value="forced">{t('agentCommands.forced')}</option>
-                </select>
-              </label>
+                />
+              </div>
               <button
                 className={styles.commandButton}
                 onClick={(event) =>
@@ -243,21 +243,18 @@ function IdlePoolReassignment({
             label={t('agentCommands.poolData')}
             onRetry={pools.isFetchNextPageError ? pools.fetchNextPage : pools.refetch}
           />
-          <label className={commandFormStyles.field}>
+          <div className={commandFormStyles.field}>
             <span>{t('agentCommands.targetPool')}</span>
-            <select
-              className={commandFormStyles.control}
-              onChange={(event) => setTargetPoolId(event.target.value)}
+            <SelectMenu
+              ariaLabel={t('agentCommands.targetPool')}
+              onValueChange={setTargetPoolId}
+              options={[
+                { label: t('agentCommands.selectPool'), value: '' },
+                ...targets.map((pool) => ({ label: pool.name, value: pool.id })),
+              ]}
               value={targetPoolId}
-            >
-              <option value="">{t('agentCommands.selectPool')}</option>
-              {targets.map((pool) => (
-                <option key={pool.id} value={pool.id}>
-                  {pool.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
           {pools.hasNextPage ? (
             <button
               className={styles.textButton}

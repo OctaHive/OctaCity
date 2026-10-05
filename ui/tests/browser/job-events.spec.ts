@@ -208,9 +208,12 @@ test('round-trips scoped log filters and paginates only redacted search response
   expect(searchRequests[1]?.searchParams.get('after')).toBe('opaque-next');
 
   await search.getByRole('searchbox', { name: 'Log query' }).fill('link failed');
-  await search.getByRole('combobox', { name: 'Search mode' }).selectOption('full_text');
-  await search.getByRole('combobox', { name: 'Search scope' }).selectOption('attempt');
-  await search.getByRole('combobox', { name: 'Log stream' }).selectOption('stdout');
+  await search.getByRole('combobox', { name: 'Search mode' }).click();
+  await page.getByRole('option', { name: 'Full text' }).click();
+  await search.getByRole('combobox', { name: 'Search scope' }).click();
+  await page.getByRole('option', { name: 'Current Attempt' }).click();
+  await search.getByRole('combobox', { name: 'Log stream' }).click();
+  await page.getByRole('option', { name: 'stdout' }).click();
   await search.getByRole('button', { name: 'Search logs' }).click();
   await expect(page).toHaveURL(
     `/builds/${BUILD_ID}?log_query=link+failed&log_mode=full_text&log_scope=attempt&log_stream=stdout`,

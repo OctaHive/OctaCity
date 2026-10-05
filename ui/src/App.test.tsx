@@ -56,7 +56,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Projects' })).toBeTruthy();
     expect(screen.getByRole('complementary', { name: 'Projects explorer' })).toBeTruthy();
     expect(screen.getByRole('link', { current: 'page', name: 'Projects' })).toBeTruthy();
-    expect(screen.getByLabelText('Security notice')).toBeTruthy();
+    expect(screen.queryByLabelText('Security notice')).toBeNull();
   });
 
   it('keeps Favorites before the contextual browse content', () => {
@@ -271,7 +271,8 @@ describe('App', () => {
     const user = userEvent.setup();
     renderConsole(CONSOLE_PATHS.projects);
 
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Theme' }), 'dark');
+    await user.click(screen.getByRole('combobox', { name: 'Theme' }));
+    await user.click(screen.getByRole('option', { name: 'Dark' }));
     expect(document.documentElement.dataset.resolvedTheme).toBe('dark');
 
     const notifications = await screen.findByRole('button', { name: 'Notifications' });
@@ -288,7 +289,8 @@ describe('App', () => {
     renderConsole(CONSOLE_PATHS.projects);
 
     await user.click(screen.getByLabelText('Operator menu'));
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'ru');
+    await user.click(screen.getByRole('combobox', { name: 'Language' }));
+    await user.click(screen.getByRole('option', { name: 'Russian' }));
     expect(document.documentElement.lang).toBe('ru');
     expect(screen.getByRole('link', { current: 'page', name: 'Проекты' })).toBeTruthy();
 
@@ -301,14 +303,10 @@ describe('App', () => {
     renderConsole(CONSOLE_PATHS.projects);
 
     await user.click(screen.getByLabelText('Operator menu'));
-    expect((screen.getByRole('combobox', { name: 'Language' }) as HTMLSelectElement).value).toBe(
-      'en',
-    );
+    expect(screen.getByRole('combobox', { name: 'Language' }).textContent).toContain('English');
     expect(screen.getByText('Trusted network')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'API documentation' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Deployment information' }).getAttribute('href')).toBe(
-      '#trusted-network-notice',
-    );
+    expect(screen.queryByText('Trusted network only.')).toBeNull();
     expect(screen.getByText('No browser identity or session is active.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /log out|sign out/i })).toBeNull();
   });
@@ -318,6 +316,28 @@ describe('App', () => {
 
     await screen.findByText('Server unavailable');
     expect(screen.getByRole('heading', { level: 1, name: 'Projects' })).toBeTruthy();
+  });
+
+  it('light-dismisses header popups after an outside click', async () => {
+    const user = userEvent.setup();
+    renderConsole(CONSOLE_PATHS.projects);
+
+    await user.click(screen.getByRole('combobox', { name: 'Theme' }));
+    expect(screen.getByRole('listbox', { name: 'Theme' })).toBeTruthy();
+    await user.click(screen.getByRole('link', { name: 'Projects' }));
+    expect(screen.queryByRole('listbox', { name: 'Theme' })).toBeNull();
+
+    await user.click(screen.getByLabelText('Operator menu'));
+    expect(screen.getByRole('dialog', { name: 'Operator menu' })).toBeTruthy();
+    await user.click(screen.getByRole('link', { name: 'Projects' }));
+    expect(screen.queryByRole('dialog', { name: 'Operator menu' })).toBeNull();
+
+    const notifications = await screen.findByRole('button', { name: 'Notifications' });
+    await waitFor(() => expect((notifications as HTMLButtonElement).disabled).toBe(false));
+    await user.click(notifications);
+    expect(screen.getByRole('dialog', { name: 'Notification center' })).toBeTruthy();
+    await user.click(screen.getByRole('link', { name: 'Projects' }));
+    expect(screen.queryByRole('dialog', { name: 'Notification center' })).toBeNull();
   });
 
   it.each([

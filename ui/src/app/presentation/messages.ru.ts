@@ -570,7 +570,6 @@ export const ruMessages = {
   'operator.access': 'Доступ',
   'operator.apiDocumentation': 'Документация API',
   'operator.browserLocal': 'Локально в браузере',
-  'operator.deploymentInformation': 'Информация о развёртывании',
   'operator.localSettings': 'Локальные настройки консоли',
   'operator.menu': 'Меню оператора',
   'operator.noIdentity': 'В браузере нет активной личности или сессии.',
@@ -661,10 +660,6 @@ export const ruMessages = {
   'section.audit': 'Аудит',
   'section.builds': 'Сборки',
   'section.projects': 'Проекты',
-  'security.description':
-    'Эта консоль работает без аутентификации и не должна быть доступна из недоверенной сети.',
-  'security.label': 'Предупреждение о безопасности',
-  'security.title': 'Только доверенная сеть.',
   'shell.allAgents': 'Все агенты',
   'shell.allProjects': 'Все проекты',
   'shell.agentPools': 'Пулы агентов',

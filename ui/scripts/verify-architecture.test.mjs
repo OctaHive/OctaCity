@@ -154,6 +154,11 @@ const sourceViolations = [
     },
     expected: 'color literals must be centralized in the design tokens',
   },
+  {
+    name: 'browser-native selects',
+    prepare: (root) => write(root, 'src/main.tsx', 'export const Native = () => <select />;'),
+    expected: 'browser-native select elements are forbidden',
+  },
 ];
 
 for (const example of sourceViolations) {
