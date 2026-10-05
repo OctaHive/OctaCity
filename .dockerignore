@@ -88,6 +88,7 @@ shared/*/*
 ui/*
 !ui/.npmrc
 !ui/.node-version
+!ui/architecture-policy.json
 !ui/index.html
 !ui/package.json
 !ui/pnpm-lock.yaml
@@ -95,6 +96,7 @@ ui/*
 !ui/scripts/
 ui/scripts/*
 !ui/scripts/generate-api.mjs
+!ui/scripts/verify-architecture.mjs
 !ui/tsconfig.json
 !ui/vite.config.ts
 !ui/public/

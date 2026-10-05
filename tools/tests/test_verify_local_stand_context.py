@@ -90,9 +90,13 @@ class LocalStandContextTests(unittest.TestCase):
 
     def test_ui_api_contract_is_generated_inside_the_builder(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
-        self.assertTrue(
-            VERIFY.docker_path_included("ui/scripts/generate-api.mjs", rules)
-        )
+        for path in (
+            "ui/architecture-policy.json",
+            "ui/scripts/generate-api.mjs",
+            "ui/scripts/verify-architecture.mjs",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(VERIFY.docker_path_included(path, rules))
         self.assertFalse(
             VERIFY.docker_path_included("ui/.generated/api/schema.d.ts", rules)
         )
