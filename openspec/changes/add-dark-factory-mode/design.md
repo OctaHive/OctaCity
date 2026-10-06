@@ -24,6 +24,7 @@ Provider SDK types, model messages, forge payloads, SQL rows, HTTP DTOs, and UI 
 - Add one durable code-owned lifecycle above Builds with exact state, bounded work, idempotent side effects, fencing, restart recovery, and human escalation.
 - Treat LLM execution as bounded typed calls inside a program-owned call DAG, following the LLM-as-Code separation: code owns flow; models own only reasoning, generation, or assessment within a call.
 - Make inter-stage memory explicit through immutable typed Stage Handoffs and reproducible Context Manifests so no provider session is correctness state.
+- Allow optional probability-backed routing and tool-risk judgments through a provider-neutral Decision Signal contract while keeping every executable transition and permission decision in deterministic policy.
 - Reuse existing Build, Job, scheduling, Agent, Octa, Artifact, audit, retention, authorization, REST, and UI boundaries rather than creating a second execution platform.
 - Integrate the concrete official Codex task first and defer a shared harness abstraction until a second production implementation proves one.
 - Establish enforceable permissions, exact ChangeSet/evidence identity, independent evaluation, deterministic decisions, and idempotent delivery-for-review before permitting unattended backlog processing.
@@ -33,6 +34,7 @@ Provider SDK types, model messages, forge payloads, SQL rows, HTTP DTOs, and UI 
 - Replacing ordinary Build orchestration, teaching Octa about backlog or delivery, or teaching the Agent about Codex semantics.
 - Automatic merge, arbitrary repository-driven factory policy, dynamic Agent provisioning, public-network console access, or browser authentication in this change.
 - Preserving a provider session as correctness state, replaying hidden chain-of-thought, or feeding a complete accumulated transcript into each later model call.
+- Binding Factory correctness to JEV, OpenAI Decisions API, another provider, a provider-specific response shape, or a mutable `latest` model alias.
 - Building a production Repository Knowledge/RAG service, cross-Project knowledge base, or semantic-memory UI in this change; a later change may produce bounded repository fragments for the same Context Manifest contract.
 - Supporting every model, forge, Work Source, operating system, and execution backend in the first vertical slice.
 - Introducing universal `coding` or `evaluator` plugin facades before multiple real implementations need them.
@@ -57,7 +59,7 @@ Splitting Work, Factory, Evaluation, and Delivery into empty crates immediately 
 
 ### 3. Persist immutable definitions and append-only execution history
 
-PostgreSQL will store stable Factory Configuration identities plus immutable version rows. A Work Envelope is immutable after admission. A Factory Run has a monotonic aggregate version and current-state projection, while Stage Attempts, Stage Handoffs, Context Manifests, call nodes, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, escalations, delivery attempts, reporter attempts, audit facts, and outbox records are append-only.
+PostgreSQL will store stable Factory Configuration identities plus immutable version rows. A Work Envelope is immutable after admission. A Factory Run has a monotonic aggregate version and current-state projection, while Stage Attempts, Stage Handoffs, Context Manifests, call nodes, Decision Signal Requests and Receipts, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, escalations, delivery attempts, reporter attempts, audit facts, and outbox records are append-only.
 
 Current pointers are projections backed by foreign keys to immutable rows; they are not replacements for history. Every transition transaction locks the Factory Run, verifies its expected version and current claim fence, applies one pure decision, appends its facts and outbox work, updates the current projection, and increments the version. Stable identities for external and Build side effects are derived from Factory Run, stage, attempt, operation kind, and immutable input digest so a replay observes the original result.
 
@@ -67,7 +69,7 @@ An event-sourced aggregate with no current projection was rejected because most 
 
 ### 4. Use a fenced reconciler and pure next-action decisions
 
-One supervised Factory reconciler claims bounded eligible runs with owner, expiry, and fence. It loads the complete bounded factory snapshot and calls a pure decision function that returns one of: no action, create a Stage Attempt, create a Build, wait for linked Builds, capture a candidate, construct evidence, plan evaluations, decide, request rework, escalate, request delivery, report, cancel, or complete. The store commits the transition and durable outbox work before a worker performs an external side effect.
+One supervised Factory reconciler claims bounded eligible runs with owner, expiry, and fence. It loads the complete bounded factory snapshot and calls a pure decision function that returns one of: no action, request an optional Decision Signal, create a Stage Attempt, create a Build, wait for linked Builds, capture a candidate, construct evidence, plan evaluations, decide, request rework, escalate, request delivery, report, cancel, or complete. The store commits the transition and durable outbox work before a worker performs an external side effect. A recorded signal is only another typed input to that function; it never commits its own transition.
 
 External observations are checkpointed once under the claim before later transitions consume them. Process timers only wake work. Lost claims expire; stale completions fail their fence. WIP, stage concurrency, provider concurrency, attempt, elapsed-time, token, cost, and output budgets are authoritative inputs to the pure decision.
 
@@ -129,7 +131,25 @@ The Agent uploads these as generic outputs and completes the Job only after thei
 
 Publishing directly from the coding harness was rejected because it grants forge authority and makes the external branch the only copy of unfinished work. A plain patch without candidate commit identity was rejected because binary files, modes, renames, and reproducible exact revision materialization are weaker. Server-side workspace capture was rejected because the server never materializes build worktrees.
 
-### 10. Separate facts, assessments, and decisions
+### 10. Treat decision models as replaceable signal providers, not authorities
+
+The factory core defines a small provider-neutral `DecisionSignalProvider` port over canonical typed requests and results. A request contains one bounded redacted state document, one or more versioned questions, finite answer or score domains, purpose (`routing` or `tool_risk`), subject and policy digests, deadline, and budget. A result contains only schema-valid typed answers, normalized probability or confidence data when the selected capability provides it, usage, and provider/model provenance. Provider discovery advertises supported input media, question kinds, probability semantics, limits, data-handling class, latency/cost metadata, and exact model/version identity. Factory Configuration selects a compatible logical profile; provider SDK and wire types remain in infrastructure adapters.
+
+JEV is the first concrete adapter. A future OpenAI Decisions API or another decision-model service is a separate adapter behind the same port once its public contract and probability semantics are stable. The common contract does not assume identical calibration: thresholds, margin rules, allowed question kinds, and evaluation corpora are versioned per purpose and provider/model identity. Mutable aliases such as `latest` may be resolved at configuration publication, but an admitted Factory Run freezes an exact adapter, model, question set, policy, and input digest.
+
+A routing assessment may rank or choose only the finite outgoing edges declared by the immutable Factory Configuration. Required validation, evaluation, budget, escalation, delivery, and human-review gates are not candidates and cannot be skipped. Deterministic routing policy consumes the signal plus current authoritative state and either follows one declared edge, selects a configured fallback, or escalates. It never accepts a provider-supplied stage or transition name.
+
+A tool-risk assessment occurs only after the proposed action has been normalized and proven to fit the intersection of Factory Permission Set, Task Envelope, Project policy, local Agent grants, and backend capabilities. Deterministic hard-deny rules run first; deterministic hard-allow rules may avoid a provider call. Only an ambiguous action already inside that envelope may be assessed. The result can narrow execution to deny or escalate, but it cannot add a tool, command, argument, path, host, credential, descendant, resource, or output capability. The Agent and backend remain the final enforcement boundary immediately before the protected operation.
+
+Routing calls originate in the server. Tool calls require a blocking pre-execution hook in the selected pinned harness adapter: the trusted Octa plugin forwards a canonical proposal to an Agent-local authorization broker bound to the current Job, lease and fence; the broker applies signed deterministic policy locally and sends only an ambiguous redacted in-envelope assessment request to the server-side Decision Signal adapter. Provider credentials never reach the Agent workload or plugin. The action remains blocked until the broker receives the recorded deterministic disposition, then the Agent and backend revalidate the unchanged action. Cancellation, timeout, stale fence, broker loss, or receipt mismatch denies the action. A harness or plugin without the advertised blocking-hook capability is ineligible for `tool_risk` bounded control rather than running with a best-effort gate.
+
+Every call uses a stable logical request identity and produces one immutable Decision Signal Receipt containing canonical input, question-set and policy digests, exact provider/adapter/model identities, typed answers, probabilities or confidence semantics, usage, latency, terminal classification, and the deterministic disposition that consumed it. Unknown-response recovery observes or reuses the recorded receipt; retry never silently queries a different model for the same logical decision. Timeouts, transport failures, invalid results, unsupported capabilities, or confidence below the configured floor follow an explicit fail-closed fallback (`deny` or `escalate`). Raw provider payloads, credentials, prompts, repository secrets, and unbounded command text are not persisted or exposed.
+
+Rollout is independently versioned per purpose as `shadow`, `advisory`, or `bounded_control`. Shadow mode records comparison evidence but cannot affect execution. Advisory mode presents a recommendation while deterministic baseline policy acts. Bounded control permits the signal only in the two constrained seams above after an evaluation corpus, calibration thresholds, drift limits, circuit breakers, and an audited promotion have passed. Ordinary CI/CD and Factory configurations without a Decision Signal profile remain fully functional.
+
+Calling JEV directly from the Factory Controller was rejected because it couples domain behavior to one provider. Letting a decision model authorize an otherwise forbidden action, invent an edge, skip a mandatory gate, or produce the final Evaluation Decision was rejected because probabilistic output is not authority. Re-querying on retry was rejected because model and calibration drift would make one durable transition non-reproducible. One global confidence threshold was rejected because providers and routing/tool-risk purposes have different calibration.
+
+### 11. Separate facts, assessments, and decisions
 
 Validation Builds publish generic reports and Artifacts. A trusted application projection constructs the Evidence Manifest only from verified retained outputs bound to the exact candidate, producer Build/Job, plugin/tool identity, schema, digest, and freshness. Deterministic failed gates are direct Decision inputs and are never paraphrased by a model.
 
@@ -139,7 +159,7 @@ The Decision Engine is pure code. It combines required deterministic gates, immu
 
 Allowing an evaluator to run arbitrary evidence tools was rejected because it conflates facts and judgment. Letting the implementation call review itself in the same session was rejected because it shares writable state and context. A dedicated universal evaluator plugin is deferred until another real evaluation transport requires it.
 
-### 11. Deliver through a separate verified GitHub adapter and stop at review
+### 12. Deliver through a separate verified GitHub adapter and stop at review
 
 The initial concrete delivery slice adds a provider-neutral versioned delivery process protocol, a verified adapter host reusing registry/digest/framing/timeout/process-cleanup patterns, and an `octacity-delivery-github` adapter. The adapter receives a protected credential handle and bounded request containing repository identity, exact base/candidate/ChangeSet/Decision digests, stable delivery identity, target branch policy, and safe review metadata. It can observe, publish the exact candidate branch, and create or update one pull request. It cannot merge in this release.
 
@@ -147,7 +167,7 @@ Observe-before-retry uses the stable delivery identity in branch/review metadata
 
 Adding GitHub-specific cases to the Factory Controller or VCS read protocol was rejected. Reusing the coding Job to push was rejected because it crosses the strongest trust boundary. Generic automatic merge was rejected until risk classification, independent/quorum review, calibration, rollback, and audited enablement are separately implemented.
 
-### 12. Keep REST authoritative and make the console a complete optional management surface
+### 13. Keep REST authoritative and make the console a complete optional management surface
 
 REST adds versioned Factory Configuration resources, authorization-safe bounded choice collections needed to author them, manual Work admission, Factory Run collections and details, bounded child collections, cancellation, eligible retry, escalation disposition, and delivery-for-review. Every command uses existing management authorization, idempotency, request correlation, audit, and strong-precondition patterns. Visibility is applied in store queries before filters, ordering, counts, evidence projection, and cursor construction. OpenAPI remains the source for generated UI types.
 
@@ -159,7 +179,7 @@ The console does not infer next state, Decision, compatibility, severity, effect
 
 Embedding factory-only business logic in the console, exposing a raw JSON configuration editor, or requiring WebSockets was rejected. Raw JSON would leak provider shape, make invalid cross-resource references easy, and bypass the console's guided safety review. The existing typed REST, cursor, and bounded-wait patterns are sufficient for the first release and preserve headless parity.
 
-### 13. Make retention, audit, and reporting follow exact factory identity
+### 14. Make retention, audit, and reporting follow exact factory identity
 
 Factory records reference immutable Build Results and Artifact objects rather than copying bytes. A visible non-terminal, escalated, or held Factory Run retains the Task Envelope, current and accepted ChangeSets, Evidence Manifests, Assessments, Decisions, delivery provenance, and required Build Results. Cleanup first removes logical visibility according to policy and only then deletes unreferenced projection, manifest, and byte data idempotently.
 
@@ -167,7 +187,7 @@ Every accepted state mutation appends an audit fact in the authoritative transac
 
 Making an external issue or pull request the Factory source of truth was rejected because provider loss, manual edits, and retries could invent or erase lifecycle state.
 
-### 14. Verify vertical slices before broadening autonomy
+### 15. Verify vertical slices before broadening autonomy
 
 Implementation proceeds through thin released-product slices. Each slice must include the core decision, in-memory and PostgreSQL parity, migrations and prior-schema upgrade, REST/OpenAPI where applicable, audit/outbox behavior, failure/replay/fencing tests, documentation, and a released-product contract. Architecture checks must keep provider SDKs in adapter packages and prohibit factory dependencies from entering existing core modules in the wrong direction.
 
@@ -189,6 +209,9 @@ Building all providers and autonomous policies before one complete released slic
 - **[Factory context still grows over long rework loops]** → Persist the macro call DAG, pass only declared ancestor context and typed summaries, bound summary and call depth, and retain full traces only as artifacts.
 - **[GitHub delivery couples the product to one forge]** → Keep GitHub behind the first provider-neutral delivery protocol and require Factory domain, REST, and UI types to expose only generic delivery identities and states.
 - **[Provider rate limits or outages stall runs]** → Use provider-specific bounded concurrency, durable claims, classified idempotent retry, circuit breakers, budget deadlines, and escalation; do not affect ordinary CI/CD readiness.
+- **[Decision-model providers expose superficially similar but differently calibrated probabilities]** → Normalize only structural result shape, retain provider/model-specific probability semantics and calibration policy, require per-purpose corpora and thresholds, and promote each exact model independently from shadow to bounded control.
+- **[A probabilistic tool gate is mistaken for an authorization boundary]** → Run immutable permission intersection and hard deterministic deny rules first, permit the signal only to narrow an in-envelope ambiguous action, and keep Agent/backend enforcement authoritative.
+- **[A provider upgrade changes a replayed route]** → Freeze exact adapter, model, questions, policy, canonical input digest, and receipt per logical request; configuration replacement affects only later admissions.
 - **[Factory retention becomes unbounded]** → Account artifacts and traces against immutable policy, preserve only referenced/held evidence, expose usage, and test safe incremental cleanup.
 - **[Self-evolution bypasses review]** → Treat workflow and policy edits as ordinary candidates and prohibit a running model call from mutating its own controlling definitions.
 
@@ -198,9 +221,10 @@ Building all providers and autonomous policies before one complete released slic
 2. Ship additive Factory Configuration, Work Envelope, Factory Run, Stage Attempt, call-DAG, budget, claim, and audit schema with workers disabled by default. Verify migration reentrancy, prior-schema upgrade, backup/restore, and ordinary CI/CD parity.
 3. Release JobSpec v3, Agent protected-input staging, permission enforcement, generated Octafile support, and qualified backend contracts. Older Agents continue ordinary v1/v2 work and are ineligible for Factory Jobs.
 4. Enable manual Work admission and one implementation Build path, then add trusted Git bundle ChangeSet capture and exact candidate rematerialization. Keep evaluation and delivery commands unavailable until their migrations and adapters are present.
-5. Add deterministic validation/evidence, read-only assessment, Decision policy, one bounded rework, and escalation. Run the released PostgreSQL-backed isolated pilot with delivery still disabled.
-6. Add the verified GitHub delivery adapter and delivery-for-review command, then add Factory REST discovery and Operator Console workflows. Human merge remains the only merge path.
-7. Enable Factory Configuration per Project only after the deployment proves required Agent v3 capacity, backend enforcement, model/evaluator secrets, Artifact retention, and delivery adapter readiness. Default remains disabled.
+5. Add the provider-neutral Decision Signal contract and JEV adapter in shadow mode, persist immutable receipts, and calibrate routing and tool-risk policies independently without changing execution.
+6. Add deterministic validation/evidence, read-only assessment, Decision policy, one bounded rework, and escalation. Promote only proven signal policies to advisory or bounded control and run the released PostgreSQL-backed isolated pilot with delivery still disabled.
+7. Add the verified GitHub delivery adapter and delivery-for-review command, then add Factory REST discovery and Operator Console workflows. Human merge remains the only merge path.
+8. Enable Factory Configuration per Project only after the deployment proves required Agent v3 capacity, backend enforcement, model/evaluator/decision-signal secrets, Artifact retention, and delivery adapter readiness. Default remains disabled.
 
 Rollback disables Factory admission and workers, allows active Jobs to be cancelled through existing Build control, preserves all immutable factory history and outputs for diagnosis, and leaves ordinary CI/CD paths operational. Schema rollback is not required for service rollback; older binaries must reject a database schema newer than they support rather than partially interpreting factory rows.
 
@@ -208,4 +232,5 @@ Rollback disables Factory admission and workers, allows active Jobs to be cancel
 
 - Which second production coding harness will be used in a later change to test whether a shared `CodingHarness` abstraction is justified?
 - Which independent evaluator provider and quorum policy will be required before moving beyond human-reviewed pull requests?
+- Which future Decisions API provider will be the second Decision Signal adapter, and what exact public probability/calibration contract must it expose before bounded control is permitted?
 - Which low-risk classes, rollback guarantees, and emergency controls would be required by a separate future auto-merge change?

@@ -33,17 +33,182 @@ def management_security_violation_codes(relative_path: str, source: str) -> list
         ]
 
 
+def package_fixture(
+    name: str,
+    manifest_path: Path,
+    *,
+    dependencies: tuple[str, ...] = (),
+    external_dependencies: tuple[str, ...] = (),
+) -> ARCHITECTURE.Package:
+    return ARCHITECTURE.Package(
+        name=name,
+        manifest_path=manifest_path,
+        role="core",
+        dependencies=dependencies,
+        external_dependencies=external_dependencies,
+        shared_contract=None,
+        shared_consumers=(),
+        shared_scaffold=False,
+        shared_policy_valid=True,
+    )
+
+
 class ArchitecturePolicyTests(unittest.TestCase):
     def test_current_workspace_satisfies_the_policy(self):
         graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
         self.assertEqual(
             ARCHITECTURE.check(graph)
+            + ARCHITECTURE.check_factory_graph(graph)
             + ARCHITECTURE.check_shared_sources(graph)
+            + ARCHITECTURE.check_factory_core_sources(graph)
             + ARCHITECTURE.check_management_route_sources(REPOSITORY)
             + ARCHITECTURE.check_management_security_sources(REPOSITORY)
             + ARCHITECTURE.check_postgres_management_actor_sources(REPOSITORY),
             [],
         )
+
+    def test_factory_core_rejects_provider_persistence_transport_and_ui_types(self):
+        invalid_sources = {
+            "provider type": "struct CodexProtocolRequest;",
+            "provider import alias": "use jev_sdk::Client as SignalClient;\npub struct FactoryPolicy;",
+            "SQL row": "#[derive(sqlx::FromRow)]\npub struct StoredFactory;",
+            "HTTP DTO": "pub(crate) struct FactoryRestResponse;",
+            "UI state": "struct FactoryUiState;",
+        }
+        for label, source in invalid_sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary_directory:
+                package_root = Path(temporary_directory) / "server/core/octacity-server-factory"
+                (package_root / "src").mkdir(parents=True)
+                (package_root / "src/lib.rs").write_text(source, encoding="utf-8")
+                package = package_fixture(
+                    ARCHITECTURE.FACTORY_CORE_PACKAGE,
+                    package_root / "Cargo.toml",
+                )
+
+                violations = ARCHITECTURE.check_factory_core_sources(
+                    ARCHITECTURE.Graph(packages=(package,), edges=())
+                )
+
+                self.assertEqual(
+                    [violation.code for violation in violations],
+                    ["ARCH018_FACTORY_CORE_COUPLING"],
+                )
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            package_root = Path(temporary_directory) / "server/core/octacity-server-factory"
+            (package_root / "src").mkdir(parents=True)
+            (package_root / "src/lib.rs").write_text(
+                "pub struct FactoryPolicy;\n"
+                "#[cfg(test)]\nmod tests { struct CodexProtocolRequest; }\n",
+                encoding="utf-8",
+            )
+            (package_root / "src/policy_tests.rs").write_text(
+                "struct FactoryUiState;\n",
+                encoding="utf-8",
+            )
+            package = package_fixture(
+                ARCHITECTURE.FACTORY_CORE_PACKAGE,
+                package_root / "Cargo.toml",
+            )
+
+            self.assertEqual(
+                ARCHITECTURE.check_factory_core_sources(
+                    ARCHITECTURE.Graph(packages=(package,), edges=())
+                ),
+                [],
+            )
+
+    def test_factory_core_rejects_provider_sdks_and_codex_contract_dependencies(self):
+        package = package_fixture(
+            ARCHITECTURE.FACTORY_CORE_PACKAGE,
+            REPOSITORY / ARCHITECTURE.FACTORY_CORE_SOURCE.parent / "Cargo.toml",
+            dependencies=("aws-sdk-s3", "octa-plugin-codex-protocol", "sqlx"),
+            external_dependencies=("aws-sdk-s3", "sqlx"),
+        )
+        graph = ARCHITECTURE.Graph(packages=(package,), edges=())
+
+        self.assertEqual(
+            [violation.code for violation in ARCHITECTURE.check(graph)],
+            ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"],
+        )
+        self.assertEqual(
+            [violation.code for violation in ARCHITECTURE.check_factory_graph(graph)],
+            ["ARCH018_FACTORY_CORE_COUPLING"],
+        )
+
+        provider_package = package_fixture(
+            ARCHITECTURE.FACTORY_CORE_PACKAGE,
+            REPOSITORY / ARCHITECTURE.FACTORY_CORE_SOURCE.parent / "Cargo.toml",
+            dependencies=("jev-sdk",),
+            external_dependencies=("jev-sdk",),
+        )
+        self.assertEqual(
+            [
+                violation.code
+                for violation in ARCHITECTURE.check_factory_graph(
+                    ARCHITECTURE.Graph(packages=(provider_package,), edges=())
+                )
+            ],
+            ["ARCH018_FACTORY_CORE_COUPLING"],
+        )
+
+    def test_build_and_job_lifecycle_cores_cannot_depend_on_factory(self):
+        def package(name: str) -> ARCHITECTURE.Package:
+            return package_fixture(
+                name,
+                REPOSITORY / "server/core" / name / "Cargo.toml",
+            )
+
+        factory = package(ARCHITECTURE.FACTORY_CORE_PACKAGE)
+        for name in sorted(ARCHITECTURE.FACTORY_INDEPENDENT_LIFECYCLE_PACKAGES):
+            with self.subTest(package=name):
+                source = package(name)
+                graph = ARCHITECTURE.Graph(
+                    packages=(factory, source),
+                    edges=(ARCHITECTURE.Edge(source=source, target=factory, kind="normal"),),
+                )
+                self.assertEqual(
+                    [violation.code for violation in ARCHITECTURE.check_factory_graph(graph)],
+                    ["ARCH019_FACTORY_EXECUTION_DEPENDENCY"],
+                )
+
+    def test_factory_core_cannot_be_an_empty_or_duplicate_seam(self):
+        duplicate = package_fixture(
+            "octacity-server-factory-evaluation",
+            REPOSITORY / "server/core/octacity-server-factory-evaluation/Cargo.toml",
+        )
+        self.assertEqual(
+            [
+                violation.code
+                for violation in ARCHITECTURE.check_factory_graph(
+                    ARCHITECTURE.Graph(packages=(duplicate,), edges=())
+                )
+            ],
+            ["ARCH020_FACTORY_MODULE_SHAPE"],
+        )
+
+        invalid_sources = {
+            "empty": "//! Placeholder Factory seam.\n",
+            "duplicate lifecycle": "pub struct Build;\n",
+        }
+        for label, source in invalid_sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary_directory:
+                package_root = Path(temporary_directory) / "server/core/octacity-server-factory"
+                (package_root / "src").mkdir(parents=True)
+                (package_root / "src/lib.rs").write_text(source, encoding="utf-8")
+                factory = package_fixture(
+                    ARCHITECTURE.FACTORY_CORE_PACKAGE,
+                    package_root / "Cargo.toml",
+                )
+
+                violations = ARCHITECTURE.check_factory_core_sources(
+                    ARCHITECTURE.Graph(packages=(factory,), edges=())
+                )
+
+                self.assertEqual(
+                    [violation.code for violation in violations],
+                    ["ARCH020_FACTORY_MODULE_SHAPE"],
+                )
 
     def test_fixture_graphs_have_the_expected_violations(self):
         for path in sorted(FIXTURES.glob("*.json")):

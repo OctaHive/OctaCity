@@ -22,6 +22,29 @@ The Agent SHALL verify the signed Factory Permission Set, pinned plugin and exec
 - **WHEN** repository content or a harness request attempts to add a command, argument, path, mount, host, child process, secret, or output outside signed intent
 - **THEN** the Agent or backend denies that operation and cannot persist the requested widening as a new grant
 
+### Requirement: Optional tool-risk assessment cannot widen execution authority
+Before any optional Decision Signal assessment, a model-proposed tool or command action SHALL be intercepted by a trusted blocking pre-execution hook and normalized into bounded executable identity, arguments, resolved paths, network destinations, credential profiles, descendants, resources, and expected outputs. An Agent-local authorization broker bound to the current Job, lease and fence SHALL apply the signed Factory Permission Set, Task Envelope, Project policy, local Agent grants, backend capabilities, and deterministic hard-deny rules before the action can execute. Deterministic hard-allow rules MAY authorize an in-envelope action without a provider call. Only an ambiguous action already inside every authoritative envelope MAY be sent as a redacted `tool_risk` request to a server-side Decision Signal provider. Its consuming code policy MAY allow the unchanged action, deny it, or escalate, but the signal SHALL NOT add or broaden any authority. The Agent and backend SHALL revalidate and enforce the final unchanged action immediately before the protected operation. Provider credentials SHALL NOT be delivered to the Agent workload or harness.
+
+#### Scenario: Proposed command is outside the whitelist
+- **WHEN** a harness proposes a command, argument, path, host, credential, descendant, resource, or output not present in the effective permission intersection
+- **THEN** deterministic policy denies it before any Decision Signal request and no provider response can authorize it
+
+#### Scenario: Ambiguous in-envelope action is assessed
+- **WHEN** an action fits every authoritative permission boundary but is not covered by deterministic hard-allow or hard-deny policy
+- **THEN** the configured exact `tool_risk` provider and policy may assess the normalized redacted action, after which code applies its threshold and fail-closed disposition
+
+#### Scenario: Tool-risk provider is unavailable
+- **WHEN** bounded control requires a tool-risk signal but its provider is unavailable, invalid, or below the configured confidence floor
+- **THEN** the action is denied or escalated according to immutable policy and execution does not fall back to an unassessed allow
+
+#### Scenario: Harness lacks a blocking tool hook
+- **WHEN** a Factory Job requires `tool_risk` bounded control but its pinned plugin or harness cannot prove the required pre-execution interception capability
+- **THEN** placement or pre-spawn validation rejects the Job and no action runs through an advisory or best-effort fallback
+
+#### Scenario: Tool authorization loses its fence
+- **WHEN** the Job is cancelled, its lease or fence becomes stale, the authorization broker disconnects, or the returned receipt does not match the blocked proposal
+- **THEN** the pending action is denied and cannot execute using a disposition from another Job or proposal
+
 ### Requirement: Factory secrets remain stage scoped
 Model, evaluator, source, and delivery credentials SHALL use distinct logical profiles and SHALL be delivered only to the trusted component and Stage Attempt authorized to consume them. Coding and evaluation execution SHALL NOT receive a delivery credential, and a delivery adapter SHALL NOT receive model session credentials or unredacted model traces.
 

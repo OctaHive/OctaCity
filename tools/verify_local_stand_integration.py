@@ -763,6 +763,11 @@ def _wait_for_running_job(
                 and runner_started
             ):
                 return _canonical_uuid(job_id, "running Job identity")
+            if job.get("state") in {"succeeded", "failed", "cancelled", "skipped"}:
+                raise IntegrationError(
+                    "cancellable integration Job ended in state "
+                    f"{job.get('state')} before cancellation"
+                )
         if monotonic() >= deadline:
             raise IntegrationError("timed out waiting for the cancellable integration Job")
         sleep(POLL_INTERVAL_SECONDS)

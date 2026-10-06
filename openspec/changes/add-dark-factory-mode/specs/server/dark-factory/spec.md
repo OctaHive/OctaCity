@@ -16,7 +16,7 @@ OctaCity SHALL continue to accept and execute ordinary CI/CD Triggers and Builds
 - **THEN** other Projects and ordinary Build commands remain independent of that configuration and its provider availability
 
 ### Requirement: Versioned Factory Configuration
-The server SHALL store Factory Configurations as immutable versions owned by one Project. A version SHALL bind admission rules, stage definitions, Build Configuration selections, budgets, WIP limits, permission policy, criterion packs, evaluator policy, rework limits, delivery policy, and enabled state. A Factory Run SHALL retain the exact version accepted at admission and SHALL NOT observe later replacements.
+The server SHALL store Factory Configurations as immutable versions owned by one Project. A version SHALL bind admission rules, stage definitions, Build Configuration selections, budgets, WIP limits, permission policy, optional Decision Signal profiles and rollout policies, criterion packs, evaluator policy, rework limits, delivery policy, and enabled state. A Factory Run SHALL retain the exact version accepted at admission and SHALL NOT observe later replacements.
 
 #### Scenario: Factory Configuration is replaced
 - **WHEN** an operator publishes a valid replacement using the current-version precondition
@@ -47,6 +47,34 @@ The server SHALL drive Factory Runs through explicit persisted state machines fo
 #### Scenario: Required branch does not complete
 - **WHEN** one required parallel evaluator times out or returns an invalid result
 - **THEN** the deterministic join policy records the failed branch and applies its configured retry or escalation rule
+
+### Requirement: Provider-neutral Decision Signals are bounded non-authoritative inputs
+The server MAY request probability-backed Decision Signals through a provider-neutral versioned port for only `routing` and `tool_risk` purposes. A request SHALL contain bounded redacted canonical state, versioned typed questions with finite answer or score domains, subject and policy digests, deadline, budget, and a stable logical identity. Provider capability discovery SHALL identify supported question kinds, input media, limits, data-handling class, exact adapter and model version, and probability or confidence semantics without exposing provider wire types to the factory core. JEV SHALL be the initial adapter, and another decision-model or Decisions API adapter SHALL be replaceable through immutable Factory Configuration rather than domain changes.
+
+Every completed or terminal request SHALL produce an immutable Decision Signal Receipt that binds the canonical input, question-set and policy digests, exact provider, adapter and model identities, typed answers, probability or confidence semantics, usage, terminal classification, and consuming deterministic disposition. An admitted Factory Run SHALL retain its selected exact identities even after configuration replacement. Unknown-response recovery and replay SHALL reuse or observe the recorded receipt and SHALL NOT silently query a different model for the same logical decision.
+
+#### Scenario: Provider is replaced for later runs
+- **WHEN** an operator publishes a new Factory Configuration selecting another compatible decision-model adapter or exact model version
+- **THEN** later Factory Runs use the replacement while admitted runs retain their original provider, model, questions, policy, and receipts
+
+#### Scenario: Decision Signal call cannot be reproduced safely
+- **WHEN** the configured provider times out, returns an invalid result, lacks a required capability, falls below its calibrated confidence floor, or has an unknown outcome with no observable receipt
+- **THEN** deterministic policy applies the configured fail-closed denial or escalation and does not substitute another model implicitly
+
+### Requirement: Decision Signals can select only declared Factory routes
+A routing Decision Signal SHALL receive only the finite outgoing route choices declared for the current state by the immutable Factory Configuration. Deterministic routing policy SHALL combine the recorded signal with authoritative lifecycle state, budgets, required gates, and configured thresholds to follow one declared edge, use a declared fallback, or escalate. A provider result SHALL NOT name or create an undeclared stage, skip a required validation, evaluation, delivery, or human-review gate, change a hard budget, or directly commit a Factory transition.
+
+#### Scenario: Routing provider returns an undeclared answer
+- **WHEN** an adapter returns a route absent from the request's finite choice set
+- **THEN** the result is invalid, no transition is committed, and fail-closed policy denies or escalates the routing request
+
+#### Scenario: Routing confidence is sufficient in bounded control
+- **WHEN** an exact provider/model policy in `bounded_control` mode returns a declared route that satisfies its calibrated threshold and margin rules
+- **THEN** deterministic policy may commit that declared edge only if every mandatory lifecycle invariant and budget still permits it
+
+#### Scenario: Routing policy is in shadow mode
+- **WHEN** a Decision Signal profile is configured as `shadow`
+- **THEN** the server records comparison evidence while the deterministic baseline selects the route and the signal cannot alter execution
 
 ### Requirement: Append-only Stage Attempts and fenced ownership
 Every Factory Stage SHALL have monotonically numbered append-only Stage Attempts with immutable input digests, selected Build identities, owner, deadline, fence, terminal observation, and consumed budget. A retry or rework SHALL create a new Stage Attempt and SHALL NOT rewrite prior history. Only the current fenced owner SHALL publish a transition or consume the next stage budget.

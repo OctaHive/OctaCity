@@ -92,7 +92,7 @@ class FakeClient:
                 "jobs": [
                     {
                         "id": self.cancelled_job_id,
-                        "state": "running" if self.cancelled_state == "running" else "cancelled",
+                        "state": self.cancelled_state,
                         "event_cursor": 3,
                     }
                 ]
@@ -174,6 +174,23 @@ class FakeClient:
 
 
 class LocalStandIntegrationTests(unittest.TestCase):
+    def test_cancellable_wait_reports_a_terminal_job_without_waiting_for_timeout(self):
+        client = FakeClient()
+        client.cancelled_state = "failed"
+        clock = iter((0.0, 1.0))
+
+        with self.assertRaisesRegex(
+            integration.IntegrationError,
+            "cancellable integration Job ended in state failed before cancellation",
+        ):
+            integration._wait_for_running_job(
+                client,  # type: ignore[arg-type]
+                client.cancelled_attempt_id,
+                1,
+                monotonic=lambda: next(clock),
+                sleep=lambda _: None,
+            )
+
     def test_terminal_codex_cleanup_requires_an_empty_private_work_root(self):
         with tempfile.TemporaryDirectory() as directory:
             work_root = Path(directory) / "agent/work"

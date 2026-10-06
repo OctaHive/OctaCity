@@ -43,6 +43,7 @@ Work Source
   -> ChangeSet
   -> deterministic validation
   -> independent evaluation
+  -> optional typed Decision Signal (routing/tool risk)
   -> Accept / Rework / Escalate
   -> trusted delivery adapter
 ```
@@ -68,8 +69,10 @@ Factory Run на другом Agent.
 7. Выполнять deterministic checks до LLM evaluation.
 8. Поддерживать произвольные evidence producers, criterion packs и evaluators.
 9. Принимать решение детерминированной policy, а не свободным текстом LLM.
-10. Поддерживать bounded retries, budgets, WIP limits и human escalation.
-11. Переживать restart, lease expiry, повтор событий и потерю Agent.
+10. Подключать взаимозаменяемые decision-модели для bounded routing и tool-risk
+    assessment, не передавая им authority.
+11. Поддерживать bounded retries, budgets, WIP limits и human escalation.
+12. Переживать restart, lease expiry, повтор событий и потерю Agent.
 
 ### Не-цели первого релиза
 
@@ -83,6 +86,10 @@ Factory Run на другом Agent.
 - выдача coding harness широких forge credentials;
 - превращение Octa в backlog scheduler или merge controller;
 - зависимость correctness от сохранённой model session.
+- привязка Factory domain к JEV, OpenAI Decisions API или wire format одного
+  decision-model provider;
+- разрешение decision-модели расширять whitelist, создавать произвольный route
+  или пропускать обязательный gate.
 
 ## 3. Текущий фундамент и граница реализации
 
@@ -127,6 +134,7 @@ opt-in `codex` task к обычным Pipelines; он не включает Dark
 | Factory Controller | Не реализовано | Нет Factory Run, Stage Attempt, меж-Build reconciliation, budgets и WIP ownership |
 | ChangeSet capture | Не реализовано | Agent публикует generic outputs, но trusted base/candidate capture и immutable ChangeSet contract отсутствуют |
 | Evaluation Plane | Не реализовано | Нет Evidence Manifest, Criterion Pack, Assessment, Evaluation Round и Decision Engine |
+| Decision Signal Plane | Не реализовано | Нет provider-neutral request/receipt, routing/tool-risk policies или JEV adapter; decision-модель не является частью текущего execution substrate |
 | Delivery | Не реализовано | VCS reads и revision resolution существуют; write-capable branch/PR/merge adapter отсутствует |
 | Factory operator UX | Не реализовано | Console управляет Projects, Builds, Agents и audit, но не показывает Factory Runs, evaluation rounds или delivery decisions |
 
@@ -175,7 +183,55 @@ Stage Handoffs и typed результатами завершённых ветв
 ChangeSet и проходит те же tests/evaluation/delivery gates; модель не изменяет
 рабочий workflow скрытым состоянием.
 
-### 4.3 Factory Controller находится над Builds
+### 4.3 Decision-модель возвращает сигнал, а не исполняет решение
+
+Для узких вероятностных задач OctaCity вводит provider-neutral
+`DecisionSignalProvider`. Первый adapter использует JEV. Позже OpenAI Decisions
+API или другой сервис может быть подключён отдельным adapter без изменения
+Factory domain, когда его официальный public contract и probability semantics
+станут стабильными.
+
+Decision Signal применяется только в двух seams:
+
+1. routing между конечным набором заранее объявленных outgoing edges;
+2. tool-risk assessment для уже нормализованного действия, которое прошло
+   Factory Permission Set, Task Envelope, Project policy, локальную Agent policy
+   и backend capability checks.
+
+```text
+authoritative state + declared choices
+  -> canonical redacted Decision Signal Request
+  -> selected provider/model (JEV сейчас, другой adapter позже)
+  -> typed answers + probability/confidence
+  -> immutable Decision Signal Receipt
+  -> deterministic policy
+  -> declared route | unchanged allowed action | deny | escalate
+```
+
+Signal не может создать новый stage, пропустить mandatory gate, увеличить
+budget, расширить command/path/network/secret whitelist или принять финальный
+Evaluation Decision. Agent и backend остаются последней enforcement boundary.
+Provider outage, invalid output и недостаточная confidence приводят только к
+явному fail-closed fallback. Retry использует сохранённый receipt и не вызывает
+другую модель для того же logical decision.
+
+Для `tool_risk` недостаточно post-factum telemetry: выбранный pinned harness
+adapter обязан иметь blocking pre-execution hook. Trusted Octa plugin передаёт
+canonical proposal в Agent-local authorization broker, связанный с текущими
+Job, lease и fence. Broker применяет signed hard policy и только ambiguous
+in-envelope request отправляет server-side Decision Signal adapter. Provider
+credential остаётся на server; workload ждёт deterministic disposition, после
+чего Agent/backend повторно проверяют неизменённое действие. Timeout,
+cancellation, stale fence, broker loss или receipt mismatch означают deny.
+Harness без этого capability не допускается к `tool_risk` bounded control.
+
+Каждый provider/model и каждая purpose (`routing`, `tool_risk`) имеют отдельные
+versioned questions, thresholds, margin rules и calibration corpus. Rollout
+проходит через `shadow`, `advisory` и только затем `bounded_control`. Общая
+абстракция нормализует typed choice/score/yes-no result, но не притворяется, что
+probability разных моделей одинаково откалибрована.
+
+### 4.4 Factory Controller находится над Builds
 
 Build является immutable execution request с точной source revision. Dark
 factory меняет код между стадиями, поэтому весь lifecycle нельзя поместить в
@@ -193,7 +249,7 @@ Factory Run
 Orchestrator продолжает двигать Jobs внутри Attempt. Factory Controller
 принимает меж-Build решения.
 
-### 4.4 OctaCity Agent не запускает Codex напрямую
+### 4.5 OctaCity Agent не запускает Codex напрямую
 
 ```text
 OctaCity Agent
@@ -215,7 +271,7 @@ Codex types и не знают его machine protocol. Пока существ�
 harness, отдельный universal `coding` abstraction не вводится; общий seam
 выделяется только после появления второго реально интегрированного harness.
 
-### 4.5 Implementation и evaluation разделены
+### 4.6 Implementation и evaluation разделены
 
 ```text
 octa_plugin_codex (сейчас) / другой implementation plugin (в будущем)
@@ -230,13 +286,13 @@ octa_plugin_evaluator
 После появления нескольких реализаций они могут переиспользовать доказанную
 общую process/result library, но evaluator не получает право менять код.
 
-### 4.6 Exact commit является identity результата
+### 4.7 Exact commit является identity результата
 
 Нельзя проверять плавающую branch. Checks и assessments привязаны к точному
 candidate commit SHA, ChangeSet digest, evidence digest и policy version. Любое
 изменение кода создаёт новую Evaluation Round.
 
-### 4.7 LLM не принимает merge decision
+### 4.8 LLM не принимает merge decision
 
 LLM возвращает schema-validated Assessment. Детерминированный Decision Engine
 создаёт `Accept`, `Rework`, `Escalate`, `Reject` или `Cancel`.
@@ -296,6 +352,27 @@ Envelope и call node.
 **Call DAG** — durable структура function/reasoning calls. Active call видит
 scoped ancestor context, а завершённая child branch возвращает typed result и
 summary; полный trace остаётся evidence, а не общим model context.
+
+**Decision Signal Provider** — взаимозаменяемый adapter узкой decision-модели,
+который принимает bounded canonical state и versioned typed questions и
+возвращает один из заранее объявленных answers или score с probability/confidence.
+JEV является первым provider; будущий Decisions API подключается через тот же
+application port, а не становится новым Factory domain concept.
+
+**Decision Signal Request** — immutable provider-neutral запрос с purpose,
+subject/policy digests, finite answer domain, deadline, budget и redacted state.
+
+**Decision Signal Receipt** — immutable replay/audit запись exact provider,
+adapter, model, question set, policy и input digests, typed answers,
+probability semantics, usage, terminal classification и применённого кодом
+disposition.
+
+**Routing Assessment** — Decision Signal, который может выбрать только один из
+predeclared outgoing edges текущего Factory state.
+
+**Tool Risk Assessment** — Decision Signal для уже разрешённого permission
+intersection действия; он может привести к unchanged allow, deny или escalation,
+но не расширяет authority.
 
 **Repository Knowledge** — отдельный non-authoritative discovery subsystem для
 revision-bound hybrid symbol, lexical, dependency-graph и vector retrieval по
@@ -583,6 +660,11 @@ Evidence Producers -> Evaluators -> Decision Engine
        facts            opinions       authority
 ```
 
+Decision Signal Plane не подменяет эту цепочку. `Routing Assessment` и
+`Tool Risk Assessment` отвечают на bounded operational questions до Evaluation
+Decision и сохраняются отдельно. Они не являются candidate Assessment,
+Evidence или основанием для merge.
+
 Deterministic failures поступают Decision Engine напрямую, а не через пересказ
 LLM.
 
@@ -692,19 +774,23 @@ Required failure или indeterminate ведёт к Escalate, а не pass. High
 3. WorkResolver создаёт Work Envelope.
 4. Admission создаёт ровно один Factory Run.
 5. Source ref разрешается в exact immutable base revision.
-6. Factory Controller создаёт Implementation Stage Attempt.
-7. Agent создаёт disposable sandbox/worktree и запускает octa-runner.
-8. Octa запускает coding plugin, harness изменяет workspace.
-9. Trusted capture создаёт ChangeSet/candidate commit.
-10. Implementation worktree уничтожается.
-11. Validation Jobs создают свежие worktrees exact candidate commit.
-12. Octa запускает tests/scanners/evidence producers.
-13. Evaluation Planner фиксирует immutable Evaluation Plan.
-14. Evaluator Jobs параллельно работают в read-only worktrees.
-15. Decision Engine создаёт Accept, Rework или Escalate.
-16. Accept вызывает trusted Delivery Adapter; Rework создаёт новый worktree.
-17. Work Reporter best-effort публикует status/result projection.
-18. Retention policy очищает disposable и просроченные artifacts.
+6. Если route имеет разрешённый probabilistic seam, Factory Controller создаёт
+   Decision Signal Request и deterministic policy потребляет frozen receipt.
+7. Factory Controller создаёт Implementation Stage Attempt по declared edge.
+8. Agent создаёт disposable sandbox/worktree и запускает octa-runner.
+9. Octa запускает coding plugin; каждый tool action проходит permission gate и,
+   только для in-envelope ambiguity, optional Tool Risk Assessment.
+10. Harness изменяет workspace в пределах неизменённой разрешённой операции.
+11. Trusted capture создаёт ChangeSet/candidate commit.
+12. Implementation worktree уничтожается.
+13. Validation Jobs создают свежие worktrees exact candidate commit.
+14. Octa запускает tests/scanners/evidence producers.
+15. Evaluation Planner фиксирует immutable Evaluation Plan.
+16. Evaluator Jobs параллельно работают в read-only worktrees.
+17. Decision Engine создаёт Accept, Rework или Escalate.
+18. Accept вызывает trusted Delivery Adapter; Rework создаёт новый worktree.
+19. Work Reporter best-effort публикует status/result projection.
+20. Retention policy очищает disposable и просроченные artifacts.
 
 ## 13. Целевое module ownership и текущая реализация
 
@@ -719,12 +805,23 @@ Orchestrator, Scheduler, Agent protocol или management API.
 | `octacity-server-evaluation` | Evaluation Round, Plan, Assessment, Decision | Model calls, scanners, repo execution |
 | `octacity-server-delivery` | Delivery policy and commands | Forge SDKs, repo execution |
 
+`DecisionSignalProvider` начинается как узкий application port рядом с Factory
+use cases, а canonical request/result/receipt принадлежат deep factory core.
+JEV HTTP types живут только в infrastructure adapter. Отдельный protocol crate
+создаётся лишь если появится реальная out-of-process distribution boundary;
+будущий OpenAI Decisions API adapter должен реализовать тот же conformance
+contract, но сохраняет собственные wire types и calibration semantics внутри.
+
 Provider-neutral protocols:
 
 - `octacity-work-source-protocol`;
 - `octacity-work-reporter-protocol`;
 - `octacity-delivery-protocol`;
 - `octacity-evaluator-protocol`.
+
+Decision Signal boundary provider-neutral, но не обязана немедленно становиться
+отдельным process protocol: сначала JEV adapter и второй fake adapter доказывают
+стабильность seam без пустого пакета.
 
 Octa plugins:
 
@@ -759,6 +856,16 @@ tool reports, URLs и provider metadata.
   fail-closed без fallback на более слабый execution mode;
 - evaluator по умолчанию не имеет shell/write/arbitrary network;
 - LLM output schema-validated и никогда не исполняется напрямую;
+- Decision Signal получает только bounded redacted state и finite answer domain;
+- routing signal не создаёт edge и не пропускает mandatory gate;
+- tool-risk signal вызывается только после permission intersection и hard-deny
+  checks, может сузить решение, но не расширить whitelist;
+- exact provider/model/question/policy/input закрепляются в receipt; timeout,
+  invalid result и low confidence используют `deny` или `escalate`;
+- provider credentials server-side и не доступны repository, harness, Agent
+  workload или Operator Console;
+- tool proposal блокируется trusted hook до fenced disposition; отсутствие hook,
+  broker или matching receipt означает deny, а не best-effort execution;
 - secrets и cross-tenant data не попадают в context;
 - model credentials short-lived, scoped и redacted;
 - delivery credential доступен только trusted adapter;
@@ -795,12 +902,28 @@ defense in depth, но внешней security boundary остаётся OctaCit
 backend. Unattended mode разрешается только после закрытия этого gap и
 контрактных negative tests для каждой категории permission.
 
+Опциональный Tool Risk Assessment не заполняет этот gap и не считается
+enforcement boundary. Порядок неизменяем:
+
+```text
+normalize proposal
+  -> Factory Permission Set ∩ Task Envelope ∩ Project/Agent/backend policy
+  -> deterministic hard deny / hard allow
+  -> optional Decision Signal только для in-envelope ambiguity
+  -> deterministic disposition
+  -> Agent/backend revalidation and enforcement
+```
+
 ## 15. Failure, retry и fencing
 
 - Worker loss: lease expiry fences owner; другой Agent materializes exact state.
 - Duplicate intake: scoped dedup identity возвращает существующий Factory Run.
 - Stale completion: принимается только current lease/stage/subject digest.
 - Connector outage: bounded retry; exhaustion required connector -> Escalate.
+- Decision Signal lost response: observe/reuse stable request receipt; не
+  re-query другой model; невозможность доказать результат -> Deny/Escalate.
+- Decision Signal provider/model drift: новые calls требуют новой immutable
+  Factory Configuration; active runs сохраняют exact identity и policy.
 - Partial evidence: required evaluation не становится accepted.
 - Delivery lost response: stable idempotency key и observe-before-retry.
 - Rework: новый ChangeSet/Evaluation Round, bounded attempts/time/tokens/cost.
@@ -812,7 +935,9 @@ Multi-instance correctness хранится в authoritative store. Process-loca
 
 Audit фиксирует source identity, Factory transitions, exact revisions,
 connector/plugin/image/policy digests, usage, lease fence, evidence freshness,
-decision reasons, delivery identity и escalation cause.
+decision reasons, Decision Signal purpose/provider/model/question/input/policy
+digests, rollout mode, deterministic disposition, delivery identity и
+escalation cause.
 
 Task text, paths высокой кардинальности, issue IDs, prompts, secrets и raw
 findings не попадают в metric labels.
@@ -824,6 +949,8 @@ findings не попадают в metric labels.
 - раздельные coding/evaluation quotas;
 - source admission rate limits;
 - provider circuit breakers;
+- отдельные decision-signal concurrency, latency и cost budgets;
+- purpose/provider/model-specific calibration и drift monitors;
 - fair scheduling;
 - bounded evaluator fan-out.
 
@@ -845,6 +972,7 @@ target добавляет Delivery Adapter. Factory Controller не изменя
 | Codex plugin conformance и release packaging в Octa | Готово upstream |
 | OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.5.0`, revision `8b4269eff298dccadf38bc7011b759464fcdc1e1` |
 | Factory Work/Task/ChangeSet/Assessment contracts и durable storage | Не готово |
+| Decision Signal provider seam и JEV adapter | Не готово; сначала shadow, затем отдельная калибровка routing/tool-risk |
 | Factory Permission Set и malicious-repository negative contracts | Частично; требуется закрыть gap из 14.1 |
 | Trusted ChangeSet capture, evaluation и delivery | Не готово |
 
@@ -858,6 +986,7 @@ manual REST/CLI Work Submission
   -> trusted ChangeSet capture
   -> Octa fmt/lint/test
   -> spec + architecture + security + test-quality evaluation
+  -> JEV routing/tool-risk shadow receipts (без влияния на execution)
   -> at most one rework
   -> PR creation
   -> human merge
@@ -884,7 +1013,8 @@ release metadata, plugin lock и совместимость CLI.
 Утвердить glossary; Work/Task Envelope; Factory Run/Stage Attempt; ChangeSet; Evidence Manifest;
 Assessment/Decision schemas; typed permission vocabulary; effective-permission
 intersection; backend capability/admission matrix; plugin provenance; threat
-model; ADR о разделении Factory Run и Build. Обычный CI/CD path остаётся
+model; provider-neutral Decision Signal request/receipt и rollout policy; ADR о
+разделении Factory Run и Build. Обычный CI/CD path остаётся
 неизменным и проходит regression contracts без factory configuration.
 
 ### Phase B: manual factory to PR
@@ -892,19 +1022,26 @@ model; ADR о разделении Factory Run и Build. Обычный CI/CD pa
 Manual intake, durable Factory Controller, `octa_plugin_codex`, trusted
 ChangeSet capture, deterministic validation, один evaluator connector, trusted
 PR delivery и human merge. Все loops, retries, joins и stop conditions
-реализуются программно; model calls возвращают typed results.
+реализуются программно; model calls возвращают typed results. JEV adapter
+работает в shadow mode и накапливает отдельные routing/tool-risk calibration
+corpora без изменения baseline flow.
 
 ### Phase C: pluggability
 
 Claude plugin/adapter, второй Work Source, Work Reporter, multiple Criterion
-Packs, connector registry и bounded rework. Только здесь по двум production
-harnesses принимается решение о shared coding interface или сохранении
-независимых provider plugins.
+Packs, connector registry, второй Decision Signal adapter (например OpenAI
+Decisions API после публикации стабильного contract) и bounded rework. Только
+здесь по двум production harnesses принимается решение о shared coding
+interface или сохранении независимых provider plugins.
 
 ### Phase D: unattended backlog
 
 Polling/webhooks, durable claiming, WIP limits, reconciliation, circuit
 breakers и multi-instance tests.
+
+На этом этапе доказанные Decision Signal profiles могут независимо перейти из
+shadow в advisory и затем в bounded control. Promotion привязан к exact
+provider/model/policy и откатывается без изменения Factory graph.
 
 ### Phase E: policy-based auto-merge
 
@@ -942,6 +1079,16 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
     последующий model context входят только scoped typed outputs/summaries.
 23. Self-evolution создаёт обычный ChangeSet и не обходит validation,
     evaluation, delivery policy или human gates.
+24. Decision Signal provider взаимозаменяем; JEV и будущий Decisions API не
+    входят в Factory domain types.
+25. Routing signal выбирает только predeclared edge и не пропускает mandatory
+    gate; code-owned policy остаётся единственным автором transition.
+26. Tool-risk signal никогда не расширяет effective permission intersection;
+    Agent/backend остаются enforcement boundary.
+27. Один logical Decision Signal request закрепляет exact provider/model,
+    question/policy/input digests и receipt; retry не подменяет модель.
+28. Shadow, advisory и bounded control продвигаются отдельно для каждой purpose
+    и exact provider/model только по versioned calibration evidence.
 
 ## 20. Решения для отдельных ADR
 
@@ -963,6 +1110,11 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
 13. Разделение Factory Policy, Task Envelope и локальной Agent policy.
 14. Versioned representation call DAG, context summaries и replay evidence для
     LLM-as-Code execution.
+15. Canonical Decision Signal request/result/receipt, provider capability model
+    и граница между structural normalization и provider-specific probability
+    semantics.
+16. Purpose-specific calibration corpus, promotion/demotion policy и drift
+    limits для routing и tool-risk.
 
 ## 21. Критерии подтверждения архитектуры
 
@@ -1009,6 +1161,15 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
     values и не используют общий бесконечно растущий transcript как state.
 17. Self-evolution создаёт candidate ChangeSet и не может изменить production
     workflow до прохождения обычных gates и delivery policy.
+18. JEV и второй fake adapter проходят один Decision Signal conformance suite;
+    замена adapter не требует изменения Factory core или REST domain DTO.
+19. Signal с undeclared route, out-of-envelope tool action, malformed result,
+    low confidence или provider outage не запускает действие и приводит к
+    configured Deny/Escalate.
+20. Restart и unknown response переиспользуют immutable Decision Signal Receipt,
+    не вызывая другую model для того же logical decision.
+21. Shadow JEV результаты доступны в audit/diagnostics, но не меняют baseline;
+    bounded control требует отдельного audited promotion exact model/policy.
 
 ## 22. Итог
 
@@ -1019,10 +1180,15 @@ plugins, OctaCity владеет durable lifecycle, coding harnesses меняю�
 worktrees, Evaluation Plane независимо оценивает exact candidate, а доверенный
 Delivery Adapter публикует принятый результат. Детерминированный код владеет
 control flow; LLM используется как bounded reasoning/generation/evaluation call.
+Decision-модели подключаются через replaceable Decision Signal Provider: JEV
+первым, будущий Decisions API отдельным adapter. Они дают typed probabilistic
+signal для заранее ограниченного routing или tool-risk, но никогда не получают
+право расширить permissions или самостоятельно совершить transition.
 
 ```text
 новый источник        -> Work Source Adapter
 новый coding provider -> Octa plugin -> optional shared Harness Adapter
+новый decision model  -> Decision Signal Provider adapter
 новый аспект качества -> Criterion Pack / Evidence Producer
 новый target delivery -> Delivery Adapter
 ```

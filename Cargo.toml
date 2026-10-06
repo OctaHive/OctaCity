@@ -33,6 +33,7 @@ members = [
   "server/core/octacity-server-artifacts",
   "server/core/octacity-server-cache",
   "server/core/octacity-server-domain",
+  "server/core/octacity-server-factory",
   "server/core/octacity-server-job",
   "server/core/octacity-server-orchestrator",
   "server/core/octacity-server-pipeline",

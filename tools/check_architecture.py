@@ -218,6 +218,54 @@ SERVER_COMPOSITION_SOURCE = Path("server/app/src")
 SERVER_INFRASTRUCTURE_SOURCE = Path("server/infrastructure")
 MANAGEMENT_SECURITY_SOURCE = Path("server/application/src/management_security")
 POSTGRES_STORE_SOURCE = Path("server/infrastructure/octacity-server-store-postgres/src")
+FACTORY_CORE_PACKAGE = "octacity-server-factory"
+FACTORY_CORE_SOURCE = Path("server/core/octacity-server-factory/src")
+FACTORY_INDEPENDENT_LIFECYCLE_PACKAGES = frozenset({
+    "octacity-server-domain",
+    "octacity-server-trigger",
+    "octacity-server-pipeline",
+    "octacity-server-job",
+    "octacity-server-orchestrator",
+    "octacity-server-scheduler",
+})
+FACTORY_CORE_SOURCE_RULES = (
+    (
+        "provider-specific import",
+        re.compile(
+            r"(?mi)^\s*(?:use|extern\s+crate)\s+"
+            r"(?:anthropic|codex|github|gitlab|jev|openai)(?:_|::|\b)"
+        ),
+    ),
+    (
+        "provider-specific type",
+        re.compile(
+            r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|type)\s+"
+            r"(?:Anthropic|Codex|GitHub|GitLab|JEV|Jev|OpenAI|OpenAi)\w*"
+        ),
+    ),
+    (
+        "SQL row implementation",
+        re.compile(r"\b(?:diesel|sea_orm|sqlx|tokio_postgres)::|#\s*\[\s*(?:diesel|sqlx)\b|\bFromRow\b"),
+    ),
+    (
+        "HTTP DTO implementation",
+        re.compile(
+            r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|type)\s+"
+            r"\w*(?:Http|Rest)(?:Dto|Request|Response)\b"
+        ),
+    ),
+    (
+        "UI state implementation",
+        re.compile(
+            r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|type)\s+"
+            r"\w*(?:Ui|UI)(?:Model|State|ViewModel)\b"
+        ),
+    ),
+)
+FACTORY_DUPLICATE_LIFECYCLE_TYPE = re.compile(
+    r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|type|trait)\s+"
+    r"(?:Attempt|AttemptState|Build|BuildState|Job|JobState|Lease|LeaseState|Pipeline|PipelineVersion)\b"
+)
 TYPED_MANAGEMENT_ROUTE_REGISTRY = Path("v1/adapter/routes.rs")
 MANAGEMENT_PATH_DECLARATIONS = Path("v1/openapi/operations")
 MANAGEMENT_PREFIX_OWNERS = frozenset({
@@ -648,6 +696,110 @@ def check_shared_sources(graph: Graph) -> list[Violation]:
     return sorted(violations, key=lambda violation: (violation.code, violation.message))
 
 
+def check_factory_graph(graph: Graph) -> list[Violation]:
+    """Keep Factory above the existing execution core and inside one deep module."""
+
+    violations: list[Violation] = []
+    for package in graph.packages:
+        if package.role == "core" and "factory" in package.name and package.name != FACTORY_CORE_PACKAGE:
+            violations.append(
+                Violation(
+                    "ARCH020_FACTORY_MODULE_SHAPE",
+                    f"{package.name} creates a second Factory core seam; extend {FACTORY_CORE_PACKAGE} instead",
+                )
+            )
+        if package.name == FACTORY_CORE_PACKAGE:
+            provider_dependencies = sorted(
+                dependency
+                for dependency in package.dependencies
+                if re.search(
+                    r"(?:^|[-_])(?:anthropic|codex|github|gitlab|jev|openai)(?:[-_]|$)",
+                    dependency,
+                    re.IGNORECASE,
+                )
+            )
+            if provider_dependencies:
+                violations.append(
+                    Violation(
+                        "ARCH018_FACTORY_CORE_COUPLING",
+                        f"{FACTORY_CORE_PACKAGE} depends on provider-specific contracts: "
+                        f"{', '.join(provider_dependencies)}",
+                    )
+                )
+
+    for edge in graph.edges:
+        if (
+            edge.source.name in FACTORY_INDEPENDENT_LIFECYCLE_PACKAGES
+            and edge.target.name == FACTORY_CORE_PACKAGE
+        ):
+            violations.append(
+                Violation(
+                    "ARCH019_FACTORY_EXECUTION_DEPENDENCY",
+                    f"{edge.source.name} must remain independent of {FACTORY_CORE_PACKAGE}",
+                )
+            )
+
+    return sorted(set(violations), key=lambda violation: (violation.code, violation.message))
+
+
+def check_factory_core_sources(graph: Graph) -> list[Violation]:
+    """Reject representation leakage and duplicate execution lifecycle types in Factory core."""
+
+    package = next((candidate for candidate in graph.packages if candidate.name == FACTORY_CORE_PACKAGE), None)
+    if package is None:
+        return []
+    source_root = package.manifest_path.parent / "src"
+    source_paths = [
+        source_path
+        for source_path in sorted(source_root.rglob("*.rs"))
+        if not _is_rust_test_source(source_path)
+    ]
+    if not source_paths:
+        return [
+            Violation(
+                "ARCH020_FACTORY_MODULE_SHAPE",
+                f"{FACTORY_CORE_PACKAGE} is an empty seam with no production Rust source",
+            )
+        ]
+
+    violations: list[Violation] = []
+    has_implementation = False
+    for source_path in source_paths:
+        source = _production_rust_source(source_path)
+        relative_path = source_path.relative_to(package.manifest_path.parent)
+        has_implementation = has_implementation or bool(
+            re.search(
+                r"(?m)^\s*(?:impl\b|(?:pub(?:\([^)]*\))?\s+)?"
+                r"(?:const|enum|fn|struct|trait|type)\s+\w+)",
+                source,
+            )
+        )
+        for representation, pattern in FACTORY_CORE_SOURCE_RULES:
+            if pattern.search(source):
+                violations.append(
+                    Violation(
+                        "ARCH018_FACTORY_CORE_COUPLING",
+                        f"{FACTORY_CORE_PACKAGE} contains {representation}: {relative_path}",
+                    )
+                )
+        if FACTORY_DUPLICATE_LIFECYCLE_TYPE.search(source):
+            violations.append(
+                Violation(
+                    "ARCH020_FACTORY_MODULE_SHAPE",
+                    f"{FACTORY_CORE_PACKAGE} duplicates the existing Build/Job lifecycle: {relative_path}",
+                )
+            )
+
+    if not has_implementation:
+        violations.append(
+            Violation(
+                "ARCH020_FACTORY_MODULE_SHAPE",
+                f"{FACTORY_CORE_PACKAGE} is an empty seam without domain behavior",
+            )
+        )
+    return sorted(set(violations), key=lambda violation: (violation.code, violation.message))
+
+
 def check_management_route_sources(workspace: Path) -> list[Violation]:
     """Keep every management route behind the typed authorization registry."""
 
@@ -865,7 +1017,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         graph = graph_from_metadata(metadata)
         violations = (
             check(graph)
+            + check_factory_graph(graph)
             + check_shared_sources(graph)
+            + check_factory_core_sources(graph)
             + check_management_route_sources(options.workspace)
             + check_management_security_sources(options.workspace)
             + check_postgres_management_actor_sources(options.workspace)

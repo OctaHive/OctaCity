@@ -18,7 +18,7 @@ Every operation required to manage project hierarchies, pipelines, build configu
 ## ADDED Requirements
 
 ### Requirement: Versioned Factory Configuration management
-The management REST API SHALL expose typed authorization-safe commands and queries to create, inspect, list, validate, and publish replacement Factory Configuration versions owned by a Project. It SHALL expose bounded authorization-filtered choice collections for selectable Build Configurations, execution policies and targets, permission profiles and semantic enforcement capabilities, criterion packs, evaluator connectors, secret and workload-identity profile references, delivery adapters, and other logical references needed by a management client. Requests SHALL use bounded structured admission, stage, Build Configuration, budget, WIP, permission, evaluation, rework, and delivery policy; SHALL reject unknown provider payloads; SHALL require idempotency and current-version preconditions for mutations; and SHALL expose logical adapter and policy identities without credentials.
+The management REST API SHALL expose typed authorization-safe commands and queries to create, inspect, list, validate, and publish replacement Factory Configuration versions owned by a Project. It SHALL expose bounded authorization-filtered choice collections for selectable Build Configurations, execution policies and targets, permission profiles and semantic enforcement capabilities, Decision Signal adapters, exact models, question kinds and profile policies, criterion packs, evaluator connectors, secret and workload-identity profile references, delivery adapters, and other logical references needed by a management client. Requests SHALL use bounded structured admission, stage, Build Configuration, budget, WIP, permission, optional Decision Signal routing and tool-risk rollout, evaluation, rework, and delivery policy; SHALL reject unknown provider payloads; SHALL require idempotency and current-version preconditions for mutations; and SHALL expose logical adapter and policy identities without credentials.
 
 #### Scenario: Operator creates a Factory Configuration
 - **WHEN** an authorized client submits a valid configuration using visible Project, Build Configuration, criterion-pack, connector, and policy identities
@@ -35,6 +35,14 @@ The management REST API SHALL expose typed authorization-safe commands and queri
 #### Scenario: Configuration contains unavailable authority
 - **WHEN** a request names a permission, secret profile, execution target, connector, or delivery operation unavailable under the Project and deployment policy
 - **THEN** the API returns a stable validation or conflict response and publishes no usable configuration version
+
+#### Scenario: Client selects a Decision Signal provider
+- **WHEN** a client configures JEV or another compatible decision-model adapter for routing or tool risk
+- **THEN** it selects a server-published exact adapter/model/profile choice with supported capabilities, purpose-specific rollout mode, thresholds, fallback and policy version rather than posting provider credentials or an arbitrary wire payload
+
+#### Scenario: Mutable model alias is selected
+- **WHEN** a client selects a supported provider alias while preparing a configuration
+- **THEN** authoritative validation resolves and displays the exact model identity that publication will freeze, or rejects publication when exact resolution is unavailable
 
 ### Requirement: Bounded Work admission commands
 The management REST API SHALL accept a manual provider-neutral Work Submission containing a visible Factory Configuration, scoped external identity, Repository subject, allowed base reference, task and acceptance artifacts, optional specification references, bounded priority and risk, and bounded metadata. The command SHALL use an idempotency key and SHALL return the existing logical admission result for an exact scoped replay before resolving mutable source state again.
@@ -59,7 +67,7 @@ The management REST API SHALL expose project-scoped and global authorization-saf
 - **THEN** returned items and cursor reveal nothing about hidden runs and retain deterministic page bounds
 
 ### Requirement: Factory Run diagnostics
-The management REST API SHALL expose one Factory Run and bounded cursor-paginated views of its immutable Work Envelope summary, Stage Attempts, linked Builds, Task Envelope metadata, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, budget consumption, escalations, delivery attempts, reporter status, and audit correlation. Responses SHALL use logical identities and safe digest/provenance metadata and SHALL NOT expose raw hidden reasoning, unredacted prompts, secrets, permanent object locations, or forge credentials.
+The management REST API SHALL expose one Factory Run and bounded cursor-paginated views of its immutable Work Envelope summary, Stage Attempts, linked Builds, Task Envelope metadata, Decision Signal Requests and Receipts, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, budget consumption, escalations, delivery attempts, reporter status, and audit correlation. Responses SHALL use logical identities and safe digest/provenance metadata and SHALL NOT expose raw hidden reasoning, unredacted prompts or command text, raw provider payloads, secrets, permanent object locations, or provider and forge credentials.
 
 #### Scenario: Client diagnoses a rework decision
 - **WHEN** a visible Factory Run has produced a rework Decision
@@ -68,6 +76,10 @@ The management REST API SHALL expose one Factory Run and bounded cursor-paginate
 #### Scenario: Evaluation branch is still active
 - **WHEN** some required evaluator Stage Attempts are terminal and another remains active
 - **THEN** the response distinguishes branch states and the pending deterministic join without claiming a final Decision
+
+#### Scenario: Client diagnoses a signal-influenced route
+- **WHEN** bounded control consumed a routing or tool-risk Decision Signal
+- **THEN** the API distinguishes the non-authoritative typed signal and confidence semantics from the deterministic policy disposition and links their exact provider, model, question-set, input and policy digests
 
 ### Requirement: Idempotent Factory control commands
 The management REST API SHALL expose typed idempotent commands to cancel a non-terminal Factory Run, retry an eligible infrastructure-failed Stage Attempt, acknowledge or resolve an escalation with a bounded disposition, and request delivery for review of the exact currently accepted candidate. Commands SHALL require the current Factory Run version or equivalent strong precondition and SHALL NOT permit a caller to submit an arbitrary next state, Assessment, Decision, candidate digest, or delivery success.

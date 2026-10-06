@@ -73,7 +73,7 @@ The console SHALL provide stable, directly addressable views for the Project hie
 ## ADDED Requirements
 
 ### Requirement: Guided Factory Configuration management
-The console SHALL provide typed guided creation and immutable-version replacement for Factory Configurations rather than limiting Factory mode to read-only views or exposing a raw JSON editor. The editor SHALL organize admission, stages and Build Configurations, WIP and hard budgets, permissions, criterion packs, evaluators and quorum, rework, delivery, and enabled state into reviewable sections. It SHALL populate every resource reference from bounded authorization-filtered REST choices, SHALL NOT require an operator to enter an opaque identifier or provider payload manually, and SHALL distinguish unavailable, incompatible, hidden, and unconfigured choices without deriving authority on the client.
+The console SHALL provide typed guided creation and immutable-version replacement for Factory Configurations rather than limiting Factory mode to read-only views or exposing a raw JSON editor. The editor SHALL organize admission, stages and Build Configurations, WIP and hard budgets, permissions, optional Decision Signal routing and tool-risk profiles, criterion packs, evaluators and quorum, rework, delivery, and enabled state into reviewable sections. It SHALL populate every resource reference from bounded authorization-filtered REST choices, SHALL NOT require an operator to enter an opaque identifier, provider credential, model alias, or provider payload manually, and SHALL distinguish unavailable, incompatible, hidden, and unconfigured choices without deriving authority on the client.
 
 The editor SHALL start from an empty supported template or a selected current immutable version, keep an unfinished draft only in component memory, perform generated-type and bounded field validation, request authoritative server validation, and present the normalized configuration, effective permission narrowing, required Agent/backend capabilities, unresolved incompatibilities, and current-version precondition before confirmation. Publication SHALL use the shared immutable confirmed-intent helper and SHALL create one new version rather than mutating the current version. Secrets, task bodies, prompts, provider credentials, and unfinished configuration drafts SHALL NOT be placed in browser persistence, URLs, logs, analytics, or error reports.
 
@@ -89,6 +89,10 @@ The editor SHALL start from an empty supported template or a selected current im
 - **WHEN** authoritative validation reports that a selected stage, permission, evaluator, delivery adapter, or required enforcement capability is unavailable under current policy
 - **THEN** the editor associates the safe error with its section, prevents publication, and allows correction without discarding unrelated entered values
 
+#### Scenario: Operator configures a Decision Signal profile
+- **WHEN** an operator enables routing or tool-risk signals
+- **THEN** the editor offers only compatible server-published adapter/model/profile choices, shows the resolved exact identity, purpose-specific `shadow`, `advisory`, or `bounded_control` mode, thresholds, fail-closed fallback and calibration status, and explains that the signal cannot grant authority or skip mandatory gates
+
 #### Scenario: Configuration changes during editing
 - **WHEN** publication fails because another operator replaced the current version after the editor opened
 - **THEN** the console preserves the in-memory form, shows the version conflict and changed authoritative baseline, and requires explicit reconciliation and a new confirmed intent instead of silently overwriting or replaying against the new version
@@ -98,7 +102,7 @@ The editor SHALL start from an empty supported template or a selected current im
 - **THEN** unfinished values are discarded and no configuration version, browser-persisted draft, idempotency outcome, or audit mutation is created
 
 ### Requirement: Factory Run diagnostics
-The Factory Run view SHALL expose the safe Work summary, exact base and candidate identities, current state and version, Stage Attempt timeline and linked Builds, bounded budget consumption, Task Envelope and permission summary, ChangeSets, deterministic evidence, evaluation plan and branch states, Assessments, Decisions and reasons, escalation, delivery-for-review, reporting state, and audit correlation available through REST. The console SHALL present program-selected lifecycle state and SHALL NOT derive a Decision, scheduling compatibility, missing transition, or delivery success from model prose or client state.
+The Factory Run view SHALL expose the safe Work summary, exact base and candidate identities, current state and version, Stage Attempt timeline and linked Builds, bounded budget consumption, Task Envelope and permission summary, Decision Signal requests, receipts and consuming dispositions, ChangeSets, deterministic evidence, evaluation plan and branch states, Assessments, Decisions and reasons, escalation, delivery-for-review, reporting state, and audit correlation available through REST. The console SHALL present program-selected lifecycle state and SHALL NOT derive a Decision, scheduling compatibility, missing transition, authorization, or delivery success from model prose, probability, or client state.
 
 #### Scenario: Operator investigates an active run
 - **WHEN** a Factory Run is waiting on parallel validation or evaluation branches
@@ -107,6 +111,10 @@ The Factory Run view SHALL expose the safe Work summary, exact base and candidat
 #### Scenario: Operator investigates a rejected candidate
 - **WHEN** the Decision Engine rejects or requests rework
 - **THEN** the view associates reasons with the exact candidate, deterministic evidence, Assessments, policy version, and next bounded action using non-color labels and accessible structured text
+
+#### Scenario: Operator investigates a Decision Signal
+- **WHEN** routing or tool-risk assessment was requested in shadow, advisory, or bounded-control mode
+- **THEN** the view separately labels its purpose, exact provider/model, typed answers, confidence semantics, mode, fallback, receipt digest, deterministic baseline and final policy disposition without presenting the signal as an authoritative Decision
 
 #### Scenario: Sensitive factory data exists
 - **WHEN** Task Envelopes, provider traces, delivery attempts, or Assessments reference protected data

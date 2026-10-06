@@ -47,6 +47,15 @@ use explicit per-layer allowlists. An unknown SDK is rejected by default, so
 enforcement does not depend on recognizing every database, broker, VCS, or
 provider crate name.
 
+The Factory core has an additional guard: provider-specific types, persistence
+rows, HTTP DTOs, UI state, and Codex protocol contracts cannot enter it. The
+existing Build, Attempt, Job, Lease, Pipeline, orchestration, and placement
+cores remain independent of Factory, while Factory lifecycle and decision
+invariants stay together in the single `octacity-server-factory` module. That
+module also owns the narrow provider-neutral Decision Signal port and its pure
+routing/tool-risk consumption policy; provider discovery, credentials, wire
+formats, retries, and concrete adapters remain outside the core.
+
 ### Browser console boundary
 
 The standalone application under `ui/` is a separately built and deployed
@@ -73,6 +82,7 @@ management workflow available to headless REST clients.
 | `octacity-server-api-cache` | Exact bounded adaptation of Octa HTTP cache v1, including protocol headers and media types | Action-key calculation, plugin contracts, quota decisions, or physical object keys |
 | `octacity-server-application` | Transport-independent commands, queries, handlers, projections, transaction coordination, and cross-module Project-policy resolution | HTTP DTOs and concrete infrastructure |
 | `octacity-server-domain` | Server-only identities, versions, bounded values, timestamps, and typed errors | Aggregates, transport DTOs, persistence rows |
+| `octacity-server-factory` | Bounded Factory values, immutable records, permission intersection, lifecycle and candidate decisions, and the provider-neutral Decision Signal contract and consumption policy | Build/Job execution lifecycle, provider wire/process protocols or SDKs, adapter discovery and dispatch, persistence rows, HTTP DTOs, and UI state |
 | `octacity-server-trigger` | Trigger normalization, occurrence deduplication, and Trigger evaluation state | Ready-Job placement or provider payloads |
 | `octacity-server-pipeline` | Immutable Pipeline versions, DAG validation, dependency policy, Attempt materialization rules | Agent execution and queue leasing |
 | `octacity-server-job` | Server Job state, requirements, and signed-intent construction inputs | Agent-side Job execution lifecycle |

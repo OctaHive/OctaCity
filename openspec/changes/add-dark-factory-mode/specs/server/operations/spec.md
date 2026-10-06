@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Durable restart recovery
-After restart, the server SHALL reconstruct schedules, trigger work, pipeline state, queued jobs, builds and attempts, Factory Configurations, Work Envelopes, Factory Runs, Stage Attempts, current stage claims and budgets, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, delivery and reporting work, current leases, event cursors, log-chunk manifests, pending uploads, cache sessions, drain state, idempotency outcomes, and outbox records from the authoritative store and SHALL fence or expire ambiguous ownership before reassignment. Recovery SHALL require no worktree, model session, in-memory transcript, process-local timer, or provider-local hidden state.
+After restart, the server SHALL reconstruct schedules, trigger work, pipeline state, queued jobs, builds and attempts, Factory Configurations, Work Envelopes, Factory Runs, Stage Attempts, current stage claims and budgets, Decision Signal Requests and Receipts, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, delivery and reporting work, current leases, event cursors, log-chunk manifests, pending uploads, cache sessions, drain state, idempotency outcomes, and outbox records from the authoritative store and SHALL fence or expire ambiguous ownership before reassignment. Recovery SHALL require no worktree, model session, in-memory transcript, process-local timer, or provider-local hidden state.
 
 #### Scenario: Server restarts during a running job
 - **WHEN** the agent reconnects with the current registration and fence before lease expiry
@@ -29,7 +29,7 @@ Factory admission, reconciliation, evaluation planning, decision, delivery, and 
 - **THEN** readiness and operator diagnostics report the degraded factory capability while liveness and already-safe CI/CD observation remain honest
 
 ### Requirement: Factory audit and secret-safe observability
-Every accepted Work admission, Factory claim, Stage Attempt, Build linkage, candidate capture, evidence publication, evaluation plan, Assessment receipt, Decision, rework, escalation, cancellation, delivery, and reporting mutation SHALL append an immutable audit fact in the same authoritative transaction as its state change. Structured logs, metrics, and traces SHALL expose bounded lifecycle state, latency, usage, retries, budget, fences, connector and policy digests, and failure classifications while excluding task bodies, prompts, raw findings, paths of unbounded cardinality, provider credentials, secrets, private delivery capabilities, and hidden model reasoning.
+Every accepted Work admission, Factory claim, Stage Attempt, Build linkage, Decision Signal request, receipt, rollout comparison and consuming disposition, candidate capture, evidence publication, evaluation plan, Assessment receipt, Decision, rework, escalation, cancellation, delivery, and reporting mutation SHALL append an immutable audit fact in the same authoritative transaction as its state change. Structured logs, metrics, and traces SHALL expose bounded lifecycle state, latency, usage, retries, budget, fences, exact connector/model/policy digests, rollout mode, calibrated outcome class, and failure classifications while excluding task bodies, prompts, raw command text, raw provider payloads, raw findings, paths of unbounded cardinality, provider credentials, secrets, private delivery capabilities, and hidden model reasoning.
 
 #### Scenario: Factory decision is committed
 - **WHEN** the Decision Engine accepts, reworks, escalates, rejects, or cancels a candidate
@@ -39,8 +39,16 @@ Every accepted Work admission, Factory claim, Stage Attempt, Build linkage, cand
 - **WHEN** a model, evaluator, source, or delivery adapter returns an error containing a credential, private URL, prompt fragment, or repository-sensitive text
 - **THEN** operational logs and metrics contain only the redacted stable classification and safe correlation identity
 
+#### Scenario: Decision Signal policy runs in shadow mode
+- **WHEN** a shadow routing or tool-risk assessment completes
+- **THEN** audit records its exact provider/model/policy identities, typed result, baseline disposition, latency, and safe comparison outcome while metrics use bounded labels and execution remains unchanged
+
+#### Scenario: Decision Signal model drifts beyond policy
+- **WHEN** monitored disagreement, calibration, invalid-result, latency, or failure bounds exceed the immutable promotion policy
+- **THEN** the provider/model policy is prevented from entering or remaining in bounded control and affected decisions use the configured deterministic fallback
+
 ### Requirement: Factory state participates in backup and retention
-Backup and restore procedures SHALL cover Factory Configurations, Work Envelopes, Factory Runs, Stage Attempts, claims, budgets, ChangeSets, evidence, Assessments, Decisions, delivery identities, audit facts, and referenced retained objects consistently with the Build and Artifact stores. Retention SHALL preserve the exact candidate, evidence, decision, and delivery provenance required by any visible non-terminal, escalated, or held Factory Run and SHALL safely retry partial cleanup.
+Backup and restore procedures SHALL cover Factory Configurations, Work Envelopes, Factory Runs, Stage Attempts, claims, budgets, Decision Signal Requests and Receipts, ChangeSets, evidence, Assessments, Decisions, delivery identities, audit facts, and referenced retained objects consistently with the Build and Artifact stores. Retention SHALL preserve the exact routing and tool-risk receipts, candidate, evidence, decision, and delivery provenance required by any visible non-terminal, escalated, or held Factory Run and SHALL safely retry partial cleanup.
 
 #### Scenario: Deployment is restored with active Factory Runs
 - **WHEN** matched authoritative metadata and object snapshots are restored

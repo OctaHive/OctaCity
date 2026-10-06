@@ -2,7 +2,7 @@
 
 use octa_runner_protocol::{CacheSessionSpec, RemoteCacheSession, RunRequest, RunStatus};
 use octacity_execution::{ExecutionExit, ExecutionPaths};
-use octacity_protocol::ExecutionSpec;
+use octacity_protocol::{ExecutionSpec, OctaSpec};
 
 use super::{RunnerCacheSession, RunnerSupervisionError, invalid, protocol};
 use crate::protocol::{RunnerEvent, RunnerMessage};
@@ -12,6 +12,7 @@ use crate::protocol::{RunnerEvent, RunnerMessage};
 /// control-plane payload.
 pub(super) fn build_run_request(
   spec: &ExecutionSpec,
+  octa: &OctaSpec,
   cache: Option<&RunnerCacheSession>,
   paths: &ExecutionPaths,
 ) -> Result<RunRequest, RunnerSupervisionError> {
@@ -48,7 +49,7 @@ pub(super) fn build_run_request(
     plugin_lock: Some(paths.plugin_lock.clone()),
     secrets_profile: spec.secrets_profile.as_ref().map(Into::into),
     cache,
-    plugins: Vec::new(),
+    plugins: octa.plugin_digests.keys().cloned().collect(),
     default_plugin: None,
     commands: spec.commands.clone(),
     variables: spec.variables.clone(),
@@ -156,6 +157,20 @@ mod tests {
     }
   }
 
+  fn octa_spec() -> OctaSpec {
+    OctaSpec {
+      version: "0.5.0".to_owned(),
+      runner_sha256: "a".repeat(64),
+      runner_protocol: 3,
+      event_schema: 4,
+      plugin_protocol: 2,
+      plugin_digests: BTreeMap::from([
+        ("codex".to_owned(), "b".repeat(64)),
+        ("shell".to_owned(), "c".repeat(64)),
+      ]),
+    }
+  }
+
   fn paths() -> ExecutionPaths {
     ExecutionPaths {
       workspace: PathBuf::from("/workspace"),
@@ -188,7 +203,8 @@ mod tests {
 
   #[test]
   fn builds_one_local_and_remote_cache_session_without_copying_the_bearer() {
-    let request = build_run_request(&execution_spec(), Some(&session()), &paths()).unwrap();
+    let request = build_run_request(&execution_spec(), &octa_spec(), Some(&session()), &paths()).unwrap();
+    assert_eq!(request.plugins, ["codex", "shell"]);
     assert!(!serde_json::to_string(&request).unwrap().contains("cache-secret"));
     let cache = request.cache.unwrap();
     assert_eq!(cache.local_directory, PathBuf::from("/var/cache/octa"));
@@ -201,10 +217,10 @@ mod tests {
   fn rejects_disagreement_between_semantic_and_backend_cache_projections() {
     let mut projected = paths();
     projected.cache = None;
-    assert!(build_run_request(&execution_spec(), Some(&session()), &projected).is_err());
+    assert!(build_run_request(&execution_spec(), &octa_spec(), Some(&session()), &projected).is_err());
 
     let mut projected = paths();
     projected.cache.as_mut().unwrap().token_file = None;
-    assert!(build_run_request(&execution_spec(), Some(&session()), &projected).is_err());
+    assert!(build_run_request(&execution_spec(), &octa_spec(), Some(&session()), &projected).is_err());
   }
 }
