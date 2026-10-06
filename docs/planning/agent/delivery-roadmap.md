@@ -289,8 +289,8 @@ vertical slice belongs to the Phase 9 release matrix; Phase 8 does not simulate
 that operational boundary with mocks.
 
 Implementation status: component-complete. The Octa source pin targets
-the published `v0.4.0` release containing the required machine-readable release
-contract and matching `0.4.0` protocol crates. Deterministic
+the published `v0.5.0` release containing the required machine-readable release
+and Codex compatibility contracts and matching `0.5.0` protocol crates. Deterministic
 archives contain the agent, the host-native Git source plugin and its
 digest-bound manifest, service
 assets, an internal checksum inventory, and operator documentation for Linux

@@ -8,6 +8,7 @@ use std::{
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use ed25519_dalek::SigningKey;
+use octacity_protocol::OutputLimits;
 use octacity_release_harness::InstalledRelease;
 use tokio::process::{Child, Command};
 
@@ -38,7 +39,16 @@ pub(super) struct AgentConfigOverrides<'a> {
   pub(super) cache_ca_certificate: Option<&'a Path>,
   pub(super) unrestricted_network: bool,
   pub(super) upload_origins: &'a [&'a str],
-  pub(super) output_limit_bytes: Option<u64>,
+  pub(super) output_limits: Option<OutputLimits>,
+  pub(super) tool_executables: &'a [AgentToolExecutable<'a>],
+}
+
+pub(super) struct AgentToolExecutable<'a> {
+  pub(super) product: &'a str,
+  pub(super) path: &'a Path,
+  pub(super) version: &'a str,
+  pub(super) platform: &'a str,
+  pub(super) sha256: &'a str,
 }
 
 impl<'a> AgentConfigOverrides<'a> {
@@ -50,7 +60,8 @@ impl<'a> AgentConfigOverrides<'a> {
       cache_ca_certificate: None,
       unrestricted_network: false,
       upload_origins,
-      output_limit_bytes: None,
+      output_limits: None,
+      tool_executables: &[],
     }
   }
 }
@@ -237,9 +248,32 @@ isolation_providers = [{{ provider = "apple_vf", environment_identity = {}, exec
       .collect::<Vec<_>>()
       .join(", ")
   );
-  let output_limits = overrides.output_limit_bytes.map_or_else(
+  let output_limits = overrides.output_limits.as_ref().map_or_else(
     || "{ artifact_count = 0, artifact_bytes = 0, report_count = 0, report_bytes = 0, single_output_bytes = 0 }".to_owned(),
-    |bytes| format!("{{ artifact_count = 1, artifact_bytes = {bytes}, report_count = 1, report_bytes = {bytes}, single_output_bytes = {bytes} }}"),
+    |limits| format!(
+      "{{ artifact_count = {}, artifact_bytes = {}, report_count = {}, report_bytes = {}, single_output_bytes = {} }}",
+      limits.artifact_count,
+      limits.artifact_bytes,
+      limits.report_count,
+      limits.report_bytes,
+      limits.single_output_bytes
+    ),
+  );
+  let tool_executables = format!(
+    "{{{}}}",
+    overrides
+      .tool_executables
+      .iter()
+      .map(|tool| format!(
+        "{} = {{ path = {}, version = {}, platform = {}, sha256 = {} }}",
+        toml_text(tool.product),
+        toml_string(tool.path),
+        toml_text(tool.version),
+        toml_text(tool.platform),
+        toml_text(tool.sha256)
+      ))
+      .collect::<Vec<_>>()
+      .join(", ")
   );
   let verifying_key = SigningKey::from_bytes(&SIGNING_SEED).verifying_key();
   let config = format!(
@@ -252,6 +286,7 @@ state_root = {}
 octa_release_root = {}
 source_plugins_dir = {}
 workload_identity_profiles = {{}}
+tool_executables = {tool_executables}
 cache.root = {}
 cache.capacity.max_bytes = {}
 cache.capacity.high_watermark_bytes = {}

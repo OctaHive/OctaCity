@@ -37,7 +37,7 @@ use octacity_protocol::{
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
-  RunnerSupervisionError, RunnerSupervisionPolicy, supervise,
+  RunnerSupervisionError, RunnerSupervisionPolicy, VerifiedExternalExecutable, supervise,
 };
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
 use sha2::{Digest as _, Sha256};
@@ -205,6 +205,8 @@ pub struct JobExecutorConfig {
   pub cancellation_grace: Duration,
   /// Runner protocol and resource-accounting timing policy.
   pub runner_supervision: RunnerSupervisionPolicy,
+  /// Operator-selected executables already matched to the installed Octa release.
+  pub external_executables: BTreeMap<String, VerifiedExternalExecutable>,
 }
 
 /// Construction or lifecycle failure for one job.
@@ -306,6 +308,7 @@ pub struct JobExecutor {
   max_output_limits: OutputLimits,
   cancellation_grace: Duration,
   runner_supervision: RunnerSupervisionPolicy,
+  external_executables: BTreeMap<String, VerifiedExternalExecutable>,
 }
 
 impl JobExecutor {
@@ -365,6 +368,7 @@ impl JobExecutor {
       max_output_limits: config.max_output_limits,
       cancellation_grace: config.cancellation_grace,
       runner_supervision: config.runner_supervision,
+      external_executables: config.external_executables,
     })
   }
 
@@ -553,6 +557,7 @@ impl JobExecutor {
                 .chain(cache.iter().filter_map(|session| session.sensitive_value())),
             ),
             cancellation_grace: self.cancellation_grace,
+            external_executables: self.external_executables.clone(),
           },
           cancellation,
           events,

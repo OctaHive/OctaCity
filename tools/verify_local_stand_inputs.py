@@ -294,7 +294,10 @@ def validate_octa(value: dict[str, Any]) -> None:
         {
             "archive_max_bytes",
             "asset",
+            "codex",
+            "license",
             "platform",
+            "provenance",
             "release_name",
             "release_url",
             "repository",
@@ -312,6 +315,32 @@ def validate_octa(value: dict[str, Any]) -> None:
     )
     version = require_match(value["version"], SEMVER, "native.octa.version")
     require_match(value["source_revision"], GIT_SHA1, "native.octa.source_revision")
+    codex = require_object(value["codex"], "native.octa.codex")
+    require_exact_keys(
+        codex,
+        {
+            "executable_product",
+            "manifest",
+            "plugin_name",
+            "plugin_protocol",
+            "selection_environment",
+            "supported_cli_versions",
+        },
+        "native.octa.codex",
+    )
+    if codex != {
+        "executable_product": "codex-cli",
+        "manifest": "plugins/codex.plugin.yml",
+        "plugin_name": "codex",
+        "plugin_protocol": 2,
+        "selection_environment": "OCTA_CODEX_EXECUTABLE",
+        "supported_cli_versions": ["0.130.0"],
+    }:
+        raise InputError("native.octa.codex identity is unexpected")
+    if value["license"] != "MIT":
+        raise InputError("native.octa.license is unexpected")
+    if value["provenance"] != "github-build-provenance":
+        raise InputError("native.octa.provenance is unexpected")
     if value["platform"] != EXPECTED_OCTA_RELEASE_PLATFORM:
         raise InputError(
             f"native.octa.platform must equal {EXPECTED_OCTA_RELEASE_PLATFORM}"

@@ -5,6 +5,15 @@ work_root = "/var/lib/octacity/work"
 state_root = "/var/lib/octacity/state"
 octa_release_root = "/opt/octacity/octa"
 source_plugins_dir = "/opt/octacity/current/source-plugins"
+# Optional external tools are selected only through verified Octa release
+# compatibility metadata. JobSpec v1/v2 expose configured tools to every Job,
+# so use a dedicated Agent/Pool without model credentials. Keep the executable
+# outside all job-writable roots.
+# [tool_executables.codex-cli]
+# path = "/opt/codex/0.130.0/codex"
+# version = "0.130.0"
+# platform = "linux-x86_64"
+# sha256 = "replace-with-the-lowercase-sha256-of-the-installed-executable"
 # Logical names are selected by signed jobs; values are operator-owned files
 # refreshed by an OIDC, SPIFFE, or platform identity service.
 workload_identity_profiles = { ci = "/run/octacity-identities/ci.jwt" }

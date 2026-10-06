@@ -135,7 +135,7 @@ fn browser_toolchain() -> Toolchain {
   Toolchain {
     source_version: "0.1.0".to_owned(),
     source_digest: "1".repeat(64),
-    octa_version: "0.4.0".to_owned(),
+    octa_version: "0.5.0".to_owned(),
     runner_digest: "2".repeat(64),
     runner_protocol: octacity_runner::RUNNER_PROTOCOL_VERSION,
     event_schema: octacity_runner::RUNNER_EVENT_SCHEMA_VERSION,

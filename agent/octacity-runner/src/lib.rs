@@ -12,7 +12,10 @@ mod installation;
 mod protocol;
 mod supervisor;
 
-pub use installation::{RunnerCapabilities, RunnerInstallation, RunnerInstallationError, RunnerPlugin};
+pub use installation::{
+  ConfiguredExternalExecutable, RunnerCapabilities, RunnerInstallation, RunnerInstallationError, RunnerPlugin,
+  VerifiedExternalExecutable,
+};
 pub use octa_runner_protocol::{RUNNER_EVENT_SCHEMA_VERSION, RUNNER_PROTOCOL_VERSION, RunStatus};
 #[cfg(feature = "fuzzing")]
 #[doc(hidden)]

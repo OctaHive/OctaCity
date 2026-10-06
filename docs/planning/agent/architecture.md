@@ -475,6 +475,7 @@ work_root
 state_root
 octa_release_root
 source_plugins_dir
+tool_executables
 workload_identity_profiles
 cache.root
 cache.capacity.max_bytes

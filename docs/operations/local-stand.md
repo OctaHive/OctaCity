@@ -192,8 +192,16 @@ browser if it does not notice a trust change immediately.
 The health commands above verify the gateway and server. The integration
 verifier additionally checks the built UI entry point, exactly one local Pool,
 exactly one online macOS ARM64 Agent, its Linux ARM64 Microsandbox target, a
-successful Build and Job, and an artifact uploaded to and downloaded from
-MinIO.
+cancelled shell process tree with no accepted partial output, the Agent's
+return to idle readiness, deterministic Codex success, overflow, and
+cancellation inside Microsandbox, a subsequent ordinary successful Build and
+Job with no Factory state, and an artifact uploaded to and downloaded from
+MinIO. The Codex fixture is a release-inventoried local script with no network
+access or model credential. Its trace/result/provenance and complete Job event
+stream are scanned for prompt and credential canaries; failed and cancelled
+runs must publish no partial output and the Agent must return to idle after
+each case. This is execution-boundary evidence, not a Factory deployment or a
+real model call.
 
 The selected commit must already be committed and fetchable from the supplied
 public HTTPS GitHub repository. The receipt path must not already exist:

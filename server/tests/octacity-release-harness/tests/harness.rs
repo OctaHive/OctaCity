@@ -33,7 +33,7 @@ fn installs_only_verified_released_bundles() {
   assert!(installed.agent_binary.starts_with(&installed.agent_root));
   assert!(installed.octa_runner.starts_with(&installed.octa_root));
   assert_eq!(installed.octa_platform, "linux-x86_64");
-  assert_eq!(installed.octa_version, "0.4.0");
+  assert_eq!(installed.octa_version, "0.5.0");
   assert_ne!(installed.server_root, bundles.server);
   assert_ne!(installed.agent_root, bundles.agent);
   assert_ne!(installed.octa_root, bundles.octa);
@@ -172,13 +172,48 @@ fn rejects_manifest_protocol_drift_even_with_fresh_checksums() {
 }
 
 #[test]
-fn rejects_octa_plugin_digest_drift_even_with_fresh_bundle_checksums() {
+fn rejects_codex_plugin_executable_digest_drift_even_with_fresh_bundle_checksums() {
   let temporary = tempfile::tempdir().unwrap();
   let bundles = fixture(temporary.path());
-  fs::write(bundles.octa.join("plugins/octa_plugin_shell"), b"replaced plugin").unwrap();
+  fs::write(bundles.octa.join("plugins/octa_plugin_codex"), b"replaced plugin").unwrap();
   write_checksums(&bundles.octa);
 
   let error = install(&bundles, &temporary.path().join("rejected-plugin")).unwrap_err();
+
+  assert!(error.to_string().contains("differs from Octa.lock"));
+}
+
+#[test]
+fn rejects_codex_executable_compatibility_drift_even_with_fresh_checksums() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let compatibility_path = bundles.octa.join("codex-compatibility.json");
+  let mut compatibility: Value = serde_json::from_slice(&fs::read(&compatibility_path).unwrap()).unwrap();
+  compatibility["executable"]["supported_versions"] = json!(["0.131.0"]);
+  write_json(&compatibility_path, &compatibility);
+  write_checksums(&bundles.octa);
+
+  let error = install(&bundles, &temporary.path().join("rejected-codex-version")).unwrap_err();
+
+  assert!(
+    error
+      .to_string()
+      .contains("unsupported Octa Codex compatibility identity")
+  );
+}
+
+#[test]
+fn rejects_codex_plugin_lock_drift_even_with_fresh_checksums() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let lock_path = bundles.octa.join("Octa.lock");
+  let lock = fs::read_to_string(&lock_path)
+    .unwrap()
+    .replace("version: \"0.5.0\"", "version: \"0.5.1\"");
+  fs::write(lock_path, lock).unwrap();
+  write_checksums(&bundles.octa);
+
+  let error = install(&bundles, &temporary.path().join("rejected-codex-plugin")).unwrap_err();
 
   assert!(error.to_string().contains("differs from Octa.lock"));
 }
@@ -248,7 +283,7 @@ fn derives_and_verifies_server_policy_from_the_agent_assets() {
 
   assert_eq!(document["source"]["provider"], "git");
   assert_eq!(document["source"]["plugin_version"], "0.1.0");
-  assert_eq!(document["octa"]["version"], "0.4.0");
+  assert_eq!(document["octa"]["version"], "0.5.0");
   assert_eq!(document["octa"]["runner_protocol"], 3);
   assert_eq!(document["octa"]["event_schema"], 4);
   assert_eq!(document["octa"]["plugin_protocol"], 2);
@@ -293,7 +328,7 @@ fn derives_policy_for_a_macos_agent_with_a_linux_arm64_octa_guest() {
   )
   .unwrap();
 
-  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.4.0");
+  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.5.0");
 }
 
 #[test]
@@ -502,24 +537,49 @@ fn fixture(root: &Path) -> ReleaseBundles {
   write_executable(&octa.join("octa-runner"), "#!/bin/sh\nexit 0\n");
   let octa_plugin = octa.join("plugins/octa_plugin_shell");
   write_executable(&octa_plugin, "#!/bin/sh\nexit 0\n");
+  let codex_plugin = octa.join("plugins/octa_plugin_codex");
+  write_executable(&codex_plugin, "#!/bin/sh\nexit 0\n");
   fs::write(
     octa.join("plugins/shell.plugin.yml"),
     "manifest_version: 1\nname: shell\n",
   )
   .unwrap();
   fs::write(
+    octa.join("plugins/codex.plugin.yml"),
+    "manifest_version: 1\nname: codex\n",
+  )
+  .unwrap();
+  fs::write(
     octa.join("Octa.lock"),
     format!(
-      "version: 1\nplugins:\n  shell:\n    version: 0.4.0\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_shell\n    sha256: {}\n    capabilities: [shell]\n    source: shell.plugin.yml\n",
+      "version: 1\nplugins:\n  codex:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {}\n    source: codex.plugin.yml\n  shell:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_shell\n    sha256: {}\n    capabilities: [shell]\n    source: shell.plugin.yml\n",
+      sha256(&codex_plugin),
       sha256(&octa_plugin)
     ),
   )
   .unwrap();
   write_json(
+    &octa.join("codex-compatibility.json"),
+    &json!({
+      "format_version": 1,
+      "plugin": {
+        "name": "codex",
+        "version": "0.5.0",
+        "protocol": 2,
+        "manifest": "plugins/codex.plugin.yml"
+      },
+      "executable": {
+        "product": "codex-cli",
+        "supported_versions": ["0.130.0"],
+        "selection_environment": "OCTA_CODEX_EXECUTABLE"
+      }
+    }),
+  );
+  write_json(
     &octa.join("octa-runner-capabilities.json"),
     &json!({
       "type": "capabilities",
-      "octa_version": "0.4.0",
+      "octa_version": "0.5.0",
       "runner_protocols": [3],
       "event_schemas": [4],
       "plugin_protocols": [2],
@@ -534,6 +594,7 @@ fn fixture(root: &Path) -> ReleaseBundles {
     &json!({
       "format_version": 1,
       "runner_capabilities": "octa-runner-capabilities.json",
+      "codex_compatibility": "codex-compatibility.json",
       "checksums": "SHA256SUMS",
       "provenance": "github-build-provenance"
     }),

@@ -43,16 +43,27 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
       cache_ca_certificate: Some(&certificate),
       unrestricted_network: true,
       upload_origins: &upload_origins,
-      output_limit_bytes: Some(4096),
+      output_limits: Some(octacity_protocol::OutputLimits {
+        artifact_count: 1,
+        artifact_bytes: 4096,
+        report_count: 1,
+        report_bytes: 4096,
+        single_output_bytes: 4096,
+      }),
+      tool_executables: &[],
     },
   );
-  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+  let contents = fs::read_to_string(config).unwrap();
+  assert!(!contents.contains("OCTA_CODEX_EXECUTABLE"));
+  assert!(!contents.contains("OPENAI_API_KEY"));
+  let document: toml::Value = toml::from_str(&contents).unwrap();
   assert!(document["allowed_upload_origins"].is_array());
   assert_eq!(document["cache"]["root"].as_str(), cache.to_str());
   assert_eq!(document["cache"]["ca_certificate_file"].as_str(), certificate.to_str());
   assert_eq!(document["cache"]["allow_read"].as_bool(), Some(true));
   assert_eq!(fs::metadata(&cache).unwrap().permissions().mode() & 0o777, 0o700);
   assert_eq!(document["max_output_limits"]["artifact_bytes"].as_integer(), Some(4096));
+  assert!(document["tool_executables"].as_table().unwrap().is_empty());
   assert!(document["oci_engines"].as_array().unwrap().is_empty());
   let provider = &document["virtualization_providers"][0];
   assert_eq!(provider["provider"].as_str(), Some("microsandbox"));
@@ -60,6 +71,64 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
     provider["environment_identity"].as_str(),
     Some("microsandbox-linux-guest-v1")
   );
+}
+
+#[test]
+fn codex_tool_selection_is_explicit_and_absent_from_ordinary_agent_configuration() {
+  let directory = tempfile::tempdir().unwrap();
+  for root in ["work", "state", "cache", "octa", "sources", "cgroups"] {
+    fs::create_dir(directory.path().join(root)).unwrap();
+  }
+  let executable = directory.path().join("codex");
+  fs::write(&executable, "fixture").unwrap();
+  #[cfg(unix)]
+  fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+  let source_plugins = directory.path().join("sources");
+  let octa_root = directory.path().join("octa");
+  let backend = ReleaseBackend::Native {
+    cgroup_root: directory.path().join("cgroups"),
+    work_root: directory.path().join("work"),
+    cache_root: directory.path().join("cache"),
+    bubblewrap: PathBuf::from("/usr/bin/bwrap"),
+    path: "/usr/bin:/bin".to_owned(),
+    environment_identity: "test-native-environment-v1".to_owned(),
+    workspace_bytes: 1024 * 1024,
+  };
+  let digest = "a".repeat(64);
+  let tool = AgentToolExecutable {
+    product: "codex-cli",
+    path: &executable,
+    version: "0.130.0",
+    platform: "linux-x86_64",
+    sha256: &digest,
+  };
+  let config = write_agent_config(
+    directory.path(),
+    "http://127.0.0.1:12345",
+    "codex-config-shape",
+    "credential",
+    AgentReleasePaths {
+      source_plugins: &source_plugins,
+      octa_root: &octa_root,
+    },
+    &backend,
+    &AgentConfigOverrides {
+      cache_read: false,
+      cache_write: false,
+      remote_cache_origin: None,
+      cache_ca_certificate: None,
+      unrestricted_network: false,
+      upload_origins: &[],
+      output_limits: None,
+      tool_executables: &[tool],
+    },
+  );
+
+  let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
+  let configured = &document["tool_executables"]["codex-cli"];
+  assert_eq!(configured["path"].as_str(), executable.to_str());
+  assert_eq!(configured["version"].as_str(), Some("0.130.0"));
+  assert_eq!(configured["platform"].as_str(), Some("linux-x86_64"));
 }
 
 #[test]

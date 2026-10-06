@@ -10,6 +10,7 @@ fn runner(root: &Path) -> RunnerProgram {
     executable: root.join("octa-runner"),
     plugins_dir: root.join("plugins"),
     plugin_lock: root.join("Octa.lock"),
+    external_executables: std::collections::BTreeMap::new(),
   }
 }
 

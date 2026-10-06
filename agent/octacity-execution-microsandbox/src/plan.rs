@@ -40,6 +40,8 @@ pub(super) struct SandboxPlan {
   pub(super) guest_plugins_dir: PathBuf,
   /// Plugin lock path translated into the guest release mount.
   pub(super) guest_plugin_lock: PathBuf,
+  /// Selector, canonical host path, and fixed guest path for each trusted tool.
+  pub(super) external_executables: Vec<(String, PathBuf, String)>,
   /// Optional job-private identity source exposed read-only in the guest.
   pub(super) workload_identity: Option<PathBuf>,
   /// Job-private credential directories hidden behind empty read-only mounts.
@@ -120,6 +122,17 @@ impl SandboxPlan {
     };
 
     let guest_release = "/opt/octacity/octa".to_owned();
+    let external_executables = runner
+      .external_executable_projections()
+      .into_iter()
+      .map(|projection| {
+        let destination = projection
+          .destination(Path::new("/opt/octacity/tools"))
+          .to_string_lossy()
+          .into_owned();
+        (projection.selector, projection.source, destination)
+      })
+      .collect();
     let guest_job_root = "/work".to_owned();
     let guest_workspace = guest_path(&guest_job_root, &job_root, &workspace)?;
     let private_files = request
@@ -156,6 +169,7 @@ impl SandboxPlan {
       guest_data_dir: guest_path_buf(&guest_job_root, &job_root, &request.data_dir)?,
       guest_plugins_dir: guest_path_buf(&guest_release, &runner.release_root, &runner.plugins_dir)?,
       guest_plugin_lock: guest_path_buf(&guest_release, &runner.release_root, &runner.plugin_lock)?,
+      external_executables,
       workload_identity: request.workload_identity.clone(),
       masked_job_directories,
       cache,

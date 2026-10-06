@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -113,6 +114,11 @@ class NativeAgentStartupTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"fixture")
             path.chmod(0o755 if path != self.libkrunfw else 0o644)
+        self.codex = self.installation / "agent/share/local-stand-codex-fixture"
+        self.codex.parent.mkdir(parents=True, exist_ok=True)
+        self.codex.write_text("#!/bin/sh\n# codex-cli 0.130.0\n", encoding="utf-8")
+        self.codex.chmod(0o755)
+        codex_digest = hashlib.sha256(self.codex.read_bytes()).hexdigest()
         manifest = self.installation / "installation-manifest.json"
         manifest.write_text(
             json.dumps({"microsandbox_version": "0.7.6"}) + "\n",
@@ -135,6 +141,11 @@ class NativeAgentStartupTests(unittest.TestCase):
                     f'executable = "{self.msb}"',
                     f'libkrunfw = "{self.libkrunfw}"',
                     "metrics_sample_interval_seconds = 1",
+                    "[tool_executables.codex-cli]",
+                    f'path = "{self.codex}"',
+                    'version = "0.130.0"',
+                    'platform = "linux-aarch64"',
+                    f'sha256 = "{codex_digest}"',
                     "[labels]",
                     'os = "macos"',
                     'arch = "arm64"',

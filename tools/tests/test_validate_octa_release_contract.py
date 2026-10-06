@@ -42,6 +42,47 @@ class OctaReleaseContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid JSON"):
                 VALIDATOR.validate(path)
 
+    def test_accepts_only_the_exact_codex_compatibility_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "codex-compatibility.json"
+            expected = VALIDATOR.expected_codex_compatibility("0.5.0")
+            path.write_text(json.dumps(expected), encoding="utf-8")
+            VALIDATOR.validate_codex_compatibility(path, "0.5.0")
+
+            mutations = (
+                ("plugin", "name", "another-plugin"),
+                ("plugin", "version", "0.5.1"),
+                ("plugin", "protocol", 3),
+                ("executable", "product", "another-cli"),
+                ("executable", "supported_versions", ["0.131.0"]),
+                ("executable", "selection_environment", "PATH"),
+            )
+            for section, field, value in mutations:
+                document = json.loads(json.dumps(expected))
+                document[section][field] = value
+                path.write_text(json.dumps(document), encoding="utf-8")
+                with self.subTest(section=section, field=field), self.assertRaisesRegex(
+                    ValueError, "supported identity"
+                ):
+                    VALIDATOR.validate_codex_compatibility(path, "0.5.0")
+
+    def test_rejects_oversized_release_metadata_before_parsing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "contract.json"
+            path.write_bytes(b" " * (VALIDATOR.MAX_RELEASE_METADATA_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, "exceeds"):
+                VALIDATOR.validate(path)
+
+    def test_rejects_release_metadata_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "target.json"
+            target.write_text(json.dumps(VALIDATOR.EXPECTED_CONTRACT), encoding="utf-8")
+            link = root / "contract.json"
+            link.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, "regular file"):
+                VALIDATOR.validate(link)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import validate_octa_release_contract as release_contract
+
 
 ASSETS = {
     "linux-amd64": ("octa-Linux-amd64.tar.gz", "linux-x86_64"),
@@ -257,6 +259,11 @@ def stage(version: str, platform: str, revision: str, destination: Path) -> Path
             extract_zip(payload, temporary)
         else:
             extract_tar(payload, temporary)
+        contract = temporary / "octa-release-contract.json"
+        release_contract.validate(contract)
+        release_contract.validate_codex_compatibility(
+            temporary / "codex-compatibility.json", version
+        )
         capabilities = temporary / "octa-runner-capabilities.json"
         if not capabilities.is_file():
             raise ValueError("Octa release has no runner capability manifest")

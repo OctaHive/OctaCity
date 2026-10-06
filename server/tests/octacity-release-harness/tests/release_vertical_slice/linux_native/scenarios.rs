@@ -27,12 +27,18 @@ pub(super) struct ManualBuildInput<'a> {
 pub(super) struct CancellationInput<'a> {
   pub(super) build: ManualBuildInput<'a>,
   pub(super) native_cgroup: Option<NativeCgroupAssertion<'a>>,
+  pub(super) ready_marker: Option<ReadyMarkerAssertion<'a>>,
   pub(super) maximum_disk_bytes: u64,
 }
 
 pub(super) struct NativeCgroupAssertion<'a> {
   pub(super) root: &'a Path,
   pub(super) baseline: &'a BTreeSet<OsString>,
+}
+
+pub(super) struct ReadyMarkerAssertion<'a> {
+  pub(super) root: &'a Path,
+  pub(super) file_name: &'a str,
 }
 
 pub(super) struct RetryInput<'a> {
@@ -86,7 +92,11 @@ pub(super) async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Chi
       .unwrap()
       .iter()
       .any(|event| event["payload"]["source"] == "agent" && event["payload"]["event"]["type"] == "resource_usage");
-    if started && sampled {
+    let fixture_ready = input
+      .ready_marker
+      .as_ref()
+      .is_none_or(|marker| super::contains_file_named(marker.root, marker.file_name));
+    if started && sampled && fixture_ready {
       if let Some(cgroup) = &input.native_cgroup {
         assert_native_resource_controls(cgroup.root, cgroup.baseline);
       }
@@ -94,7 +104,7 @@ pub(super) async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Chi
     }
     assert!(
       Instant::now() < deadline,
-      "cancelled Build never started with resource accounting"
+      "cancelled Build never started with resource accounting and its required process marker"
     );
     sleep(Duration::from_millis(250)).await;
   }

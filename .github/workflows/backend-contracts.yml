@@ -447,6 +447,7 @@ jobs:
           agent-root: ${{ steps.release-candidate.outputs.agent-root }}
           backend: native
           execution-wrapper: ${{ github.workspace }}/octacity/tools/runner/github-hosted-native.sh
+          codex-fixture: "true"
       - name: Enforce explicit release performance budgets
         if: ${{ env.OCTACITY_PERFORMANCE_GATE == 'true' && steps.release-slice.outcome == 'success' }}
         working-directory: octacity

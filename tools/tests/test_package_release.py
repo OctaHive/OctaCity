@@ -125,6 +125,22 @@ class PackageReleaseTests(unittest.TestCase):
                 self.assertIn('executable = "octacity-source-git.exe"', plugin)
                 self.assertIn('git_path = "C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe"', plugin)
 
+    def test_optional_local_stand_codex_fixture_is_executable_and_inventoried(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            arguments = self.fixture(root, "macos-arm64", "agent.tar.gz")
+            fixture = root / "codex-fixture"
+            fixture.write_text("#!/bin/sh\n# codex-cli 0.130.0\n", encoding="utf-8")
+            arguments.codex_fixture = fixture
+
+            output = PACKAGE_RELEASE.package(arguments)
+
+            with tarfile.open(output, "r:gz") as archive:
+                member = archive.getmember("share/local-stand-codex-fixture")
+                self.assertEqual(member.mode & 0o111, 0o111)
+                checksums = archive.extractfile("SHA256SUMS").read().decode()
+                self.assertIn("  share/local-stand-codex-fixture\n", checksums)
+
     def test_upgrade_candidates_remain_separate_and_rollback_verifiable(self):
         for platform in ("linux-amd64", "macos-arm64", "windows-amd64"):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
@@ -358,12 +374,27 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn('${{ steps.test.outputs.evidence }}', action)
         self.assertIn('> "${OCTACITY_RELEASE_EVIDENCE_DIR}/minio.log"', action)
         self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
+        self.assertIn("codex-fixture:", action)
+        self.assertIn("OCTACITY_RELEASE_CODEX_FIXTURE", action)
         fixture = REPOSITORY / "server/tests/octacity-release-harness/fixtures/release-matrix/Octafile.yml"
         self.assertTrue(fixture.is_file())
         fixture_text = fixture.read_text(encoding="utf-8")
         self.assertIn("cache: {}", fixture_text)
         self.assertIn("failing:", fixture_text)
         self.assertIn("exit 23", fixture_text)
+        self.assertIn("codex-fixture:", fixture_text)
+        self.assertIn("codex-overflow:", fixture_text)
+        self.assertIn("codex-cancel:", fixture_text)
+        self.assertIn("OCTA_CODEX_FIXTURE_SECRET: CODEX_FIXTURE_SECRET", fixture_text)
+        self.assertIn("sleep 120 &", fixture_text)
+        self.assertIn("result_schema:", fixture_text)
+        self.assertTrue(
+            (REPOSITORY / "server/tests/octacity-release-harness/src/bin/codex_fixture.rs").is_file()
+        )
+        linux_native = workflow.split("  linux-native:\n", 1)[1].split(
+            "  linux-containerd:\n", 1
+        )[0]
+        self.assertIn('codex-fixture: "true"', linux_native)
         release = (REPOSITORY / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("tools/package_server_release.py", release)
         self.assertIn("octacity-server-${{ matrix.platform }}", release)

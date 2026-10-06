@@ -49,6 +49,15 @@ pub fn validate_trusted_owner(path: &Path) -> std::io::Result<()> {
   platform::validate_trusted_owner(path)
 }
 
+/// Verifies that no untrusted local principal can mutate `path`.
+///
+/// Read and execute access may remain available for a public installed tool;
+/// write, append, delete, ownership, and access-control mutation rights may
+/// only be held by the object owner or trusted system principals.
+pub fn validate_no_untrusted_write_access(path: &Path) -> std::io::Result<()> {
+  platform::validate_no_untrusted_write_access(path)
+}
+
 /// Verifies ownership and replacement safety through the volume-root chain.
 ///
 /// On Unix, a world-writable sticky directory such as `/tmp` remains valid,
@@ -174,6 +183,17 @@ mod tests {
       read_bounded_regular_file(&file, 3).unwrap_err().kind(),
       std::io::ErrorKind::InvalidData
     );
+  }
+
+  #[test]
+  fn validates_an_executable_in_a_protected_directory() {
+    let temporary = tempfile::tempdir().unwrap();
+    let directory = temporary.path().join("private");
+    create_private_directory(&directory).unwrap();
+    let executable = directory.join(if cfg!(windows) { "tool.exe" } else { "tool" });
+    std::fs::write(&executable, "tool").unwrap();
+
+    validate_no_untrusted_write_access(&executable).unwrap();
   }
 
   #[cfg(unix)]

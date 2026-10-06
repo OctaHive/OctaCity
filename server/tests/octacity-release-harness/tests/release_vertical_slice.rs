@@ -43,7 +43,7 @@ mod release;
 #[path = "release_vertical_slice/support.rs"]
 mod support;
 
-use agent::{AgentConfigOverrides, AgentReleasePaths, spawn_agent, write_agent_config};
+use agent::{AgentConfigOverrides, AgentReleasePaths, AgentToolExecutable, spawn_agent, write_agent_config};
 use backend::ReleaseBackend;
 use support::{get_json, post_management, publish_policy_and_trigger_definition, resource_id, string};
 

@@ -14,6 +14,7 @@ use sha2::{Digest as _, Sha256};
 use super::{backend, invalid};
 
 const GUEST_RELEASE: &str = "/opt/octacity/octa";
+const GUEST_TOOLS: &str = "/opt/octacity/tools";
 const GUEST_WORKSPACE: &str = "/workspace";
 const MAX_MARKER_BYTES: u64 = 128;
 
@@ -74,6 +75,15 @@ impl AppleVfPlan {
     ];
     push_directory_bind(&mut arguments, &request.workspace, GUEST_WORKSPACE, false)?;
     push_directory_bind(&mut arguments, &runner.release_root, GUEST_RELEASE, true)?;
+    for projection in runner.external_executable_projections() {
+      let guest = projection
+        .destination(Path::new(GUEST_TOOLS))
+        .to_string_lossy()
+        .into_owned();
+      push_readonly_file_bind(&mut arguments, &projection.source, &guest)?;
+      arguments.push("--env".to_owned());
+      arguments.push(format!("{}={guest}", projection.selector));
+    }
     if let Some(identity) = &request.workload_identity {
       push_readonly_file_bind(&mut arguments, identity, WORKLOAD_IDENTITY_PATH)?;
     }
@@ -314,6 +324,7 @@ mod tests {
       executable: release.join("octa-runner"),
       plugins_dir: release.join("plugins"),
       plugin_lock: release.join("Octa.lock"),
+      external_executables: std::collections::BTreeMap::new(),
     };
     let request = StartExecution {
       execution_id: "job-1".to_owned(),

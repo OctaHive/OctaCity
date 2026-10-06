@@ -11,25 +11,77 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import stat
 
 
 EXPECTED_CONTRACT = {
     "format_version": 1,
     "runner_capabilities": "octa-runner-capabilities.json",
+    "codex_compatibility": "codex-compatibility.json",
     "checksums": "SHA256SUMS",
     "provenance": "github-build-provenance",
 }
+SUPPORTED_CODEX_CLI_VERSIONS = ["0.130.0"]
+MAX_RELEASE_METADATA_BYTES = 1024 * 1024
+
+
+def expected_codex_compatibility(octa_version: str) -> dict[str, object]:
+    """Return the exact Codex identity supported by this OctaCity release line."""
+
+    return {
+        "format_version": 1,
+        "plugin": {
+            "name": "codex",
+            "version": octa_version,
+            "protocol": 2,
+            "manifest": "plugins/codex.plugin.yml",
+        },
+        "executable": {
+            "product": "codex-cli",
+            "supported_versions": SUPPORTED_CODEX_CLI_VERSIONS,
+            "selection_environment": "OCTA_CODEX_EXECUTABLE",
+        },
+    }
+
+
+def _load_object(path: Path, description: str) -> dict[str, object]:
+    try:
+        metadata = path.stat(follow_symlinks=False)
+    except OSError as error:
+        raise ValueError(f"{description} must be a regular file: {path}") from error
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"{description} must be a regular file: {path}")
+    if metadata.st_size > MAX_RELEASE_METADATA_BYTES:
+        raise ValueError(
+            f"{description} exceeds {MAX_RELEASE_METADATA_BYTES} bytes: {path}"
+        )
+    try:
+        with path.open("rb") as source:
+            payload = source.read(MAX_RELEASE_METADATA_BYTES + 1)
+        if len(payload) > MAX_RELEASE_METADATA_BYTES:
+            raise ValueError(
+                f"{description} exceeds {MAX_RELEASE_METADATA_BYTES} bytes: {path}"
+            )
+        document = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"{description} is invalid JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise ValueError(f"{description} must be a JSON object")
+    return document
 
 
 def validate(path: Path) -> None:
-    if not path.is_file() or path.is_symlink():
-        raise ValueError(f"Octa release contract must be a regular file: {path}")
-    try:
-        contract = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"Octa release contract is invalid JSON: {error}") from error
+    contract = _load_object(path, "Octa release contract")
     if contract != EXPECTED_CONTRACT:
         raise ValueError("Octa release contract does not match the supported artifact contract")
+
+
+def validate_codex_compatibility(path: Path, octa_version: str) -> None:
+    """Require exact plugin and Codex CLI compatibility metadata."""
+
+    document = _load_object(path, "Octa Codex compatibility metadata")
+    if document != expected_codex_compatibility(octa_version):
+        raise ValueError("Octa Codex compatibility metadata does not match the supported identity")
 
 
 def main() -> None:

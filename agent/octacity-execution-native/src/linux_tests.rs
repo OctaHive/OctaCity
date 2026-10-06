@@ -39,6 +39,7 @@ fn runner(root: &Path) -> RunnerProgram {
     plugins_dir: release.join("plugins"),
     plugin_lock: release.join("Octa.lock"),
     release_root: release,
+    external_executables: BTreeMap::new(),
   }
 }
 
@@ -313,7 +314,12 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
     token_file: Some(cache_token),
     ca_certificate_file: Some(cache_ca),
   });
-  let runner = runner(root.path());
+  let mut runner = runner(root.path());
+  let external_executable = root.path().join("codex");
+  fs::write(&external_executable, "fixture").unwrap();
+  runner
+    .external_executables
+    .insert("OCTA_CODEX_EXECUTABLE".to_owned(), external_executable.clone());
   let temporary = request.data_dir.join("tmp");
   let home = request.data_dir.join("home");
   fs::create_dir(&temporary).unwrap();
@@ -359,6 +365,21 @@ fn assembles_the_complete_bubblewrap_filesystem_without_starting_it() {
     arguments
       .windows(3)
       .any(|values| values == ["--ro-bind", release_root.as_ref(), NATIVE_OCTA_ROOT_PATH])
+  );
+  assert!(arguments.windows(3).any(|values| {
+    values
+      == [
+        "--ro-bind",
+        external_executable.to_string_lossy().as_ref(),
+        "/opt/octacity/tools/tool-0",
+      ]
+  }));
+  assert_eq!(
+    external_executable_environment(&runner),
+    BTreeMap::from([(
+      "OCTA_CODEX_EXECUTABLE".to_owned(),
+      "/opt/octacity/tools/tool-0".to_owned()
+    )])
   );
   let work_root = root.path().to_string_lossy();
   let job_root = request.workspace.parent().unwrap().to_string_lossy();

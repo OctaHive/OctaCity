@@ -189,6 +189,34 @@ pub(super) fn canonical_regular_file(name: &str, path: &Path) -> Result<PathBuf,
     .map_err(|error| ConfigError::Invalid(format!("{name}: {error}")))
 }
 
+/// Canonicalizes an operator-installed executable and rejects mutable trust
+/// paths before another component can inspect or start it.
+pub(super) fn canonical_operator_executable(name: &str, path: &Path) -> Result<PathBuf, ConfigError> {
+  validate_regular_file(name, path)?;
+  let executable = path
+    .canonicalize()
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", path.display())))?;
+  validate_trusted_owner(name, &executable)?;
+  octacity_private_fs::validate_no_untrusted_write_access(&executable)
+    .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", executable.display())))?;
+  let parent = executable
+    .parent()
+    .ok_or_else(|| ConfigError::Invalid(format!("{name} has no parent")))?;
+  validate_trusted_directory_chain(&format!("{name} parent"), parent)?;
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    let mode = fs::metadata(&executable)
+      .map_err(|error| ConfigError::Invalid(format!("{name} '{}': {error}", executable.display())))?
+      .permissions()
+      .mode();
+    if mode & 0o111 == 0 {
+      return invalid(format!("{name} '{}' has no execute bit", executable.display()));
+    }
+  }
+  Ok(executable)
+}
+
 /// Canonicalizes integrity-sensitive public trust material in a private file.
 pub(super) fn canonical_private_trust_file(name: &str, path: &Path) -> Result<PathBuf, ConfigError> {
   let certificate = canonical_regular_file(name, path)?;
@@ -404,6 +432,47 @@ pub(super) fn non_empty(name: &str, value: &str) -> Result<(), ConfigError> {
   } else {
     Ok(())
   }
+}
+
+pub(super) fn validate_logical_name(name: &str, value: &str) -> Result<(), ConfigError> {
+  if value.is_empty()
+    || !value
+      .bytes()
+      .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_'))
+  {
+    return invalid(format!("{name} '{value}' is not a logical name"));
+  }
+  Ok(())
+}
+
+pub(super) fn validate_trimmed_value(name: &str, value: &str) -> Result<(), ConfigError> {
+  if value.is_empty() || value.trim() != value || value.chars().any(char::is_control) {
+    return invalid(format!(
+      "{name} must be a non-empty trimmed value without control characters"
+    ));
+  }
+  Ok(())
+}
+
+pub(super) fn validate_octa_platform(name: &str, value: &str) -> Result<(), ConfigError> {
+  if !matches!(
+    value,
+    "linux-x86_64" | "linux-aarch64" | "macos-x86_64" | "macos-aarch64" | "windows-x86_64" | "windows-aarch64"
+  ) {
+    return invalid(format!("{name} '{value}' is unsupported"));
+  }
+  Ok(())
+}
+
+pub(super) fn validate_sha256(name: &str, value: &str) -> Result<(), ConfigError> {
+  if value.len() != 64
+    || !value
+      .bytes()
+      .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+  {
+    return invalid(format!("{name} must be a lowercase SHA-256 digest"));
+  }
+  Ok(())
 }
 
 pub(super) fn invalid<T>(message: impl Into<String>) -> Result<T, ConfigError> {

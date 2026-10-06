@@ -34,17 +34,32 @@ pub(super) async fn wait_for_successful_run(
   let mut jobs = Vec::new();
   for job in attempt["jobs"].as_array().unwrap() {
     let detail = get_json(client, format!("{origin}/api/v1/jobs/{}", string(job, "id"))).await;
-    let events = get_json(
-      client,
-      format!(
-        "{origin}/api/v1/jobs/{}/events?after=0&limit=256&wait_ms=0",
-        string(job, "id")
-      ),
-    )
-    .await;
+    let events = complete_job_events(client, origin, &string(job, "id")).await;
     jobs.push(json!({"detail": detail, "events": events}));
   }
   BuildRun { build, attempt, jobs }
+}
+
+async fn complete_job_events(client: &Client, origin: &str, job_id: &str) -> Value {
+  const PAGE_LIMIT: usize = 100;
+  let mut after = 0_u64;
+  let mut items = Vec::new();
+  loop {
+    let page = get_json(
+      client,
+      format!("{origin}/api/v1/jobs/{job_id}/events?after={after}&limit={PAGE_LIMIT}&wait_ms=0"),
+    )
+    .await;
+    let page_items = page["items"].as_array().expect("Job event items must be an array");
+    let cursor = page["cursor"].as_u64().expect("Job event cursor must be an integer");
+    assert!(cursor >= after, "Job event cursor moved backwards");
+    items.extend(page_items.iter().cloned());
+    if page_items.len() < PAGE_LIMIT {
+      return json!({"items": items, "cursor": cursor});
+    }
+    assert!(cursor > after, "full Job event page did not advance its cursor");
+    after = cursor;
+  }
 }
 
 pub(super) fn assert_dag_and_events(run: &BuildRun, maximum_disk_bytes: Option<u64>) {
@@ -208,6 +223,145 @@ pub(super) async fn verify_artifacts(client: &Client, origin: &str, build: &Valu
     json!({"page": page, "downloaded_sha256": download["artifact"]["sha256"]}),
     bytes.len() as f64 / elapsed,
   )
+}
+
+pub(super) async fn verify_codex_outputs(client: &Client, origin: &str, build: &Value) -> Value {
+  let page = get_json(
+    client,
+    format!("{origin}/api/v1/builds/{}/artifacts?limit=10", string(build, "id")),
+  )
+  .await;
+  let items = page["items"].as_array().unwrap();
+  assert_eq!(items.len(), 3, "Codex must publish two artifacts and one report");
+  let trace = items.iter().find(|item| item["name"] == "codex-run-trace").unwrap();
+  assert_eq!(trace["output_type"]["kind"], "artifact");
+  assert_eq!(trace["media_type"], "application/x-ndjson");
+  let provenance = items
+    .iter()
+    .find(|item| item["name"] == "codex-run-provenance")
+    .unwrap();
+  assert_eq!(provenance["output_type"]["kind"], "artifact");
+  let result = items.iter().find(|item| item["name"] == "codex-run-result").unwrap();
+  assert_eq!(result["output_type"]["kind"], "report");
+  assert_eq!(result["output_type"]["format"], "octa.codex.result.v1");
+
+  let trace_bytes = download_output(client, origin, trace).await;
+  let trace_text = std::str::from_utf8(&trace_bytes).unwrap();
+  assert!(
+    !trace_text.contains("OCTACITY_CODEX_PROMPT_MUST_NOT_APPEAR_IN_TRACE"),
+    "sanitized trace retained prompt content"
+  );
+  assert!(
+    !trace_text.contains("release-secret-canary-must-not-appear"),
+    "sanitized trace retained an explicitly mapped credential"
+  );
+  assert!(
+    trace_text.contains("*****"),
+    "sanitized trace did not retain a redaction marker"
+  );
+  for line in trace_text.lines() {
+    let record: Value = serde_json::from_str(line).unwrap();
+    assert_eq!(record["format_version"], 1);
+  }
+
+  let result_bytes = download_output(client, origin, result).await;
+  let result_document: Value = serde_json::from_slice(&result_bytes).unwrap();
+  assert_eq!(result_document["format_version"], 1);
+  assert_eq!(result_document["outcome"], "completed");
+  assert_eq!(
+    result_document["structured_result"],
+    json!({"outcome": "completed", "files": 1})
+  );
+  assert!(
+    !serde_json::to_string(&result_document)
+      .unwrap()
+      .contains("release-secret-canary-must-not-appear")
+  );
+  let provenance_bytes = download_output(client, origin, provenance).await;
+  let provenance_document: Value = serde_json::from_slice(&provenance_bytes).unwrap();
+  assert_eq!(provenance_document["format_version"], 1);
+  let retained = format!(
+    "{trace_text}\n{}\n{}",
+    serde_json::to_string(&result_document).unwrap(),
+    serde_json::to_string(&provenance_document).unwrap()
+  );
+  assert_no_codex_sensitive_text(&retained, "Codex published output");
+  json!({"page": page, "trace": trace_text, "result": result_document, "provenance": provenance_document})
+}
+
+pub(super) async fn verify_no_outputs(client: &Client, origin: &str, build: &Value) -> Value {
+  let page = get_json(
+    client,
+    format!("{origin}/api/v1/builds/{}/artifacts?limit=10", string(build, "id")),
+  )
+  .await;
+  assert_eq!(
+    page["items"].as_array().map(Vec::len),
+    Some(0),
+    "failed or cancelled Codex execution published partial output"
+  );
+  page
+}
+
+pub(super) async fn verify_failed_codex_events(
+  client: &Client,
+  origin: &str,
+  accepted: &Value,
+  build: &Value,
+) -> Value {
+  assert_eq!(build["state"], "failed");
+  let attempt = get_json(
+    client,
+    format!("{origin}/api/v1/attempts/{}", string(accepted, "attempt_id")),
+  )
+  .await;
+  let jobs = attempt["jobs"].as_array().expect("Attempt jobs must be an array");
+  assert_eq!(jobs.len(), 1);
+  assert_eq!(jobs[0]["state"], "failed");
+  let events = complete_job_events(client, origin, &string(&jobs[0], "id")).await;
+  let evidence = json!({"attempt": attempt, "events": events});
+  assert_no_codex_sensitive_text(&evidence.to_string(), "failed Codex events");
+  evidence
+}
+
+pub(super) fn assert_run_has_no_codex_sensitive_text(run: &BuildRun) {
+  assert_no_codex_sensitive_text(
+    &json!({"build": run.build, "attempt": run.attempt, "jobs": run.jobs}).to_string(),
+    "successful Codex REST evidence",
+  );
+}
+
+fn assert_no_codex_sensitive_text(value: &str, description: &str) {
+  for forbidden in [
+    "release-secret-canary-must-not-appear",
+    "OCTACITY_CODEX_PROMPT_MUST_NOT_APPEAR_IN_TRACE",
+  ] {
+    assert!(!value.contains(forbidden), "{description} retained sensitive input");
+  }
+}
+
+async fn download_output(client: &Client, origin: &str, output: &Value) -> Vec<u8> {
+  let download = client
+    .post(format!("{origin}/api/v1/artifacts/{}/download", string(output, "id")))
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json::<Value>()
+    .await
+    .unwrap();
+  client
+    .get(string(&download, "get_url"))
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .bytes()
+    .await
+    .unwrap()
+    .to_vec()
 }
 
 pub(super) fn assert_release_artifact_payload(bytes: &[u8]) {

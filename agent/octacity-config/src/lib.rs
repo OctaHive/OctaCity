@@ -53,6 +53,13 @@ pub struct AgentConfig {
   pub octa_release_root: PathBuf,
   /// Operator-installed source-plugin registry root.
   pub source_plugins_dir: PathBuf,
+  /// Operator-installed executables available to trusted Octa task plugins.
+  ///
+  /// Keys are provider-neutral product identities. The installed Octa release
+  /// must declare a matching compatibility contract. JobSpec v1/v2 have no
+  /// per-Job selector, so configured tools require a dedicated Agent profile.
+  #[serde(default)]
+  pub tool_executables: BTreeMap<String, ToolExecutableConfig>,
   /// Workload identity profile names mapped to restricted rotating token files.
   #[serde(default)]
   pub workload_identity_profiles: BTreeMap<String, PathBuf>,
@@ -157,6 +164,20 @@ pub struct AgentConfig {
   pub resource_sample_timeout_seconds: u64,
   /// Consecutive accounting failures tolerated per job.
   pub max_accounting_failures: usize,
+}
+
+/// Immutable identity claimed for one operator-installed plugin executable.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolExecutableConfig {
+  /// Absolute path to the operator-installed executable.
+  pub path: PathBuf,
+  /// Product version bound to the configured digest.
+  pub version: String,
+  /// Octa runtime platform for which the executable was built.
+  pub platform: String,
+  /// Lowercase SHA-256 digest of the executable bytes.
+  pub sha256: String,
 }
 
 /// Operator-owned task-result cache policy shared by all jobs on this agent.
@@ -550,6 +571,24 @@ impl AgentConfig {
     self.octa_release_root = roots[2].1.clone();
     self.source_plugins_dir = roots[3].1.clone();
     self.cache.root = roots[4].1.clone();
+
+    let mut executable_paths = BTreeSet::new();
+    for (product, executable) in &mut self.tool_executables {
+      validate_logical_name("tool executable product", product)?;
+      validate_trimmed_value("tool executable version", &executable.version)?;
+      validate_octa_platform("tool executable platform", &executable.platform)?;
+      validate_sha256("tool executable sha256", &executable.sha256)?;
+      executable.path = canonical_operator_executable("tool executable", &executable.path)?;
+      if !executable_paths.insert(executable.path.clone()) {
+        return invalid("tool executables must use distinct canonical paths");
+      }
+      if executable.path.starts_with(&self.work_root)
+        || executable.path.starts_with(&self.state_root)
+        || executable.path.starts_with(&self.cache.root)
+      {
+        return invalid("tool executables must be outside agent-owned writable roots");
+      }
+    }
 
     validate_private_directory_permissions("cache.root", &self.cache.root)?;
     validate_trusted_directory_chain("cache.root", &self.cache.root)?;

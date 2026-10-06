@@ -15,6 +15,10 @@ inputs:
     description: Optional host cgroup entrypoint used to execute the scenario command
     required: false
     default: ""
+  codex-fixture:
+    description: Run the deterministic ordinary Build Codex fixture
+    required: false
+    default: "false"
 
 outputs:
   evidence:
@@ -109,6 +113,7 @@ runs:
         OCTACITY_RELEASE_BACKEND: ${{ inputs.backend }}
         OCTACITY_RELEASE_EXECUTION_WRAPPER: ${{ inputs.execution-wrapper }}
         OCTACITY_RELEASE_SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+        OCTACITY_RELEASE_CODEX_FIXTURE: ${{ inputs.codex-fixture == 'true' && '1' || '0' }}
       run: |
         set -euo pipefail
         evidence=$(mktemp -d "${RUNNER_TEMP}/octacity-release-evidence.XXXXXX")

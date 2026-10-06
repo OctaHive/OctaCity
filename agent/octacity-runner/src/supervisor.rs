@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::{
-  installation::{RunnerInstallation, RunnerInstallationError},
+  installation::{RunnerInstallation, RunnerInstallationError, VerifiedExternalExecutable},
   protocol::{RunnerEvent, RunnerProtocolError},
 };
 
@@ -94,6 +94,8 @@ pub struct RunnerJobRequest {
   pub redactions: RunnerRedactions,
   /// Time allowed for graceful runner cancellation before a forced kill.
   pub cancellation_grace: Duration,
+  /// Agent-verified plugin executables projected into this runner process.
+  pub external_executables: std::collections::BTreeMap<String, VerifiedExternalExecutable>,
 }
 
 /// Backend-independent values used to build Octa's cache session request.
@@ -240,7 +242,7 @@ pub async fn supervise(
   if job.execution.max_duration.is_zero() {
     return Err(RunnerSupervisionError::StartupTimeout);
   }
-  let program = runner.program();
+  let program = runner.program_with_external_executables(&job.external_executables);
   let mut execution = backend
     .start(&program, job.execution.clone(), cancellation.clone())
     .await?;

@@ -22,15 +22,17 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
-  AgentConfigOverrides, AgentReleasePaths, RELEASE_JOB_TIMEOUT_SECONDS, ReleaseBackend, ServerConfigInput, drain_agent,
-  get_json, issue_enrollment, post_management, private_file, release, required_path, required_string, resource_id,
-  shutdown_server, spawn_agent, spawn_server, string, wait_for_server_ready, wait_for_terminal_build,
-  write_agent_config, write_server_config,
+  AgentConfigOverrides, AgentReleasePaths, AgentToolExecutable, RELEASE_JOB_TIMEOUT_SECONDS, ReleaseBackend,
+  ServerConfigInput, drain_agent, get_json, issue_enrollment, post_management, private_file, release, required_path,
+  required_string, resource_id, shutdown_server, spawn_agent, spawn_server, string, wait_for_server_ready,
+  wait_for_terminal_build, write_agent_config, write_server_config,
 };
 
 #[path = "cache_proxy.rs"]
 mod cache_proxy;
 mod checks;
+#[path = "linux_native/codex.rs"]
+mod codex;
 #[path = "linux_native/performance.rs"]
 mod performance;
 #[path = "linux_native/scenarios.rs"]
@@ -41,7 +43,8 @@ mod support;
 use cache_proxy::TlsCacheProxy;
 use checks::*;
 use scenarios::{
-  CancellationInput, ManualBuildInput, NativeCgroupAssertion, RetryInput, run_and_cancel, run_and_retry,
+  CancellationInput, ManualBuildInput, NativeCgroupAssertion, ReadyMarkerAssertion, RetryInput, run_and_cancel,
+  run_and_retry,
 };
 use support::*;
 
@@ -55,6 +58,7 @@ const OUTPUT_BYTES: u64 = 4 * 1024 * 1024;
 struct MatrixResources {
   pool_id: String,
   project_id: String,
+  repository_id: String,
   manual_configuration_id: String,
   scheduled_configuration_id: String,
   cancellation_configuration_id: String,
@@ -89,6 +93,7 @@ struct AgentStartInput<'a> {
   backend: &'a ReleaseBackend,
   cache_proxy: &'a TlsCacheProxy,
   object_endpoint: &'a str,
+  tool_executable: Option<&'a AgentToolExecutable<'a>>,
 }
 
 struct ConfigurationInput<'a> {
@@ -102,6 +107,7 @@ struct ConfigurationInput<'a> {
   pool_id: &'a str,
   triggers: &'a [&'a str],
   cache: bool,
+  artifact_count: u16,
   backend: &'a ReleaseBackend,
 }
 
@@ -198,6 +204,7 @@ async fn run_matrix(expected_backend: &str) {
     backend: &backend,
     cache_proxy: &cache_proxy,
     object_endpoint: &object_endpoint,
+    tool_executable: None,
   })
   .await;
   performance::wait_for_agent_registration(&client, &management_origin, &agent_a_name).await;
@@ -240,6 +247,8 @@ async fn run_matrix(expected_backend: &str) {
   performance::record_run(&mut performance, &manual_run);
   write_cache_diagnostics(&evidence, "manual", &manual_run);
   assert_dag_and_events(&manual_run, Some(backend.workspace_bytes()));
+  assert!(manual_run.build.get("factory").is_none());
+  assert!(manual_run.build.get("factory_run_id").is_none());
   let downstream_build_id = wait_for_trigger_build(&pool, &resources.internal_trigger_id).await;
   let downstream_run = wait_for_successful_run(
     &client,
@@ -310,6 +319,7 @@ async fn run_matrix(expected_backend: &str) {
     backend: &backend,
     cache_proxy: &cache_proxy,
     object_endpoint: &object_endpoint,
+    tool_executable: None,
   })
   .await;
   performance::wait_for_agent_registration(&client, &management_origin, &agent_b_name).await;
@@ -376,6 +386,7 @@ async fn run_matrix(expected_backend: &str) {
           root: cgroup_root,
           baseline,
         }),
+      ready_marker: None,
       maximum_disk_bytes: backend.workspace_bytes(),
     },
     agent_b.child_mut(),
@@ -389,6 +400,27 @@ async fn run_matrix(expected_backend: &str) {
     &mut agent_b,
     &evidence.join("agent-b.stderr.log"),
   )
+  .await;
+
+  let codex = codex::run(codex::CodexScenarioInput {
+    client: &client,
+    management_origin: &management_origin,
+    agent_origin: &agent_origin,
+    temporary: temporary.path(),
+    evidence: &evidence,
+    run_id: &run_id,
+    resources: &resources,
+    backend: &backend,
+    release: &release,
+    cache_proxy: &cache_proxy,
+    object_endpoint: &object_endpoint,
+    revision: &revision,
+    native_roots,
+    cgroup_baseline: cgroup_baseline.as_ref(),
+    work_root,
+    server_stdout: &server_stdout,
+    server_stderr: &server_stderr,
+  })
   .await;
 
   if let (Some(cache_root), Some(cache_baseline)) = (cache_root, cache_baseline.as_ref()) {
@@ -468,6 +500,7 @@ async fn run_matrix(expected_backend: &str) {
       "scheduled": scheduled_run.build,
       "retried": retried_run,
       "cancelled": cancelled_run,
+      "codex": codex,
       "artifacts": artifacts,
       "log_search": searches,
     }))
@@ -559,6 +592,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: true,
+    artifact_count: 1,
     backend,
   })
   .await;
@@ -573,6 +607,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["scheduled"],
     cache: true,
+    artifact_count: 1,
     backend,
   })
   .await;
@@ -587,6 +622,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["internal"],
     cache: false,
+    artifact_count: 1,
     backend,
   })
   .await;
@@ -601,6 +637,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: false,
+    artifact_count: 1,
     backend,
   })
   .await;
@@ -615,6 +652,7 @@ async fn create_resources(
     pool_id: &pool_id,
     triggers: &["manual"],
     cache: false,
+    artifact_count: 1,
     backend,
   })
   .await;
@@ -644,6 +682,7 @@ async fn create_resources(
   MatrixResources {
     pool_id,
     project_id,
+    repository_id,
     manual_configuration_id,
     scheduled_configuration_id,
     cancellation_configuration_id,
@@ -736,7 +775,7 @@ fn matrix_configuration_body(input: &ConfigurationInput<'_>) -> Value {
         "write": input.cache
       },
       "artifacts": {
-        "artifact_count": 1,
+        "artifact_count": input.artifact_count,
         "artifact_bytes": OUTPUT_BYTES,
         "report_count": 1,
         "report_bytes": OUTPUT_BYTES,
@@ -796,7 +835,7 @@ fn matrix_policy_body(repository_id: &str, pool_id: &str, backend: &ReleaseBacke
       "namespaces": [CACHE_NAMESPACE], "read": true, "write": true, "max_bytes": OUTPUT_BYTES
     }},
     "artifacts": {"mode": "replace", "value": {
-      "artifact_count": 1, "artifact_bytes": OUTPUT_BYTES,
+      "artifact_count": 2, "artifact_bytes": OUTPUT_BYTES,
       "report_count": 1, "report_bytes": OUTPUT_BYTES, "single_output_bytes": OUTPUT_BYTES
     }},
     "concurrency": {"mode": "replace", "value": {"active_builds": 8, "active_jobs": 1}},
@@ -836,6 +875,7 @@ mod tests {
       pool_id: "pool",
       triggers: &["manual"],
       cache: true,
+      artifact_count: 1,
       backend: &backend,
     });
     let execution_target = backend.execution_target().unwrap();

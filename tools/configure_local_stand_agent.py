@@ -46,6 +46,8 @@ LOCAL_AGENT_LABELS = {
     "environment": "local-stand",
 }
 LOCAL_HOST_PLATFORM = {"os": "macos", "architecture": "arm64"}
+LOCAL_CODEX_VERSION = "0.130.0"
+LOCAL_CODEX_PLATFORM = "linux-aarch64"
 MICROSANDBOX_STATE_PARENT = Path("/tmp").resolve()
 
 # This is a workstation profile, not protocol policy. Values are collected in
@@ -362,6 +364,14 @@ def _render_config(
         "identity": _toml_string(_environment_identity(microsandbox_version)),
         "signing_key": _toml_string(signing_public_key),
     }
+    codex_fixture = installation / "agent/share/local-stand-codex-fixture"
+    codex_contents = _regular_file(
+        codex_fixture,
+        "local-stand Codex fixture",
+        max_bytes=4 * 1024 * 1024,
+        modes=frozenset({0o755}),
+    )
+    codex_digest = hashlib.sha256(codex_contents).hexdigest()
     agent_limits = _toml_integer_lines(LOCAL_AGENT_LIMITS)
     output_limits = _toml_inline_integer_table(LOCAL_OUTPUT_LIMITS)
     cache_limits = _toml_integer_lines(LOCAL_CACHE_LIMITS)
@@ -416,6 +426,12 @@ metrics_sample_interval_seconds = 1
 [server_signing_keys]
 local-stand = {values["signing_key"]}
 
+[tool_executables.codex-cli]
+path = {_toml_string(codex_fixture)}
+version = "{LOCAL_CODEX_VERSION}"
+platform = "{LOCAL_CODEX_PLATFORM}"
+sha256 = "{codex_digest}"
+
 [labels]
 {labels}
 '''.encode("utf-8")
@@ -459,6 +475,24 @@ def validated_launch_plan(
         raise AgentConfigurationError("Agent configuration advertises an unexpected identity")
 
     installation = installation.resolve()
+    codex_fixture = installation / "agent/share/local-stand-codex-fixture"
+    expected_tool = {
+        "codex-cli": {
+            "path": str(codex_fixture),
+            "version": LOCAL_CODEX_VERSION,
+            "platform": LOCAL_CODEX_PLATFORM,
+            "sha256": hashlib.sha256(
+                _regular_file(
+                    codex_fixture,
+                    "local-stand Codex fixture",
+                    max_bytes=4 * 1024 * 1024,
+                    modes=frozenset({0o755}),
+                )
+            ).hexdigest(),
+        }
+    }
+    if document.get("tool_executables") != expected_tool:
+        raise AgentConfigurationError("Agent configuration has an unexpected tool executable")
     manifest = _json_object(
         _regular_file(
             installation / "installation-manifest.json",

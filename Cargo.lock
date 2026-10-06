@@ -3833,7 +3833,7 @@ dependencies = [
 
 [[package]]
 name = "octa-cache-protocol"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "blake3",
  "serde",
@@ -3843,14 +3843,14 @@ dependencies = [
 
 [[package]]
 name = "octa-plugin-lock"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "octa-runner-protocol"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "octa-cache-protocol",
  "serde",
@@ -4298,6 +4298,7 @@ dependencies = [
  "octa-plugin-lock",
  "octa-runner-protocol",
  "octacity-execution",
+ "octacity-private-fs",
  "octacity-protocol",
  "serde",
  "serde_json",
@@ -6597,7 +6598,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

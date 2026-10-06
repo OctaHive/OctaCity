@@ -227,6 +227,7 @@ mod tests {
       executable: PathBuf::from("/release/octa-runner"),
       plugins_dir: PathBuf::from("/release/plugins"),
       plugin_lock: PathBuf::from("/release/plugins.lock"),
+      external_executables: std::collections::BTreeMap::new(),
     };
     (temporary, request, runner)
   }

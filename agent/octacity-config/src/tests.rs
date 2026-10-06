@@ -45,6 +45,7 @@ impl Fixture {
       state_root: directory("state"),
       octa_release_root: directory("octa"),
       source_plugins_dir: directory("sources"),
+      tool_executables: BTreeMap::new(),
       workload_identity_profiles: BTreeMap::new(),
       cache: CacheConfig {
         root: directory("cache"),
@@ -127,6 +128,110 @@ fn validates_a_provisioned_agent() {
   let fixture = Fixture::new();
   let validated = fixture.config.validate().unwrap();
   assert_eq!(validated.signing_keys.len(), 1);
+}
+
+#[test]
+fn validates_operator_installed_tool_executable_identity() {
+  let mut fixture = Fixture::new();
+  let executable = fixture
+    ._temp
+    .path()
+    .join(if cfg!(windows) { "codex.exe" } else { "codex" });
+  File::create(&executable).unwrap().write_all(b"codex fixture").unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+  }
+  fixture.config.tool_executables.insert(
+    "codex-cli".to_owned(),
+    ToolExecutableConfig {
+      path: executable.clone(),
+      version: "0.130.0".to_owned(),
+      platform: "linux-x86_64".to_owned(),
+      sha256: "a".repeat(64),
+    },
+  );
+
+  let validated = fixture.config.validate().unwrap();
+  assert_eq!(validated.config.tool_executables["codex-cli"].path, executable);
+}
+
+#[test]
+fn rejects_absent_or_job_writable_tool_executables() {
+  let mut absent = Fixture::new();
+  absent.config.tool_executables.insert(
+    "codex-cli".to_owned(),
+    ToolExecutableConfig {
+      path: absent._temp.path().join("missing-codex"),
+      version: "0.130.0".to_owned(),
+      platform: "linux-x86_64".to_owned(),
+      sha256: "a".repeat(64),
+    },
+  );
+  assert!(
+    absent
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("tool executable")
+  );
+
+  let mut writable = Fixture::new();
+  let executable = writable.config.work_root.join("codex");
+  File::create(&executable).unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+  }
+  writable.config.tool_executables.insert(
+    "codex-cli".to_owned(),
+    ToolExecutableConfig {
+      path: executable,
+      version: "0.130.0".to_owned(),
+      platform: "linux-x86_64".to_owned(),
+      sha256: "a".repeat(64),
+    },
+  );
+  assert!(
+    writable
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("outside agent-owned writable roots")
+  );
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_tool_executable_writable_by_an_untrusted_local_user() {
+  use std::os::unix::fs::PermissionsExt as _;
+
+  let mut fixture = Fixture::new();
+  let executable = fixture._temp.path().join("codex");
+  File::create(&executable).unwrap();
+  fs::set_permissions(&executable, fs::Permissions::from_mode(0o777)).unwrap();
+  fixture.config.tool_executables.insert(
+    "codex-cli".to_owned(),
+    ToolExecutableConfig {
+      path: executable,
+      version: "0.130.0".to_owned(),
+      platform: "linux-x86_64".to_owned(),
+      sha256: "a".repeat(64),
+    },
+  );
+
+  assert!(
+    fixture
+      .config
+      .validate()
+      .unwrap_err()
+      .to_string()
+      .contains("writable by group")
+  );
 }
 
 #[test]

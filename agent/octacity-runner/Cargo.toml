@@ -19,6 +19,7 @@ octa-runner-protocol.workspace = true
 octa-cache-protocol.workspace = true
 octa-plugin-lock.workspace = true
 octacity-execution = { path = "../octacity-execution" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 serde.workspace = true
 serde_json.workspace = true

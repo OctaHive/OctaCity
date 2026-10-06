@@ -13,6 +13,7 @@
 #![warn(missing_docs)]
 
 use std::{
+  collections::BTreeMap,
   path::{Component, Path, PathBuf},
   pin::Pin,
   time::Duration,
@@ -37,6 +38,26 @@ pub const CACHE_DIRECTORY_PATH: &str = "/var/cache/octa";
 pub const CACHE_TOKEN_PATH: &str = "/run/octa-cache/token";
 /// Stable read-only path for an optional private cache CA certificate.
 pub const CACHE_CA_CERTIFICATE_PATH: &str = "/run/octa-cache/ca.pem";
+/// Stable filename prefix for operator-selected executables projected by isolated backends.
+pub const EXTERNAL_EXECUTABLE_FILE_PREFIX: &str = "tool-";
+
+/// One deterministic projection of an operator-selected executable.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalExecutableProjection {
+  /// Environment selector declared by the release contract.
+  pub selector: String,
+  /// Verified absolute path on the Agent host.
+  pub source: PathBuf,
+  /// Opaque filename used below a backend-owned read-only tools root.
+  pub file_name: String,
+}
+
+impl ExternalExecutableProjection {
+  /// Returns the projected path below a backend-owned tools root.
+  pub fn destination(&self, tools_root: &Path) -> PathBuf {
+    tools_root.join(&self.file_name)
+  }
+}
 
 /// Canonical host paths that a backend must project into an execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,9 +123,26 @@ pub struct RunnerProgram {
   pub plugins_dir: PathBuf,
   /// Canonical `Octa.lock` authorizing the plugin set.
   pub plugin_lock: PathBuf,
+  /// Operator-selected executables exposed only through release-declared
+  /// environment selectors. Backends project these paths read-only.
+  pub external_executables: BTreeMap<String, PathBuf>,
 }
 
 impl RunnerProgram {
+  /// Projects trusted executables in selector order without exposing product names.
+  pub fn external_executable_projections(&self) -> Vec<ExternalExecutableProjection> {
+    self
+      .external_executables
+      .iter()
+      .enumerate()
+      .map(|(index, (selector, source))| ExternalExecutableProjection {
+        selector: selector.clone(),
+        source: source.clone(),
+        file_name: format!("{EXTERNAL_EXECUTABLE_FILE_PREFIX}{index}"),
+      })
+      .collect()
+  }
+
   /// Checks that every distribution path is absolute and confined to its root.
   pub fn validate(&self) -> Result<(), ExecutionError> {
     if !self.release_root.is_absolute()
@@ -114,9 +152,16 @@ impl RunnerProgram {
       || !self.executable.starts_with(&self.release_root)
       || !self.plugins_dir.starts_with(&self.release_root)
       || !self.plugin_lock.starts_with(&self.release_root)
+      || self.external_executables.iter().any(|(selector, executable)| {
+        selector.is_empty()
+          || selector.trim() != selector
+          || selector.contains('=')
+          || selector.chars().any(char::is_control)
+          || !executable.is_absolute()
+      })
     {
       return Err(ExecutionError::Invalid(
-        "runner paths must be absolute and contained by release_root".to_owned(),
+        "runner paths and external executable selectors are invalid".to_owned(),
       ));
     }
     Ok(())
@@ -582,6 +627,33 @@ pub trait RunningExecution: Send {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn projects_external_executables_in_stable_selector_order() {
+    let runner = RunnerProgram {
+      release_root: PathBuf::from("/release"),
+      executable: PathBuf::from("/release/octa-runner"),
+      plugins_dir: PathBuf::from("/release/plugins"),
+      plugin_lock: PathBuf::from("/release/Octa.lock"),
+      external_executables: BTreeMap::from([
+        ("Z_TOOL".to_owned(), PathBuf::from("/tools/z")),
+        ("A_TOOL".to_owned(), PathBuf::from("/tools/a")),
+      ]),
+    };
+
+    let projections = runner.external_executable_projections();
+    assert_eq!(projections[0].selector, "A_TOOL");
+    assert_eq!(projections[0].source, PathBuf::from("/tools/a"));
+    assert_eq!(
+      projections[0].destination(Path::new("/guest/tools")),
+      PathBuf::from("/guest/tools/tool-0")
+    );
+    assert_eq!(projections[1].selector, "Z_TOOL");
+    assert_eq!(
+      projections[1].destination(Path::new("/guest/tools")),
+      PathBuf::from("/guest/tools/tool-1")
+    );
+  }
 
   #[test]
   fn validates_execution_boundaries() {

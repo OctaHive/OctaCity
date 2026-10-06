@@ -156,6 +156,7 @@ impl ExecutionBackend for HostBackend {
     command
       .env_clear()
       .envs(&self.environment)
+      .envs(&runner.external_executables)
       .current_dir(&workspace)
       .stdin(Stdio::piped())
       .stdout(Stdio::piped())
@@ -630,6 +631,7 @@ mod tests {
       executable: PathBuf::new(),
       plugins_dir: PathBuf::new(),
       plugin_lock: PathBuf::new(),
+      external_executables: BTreeMap::new(),
     };
 
     let error = match backend.start(&invalid_runner, request, CancellationToken::new()).await {
@@ -681,6 +683,7 @@ mod tests {
       executable,
       plugins_dir,
       plugin_lock,
+      external_executables: BTreeMap::new(),
     };
     let request = StartExecution {
       execution_id: "descendant-cleanup".to_owned(),

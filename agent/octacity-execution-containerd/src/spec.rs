@@ -106,6 +106,32 @@ pub(super) fn oci_spec(
     },
     "annotations": { "com.octacity.security-profile": SECURITY_PROFILE_VERSION }
   });
+  let mut external_environment = Vec::with_capacity(runner.external_executables.len());
+  let mut external_mounts = Vec::with_capacity(runner.external_executables.len());
+  for projection in runner.external_executable_projections() {
+    let destination = projection
+      .destination(Path::new(GUEST_TOOLS))
+      .to_string_lossy()
+      .into_owned();
+    external_environment.push(serde_json::Value::String(format!(
+      "{}={destination}",
+      projection.selector
+    )));
+    external_mounts.push(serde_json::json!({
+      "destination": destination,
+      "type": "bind",
+      "source": projection.source,
+      "options": ["bind", "ro", "nosuid", "nodev"]
+    }));
+  }
+  spec["process"]["env"]
+    .as_array_mut()
+    .expect("OCI process environment is an array")
+    .extend(external_environment);
+  spec["mounts"]
+    .as_array_mut()
+    .expect("OCI mounts are an array")
+    .extend(external_mounts);
   if let Some(identity) = &request.workload_identity {
     spec["mounts"]
       .as_array_mut()

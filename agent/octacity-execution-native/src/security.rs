@@ -6,6 +6,7 @@ use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_
 pub(super) const NATIVE_JOB_ROOT_PATH: &str = "/work";
 pub(super) const NATIVE_WORKSPACE_PATH: &str = "/work/workspace";
 pub(super) const NATIVE_OCTA_ROOT_PATH: &str = "/opt/octa";
+pub(super) const NATIVE_TOOLS_ROOT_PATH: &str = "/opt/octacity/tools";
 
 /// Host paths projected into one Native execution sandbox.
 pub(super) struct NativeFilesystem<'a> {
@@ -38,6 +39,25 @@ pub(super) fn environment_arguments(environment: &BTreeMap<String, String>) -> V
       "TMPDIR".into(),
       "/tmp".into(),
     ])
+    .collect()
+}
+
+/// Returns fixed guest paths for operator-selected executables. Ordering by
+/// selector makes the mount layout deterministic without exposing products in
+/// the execution protocol.
+pub(super) fn external_executable_environment(runner: &RunnerProgram) -> BTreeMap<String, String> {
+  runner
+    .external_executable_projections()
+    .into_iter()
+    .map(|projection| {
+      (
+        projection.selector,
+        projection
+          .destination(Path::new(NATIVE_TOOLS_ROOT_PATH))
+          .to_string_lossy()
+          .into_owned(),
+      )
+    })
     .collect()
 }
 
@@ -106,6 +126,16 @@ pub(super) fn add_native_filesystem(
   }
   command.arg("--dir").arg("/opt").arg("--dir").arg(NATIVE_OCTA_ROOT_PATH);
   ro_bind(command, &runner.release_root, Path::new(NATIVE_OCTA_ROOT_PATH));
+  if !runner.external_executables.is_empty() {
+    command.arg("--dir").arg(NATIVE_TOOLS_ROOT_PATH);
+    for projection in runner.external_executable_projections() {
+      ro_bind(
+        command,
+        &projection.source,
+        &projection.destination(Path::new(NATIVE_TOOLS_ROOT_PATH)),
+      );
+    }
+  }
   // Octa stages atomic cache restores beside the workspace so every rename
   // stays on one filesystem. Expose only this job's parent, never the
   // backend-wide work root, and mask credentials that are projected below.

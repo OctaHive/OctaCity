@@ -831,6 +831,7 @@ fn executor_config(
     },
     cancellation_grace: Duration::from_secs(5),
     runner_supervision: RunnerSupervisionPolicy::default(),
+    external_executables: BTreeMap::new(),
   }
 }
 

@@ -1,14 +1,35 @@
 # OctaCity Dark Factory Architecture
 
-- Статус: архитектурное предложение
-- Дата: 2026-09-27
+- Статус: целевая архитектура и снимок реализации
+- Создано: 2026-09-27
+- Актуализировано: 2026-10-06
 - Область: OctaCity, Octa, coding harnesses, evaluation и delivery
 
 ## 1. Резюме
 
-OctaCity развивается в source-agnostic dark factory control plane. Octa остаётся
-детерминированным execution engine. Codex, Claude и другие coding harnesses
-запускаются Octa через проверяемый plugin внутри изолированного Job.
+OctaCity остаётся самостоятельной CI/CD-платформой и дополнительно получает
+source-agnostic Dark Factory mode. Обычные Pipelines, Builds, Triggers и ручные
+operator commands не требуют Factory Controller, LLM или coding harness. Dark
+Factory переиспользует тот же execution substrate и координирует несколько
+обычных immutable Builds как более длинный lifecycle работы над кодом.
+
+```text
+CI/CD mode
+  Trigger / operator
+    -> Build -> Attempt -> Job DAG -> Agent -> Octa -> Result
+
+Dark Factory mode
+  Work Source -> Factory Run
+    -> Implementation Build
+    -> Validation / Evaluation Builds
+    -> Delivery
+```
+
+Octa в обоих режимах остаётся детерминированным execution engine. Codex, Claude
+и другие coding harnesses запускаются Octa через проверяемые plugins внутри
+изолированного Job. CI/CD и Dark Factory имеют общий substrate, но разные
+application lifecycles и могут развиваться, включаться и эксплуатироваться
+независимо.
 
 ```text
 Work Source
@@ -37,20 +58,24 @@ Factory Run на другом Agent.
 
 ### Цели
 
-1. Принимать работу из разных источников через единый intake seam.
-2. Нормализовать её в immutable Work Envelope.
-3. Выполнять coding и rework в disposable worktree/sandbox.
-4. Запускать разные coding harnesses через один стабильный Octa plugin contract.
-5. Фиксировать результат как immutable ChangeSet для точного base commit.
-6. Выполнять deterministic checks до LLM evaluation.
-7. Поддерживать произвольные evidence producers, criterion packs и evaluators.
-8. Принимать решение детерминированной policy, а не свободным текстом LLM.
-9. Поддерживать bounded retries, budgets, WIP limits и human escalation.
-10. Переживать restart, lease expiry, повтор событий и потерю Agent.
+1. Сохранить полноценный независимый CI/CD mode и его существующие contracts.
+2. Принимать factory work из разных источников через единый intake seam.
+3. Нормализовать её в immutable Work Envelope.
+4. Выполнять coding и rework в disposable worktree/sandbox.
+5. Запускать разные coding harnesses через versioned Octa task/plugin contracts,
+   не пропуская provider-specific semantics в OctaCity.
+6. Фиксировать результат как immutable ChangeSet для точного base commit.
+7. Выполнять deterministic checks до LLM evaluation.
+8. Поддерживать произвольные evidence producers, criterion packs и evaluators.
+9. Принимать решение детерминированной policy, а не свободным текстом LLM.
+10. Поддерживать bounded retries, budgets, WIP limits и human escalation.
+11. Переживать restart, lease expiry, повтор событий и потерю Agent.
 
 ### Не-цели первого релиза
 
 - автоматический merge любых изменений;
+- замена существующего CI/CD mode или обязательное прохождение Build через
+  Factory Controller;
 - dynamic infrastructure provisioning;
 - одновременная поддержка всех ОС и sandbox backends;
 - использование LLM judge как источника фактов;
@@ -59,22 +84,98 @@ Factory Run на другом Agent.
 - превращение Octa в backlog scheduler или merge controller;
 - зависимость correctness от сохранённой model session.
 
-## 3. Существующий фундамент
+## 3. Текущий фундамент и граница реализации
 
-OctaCity уже владеет нижним execution-слоем: Trigger, immutable Build и Attempt,
-Jobs, DAG Orchestrator, Placement Scheduler, fenced Lease, Agents, signed
-JobSpec, Artifact Store, secret grants, audit, observability и sandbox backends.
+На 2026-10-06 OctaCity уже владеет нижним execution-слоем: versioned Project,
+Pipeline, Repository и Build Configuration, нормализованные Trigger occurrences,
+immutable Build и Attempt, Jobs, DAG Orchestrator, Placement Scheduler, fenced
+Lease, Agents и Agent Pools, signed JobSpec v1/v2, Artifact Store, cache sessions,
+secret grants, audit, retention, observability и release-qualified execution
+backends. Management REST и Operator Console позволяют запускать, отменять и
+повторять Builds, диагностировать Jobs, outputs, capacity и audit evidence.
 
 Octa уже предоставляет task DAG, headless `octa-runner`, versioned protocol,
 process plugins, JSON Schema, structured outputs, progress, cancellation,
 artifacts, reports и digest-pinned `Octa.lock`.
 
-Dark factory строится поверх этого и не заменяет существующие Orchestrator,
-Scheduler, Agent или Octa runtime.
+В закреплённом Octa release `v0.5.0` с source revision
+`8b4269eff298dccadf38bc7011b759464fcdc1e1` реализован и упакован официальный
+`octa_plugin_codex`. Он запускает Codex CLI
+как обычный Octa task, использует строгую schema, проверяет совместимую версию
+CLI (сейчас exact `0.130.0`) и явно выбранный absolute executable, передаёт
+только явно выбранное environment, завершает всё дерево процессов, санитизирует
+JSONL events и публикует versioned trace, result и provenance через обычные Octa
+artifacts/reports. Plugin намеренно не добавляет Codex-specific JobSpec, runner
+events или OctaCity API.
+
+OctaCity проверяет exact `codex-compatibility.json`, `Octa.lock`, plugin manifest,
+plugin executable digest, release checksum inventory и embedded build revision.
+Local-stand inputs отдельно закрепляют release/source archive digests, MIT
+license и GitHub build-provenance contract. Этот foundation только добавляет
+opt-in `codex` task к обычным Pipelines; он не включает Dark Factory и не
+изменяет lifecycle существующих Builds.
+
+### 3.1 Матрица готовности
+
+| Область | Состояние | Фактическая граница |
+| --- | --- | --- |
+| Build execution substrate | Реализовано | Exact revision, immutable configuration snapshots, signed JobSpec, placement, fenced lifecycle и generic result publication работают end-to-end |
+| Isolation и resource policy | Реализовано для квалифицированных backends | v2 target фиксирует mode, platform и required guarantees; containerd, Microsandbox, Apple VF и Native имеют отдельные contracts без fallback на более слабый mode |
+| Network, secret и identity restrictions | Частично реализовано | Есть restricted host allowlist, Project/Pool/execution-target policy, logical secret и workload-identity profiles; полного factory-level tool/command/path/mount vocabulary ещё нет |
+| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.0`; Factory lifecycle ещё не включён |
+| Source intake | Частично реализовано | REST/manual, schedule, authenticated webhook и internal Trigger sources нормализуют Build occurrences, но provider-neutral Work Envelope и Factory admission отсутствуют |
+| Factory Controller | Не реализовано | Нет Factory Run, Stage Attempt, меж-Build reconciliation, budgets и WIP ownership |
+| ChangeSet capture | Не реализовано | Agent публикует generic outputs, но trusted base/candidate capture и immutable ChangeSet contract отсутствуют |
+| Evaluation Plane | Не реализовано | Нет Evidence Manifest, Criterion Pack, Assessment, Evaluation Round и Decision Engine |
+| Delivery | Не реализовано | VCS reads и revision resolution существуют; write-capable branch/PR/merge adapter отсутствует |
+| Factory operator UX | Не реализовано | Console управляет Projects, Builds, Agents и audit, но не показывает Factory Runs, evaluation rounds или delivery decisions |
+
+Dark factory строится поверх реализованного execution substrate и не заменяет
+существующие Orchestrator, Scheduler, Agent, REST control plane или Octa runtime.
+Следующая архитектурная граница — durable меж-Build coordination, а не ещё один
+Job backend.
 
 ## 4. Главные архитектурные решения
 
-### 4.1 Factory Controller находится над Builds
+### 4.1 CI/CD и Dark Factory являются двумя first-class режимами
+
+CI/CD остаётся базовой возможностью продукта. Пользователь может создавать
+Project, Pipeline, Repository и Build Configuration, запускать Build из Trigger
+или Operator Console, наблюдать DAG, artifacts и результаты, не создавая
+Factory Configuration и не подключая LLM provider.
+
+Dark Factory является opt-in application layer над теми же Build APIs. Он не
+ветвится внутри Scheduler и не добавляет специальный тип Agent. Factory stage
+создаёт обычный Build с immutable configuration snapshot; дальнейшее placement,
+lease fencing, execution, cancellation, retry, artifacts и audit выполняются
+существующим CI/CD контуром. Поэтому развитие Factory не должно менять семантику
+обычного Build и не должно делать доступность model provider условием готовности
+CI/CD control plane.
+
+### 4.2 Управляющий flow исполняется кодом, а не выбирается LLM
+
+Архитектура следует модели Agentic Programming / LLM-as-Code из статьи
+[LLM-as-Code: Agentic Programming for Agent Harness](https://arxiv.org/html/2606.15874v1):
+детерминированные loop, branch, sequence, retry, timeout, budget, join и stop
+conditions принадлежат программе. LLM вызывается только в узлах, где нужны
+понимание, генерация или оценочное суждение.
+
+Factory Controller, Octa task DAG и Decision Engine образуют программный
+control flow. Harness может свободно рассуждать и пользоваться разрешёнными
+tools внутри bounded call, но не может пропустить обязательную validation stage,
+самостоятельно объявить Factory Run доставленным или изменить policy переходов.
+
+Длительная работа представляется durable DAG вызовов и стадий. Каждый reasoning
+call получает immutable Context Manifest с необходимым ancestor context,
+Stage Handoffs и typed результатами завершённых ветвей, а не бесконечно растущий
+общий transcript. Полный trace сохраняется как evidence для audit/replay, но не
+обязан целиком возвращаться в model context.
+Параллельные reviewers являются sibling calls, а их join и failure policy
+остаются детерминированным кодом. Self-improvement публикуется как обычный
+ChangeSet и проходит те же tests/evaluation/delivery gates; модель не изменяет
+рабочий workflow скрытым состоянием.
+
+### 4.3 Factory Controller находится над Builds
 
 Build является immutable execution request с точной source revision. Dark
 factory меняет код между стадиями, поэтому весь lifecycle нельзя поместить в
@@ -92,7 +193,7 @@ Factory Run
 Orchestrator продолжает двигать Jobs внутри Attempt. Factory Controller
 принимает меж-Build решения.
 
-### 4.2 OctaCity Agent не запускает Codex напрямую
+### 4.4 OctaCity Agent не запускает Codex напрямую
 
 ```text
 OctaCity Agent
@@ -108,10 +209,16 @@ Agent владеет workspace, sandbox, resources, short-lived secrets, cancell
 и cleanup. Octa владеет task execution. Plugin владеет lifecycle harness
 process. Harness изменяет файлы или возвращает assessment.
 
-### 4.3 Implementation и evaluation разделены
+Эта граница уже доказана `octa_plugin_codex`: OctaCity видит только обычные
+runner events, artifacts, reports и outputs. Agent и server не импортируют
+Codex types и не знают его machine protocol. Пока существует один production
+harness, отдельный universal `coding` abstraction не вводится; общий seam
+выделяется только после появления второго реально интегрированного harness.
+
+### 4.5 Implementation и evaluation разделены
 
 ```text
-octa_plugin_coding
+octa_plugin_codex (сейчас) / другой implementation plugin (в будущем)
   workspace: writable
   purpose: implement or repair
 
@@ -120,21 +227,27 @@ octa_plugin_evaluator
   purpose: assess immutable candidate
 ```
 
-Они могут использовать общую библиотеку Harness Adapters, но evaluator не
-получает право менять код.
+После появления нескольких реализаций они могут переиспользовать доказанную
+общую process/result library, но evaluator не получает право менять код.
 
-### 4.4 Exact commit является identity результата
+### 4.6 Exact commit является identity результата
 
 Нельзя проверять плавающую branch. Checks и assessments привязаны к точному
 candidate commit SHA, ChangeSet digest, evidence digest и policy version. Любое
 изменение кода создаёт новую Evaluation Round.
 
-### 4.5 LLM не принимает merge decision
+### 4.7 LLM не принимает merge decision
 
 LLM возвращает schema-validated Assessment. Детерминированный Decision Engine
 создаёт `Accept`, `Rework`, `Escalate`, `Reject` или `Cancel`.
 
 ## 5. Канонические термины
+
+**CI/CD mode** — существующий самостоятельный lifecycle Trigger/command ->
+Build -> Attempt -> Jobs -> Result. Он не является сокращённым Factory Run.
+
+**Dark Factory mode** — opt-in lifecycle, который координирует несколько Builds
+для реализации, проверки, оценки и доставки изменения.
 
 **Work Source** — источник потенциальной работы: tracker, webhook, REST, CLI,
 queue, schedule, файл, OpenSpec change или другой Pipeline.
@@ -157,13 +270,41 @@ selectors, evaluation и delivery policy.
 
 **Stage Attempt** — одна bounded попытка стадии; retry не переписывает историю.
 
+**Stage Handoff** — immutable schema-validated межэтапный результат с outcome,
+bounded summary, влияющими на candidate решениями и assumptions, unresolved
+items, changed-component references, validation observations, findings и
+точными Artifact/ChangeSet/Evidence/provenance references. Он не содержит
+credentials, hidden chain-of-thought или полный transcript.
+
 **Task Envelope** — immutable input Job: задача, revision, permissions, budget,
 policy versions и ожидаемые outputs.
+
+**Context Manifest** — канонический immutable список точных входов reasoning
+call. Каждая ordered entry содержит source kind, logical identity, revision или
+subject binding, Artifact либо repository range reference, content digest,
+размер, inclusion reason и provenance; digest манифеста является частью Task
+Envelope и call node.
 
 **Coding Harness** — Codex, Claude или другой исполнитель LLM coding session.
 Его не следует называть Agent: Agent уже означает execution worker OctaCity.
 
 **Harness Adapter** — provider-specific реализация стабильного plugin interface.
+
+**Reasoning Call** — bounded invocation модели с immutable input и typed output;
+модель не владеет переходом Factory lifecycle.
+
+**Call DAG** — durable структура function/reasoning calls. Active call видит
+scoped ancestor context, а завершённая child branch возвращает typed result и
+summary; полный trace остаётся evidence, а не общим model context.
+
+**Repository Knowledge** — отдельный non-authoritative discovery subsystem для
+revision-bound hybrid symbol, lexical, dependency-graph и vector retrieval по
+коду и документации. Он помогает найти context, но не заменяет Git, Stage
+Handoff, Evidence Manifest, policy или Decision Engine.
+
+**Retrieval Receipt** — immutable описание одного retrieval: exact repository
+revision, index/embedding identities, normalized query, retrieval policy,
+stable ranking и ranges/digests возвращённых fragments.
 
 **ChangeSet** — immutable base/candidate relationship, commit или bundle/patch,
 changed paths, digest и provenance.
@@ -249,17 +390,19 @@ Stateless/disposable:
 
 Durable state:
 
-| Место | Authoritative state |
+| Место | Durable role |
 | --- | --- |
 | Git / ChangeSet Store | код и immutable revisions |
-| PostgreSQL OctaCity | Factory Run, stages, attempts, leases, budgets, policies, decisions |
-| Artifact Store | logs, reports, evidence, assessments, transcripts, ChangeSets |
+| PostgreSQL OctaCity | Factory Run, stages, attempts, leases, budgets, policies, Stage Handoffs, Context Manifest metadata/digests, decisions |
+| Artifact Store | task/spec bodies, Context Manifest payloads, handoffs, logs, reports, evidence, assessments, transcripts, ChangeSets |
+| Repository Knowledge | revision-bound non-authoritative indexes и immutable Retrieval Receipts; не lifecycle truth |
 | Work Source | внешний identity и best-effort status projection |
 | Worktree | ничего незаменимого |
 
 Другой Agent должен продолжить работу, имея только Factory Run state, exact
-commit, Task Envelope digest, policy/connector versions, artifact references и
-current fenced Lease. Session resume допустим только как оптимизация.
+commit, Stage Handoffs, Context Manifest и Task Envelope digests,
+policy/connector versions, artifact references и current fenced Lease. Session
+resume допустим только как оптимизация.
 
 ## 8. Factory lifecycle
 
@@ -287,46 +430,63 @@ Delivery разрешён только для exact accepted candidate commit.
 
 ## 9. Coding execution через Octa plugin
 
-Octafile использует один стабильный task key, а не provider-specific `codex:`
-и `claude:` contracts:
+### 9.1 Реализованный Codex task
+
+Текущая реализация в Octa использует официальный provider-specific task key
+`codex`. Это обычный Octa task, а не специальный OctaCity backend:
 
 ```yaml
-tasks:
-  implement:
-    coding:
-      harness: codex
-      mode: implement
-      task_envelope: .octa/factory/task-envelope.json
-      result: .octa/factory/coding-result.json
+codex:
+  prompt_file: .octa/factory/implement.md
+  model: gpt-codex
+  reasoning_effort: high
+  result_schema:
+    type: object
+    properties:
+      status:
+        type: string
+        enum: [completed, blocked, needs_input, budget_exhausted, failed]
+      summary:
+        type: string
+    required: [status, summary]
+    additionalProperties: false
+  environment:
+    secret:
+      OPENAI_API_KEY: CODEX_AUTH
+  source_revision: 8de7f1c
+  deliverables:
+    - kind: report
+      name: coding-result
+      path: .octa/factory/coding-result.json
+      format: octa.codex.result.v1
 ```
 
-Это концептуальная схема; финальный contract фиксируется JSON Schema.
+`octa_plugin_codex` уже владеет проверкой совместимой Codex CLI, построением
+минимального child environment, process-tree supervision, bounded sanitized
+JSONL, cancellation/timeout, schema validation и публикацией versioned
+`trace.jsonl`, `result.json` и `provenance.json`. Он не владеет Factory Run,
+source admission, worktree creation, sandbox policy, VCS push/PR/merge,
+delivery decision или меж-Build retries.
 
-`octa_plugin_coding` владеет выбором Harness Adapter, process supervision,
-streaming, cancellation, budgets, provider-result normalization, diagnostics и
-registration reports.
+OctaCity остаётся provider-neutral не потому, что сейчас существует фиктивный
+универсальный `coding` task, а потому, что provider boundary заканчивается в
+Octa plugin. Выше этой границы OctaCity получает только generic runner events,
+artifacts, reports, outputs и terminal status. Общий `CodingHarness` interface
+следует выделять лишь после второго production implementation, когда Codex и,
+например, Claude докажут фактический общий seam. До этого предпочтительнее
+конкретный глубокий module, чем преждевременная abstraction.
 
-Он не владеет Factory Run, source admission, worktree creation, sandbox policy,
-VCS push/PR/merge, delivery decision или меж-Job retries.
-
-Harness seam:
-
-```rust
-trait CodingHarness {
-    async fn run(
-        &self,
-        request: HarnessRequest,
-        events: EventSink,
-        cancellation: CancellationToken,
-    ) -> Result<HarnessOutcome, HarnessFailure>;
-}
-```
-
-Adapters: Codex, Claude, Gemini, OpenCode, Aider и локальные runtimes.
+### 9.2 Factory Task Envelope
 
 Task Envelope фиксирует protocol version, identities, mode, exact revision,
 task/spec artifacts, previous findings, permissions, network policy, secret
 handles, budgets, expected output schema и prompt/policy digests.
+
+Factory Controller не передаёт Task Envelope в Codex как право управлять
+lifecycle. Trusted adapter детерминированно компилирует envelope в immutable
+Octa input: prompt artifact, result schema, explicit environment mappings,
+source revision, deliverables и execution policy. Неподдерживаемое поле или
+невозможность выразить требуемое ограничение приводит к admission failure.
 
 Permissions являются typed, deny-by-default контрактом, а не свободной map. Они
 отдельно задают разрешённые tools/commands, read/write filesystem roots, mount
@@ -342,9 +502,56 @@ Envelope, локальной Agent policy и реально обеспечива
 отклоняет Job до запуска; переход на Host или другой более слабый backend
 запрещён.
 
-Coding result содержит status, changed-path summary, summary, usage, diagnostics,
-transcript и provider provenance. Изменения остаются в sandbox до trusted
-ChangeSet capture.
+### 9.3 Межэтапная память и Repository Knowledge
+
+Завершённая model-backed Stage Attempt публикует Stage Handoff. Следующий call
+не восстанавливает состояние по transcript или mutable provider session:
+Factory Controller канонически собирает Context Manifest только из declared
+stage/call dependencies, обязательных exact artifacts/evidence и явно выбранных
+typed child results или bounded summaries. Stable ordering, content digests,
+размеры, inclusion reasons и provenance делают manifest воспроизводимым; retry
+использует сохранённый manifest, а не повторяет discovery.
+
+```text
+Stage Handoffs --------+
+Exact artifacts -------+--> Context Manifest --> Task Envelope --> reasoning call
+Evidence --------------+
+Repository fragments --+    (optional, frozen with Retrieval Receipt)
+```
+
+Repository Knowledge решает другую задачу: поиск дополнительного релевантного
+кода и документации в большом exact repository revision. Предпочтителен hybrid
+retrieval: symbol и exact search, lexical/BM25, dependency/call graph, vector
+similarity и deterministic reranking. Его результат становится входом call
+только после фиксации concrete paths/ranges, bytes digests, stable order и
+Retrieval Receipt в Context Manifest. Изменение индекса, embedding model или
+ranking policy не меняет уже dispatched call.
+
+Repository fragments считаются недоверенным текстом и могут содержать prompt
+injection. Retrieval применяется после Project visibility и никогда не может
+заменить required Stage Handoff или deterministic evidence, расширить
+permissions, выбрать lifecycle transition или передать implementation
+transcript независимому evaluator. Cross-Project и cross-run knowledge по
+умолчанию изолированы.
+
+Первый Dark Factory slice использует exact references, typed handoffs и bounded
+workspace tools concrete harness. Полноценные indexes, ingestion, hybrid/vector
+retrieval, обновление по revision, retention и operator diagnostics относятся
+к отдельному Repository Knowledge change. До появления concrete implementation
+не создаётся пустой retrieval port; versioned Context Manifest и Retrieval
+Receipt являются совместимой точкой будущей интеграции.
+
+Сегодня применимая основа уже включает allowlist Octa task/plugin identities,
+execution target и required guarantees, resource bounds, restricted network
+hosts, logical secret/workload-identity profiles и output limits. Полный
+factory-level contract для tool identities, command arguments, filesystem
+read/write roots, mounts и descendant processes ещё не реализован; без него
+unattended factory не считается готовой.
+
+Coding result содержит status, changed-path summary, summary, usage,
+diagnostics, trace и provider provenance. Изменения остаются в sandbox до
+trusted ChangeSet capture. Model result является typed return value одного
+reasoning call, но не authority на следующий control-flow transition.
 
 Coding task заранее не знает все reads/writes и по умолчанию возвращает
 `CachePlanUnavailable`. Reproducibility identity включает Task Envelope, base
@@ -499,9 +706,11 @@ Required failure или indeterminate ведёт к Escalate, а не pass. High
 17. Work Reporter best-effort публикует status/result projection.
 18. Retention policy очищает disposable и просроченные artifacts.
 
-## 13. Proposed module ownership
+## 13. Целевое module ownership и текущая реализация
 
-Названия предварительные.
+Factory modules и protocols ниже ещё не реализованы; названия предварительные.
+Они дополняют существующие CI/CD modules, а не заменяют Build application,
+Orchestrator, Scheduler, Agent protocol или management API.
 
 | Module | Owns | Explicitly does not own |
 | --- | --- | --- |
@@ -519,12 +728,16 @@ Provider-neutral protocols:
 
 Octa plugins:
 
-- `octa_plugin_coding` — writable implementation/rework;
-- `octa_plugin_evaluator` — read-only structured Assessment;
+- `octa_plugin_codex` — реализованный и закреплённый в OctaCity writable
+  implementation/rework task;
+- будущий `octa_plugin_evaluator` — read-only structured Assessment;
 - существующие shell/test plugins — deterministic evidence.
 
-Shared internal library `octa-harness-adapters` содержит CodexHarness,
-ClaudeHarness и будущие adapters.
+Универсального `octa_plugin_coding` и shared `octa-harness-adapters` сейчас нет.
+Они не вводятся только ради симметрии: общий internal interface появляется после
+интеграции второго production harness и включает лишь реально совпавшие
+process/result semantics. Provider-specific configuration остаётся внутри
+соответствующего Octa plugin.
 
 ## 14. Security and trust model
 
@@ -562,6 +775,26 @@ OctaCity Agent остаётся доверенным execution worker и мож�
 Hardening и выделенная машина/VM для самого Agent относятся к deployment
 profile; backend sockets и host devices никогда не передаются workload.
 
+### 14.1 Что whitelist означает в текущей реализации
+
+Уже enforced кодом, а не prompt:
+
+- разрешённые Pool и execution targets для Project;
+- exact plugin/toolchain identities и signed JobSpec;
+- execution mode, platform и required isolation guarantees;
+- CPU, memory, disk, process и output bounds;
+- `disabled`, `unrestricted` или `restricted` network policy с
+  `allowed_hosts`;
+- заранее объявленные secret и workload-identity profiles;
+- отказ от запуска без перехода на более слабый backend.
+
+Пока не реализован единый Factory Permission Set, который описывает и проверяет
+идентичность каждого доступного модели tool, допустимые команды и arguments,
+read/write paths, mounts и descendants. Внутренний sandbox Codex полезен как
+defense in depth, но внешней security boundary остаётся OctaCity execution
+backend. Unattended mode разрешается только после закрытия этого gap и
+контрактных negative tests для каждой категории permission.
+
 ## 15. Failure, retry и fencing
 
 - Worker loss: lease expiry fences owner; другой Agent materializes exact state.
@@ -595,20 +828,25 @@ findings не попадают в metric labels.
 - bounded evaluator fan-out.
 
 Новый источник добавляет Work Source Adapter. Новый coding provider добавляет
-Harness Adapter. Новый аспект качества добавляет Criterion Pack/Evidence
-Producer. Новый delivery target добавляет Delivery Adapter. Factory Controller
-не изменяется.
+Octa plugin и, только при наличии доказанного общего seam, Harness Adapter.
+Новый аспект качества добавляет Criterion Pack/Evidence Producer. Новый delivery
+target добавляет Delivery Adapter. Factory Controller не изменяется.
 
 ## 17. Минимальный безопасный пилот
 
-Предпосылки:
+Состояние предпосылок:
 
-1. Полный server -> Agent -> Octa lifecycle через PostgreSQL.
-2. Typed cancel/retry/diagnostics.
-3. Один квалифицированный isolation backend.
-4. Recovery/failure tests.
-5. Security tests для malicious repository и secret isolation.
-6. Надёжные Artifact/report contracts.
+| Предпосылка | Состояние |
+| --- | --- |
+| Полный server -> Agent -> Octa lifecycle через PostgreSQL | Готово |
+| Typed cancel/retry/diagnostics и fenced recovery | Готово |
+| Квалифицированные isolation backends и запрет слабого fallback | Готово; pilot выбирает один поддерживаемый deployment profile |
+| Generic Artifact/report/result contracts | Готово |
+| Codex plugin conformance и release packaging в Octa | Готово upstream |
+| OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.5.0`, revision `8b4269eff298dccadf38bc7011b759464fcdc1e1` |
+| Factory Work/Task/ChangeSet/Assessment contracts и durable storage | Не готово |
+| Factory Permission Set и malicious-repository negative contracts | Частично; требуется закрыть gap из 14.1 |
+| Trusted ChangeSet capture, evaluation и delivery | Не готово |
 
 Первый slice:
 
@@ -616,7 +854,7 @@ Producer. Новый delivery target добавляет Delivery Adapter. Factor
 manual REST/CLI Work Submission
   -> Work Envelope
   -> Factory Run
-  -> Codex through octa_plugin_coding
+  -> Codex through octa_plugin_codex
   -> trusted ChangeSet capture
   -> Octa fmt/lint/test
   -> spec + architecture + security + test-quality evaluation
@@ -625,28 +863,43 @@ manual REST/CLI Work Submission
   -> human merge
 ```
 
-Для проверки seams пилот должен иметь минимум два Work Source adapters, Codex и
-Claude adapters, один coding plugin contract, несколько Criterion Packs через
-один evaluator interface и fake adapters для deterministic tests.
+Пилот использует один реальный Work Source и один реальный Codex plugin;
+source, evaluator и delivery ports проверяются также fake adapters в
+deterministic tests. Второй реальный Work Source и Claude не являются условием
+минимального pilot: они входят в Phase C и служат доказательством, что ранее
+выбранные seams действительно provider-neutral.
 
 ## 18. Этапы развития
 
-### Phase A: contracts
+### Foundation: CI/CD substrate и первый harness — выполнено
 
-Утвердить glossary; Work/Task Envelope; ChangeSet; Assessment/Decision schemas;
-typed permission vocabulary; effective-permission intersection; backend
-capability/admission matrix; plugin provenance; threat model; ADR о разделении
-Factory Run и Build.
+Завершены CI/CD Build/Attempt/Job lifecycle, PostgreSQL-backed orchestration,
+Agents/Pools, signed JobSpec, isolation backends, artifacts/cache/secrets,
+management REST, Operator Console и release/local-stand contracts. Официальный
+Codex task/plugin входит в закреплённый Octa `v0.5.0`, а OctaCity проверяет его
+release metadata, plugin lock и совместимость CLI.
+
+### Phase A: factory contracts — следующий этап
+
+Утвердить glossary; Work/Task Envelope; Factory Run/Stage Attempt; ChangeSet; Evidence Manifest;
+Assessment/Decision schemas; typed permission vocabulary; effective-permission
+intersection; backend capability/admission matrix; plugin provenance; threat
+model; ADR о разделении Factory Run и Build. Обычный CI/CD path остаётся
+неизменным и проходит regression contracts без factory configuration.
 
 ### Phase B: manual factory to PR
 
-Manual intake, coding plugin, Codex adapter, ChangeSet capture, deterministic
-validation, один evaluator connector, human merge.
+Manual intake, durable Factory Controller, `octa_plugin_codex`, trusted
+ChangeSet capture, deterministic validation, один evaluator connector, trusted
+PR delivery и human merge. Все loops, retries, joins и stop conditions
+реализуются программно; model calls возвращают typed results.
 
 ### Phase C: pluggability
 
-Claude adapter, второй Work Source, Work Reporter, multiple Criterion Packs,
-connector registry и bounded rework.
+Claude plugin/adapter, второй Work Source, Work Reporter, multiple Criterion
+Packs, connector registry и bounded rework. Только здесь по двум production
+harnesses принимается решение о shared coding interface или сохранении
+независимых provider plugins.
 
 ### Phase D: unattended backlog
 
@@ -660,32 +913,44 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
 
 ## 19. Архитектурные инварианты
 
-1. Work Source не определяет внутренний lifecycle Factory Run.
-2. OpenSpec — optional specification format, не factory dependency.
-3. Factory Controller не вызывает model provider напрямую.
-4. OctaCity Agent не знает provider-specific harness semantics.
-5. Octa не владеет backlog, Factory Run или delivery.
-6. Coding plugin не выполняет push, PR или merge.
-7. Evaluator не изменяет candidate.
-8. Assessment не является Decision.
-9. LLM output не исполняется без schema/policy validation.
-10. Gates относятся к exact candidate/evidence digests.
-11. Worktree не содержит authoritative state.
-12. Retry не переписывает историю.
-13. Required missing/indeterminate evidence не означает pass.
-14. External status — projection, не correctness state.
-15. Auto-merge opt-in и ограничен risk policy.
-16. Effective permissions могут только сужаться на каждом trust boundary.
-17. Невозможность обеспечить permission приводит к отказу до spawn, а не к
+1. OctaCity остаётся работоспособной CI/CD-платформой без Factory Configuration,
+   model provider и coding harness.
+2. Dark Factory использует обычные immutable Builds и не меняет их семантику.
+3. Work Source не определяет внутренний lifecycle Factory Run.
+4. OpenSpec — optional specification format, не factory dependency.
+5. Program владеет loop, branch, sequence, retry, join и termination; LLM
+   возвращает typed result bounded call и не оркестрирует Factory Run.
+6. Factory Controller не вызывает model provider напрямую.
+7. OctaCity Agent не знает provider-specific harness semantics.
+8. Octa не владеет backlog, Factory Run или delivery.
+9. Coding plugin не выполняет push, PR или merge.
+10. Evaluator не изменяет candidate.
+11. Assessment не является Decision.
+12. LLM output не исполняется без schema/policy validation.
+13. Gates относятся к exact candidate/evidence digests.
+14. Worktree и model session не содержат authoritative state.
+15. Retry не переписывает историю.
+16. Required missing/indeterminate evidence не означает pass.
+17. External status — projection, не correctness state.
+18. Auto-merge opt-in и ограничен risk policy.
+19. Effective permissions могут только сужаться на каждом trust boundary.
+20. Невозможность обеспечить permission приводит к отказу до spawn, а не к
     fallback на более слабый backend.
-18. OctaCity Agent является доверенным worker; изолируется недоверенный
+21. OctaCity Agent является доверенным worker; изолируется недоверенный
     Job/harness и его descendants.
+22. Завершённые reasoning branches сохраняют full trace как evidence, но в
+    последующий model context входят только scoped typed outputs/summaries.
+23. Self-evolution создаёт обычный ChangeSet и не обходит validation,
+    evaluation, delivery policy или human gates.
 
 ## 20. Решения для отдельных ADR
 
 1. ChangeSet format: commit, git bundle, patch series или комбинация.
 2. Где выполняется trusted commit creation.
-3. Один universal coding plugin или independently distributed provider plugins.
+3. После второго production harness: общий internal coding interface или
+   независимо распространяемые provider plugins. Для первого implementation
+   зафиксирован конкретный официальный `octa_plugin_codex` без преждевременного
+   universal facade.
 4. Installation/versioning model Criterion Packs.
 5. Evaluator process на Agent или remote evaluator pool.
 6. Data residency classes для внешних LLM providers.
@@ -696,39 +961,68 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
 11. Каноническая идентичность tool/command, допустимые arguments и descendants.
 12. Формат filesystem roots и mount policy для implementation и evaluator.
 13. Разделение Factory Policy, Task Envelope и локальной Agent policy.
+14. Versioned representation call DAG, context summaries и replay evidence для
+    LLM-as-Code execution.
 
 ## 21. Критерии подтверждения архитектуры
 
+### 21.1 Уже подтверждённый substrate
+
+1. Обычный CI/CD Build проходит server -> Agent -> Octa -> result без Factory
+   Configuration и LLM provider.
+2. Agent restart, lease expiry, stale completion и retry проверяются lifecycle
+   и released-product contracts.
+3. Signed JobSpec и backend contracts не допускают fallback с требуемой
+   isolation/virtualization на Host.
+4. Resource, network host, secret profile и workload identity restrictions
+   проходят positive и negative contracts в существующих границах.
+5. `octa_plugin_codex` работает как обычный Octa task, не добавляя
+   provider-specific OctaCity protocol, и проверяет secrets, process cleanup,
+   cancellation, bounded output, schema и provenance.
+6. Operator Console и REST сохраняют обычные Project/Build/Agent/Audit workflows
+   независимо от будущего Factory UX.
+
+### 21.2 Критерии готовности Dark Factory
+
 1. Одна задача принимается из REST и GitHub без изменения Factory Controller.
-2. Один Octafile работает через Codex и Claude без provider-specific factory logic.
+2. Codex и второй production harness выполняются без provider-specific factory
+   logic; общий plugin/library seam извлекается только если он подтверждён обеими
+   реализациями.
 3. Agent погибает после coding, другой продолжает без hidden local state.
-4. Completion старого lease после takeover отклоняется.
+4. Completion старого lease или Stage Attempt после takeover отклоняется.
 5. Architecture/security используют один evaluator interface и разные packs.
 6. Тесты failed, LLM сказал pass, но Decision Engine создаёт Rework.
 7. Required evaluator недоступен — система Escalates.
-8. Prompt injection в repo не расширяет permissions evaluator.
+8. Prompt injection в repo не расширяет permissions evaluator или harness.
 9. Candidate изменился — старые gates не принимаются.
 10. Delivery retry после lost response не создаёт второй PR.
 11. Coding harness не имеет push/merge credential.
-12. Удаление worktree не уничтожает возможность продолжить Factory Run.
-13. Запрос tool, command, path, mount, host или secret profile вне allowlist
-    отклоняется до spawn или до соответствующего защищённого действия.
-14. Job, требующий unsupported backend capability, не запускается через Host или
-    другой более слабый execution mode.
-15. Реальный backend contract одновременно доказывает разрешённые и запрещённые
+12. Удаление worktree и model session не уничтожает возможность продолжить
+    Factory Run.
+13. Запрос tool, command, argument, path, mount, host или secret profile вне
+    allowlist отклоняется до spawn или соответствующего защищённого действия.
+14. Реальный backend contract одновременно доказывает разрешённые и запрещённые
     tool, filesystem, network и secret операции.
+15. Обязательные validation/evaluation stages, bounded retries, joins и stop
+    conditions выполняются кодом даже при противоречащем LLM result.
+16. Parallel reasoning calls получают scoped ancestor context, возвращают typed
+    values и не используют общий бесконечно растущий transcript как state.
+17. Self-evolution создаёт candidate ChangeSet и не может изменить production
+    workflow до прохождения обычных gates и delivery policy.
 
 ## 22. Итог
 
-Dark factory является новым верхним coordination-слоем OctaCity, а не
-расширением Octa до orchestrator. Octa исполняет DAG и plugins, OctaCity владеет
-durable lifecycle, coding harnesses меняют одноразовые worktrees, Evaluation
-Plane независимо оценивает exact candidate, а доверенный Delivery Adapter
-публикует принятый результат.
+OctaCity остаётся CI/CD-платформой и получает Dark Factory как независимый
+opt-in coordination-слой над обычными Builds, а не как замену существующего
+режима и не как расширение Octa до backlog orchestrator. Octa исполняет DAG и
+plugins, OctaCity владеет durable lifecycle, coding harnesses меняют одноразовые
+worktrees, Evaluation Plane независимо оценивает exact candidate, а доверенный
+Delivery Adapter публикует принятый результат. Детерминированный код владеет
+control flow; LLM используется как bounded reasoning/generation/evaluation call.
 
 ```text
 новый источник        -> Work Source Adapter
-новый coding provider -> Harness Adapter
+новый coding provider -> Octa plugin -> optional shared Harness Adapter
 новый аспект качества -> Criterion Pack / Evidence Producer
 новый target delivery -> Delivery Adapter
 ```

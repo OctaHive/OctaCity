@@ -106,6 +106,7 @@ def stage_release(
     source_allow_file: bool,
     octacity_revision: str,
     octa_revision: str,
+    codex_fixture: Path | None = None,
 ) -> None:
     layout = PLATFORMS[platform]
     contract_path, product_contract = load_release_contract(repository, "octacity-agent")
@@ -155,6 +156,12 @@ def stage_release(
     copy_file(require_file("operations guide", repository / "docs/operations/agent.md"), root / "share/operations.md")
     copy_file(require_file("license", repository / "LICENSE"), root / "LICENSE")
     copy_file(contract_path, root / "release-contract.json")
+    if codex_fixture is not None:
+        copy_file(
+            require_file("local-stand Codex fixture", codex_fixture),
+            root / "share/local-stand-codex-fixture",
+            executable=True,
+        )
     manifest = {
         "format_version": 1,
         "product": "octacity-agent",
@@ -197,6 +204,7 @@ def package(args: argparse.Namespace) -> Path:
             args.source_allow_file,
             octacity_revision,
             octa_revision,
+            getattr(args, "codex_fixture", None),
         )
 
     return archive_release(args.platform, args.output, "octacity-release-", "octacity", stage)
@@ -217,6 +225,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--octacity-revision", required=True)
     parser.add_argument("--octa-revision", required=True)
+    parser.add_argument("--codex-fixture", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 

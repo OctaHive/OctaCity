@@ -141,9 +141,23 @@ class NativeStandStagingTests(unittest.TestCase):
         octa_root = root / "octa-root"
         octa_root.mkdir()
         write_executable(octa_root / "octa-runner", "#!/bin/sh\nexit 0\n")
+        write_executable(
+            octa_root / "plugins/octa_plugin_codex", "#!/bin/sh\nexit 0\n"
+        )
+        (octa_root / "plugins/codex.plugin.yml").write_text(
+            "manifest_version: 1\nname: codex\n", encoding="utf-8"
+        )
         (octa_root / "Octa.lock").write_text("version: 1\nplugins: {}\n", encoding="utf-8")
         (octa_root / "octa-release-contract.json").write_text(
-            json.dumps({"format_version": 1, "checksums": "SHA256SUMS"}), encoding="utf-8"
+            json.dumps(STAGER.release_contract.EXPECTED_CONTRACT), encoding="utf-8"
+        )
+        (octa_root / "codex-compatibility.json").write_text(
+            json.dumps(
+                STAGER.release_contract.expected_codex_compatibility(
+                    document["native"]["octa"]["version"]
+                )
+            ),
+            encoding="utf-8",
         )
         (octa_root / "octa-runner-capabilities.json").write_text(
             json.dumps(
@@ -223,11 +237,11 @@ class NativeStandStagingTests(unittest.TestCase):
         name = STAGER.input_set_name(self.document, REVISION)
         self.assertEqual(
             name,
-            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.4.0-msb-0.7.6",
+            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.5.0-msb-0.7.6",
         )
         self.assertEqual(
             STAGER.installation_name(self.document, REVISION),
-            "agent-0.1.0-aaaaaaaaaaaa-octa-0.4.0-msb-0.7.6",
+            "agent-0.1.0-aaaaaaaaaaaa-octa-0.5.0-msb-0.7.6",
         )
 
     def test_prepare_proves_microsandbox_release_and_asset_identity(self):

@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "tools"))
 SPEC = importlib.util.spec_from_file_location("stage_octa_release", REPOSITORY / "tools/stage_octa_release.py")
 assert SPEC and SPEC.loader
 STAGE = importlib.util.module_from_spec(SPEC)
@@ -39,17 +40,23 @@ class _Response(io.BytesIO):
 
 def _release_tar(version: str, revision: str, platform: str) -> bytes:
     payload = io.BytesIO()
-    manifest = json.dumps(
-        {
+    files = {
+        "octa-runner-capabilities.json": {
             "octa_version": version,
             "build_commit": revision,
             "platform": platform,
-        }
-    ).encode()
+        },
+        "octa-release-contract.json": STAGE.release_contract.EXPECTED_CONTRACT,
+        "codex-compatibility.json": STAGE.release_contract.expected_codex_compatibility(
+            version
+        ),
+    }
     with tarfile.open(fileobj=payload, mode="w:gz") as archive:
-        member = tarfile.TarInfo("octa-runner-capabilities.json")
-        member.size = len(manifest)
-        archive.addfile(member, io.BytesIO(manifest))
+        for name, document in files.items():
+            contents = json.dumps(document).encode()
+            member = tarfile.TarInfo(name)
+            member.size = len(contents)
+            archive.addfile(member, io.BytesIO(contents))
     return payload.getvalue()
 
 
@@ -133,6 +140,43 @@ class StageOctaReleaseTests(unittest.TestCase):
         self.assertEqual(STAGE.expected_digest(f"{digest}  octa.zip\n".encode(), "octa.zip"), digest)
         with self.assertRaisesRegex(ValueError, "requested asset"):
             STAGE.expected_digest(f"{digest}  another.zip\n".encode(), "octa.zip")
+
+    def test_stage_rejects_codex_cli_identity_drift(self):
+        version = "1.2.3"
+        revision = "a" * 40
+        asset = "octa-Linux-amd64.tar.gz"
+        archive = io.BytesIO()
+        compatibility = STAGE.release_contract.expected_codex_compatibility(version)
+        compatibility["executable"]["supported_versions"] = ["9.9.9"]
+        files = {
+            "octa-runner-capabilities.json": {
+                "octa_version": version,
+                "build_commit": revision,
+                "platform": "linux-x86_64",
+            },
+            "octa-release-contract.json": STAGE.release_contract.EXPECTED_CONTRACT,
+            "codex-compatibility.json": compatibility,
+        }
+        with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+            for name, document in files.items():
+                contents = json.dumps(document).encode()
+                member = tarfile.TarInfo(name)
+                member.size = len(contents)
+                bundle.addfile(member, io.BytesIO(contents))
+        payload = archive.getvalue()
+        checksum = f"{STAGE.hashlib.sha256(payload).hexdigest()}  {asset}\n".encode()
+
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+            STAGE,
+            "download_release_assets",
+            return_value={asset: payload, f"{asset}.sha256": checksum},
+        ), self.assertRaisesRegex(ValueError, "supported identity"):
+            STAGE.stage(
+                version,
+                "linux-amd64",
+                revision,
+                Path(temporary) / "octa",
+            )
 
     def test_tar_extraction_rejects_links_and_parent_traversal(self):
         for name, member_type in [("../escape", tarfile.REGTYPE), ("runner-link", tarfile.SYMTYPE)]:

@@ -95,6 +95,7 @@ const OCI_SPEC_TYPE_URL: &str = "types.containerd.io/opencontainers/runtime-spec
 const CGROUP_V2_METRICS_SUFFIX: &str = "io.containerd.cgroups.v2.Metrics";
 const GUEST_WORKSPACE: &str = "/workspace";
 const GUEST_RELEASE: &str = "/opt/octa";
+const GUEST_TOOLS: &str = "/opt/octacity/tools";
 
 /// OCI process engine backed by a configured containerd daemon.
 pub struct ContainerdEngine {

@@ -57,6 +57,7 @@ management responses, audit facts, metrics, traces, logs, or durable errors.
 | Webhook ingress | Provider headers and exact request bytes | Exact-body authentication before decoding, bounded payloads, deduplication, provider-process isolation, negative signature tests |
 | Repository and VCS | Locator, refs, trees, content, malicious repositories | Operator-installed digest-locked adapter, credential handles rather than values, read-only bounded operations, traversal and hook-execution tests |
 | Execution | Repository-controlled commands and outputs | Explicit Host admission or qualified isolation/virtualization, dedicated work roots, resource/output limits, cancellation, cleanup, backend conformance matrix |
+| Operator-selected task executable | Executable bytes, configured product/version/platform/digest, plugin environment selector | Startup-time regular-file, ownership, ACL, digest, platform, release-compatibility and plugin-lock verification; opaque read-only backend projection; bounded version probe where host-executable; process-tree cleanup and leak scans |
 | PostgreSQL | Concurrent replicas and restored state | Use-case-shaped transactions, declarative constraints, fencing, atomic audit/idempotency/outbox evidence, migration and race contracts |
 | Object storage and cache | Missing, stale, corrupt, or cross-scope bytes | Private layouts, digest verification, immutable identities, scoped grants, transactional visibility, corruption and outage tests |
 | Provider adapters | Executable, manifest, stdout frames, diagnostics | Regular-file and permission validation, digest lock, bounded versioned protocol, deadline and forced termination, redacted errors |
@@ -84,6 +85,17 @@ are digest-verified, and caller-controlled intent cannot contain credentials,
 host paths, fences, or presigned URLs. Adapters receive bounded commands and
 credential handles only. PostgreSQL commits state, idempotency, audit, and
 outbox evidence atomically.
+
+Operator-selected task executables are an explicit extension of the Agent
+trust base, not repository input. The Agent verifies them before source
+discovery or coordinator contact, and isolated backends expose them from a
+fixed read-only tools root under opaque deterministic names. The current
+JobSpec v1/v2 contract has no per-Job tool selector: when a tool is configured,
+every admitted Job on that Agent can reach it through the release-owned plugin
+selector. Operators must therefore use a dedicated Agent and Pool constrained
+to the intended Projects and must not install model credentials in that
+profile. Factory Permission Sets in JobSpec v3 will replace this deployment
+scope with signed per-Job selection; v1/v2 are deliberately unchanged.
 
 ### Cross-project disclosure and secret leakage
 
@@ -156,6 +168,9 @@ reasoned configuration change rather than a CI bypass.
 - Host mode is not a sandbox. Use Isolation or Virtualization for untrusted
   repository code and dedicate Agent identities and machines where Host is
   unavoidable.
+- A v1/v2 Agent with `tool_executables` is a dedicated tool profile. It must
+  not share a Pool with general workloads or carry ambient model credentials;
+  the configured digest grants execution authority to every admitted Job.
 - Containerd control is host-equivalent authority, KVM and Apple
   Virtualization.framework are privileged resources, and their sockets or
   devices must never be exposed to repository code.

@@ -196,6 +196,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
           resource_sample_interval: Duration::from_millis(50),
           ..RunnerSupervisionPolicy::default()
         },
+        external_executables: BTreeMap::new(),
       },
     )
     .unwrap(),

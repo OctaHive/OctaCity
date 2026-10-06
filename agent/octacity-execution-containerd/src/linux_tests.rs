@@ -183,11 +183,17 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   let workspace = temporary.path().join("workspace");
   fs::create_dir_all(release.join("plugins")).unwrap();
   fs::create_dir_all(workspace.join("data")).unwrap();
+  let external_executable = temporary.path().join("codex");
+  fs::write(&external_executable, "fixture").unwrap();
   let runner = RunnerProgram {
     release_root: release.clone(),
     executable: release.join("octa-runner"),
     plugins_dir: release.join("plugins"),
     plugin_lock: release.join("plugins.lock"),
+    external_executables: std::collections::BTreeMap::from([(
+      "OCTA_CODEX_EXECUTABLE".to_owned(),
+      external_executable.clone(),
+    )]),
   };
   let identity = temporary.path().join("identity-token");
   fs::write(&identity, "signed-jwt").unwrap();
@@ -242,6 +248,10 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   assert_eq!(spec["process"]["noNewPrivileges"], true);
   assert_eq!(spec["process"]["env"][0], "HOME=/workspace");
   assert_eq!(spec["process"]["env"][1], "PATH=/tools/bin");
+  assert_eq!(
+    spec["process"]["env"][2],
+    "OCTA_CODEX_EXECUTABLE=/opt/octacity/tools/tool-0"
+  );
   assert_eq!(spec["linux"]["resources"]["pids"]["limit"], 4096);
   assert_eq!(spec["process"]["rlimits"][0]["hard"], 65536);
   assert!(spec["hostname"].as_str().unwrap().len() <= super::spec::LINUX_UTS_HOSTNAME_MAX_BYTES);
@@ -251,6 +261,20 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
     SECURITY_PROFILE_VERSION
   );
   assert_eq!(spec["linux"]["seccomp"]["defaultAction"], "SCMP_ACT_ALLOW");
+  let external_mount = spec["mounts"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|mount| mount["destination"] == "/opt/octacity/tools/tool-0")
+    .unwrap();
+  assert_eq!(external_mount["source"], external_executable.to_string_lossy().as_ref());
+  assert!(
+    external_mount["options"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|value| value == "ro")
+  );
   let identity_mount = spec["mounts"]
     .as_array()
     .unwrap()

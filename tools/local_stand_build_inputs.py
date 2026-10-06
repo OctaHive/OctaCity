@@ -113,7 +113,12 @@ def stage_octa_source(document: dict[str, Any], destination: Path) -> None:
         archive = Path(temporary) / "octa-source.tar.gz"
         download(policy, archive)
         extract_source(archive, destination, policy)
-    for required in ("Cargo.toml", "Cargo.lock", "crates/octa-runner-protocol/Cargo.toml"):
+    for required in (
+        "Cargo.toml",
+        "Cargo.lock",
+        "LICENSE",
+        "crates/octa-runner-protocol/Cargo.toml",
+    ):
         if not (destination / required).is_file():
             raise SourceArchiveError(
                 f"verified Octa source omits required input: {required}"

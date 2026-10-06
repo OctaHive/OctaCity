@@ -290,6 +290,7 @@ fn job(workspace: &std::path::Path) -> RunnerJobRequest {
     cache: None,
     redactions: RunnerRedactions::default(),
     cancellation_grace: Duration::from_secs(1),
+    external_executables: BTreeMap::new(),
   }
 }
 

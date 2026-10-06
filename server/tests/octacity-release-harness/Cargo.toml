@@ -8,6 +8,13 @@ repository.workspace = true
 publish = false
 description = "Isolated released-bundle installer for the Agent Ready matrix"
 
+[[bin]]
+name = "octacity-codex-fixture"
+path = "src/bin/codex_fixture.rs"
+test = false
+bench = false
+doc = false
+
 [dependencies]
 clap.workspace = true
 octa-cache-protocol.workspace = true

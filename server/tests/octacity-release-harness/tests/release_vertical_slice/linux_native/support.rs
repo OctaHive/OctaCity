@@ -93,6 +93,14 @@ pub(super) async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgen
   let directory = input.temporary.join(input.evidence_name);
   fs::create_dir(&directory).unwrap();
   let upload_origins = [input.object_endpoint];
+  let tool_executables = input.tool_executable.map_or(&[][..], std::slice::from_ref);
+  let output_limits = octacity_protocol::OutputLimits {
+    artifact_count: if input.tool_executable.is_some() { 2 } else { 1 },
+    artifact_bytes: OUTPUT_BYTES,
+    report_count: 1,
+    report_bytes: OUTPUT_BYTES,
+    single_output_bytes: OUTPUT_BYTES,
+  };
   let config = write_agent_config(
     &directory,
     input.agent_origin,
@@ -107,7 +115,8 @@ pub(super) async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgen
       cache_ca_certificate: Some(&input.cache_proxy.ca_certificate),
       unrestricted_network: true,
       upload_origins: &upload_origins,
-      output_limit_bytes: Some(OUTPUT_BYTES),
+      output_limits: Some(output_limits),
+      tool_executables,
     },
   );
   let child = spawn_agent(
@@ -238,6 +247,38 @@ pub(super) fn directory_entries(path: &Path) -> BTreeSet<OsString> {
     .unwrap()
     .map(|entry| entry.unwrap().file_name())
     .collect()
+}
+
+pub(super) fn contains_file_named(root: &Path, expected: &str) -> bool {
+  let mut pending = vec![(root.to_owned(), 0_u8)];
+  while let Some((directory, depth)) = pending.pop() {
+    let Ok(entries) = fs::read_dir(directory) else {
+      continue;
+    };
+    for entry in entries.flatten() {
+      if entry.file_name() == expected {
+        return entry.file_type().is_ok_and(|kind| kind.is_file());
+      }
+      if depth < 4 && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+        pending.push((entry.path(), depth + 1));
+      }
+    }
+  }
+  false
+}
+
+pub(super) async fn wait_for_directory_baseline(path: &Path, baseline: &BTreeSet<OsString>, description: &str) {
+  let deadline = Instant::now() + Duration::from_secs(30);
+  loop {
+    if directory_entries(path) == *baseline {
+      return;
+    }
+    assert!(
+      Instant::now() < deadline,
+      "{description} did not return to its baseline"
+    );
+    sleep(Duration::from_millis(100)).await;
+  }
 }
 
 pub(super) fn remove_agent_cache_entries(cache_root: &Path, baseline: &BTreeSet<OsString>) {

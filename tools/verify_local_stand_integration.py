@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import hashlib
 from http import client as http_client
 import json
 from pathlib import Path
 import re
 import ssl
+import stat
 import subprocess
 import sys
 import time
@@ -38,12 +40,30 @@ MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024
 DEFAULT_BUILD_TIMEOUT_SECONDS = 600
 POLL_INTERVAL_SECONDS = 0.5
 RECEIPT_MAX_BYTES = 64 * 1024
+RECEIPT_SCHEMA_VERSION = 3
 GIT_REVISION = re.compile(r"[0-9a-f]{40}")
 GITHUB_COMPONENT = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 class IntegrationError(RuntimeError):
     """The running stand does not satisfy its integration contract."""
+
+
+@dataclass(frozen=True)
+class IntegrationResources:
+    """Immutable identities created for one local-stand verification run."""
+
+    project_id: str
+    trigger_id: str
+    configuration_id: str
+    cancellation_trigger_id: str
+    cancellation_configuration_id: str
+    codex_trigger_id: str
+    codex_configuration_id: str
+    codex_overflow_trigger_id: str
+    codex_overflow_configuration_id: str
+    codex_cancellation_trigger_id: str
+    codex_cancellation_configuration_id: str
 
 
 def _require_object(value: object, description: str) -> dict[str, object]:
@@ -143,6 +163,7 @@ class LocalStandClient:
     """Bounded client for the trusted local management and object origins."""
 
     def __init__(self, root: Path, origin: str):
+        self._agent_work_root = root / "agent/work"
         ca = state.read_regular_file(
             root / "pki/local-ca.pem",
             "local stand CA certificate",
@@ -183,6 +204,23 @@ class LocalStandClient:
         ):
             raise IntegrationError("gateway did not serve the built operator console")
         self._management.ready()
+
+    def verify_agent_work_root_is_empty(self) -> None:
+        """Proves that a terminal job left no workspace or descendant behind."""
+        try:
+            metadata = self._agent_work_root.stat(follow_symlinks=False)
+        except OSError as cause:
+            raise IntegrationError("failed to inspect the Agent work root") from cause
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise IntegrationError("Agent work root is not a real directory")
+        if metadata.st_mode & 0o077:
+            raise IntegrationError("Agent work root is accessible to another principal")
+        try:
+            entries = list(self._agent_work_root.iterdir())
+        except OSError as cause:
+            raise IntegrationError("failed to list the Agent work root") from cause
+        if entries:
+            raise IntegrationError("terminal Codex job left an Agent workspace behind")
 
     def get(self, path: str) -> dict[str, object]:
         return self._management.get(path)
@@ -284,6 +322,7 @@ def verify_registered_topology(client: LocalStandClient) -> tuple[str, str]:
     if (
         agent.get("status") != "online"
         or agent.get("pool_id") != pool_id
+        or agent.get("current_execution") is not None
         or inventory.get("host_platform") != agent_config.LOCAL_HOST_PLATFORM
         or inventory.get("labels") != agent_config.LOCAL_AGENT_LABELS
         or capacity.get("virtualization_available") is not True
@@ -305,15 +344,103 @@ def _execution_target() -> dict[str, object]:
     return _require_object(targets[0], "Pool execution target")
 
 
+def _pipeline_request(project_id: str, task: str) -> dict[str, object]:
+    return {
+        "project_id": project_id,
+        "name": f"local-stand-{task}",
+        "dag": {
+            "nodes": [
+                {
+                    "id": task,
+                    "name": task,
+                    "dependency_policy": "all_succeeded",
+                    "required_capabilities": ["shell"],
+                    "execution": {
+                        "octafile": FIXTURE_OCTAFILE,
+                        "commands": [task],
+                        "parallel": False,
+                        "failfast": True,
+                    },
+                }
+            ],
+            "edges": [],
+        },
+    }
+
+
+def _configuration_request(
+    *,
+    project_id: str,
+    repository_id: str,
+    pipeline_id: str,
+    pool_id: str,
+    guest_image: str,
+    name: str,
+    publishes_outputs: bool,
+    artifact_count: int | None = None,
+    report_count: int | None = None,
+) -> dict[str, object]:
+    artifact_count = (1 if publishes_outputs else 0) if artifact_count is None else artifact_count
+    report_count = (1 if publishes_outputs else 0) if report_count is None else report_count
+    return {
+        "project_id": project_id,
+        "name": name,
+        "definition": {
+            "enabled": True,
+            "job_concurrency_limit": 1,
+            "repository_id": repository_id,
+            "repository_version": 1,
+            "pipeline_id": pipeline_id,
+            "pipeline_version": 1,
+            "parameters": {"parameters": {}, "deny_unknown": True},
+            "triggers": ["manual"],
+            "agent_requirements": {
+                "capabilities": ["shell"],
+                "labels": agent_config.LOCAL_AGENT_LABELS,
+                "minimum_cpu_millis": 1000,
+                "minimum_memory_bytes": 512 * 1024 * 1024,
+                "minimum_disk_bytes": 1024 * 1024 * 1024,
+            },
+            "allowed_pools": [pool_id],
+            "runtime": {
+                "class": "virtualization",
+                "operating_system": "linux",
+                "architecture": "arm64",
+                "host_platform": agent_config.LOCAL_HOST_PLATFORM,
+                "required_guarantees": _execution_target()["required_guarantees"],
+                "immutable_image": guest_image,
+                "cpu_millis": 1000,
+                "memory_bytes": 512 * 1024 * 1024,
+                "writable_disk_bytes": 1024 * 1024 * 1024,
+                "timeout_seconds": 300,
+                "network": {"mode": "disabled"},
+                "workload_identity_profile": None,
+            },
+            "cache": {
+                "namespace": CACHE_NAMESPACE if publishes_outputs else None,
+                "read": publishes_outputs,
+                "write": publishes_outputs,
+            },
+            "artifacts": {
+                "artifact_count": artifact_count,
+                "artifact_bytes": MAX_DOWNLOAD_BYTES if publishes_outputs else 0,
+                "report_count": report_count,
+                "report_bytes": MAX_DOWNLOAD_BYTES if publishes_outputs else 0,
+                "single_output_bytes": MAX_DOWNLOAD_BYTES if publishes_outputs else 0,
+            },
+            "retry": {"max_attempts": 1, "retry_on": []},
+        },
+    }
+
+
 def _create_resources(
     client: LocalStandClient,
     *,
     pool_id: str,
     source_repository: str,
-    source_revision: str,
     guest_image: str,
     scope: str,
-) -> tuple[str, str]:
+) -> IntegrationResources:
     project_id = _resource_id(
         client.post(
             "/api/v1/projects",
@@ -346,88 +473,83 @@ def _create_resources(
         client.post(
             "/api/v1/pipelines",
             f"{scope}-pipeline",
-            {
-                "project_id": project_id,
-                "name": "local-stand-integration",
-                "dag": {
-                    "nodes": [
-                        {
-                            "id": "cacheable",
-                            "name": "cacheable",
-                            "dependency_policy": "all_succeeded",
-                            "required_capabilities": ["shell"],
-                            "execution": {
-                                "octafile": FIXTURE_OCTAFILE,
-                                "commands": ["cacheable"],
-                                "parallel": False,
-                                "failfast": True,
-                            },
-                        }
-                    ],
-                    "edges": [],
-                },
-            },
+            _pipeline_request(project_id, "cacheable"),
         ),
         "Pipeline",
+    )
+    cancellation_pipeline_id = _resource_id(
+        client.post(
+            "/api/v1/pipelines",
+            f"{scope}-cancellation-pipeline",
+            _pipeline_request(project_id, "slow"),
+        ),
+        "cancellation Pipeline",
     )
     configuration_id = _resource_id(
         client.post(
             "/api/v1/build-configurations",
             f"{scope}-configuration",
-            {
-                "project_id": project_id,
-                "name": "local-stand-integration",
-                "definition": {
-                    "enabled": True,
-                    "job_concurrency_limit": 1,
-                    "repository_id": repository_id,
-                    "repository_version": 1,
-                    "pipeline_id": pipeline_id,
-                    "pipeline_version": 1,
-                    "parameters": {"parameters": {}, "deny_unknown": True},
-                    "triggers": ["manual"],
-                    "agent_requirements": {
-                        "capabilities": ["shell"],
-                        "labels": agent_config.LOCAL_AGENT_LABELS,
-                        "minimum_cpu_millis": 1000,
-                        "minimum_memory_bytes": 512 * 1024 * 1024,
-                        "minimum_disk_bytes": 1024 * 1024 * 1024,
-                    },
-                    "allowed_pools": [pool_id],
-                    "runtime": {
-                        "class": "virtualization",
-                        "operating_system": "linux",
-                        "architecture": "arm64",
-                        "host_platform": agent_config.LOCAL_HOST_PLATFORM,
-                        "required_guarantees": _execution_target()[
-                            "required_guarantees"
-                        ],
-                        "immutable_image": guest_image,
-                        "cpu_millis": 1000,
-                        "memory_bytes": 512 * 1024 * 1024,
-                        "writable_disk_bytes": 1024 * 1024 * 1024,
-                        "timeout_seconds": 300,
-                        "network": {"mode": "disabled"},
-                        "workload_identity_profile": None,
-                    },
-                    "cache": {
-                        "namespace": CACHE_NAMESPACE,
-                        "read": True,
-                        "write": True,
-                    },
-                    "artifacts": {
-                        "artifact_count": 1,
-                        "artifact_bytes": MAX_DOWNLOAD_BYTES,
-                        "report_count": 1,
-                        "report_bytes": MAX_DOWNLOAD_BYTES,
-                        "single_output_bytes": MAX_DOWNLOAD_BYTES,
-                    },
-                    "retry": {"max_attempts": 1, "retry_on": []},
-                },
-            },
+            _configuration_request(
+                project_id=project_id,
+                repository_id=repository_id,
+                pipeline_id=pipeline_id,
+                pool_id=pool_id,
+                guest_image=guest_image,
+                name="local-stand-integration",
+                publishes_outputs=True,
+            ),
         ),
         "Build Configuration",
     )
+    cancellation_configuration_id = _resource_id(
+        client.post(
+            "/api/v1/build-configurations",
+            f"{scope}-cancellation-configuration",
+            _configuration_request(
+                project_id=project_id,
+                repository_id=repository_id,
+                pipeline_id=cancellation_pipeline_id,
+                pool_id=pool_id,
+                guest_image=guest_image,
+                name="local-stand-cancellation",
+                publishes_outputs=False,
+            ),
+        ),
+        "cancellation Build Configuration",
+    )
+    codex_resources: dict[str, tuple[str, str]] = {}
+    for name, task, artifact_count, report_count in (
+        ("codex", "codex-fixture", 2, 1),
+        ("codex-overflow", "codex-overflow", 0, 0),
+        ("codex-cancellation", "codex-cancel", 0, 0),
+    ):
+        pipeline_id = _resource_id(
+            client.post(
+                "/api/v1/pipelines",
+                f"{scope}-{name}-pipeline",
+                _pipeline_request(project_id, task),
+            ),
+            f"{name} Pipeline",
+        )
+        configuration_id = _resource_id(
+            client.post(
+                "/api/v1/build-configurations",
+                f"{scope}-{name}-configuration",
+                _configuration_request(
+                    project_id=project_id,
+                    repository_id=repository_id,
+                    pipeline_id=pipeline_id,
+                    pool_id=pool_id,
+                    guest_image=guest_image,
+                    name=f"local-stand-{name}",
+                    publishes_outputs=artifact_count > 0 or report_count > 0,
+                    artifact_count=artifact_count,
+                    report_count=report_count,
+                ),
+            ),
+            f"{name} Build Configuration",
+        )
+        codex_resources[name] = (configuration_id, "")
     target = _execution_target()
     client.post(
         f"/api/v1/projects/{project_id}/policy-versions",
@@ -452,9 +574,9 @@ def _create_resources(
                 "artifacts": {
                     "mode": "replace",
                     "value": {
-                        "artifact_count": 1,
+                        "artifact_count": 3,
                         "artifact_bytes": MAX_DOWNLOAD_BYTES,
-                        "report_count": 1,
+                        "report_count": 2,
                         "report_bytes": MAX_DOWNLOAD_BYTES,
                         "single_output_bytes": MAX_DOWNLOAD_BYTES,
                     },
@@ -488,15 +610,66 @@ def _create_resources(
         ),
         "Trigger Definition",
     )
+    cancellation_trigger_id = _resource_id(
+        client.post(
+            "/api/v1/trigger-definitions/manual",
+            f"{scope}-cancellation-trigger-definition",
+            {
+                "configuration_id": cancellation_configuration_id,
+                "configuration_version": 1,
+                "enabled": True,
+                "definition": {},
+            },
+        ),
+        "cancellation Trigger Definition",
+    )
+    for name, (configuration_id, _) in tuple(codex_resources.items()):
+        trigger_id = _resource_id(
+            client.post(
+                "/api/v1/trigger-definitions/manual",
+                f"{scope}-{name}-trigger-definition",
+                {
+                    "configuration_id": configuration_id,
+                    "configuration_version": 1,
+                    "enabled": True,
+                    "definition": {},
+                },
+            ),
+            f"{name} Trigger Definition",
+        )
+        codex_resources[name] = (configuration_id, trigger_id)
+    return IntegrationResources(
+        project_id=project_id,
+        trigger_id=trigger_id,
+        configuration_id=configuration_id,
+        cancellation_trigger_id=cancellation_trigger_id,
+        cancellation_configuration_id=cancellation_configuration_id,
+        codex_configuration_id=codex_resources["codex"][0],
+        codex_trigger_id=codex_resources["codex"][1],
+        codex_overflow_configuration_id=codex_resources["codex-overflow"][0],
+        codex_overflow_trigger_id=codex_resources["codex-overflow"][1],
+        codex_cancellation_configuration_id=codex_resources["codex-cancellation"][0],
+        codex_cancellation_trigger_id=codex_resources["codex-cancellation"][1],
+    )
+
+
+def _trigger_build(
+    client: LocalStandClient,
+    *,
+    trigger_id: str,
+    configuration_id: str,
+    source_revision: str,
+    identity: str,
+) -> tuple[str, str]:
     trigger = client.post(
         "/api/v1/triggers/manual",
-        f"{scope}-trigger",
+        identity,
         {
             "trigger_id": trigger_id,
             "trigger_version": 1,
             "configuration_id": configuration_id,
             "configuration_version": 1,
-            "deduplication_identity": f"{scope}-trigger",
+            "deduplication_identity": identity,
             "source": {"kind": "exact_revision", "value": source_revision},
             "parameters": {},
             "priority": 50,
@@ -504,10 +677,13 @@ def _create_resources(
     )
     if trigger.get("outcome") != "accepted":
         raise IntegrationError("manual integration trigger was not accepted")
-    return project_id, _canonical_uuid(trigger.get("build_id"), "Build identity")
+    return (
+        _canonical_uuid(trigger.get("build_id"), "Build identity"),
+        _canonical_uuid(trigger.get("attempt_id"), "Attempt identity"),
+    )
 
 
-def _wait_for_successful_build(
+def _wait_for_terminal_build(
     client: LocalStandClient,
     build_id: str,
     timeout_seconds: int,
@@ -519,13 +695,245 @@ def _wait_for_successful_build(
     while True:
         build = client.get(f"/api/v1/builds/{build_id}")
         build_state = build.get("state")
-        if build_state == "succeeded":
+        if build_state in {"succeeded", "failed", "cancelled"}:
             return build
-        if build_state in {"failed", "cancelled"}:
-            raise IntegrationError(f"integration Build ended in state {build_state}")
         if monotonic() >= deadline:
             raise IntegrationError("timed out waiting for the integration Build")
         sleep(POLL_INTERVAL_SECONDS)
+
+
+def _wait_for_successful_build(
+    client: LocalStandClient,
+    build_id: str,
+    timeout_seconds: int,
+    *,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, object]:
+    build = _wait_for_terminal_build(
+        client,
+        build_id,
+        timeout_seconds,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+    if build.get("state") != "succeeded":
+        raise IntegrationError(
+            f"integration Build ended in state {build.get('state')}"
+        )
+    return build
+
+
+def _wait_for_running_job(
+    client: LocalStandClient,
+    attempt_id: str,
+    timeout_seconds: int,
+    *,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    deadline = monotonic() + timeout_seconds
+    while True:
+        attempt = client.get(f"/api/v1/attempts/{attempt_id}")
+        jobs = _require_array(attempt.get("jobs"), "Attempt jobs")
+        if len(jobs) == 1:
+            job = _require_object(jobs[0], "Job")
+            cursor = job.get("event_cursor")
+            job_id = job.get("id")
+            runner_started = False
+            if isinstance(job_id, str):
+                events = client.get(
+                    f"/api/v1/jobs/{job_id}/events?after=0&limit=100&wait_ms=0"
+                )
+                runner_started = any(
+                    isinstance(event, dict)
+                    and isinstance(event.get("payload"), dict)
+                    and event["payload"].get("source") == "runner"
+                    and isinstance(event["payload"].get("event"), dict)
+                    and isinstance(event["payload"]["event"].get("data"), dict)
+                    and event["payload"]["event"]["data"].get("type") == "output"
+                    for event in _require_array(events.get("items"), "Job events")
+                )
+            if (
+                job.get("state") == "running"
+                and isinstance(cursor, int)
+                and not isinstance(cursor, bool)
+                and cursor > 0
+                and runner_started
+            ):
+                return _canonical_uuid(job_id, "running Job identity")
+        if monotonic() >= deadline:
+            raise IntegrationError("timed out waiting for the cancellable integration Job")
+        sleep(POLL_INTERVAL_SECONDS)
+
+
+def _cancel_process_tree(
+    client: LocalStandClient,
+    *,
+    trigger_id: str,
+    configuration_id: str,
+    source_revision: str,
+    scope: str,
+    timeout_seconds: int,
+    identity_kind: str = "cancellation",
+) -> tuple[str, str]:
+    build_id, attempt_id = _trigger_build(
+        client,
+        trigger_id=trigger_id,
+        configuration_id=configuration_id,
+        source_revision=source_revision,
+        identity=f"{scope}-{identity_kind}-trigger",
+    )
+    job_id = _wait_for_running_job(client, attempt_id, timeout_seconds)
+    client.post(f"/api/v1/builds/{build_id}/cancel", f"{scope}-cancel", {})
+    build = _wait_for_terminal_build(client, build_id, timeout_seconds)
+    if build.get("state") != "cancelled":
+        raise IntegrationError("cancellable integration Build did not become cancelled")
+    outputs = client.get(f"/api/v1/builds/{build_id}/artifacts?limit=10")
+    if _require_array(outputs.get("items"), "cancelled Build outputs"):
+        raise IntegrationError("cancelled integration Build published partial output")
+    client.verify_ui_and_readiness()
+    verify_registered_topology(client)
+    return build_id, job_id
+
+
+def _complete_job_events(
+    client: LocalStandClient, job_id: str, *, limit: int = 100
+) -> list[object]:
+    after = 0
+    events: list[object] = []
+    while True:
+        page = client.get(
+            f"/api/v1/jobs/{job_id}/events?after={after}&limit={limit}&wait_ms=0"
+        )
+        items = _require_array(page.get("items"), "Job events")
+        events.extend(items)
+        cursor = page.get("cursor")
+        if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < after:
+            raise IntegrationError("Job event page has an invalid cursor")
+        if len(items) < limit:
+            return events
+        if cursor == after:
+            raise IntegrationError("full Job event page did not advance its cursor")
+        after = cursor
+
+
+def _codex_job_evidence(
+    client: LocalStandClient, build: dict[str, object]
+) -> tuple[str, list[object]]:
+    attempt = _require_object(build.get("current_attempt"), "current Codex attempt")
+    detail = client.get(
+        f"/api/v1/attempts/{_canonical_uuid(attempt.get('id'), 'Codex Attempt identity')}"
+    )
+    jobs = _require_array(detail.get("jobs"), "Codex Attempt jobs")
+    if len(jobs) != 1:
+        raise IntegrationError("Codex integration Build must contain one Job")
+    job = _require_object(jobs[0], "Codex Job")
+    job_id = _canonical_uuid(job.get("id"), "Codex Job identity")
+    return job_id, _complete_job_events(client, job_id)
+
+
+def _assert_no_codex_sensitive_text(value: object, description: str) -> None:
+    encoded = value if isinstance(value, bytes) else json.dumps(value, sort_keys=True).encode()
+    for forbidden in (
+        b"release-secret-canary-must-not-appear",
+        b"OCTACITY_CODEX_PROMPT_MUST_NOT_APPEAR_IN_TRACE",
+    ):
+        if forbidden in encoded:
+            raise IntegrationError(f"{description} retained sensitive Codex input")
+
+
+def _verify_codex_outputs(
+    client: LocalStandClient, build_id: str
+) -> dict[str, object]:
+    page = client.get(f"/api/v1/builds/{build_id}/artifacts?limit=10")
+    outputs = [
+        _require_object(item, "Codex output")
+        for item in _require_array(page.get("items"), "Codex outputs")
+    ]
+    expected = {"codex-run-trace", "codex-run-provenance", "codex-run-result"}
+    if {output.get("name") for output in outputs} != expected:
+        raise IntegrationError("Codex integration Build published unexpected outputs")
+    downloaded: dict[str, object] = {}
+    for output in outputs:
+        name = _require_string(output.get("name"), "Codex output name")
+        output_id = _canonical_uuid(output.get("id"), "Codex output identity")
+        authorization = client.post_without_body(
+            f"/api/v1/artifacts/{output_id}/download"
+        )
+        contents = client.download(_require_string(authorization.get("get_url"), "Codex output URL"))
+        _assert_no_codex_sensitive_text(contents, name)
+        if name == "codex-run-trace":
+            text = contents.decode("utf-8")
+            if "*****" not in text:
+                raise IntegrationError("Codex trace has no redaction marker")
+            downloaded[name] = [json.loads(line) for line in text.splitlines()]
+        else:
+            downloaded[name] = _require_object(json.loads(contents), name)
+    return downloaded
+
+
+def _verify_codex_contract(
+    client: LocalStandClient,
+    resources: IntegrationResources,
+    *,
+    source_revision: str,
+    scope: str,
+    timeout_seconds: int,
+) -> dict[str, object]:
+    successful_id, _ = _trigger_build(
+        client,
+        trigger_id=resources.codex_trigger_id,
+        configuration_id=resources.codex_configuration_id,
+        source_revision=source_revision,
+        identity=f"{scope}-codex-trigger",
+    )
+    successful = _wait_for_successful_build(client, successful_id, timeout_seconds)
+    successful_job, successful_events = _codex_job_evidence(client, successful)
+    _assert_no_codex_sensitive_text(successful_events, "successful Codex events")
+    outputs = _verify_codex_outputs(client, successful_id)
+    verify_registered_topology(client)
+    client.verify_agent_work_root_is_empty()
+
+    overflow_id, _ = _trigger_build(
+        client,
+        trigger_id=resources.codex_overflow_trigger_id,
+        configuration_id=resources.codex_overflow_configuration_id,
+        source_revision=source_revision,
+        identity=f"{scope}-codex-overflow-trigger",
+    )
+    overflow = _wait_for_terminal_build(client, overflow_id, timeout_seconds)
+    if overflow.get("state") != "failed":
+        raise IntegrationError("Codex overflow Build did not fail closed")
+    overflow_job, overflow_events = _codex_job_evidence(client, overflow)
+    _assert_no_codex_sensitive_text(overflow_events, "failed Codex events")
+    if _require_array(
+        client.get(f"/api/v1/builds/{overflow_id}/artifacts?limit=10").get("items"),
+        "failed Codex outputs",
+    ):
+        raise IntegrationError("Codex overflow Build published partial output")
+    verify_registered_topology(client)
+    client.verify_agent_work_root_is_empty()
+
+    cancelled_id, cancelled_job = _cancel_process_tree(
+        client,
+        trigger_id=resources.codex_cancellation_trigger_id,
+        configuration_id=resources.codex_cancellation_configuration_id,
+        source_revision=source_revision,
+        scope=scope,
+        timeout_seconds=timeout_seconds,
+        identity_kind="codex-cancellation",
+    )
+    client.verify_agent_work_root_is_empty()
+    return {
+        "successful_build_id": successful_id,
+        "successful_job_id": successful_job,
+        "outputs": outputs,
+        "overflow_build_id": overflow_id,
+        "overflow_job_id": overflow_job,
+        "cancelled_build_id": cancelled_id,
+        "cancelled_job_id": cancelled_job,
+    }
 
 
 def _verify_job(client: LocalStandClient, build: dict[str, object]) -> str:
@@ -592,27 +1000,55 @@ def run_vertical_slice(
 ) -> dict[str, object]:
     """Create and run one real PostgreSQL/MinIO-backed Microsandbox Build."""
 
+    source_repository = _validated_source_repository(source_repository)
+    source_revision = _validated_revision(source_revision)
     client.verify_ui_and_readiness()
     pool_id, agent_id = verify_registered_topology(client)
     scope = uuid.uuid4().hex
-    project_id, build_id = _create_resources(
+    resources = _create_resources(
         client,
         pool_id=pool_id,
-        source_repository=_validated_source_repository(source_repository),
-        source_revision=_validated_revision(source_revision),
+        source_repository=source_repository,
         guest_image=guest_image,
         scope=scope,
     )
+    cancelled_build_id, cancelled_job_id = _cancel_process_tree(
+        client,
+        trigger_id=resources.cancellation_trigger_id,
+        configuration_id=resources.cancellation_configuration_id,
+        source_revision=source_revision,
+        scope=scope,
+        timeout_seconds=build_timeout_seconds,
+    )
+    codex = _verify_codex_contract(
+        client,
+        resources,
+        source_revision=source_revision,
+        scope=scope,
+        timeout_seconds=build_timeout_seconds,
+    )
+    build_id, _ = _trigger_build(
+        client,
+        trigger_id=resources.trigger_id,
+        configuration_id=resources.configuration_id,
+        source_revision=source_revision,
+        identity=f"{scope}-trigger",
+    )
     build = _wait_for_successful_build(client, build_id, build_timeout_seconds)
+    if "factory" in build or "factory_run_id" in build:
+        raise IntegrationError("ordinary integration Build gained Factory state")
     job_id = _verify_job(client, build)
     artifact_id, artifact_sha256, artifact_bytes = _verify_artifact(client, build_id)
     return {
-        "schema_version": 1,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
         "pool_id": pool_id,
         "agent_id": agent_id,
-        "project_id": project_id,
+        "project_id": resources.project_id,
         "build_id": build_id,
         "job_id": job_id,
+        "cancelled_build_id": cancelled_build_id,
+        "cancelled_job_id": cancelled_job_id,
+        "codex": codex,
         "artifact_id": artifact_id,
         "artifact_sha256": artifact_sha256,
         "artifact_bytes": artifact_bytes,
@@ -624,7 +1060,7 @@ def observe_persisted_slice(
 ) -> dict[str, object]:
     """Verify topology uniqueness and durable Build plus object state after restart."""
 
-    if receipt.get("schema_version") != 1:
+    if receipt.get("schema_version") != RECEIPT_SCHEMA_VERSION:
         raise IntegrationError("integration receipt has an unsupported schema version")
     client.verify_ui_and_readiness()
     pool_id, agent_id = verify_registered_topology(client)
@@ -634,6 +1070,17 @@ def observe_persisted_slice(
     build = client.get(f"/api/v1/builds/{build_id}")
     if build.get("state") != "succeeded":
         raise IntegrationError("persisted PostgreSQL Build is no longer successful")
+    cancelled_build_id = _canonical_uuid(
+        receipt.get("cancelled_build_id"), "persisted cancelled Build identity"
+    )
+    cancelled = client.get(f"/api/v1/builds/{cancelled_build_id}")
+    if cancelled.get("state") != "cancelled":
+        raise IntegrationError("persisted cancelled Build changed state after restart")
+    cancelled_outputs = client.get(
+        f"/api/v1/builds/{cancelled_build_id}/artifacts?limit=10"
+    )
+    if _require_array(cancelled_outputs.get("items"), "persisted cancelled outputs"):
+        raise IntegrationError("persisted cancelled Build acquired partial output")
     artifact_id, artifact_sha256, artifact_bytes = _verify_artifact(client, build_id)
     if (
         artifact_id != receipt.get("artifact_id")
@@ -642,11 +1089,12 @@ def observe_persisted_slice(
     ):
         raise IntegrationError("persisted MinIO artifact identity changed after restart")
     return {
-        "schema_version": 1,
+        "schema_version": RECEIPT_SCHEMA_VERSION,
         "state": "verified",
         "pool_id": pool_id,
         "agent_id": agent_id,
         "build_id": build_id,
+        "cancelled_build_id": cancelled_build_id,
         "artifact_id": artifact_id,
         "artifact_sha256": artifact_sha256,
         "artifact_bytes": artifact_bytes,

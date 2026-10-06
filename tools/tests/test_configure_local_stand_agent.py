@@ -126,15 +126,50 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         runner.parent.mkdir(parents=True, exist_ok=True)
         runner.write_bytes(b"runner")
         runner.chmod(0o755)
-        (self.installation / "octa/plugins").mkdir(exist_ok=True)
+        octa_plugins = self.installation / "octa/plugins"
+        octa_plugins.mkdir(exist_ok=True)
+        codex_plugin = octa_plugins / "octa_plugin_codex"
+        codex_plugin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        codex_plugin.chmod(0o755)
+        codex_digest = hashlib.sha256(codex_plugin.read_bytes()).hexdigest()
+        (octa_plugins / "codex.plugin.yml").write_text(
+            "manifest_version: 1\nname: codex\n", encoding="utf-8"
+        )
         (self.installation / "octa/Octa.lock").write_text(
-            "version: 1\nplugins: {}\n", encoding="utf-8"
+            "version: 1\nplugins:\n  codex:\n"
+            "    version: '0.5.0'\n"
+            "    protocol: 1\n"
+            "    platforms: [linux-aarch64]\n"
+            "    entrypoint: octa_plugin_codex\n"
+            f"    sha256: {codex_digest}\n"
+            "    capabilities: []\n"
+            "    source: codex.plugin.yml\n",
+            encoding="utf-8",
+        )
+        (self.installation / "octa/codex-compatibility.json").write_text(
+            json.dumps(
+                {
+                    "format_version": 1,
+                    "plugin": {
+                        "name": "codex",
+                        "version": "0.5.0",
+                        "protocol": 1,
+                        "manifest": "plugins/codex.plugin.yml",
+                    },
+                    "executable": {
+                        "product": "codex-cli",
+                        "supported_versions": ["0.130.0"],
+                        "selection_environment": "OCTA_CODEX_EXECUTABLE",
+                    },
+                }
+            ),
+            encoding="utf-8",
         )
         (self.installation / "octa/octa-runner-capabilities.json").write_text(
             json.dumps(
                 {
                     "type": "capabilities",
-                    "octa_version": "0.4.0",
+                    "octa_version": "0.5.0",
                     "runner_protocols": [1],
                     "event_schemas": [1],
                     "plugin_protocols": [1],
@@ -174,6 +209,10 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
             encoding="utf-8",
         )
         plugin.chmod(0o644)
+        self._executable(
+            "agent/share/local-stand-codex-fixture",
+            "#!/bin/sh\n# codex-cli 0.130.0\nexit 0\n",
+        )
         self._write_manifest()
 
     def generate(self):
@@ -217,6 +256,14 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
             ["https://objects.localhost:8443"],
         )
         self.assertEqual(configuration["enabled_runtime_modes"], [])
+        tool = configuration["tool_executables"]["codex-cli"]
+        self.assertEqual(tool["version"], "0.130.0")
+        self.assertEqual(tool["platform"], "linux-aarch64")
+        self.assertEqual(
+            Path(tool["path"]),
+            self.installation.resolve() / "agent/share/local-stand-codex-fixture",
+        )
+        self.assertNotIn("OPENAI_API_KEY", configuration_path.read_text(encoding="utf-8"))
         self.assertIs(configuration["allow_native_execution"], False)
         self.assertIs(configuration["allow_host_execution"], False)
         self.assertEqual(configuration["oci_engines"], [])

@@ -33,7 +33,9 @@ use octacity_protocol::{
   AgentInventory, BackendHealth, BackendHealthStatus, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode,
   ExecutionProviderId, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode, guarantees_for,
 };
-use octacity_runner::{RunnerInstallation, RunnerSupervisionPolicy};
+use octacity_runner::{
+  ConfiguredExternalExecutable, RunnerInstallation, RunnerSupervisionPolicy, VerifiedExternalExecutable,
+};
 use octacity_source::{SourceMaterializer, SourcePluginRegistry};
 
 use crate::maintenance::WorkspaceCapacityReservation;
@@ -51,12 +53,26 @@ pub(crate) struct Components {
   pub(crate) backend_health: Vec<BackendHealth>,
   pub(crate) workspace_capacity_reservation: WorkspaceCapacityReservation,
   pub(crate) source_plugin_count: usize,
+  pub(crate) tool_executables: BTreeMap<String, VerifiedExternalExecutable>,
 }
 
 impl Components {
   pub(crate) async fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
     let validated = AgentConfig::load(path)?.validate()?;
     let runner = RunnerInstallation::load(&validated.config.octa_release_root)?;
+    let configured_executables = validated
+      .config
+      .tool_executables
+      .iter()
+      .map(|(product, executable)| ConfiguredExternalExecutable {
+        product: product.clone(),
+        version: executable.version.clone(),
+        platform: executable.platform.clone(),
+        executable: executable.path.clone(),
+        sha256: executable.sha256.clone(),
+      })
+      .collect::<Vec<_>>();
+    let tool_executables = runner.verify_external_executables(&configured_executables)?;
     let source_plugins = Arc::new(SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?);
     let source_plugin_count = source_plugins.len();
     let ExecutorAssembly {
@@ -65,7 +81,13 @@ impl Components {
       executions,
       backend_health,
       cache,
-    } = build_executor(&validated, runner.clone(), source_plugins.clone()).await?;
+    } = build_executor(
+      &validated,
+      runner.clone(),
+      source_plugins.clone(),
+      tool_executables.clone(),
+    )
+    .await?;
     let workspace_capacity_reservation = workspace_capacity_reservation(&runtimes, &executions);
     let virtualization_available = workspace_capacity_reservation == WorkspaceCapacityReservation::Required;
     let host = HostMonitor::new(
@@ -126,6 +148,7 @@ impl Components {
       backend_health,
       workspace_capacity_reservation,
       source_plugin_count,
+      tool_executables,
     })
   }
 }
@@ -347,6 +370,7 @@ async fn build_executor(
   validated: &ValidatedConfig,
   runner: RunnerInstallation,
   source_plugins: Arc<SourcePluginRegistry>,
+  tool_executables: BTreeMap<String, VerifiedExternalExecutable>,
 ) -> Result<ExecutorAssembly, Box<dyn std::error::Error>> {
   #[cfg(unix)]
   if validated.runtimes.iter().any(|runtime| match runtime {
@@ -463,6 +487,7 @@ async fn build_executor(
         resource_sample_timeout: Duration::from_secs(validated.config.resource_sample_timeout_seconds),
         max_accounting_failures: validated.config.max_accounting_failures,
       },
+      external_executables: tool_executables,
     },
   )?
   .with_execution_backends(assembly.routes)?
@@ -861,6 +886,7 @@ primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
     let components = Components::load(&fixture.config).await.unwrap();
 
     assert_eq!(components.source_plugin_count, 0);
+    assert!(components.tool_executables.is_empty());
     assert_eq!(
       components.workspace_capacity_reservation,
       WorkspaceCapacityReservation::Required

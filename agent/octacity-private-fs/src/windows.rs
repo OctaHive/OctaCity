@@ -58,6 +58,20 @@ const WRITE_DAC: u32 = 0x0004_0000;
 const WRITE_OWNER: u32 = 0x0008_0000;
 const GENERIC_ALL: u32 = 0x1000_0000;
 const ANCESTOR_REPLACEMENT_RIGHTS: u32 = FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
+const FILE_WRITE_DATA: u32 = 0x0000_0002;
+const FILE_APPEND_DATA: u32 = 0x0000_0004;
+const FILE_WRITE_EA: u32 = 0x0000_0010;
+const FILE_WRITE_ATTRIBUTES: u32 = 0x0000_0100;
+const GENERIC_WRITE: u32 = 0x4000_0000;
+const FILE_MUTATION_RIGHTS: u32 = FILE_WRITE_DATA
+  | FILE_APPEND_DATA
+  | FILE_WRITE_EA
+  | FILE_WRITE_ATTRIBUTES
+  | DELETE
+  | WRITE_DAC
+  | WRITE_OWNER
+  | GENERIC_WRITE
+  | GENERIC_ALL;
 
 pub(super) fn create_private_directory(path: &Path) -> std::io::Result<()> {
   let path = wide(path)?;
@@ -102,6 +116,20 @@ pub(super) fn validate_trusted_owner(path: &Path) -> std::io::Result<()> {
   } else {
     Err(untrusted_owner_error("path", owner))
   }
+}
+
+pub(super) fn validate_no_untrusted_write_access(path: &Path) -> std::io::Result<()> {
+  let (owner, dacl, _descriptor) = security(path)?;
+  for_each_allowed_ace(dacl, |mask, flags, sid| {
+    if ace_grants_mutation(mask, flags) && !trusted_sid(sid, owner) {
+      Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        format!("path grants mutation rights to an untrusted local principal (mask 0x{mask:08x}, flags 0x{flags:02x})"),
+      ))
+    } else {
+      Ok(())
+    }
+  })
 }
 
 pub(super) fn validate_trusted_directory_chain(path: &Path) -> std::io::Result<()> {
@@ -185,6 +213,10 @@ fn validate_ancestor_acl(owner: PSID, dacl: *mut ACL) -> std::io::Result<()> {
 
 fn ace_grants_replacement(mask: u32, flags: u8) -> bool {
   u32::from(flags) & INHERIT_ONLY_ACE == 0 && mask & ANCESTOR_REPLACEMENT_RIGHTS != 0
+}
+
+fn ace_grants_mutation(mask: u32, flags: u8) -> bool {
+  u32::from(flags) & INHERIT_ONLY_ACE == 0 && mask & FILE_MUTATION_RIGHTS != 0
 }
 
 fn for_each_allowed_ace(
@@ -434,6 +466,32 @@ impl Drop for Handle {
 mod tests {
   use super::*;
 
+  fn set_dacl(path: &Path, sddl: &str) {
+    let sddl = sddl.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+    // SAFETY: the SDDL input is NUL-terminated and the returned descriptor is
+    // owned by the guard through the SetFileSecurityW call.
+    assert_ne!(
+      unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+          sddl.as_ptr(),
+          SDDL_REVISION_1,
+          &mut descriptor,
+          ptr::null_mut(),
+        )
+      },
+      0
+    );
+    let descriptor = SecurityDescriptor(descriptor);
+    let path = wide(path).unwrap();
+    // SAFETY: both the path and descriptor remain live for the synchronous
+    // call and the descriptor contains a valid DACL produced by Windows.
+    assert_ne!(
+      unsafe { windows_sys::Win32::Security::SetFileSecurityW(path.as_ptr(), DACL_SECURITY_INFORMATION, descriptor.0) },
+      0
+    );
+  }
+
   #[test]
   fn distinguishes_sibling_creation_from_path_replacement() {
     const GENERIC_WRITE: u32 = 0x4000_0000;
@@ -451,6 +509,26 @@ mod tests {
   #[test]
   fn ignores_replacement_rights_which_do_not_apply_to_the_directory() {
     assert!(!ace_grants_replacement(FILE_DELETE_CHILD, INHERIT_ONLY_ACE as u8));
+    assert!(!ace_grants_mutation(GENERIC_WRITE, INHERIT_ONLY_ACE as u8));
+  }
+
+  #[test]
+  fn distinguishes_read_access_from_file_mutation() {
+    const GENERIC_READ: u32 = 0x8000_0000;
+
+    assert!(!ace_grants_mutation(GENERIC_READ, 0));
+    assert!(ace_grants_mutation(FILE_WRITE_DATA, 0));
+    assert!(ace_grants_mutation(GENERIC_WRITE, 0));
+  }
+
+  #[test]
+  fn rejects_an_untrusted_file_write_grant() {
+    let temporary = tempfile::tempdir().unwrap();
+    let executable = temporary.path().join("tool.exe");
+    fs::write(&executable, "tool").unwrap();
+    set_dacl(&executable, "D:P(A;;0x2;;;WD)");
+
+    assert!(validate_no_untrusted_write_access(&executable).is_err());
   }
 
   #[test]
@@ -462,29 +540,7 @@ mod tests {
     // FILE_DELETE_CHILD right; its `DC` token means the unrelated Active
     // Directory mask 0x2. Use the exact filesystem mask so this descriptor
     // models an ancestor able to replace a protected descendant.
-    let sddl = "D:P(A;;0x40;;;WD)".encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-    let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
-    // SAFETY: the SDDL input is NUL-terminated and the returned descriptor is
-    // owned by the guard through the SetFileSecurityW call.
-    assert_ne!(
-      unsafe {
-        ConvertStringSecurityDescriptorToSecurityDescriptorW(
-          sddl.as_ptr(),
-          SDDL_REVISION_1,
-          &mut descriptor,
-          ptr::null_mut(),
-        )
-      },
-      0
-    );
-    let descriptor = SecurityDescriptor(descriptor);
-    let path = wide(&directory).unwrap();
-    // SAFETY: both the path and descriptor remain live for the synchronous
-    // call and the descriptor contains a valid DACL produced by Windows.
-    assert_ne!(
-      unsafe { windows_sys::Win32::Security::SetFileSecurityW(path.as_ptr(), DACL_SECURITY_INFORMATION, descriptor.0) },
-      0
-    );
+    set_dacl(&directory, "D:P(A;;0x40;;;WD)");
 
     let (owner, dacl, _descriptor) = security(&directory).unwrap();
     assert!(validate_ancestor_acl(owner, dacl).is_err());

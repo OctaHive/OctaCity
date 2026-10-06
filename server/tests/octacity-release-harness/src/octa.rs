@@ -22,8 +22,34 @@ const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 struct OctaReleaseContract {
   format_version: u16,
   runner_capabilities: String,
+  codex_compatibility: String,
   checksums: String,
   provenance: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct CodexCompatibility {
+  format_version: u16,
+  plugin: CodexPluginCompatibility,
+  executable: CodexExecutableCompatibility,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct CodexPluginCompatibility {
+  name: String,
+  version: String,
+  protocol: u16,
+  manifest: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct CodexExecutableCompatibility {
+  product: String,
+  supported_versions: Vec<String>,
+  selection_environment: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -62,6 +88,7 @@ impl OctaBundle {
       != (OctaReleaseContract {
         format_version: 1,
         runner_capabilities: "octa-runner-capabilities.json".to_owned(),
+        codex_compatibility: "codex-compatibility.json".to_owned(),
         checksums: "SHA256SUMS".to_owned(),
         provenance: "github-build-provenance".to_owned(),
       })
@@ -78,6 +105,11 @@ impl OctaBundle {
     let _octa = executable(root, &inventory, "octa")?;
     let runner_digest = sha256(&runner)?;
     let plugins = verify_plugins(root, &inventory, &capabilities)?;
+    let codex: CodexCompatibility = serde_json::from_slice(&read_bounded(
+      &root.join(&contract.codex_compatibility),
+      MAX_METADATA_BYTES,
+    )?)?;
+    codex.validate(&capabilities, &plugins)?;
     Ok(Self {
       root: root.to_owned(),
       inventory,
@@ -150,6 +182,13 @@ impl RunnerCapabilities {
 pub(crate) struct VerifiedPlugins {
   protocol: u16,
   digests: BTreeMap<String, String>,
+  identities: BTreeMap<String, VerifiedPlugin>,
+}
+
+struct VerifiedPlugin {
+  version: String,
+  protocol: u16,
+  manifest: PathBuf,
 }
 
 fn verify_plugins(
@@ -164,6 +203,7 @@ fn verify_plugins(
   }
   let mut protocol = None;
   let mut digests = BTreeMap::new();
+  let mut identities = BTreeMap::new();
   for (name, plugin) in lock.plugins {
     if name.trim().is_empty()
       || plugin.version.trim().is_empty()
@@ -202,12 +242,54 @@ fn verify_plugins(
         "Octa plugin '{name}' manifest is absent from SHA256SUMS"
       )));
     }
-    regular_file(&root.join(source), "Octa plugin manifest")?;
+    regular_file(&root.join(&source), "Octa plugin manifest")?;
+    identities.insert(
+      name,
+      VerifiedPlugin {
+        version: plugin.version,
+        protocol: plugin.protocol,
+        manifest: source,
+      },
+    );
   }
   Ok(VerifiedPlugins {
     protocol: protocol.expect("non-empty plugin lock has a protocol"),
     digests,
+    identities,
   })
+}
+
+impl CodexCompatibility {
+  fn validate(&self, capabilities: &RunnerCapabilities, plugins: &VerifiedPlugins) -> Result<(), HarnessError> {
+    let expected = Self {
+      format_version: 1,
+      plugin: CodexPluginCompatibility {
+        name: "codex".to_owned(),
+        version: capabilities.octa_version.clone(),
+        protocol: 2,
+        manifest: "plugins/codex.plugin.yml".to_owned(),
+      },
+      executable: CodexExecutableCompatibility {
+        product: "codex-cli".to_owned(),
+        supported_versions: vec!["0.130.0".to_owned()],
+        selection_environment: "OCTA_CODEX_EXECUTABLE".to_owned(),
+      },
+    };
+    if self != &expected {
+      return Err(invalid("unsupported Octa Codex compatibility identity"));
+    }
+    let plugin = plugins
+      .identities
+      .get(&self.plugin.name)
+      .ok_or_else(|| invalid("Octa release omits its declared Codex plugin"))?;
+    if plugin.version != self.plugin.version
+      || plugin.protocol != self.plugin.protocol
+      || plugin.manifest != Path::new(&self.plugin.manifest)
+    {
+      return Err(invalid("Octa Codex compatibility metadata differs from Octa.lock"));
+    }
+    Ok(())
+  }
 }
 
 fn executable(root: &Path, inventory: &BTreeMap<PathBuf, String>, stem: &str) -> Result<PathBuf, HarnessError> {

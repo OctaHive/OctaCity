@@ -39,7 +39,8 @@ use cgroup::{
 use filesystem::{filesystem_usage, validate_workspace_filesystem, validate_workspace_root};
 use security::{
   NATIVE_JOB_ROOT_PATH, NATIVE_OCTA_ROOT_PATH, NATIVE_WORKSPACE_PATH, NativeFilesystem, add_native_filesystem,
-  create_seccomp_filter, environment_arguments, host_execution_platform, network_arguments, validate_native_path,
+  create_seccomp_filter, environment_arguments, external_executable_environment, host_execution_platform,
+  network_arguments, validate_native_path,
 };
 
 const CPU_PERIOD_MICROS: u64 = 100_000;
@@ -254,11 +255,19 @@ impl ExecutionBackend for NativeBackend {
         readonly_paths: &self.readonly_paths,
       },
     )?;
+    let mut runner_environment = self.environment.clone();
+    for (selector, executable) in external_executable_environment(runner) {
+      if runner_environment.insert(selector.clone(), executable).is_some() {
+        return Err(ExecutionError::Invalid(format!(
+          "native environment overrides external executable selector '{selector}'"
+        )));
+      }
+    }
     command
       .arg("--chdir")
       .arg(NATIVE_WORKSPACE_PATH)
       .arg("--clearenv")
-      .args(environment_arguments(&self.environment))
+      .args(environment_arguments(&runner_environment))
       .arg("--cap-drop")
       .arg("ALL")
       .arg("--disable-userns")

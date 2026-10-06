@@ -17,6 +17,7 @@ use std::{
 use octa_plugin_lock::{PLUGIN_LOCK_VERSION, PluginLock};
 use octacity_execution::RunnerProgram;
 use octacity_protocol::OctaSpec;
+use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 use tracing::{debug, info};
@@ -24,8 +25,11 @@ use tracing::{debug, info};
 use crate::protocol::RunnerMessage;
 
 const MAX_CAPABILITIES_BYTES: usize = 1024 * 1024;
+const MAX_COMPATIBILITY_BYTES: u64 = 1024 * 1024;
 const MAX_PLUGIN_LOCK_BYTES: u64 = 1024 * 1024;
+const CODEX_COMPATIBILITY_FILE: &str = "codex-compatibility.json";
 const RUNNER_CAPABILITIES_FILE: &str = "octa-runner-capabilities.json";
+const MAX_EXECUTABLE_HEADER_BYTES: usize = 4096;
 
 /// Capabilities recorded alongside the installed `octa-runner` executable.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,6 +88,69 @@ pub struct RunnerPlugin {
   pub capabilities: Vec<String>,
 }
 
+/// Operator configuration for one executable consumed by a trusted task plugin.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredExternalExecutable {
+  /// Provider-neutral product identity declared by release compatibility metadata.
+  pub product: String,
+  /// Version claimed for the configured executable digest.
+  pub version: String,
+  /// Octa runtime platform for which the executable was built.
+  pub platform: String,
+  /// Canonical executable path outside job-owned writable roots.
+  pub executable: PathBuf,
+  /// Lowercase SHA-256 digest expected for the executable bytes.
+  pub sha256: String,
+}
+
+/// Executable identity verified against both operator configuration and the
+/// installed Octa release contract.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedExternalExecutable {
+  /// Provider-neutral product identity.
+  pub product: String,
+  /// Verified product version.
+  pub version: String,
+  /// Verified Octa runtime platform.
+  pub platform: String,
+  /// Canonical executable path.
+  pub executable: PathBuf,
+  /// Digest calculated from the executable bytes.
+  pub sha256: String,
+  /// Release-owned environment selector used by the trusted task plugin.
+  pub selection_environment: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExternalExecutableCompatibility {
+  format_version: u16,
+  plugin: CompatiblePlugin,
+  executable: CompatibleExecutable,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompatiblePlugin {
+  name: String,
+  version: String,
+  protocol: u16,
+  manifest: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompatibleExecutable {
+  product: String,
+  supported_versions: Vec<String>,
+  selection_environment: String,
+}
+
+struct ExternalExecutableRequirement {
+  supported_versions: Vec<String>,
+  selection_environment: String,
+}
+
 #[derive(Debug, Error)]
 /// Failure while inventorying or matching an installed Octa release.
 pub enum RunnerInstallationError {
@@ -101,6 +168,9 @@ pub enum RunnerInstallationError {
   #[error("Octa runner capabilities manifest contains invalid JSON: {0}")]
   /// The capabilities manifest is not valid JSON.
   Json(#[source] Box<serde_json::Error>),
+  #[error("Octa external executable compatibility manifest contains invalid JSON: {0}")]
+  /// An external executable compatibility manifest is not valid JSON.
+  CompatibilityJson(#[source] Box<serde_json::Error>),
   #[error("failed to parse the installed Octa.lock: {0}")]
   /// The default plugin lock is not valid YAML.
   PluginLock(#[source] Box<serde_yaml_ng::Error>),
@@ -131,6 +201,7 @@ impl RunnerInstallation {
     debug!(runner = %executable.display(), sha256 = %sha256, manifest = %capabilities_path.display(), "inventorying Octa runner");
     let capabilities = load_capabilities(&capabilities_path)?;
     let plugins = load_plugins(&default_plugin_lock, &plugins_dir, &capabilities)?;
+    load_external_executable_requirements(&root, &plugins)?;
     info!(
       version = %capabilities.octa_version,
       platform = %capabilities.platform,
@@ -201,16 +272,269 @@ impl RunnerInstallation {
     Ok(())
   }
 
+  /// Verifies explicitly configured plugin executables against the installed
+  /// release compatibility metadata without making their provider identity a
+  /// JobSpec or Agent protocol concept.
+  pub fn verify_external_executables(
+    &self,
+    configured: &[ConfiguredExternalExecutable],
+  ) -> Result<BTreeMap<String, VerifiedExternalExecutable>, RunnerInstallationError> {
+    let requirements = load_external_executable_requirements(&self.root, &self.plugins)?;
+    let mut verified = BTreeMap::new();
+    for executable in configured {
+      if verified.contains_key(&executable.product) {
+        return Err(invalid(format!(
+          "external executable product '{}' is configured more than once",
+          executable.product
+        )));
+      }
+      let requirement = requirements.get(&executable.product).ok_or_else(|| {
+        invalid(format!(
+          "external executable product '{}' is not declared by the installed Octa release",
+          executable.product
+        ))
+      })?;
+      if !requirement.supported_versions.contains(&executable.version) {
+        return Err(invalid(format!(
+          "external executable '{}' version '{}' is not supported by the installed Octa release",
+          executable.product, executable.version
+        )));
+      }
+      if executable.platform != self.capabilities.platform {
+        return Err(invalid(format!(
+          "external executable '{}' platform '{}' differs from Octa runner platform '{}'",
+          executable.product, executable.platform, self.capabilities.platform
+        )));
+      }
+      if !sha256_digest(&executable.sha256) {
+        return Err(invalid(format!(
+          "external executable '{}' has an invalid configured SHA-256",
+          executable.product
+        )));
+      }
+      validate_regular_file(
+        &format!("external executable '{}'", executable.product),
+        &executable.executable,
+        true,
+      )?;
+      octacity_private_fs::validate_no_untrusted_write_access(&executable.executable).map_err(|error| {
+        invalid(format!(
+          "external executable '{}' '{}': {error}",
+          executable.product,
+          executable.executable.display()
+        ))
+      })?;
+      let path = executable.executable.canonicalize().map_err(|error| {
+        invalid(format!(
+          "external executable '{}' '{}': {error}",
+          executable.product,
+          executable.executable.display()
+        ))
+      })?;
+      let digest = file_sha256(&path)?;
+      if digest != executable.sha256 {
+        return Err(invalid(format!(
+          "external executable '{}' digest differs from agent configuration",
+          executable.product
+        )));
+      }
+      let actual_platform = executable_platform(&path)?;
+      if actual_platform != "portable-script" && actual_platform != executable.platform {
+        return Err(invalid(format!(
+          "external executable '{}' binary platform '{}' differs from configured platform '{}'",
+          executable.product, actual_platform, executable.platform
+        )));
+      }
+      let version_marker = executable.version.as_bytes();
+      if !file_contains(&path, version_marker)? {
+        return Err(invalid(format!(
+          "external executable '{}' bytes do not contain the configured version identity",
+          executable.product
+        )));
+      }
+      verified.insert(
+        executable.product.clone(),
+        VerifiedExternalExecutable {
+          product: executable.product.clone(),
+          version: executable.version.clone(),
+          platform: executable.platform.clone(),
+          executable: path,
+          sha256: digest,
+          selection_environment: requirement.selection_environment.clone(),
+        },
+      );
+    }
+    Ok(verified)
+  }
+
   /// Returns the verified host paths that an execution backend may expose to
   /// the runner. Protocol requirements remain owned by this inventory.
   pub fn program(&self) -> RunnerProgram {
+    self.program_with_external_executables(&BTreeMap::new())
+  }
+
+  /// Projects verified operator executables into a backend-neutral runner
+  /// program without adding their product identities to JobSpec.
+  pub fn program_with_external_executables(
+    &self,
+    executables: &BTreeMap<String, VerifiedExternalExecutable>,
+  ) -> RunnerProgram {
     RunnerProgram {
       release_root: self.root.clone(),
       executable: self.executable.clone(),
       plugins_dir: self.plugins_dir.clone(),
       plugin_lock: self.default_plugin_lock.clone(),
+      external_executables: executables
+        .values()
+        .map(|executable| (executable.selection_environment.clone(), executable.executable.clone()))
+        .collect(),
     }
   }
+}
+
+fn executable_platform(path: &Path) -> Result<&'static str, RunnerInstallationError> {
+  let mut file = fs::File::open(path).map_err(|source| RunnerInstallationError::Hash {
+    path: path.to_owned(),
+    source,
+  })?;
+  let mut header = vec![0_u8; MAX_EXECUTABLE_HEADER_BYTES];
+  let length = file.read(&mut header).map_err(|source| RunnerInstallationError::Hash {
+    path: path.to_owned(),
+    source,
+  })?;
+  header.truncate(length);
+
+  if header.starts_with(b"#!/bin/sh\n") {
+    return Ok("portable-script");
+  }
+
+  if header.starts_with(b"\x7fELF") && header.len() >= 20 {
+    let machine = match header[5] {
+      1 => u16::from_le_bytes([header[18], header[19]]),
+      2 => u16::from_be_bytes([header[18], header[19]]),
+      _ => return Err(invalid("external executable ELF byte order is unsupported")),
+    };
+    return match machine {
+      62 => Ok("linux-x86_64"),
+      183 => Ok("linux-aarch64"),
+      _ => Err(invalid(format!(
+        "external executable ELF machine {machine} is unsupported"
+      ))),
+    };
+  }
+
+  if header.starts_with(b"MZ") && header.len() >= 64 {
+    let offset = u32::from_le_bytes(header[60..64].try_into().expect("four-byte PE offset")) as usize;
+    if offset.checked_add(6).is_some_and(|end| end <= header.len()) && &header[offset..offset + 4] == b"PE\0\0" {
+      let machine = u16::from_le_bytes([header[offset + 4], header[offset + 5]]);
+      return match machine {
+        0x8664 => Ok("windows-x86_64"),
+        0xaa64 => Ok("windows-aarch64"),
+        _ => Err(invalid(format!(
+          "external executable PE machine {machine:#x} is unsupported"
+        ))),
+      };
+    }
+  }
+
+  if header.len() >= 8 {
+    let (byte_order, cpu_bytes) = (&header[..4], &header[4..8]);
+    let cpu = match byte_order {
+      [0xcf, 0xfa, 0xed, 0xfe] => u32::from_le_bytes(cpu_bytes.try_into().expect("four-byte Mach-O CPU")),
+      [0xfe, 0xed, 0xfa, 0xcf] => u32::from_be_bytes(cpu_bytes.try_into().expect("four-byte Mach-O CPU")),
+      _ => 0,
+    };
+    return match cpu {
+      0x0100_0007 => Ok("macos-x86_64"),
+      0x0100_000c => Ok("macos-aarch64"),
+      _ if cpu != 0 => Err(invalid(format!(
+        "external executable Mach-O CPU {cpu:#x} is unsupported"
+      ))),
+      _ => Err(invalid("external executable format is unsupported")),
+    };
+  }
+  Err(invalid("external executable format is unsupported"))
+}
+
+fn file_contains(path: &Path, needle: &[u8]) -> Result<bool, RunnerInstallationError> {
+  let mut file = fs::File::open(path).map_err(|source| RunnerInstallationError::Hash {
+    path: path.to_owned(),
+    source,
+  })?;
+  let mut carry = Vec::new();
+  let mut chunk = [0_u8; 8192];
+  loop {
+    let length = file.read(&mut chunk).map_err(|source| RunnerInstallationError::Hash {
+      path: path.to_owned(),
+      source,
+    })?;
+    if length == 0 {
+      return Ok(false);
+    }
+    carry.extend_from_slice(&chunk[..length]);
+    if carry.windows(needle.len()).any(|window| window == needle) {
+      return Ok(true);
+    }
+    let retained = needle.len().saturating_sub(1).min(carry.len());
+    carry.drain(..carry.len() - retained);
+  }
+}
+
+fn load_external_executable_requirements(
+  root: &Path,
+  plugins: &BTreeMap<String, RunnerPlugin>,
+) -> Result<BTreeMap<String, ExternalExecutableRequirement>, RunnerInstallationError> {
+  let compatibility_path = root.join(CODEX_COMPATIBILITY_FILE);
+  let codex = plugins.get("codex");
+  if codex.is_none() && !compatibility_path.exists() {
+    return Ok(BTreeMap::new());
+  }
+  validate_regular_file("Codex compatibility manifest", &compatibility_path, false)?;
+  let metadata =
+    fs::metadata(&compatibility_path).map_err(|error| invalid(format!("Codex compatibility manifest: {error}")))?;
+  if metadata.len() > MAX_COMPATIBILITY_BYTES {
+    return Err(invalid(format!(
+      "Codex compatibility manifest exceeds the {MAX_COMPATIBILITY_BYTES}-byte limit"
+    )));
+  }
+  let document: ExternalExecutableCompatibility = serde_json::from_slice(
+    &fs::read(&compatibility_path).map_err(|error| invalid(format!("Codex compatibility manifest: {error}")))?,
+  )
+  .map_err(|error| RunnerInstallationError::CompatibilityJson(Box::new(error)))?;
+  let installed = codex.ok_or_else(|| invalid("Codex compatibility metadata has no installed Codex plugin"))?;
+  if document.format_version != 1
+    || document.plugin.name != "codex"
+    || document.plugin.version != installed.version
+    || document.plugin.protocol != installed.protocol
+    || document.plugin.manifest != "plugins/codex.plugin.yml"
+    || document.executable.product != "codex-cli"
+    || document.executable.selection_environment != "OCTA_CODEX_EXECUTABLE"
+  {
+    return Err(invalid(
+      "Codex compatibility metadata differs from the installed plugin",
+    ));
+  }
+  let plugin_manifest = root.join(&document.plugin.manifest);
+  validate_regular_file("Codex plugin manifest", &plugin_manifest, false)?;
+  if document.executable.supported_versions.is_empty()
+    || document
+      .executable
+      .supported_versions
+      .iter()
+      .any(|version| version.is_empty() || version.trim() != version || version.chars().any(char::is_control))
+    || has_duplicates(&document.executable.supported_versions)
+  {
+    return Err(invalid(
+      "Codex compatibility metadata has invalid supported executable versions",
+    ));
+  }
+  Ok(BTreeMap::from([(
+    document.executable.product,
+    ExternalExecutableRequirement {
+      supported_versions: document.executable.supported_versions,
+      selection_environment: document.executable.selection_environment,
+    },
+  )]))
 }
 
 fn load_plugins(

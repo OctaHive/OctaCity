@@ -375,6 +375,7 @@ fn executor_with_identity(
       },
       cancellation_grace: Duration::from_secs(1),
       runner_supervision: RunnerSupervisionPolicy::default(),
+      external_executables: BTreeMap::new(),
     },
   )
   .unwrap()
@@ -648,6 +649,7 @@ fn permits_an_unschedulable_executor_but_rejects_invalid_policies() {
     },
     cancellation_grace: Duration::from_secs(1),
     runner_supervision: RunnerSupervisionPolicy::default(),
+    external_executables: BTreeMap::new(),
   };
   assert!(
     JobExecutor::new(

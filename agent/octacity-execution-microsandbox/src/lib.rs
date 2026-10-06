@@ -254,6 +254,9 @@ impl OciEngine for MicrosandboxEngine {
             mount.bind(identity).readonly().nosuid().nodev()
           });
         }
+        for (_, executable, guest_path) in &plan.external_executables {
+          builder = builder.volume(guest_path, |mount| mount.bind(executable).readonly().nosuid().nodev());
+        }
         for directory in &plan.masked_job_directories {
           builder = builder.volume(directory, |mount| {
             mount.tmpfs().size(1_u32).readonly().noexec().nosuid().nodev()
@@ -300,8 +303,12 @@ impl OciEngine for MicrosandboxEngine {
     if cancellation.is_cancelled() {
       return Err(cleanup_after_start_failure(&sandbox, self.cleanup_timeout, ExecutionError::Cancelled).await);
     }
-    let exec = sandbox.exec_stream_with(&plan.guest_executable, |options| {
-      options.stdin_pipe().cwd(&plan.guest_workspace)
+    let exec = sandbox.exec_stream_with(&plan.guest_executable, |mut options| {
+      options = options.stdin_pipe().cwd(&plan.guest_workspace);
+      for (selector, _, executable) in &plan.external_executables {
+        options = options.env(selector, executable);
+      }
+      options
     });
     let mut handle = match before_deadline(deadline, &cancellation, "starting the Microsandbox runner", exec).await {
       Ok(Ok(handle)) => handle,

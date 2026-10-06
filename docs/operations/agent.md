@@ -22,6 +22,24 @@ Octa is a separate product and release. Verify its archive and provenance in
 the same way, then install its complete runner, capability manifest, plugin
 directory, and `Octa.lock` below the configured `octa_release_root`.
 
+An Octa task plugin may declare a compatible external executable without
+making that provider part of the Agent protocol. Configure such tools under
+`tool_executables` by product identity, exact version, Octa runtime platform,
+absolute path, and SHA-256. At startup the Agent re-hashes the executable and
+matches it to the installed Octa compatibility metadata and plugin lock before
+discovering source plugins or contacting the coordinator. The executable must
+be a real executable file outside Agent job-writable roots and must not be
+writable by an untrusted local user. Omitting a tool keeps its plugin
+capability unavailable while leaving ordinary CI/CD execution valid.
+
+JobSpec v1/v2 do not carry a per-Job tool selector. A configured executable is
+therefore projected into every execution accepted by that Agent, although only
+the release-locked plugin knows its environment selector. Run such a
+configuration as a dedicated Agent and Pool restricted to the intended
+Projects, and do not install ambient model credentials for that service
+identity. Signed per-Job selection belongs to the Factory Permission Set in
+JobSpec v3; the existing protocol is not reinterpreted.
+
 ## Install and enroll
 
 Create a dedicated `octacity` service account with no interactive login. Keep

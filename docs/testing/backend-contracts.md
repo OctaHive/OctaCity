@@ -9,6 +9,16 @@ virtualization. These tests are
 privileged runtime provisioning. They never skip after an operator explicitly
 selects one: absent or invalid provisioning fails the test.
 
+The release-qualified Native slice also configures the deterministic Codex CLI
+fixture as an operator-selected executable. Before any source is materialized,
+startup rejects missing, mutable, wrong-digest, incompatible-platform, or
+release-incompatible tools. The successful, overflow, and cancellation cases
+then prove identical opaque read-only projection, explicit environment
+mapping, bounded/redacted trace/result/provenance and complete event evidence,
+no partial output on failure, descendant cleanup, and unchanged readiness for
+ordinary CI/CD Builds. JobSpec v1/v2 do not select tools individually, so this
+evidence uses a dedicated Agent/Pool profile without model credentials.
+
 The `host` suite runs on ordinary GitHub-hosted Linux, Apple Silicon macOS, and
 Windows machines. It verifies the downloaded Octa release and packaged Agent,
 runs the real Host backend contract, and then starts that released Agent

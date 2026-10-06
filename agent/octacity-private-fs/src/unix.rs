@@ -41,6 +41,17 @@ pub(super) fn validate_trusted_owner(path: &Path) -> std::io::Result<()> {
   }
 }
 
+pub(super) fn validate_no_untrusted_write_access(path: &Path) -> std::io::Result<()> {
+  let mode = fs::symlink_metadata(path)?.permissions().mode();
+  if mode & 0o022 != 0 {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::PermissionDenied,
+      "path is writable by group or other users",
+    ));
+  }
+  Ok(())
+}
+
 fn trusted_uid(owner: u32, agent: u32) -> bool {
   owner == agent || owner == 0
 }

@@ -179,6 +179,18 @@ class LocalStandInputTests(unittest.TestCase):
         with self.assertRaisesRegex(VERIFIER.InputError, "does not match its revision"):
             self.validate(document)
 
+    def test_rejects_octa_codex_license_and_provenance_drift(self):
+        mutations = (
+            ("codex", {**self.document["native"]["octa"]["codex"], "plugin_protocol": 3}),
+            ("license", "Apache-2.0"),
+            ("provenance", "unsigned"),
+        )
+        for field, value in mutations:
+            document = deepcopy(self.document)
+            document["native"]["octa"][field] = value
+            with self.subTest(field=field), self.assertRaises(VERIFIER.InputError):
+                self.validate(document)
+
     def test_rejects_unbounded_octa_source_archives(self):
         document = deepcopy(self.document)
         document["native"]["octa"]["source_archive_member_max_count"] = 0

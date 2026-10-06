@@ -28,7 +28,7 @@ pub(crate) async fn validate(config: PathBuf) -> Result<(), Box<dyn std::error::
   info!(config = %config.display(), "validating agent configuration");
   let components = Components::load(&config).await?;
   println!(
-    "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} configured runtime(s), {} legacy route(s), {} execution route(s), {} source plugin(s))",
+    "agent '{}' configuration is valid (Octa {}, {} signing key(s), {} configured runtime(s), {} legacy route(s), {} execution route(s), {} source plugin(s), {} tool executable(s))",
     components.validated.config.agent_id,
     components.runner.capabilities.octa_version,
     components.validated.signing_keys.len(),
@@ -36,6 +36,7 @@ pub(crate) async fn validate(config: PathBuf) -> Result<(), Box<dyn std::error::
     components.inventory.runtimes.len(),
     components.inventory.executions.len(),
     components.source_plugin_count,
+    components.tool_executables.len(),
   );
   Ok(())
 }
@@ -394,6 +395,7 @@ mod tests {
       state_root: state.path().join("state"),
       octa_release_root: state.path().join("octa"),
       source_plugins_dir: state.path().join("sources"),
+      tool_executables: Default::default(),
       workload_identity_profiles: Default::default(),
       cache: octacity_config::CacheConfig {
         root: state.path().join("cache"),

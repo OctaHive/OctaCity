@@ -714,6 +714,7 @@ fn lifecycle_fixture(
           resource_sample_interval: Duration::from_millis(1),
           ..RunnerSupervisionPolicy::default()
         },
+        external_executables: BTreeMap::new(),
       },
     )
     .unwrap()

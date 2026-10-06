@@ -32,6 +32,7 @@ from pinned_source_archive import (
 )
 import verify_local_stand_context as context
 import verify_local_stand_inputs as inputs
+import validate_octa_release_contract as release_contract
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -178,6 +179,8 @@ def _build_agent_archive(
                 revision,
                 "--octa-revision",
                 octa["source_revision"],
+                "--codex-fixture",
+                str(checkout / "deployment/local-stand/fixtures/codex-fixture.sh"),
                 "--output",
                 str(destination),
             ],
@@ -351,15 +354,22 @@ def verify_agent_bundle(root: Path, document: dict[str, Any], revision: str) -> 
 def verify_octa_bundle(root: Path, document: dict[str, Any]) -> None:
     """Verify the Octa checksum inventory, contract, and runner identity."""
 
-    verify_checksum_inventory(root)
-    contract_document = _json_object(root / "octa-release-contract.json")
-    if (
-        contract_document.get("format_version") != 1
-        or contract_document.get("checksums") != "SHA256SUMS"
-    ):
-        raise NativeStageError("installed Octa release contract is invalid")
-    capabilities = _json_object(root / "octa-runner-capabilities.json")
+    inventory = verify_checksum_inventory(root)
+    contract_path = root / "octa-release-contract.json"
+    release_contract.validate(contract_path)
     octa = document["native"]["octa"]
+    release_contract.validate_codex_compatibility(
+        root / "codex-compatibility.json", octa["version"]
+    )
+    required = {
+        Path("Octa.lock"),
+        Path("codex-compatibility.json"),
+        Path("plugins/codex.plugin.yml"),
+        Path("plugins/octa_plugin_codex"),
+    }
+    if not required.issubset(inventory):
+        raise NativeStageError("installed Octa release omits the pinned Codex plugin")
+    capabilities = _json_object(root / "octa-runner-capabilities.json")
     expected = {
         "type": "capabilities",
         "octa_version": octa["version"],
