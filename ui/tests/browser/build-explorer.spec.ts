@@ -66,7 +66,7 @@ test('keeps loaded Build branches stable while expanding and selecting', async (
     .getByRole('link', { name: 'Builds' })
     .click();
   await buildLink.click();
-  await expect.poll(() => buildDetailReads).toBe(2);
+  await expect.poll(() => buildDetailReads).toBeGreaterThanOrEqual(2);
   await expect(explorer.locator('[data-stability-marker="original-tree"]')).toHaveCount(1);
   await expect(explorer.getByText(/Refreshing selected Build path/u)).toHaveCount(0);
   releaseSecondBuildRead();

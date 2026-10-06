@@ -22,6 +22,7 @@ export default defineConfig({
     serviceWorkers: 'block',
     timezoneId: 'UTC',
     trace: 'retain-on-failure',
+    viewport: { height: 720, width: 1_280 },
   },
   webServer: {
     command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173',

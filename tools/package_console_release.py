@@ -232,6 +232,7 @@ def _manifest(
     revision: str,
     files: dict[str, bytes],
     assets: list[dict[str, object]],
+    proxy: bytes,
 ) -> dict[str, object]:
     return {
         "format_version": 1,
@@ -239,11 +240,16 @@ def _manifest(
         "version": version,
         "platform": "any",
         "build_inputs": {"octacity_revision": revision},
+        "protocols": {},
         "components": {
             "application": {
                 "path": ENTRYPOINT,
                 "sha256": _digest_bytes(files[ENTRYPOINT]),
-            }
+            },
+            "proxy": {
+                "path": f"{NGINX_DIRECTORY}/nginx.conf",
+                "sha256": _digest_bytes(proxy),
+            },
         },
         "assets": assets,
     }
@@ -265,7 +271,8 @@ def package_console(
         raise ConsoleReleaseError("console release output must end with .tar.gz")
     contract_path, product_contract = load_release_contract(repository, PRODUCT)
     if product_contract["protocols"] or product_contract["required_components"] != [
-        "application"
+        "application",
+        "proxy",
     ]:
         raise ConsoleReleaseError("console release contract has an unsupported shape")
     output = output.resolve()
@@ -289,7 +296,8 @@ def package_console(
                 require_file(f"operator console nginx {name}", nginx_root / name),
                 root / NGINX_DIRECTORY / name,
             )
-        manifest = _manifest(version, revision, files, assets)
+        proxy = (root / NGINX_DIRECTORY / "nginx.conf").read_bytes()
+        manifest = _manifest(version, revision, files, assets, proxy)
         write_text(root / MANIFEST, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         write_text(root / CHECKSUMS, checksum_lines(root, {CHECKSUMS}))
         archive_tar(root, output)
@@ -416,6 +424,7 @@ def _verify_manifest(files: dict[str, bytes]) -> dict[str, object]:
         "version",
         "platform",
         "build_inputs",
+        "protocols",
         "components",
         "assets",
     }
@@ -429,11 +438,13 @@ def _verify_manifest(files: dict[str, bytes]) -> dict[str, object]:
         or not isinstance(components, dict)
         or not isinstance(assets, list)
         or set(build_inputs) != {"octacity_revision"}
-        or set(components) != {"application"}
+        or set(components) != {"application", "proxy"}
         or not isinstance(components["application"], dict)
+        or not isinstance(components["proxy"], dict)
     ):
         raise ConsoleReleaseError("console release manifest identity is invalid")
     application = components["application"]
+    proxy = components["proxy"]
     try:
         validate_version(manifest["version"])
         validate_revision("OctaCity revision", build_inputs["octacity_revision"])
@@ -443,9 +454,13 @@ def _verify_manifest(files: dict[str, bytes]) -> dict[str, object]:
         manifest["format_version"] != 1
         or manifest["product"] != PRODUCT
         or manifest["platform"] != "any"
+        or manifest["protocols"] != {}
         or set(application) != {"path", "sha256"}
         or application["path"] != ENTRYPOINT
         or application["sha256"] != _digest_bytes(files[ENTRYPOINT])
+        or set(proxy) != {"path", "sha256"}
+        or proxy["path"] != f"{NGINX_DIRECTORY}/nginx.conf"
+        or proxy["sha256"] != _digest_bytes(files[f"{NGINX_DIRECTORY}/nginx.conf"])
     ):
         raise ConsoleReleaseError("console release manifest identity is invalid")
     expected_assets = _validate_application(files)
@@ -462,7 +477,7 @@ def _verify_manifest(files: dict[str, bytes]) -> dict[str, object]:
         or contract.get("manifest") != MANIFEST
         or contract.get("checksums") != CHECKSUMS
         or product.get("protocols") != {}
-        or product.get("required_components") != ["application"]
+        or product.get("required_components") != ["application", "proxy"]
     ):
         raise ConsoleReleaseError("console release contract is invalid")
     return manifest

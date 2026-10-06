@@ -37,6 +37,13 @@ const visualCases = [
     viewport: { height: 900, width: 1_440 },
   },
   {
+    ...primaryRoute('project'),
+    language: 'ru',
+    name: 'project-desktop-russian-light.png',
+    theme: 'light',
+    viewport: { height: 900, width: 1_440 },
+  },
+  {
     ...primaryRoute('builds'),
     illustrationLabel: 'Build pipeline illustration',
     name: 'builds-desktop-dark.png',
@@ -75,6 +82,14 @@ const visualCases = [
     theme: 'light',
     viewport: { height: 900, width: 640 },
   },
+  {
+    ...primaryRoute('projects'),
+    colorScheme: 'dark',
+    name: 'projects-narrow-overlay-system-dark.png',
+    openExplorer: true,
+    theme: 'system',
+    viewport: { height: 900, width: 640 },
+  },
 ] as const;
 
 for (const visual of visualCases) {
@@ -82,6 +97,7 @@ for (const visual of visualCases) {
     testInfo.snapshotSuffix = process.platform;
     await installOperatorFixture(page);
     await page.setViewportSize(visual.viewport);
+    if ('colorScheme' in visual) await page.emulateMedia({ colorScheme: visual.colorScheme });
     await page.goto(visual.path);
     await expect(page.getByRole('status', { name: 'Server ready' })).toBeVisible();
     await expect(
@@ -94,17 +110,41 @@ for (const visual of visualCases) {
     if ('illustrationLabel' in visual) {
       await expect(page.getByRole('img', { name: visual.illustrationLabel })).toBeVisible();
     }
-    await selectTheme(page, visual.theme);
+    await selectTheme(
+      page,
+      visual.theme,
+      'colorScheme' in visual ? visual.colorScheme : visual.theme,
+    );
     if (visual.viewport.width === 640) {
       await expect(page.getByRole('button', { name: /Open .* explorer/u })).toBeVisible();
     }
+    if ('openExplorer' in visual && visual.openExplorer) {
+      await page.getByRole('button', { name: /Open .* explorer/u }).click();
+      const explorer = page.getByRole('dialog', { name: /.* explorer/u });
+      await expect(explorer).toBeVisible();
+      await expect(explorer.getByText(visual.retainedText, { exact: false }).first()).toBeVisible();
+    }
+    if ('language' in visual) await selectRussian(page);
+    await expect(page.locator('body')).toHaveCSS('font-family', /ui-sans-serif/u);
 
     await expect(page).toHaveScreenshot(visual.name, { fullPage: true });
   });
 }
 
-async function selectTheme(page: Page, theme: 'dark' | 'light') {
+async function selectTheme(
+  page: Page,
+  theme: 'dark' | 'light' | 'system',
+  resolved: 'dark' | 'light',
+) {
   await page.getByRole('combobox', { name: 'Theme' }).click();
-  await page.getByRole('option', { name: theme === 'dark' ? 'Dark' : 'Light' }).click();
-  await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', theme);
+  const option = { dark: 'Dark', light: 'Light', system: 'System' }[theme];
+  await page.getByRole('option', { name: option }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', resolved);
+}
+
+async function selectRussian(page: Page) {
+  await page.getByLabel('Operator menu').click();
+  await page.getByRole('combobox', { name: 'Language' }).click();
+  await page.getByRole('option', { name: 'Russian' }).click();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
 }

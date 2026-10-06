@@ -84,8 +84,13 @@ class ConsoleReleaseTests(unittest.TestCase):
             self.assertEqual(first_manifest, second_manifest)
             self.assertEqual(first_manifest["product"], "octacity-console")
             self.assertEqual(first_manifest["platform"], "any")
+            self.assertEqual(first_manifest["protocols"], {})
             self.assertEqual(
                 first_manifest["components"]["application"]["path"], "index.html"
+            )
+            self.assertEqual(
+                first_manifest["components"]["proxy"]["path"],
+                "share/nginx/nginx.conf",
             )
 
             with tarfile.open(first, "r:gz") as archive:
@@ -276,7 +281,9 @@ class ConsoleReleaseTests(unittest.TestCase):
         )
         console = contract["products"]["octacity-console"]
         self.assertEqual(console["protocols"], {})
-        self.assertEqual(console["required_components"], ["application"])
+        self.assertEqual(
+            console["required_components"], ["application", "proxy"]
+        )
 
     def test_openapi_generation_uses_the_workspace_lockfile(self):
         generator = (REPOSITORY / "ui/scripts/generate-api.mjs").read_text(
@@ -315,8 +322,11 @@ class ConsoleWorkflowTests(unittest.TestCase):
             "run: pnpm test:unit",
             "run: pnpm test:browser",
             "run: pnpm build",
+            "sudo apt-get update && sudo apt-get install --yes nginx",
             "tools/package_console_release.py package",
             "tools/package_console_release.py verify",
+            "tools/package_server_release.py",
+            "uses: ./octacity/.github/actions/release-console-browser-slice",
             "--expected-version \"${version}\"",
             '--expected-octacity-revision "${{ github.sha }}"',
             "name: octacity-console-ci-${{ github.run_id }}",
@@ -337,6 +347,14 @@ class ConsoleWorkflowTests(unittest.TestCase):
         self.assertLess(
             job.index("package_console_release.py package"),
             job.index("package_console_release.py verify"),
+        )
+        self.assertLess(
+            job.index("package_console_release.py verify"),
+            job.index("uses: ./octacity/.github/actions/release-console-browser-slice"),
+        )
+        self.assertLess(
+            job.index("uses: ./octacity/.github/actions/release-console-browser-slice"),
+            job.index("name: octacity-console-ci-${{ github.run_id }}"),
         )
 
     def assert_release_policy(self, workflow: str) -> None:
@@ -389,6 +407,10 @@ class ConsoleWorkflowTests(unittest.TestCase):
                 "tools/package_console_release.py verify",
                 "tools/package_console_release.py --help",
             ),
+            (
+                "uses: ./octacity/.github/actions/release-console-browser-slice",
+                "run: echo released-browser-slice-skipped",
+            ),
         )
         for required, replacement in failures:
             with self.subTest(required=required):
@@ -400,6 +422,21 @@ class ConsoleWorkflowTests(unittest.TestCase):
         fixture = self.release.replace("      - console-package\n", "", 1)
         with self.assertRaises(AssertionError):
             self.assert_release_policy(fixture)
+
+    def test_released_browser_action_is_bounded_and_fail_closed(self):
+        action = (
+            REPOSITORY / ".github/actions/release-console-browser-slice/action.yml"
+        ).read_text(encoding="utf-8")
+        for marker in (
+            "tools/package_console_release.py verify",
+            "octacity-release-harness -- prepare-browser",
+            "postgres:18.6-bookworm@sha256:",
+            "released_console_satisfies_the_same_origin_browser_contract",
+            "-- --ignored --exact --nocapture",
+            "docker rm --force",
+        ):
+            self.assertIn(marker, action)
+        self.assertNotIn("continue-on-error:", action)
 
 
 if __name__ == "__main__":

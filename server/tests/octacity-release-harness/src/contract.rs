@@ -120,7 +120,7 @@ mod tests {
 
     assert_eq!(
       console.required_components,
-      ["application".to_owned()].into_iter().collect()
+      ["application".to_owned(), "proxy".to_owned()].into_iter().collect()
     );
     assert!(console.protocols.is_empty());
   }

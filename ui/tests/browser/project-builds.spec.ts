@@ -9,6 +9,22 @@ const BUILD_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
 const BUILD_C = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3';
 const PAGE_CURSOR = 'equal-time-page-2';
 
+test('discovers Project resources and opens their exact published versions', async ({ page }) => {
+  await mockProjectApi(page);
+
+  await page.goto(`/projects/${PROJECT_ID}`);
+  const definitions = page.getByRole('region', { name: 'Current definitions' });
+  await expect(definitions.getByText('Delivery Pipeline', { exact: true })).toBeVisible();
+  await expect(definitions.getByText('Application Source', { exact: true })).toBeVisible();
+  await expect(definitions.getByText('Release', { exact: true })).toBeVisible();
+  await expect(definitions.getByText('Manual trigger', { exact: true })).toBeVisible();
+
+  await definitions.getByRole('button', { name: 'View Delivery Pipeline details' }).click();
+  await expect(definitions.getByText('0 Jobs', { exact: true })).toBeVisible();
+  await definitions.getByRole('button', { name: 'View Application Source details' }).click();
+  await expect(definitions.getByText('refs/heads/main', { exact: true })).toBeVisible();
+});
+
 test('replays one confirmed manual Build with an unchanged identity after a lost response', async ({
   page,
 }) => {
@@ -54,6 +70,15 @@ test('replays one confirmed manual Build with an unchanged identity after a lost
   await expect(
     page.getByRole('region', { name: 'Recent Builds' }).getByRole('link', { name: 'build-new' }),
   ).toBeVisible();
+
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: /Notifications, 1 unseen/u }).click();
+  const notifications = page.getByRole('dialog', { name: 'Notification center' });
+  const actions = notifications
+    .getByRole('heading', { name: 'Current-session actions' })
+    .locator('xpath=ancestor::section');
+  await expect(actions.getByText('Start Build from Release?', { exact: true })).toBeVisible();
+  await expect(actions.getByText('The command completed successfully.')).toBeVisible();
 
   expect(requests).toHaveLength(2);
   expect(requests[0]).toEqual(requests[1]);
@@ -213,6 +238,10 @@ async function mockProjectApi(
       await fulfillJson(route, repository(handlers.repositorySelection));
       return;
     }
+    if (url.pathname === '/api/v1/pipelines/pipeline-1/versions/1') {
+      await fulfillJson(route, pipeline());
+      return;
+    }
     if (url.pathname === `${projectPath}/builds`) {
       handlers.buildRequests?.push(url);
       if (handlers.onBuilds !== undefined) {
@@ -244,11 +273,18 @@ async function mockProjectApi(
       );
       return;
     }
-    if (
-      url.pathname === `${projectPath}/pipelines` ||
-      url.pathname === `${projectPath}/repositories`
-    ) {
-      await fulfillJson(route, pageResponse([]));
+    if (url.pathname === `${projectPath}/pipelines`) {
+      await fulfillJson(
+        route,
+        pageResponse([definitionSummary('pipeline-1', 'Delivery Pipeline')]),
+      );
+      return;
+    }
+    if (url.pathname === `${projectPath}/repositories`) {
+      await fulfillJson(
+        route,
+        pageResponse([definitionSummary('repository-1', 'Application Source')]),
+      );
       return;
     }
     await route.fulfill({ body: '{}', contentType: 'application/json', status: 404 });
@@ -259,6 +295,23 @@ interface RepositorySelection {
   allow_exact_revision: boolean;
   allowed_references: string[];
   default_reference: string | null;
+}
+
+function definitionSummary(id: string, name: string) {
+  return {
+    id,
+    name,
+    project_id: PROJECT_ID,
+    published_at_unix_ms: 1_700_000_000_000,
+    version: 1,
+  };
+}
+
+function pipeline() {
+  return {
+    dag: { edges: [], nodes: [] },
+    ...definitionSummary('pipeline-1', 'Delivery Pipeline'),
+  };
 }
 
 function repository(selection?: RepositorySelection) {

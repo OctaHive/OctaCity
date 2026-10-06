@@ -120,6 +120,26 @@ class ConsoleProxyContractTests(unittest.TestCase):
         )
         self.assertNotIn("cp -R ui/dist/. /srv/octacity-console/", guide)
 
+    def test_operator_documentation_keeps_the_no_login_boundary_explicit(self):
+        management = (
+            REPOSITORY / "docs/reference/management-rest-v1.md"
+        ).read_text(encoding="utf-8")
+        architecture = (REPOSITORY / "docs/architecture/server.md").read_text(
+            encoding="utf-8"
+        )
+        threat_model = (
+            REPOSITORY / "docs/architecture/threat-model.md"
+        ).read_text(encoding="utf-8")
+        guide = (REPOSITORY / "docs/operations/operator-console.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("There is no login", management)
+        self.assertIn("no authenticated browser identity", architecture)
+        self.assertIn("Deploying the console does not add login", threat_model)
+        self.assertIn("Access to this origin is management authority", guide)
+        self.assertIn("The console remains optional", " ".join(guide.split()))
+
 
 if __name__ == "__main__":
     unittest.main()

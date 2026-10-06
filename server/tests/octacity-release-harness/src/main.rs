@@ -4,8 +4,8 @@ use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 use octacity_release_harness::{
-  AgentRuntimeBundles, AgentRuntimePlatforms, HarnessError, ReleaseBundles, derive_job_spec_policy, install,
-  load_job_spec_policy, verify_job_spec_policy,
+  AgentRuntimeBundles, AgentRuntimePlatforms, BrowserReleaseBundles, HarnessError, ReleaseBundles,
+  derive_job_spec_policy, install, install_browser_release, load_job_spec_policy, verify_job_spec_policy,
 };
 use serde::Serialize;
 
@@ -31,6 +31,18 @@ enum Command {
     /// Extracted checksummed Octa bundle root.
     #[arg(long)]
     octa_root: PathBuf,
+    /// New directory that will own this scenario's installation.
+    #[arg(long)]
+    install_root: PathBuf,
+  },
+  /// Copy a verified matching server and static console into one installation.
+  PrepareBrowser {
+    /// Extracted checksummed server bundle root.
+    #[arg(long)]
+    server_root: PathBuf,
+    /// Extracted checksummed console bundle root.
+    #[arg(long)]
+    console_root: PathBuf,
     /// New directory that will own this scenario's installation.
     #[arg(long)]
     install_root: PathBuf,
@@ -103,6 +115,17 @@ fn run(command: Command) -> Result<String, HarnessError> {
         server: server_root,
         agent: agent_root,
         octa: octa_root,
+      },
+      &install_root,
+    )?),
+    Command::PrepareBrowser {
+      server_root,
+      console_root,
+      install_root,
+    } => encode(&install_browser_release(
+      &BrowserReleaseBundles {
+        server: server_root,
+        console: console_root,
       },
       &install_root,
     )?),

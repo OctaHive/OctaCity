@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { CONSOLE_PATHS } from '../../src/app/routes';
+import { FIXTURE_IDS, installOperatorFixture } from './operatorFixture';
 
 async function openReadyConsole(page: Page, path: string, attentionItems: readonly object[] = []) {
   await page.route('**/health/ready', async (route) => {
@@ -66,6 +67,8 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   ).toBe('stable');
   await expect(explorer.getByRole('heading', { name: 'Favorites' })).toBeVisible();
   await expect(explorer.getByRole('heading', { name: 'Browse' })).toBeVisible();
+  const explorerHeadings = await explorer.locator('h3').allTextContents();
+  expect(explorerHeadings.indexOf('Favorites')).toBeLessThan(explorerHeadings.indexOf('Browse'));
   await expect(explorer.getByRole('link', { name: 'Platform' })).toBeVisible();
   await explorer.getByRole('button', { name: 'Expand Platform' }).click();
   await expect(explorer.getByRole('link', { name: 'Delivery' })).toBeVisible();
@@ -73,6 +76,53 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(page.getByRole('main').getByRole('link', { name: 'Platform' })).toHaveCount(0);
   await expect(page.locator('#console-content')).toBeVisible();
   await expect(page.getByLabel('Security notice')).toHaveCount(0);
+});
+
+test('switches every large section rail control and restores a deep-linked resource', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.goto(`/projects/${FIXTURE_IDS.project}`);
+
+  const sections = page.getByRole('navigation', { name: 'Primary sections' });
+  const journey = [
+    { explorer: 'Builds explorer', heading: 'Builds', label: 'Builds', path: '/builds' },
+    { explorer: 'Agents explorer', heading: 'Agents', label: 'Agents', path: '/agents' },
+    { explorer: 'Audit explorer', heading: 'Audit', label: 'Audit', path: '/audit' },
+    { explorer: 'Projects explorer', heading: 'Projects', label: 'Projects', path: '/projects' },
+  ] as const;
+
+  await expect(sections.getByRole('link', { name: 'Projects' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByRole('heading', { level: 1, name: 'Accessible Project' })).toBeVisible();
+
+  for (const step of journey) {
+    const section = sections.getByRole('link', { name: step.label });
+    await section.click();
+    await expect(page).toHaveURL(step.path);
+    await expect(section).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('complementary', { name: step.explorer })).toBeVisible();
+    await expect(
+      page.getByRole('main').getByRole('heading', { level: 1, name: step.heading }),
+    ).toBeVisible();
+  }
+
+  await page.goto(`/builds/${FIXTURE_IDS.build}`);
+  await expect(
+    page.getByRole('heading', { level: 1, name: `Build ${FIXTURE_IDS.build}` }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page).toHaveURL(`/builds/${FIXTURE_IDS.build}`);
+  await expect(
+    page.getByRole('heading', { level: 1, name: `Build ${FIXTURE_IDS.build}` }),
+  ).toBeVisible();
+  await expect(sections.getByRole('link', { name: 'Builds' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 });
 
 test('centers the compact theme icon inside its trigger', async ({ page }) => {
@@ -90,9 +140,24 @@ test('centers the compact theme icon inside its trigger', async ({ page }) => {
   expect(Math.abs(offset)).toBeLessThanOrEqual(0.5);
 });
 
-test('persists Russian presentation without storing resource content', async ({ page }) => {
+test('persists Russian presentation and resolves light, dark, and system themes', async ({
+  page,
+}) => {
   await page.setViewportSize({ height: 900, width: 1_440 });
+  await page.emulateMedia({ colorScheme: 'dark' });
   await openReadyConsole(page, CONSOLE_PATHS.projects);
+
+  await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', 'dark');
+  await page.getByRole('combobox', { name: 'Theme' }).click();
+  await page.getByRole('option', { name: 'Light' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', 'light');
+  await page.getByRole('combobox', { name: 'Theme' }).click();
+  await page.getByRole('option', { name: 'Dark' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', 'dark');
+  await page.getByRole('combobox', { name: 'Theme' }).click();
+  await page.getByRole('option', { name: 'System' }).click();
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(page.locator('html')).toHaveAttribute('data-resolved-theme', 'light');
 
   await page.getByLabel('Operator menu').click();
   await page.getByRole('combobox', { name: 'Language' }).click();
@@ -398,24 +463,36 @@ test('opens global and explorer search with focus restoration', async ({ page })
   await page.getByRole('searchbox', { name: 'Search query' }).fill('alpha');
   await expect(page.getByRole('button', { name: 'Open Alpha Build' })).toBeVisible();
   await page.getByRole('button', { name: 'Add Alpha Build to favorites' }).click();
-  await page.keyboard.press('Escape');
-  await expect(globalSearch).toBeFocused();
+  await page.getByRole('button', { name: 'Open Alpha Build' }).click();
+  await expect(page).toHaveURL(`/builds/${searchableBuildId}`);
 
-  await page.getByRole('link', { name: 'Builds' }).focus();
+  await page.keyboard.press('Control+k');
+  const recents = page.getByRole('heading', { name: 'Recent resources' }).locator('xpath=..');
+  await expect(recents.getByTitle(searchableBuildId)).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  const primaryBuilds = page
+    .getByRole('navigation', { name: 'Primary sections' })
+    .getByRole('link', { name: 'Builds' });
+  await primaryBuilds.focus();
   await page.keyboard.press('Control+k');
   await expect(page.getByRole('searchbox', { name: 'Search query' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Close command center' })).toBeFocused();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('link', { name: 'Builds' })).toBeFocused();
+  await expect(primaryBuilds).toBeFocused();
 
+  await page
+    .getByRole('navigation', { name: 'Primary sections' })
+    .getByRole('link', { name: 'Projects' })
+    .click();
   await page.getByRole('button', { name: 'Search Projects' }).click();
   await expect(page.getByText('Scope: Projects')).toBeVisible();
   await page.getByRole('button', { name: 'Search all resources' }).click();
   await expect(page.getByText('Scope: All resources')).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await page.getByRole('link', { name: 'Builds' }).click();
+  await primaryBuilds.click();
   await expect(page.getByRole('link', { name: `Open Builds ${searchableBuildId}` })).toBeVisible();
   await page.getByRole('button', { name: 'Search Builds' }).click();
   await expect(page.getByText('Scope: Builds')).toBeVisible();

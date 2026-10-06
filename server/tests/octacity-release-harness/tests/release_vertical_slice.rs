@@ -34,6 +34,8 @@ mod agent;
 mod backend;
 #[path = "release_vertical_slice/backend_config_tests.rs"]
 mod backend_config_tests;
+#[path = "release_vertical_slice/browser.rs"]
+mod browser;
 #[path = "release_vertical_slice/linux_native.rs"]
 mod linux_native;
 #[path = "release_vertical_slice/release.rs"]
@@ -97,6 +99,12 @@ async fn released_macos_microsandbox_matrix_satisfies_the_end_to_end_contract() 
 #[ignore = "requires isolated released products and a provisioned Apple VF isolation runner"]
 async fn released_macos_apple_vf_matrix_satisfies_the_end_to_end_contract() {
   run_released_oci_vertical_slice(Some("apple-vf-isolation")).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires matching released server and console products, PostgreSQL, nginx, and Chromium"]
+async fn released_console_satisfies_the_same_origin_browser_contract() {
+  browser::run().await;
 }
 
 async fn run_released_oci_vertical_slice(expected_backend: Option<&str>) {

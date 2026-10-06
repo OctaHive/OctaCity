@@ -31,6 +31,8 @@ pub struct ProductManifest {
   pub(crate) build_inputs: BuildInputs,
   pub(crate) protocols: BTreeMap<String, ProtocolRange>,
   components: BTreeMap<String, ManifestComponent>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  assets: Vec<ManifestAsset>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -46,6 +48,14 @@ pub(crate) struct BuildInputs {
 struct ManifestComponent {
   path: String,
   sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestAsset {
+  path: String,
+  sha256: String,
+  size: u64,
 }
 
 pub(crate) struct Bundle {
@@ -84,6 +94,19 @@ impl Bundle {
       if sha256(&path)? != component.sha256 {
         return Err(invalid(format!(
           "component '{name}' digest differs from release-manifest.json"
+        )));
+      }
+    }
+    for asset in &bundle.manifest.assets {
+      let path = bundle.checked_path(&asset.path)?;
+      let metadata = fs::metadata(&path).map_err(|source| HarnessError::Io {
+        path: path.clone(),
+        source,
+      })?;
+      if metadata.len() != asset.size || sha256(&path)? != asset.sha256 {
+        return Err(invalid(format!(
+          "console asset '{}' differs from release-manifest.json",
+          asset.path
         )));
       }
     }
@@ -133,7 +156,7 @@ impl Bundle {
       .ok_or_else(|| invalid("release bundle has no verified source plugin"))
   }
 
-  fn checked_path(&self, relative: &str) -> Result<PathBuf, HarnessError> {
+  pub(crate) fn checked_path(&self, relative: &str) -> Result<PathBuf, HarnessError> {
     let relative = safe_relative_path(relative)?;
     if !self.inventory.contains_key(&relative) {
       return Err(invalid(format!(
@@ -275,10 +298,26 @@ impl ProductManifest {
         self.product
       )));
     }
+    if expected_product == "octacity-console" {
+      if self.assets.is_empty() {
+        return Err(invalid("console release manifest contains no static assets"));
+      }
+    } else if !self.assets.is_empty() {
+      return Err(invalid(format!(
+        "{} release manifest unexpectedly declares static assets",
+        self.product
+      )));
+    }
     for (name, component) in &self.components {
       safe_relative_path(&component.path)?;
       if !digest(&component.sha256) {
         return Err(invalid(format!("component '{name}' has an invalid SHA-256")));
+      }
+    }
+    for asset in &self.assets {
+      safe_relative_path(&asset.path)?;
+      if !asset.path.starts_with("assets/") || !digest(&asset.sha256) || asset.size == 0 {
+        return Err(invalid("console release manifest contains an invalid static asset"));
       }
     }
     Ok(())

@@ -352,6 +352,26 @@ test('replays one permanent hold intent and releases the current version with au
     key: string | undefined;
   }> = [];
   await mockBuildDiagnostics(page, {
+    onAuditRequest: async (route, url) => {
+      expect(url.searchParams.get('request_identity')).toBe('request-release');
+      await fulfillJson(route, {
+        items: [
+          {
+            actor: { identity: 'agent-audit', kind: 'agent' },
+            id: 'audit-release',
+            idempotency_key: releases[0]?.key ?? null,
+            metadata: {},
+            occurred_at_unix_ms: 1_700_000_000_000,
+            operation: 'release-build-result-hold',
+            outcome: 'accepted',
+            request_identity: 'request-release',
+            target_identity: BUILD_ID,
+            target_kind: 'build',
+          },
+        ],
+        next_cursor: null,
+      });
+    },
     onEventRequest: async (route) => fulfillJson(route, { cursor: 0, items: [] }),
     onJobRequest: async (route) =>
       fulfillJson(route, { event_cursor: 0, id: JOB_ID, state: 'succeeded' }),
@@ -417,12 +437,19 @@ test('replays one permanent hold intent and releases the current version with au
     'href',
     '/audit?request_identity=request-release',
   );
-  await dialog.getByRole('button', { name: 'Close' }).click();
-  await expect(retention.getByRole('heading', { name: 'Build Result retention' })).toBeFocused();
   expect(releases).toHaveLength(1);
   expect(releases[0]?.ifMatch).toBe('"1"');
   expect(releases[0]?.key).toMatch(/^[0-9a-f-]{36}$/i);
   expect(releases[0]?.key).not.toBe(placements[0]?.key);
+
+  await dialog.getByRole('link', { name: 'View release audit evidence' }).click();
+  await expect(page).toHaveURL('/audit?request_identity=request-release');
+  await expect(page.getByRole('textbox', { name: 'Request identity' })).toHaveValue(
+    'request-release',
+  );
+  await expect(page.getByRole('table', { name: 'Immutable audit facts' })).toContainText(
+    'release-build-result-hold',
+  );
 });
 
 async function mockBuildDiagnostics(
@@ -430,6 +457,7 @@ async function mockBuildDiagnostics(
   handlers: {
     onArtifactDownload?: (route: Route) => Promise<void>;
     onArtifacts?: (route: Route, url: URL) => Promise<void>;
+    onAuditRequest?: (route: Route, url: URL) => Promise<void>;
     onBuildRequest?: (route: Route) => Promise<void>;
     onCacheSessions?: (route: Route, url: URL) => Promise<void>;
     onCancel?: (route: Route) => Promise<void>;
@@ -447,6 +475,10 @@ async function mockBuildDiagnostics(
   });
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/v1/audit-facts' && handlers.onAuditRequest !== undefined) {
+      await handlers.onAuditRequest(route, url);
+      return;
+    }
     if (url.pathname === `/api/v1/builds/${BUILD_ID}/cancel` && handlers.onCancel !== undefined) {
       await handlers.onCancel(route);
       return;

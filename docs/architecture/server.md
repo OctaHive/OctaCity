@@ -47,6 +47,21 @@ use explicit per-layer allowlists. An unknown SDK is rejected by default, so
 enforcement does not depend on recognizing every database, broker, VCS, or
 provider crate name.
 
+### Browser console boundary
+
+The standalone application under `ui/` is a separately built and deployed
+REST client, not another server layer. It depends only on the generated
+OpenAPI contract and relative `/api/v1` paths. It does not link server crates,
+connect to PostgreSQL or object storage, own domain decisions, or require the
+server to serve static files. A same-origin reverse proxy serves its immutable
+assets and forwards API and health routes to the private management listener.
+
+The console has no authenticated browser identity in v1. Requests enter the
+same canonical anonymous trusted-network management context as any other REST
+client, with browser credentials omitted and no CORS or forwarded-identity
+contract. Removing the console and its static route therefore leaves every
+management workflow available to headless REST clients.
+
 ## Crate ownership
 
 | Crate | Owns | Explicitly does not own |
@@ -393,6 +408,22 @@ one Attempt and that the resulting graph is acyclic. It exposes stable Job and
 Pipeline-node identities, current states, dependency policy, and safe failure
 classification so skipped and failed causal paths remain explainable without
 returning execution credentials or provider configuration.
+
+Project definition pages, Project Builds, Pool-filtered Agents, global
+resource search, and operator attention are application/store projections as
+well. Their typed inputs bind ownership, exact filters, search or attention
+scope, cursor, and page bounds before an adapter query executes. Both the
+in-memory and PostgreSQL stores apply authorization visibility before
+classification or matching, deterministic ordering or ranking, pagination,
+and cursor production. REST only maps those already-safe projections into
+versioned DTOs; it never fetches a broader page and filters it afterward.
+
+Search returns only Project, Build, Agent, and Agent Pool identities, safe
+labels, and bounded context. Operator attention returns only scoped resource
+transitions and explicitly requested server-classified critical conditions;
+it owns neither recipients nor personal read state and is not reconstructed
+from audit or raw Job events. Agent current-execution detail is a bounded safe
+projection rather than exposure of coordinator Lease or fencing state.
 
 ### Immutable Pipeline publication
 

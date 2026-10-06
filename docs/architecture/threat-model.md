@@ -8,15 +8,17 @@ or durable data flow must update this model and its executable evidence.
 ## Scope and assumptions
 
 The model covers the server process, static Agents, Octa and runner release
-bundles, provider adapter processes, PostgreSQL, S3-compatible object storage,
-and the cache, artifact, webhook, VCS, and management protocols between them.
-The operating system, selected execution backend, database, object store,
+bundles, the optional static operator console and same-origin reverse proxy,
+provider adapter processes, PostgreSQL, S3-compatible object storage, and the
+cache, artifact, webhook, VCS, and management protocols between them. The
+operating system, selected execution backend, database, object store,
 release-signing infrastructure, and explicitly configured reverse proxy are
 trusted according to their documented responsibilities.
 
 Repository contents, build commands, source repositories, webhook payloads,
-management request bodies, Agent protocol messages before authentication,
-adapter output, object-store responses, and cached bytes are untrusted.
+management request bodies, browser state and input, Agent protocol messages
+before authentication, adapter output, object-store responses, and cached
+bytes are untrusted.
 Direct Host execution deliberately gives repository code the Agent host's
 security boundary. It is therefore allowed only by explicit Project and Pool
 policy and is not suitable for mutually untrusted workloads.
@@ -35,6 +37,8 @@ identity-aware policy; network placement is not treated as user identity.
 - signing keys, Agent enrollment and registration credentials, webhook keys,
   provider credentials, cache grants, and presigned transfer capabilities;
 - source, logs, artifacts, reports, cache entries, and their Project scope;
+- the console's content-hashed assets, proxy policy, and bounded local
+  presentation preferences;
 - release binaries, manifests, checksums, dependency graph, and provenance;
 - service availability, bounded storage, worker ownership, and scheduling
   fairness.
@@ -48,6 +52,7 @@ management responses, audit facts, metrics, traces, logs, or durable errors.
 | Boundary | Untrusted input | Required control and evidence |
 | --- | --- | --- |
 | Management ingress | HTTP path, query, headers, and JSON | Separate listener, explicit trusted-network acknowledgement, bounded decoding and rate limits, typed application handlers, OpenAPI drift tests |
+| Browser console and proxy | UI input, URL state, browser storage, static files, response headers | Same-origin relative API paths, omitted credentials, stripped identity and CORS headers, allowlisted bounded preferences, CSP, framing/referrer/MIME policy, immutable asset checks, released browser slice |
 | Agent and cache ingress | Registration credentials, signed intent, fences, events, uploads | Credential authentication, protocol negotiation, signature and expiry verification, lease fencing, bounded frames, replay and mismatch tests |
 | Webhook ingress | Provider headers and exact request bytes | Exact-body authentication before decoding, bounded payloads, deduplication, provider-process isolation, negative signature tests |
 | Repository and VCS | Locator, refs, trees, content, malicious repositories | Operator-installed digest-locked adapter, credential handles rather than values, read-only bounded operations, traversal and hook-execution tests |
@@ -91,6 +96,27 @@ the security contract matrix exercises archive, search, cache, URL, adapter,
 and telemetry leakage paths. Gitleaks additionally rejects credential-shaped
 material committed to either release source tree.
 
+The console adds no browser credential or general persistence API. One
+versioned adapter may retain only bounded language, theme, explorer, favorite,
+recent, and browser-local notification timestamp values. API payloads,
+notification items, mutation bodies, request identities, logs, query caches,
+and download capabilities remain in memory or are discarded. Artifact
+capabilities are obtained immediately before navigation and are never rendered
+or stored.
+
+### Browser script, origin, and identity confusion
+
+An attacker may try to inject script through server data, frame the console,
+serve a JavaScript asset with the wrong MIME type, attach cookies or bearer
+credentials, or make a reverse proxy imply an authenticated operator. React
+renders server values as data, the package forbids source-bearing or
+environment-bound output, and the proxy applies same-origin CSP,
+`frame-ancestors 'none'`, `nosniff`, no-referrer, exact MIME types, and
+file-safe SPA fallback rules. Browser requests use `credentials: 'omit'`; the
+proxy strips authorization and forwarded-user headers and hides upstream CORS
+headers. The neutral operator menu never claims a user identity or logout
+flow.
+
 ### Denial of service and resource exhaustion
 
 An attacker may send oversized frames, expensive searches, excessive events,
@@ -124,6 +150,9 @@ reasoned configuration change rather than a CI bypass.
 
 - Management v1 remains unauthenticated. Operators must keep it on a trusted
   network and preserve ingress separation when terminating TLS at a proxy.
+  Deploying the console does not add login, sessions, RBAC, ABAC, or operator
+  identity: reachability of the console origin grants the same anonymous
+  management authority as direct reachability of the private listener.
 - Host mode is not a sandbox. Use Isolation or Virtualization for untrusted
   repository code and dedicate Agent identities and machines where Host is
   unavoidable.
@@ -146,14 +175,17 @@ lint allowances:
 
 1. portable formatting, architecture, repository-tool, Clippy
    (`-D warnings`), rustdoc (`-D missing_docs`), unit, contract, and coverage
-   checks from `ci.yml`;
+   checks plus locked frontend generation, format, lint, type, unit,
+   accessibility, browser, bundle-budget, package, and archive-verification
+   gates from `ci.yml`;
 2. production and fuzz lockfile audits, dependency license/source review,
    secret scanning of both release source trees, and bounded protocol fuzzing
    from `security.yml`;
 3. the release-qualified backend, failure, security, lifecycle, and performance
    matrices from `backend-contracts.yml`;
 4. locked release builds, deterministic manifests and checksums, provenance
-   attestations, and only then publication from `release.yml`.
+   attestations, the PostgreSQL-backed released server/console same-origin
+   browser slice, and only then publication from `release.yml`.
 
 The release workflow calls the first three workflows directly, so a manually
 dispatched or tagged release cannot publish merely because a separate workflow

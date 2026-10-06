@@ -42,6 +42,15 @@ pub struct ReleaseBundles {
   pub octa: PathBuf,
 }
 
+/// Released server and static console bundles supplied to a browser scenario.
+#[derive(Clone, Debug)]
+pub struct BrowserReleaseBundles {
+  /// Extracted checksummed server release root.
+  pub server: PathBuf,
+  /// Extracted checksummed console release root.
+  pub console: PathBuf,
+}
+
 /// Released Agent and Octa bundle roots supplied to a portable Agent scenario.
 #[derive(Clone, Debug)]
 pub struct AgentRuntimeBundles {
@@ -100,6 +109,27 @@ pub struct InstalledRelease {
   pub octa_capabilities: RunnerCapabilities,
   /// Digests and protocol versions used to issue signed Job specifications.
   pub toolchain: InstalledToolchain,
+}
+
+/// Validated server and console paths consumed by a released browser scenario.
+#[derive(Clone, Debug, Serialize)]
+pub struct InstalledBrowserRelease {
+  /// Isolated installation root.
+  pub root: PathBuf,
+  /// Validated server release root.
+  pub server_root: PathBuf,
+  /// Validated server executable.
+  pub server_binary: PathBuf,
+  /// Validated console release root.
+  pub console_root: PathBuf,
+  /// Validated static application entry point.
+  pub console_entrypoint: PathBuf,
+  /// Directory containing the checksummed same-origin nginx fixture.
+  pub console_nginx_root: PathBuf,
+  /// Validated server release manifest.
+  pub server_manifest: ProductManifest,
+  /// Validated console release manifest.
+  pub console_manifest: ProductManifest,
 }
 
 /// Validated released Agent runtime used by portable host-mode scenarios.
@@ -230,6 +260,40 @@ pub fn install(bundles: &ReleaseBundles, destination: &Path) -> Result<Installed
   Ok(installed)
 }
 
+/// Installs matching released server and console bundles into one isolated root.
+pub fn install_browser_release(
+  bundles: &BrowserReleaseBundles,
+  destination: &Path,
+) -> Result<InstalledBrowserRelease, HarnessError> {
+  if destination.exists() {
+    return Err(invalid(format!(
+      "installation destination already exists: {}",
+      destination.display()
+    )));
+  }
+  let canonical_contract = ReleaseContract::canonical()?;
+  let server_source = Bundle::load(&bundles.server, "octacity-server", &canonical_contract)?;
+  let console_source = Bundle::load(&bundles.console, "octacity-console", &canonical_contract)?;
+  validate_browser_compatibility(&server_source.manifest, &console_source.manifest)?;
+
+  create_directory(destination)?;
+  let mut guard = InstallationGuard::new(destination);
+  let server_root = destination.join("server");
+  let console_root = destination.join("console");
+  server_source.install(&server_root)?;
+  console_source.install(&console_root)?;
+
+  let installed = load_browser_verified(
+    &BrowserReleaseBundles {
+      server: server_root,
+      console: console_root,
+    },
+    destination.to_owned(),
+  )?;
+  guard.commit();
+  Ok(installed)
+}
+
 /// Installs and revalidates only the released Agent and its Octa toolchain.
 ///
 /// Portable host-mode gates use a narrow in-process coordinator and therefore
@@ -330,6 +394,14 @@ pub fn validate_installed(bundles: &ReleaseBundles) -> Result<InstalledRelease, 
   load_verified(bundles, root)
 }
 
+/// Revalidates an isolated released server and console installation.
+pub fn validate_installed_browser_release(
+  bundles: &BrowserReleaseBundles,
+) -> Result<InstalledBrowserRelease, HarnessError> {
+  let root = browser_release_common_parent(bundles)?;
+  load_browser_verified(bundles, root)
+}
+
 fn load_verified(bundles: &ReleaseBundles, root: PathBuf) -> Result<InstalledRelease, HarnessError> {
   let canonical_contract = ReleaseContract::canonical()?;
   let server = Bundle::load(&bundles.server, "octacity-server", &canonical_contract)?;
@@ -356,6 +428,37 @@ fn load_verified(bundles: &ReleaseBundles, root: PathBuf) -> Result<InstalledRel
     agent_manifest: agent.manifest,
     octa_capabilities: octa.capabilities,
     toolchain,
+  })
+}
+
+fn load_browser_verified(
+  bundles: &BrowserReleaseBundles,
+  root: PathBuf,
+) -> Result<InstalledBrowserRelease, HarnessError> {
+  let canonical_contract = ReleaseContract::canonical()?;
+  let server = Bundle::load(&bundles.server, "octacity-server", &canonical_contract)?;
+  let console = Bundle::load(&bundles.console, "octacity-console", &canonical_contract)?;
+  validate_browser_compatibility(&server.manifest, &console.manifest)?;
+  server.verify_binary_version("server")?;
+  let console_entrypoint = console.component("application")?;
+  let console_nginx_root = bundles.console.join("share/nginx");
+  for relative in [
+    "share/nginx/cache-map.conf",
+    "share/nginx/nginx.conf",
+    "share/nginx/routes.conf",
+    "share/nginx/security-headers.conf",
+  ] {
+    console.checked_path(relative)?;
+  }
+  Ok(InstalledBrowserRelease {
+    root,
+    server_root: bundles.server.clone(),
+    server_binary: server.component("server")?,
+    console_root: bundles.console.clone(),
+    console_entrypoint,
+    console_nginx_root,
+    server_manifest: server.manifest,
+    console_manifest: console.manifest,
   })
 }
 
@@ -422,6 +525,21 @@ fn validate_compatibility(
   Ok(())
 }
 
+fn validate_browser_compatibility(server: &ProductManifest, console: &ProductManifest) -> Result<(), HarnessError> {
+  if console.platform != "any" {
+    return Err(invalid("console release platform must be 'any'"));
+  }
+  if server.version != console.version {
+    return Err(invalid("server and console release versions differ"));
+  }
+  if server.build_inputs.octacity_revision != console.build_inputs.octacity_revision {
+    return Err(invalid(
+      "server and console were built from different OctaCity revisions",
+    ));
+  }
+  Ok(())
+}
+
 fn validate_agent_octa_compatibility(
   agent: &ProductManifest,
   octa: &OctaBundle,
@@ -475,6 +593,19 @@ fn common_parent(bundles: &ReleaseBundles) -> Result<PathBuf, HarnessError> {
   if bundles.agent.parent() != Some(root) || bundles.octa.parent() != Some(root) {
     return Err(invalid(
       "installed release roots do not share one installation directory",
+    ));
+  }
+  Ok(root.to_owned())
+}
+
+fn browser_release_common_parent(bundles: &BrowserReleaseBundles) -> Result<PathBuf, HarnessError> {
+  let root = bundles
+    .server
+    .parent()
+    .ok_or_else(|| invalid("installed server root has no parent directory"))?;
+  if bundles.console.parent() != Some(root) {
+    return Err(invalid(
+      "installed server and console roots do not share one installation directory",
     ));
   }
   Ok(root.to_owned())

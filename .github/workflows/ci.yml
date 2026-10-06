@@ -268,6 +268,8 @@ jobs:
       - name: Install the pinned browser runtime
         working-directory: octacity/ui
         run: pnpm exec playwright install --with-deps chromium
+      - name: Install the released proxy runtime
+        run: sudo apt-get update && sudo apt-get install --yes nginx
       - name: Run console browser, accessibility, and visual tests
         working-directory: octacity/ui
         env:
@@ -276,7 +278,8 @@ jobs:
       - name: Build the console and enforce architecture and bundle budgets
         working-directory: octacity/ui
         run: pnpm build
-      - name: Package and verify the console release candidate
+      - id: console-release
+        name: Package and verify the console release candidate
         working-directory: octacity
         shell: bash
         run: |
@@ -293,6 +296,39 @@ jobs:
             --archive "${archive}" \
             --expected-version "${version}" \
             --expected-octacity-revision "${{ github.sha }}"
+          printf 'archive=%s/%s\n' "${PWD}" "${archive}" >> "${GITHUB_OUTPUT}"
+      - id: server-release
+        name: Build and package the released server counterpart
+        working-directory: octacity
+        shell: bash
+        env:
+          OCTACITY_BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import pathlib,tomllib; print(tomllib.loads(pathlib.Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"])')
+          archive="${RUNNER_TEMP}/octacity-server-linux-amd64.tar.gz"
+          cargo build --locked --release -p octacity-server
+          test "$(target/release/octacity-server --version)" = "octacity-server ${version}"
+          python3 tools/package_server_release.py \
+            --platform linux-amd64 \
+            --version "${version}" \
+            --server target/release/octacity-server \
+            --octacity-revision "${{ github.sha }}" \
+            --output "${archive}"
+          printf 'archive=%s\n' "${archive}" >> "${GITHUB_OUTPUT}"
+      - id: released-console
+        name: Run the released server and console browser slice
+        uses: ./octacity/.github/actions/release-console-browser-slice
+        with:
+          console-archive: ${{ steps.console-release.outputs.archive }}
+          server-archive: ${{ steps.server-release.outputs.archive }}
+      - name: Retain released browser evidence
+        if: always() && steps.released-console.outputs.evidence != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: octacity-console-browser-${{ github.run_id }}
+          path: ${{ steps.released-console.outputs.evidence }}
+          if-no-files-found: error
       - name: Retain the verified console release candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

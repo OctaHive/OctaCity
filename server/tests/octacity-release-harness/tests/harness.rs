@@ -8,8 +8,8 @@ use std::{
 };
 
 use octacity_release_harness::{
-  AgentRuntimeBundles, AgentRuntimePlatforms, ReleaseBundles, derive_job_spec_policy, install, install_agent_runtime,
-  load_job_spec_policy, verify_job_spec_policy,
+  AgentRuntimeBundles, AgentRuntimePlatforms, BrowserReleaseBundles, ReleaseBundles, derive_job_spec_policy, install,
+  install_agent_runtime, install_browser_release, load_job_spec_policy, verify_job_spec_policy,
 };
 use octacity_server_job::{JobSpecToolchainPolicy, MAX_JOB_SPEC_TOOLCHAIN_POLICY_BYTES};
 use serde_json::{Value, json};
@@ -37,6 +37,53 @@ fn installs_only_verified_released_bundles() {
   assert_ne!(installed.server_root, bundles.server);
   assert_ne!(installed.agent_root, bundles.agent);
   assert_ne!(installed.octa_root, bundles.octa);
+}
+
+#[test]
+fn installs_only_a_matching_checksummed_browser_release() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = browser_fixture(temporary.path());
+  let destination = temporary.path().join("browser-installation");
+
+  let installed = install_browser_release(&bundles, &destination).unwrap();
+
+  assert_eq!(installed.root, destination);
+  assert!(installed.server_binary.starts_with(&installed.server_root));
+  assert_eq!(installed.console_entrypoint, installed.console_root.join("index.html"));
+  assert_eq!(installed.console_nginx_root, installed.console_root.join("share/nginx"));
+  assert_eq!(
+    installed.server_manifest.version(),
+    installed.console_manifest.version()
+  );
+  assert_ne!(installed.server_root, bundles.server);
+  assert_ne!(installed.console_root, bundles.console);
+}
+
+#[test]
+fn rejects_a_console_built_from_another_revision() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = browser_fixture(temporary.path());
+  let manifest_path = bundles.console.join("release-manifest.json");
+  let mut manifest: Value = serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+  manifest["build_inputs"]["octacity_revision"] = json!("f".repeat(40));
+  write_json(&manifest_path, &manifest);
+  write_checksums(&bundles.console);
+
+  let error = install_browser_release(&bundles, &temporary.path().join("rejected-browser")).unwrap_err();
+
+  assert!(error.to_string().contains("built from different OctaCity revisions"));
+}
+
+#[test]
+fn rejects_a_console_without_the_packaged_proxy_contract() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = browser_fixture(temporary.path());
+  fs::remove_file(bundles.console.join("share/nginx/routes.conf")).unwrap();
+  write_checksums(&bundles.console);
+
+  let error = install_browser_release(&bundles, &temporary.path().join("rejected-browser")).unwrap_err();
+
+  assert!(error.to_string().contains("absent from SHA256SUMS"));
 }
 
 #[test]
@@ -493,6 +540,58 @@ fn fixture(root: &Path) -> ReleaseBundles {
   );
   write_checksums(&octa);
   ReleaseBundles { server, agent, octa }
+}
+
+fn browser_fixture(root: &Path) -> BrowserReleaseBundles {
+  let release = fixture(root);
+  let contract: Value = serde_json::from_str(include_str!("../../../../packaging/release-contract.json")).unwrap();
+  let console = root.join("console-bundle");
+  fs::create_dir(&console).unwrap();
+  fs::write(console.join("index.html"), "<!doctype html><div id=\"root\"></div>\n").unwrap();
+  let application = console.join("assets/index-12345678.js");
+  fs::create_dir_all(application.parent().unwrap()).unwrap();
+  fs::write(&application, "export {};\n").unwrap();
+  for name in ["cache-map.conf", "nginx.conf", "routes.conf", "security-headers.conf"] {
+    let path = console.join("share/nginx").join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, format!("# {name}\n")).unwrap();
+  }
+  write_json(
+    &console.join("release-manifest.json"),
+    &json!({
+      "format_version": 1,
+      "product": "octacity-console",
+      "version": "0.1.0",
+      "platform": "any",
+      "build_inputs": {"octacity_revision": REVISION},
+      "protocols": contract["products"]["octacity-console"]["protocols"],
+      "components": {
+        "application": {
+          "path": "index.html",
+          "sha256": sha256(&console.join("index.html"))
+        },
+        "proxy": {
+          "path": "share/nginx/nginx.conf",
+          "sha256": sha256(&console.join("share/nginx/nginx.conf"))
+        }
+      },
+      "assets": [{
+        "path": "assets/index-12345678.js",
+        "sha256": sha256(&application),
+        "size": fs::metadata(&application).unwrap().len()
+      }]
+    }),
+  );
+  fs::write(
+    console.join("release-contract.json"),
+    include_bytes!("../../../../packaging/release-contract.json"),
+  )
+  .unwrap();
+  write_checksums(&console);
+  BrowserReleaseBundles {
+    server: release.server,
+    console,
+  }
 }
 
 fn write_executable(path: &Path, contents: &str) {

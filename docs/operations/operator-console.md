@@ -5,6 +5,11 @@ operator console. The console and management API have no operator login,
 session, RBAC, or browser credential. Deploy this origin only on a trusted
 operator network. It is not safe for public Internet exposure.
 
+Access to this origin is management authority, not merely access to a read-only
+dashboard. The label `Operator` describes the local console role and is not an
+authenticated person. Do not deploy the console until network controls limit
+the origin to the intended operators.
+
 ## Supported topology
 
 Terminate TLS and serve the static console at one reverse proxy. Route only
@@ -53,6 +58,13 @@ console cannot acquire different browser code paths. The archive is rooted at
 `SHA256SUMS`, this deployment guide, the repository license, and the complete
 copy-ready nginx fixture under `share/nginx/`. It contains no Node runtime,
 package-manager metadata, source maps, or runtime API origin.
+
+The canonical release contract declares both `application` (`index.html`) and
+`proxy` (`share/nginx/nginx.conf`) components. Deploy a console only with an
+`octacity-server` archive whose manifest has the same release version and exact
+`build_inputs.octacity_revision`. The released-product verifier rejects a
+mixed-version or mixed-revision pair before installation. The console remains
+optional: the server archive and every REST workflow are complete without it.
 
 After the locked UI build completes, create and verify the archive from the
 repository root:
@@ -224,6 +236,19 @@ HSTS, framing, referrer, and `nosniff` headers. Inspect the asset response for
 the correct JavaScript MIME type and immutable cache policy. Verify that the
 server itself remains reachable only from the proxy host or protected proxy
 network.
+
+Browser developer tools must show relative same-origin `/api/v1` requests with
+no `Cookie` or `Authorization` request header, and API responses must not add
+`Access-Control-Allow-Origin` or `Access-Control-Allow-Credentials`. Active Job
+event requests must retain the published bounded `after`, `limit`, and
+`wait_ms` parameters; do not replace them with an unbounded polling proxy.
+
+CI verifies the packaged—not development—console through the packaged proxy
+against the matching released PostgreSQL-backed server. That slice exercises
+Project and Build discovery, a lost-response idempotent mutation replay,
+bounded live Job following, absence of browser credentials and CORS, and a
+headless REST workflow after nginx is stopped. Treat failure of that slice as
+a release blocker rather than substituting the Vite development server.
 
 The local-stand gateway image executes the same routing snippets against a
 mock management upstream. Its contract check compares deep-link output with

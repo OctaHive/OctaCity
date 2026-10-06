@@ -11,6 +11,14 @@ Agent listener requires enrollment or current-registration credentials. The
 examples use `octacity.example.test:8080` for management and
 `octacity.example.test:8081` for Agent traffic.
 
+The optional operator console is not an authentication layer. It is a static
+REST client served by the documented same-origin reverse proxy and sends
+management requests with browser credentials omitted. There is no login,
+session, operator identity, logout, RBAC, ABAC, or supported cross-origin
+browser deployment in v1. Any browser or headless client that can reach the
+management listener receives the canonical anonymous trusted-network context,
+so network admission to that origin is equivalent to management access.
+
 ## Prerequisites
 
 The current boundary assumes these server-owned resources already exist:
@@ -301,6 +309,13 @@ Summaries contain only operator-safe metadata. Follow their identity and exact
 version through the corresponding version endpoint to inspect immutable
 content.
 
+`GET /api/v1/projects` and
+`GET /api/v1/projects/{project_id}/children` additionally return
+`has_children` on each Project summary. It is computed from visible direct
+children before pagination. A false value therefore means that the caller has
+no visible child to expand; it does not disclose hidden descendants or require
+one probe request per Project.
+
 ### Project Build discovery
 
 `GET /api/v1/projects/{project_id}/builds` returns a bounded newest-first page
@@ -314,6 +329,37 @@ Configuration and version, normalized cause and creation time, current Attempt
 identity, number and state, and the terminal time when present. The collection
 does not embed the Attempt DAG, Job events, parameters, or policy snapshot;
 follow `GET /api/v1/builds/{build_id}` for the unchanged Build detail contract.
+
+### Global resource search
+
+`GET /api/v1/search` provides the bounded navigation search used by the
+operator console and is equally available to headless clients. The required
+`query` is normalized and bounded. Optional repeatable `kinds` values restrict
+the result to `project`, `build`, `agent`, or `agent_pool`; `after` is an
+exclusive scope-bound cursor and `limit` is bounded by the published OpenAPI
+schema.
+
+Results contain only a typed resource kind, stable identity, operator-facing
+label, and bounded non-secret context. Exact identity matches rank before name
+prefix and other normalized-name matches. Authorization visibility is applied
+before matching, ranking, pagination, and cursor production. A cursor from a
+different normalized query or kind set is rejected rather than reused.
+
+### Operator attention and audit discovery
+
+`GET /api/v1/operator-attention` is a scoped attention projection, not a
+general activity feed or personal inbox. The request must include at least one
+`build_ids`, `agent_ids`, or `pool_ids` target, or set
+`include_critical_conditions=true`. Optional occurrence-time bounds, `after`,
+and `limit` remain part of the cursor scope. The newest-first response contains
+safe typed warning or critical transitions and optional visible resource
+targets. Supplying a target never grants visibility, and the route exposes no
+recipient or server-side unread state.
+
+`GET /api/v1/audit-facts` remains the immutable evidence view. It supports the
+published actor, operation, target, request-identity, and occurrence-time
+filters with cursor pagination. Audit facts describe committed operations;
+clients must not infer current authority from them.
 
 ## 7. Accept one manual Trigger occurrence
 
@@ -651,11 +697,16 @@ revision resolution is implemented by its later feature task.
 
 ## Agent inventory and Pool assignment
 
-The management contract exposes `GET /api/v1/agents` and
-`GET /api/v1/agents/{agent_id}`. Each resource has exactly one `pool_id` and
-`pool_version`, a normalized status, validated inventory, a separate static
-capacity projection, and `last_seen_at_unix_ms`. Inventory therefore does not
-duplicate Agent identity or host capacity.
+The management contract exposes `GET /api/v1/agents`, optional exact
+`pool_id` filtering on that collection, `GET /api/v1/agents/{agent_id}`, and
+`GET /api/v1/agent-pools/{pool_id}` for the current immutable Pool version.
+Each Agent has exactly one `pool_id` and `pool_version`, a normalized status,
+validated inventory, a separate static-capacity projection, and
+`last_seen_at_unix_ms`; there is no synthetic unassigned state. Agent detail
+also carries an optional bounded current-execution projection identifying the
+active Build, Attempt, Job, and lease state without a fence or credential.
+These are capacity and execution facts, not a browser-side scheduling
+compatibility decision.
 
 An idle Agent can be moved with `POST /api/v1/agents/{agent_id}/pool`. The body
 contains only `pool_id`; `Idempotency-Key` is required and `If-Match` carries

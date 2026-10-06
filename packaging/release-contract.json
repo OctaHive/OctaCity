@@ -38,7 +38,8 @@
     "octacity-console": {
       "protocols": {},
       "required_components": [
-        "application"
+        "application",
+        "proxy"
       ]
     },
     "octacity-server": {
