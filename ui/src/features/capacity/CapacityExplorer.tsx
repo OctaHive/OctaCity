@@ -62,15 +62,17 @@ function useSelectedCapacity(
   selectedPoolId: string | null,
 ): SelectedCapacityState {
   const { t } = usePresentation();
-  const agent = useQuery({
+  const agent = useQuery<AgentResource, Error>({
     enabled: selectedAgentId !== null,
+    placeholderData: (previous: AgentResource | undefined) => previous,
     queryFn: ({ signal }) => api.getAgent(requireSelection(selectedAgentId), signal),
     queryKey:
       selectedAgentId === null
         ? queryKeys.disabledExplorerDetail('agent')
         : queryKeys.agent(selectedAgentId),
   });
-  const resolvedPoolId = selectedPoolId ?? agent.data?.pool_id ?? null;
+  const resolvedPoolId =
+    selectedPoolId ?? (selectedAgentId === null ? null : (agent.data?.pool_id ?? null));
   const pool = useQuery({
     enabled: resolvedPoolId !== null,
     queryFn: ({ signal }) => api.getAgentPool(requireSelection(resolvedPoolId), signal),
@@ -120,7 +122,10 @@ function useSelectedCapacity(
             onRetry: stale.refetch,
           },
     failure: null,
-    selection: { agent: agent.data ?? null, pool: pool.data ?? null },
+    selection: {
+      agent: agent.isPlaceholderData ? null : (agent.data ?? null),
+      pool: pool.data ?? null,
+    },
   };
 }
 

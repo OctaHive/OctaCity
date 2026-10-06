@@ -139,6 +139,32 @@ describe('Capacity explorer', () => {
     expect(screen.getByRole('link', { name: 'Builder A' })).toBeTruthy();
   });
 
+  it('keeps the selected Pool expanded while a different Agent selection loads', async () => {
+    const api = fakeCapacityApi();
+    const selectedPool = pool('pool-a', 'Linux');
+    const firstAgent = agent('agent-a', 'Builder A', selectedPool.id);
+    api.listAgentPools.mockResolvedValue(page([selectedPool], null));
+    api.listAgents.mockResolvedValue(
+      page([firstAgent, agent('agent-b', 'Builder B', selectedPool.id)], null),
+    );
+    api.getAgent.mockImplementation(async (agentId) => {
+      if (agentId === firstAgent.id) return firstAgent;
+      return new Promise(() => undefined);
+    });
+    api.getAgentPool.mockResolvedValue(selectedPool);
+    const { router } = renderExplorer('/agents/agent-a', api);
+
+    await screen.findByRole('button', { name: 'Collapse Linux' });
+    const hierarchy = screen.getByRole('tree');
+    await userEvent.click(await screen.findByRole('link', { name: 'Builder B' }));
+
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe('/agents/agent-b'));
+    expect(screen.getByRole('tree')).toBe(hierarchy);
+    expect(api.listAgents).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Collapse Linux' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Builder B' })).toBeTruthy();
+  });
+
   it('keeps the existing capacity hierarchy mounted while an Agent Pool selection loads', async () => {
     const api = fakeCapacityApi();
     api.listAgentPools.mockResolvedValue(page([pool('pool-a', 'Linux')], null));
