@@ -402,6 +402,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-private-fs"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
 name = "octacity-protocol"
 version = "0.1.0"
 dependencies = [
@@ -425,6 +433,7 @@ dependencies = [
  "octa-plugin-lock",
  "octa-runner-protocol",
  "octacity-execution",
+ "octacity-private-fs",
  "octacity-protocol",
  "serde",
  "serde_json",

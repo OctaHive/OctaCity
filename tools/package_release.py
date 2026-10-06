@@ -75,6 +75,25 @@ PLATFORMS = {
 LINUX_RUNTIME_ASSETS = ("native-runtime.conf", "containerd-runtime.conf", "microsandbox-runtime.conf")
 
 
+def release_executable_files(
+    platform: str, *, include_codex_fixture: bool
+) -> frozenset[str]:
+    """Returns the portable executable-mode inventory for one Agent archive."""
+
+    layout = PLATFORMS[platform]
+    files = {
+        f"bin/{layout.agent_name}",
+        f"source-plugins/git/{layout.plugin_name}",
+    }
+    if layout.service_asset.endswith(".ps1"):
+        files.add(f"share/{layout.service_asset}")
+    if platform == "windows-amd64":
+        files.add("share/windows/uninstall-service.ps1")
+    if include_codex_fixture:
+        files.add("share/local-stand-codex-fixture")
+    return frozenset(files)
+
+
 def load_source_metadata(path: Path, expected_version: str, expected_platform: str) -> dict[str, object]:
     source = require_file("Git source-plugin package metadata", path)
     try:
@@ -109,6 +128,9 @@ def stage_release(
     codex_fixture: Path | None = None,
 ) -> None:
     layout = PLATFORMS[platform]
+    executable_files = release_executable_files(
+        platform, include_codex_fixture=codex_fixture is not None
+    )
     contract_path, product_contract = load_release_contract(repository, "octacity-agent")
     source_protocol = product_contract["protocols"]["source_plugin"]
     if source_metadata["protocol_max"] < source_protocol["min"] or source_metadata["protocol_min"] > source_protocol["max"]:
@@ -116,9 +138,17 @@ def stage_release(
     source_platform = layout.source_platform
     agent_name = layout.agent_name
     plugin_name = layout.plugin_name
-    copy_file(agent, root / "bin" / agent_name, executable=True)
+    copy_file(
+        agent,
+        root / "bin" / agent_name,
+        executable=f"bin/{agent_name}" in executable_files,
+    )
     plugin_destination = root / "source-plugins" / "git" / plugin_name
-    copy_file(source_git, plugin_destination, executable=True)
+    copy_file(
+        source_git,
+        plugin_destination,
+        executable=f"source-plugins/git/{plugin_name}" in executable_files,
+    )
     plugin_digest = sha256(plugin_destination)
     write_text(
         plugin_destination.parent / "plugin.toml",
@@ -143,14 +173,22 @@ def stage_release(
     )
     service_source = require_file("service asset", repository / "packaging" / layout.service_asset)
     service_destination = root / "share" / layout.service_asset
-    copy_file(service_source, service_destination, executable=service_source.suffix == ".ps1")
+    copy_file(
+        service_source,
+        service_destination,
+        executable=f"share/{layout.service_asset}" in executable_files,
+    )
     if platform.startswith("linux-"):
         for asset in LINUX_RUNTIME_ASSETS:
             source = require_file("systemd runtime drop-in", repository / "packaging/systemd" / asset)
             copy_file(source, root / "share/systemd" / asset)
     if platform == "windows-amd64":
         uninstall = require_file("Windows service removal asset", repository / "packaging/windows/uninstall-service.ps1")
-        copy_file(uninstall, root / "share/windows/uninstall-service.ps1", executable=True)
+        copy_file(
+            uninstall,
+            root / "share/windows/uninstall-service.ps1",
+            executable="share/windows/uninstall-service.ps1" in executable_files,
+        )
     config_source = require_file("example configuration", repository / "docs" / "reference" / "examples" / layout.config_asset)
     copy_file(config_source, root / "share/agent.example.toml")
     copy_file(require_file("operations guide", repository / "docs/operations/agent.md"), root / "share/operations.md")
@@ -160,7 +198,7 @@ def stage_release(
         copy_file(
             require_file("local-stand Codex fixture", codex_fixture),
             root / "share/local-stand-codex-fixture",
-            executable=True,
+            executable="share/local-stand-codex-fixture" in executable_files,
         )
     manifest = {
         "format_version": 1,
@@ -192,6 +230,7 @@ def package(args: argparse.Namespace) -> Path:
     octa_revision = validate_revision("Octa revision", args.octa_revision)
     source_platform = PLATFORMS[args.platform].source_platform
     source_metadata = load_source_metadata(args.source_metadata, version, source_platform)
+    codex_fixture = getattr(args, "codex_fixture", None)
     def stage(root: Path) -> None:
         stage_release(
             root,
@@ -204,10 +243,19 @@ def package(args: argparse.Namespace) -> Path:
             args.source_allow_file,
             octacity_revision,
             octa_revision,
-            getattr(args, "codex_fixture", None),
+            codex_fixture,
         )
 
-    return archive_release(args.platform, args.output, "octacity-release-", "octacity", stage)
+    return archive_release(
+        args.platform,
+        args.output,
+        "octacity-release-",
+        "octacity",
+        stage,
+        executable_files=release_executable_files(
+            args.platform, include_codex_fixture=codex_fixture is not None
+        ),
+    )
 
 
 def parse_args() -> argparse.Namespace:

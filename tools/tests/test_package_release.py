@@ -12,6 +12,7 @@ import tarfile
 import tempfile
 import tomllib
 import unittest
+from unittest import mock
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -133,7 +134,8 @@ class PackageReleaseTests(unittest.TestCase):
             fixture.write_text("#!/bin/sh\n# codex-cli 0.130.0\n", encoding="utf-8")
             arguments.codex_fixture = fixture
 
-            output = PACKAGE_RELEASE.package(arguments)
+            with mock.patch.object(Path, "chmod", autospec=True):
+                output = PACKAGE_RELEASE.package(arguments)
 
             with tarfile.open(output, "r:gz") as archive:
                 member = archive.getmember("share/local-stand-codex-fixture")
@@ -390,6 +392,15 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("result_schema:", fixture_text)
         self.assertTrue(
             (REPOSITORY / "server/tests/octacity-release-harness/src/bin/codex_fixture.rs").is_file()
+        )
+        harness_manifest = tomllib.loads(
+            (REPOSITORY / "server/tests/octacity-release-harness/Cargo.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            harness_manifest["package"]["default-run"],
+            "octacity-release-harness",
         )
         linux_native = workflow.split("  linux-native:\n", 1)[1].split(
             "  linux-containerd:\n", 1

@@ -11,11 +11,10 @@ import hashlib
 import json
 import re
 import shutil
-import stat
 import tarfile
 import tempfile
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 
 
@@ -100,7 +99,11 @@ def checksum_lines(root: Path, excluded: set[str] | None = None) -> str:
     return "".join(f"{sha256(path)}  {path.relative_to(root).as_posix()}\n" for path in files)
 
 
-def archive_tar(root: Path, destination: Path) -> None:
+def archive_tar(
+    root: Path,
+    destination: Path,
+    executable_files: frozenset[str] = frozenset(),
+) -> None:
     with destination.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w", format=tarfile.PAX_FORMAT) as archive:
@@ -111,7 +114,7 @@ def archive_tar(root: Path, destination: Path) -> None:
                     info.uname = info.gname = "root"
                     info.mtime = 0
                     if path.is_file():
-                        info.mode = stat.S_IMODE(path.stat().st_mode)
+                        info.mode = 0o755 if relative in executable_files else 0o644
                         with path.open("rb") as source:
                             archive.addfile(info, source)
                     else:
@@ -119,13 +122,18 @@ def archive_tar(root: Path, destination: Path) -> None:
                         archive.addfile(info)
 
 
-def archive_zip(root: Path, destination: Path) -> None:
+def archive_zip(
+    root: Path,
+    destination: Path,
+    executable_files: frozenset[str] = frozenset(),
+) -> None:
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for path in sorted(candidate for candidate in root.rglob("*") if candidate.is_file()):
             relative = path.relative_to(root).as_posix()
             info = zipfile.ZipInfo(relative, FIXED_ZIP_TIME)
             info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = (stat.S_IMODE(path.stat().st_mode) & 0xFFFF) << 16
+            mode = 0o755 if relative in executable_files else 0o644
+            info.external_attr = (mode & 0xFFFF) << 16
             archive.writestr(info, path.read_bytes(), compresslevel=9)
 
 
@@ -135,6 +143,8 @@ def archive_release(
     temporary_prefix: str,
     root_name: str,
     stage: Callable[[Path], None],
+    *,
+    executable_files: Collection[str] = (),
 ) -> Path:
     """Stage, archive, and externally checksum one product release."""
 
@@ -149,9 +159,21 @@ def archive_release(
         root = Path(temporary) / root_name
         root.mkdir()
         stage(root)
+        executables = frozenset(executable_files)
+        for relative in executables:
+            candidate = Path(relative)
+            staged = root / candidate
+            if (
+                candidate.is_absolute()
+                or candidate.as_posix() != relative
+                or ".." in candidate.parts
+                or not staged.is_file()
+                or staged.is_symlink()
+            ):
+                raise ValueError(f"release executable path is invalid: {relative}")
         if expected_suffix == ".zip":
-            archive_zip(root, output)
+            archive_zip(root, output, executables)
         else:
-            archive_tar(root, output)
+            archive_tar(root, output, executables)
     write_text(output.with_name(output.name + ".sha256"), f"{sha256(output)}  {output.name}\n")
     return output

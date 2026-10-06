@@ -63,6 +63,11 @@ def package(args: argparse.Namespace) -> Path:
     server = require_file("server executable", args.server)
     version = validate_version(args.version)
     octacity_revision = validate_revision("OctaCity revision", args.octacity_revision)
+    executable_name = (
+        "octacity-server.exe"
+        if args.platform.startswith("windows-")
+        else "octacity-server"
+    )
     def stage(root: Path) -> None:
         stage_release(root, repository, args.platform, version, server, octacity_revision)
 
@@ -72,6 +77,7 @@ def package(args: argparse.Namespace) -> Path:
         "octacity-server-release-",
         "octacity-server",
         stage,
+        executable_files={f"bin/{executable_name}"},
     )
 
 

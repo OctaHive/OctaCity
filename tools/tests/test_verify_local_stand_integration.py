@@ -190,6 +190,17 @@ class LocalStandIntegrationTests(unittest.TestCase):
             ):
                 client.verify_agent_work_root_is_empty()
 
+    def test_terminal_codex_cleanup_does_not_treat_windows_acl_as_posix_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work_root = Path(directory) / "agent/work"
+            work_root.mkdir(parents=True)
+            work_root.chmod(0o777)
+            client = integration.LocalStandClient.__new__(integration.LocalStandClient)
+            client._agent_work_root = work_root
+
+            with mock.patch.object(integration.os, "name", "nt"):
+                client.verify_agent_work_root_is_empty()
+
     def test_terminal_codex_cleanup_does_not_follow_a_work_root_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 publish = false
 description = "Isolated released-bundle installer for the Agent Ready matrix"
+default-run = "octacity-release-harness"
 
 [[bin]]
 name = "octacity-codex-fixture"

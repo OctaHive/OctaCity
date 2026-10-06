@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import hashlib
 from http import client as http_client
 import json
+import os
 from pathlib import Path
 import re
 import ssl
@@ -213,7 +214,7 @@ class LocalStandClient:
             raise IntegrationError("failed to inspect the Agent work root") from cause
         if not stat.S_ISDIR(metadata.st_mode):
             raise IntegrationError("Agent work root is not a real directory")
-        if metadata.st_mode & 0o077:
+        if os.name == "posix" and metadata.st_mode & 0o077:
             raise IntegrationError("Agent work root is accessible to another principal")
         try:
             entries = list(self._agent_work_root.iterdir())

@@ -50,13 +50,11 @@ pub(super) fn external_executable_environment(runner: &RunnerProgram) -> BTreeMa
     .external_executable_projections()
     .into_iter()
     .map(|projection| {
-      (
-        projection.selector,
-        projection
-          .destination(Path::new(NATIVE_TOOLS_ROOT_PATH))
-          .to_string_lossy()
-          .into_owned(),
-      )
+      let destination = projection
+        .destination(Path::new(NATIVE_TOOLS_ROOT_PATH))
+        .to_string_lossy()
+        .into_owned();
+      (projection.selector, destination)
     })
     .collect()
 }
