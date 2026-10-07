@@ -1,6 +1,7 @@
 //! Runner release inventory and trust-boundary tests.
 
 use super::*;
+use octacity_private_fs::test_support::PrivateDirectoryFixture;
 use std::collections::BTreeMap;
 
 fn write_executable(path: &Path, contents: &[u8]) {
@@ -20,8 +21,8 @@ fn linux_x86_64_executable_with_version(version: &str) -> Vec<u8> {
   bytes
 }
 
-fn codex_release() -> (tempfile::TempDir, RunnerInstallation, PathBuf) {
-  let release = tempfile::tempdir().unwrap();
+fn codex_release() -> (PrivateDirectoryFixture, RunnerInstallation, PathBuf) {
+  let release = PrivateDirectoryFixture::new().unwrap();
   fs::create_dir(release.path().join("plugins")).unwrap();
   let plugin = release.path().join("plugins/octa_plugin_codex");
   write_executable(&plugin, b"codex plugin fixture");

@@ -34,4 +34,5 @@ zeroize.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
+octacity-private-fs = { path = "../octacity-private-fs", features = ["test-support"] }
 tempfile.workspace = true
