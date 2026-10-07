@@ -59,7 +59,10 @@ pub(super) fn build_run_request(
     failfast: spec.failfast,
     dry: false,
     force: false,
-    quiet: false,
+    // Octa's human-oriented informational diagnostics may render complete
+    // repository task configuration. The Agent retains the structured
+    // lifecycle and task streams instead of publishing that untrusted input.
+    quiet: true,
     silence: None,
   })
 }
@@ -211,6 +214,14 @@ mod tests {
     assert_eq!(cache.local_capacity.max_bytes, 100);
     let remote = cache.remote.unwrap();
     assert_eq!(remote.token_file, PathBuf::from("/run/octa-cache/token"));
+  }
+
+  #[test]
+  fn suppresses_unstructured_informational_diagnostics_at_the_runner_boundary() {
+    let request = build_run_request(&execution_spec(), &octa_spec(), Some(&session()), &paths()).unwrap();
+
+    assert!(request.quiet);
+    assert_eq!(request.silence, None);
   }
 
   #[test]
