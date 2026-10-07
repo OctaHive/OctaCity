@@ -116,14 +116,10 @@ async fn execute_with_origin(
         attempt_state: parse_attempt_state(&existing.attempt_state)?,
         build_state: parse_build_state(&existing.build_state)?,
       };
-      append_orchestrator_fact(&mut transaction, &identity, attempt_id, &outcome).await?;
-      crate::mutation::commit(
-        transaction,
-        &identity,
-        facts(&request, &outcome, attention_build_id, origin),
-        encode_outcome(&StoredOutcome::from(&outcome))?,
-      )
-      .await?;
+      // Assignment delivery and Agent completion intentionally use distinct
+      // mutation namespaces. If one path already committed this completion,
+      // the other path must replay the canonical Job outcome without
+      // publishing a second idempotency, audit, or outbox record.
       return Ok(outcome);
     }
     return Err(StoreError::Conflict {
