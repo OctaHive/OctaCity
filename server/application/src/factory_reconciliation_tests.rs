@@ -22,10 +22,11 @@ use octacity_server_store::{
   AuditActor, AuditActorKind, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns,
   ClaimedFactoryOutbox, ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome,
   CreateFactoryConfiguration, FactoryConfigurationAvailability, FactoryConfigurationMutationOutcome,
-  FactoryConfigurationStore, FactoryOutboxRecord, FactoryRunSnapshot, FactoryRunStore, ManagementMutation,
-  ManagementSecurityScope, MutationAuditContext, PublishedFactoryAdmission, PublishedFactoryConfiguration,
-  ReplaceFactoryConfiguration, ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation,
-  SettleFactoryOutbox, StoreError, testing::InMemoryFactoryConfigurationStore,
+  FactoryConfigurationStore, FactoryOutboxRecord, FactoryRunDiagnosticPage, FactoryRunSnapshot, FactoryRunStore,
+  ListFactoryRunDiagnostics, ManagementMutation, ManagementSecurityScope, MutationAuditContext,
+  PublishedFactoryAdmission, PublishedFactoryConfiguration, ReplaceFactoryConfiguration,
+  ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation, SettleFactoryOutbox, StoreError,
+  testing::InMemoryFactoryConfigurationStore,
 };
 
 pub(super) fn key(value: &str) -> FactoryKey {
@@ -360,6 +361,13 @@ impl FactoryRunStore for MeasuredStore {
     };
     self.active.fetch_sub(1, Ordering::SeqCst);
     result
+  }
+
+  async fn list_factory_run_diagnostics(
+    &self,
+    request: ListFactoryRunDiagnostics,
+  ) -> Result<FactoryRunDiagnosticPage, StoreError> {
+    self.inner.list_factory_run_diagnostics(request).await
   }
 
   async fn claim_factory_run(&self, request: ClaimFactoryRun) -> Result<ClaimFactoryRunOutcome, StoreError> {

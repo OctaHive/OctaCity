@@ -1,10 +1,10 @@
 use async_trait::async_trait;
 use octacity_server_cache::{BlobDescriptor, CacheBlobObject};
-use octacity_server_domain::{ArtifactId, JobId, LogChunkId};
+use octacity_server_domain::{ArtifactId, JobId, LogChunkId, Timestamp};
 use octacity_server_store::{
   BuildLogStream, LogChunkDigest, LogChunkManifest, MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage,
-  RestoreCacheBlobPage, RestoreCacheCursor, RestoreInventoryStore, RestoreLogChunkPage, StoreError,
-  StoredLogChunkManifest,
+  RestoreCacheBlobPage, RestoreCacheCursor, RestoreFactoryArtifactPage, RestoreFactoryRecovery, RestoreInventoryStore,
+  RestoreLogChunkPage, StoreError, StoredLogChunkManifest,
 };
 use sqlx::{FromRow, PgPool, types::Json};
 
@@ -12,12 +12,28 @@ use crate::{database::unavailable, store::PostgresStore};
 
 #[async_trait]
 impl RestoreInventoryStore for PostgresStore {
+  async fn recover_restored_factory_state(
+    &self,
+    observed_at: Timestamp,
+    limit: u16,
+  ) -> Result<RestoreFactoryRecovery, StoreError> {
+    crate::factory_run::recover_restored_ownership(self.pool(), observed_at, limit).await
+  }
+
   async fn restore_artifact_page(
     &self,
     after: Option<ArtifactId>,
     limit: u16,
   ) -> Result<RestoreArtifactPage, StoreError> {
     crate::artifact::restore_page(self.pool(), after, limit).await
+  }
+
+  async fn restore_factory_artifact_page(
+    &self,
+    after: Option<ArtifactId>,
+    limit: u16,
+  ) -> Result<RestoreFactoryArtifactPage, StoreError> {
+    crate::artifact::restore_factory_page(self.pool(), after, limit).await
   }
 
   async fn restore_log_chunk_page(

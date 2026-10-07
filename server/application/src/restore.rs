@@ -1,13 +1,25 @@
-use std::sync::Arc;
+use std::{
+  sync::Arc,
+  time::{SystemTime, UNIX_EPOCH},
+};
 
 use octacity_artifact_store::{ArtifactObject, ArtifactStore, ArtifactStoreError, LogChunkStore, LogChunkStoreError};
 use octacity_server_cache::{CacheBlobStore, CacheBlobStoreError};
+use octacity_server_domain::Timestamp;
 use octacity_server_store::{MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreInventoryStore, StoreError};
 use thiserror::Error;
 
 /// Counts independently verified object references in one restored snapshot.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RestoreReconciliationSummary {
+  /// Factory Run claims made non-authoritative after restore.
+  pub factory_claims_expired: u64,
+  /// Factory outbox operations returned to pending work after restore.
+  pub factory_outbox_requeued: u64,
+  /// Factory-retention claims made non-authoritative after restore.
+  pub factory_retention_claims_expired: u64,
+  /// Exact Artifact objects retained by visible Factory Runs.
+  pub factory_artifacts: u64,
   /// Published Artifact and report objects.
   pub artifacts: u64,
   /// Visible immutable Build-log chunks.
@@ -48,20 +60,54 @@ where
   /// cursor pages describe one quiesced consistency unit.
   pub async fn reconcile(&self) -> Result<RestoreReconciliationSummary, RestoreReconciliationError> {
     let mut summary = RestoreReconciliationSummary::default();
+    let observed_at = system_time()?;
+    loop {
+      let recovery = self
+        .inventory
+        .recover_restored_factory_state(observed_at, self.batch_size)
+        .await?;
+      summary.factory_claims_expired = summary
+        .factory_claims_expired
+        .checked_add(u64::from(recovery.expired_claims))
+        .ok_or(RestoreReconciliationError::InvalidInventory)?;
+      summary.factory_outbox_requeued = summary
+        .factory_outbox_requeued
+        .checked_add(u64::from(recovery.requeued_outbox))
+        .ok_or(RestoreReconciliationError::InvalidInventory)?;
+      summary.factory_retention_claims_expired = summary
+        .factory_retention_claims_expired
+        .checked_add(u64::from(recovery.expired_retention_claims))
+        .ok_or(RestoreReconciliationError::InvalidInventory)?;
+      if !recovery.has_more {
+        break;
+      }
+      if recovery.expired_claims == 0 && recovery.expired_retention_claims == 0 && recovery.requeued_outbox == 0 {
+        return Err(RestoreReconciliationError::InvalidInventory);
+      }
+    }
+
+    let mut after = None;
+    loop {
+      let page = self
+        .inventory
+        .restore_factory_artifact_page(after, self.batch_size)
+        .await?;
+      for upload in page.items {
+        verify_artifact(self.bytes.as_ref(), &upload).await?;
+        summary.factory_artifacts = checked_increment(summary.factory_artifacts)?;
+      }
+      match page.next_after {
+        Some(next) if Some(next) != after => after = Some(next),
+        Some(_) => return Err(RestoreReconciliationError::InvalidInventory),
+        None => break,
+      }
+    }
+
     let mut after = None;
     loop {
       let page = self.inventory.restore_artifact_page(after, self.batch_size).await?;
       for upload in page.items {
-        let identity = upload.artifact.identity();
-        let object = ArtifactObject::new(
-          identity.artifact_id,
-          upload.upload_id,
-          identity.size_bytes,
-          identity.digest.to_string(),
-          upload.transport_media_type.as_str(),
-        )
-        .map_err(|_| RestoreReconciliationError::InvalidInventory)?;
-        self.bytes.verify_published(&object).await?;
+        verify_artifact(self.bytes.as_ref(), &upload).await?;
         summary.artifacts = checked_increment(summary.artifacts)?;
       }
       match page.next_after {
@@ -105,6 +151,32 @@ where
   }
 }
 
+async fn verify_artifact<B: ArtifactStore + ?Sized>(
+  bytes: &B,
+  upload: &octacity_server_store::ArtifactUploadRecord,
+) -> Result<(), RestoreReconciliationError> {
+  let identity = upload.artifact.identity();
+  let object = ArtifactObject::new(
+    identity.artifact_id,
+    upload.upload_id,
+    identity.size_bytes,
+    identity.digest.to_string(),
+    upload.transport_media_type.as_str(),
+  )
+  .map_err(|_| RestoreReconciliationError::InvalidInventory)?;
+  bytes.verify_published(&object).await?;
+  Ok(())
+}
+
+fn system_time() -> Result<Timestamp, RestoreReconciliationError> {
+  let milliseconds = SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .ok()
+    .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+    .ok_or(RestoreReconciliationError::ClockUnavailable)?;
+  Timestamp::from_unix_millis(milliseconds).map_err(|_| RestoreReconciliationError::ClockUnavailable)
+}
+
 fn checked_increment(value: u64) -> Result<u64, RestoreReconciliationError> {
   value.checked_add(1).ok_or(RestoreReconciliationError::InvalidInventory)
 }
@@ -118,6 +190,9 @@ pub enum RestoreReconciliationError {
   /// Authoritative metadata is malformed or pagination did not advance.
   #[error("restored authoritative object inventory is invalid")]
   InvalidInventory,
+  /// The current process time cannot be represented by the domain timestamp.
+  #[error("restore reconciliation clock is unavailable")]
+  ClockUnavailable,
   /// PostgreSQL could not provide the authoritative inventory.
   #[error("restored authoritative object inventory is unavailable")]
   Store(#[from] StoreError),
@@ -150,19 +225,28 @@ mod tests {
   use octacity_server_store::{
     ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactRetentionPolicy,
     ArtifactType, ArtifactUploadRecord, BuildLogStream, IdempotencyKey, LogChunkManifest, RestoreArtifactPage,
-    RestoreCacheBlobPage, RestoreCacheCursor, RestoreLogChunkPage,
+    RestoreCacheBlobPage, RestoreCacheCursor, RestoreFactoryArtifactPage, RestoreFactoryRecovery, RestoreLogChunkPage,
   };
 
   use super::*;
 
   struct Inventory {
     artifact: ArtifactUploadRecord,
+    retain_for_factory: bool,
     log_chunk: LogChunkManifest,
     cache: CacheBlobObject,
   }
 
   #[async_trait]
   impl RestoreInventoryStore for Inventory {
+    async fn recover_restored_factory_state(
+      &self,
+      _observed_at: Timestamp,
+      _limit: u16,
+    ) -> Result<RestoreFactoryRecovery, StoreError> {
+      Ok(RestoreFactoryRecovery::default())
+    }
+
     async fn restore_artifact_page(
       &self,
       after: Option<ArtifactId>,
@@ -170,6 +254,20 @@ mod tests {
     ) -> Result<RestoreArtifactPage, StoreError> {
       Ok(RestoreArtifactPage {
         items: after.is_none().then(|| self.artifact.clone()).into_iter().collect(),
+        next_after: None,
+      })
+    }
+
+    async fn restore_factory_artifact_page(
+      &self,
+      after: Option<ArtifactId>,
+      _limit: u16,
+    ) -> Result<RestoreFactoryArtifactPage, StoreError> {
+      Ok(RestoreFactoryArtifactPage {
+        items: (self.retain_for_factory && after.is_none())
+          .then(|| self.artifact.clone())
+          .into_iter()
+          .collect(),
         next_after: None,
       })
     }
@@ -307,6 +405,10 @@ mod tests {
     assert_eq!(
       valid,
       RestoreReconciliationSummary {
+        factory_claims_expired: 0,
+        factory_outbox_requeued: 0,
+        factory_retention_claims_expired: 0,
+        factory_artifacts: 1,
         artifacts: 1,
         log_chunks: 1,
         cache_blobs: 1,
@@ -351,6 +453,7 @@ mod tests {
   fn inventory() -> Inventory {
     Inventory {
       artifact: artifact_upload(),
+      retain_for_factory: true,
       log_chunk: LogChunkManifest::prepare(id(4), BuildLogStream::Stdout, 1, 1, b"log").unwrap(),
       cache: cache_object(),
     }

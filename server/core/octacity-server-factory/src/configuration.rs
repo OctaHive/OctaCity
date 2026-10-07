@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, ProjectId};
+use serde::{Deserialize, Serialize};
 
 use crate::{
   BudgetLimit, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose, DecisionSignalRouteSet,
@@ -20,7 +21,8 @@ pub const MAX_FACTORY_ACTIVE_STAGES: u32 = 1_000;
 pub const MAX_FACTORY_REWORK_CYCLES: u16 = 32;
 
 /// Exact immutable identity selected from a configuration choice catalog.
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImmutableReference {
   identity: FactoryKey,
   version: FactoryKey,
@@ -58,7 +60,8 @@ impl ImmutableReference {
 }
 
 /// Exact Project-owned Build Configuration version used by a Factory stage.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BuildConfigurationRef {
   id: BuildConfigurationId,
   version: BuildConfigurationVersion,
@@ -163,7 +166,8 @@ impl FactoryConfigurationChoices {
 }
 
 /// Per-configuration work-in-progress ceilings.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryWipLimits {
   max_active_runs: u32,
   max_active_stages: u32,
@@ -202,7 +206,8 @@ impl FactoryWipLimits {
 }
 
 /// Unresolved stage selection supplied for configuration publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryStageDraft {
   /// Stable stage identity within the configuration version.
   pub key: FactoryKey,
@@ -215,7 +220,8 @@ pub struct FactoryStageDraft {
 }
 
 /// Immutable validated stage definition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryStageDefinition {
   key: FactoryKey,
   kind: FactoryStageKind,
@@ -250,7 +256,8 @@ impl FactoryStageDefinition {
 }
 
 /// Optional unresolved Decision Signal profile selected for one purpose.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DecisionSignalProfileDraft {
   /// Purpose governed by this profile.
   pub purpose: DecisionSignalPurpose,
@@ -275,7 +282,8 @@ pub struct DecisionSignalProfileDraft {
 }
 
 /// Immutable purpose-specific Decision Signal selection.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DecisionSignalProfile {
   purpose: DecisionSignalPurpose,
   provider: ImmutableReference,
@@ -290,7 +298,8 @@ pub struct DecisionSignalProfile {
 }
 
 /// Named exact inputs for one resolved Decision Signal profile.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DecisionSignalProfileDefinition {
   /// Purpose governed by this profile.
   pub purpose: DecisionSignalPurpose,
@@ -402,7 +411,8 @@ impl DecisionSignalProfile {
 }
 
 /// Unresolved criterion and evaluator selection supplied at publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluationPolicyDraft {
   /// Selected criterion-pack aliases.
   pub criterion_packs: Vec<FactoryKey>,
@@ -415,7 +425,8 @@ pub struct EvaluationPolicyDraft {
 }
 
 /// Exact immutable evaluation selection for one configuration version.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvaluationPolicy {
   criterion_packs: Vec<ImmutableReference>,
   evaluators: Vec<ImmutableReference>,
@@ -450,7 +461,8 @@ impl EvaluationPolicy {
 }
 
 /// Unresolved bounded rework selection supplied at publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReworkPolicyDraft {
   /// Maximum number of rework cycles; zero disables rework.
   pub max_cycles: u16,
@@ -459,7 +471,8 @@ pub struct ReworkPolicyDraft {
 }
 
 /// Immutable bounded rework policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReworkPolicy {
   max_cycles: u16,
   stage: Option<FactoryKey>,
@@ -480,7 +493,8 @@ impl ReworkPolicy {
 }
 
 /// Unresolved delivery-for-review selection supplied at publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryPolicyDraft {
   /// Delivery adapter alias.
   pub adapter: FactoryKey,
@@ -489,7 +503,8 @@ pub struct DeliveryPolicyDraft {
 }
 
 /// Exact delivery-for-human-review policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DeliveryPolicy {
   adapter: ImmutableReference,
   policy: ImmutableReference,
@@ -510,7 +525,8 @@ impl DeliveryPolicy {
 }
 
 /// Complete unresolved definition submitted for immutable publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryConfigurationDraft {
   /// Alias of the immutable admission policy governing later Work selection.
   pub admission_policy: FactoryKey,
@@ -535,7 +551,8 @@ pub struct FactoryConfigurationDraft {
 }
 
 /// One validated immutable Factory Configuration version.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryConfiguration {
   reference: FactoryConfigurationRef,
   admission_policy: ImmutableReference,

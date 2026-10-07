@@ -85,6 +85,19 @@ pub(crate) async fn claim(pool: &PgPool, request: ClaimRetentionWork) -> Result<
            ORDER BY version DESC LIMIT 1) AS hold \
            WHERE hold.released_at IS NULL AND hold.expired_at IS NULL AND (hold.expires_at IS NULL \
              OR hold.expires_at > to_timestamp($1::double precision / 1000.0))) \
+         AND NOT EXISTS (\
+           SELECT 1 FROM factory_build_links AS link \
+           JOIN factory_runs AS run ON run.id = link.run_id \
+           LEFT JOIN factory_retention_work AS factory_work ON factory_work.run_id = run.id \
+           WHERE link.build_id = retention_work.build_id \
+             AND (run.visible OR factory_work.phase = 'hidden')\
+         ) \
+         AND NOT EXISTS (\
+           SELECT 1 FROM factory_artifact_references AS reference \
+           JOIN artifacts AS artifact ON artifact.id = reference.artifact_id \
+           WHERE artifact.build_id = retention_work.build_id \
+             AND reference.released_at IS NULL\
+         ) \
        ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT $2\
      ), claimed AS (\
        UPDATE retention_work AS work SET claim_owner = $3, \
@@ -113,8 +126,8 @@ pub(crate) async fn prepare(pool: &PgPool, request: PrepareRetentionWork) -> Res
   request.validate()?;
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let mut work = lock_work(&mut transaction, request.work_id, &request.owner, request.observed_at).await?;
-  let held = lock_build_and_check_hold(&mut transaction, work.build_id, request.observed_at).await?;
-  if phase(&work.phase)? == RetentionPhase::Pending && !held {
+  let retained = lock_build_and_check_retention(&mut transaction, work.build_id, request.observed_at).await?;
+  if phase(&work.phase)? == RetentionPhase::Pending && !retained {
     hide_component(&mut transaction, &mut work, request.observed_at).await?;
   }
   let current_phase = phase(&work.phase)?;
@@ -252,7 +265,7 @@ pub(crate) async fn finish_pass(
   Ok(outcome)
 }
 
-async fn lock_build_and_check_hold(
+async fn lock_build_and_check_retention(
   transaction: &mut Transaction<'_, Postgres>,
   build_id: BuildId,
   observed_at: Timestamp,
@@ -267,7 +280,25 @@ async fn lock_build_and_check_hold(
       entity: EntityKind::Build,
     });
   }
-  crate::retention_hold::active_for_retention(transaction, build_id, observed_at).await
+  if crate::retention_hold::active_for_retention(transaction, build_id, observed_at).await? {
+    return Ok(true);
+  }
+  sqlx::query_scalar(
+    "SELECT EXISTS(\
+       SELECT 1 FROM factory_build_links AS link \
+       JOIN factory_runs AS run ON run.id = link.run_id \
+       LEFT JOIN factory_retention_work AS factory_work ON factory_work.run_id = run.id \
+       WHERE link.build_id = $1 AND (run.visible OR factory_work.phase = 'hidden') \
+       UNION ALL \
+       SELECT 1 FROM factory_artifact_references AS reference \
+       JOIN artifacts AS artifact ON artifact.id = reference.artifact_id \
+       WHERE artifact.build_id = $1 AND reference.released_at IS NULL\
+     )",
+  )
+  .bind(build_id.as_uuid())
+  .fetch_one(&mut **transaction)
+  .await
+  .map_err(unavailable)
 }
 
 pub(crate) async fn fail(pool: &PgPool, request: FailRetentionWork) -> Result<(), StoreError> {

@@ -30,6 +30,11 @@ mod definition_mutation;
 mod definition_query;
 mod discovery;
 mod external_trigger;
+mod factory_admission;
+mod factory_configuration;
+mod factory_discovery;
+mod factory_retention;
+mod factory_run;
 mod internal_trigger;
 mod internal_trigger_definition;
 mod job_claim;
@@ -77,7 +82,7 @@ pub use migration::{
   run_migrator,
 };
 pub use ready_queue_notification::ready_job_count;
-pub use store::{PostgresAuthoritativeStore, PostgresStore};
+pub use store::{FactoryCapabilitySource, PostgresAuthoritativeStore, PostgresStore};
 
 /// PostgreSQL notification channel emitted after a ready-queue transaction commits.
 pub const READY_JOB_NOTIFICATION_CHANNEL: &str = "octacity_ready_jobs";

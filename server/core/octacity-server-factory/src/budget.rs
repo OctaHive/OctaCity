@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::FactoryError;
 
 /// Maximum Stage Attempts allowed by one immutable hard budget.
@@ -41,7 +43,8 @@ impl BudgetResource {
 }
 
 /// Immutable hard limits for one bounded Factory scope.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BudgetLimit {
   max_attempts: u32,
   max_elapsed_millis: u64,
@@ -123,7 +126,8 @@ impl BudgetLimit {
 }
 
 /// Monotonic usage measured against an immutable [`BudgetLimit`].
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct BudgetUsage {
   /// Attempts already consumed.
   pub attempts: u32,

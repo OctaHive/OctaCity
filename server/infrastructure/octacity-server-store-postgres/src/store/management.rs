@@ -5,6 +5,139 @@ use octacity_server_store::*;
 use super::PostgresStore;
 
 #[async_trait]
+impl FactoryConfigurationStore for PostgresStore {
+  async fn replay_factory_configuration_mutation(
+    &self,
+    request: ManagementMutation<ReplayFactoryConfigurationMutation>,
+  ) -> Result<Option<FactoryConfigurationMutationOutcome>, StoreError> {
+    crate::factory_configuration::replay_mutation(&self.pool, request).await
+  }
+
+  async fn factory_configuration_availability(
+    &self,
+    project_id: ProjectId,
+  ) -> Result<FactoryConfigurationAvailability, StoreError> {
+    crate::discovery::require_project(&self.pool, project_id).await?;
+    self.factory_capabilities().availability(project_id).await
+  }
+
+  async fn create_factory_configuration(
+    &self,
+    request: ManagementMutation<CreateFactoryConfiguration>,
+  ) -> Result<FactoryConfigurationMutationOutcome, StoreError> {
+    crate::factory_configuration::create(&self.pool, request).await
+  }
+
+  async fn replace_factory_configuration(
+    &self,
+    request: ManagementMutation<ReplaceFactoryConfiguration>,
+  ) -> Result<FactoryConfigurationMutationOutcome, ReplaceFactoryConfigurationError> {
+    crate::factory_configuration::replace(&self.pool, request).await
+  }
+
+  async fn factory_configuration_version(
+    &self,
+    id: octacity_server_factory::FactoryConfigurationId,
+    version: octacity_server_factory::FactoryConfigurationVersion,
+  ) -> Result<PublishedFactoryConfiguration, StoreError> {
+    crate::factory_configuration::read(&self.pool, id, version).await
+  }
+
+  async fn current_factory_configuration(
+    &self,
+    id: octacity_server_factory::FactoryConfigurationId,
+  ) -> Result<PublishedFactoryConfiguration, StoreError> {
+    crate::factory_configuration::read_current(&self.pool, id).await
+  }
+}
+
+#[async_trait]
+impl FactoryAdmissionStore for PostgresStore {
+  async fn replay_factory_admission(
+    &self,
+    probe: &FactoryAdmissionProbe,
+  ) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
+    crate::factory_admission::replay(&self.pool, probe).await
+  }
+
+  async fn factory_admission_context(
+    &self,
+    request: ReadFactoryAdmissionContext,
+  ) -> Result<FactoryAdmissionContext, StoreError> {
+    crate::factory_admission::context(&self.pool, request).await
+  }
+
+  async fn admit_factory_work(
+    &self,
+    request: ManagementMutation<AdmitFactoryWork>,
+  ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+    crate::factory_admission::admit(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl FactoryDiscoveryStore for PostgresStore {
+  async fn list_project_factory_configurations(
+    &self,
+    request: ListProjectFactoryConfigurations,
+  ) -> Result<CurrentFactoryConfigurationPage, StoreError> {
+    crate::factory_discovery::list_configurations(&self.pool, request).await
+  }
+
+  async fn list_factory_runs(&self, request: ListFactoryRuns) -> Result<FactoryRunPage, StoreError> {
+    crate::factory_discovery::list_runs(&self.pool, request).await
+  }
+
+  async fn factory_run_summary(
+    &self,
+    run_id: octacity_server_factory::FactoryRunId,
+    visibility: FactoryRunListVisibility,
+  ) -> Result<FactoryRunSummary, StoreError> {
+    crate::factory_discovery::read_run(&self.pool, run_id, visibility).await
+  }
+}
+
+#[async_trait]
+impl FactoryRunStore for PostgresStore {
+  async fn factory_run_snapshot(
+    &self,
+    run_id: octacity_server_factory::FactoryRunId,
+  ) -> Result<FactoryRunSnapshot, StoreError> {
+    crate::factory_run::read_snapshot(&self.pool, run_id).await
+  }
+
+  async fn list_factory_run_diagnostics(
+    &self,
+    request: octacity_server_store::ListFactoryRunDiagnostics,
+  ) -> Result<octacity_server_store::FactoryRunDiagnosticPage, StoreError> {
+    crate::factory_run::list_diagnostics(&self.pool, request).await
+  }
+
+  async fn claim_factory_run(&self, request: ClaimFactoryRun) -> Result<ClaimFactoryRunOutcome, StoreError> {
+    crate::factory_run::claim(&self.pool, request).await
+  }
+
+  async fn claim_factory_runs(&self, request: ClaimFactoryRuns) -> Result<Vec<ClaimedFactoryRun>, StoreError> {
+    crate::factory_run::claim_batch(&self.pool, request).await
+  }
+
+  async fn commit_factory_run_transition(
+    &self,
+    request: CommitFactoryRunTransition,
+  ) -> Result<CommitFactoryRunTransitionOutcome, StoreError> {
+    crate::factory_run::commit_transition(&self.pool, request).await
+  }
+
+  async fn claim_factory_outbox(&self, request: ClaimFactoryOutbox) -> Result<Vec<ClaimedFactoryOutbox>, StoreError> {
+    crate::factory_run::claim_outbox(&self.pool, request).await
+  }
+
+  async fn settle_factory_outbox(&self, request: SettleFactoryOutbox) -> Result<FactoryOutboxRecord, StoreError> {
+    crate::factory_run::settle_outbox(&self.pool, request).await
+  }
+}
+
+#[async_trait]
 impl ProjectStore for PostgresStore {
   async fn create_project(
     &self,

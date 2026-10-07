@@ -9,8 +9,9 @@ use octacity_server_store::{
   ArtifactContentDigest, ArtifactEvent, ArtifactIdentity, ArtifactMediaType, ArtifactRecord, ArtifactReportFormat,
   ArtifactRetentionPolicy, ArtifactState, ArtifactTransitionAuthority, ArtifactType, ArtifactUploadRecord,
   ArtifactVerificationResult, BeginArtifactUpload, BeginArtifactUploadOutcome, IdempotencyKey, ListPublishedArtifacts,
-  MAX_RESTORE_RECONCILIATION_BATCH_SIZE, MutationDisposition, ReserveArtifact, RestoreArtifactPage, StoreError,
-  StoreInputError, StoreOperation, TransitionArtifact, VerifyArtifactUpload, artifact_authority_is_valid,
+  MAX_RESTORE_RECONCILIATION_BATCH_SIZE, MutationDisposition, ReserveArtifact, RestoreArtifactPage,
+  RestoreFactoryArtifactPage, StoreError, StoreInputError, StoreOperation, TransitionArtifact, VerifyArtifactUpload,
+  artifact_authority_is_valid,
 };
 use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
 use uuid::Uuid;
@@ -504,6 +505,73 @@ pub(crate) async fn restore_page(
       .artifact_id
   });
   Ok(RestoreArtifactPage { items, next_after })
+}
+
+pub(crate) async fn restore_factory_page(
+  pool: &PgPool,
+  after: Option<ArtifactId>,
+  limit: u16,
+) -> Result<RestoreFactoryArtifactPage, StoreError> {
+  validate_restore_limit(limit)?;
+  let invalid: bool = sqlx::query_scalar(
+    "SELECT EXISTS(\
+       SELECT 1 FROM factory_artifact_references AS reference \
+       JOIN factory_runs AS run ON run.id = reference.run_id \
+       LEFT JOIN factory_retention_work AS factory_work ON factory_work.run_id = run.id \
+       LEFT JOIN artifacts AS artifact ON artifact.id = reference.artifact_id \
+       LEFT JOIN artifact_uploads AS upload ON upload.artifact_id = artifact.id \
+         AND upload.state = 'completed' \
+       LEFT JOIN builds AS build ON build.id = artifact.build_id \
+       WHERE (run.visible OR factory_work.phase = 'hidden') AND reference.released_at IS NULL \
+         AND ($1::UUID IS NULL OR reference.artifact_id > $1) \
+         AND (artifact.id IS NULL OR artifact.state <> 'published' OR artifact.deleted_at IS NOT NULL \
+           OR upload.id IS NULL OR build.id IS NULL \
+           OR (artifact.artifact_type = 'artifact' AND NOT build.artifacts_visible) \
+           OR (artifact.artifact_type = 'report' AND NOT build.reports_visible) \
+           OR (reference.expected_sha256 IS NOT NULL AND reference.expected_sha256 <> artifact.sha256))\
+     )",
+  )
+  .bind(after.map(ArtifactId::as_uuid))
+  .fetch_one(pool)
+  .await
+  .map_err(unavailable)?;
+  if invalid {
+    return Err(StoreError::Unavailable);
+  }
+
+  let mut rows = sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
+    "artifact.state = 'published' AND artifact.deleted_at IS NULL AND \
+     ((artifact.artifact_type = 'artifact' AND build.artifacts_visible) OR \
+      (artifact.artifact_type = 'report' AND build.reports_visible)) AND \
+     ($1::UUID IS NULL OR artifact.id > $1) AND EXISTS (\
+       SELECT 1 FROM factory_artifact_references AS reference \
+       JOIN factory_runs AS run ON run.id = reference.run_id \
+       LEFT JOIN factory_retention_work AS factory_work ON factory_work.run_id = run.id \
+       WHERE reference.artifact_id = artifact.id AND reference.released_at IS NULL \
+         AND (run.visible OR factory_work.phase = 'hidden') \
+         AND (reference.expected_sha256 IS NULL OR reference.expected_sha256 = artifact.sha256)\
+     ) ORDER BY artifact.id LIMIT $2"
+  ))
+  .bind(after.map(ArtifactId::as_uuid))
+  .bind(i64::from(limit) + 1)
+  .fetch_all(pool)
+  .await
+  .map_err(unavailable)?;
+  let has_more = rows.len() > usize::from(limit);
+  rows.truncate(usize::from(limit));
+  let items = rows
+    .into_iter()
+    .map(TryInto::try_into)
+    .collect::<Result<Vec<ArtifactUploadRecord>, StoreError>>()?;
+  let next_after = has_more.then(|| {
+    items
+      .last()
+      .expect("a restore page with more rows cannot be empty")
+      .artifact
+      .identity()
+      .artifact_id
+  });
+  Ok(RestoreFactoryArtifactPage { items, next_after })
 }
 
 fn validate_restore_limit(limit: u16) -> Result<(), StoreError> {

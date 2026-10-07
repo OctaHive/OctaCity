@@ -88,9 +88,26 @@ not a coordinated backup.
 6. Start one server replica from the same configuration and wait for
    `/health/ready`. Only then restore ingress and add replicas or Agents.
 
-The authoritative lease and worker-claim deadlines remain in PostgreSQL. On
-startup, normal fencing and expiry workers compare them with current time;
-expired leases are not revived by restore.
+The authoritative lease and worker-claim deadlines remain in PostgreSQL. The
+offline reconciliation command expires restored Factory ownership before it
+verifies objects: current Run and Factory-retention claims are cleared, and
+claimed durable outbox records receive a new pending retry record without
+rewriting their append-only history. Normal fencing and expiry workers perform
+the corresponding checks for Build leases and other work after startup;
+expired ownership is never revived by restore.
+
+Factory Runs extend the protected recovery set. Reconciliation verifies every
+unreleased task, acceptance, specification, Build-output, ChangeSet, manifest,
+and evidence reference for each visible or partially cleaned Run. Where the
+Factory recorded an expected digest, the referenced immutable Artifact must
+match it. Active or escalated Runs, and terminal Runs protected by an active
+Build Result hold, retain those exact references. Terminal unheld Runs are
+hidden before their references are released in bounded pages. Released
+reference rows and unneeded Factory projection/history rows are then removed in
+separate bounded, reclaimable passes; a minimal terminal Run and retention
+tombstone remain for audit correlation. Physical Artifact deletion remains
+owned by the ordinary Build-retention workflow after no live Factory reference
+remains.
 
 ## Search projection choices
 

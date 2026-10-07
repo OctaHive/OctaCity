@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::{
@@ -12,7 +13,7 @@ use super::{
 };
 
 /// Deterministic disposition produced after consuming a non-authoritative signal.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalDisposition {
   /// Follow one finite route declared by the immutable request.
   Route(FactoryKey),
@@ -25,7 +26,7 @@ pub enum DecisionSignalDisposition {
 }
 
 /// How deterministic code used a provider observation relative to its baseline.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalConsumptionKind {
   /// Shadow mode recorded comparison evidence only.
   Shadow,
@@ -38,7 +39,7 @@ pub enum DecisionSignalConsumptionKind {
 }
 
 /// Immutable deterministic outcome of consuming one provider observation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalConsumption {
   baseline: DecisionSignalDisposition,
   recommendation: Option<DecisionSignalDisposition>,
@@ -73,7 +74,7 @@ impl DecisionSignalConsumption {
 }
 
 /// Mapping from finite provider answers to authority-narrowing tool dispositions.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ToolRiskChoiceMapping {
   choices: DecisionSignalChoices,
   dispositions: BTreeMap<FactoryKey, DecisionSignalDisposition>,
@@ -116,7 +117,7 @@ impl ToolRiskChoiceMapping {
 }
 
 /// Immutable receipt binding provider observation to its deterministic consuming disposition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalReceipt {
   id: DecisionSignalReceiptId,
   request: DecisionSignalProviderRequest,

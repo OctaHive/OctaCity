@@ -4,9 +4,10 @@ use crate::{
   StageAttemptId, StageAttemptNumber,
 };
 use octacity_server_domain::Timestamp;
+use serde::{Deserialize, Serialize};
 
 /// Fenced worker ownership attached to immutable Factory execution records.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactoryClaimOwnership {
   owner: FactoryKey,
   claim: FactoryClaim,
@@ -33,7 +34,7 @@ impl FactoryClaimOwnership {
 }
 
 /// Canonical input and deterministic policy digests for one Decision Signal request.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalDigests {
   input: FactoryDigest,
   policy: FactoryDigest,
@@ -60,7 +61,7 @@ impl DecisionSignalDigests {
 }
 
 /// Append-only attempt to execute one program-selected Factory stage.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StageAttempt {
   id: StageAttemptId,
   run_id: FactoryRunId,
@@ -158,7 +159,7 @@ impl StageAttempt {
 }
 
 /// Provider-neutral terminal outcome of one Stage Attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum StageAttemptOutcome {
   /// The attempt produced its required immutable result.
   Succeeded,
@@ -179,7 +180,7 @@ impl StageAttemptOutcome {
 }
 
 /// Immutable terminal observation and consumed budget for one Stage Attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct StageAttemptCompletion {
   id: FactoryDigest,
   stage_attempt_id: StageAttemptId,
@@ -277,7 +278,7 @@ impl StageAttemptCompletion {
 }
 
 /// One bounded node in a Stage Attempt's durable macro-call DAG.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct MacroCall {
   id: MacroCallId,
   stage_attempt_id: StageAttemptId,
@@ -371,7 +372,7 @@ impl MacroCall {
 }
 
 /// Provider-neutral request for one bounded, non-authoritative Decision Signal.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalRequest {
   id: DecisionSignalRequestId,
   stage_attempt_id: StageAttemptId,

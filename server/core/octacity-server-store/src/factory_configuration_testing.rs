@@ -1,4 +1,5 @@
 use std::{
+  cmp::Reverse,
   collections::{BTreeMap, BTreeSet},
   sync::{Mutex, MutexGuard},
 };
@@ -12,6 +13,7 @@ use octacity_server_factory::{
 
 use crate::factory_run_testing::StoredFactoryRun;
 use crate::factory_run_testing::StoredFactoryRunControl;
+use crate::pagination::finish_bounded_page;
 use crate::testing::{
   ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
   recorded_management_audit,
@@ -19,11 +21,14 @@ use crate::testing::{
 use crate::{
   AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionContext, FactoryAdmissionMutationOutcome,
   FactoryAdmissionProbe, FactoryAdmissionStore, FactoryConfigurationAvailability, FactoryConfigurationMutationIntent,
-  FactoryConfigurationMutationOutcome, FactoryConfigurationStore, FactoryWorkSourceScope, ManagementIdempotencyKey,
-  ManagementMutation, MutationDisposition, PublishedFactoryAdmission, PublishedFactoryConfiguration,
-  PublishedRepository, ReadFactoryAdmissionContext, ReplaceFactoryConfiguration, ReplaceFactoryConfigurationError,
-  ReplayFactoryConfigurationMutation, StoreError, StoreOperation,
+  FactoryConfigurationMutationOutcome, FactoryConfigurationStore, FactoryDiscoveryStore, FactoryRunListVisibility,
+  FactoryRunPage, FactoryRunSummary, FactoryWorkSourceScope, ListFactoryRuns, ListProjectFactoryConfigurations,
+  ManagementIdempotencyKey, ManagementMutation, MutationDisposition, PublishedFactoryAdmission,
+  PublishedFactoryConfiguration, PublishedRepository, ReadFactoryAdmissionContext, ReadVisibilityKind,
+  ReplaceFactoryConfiguration, ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation, StoreError,
+  StoreOperation,
 };
+use crate::{CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary};
 
 /// Deterministic process-local Factory Configuration adapter for application tests.
 #[derive(Default)]
@@ -423,12 +428,7 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
     request: ManagementMutation<AdmitFactoryWork>,
   ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
     let (request, audit) = request.into_parts();
-    if audit.security_scope() != &request.probe.source_scope.security_scope {
-      return Err(StoreError::invalid(
-        StoreOperation::AdmitFactoryWork,
-        crate::StoreInputError::InvalidMutationAuditContext,
-      ));
-    }
+    request.validate(audit.security_scope())?;
     let idempotency = audit.scoped_idempotency_key(&request.probe.idempotency_key);
     let mut state = self.lock()?;
     if let Some(outcome) = replay_admission(&state, &request.probe)? {
@@ -448,10 +448,6 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
     if !configuration.configuration.is_enabled()
       || configuration.configuration.reference() != request.work.configuration()
       || repository.project_id != request.work.subject().project_id()
-      || request.work.external_identity() != &request.probe.external_identity
-      || request.run.configuration() != request.work.configuration()
-      || request.run.work_id() != request.work.id()
-      || request.run.subject() != request.work.subject()
     {
       return Err(StoreError::invalid(
         StoreOperation::AdmitFactoryWork,
@@ -461,10 +457,7 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
     let active_runs = state
       .factory_runs
       .values()
-      .filter(|stored| {
-        stored.run().configuration() == request.work.configuration()
-          && stored.run().state() != octacity_server_factory::FactoryRunState::Completed
-      })
+      .filter(|stored| stored.run().configuration() == request.work.configuration() && stored.run().state().is_active())
       .count();
     if active_runs >= configuration.configuration.wip_limits().max_active_runs() as usize {
       return Err(StoreError::Conflict {
@@ -507,6 +500,148 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
       admission: outcome,
     })
   }
+}
+
+#[async_trait]
+impl FactoryDiscoveryStore for InMemoryFactoryConfigurationStore {
+  async fn list_project_factory_configurations(
+    &self,
+    request: ListProjectFactoryConfigurations,
+  ) -> Result<CurrentFactoryConfigurationPage, StoreError> {
+    let state = self.lock()?;
+    if !state.projects.contains(&request.project_id()) {
+      return Err(not_found(EntityKind::Project));
+    }
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(CurrentFactoryConfigurationPage {
+        total: 0,
+        items: Vec::new(),
+        next_cursor: None,
+      });
+    }
+    let mut items = state
+      .current_versions
+      .iter()
+      .filter(|(id, _)| request.visibility().allows(id))
+      .filter_map(|(id, version)| {
+        let current = state.versions.get(&(*id, *version))?;
+        (current.configuration.reference().project_id() == request.project_id()).then(|| {
+          let created_at = state
+            .versions
+            .get(&(*id, FactoryConfigurationVersion::INITIAL))
+            .map_or(current.published_at, |initial| initial.published_at);
+          CurrentFactoryConfigurationSummary {
+            id: *id,
+            project_id: request.project_id(),
+            version: *version,
+            enabled: current.configuration.is_enabled(),
+            created_at,
+            published_at: current.published_at,
+          }
+        })
+      })
+      .collect::<Vec<_>>();
+    let total = u64::try_from(items.len()).map_err(|_| StoreError::Unavailable)?;
+    items.retain(|summary| request.after().is_none_or(|after| summary.page_position() < after));
+    items.sort_unstable_by_key(|summary| Reverse(summary.page_position()));
+    items.truncate(usize::from(request.limit().get()).saturating_add(1));
+    let next_cursor = finish_bounded_page(
+      &mut items,
+      request.limit(),
+      CurrentFactoryConfigurationSummary::page_position,
+    );
+    Ok(CurrentFactoryConfigurationPage {
+      total,
+      items,
+      next_cursor,
+    })
+  }
+
+  async fn list_factory_runs(&self, request: ListFactoryRuns) -> Result<FactoryRunPage, StoreError> {
+    let state = self.lock()?;
+    if request
+      .project_id()
+      .is_some_and(|project_id| !state.projects.contains(&project_id))
+    {
+      return Err(not_found(EntityKind::Project));
+    }
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(FactoryRunPage {
+        total: 0,
+        items: Vec::new(),
+        next_cursor: None,
+      });
+    }
+    let mut items = state
+      .factory_runs
+      .values()
+      .filter(|stored| request.visibility().allows(&stored.run().id()))
+      .filter_map(|stored| factory_run_summary(&state, stored).transpose())
+      .collect::<Result<Vec<_>, _>>()?;
+    let filter = request.filter();
+    items.retain(|summary| {
+      request.project_id().is_none_or(|id| summary.project_id == id)
+        && filter.configuration_id.is_none_or(|id| summary.configuration_id == id)
+        && filter.source.as_ref().is_none_or(|source| &summary.source == source)
+        && filter.state.is_none_or(|state| summary.state == state)
+        && filter.admitted_from.is_none_or(|from| summary.admitted_at >= from)
+        && filter.admitted_before.is_none_or(|before| summary.admitted_at < before)
+    });
+    let total = u64::try_from(items.len()).map_err(|_| StoreError::Unavailable)?;
+    items.retain(|summary| request.after().is_none_or(|after| summary.page_position() < after));
+    items.sort_unstable_by_key(|summary| Reverse(summary.page_position()));
+    items.truncate(usize::from(request.limit().get()).saturating_add(1));
+    let next_cursor = finish_bounded_page(&mut items, request.limit(), FactoryRunSummary::page_position);
+    Ok(FactoryRunPage {
+      total,
+      items,
+      next_cursor,
+    })
+  }
+
+  async fn factory_run_summary(
+    &self,
+    run_id: octacity_server_factory::FactoryRunId,
+    visibility: FactoryRunListVisibility,
+  ) -> Result<FactoryRunSummary, StoreError> {
+    if !visibility.allows(&run_id) {
+      return Err(not_found(EntityKind::FactoryRun));
+    }
+    let state = self.lock()?;
+    let stored = state
+      .factory_runs
+      .get(&run_id)
+      .ok_or_else(|| not_found(EntityKind::FactoryRun))?;
+    factory_run_summary(&state, stored)?.ok_or_else(|| not_found(EntityKind::FactoryRun))
+  }
+}
+
+fn factory_run_summary(
+  state: &FactoryConfigurationMemoryState,
+  stored: &StoredFactoryRun,
+) -> Result<Option<FactoryRunSummary>, StoreError> {
+  let work = stored.work();
+  let Some(admission) = state
+    .admissions
+    .values()
+    .find(|admission| admission.outcome.work.id() == work.id())
+  else {
+    return Ok(None);
+  };
+  let run = stored.run();
+  Ok(Some(FactoryRunSummary {
+    id: run.id(),
+    project_id: run.subject().project_id(),
+    work_id: work.id(),
+    configuration_id: run.configuration().id(),
+    configuration_version: run.configuration().version(),
+    source: admission.source_scope.source.clone(),
+    external_identity: work.external_identity().clone(),
+    state: run.state(),
+    version: run.version(),
+    admitted_at: stored.admitted_at(),
+    updated_at: stored.updated_at()?,
+  }))
 }
 
 fn replay_admission(
@@ -582,40 +717,10 @@ fn validate_configuration_intent(
   expected_current_version: Option<FactoryConfigurationVersion>,
   operation: StoreOperation,
 ) -> Result<(), StoreError> {
-  let reference = configuration.reference();
-  let matches = match intent {
-    FactoryConfigurationMutationIntent::Create {
-      id,
-      project_id,
-      definition_digest,
-      ..
-    } => {
-      expected_current_version.is_none()
-        && reference.id() == *id
-        && reference.project_id() == *project_id
-        && reference.version() == FactoryConfigurationVersion::INITIAL
-        && reference.definition_digest() == *definition_digest
-    }
-    FactoryConfigurationMutationIntent::Replace {
-      id,
-      expected_current_version: intent_version,
-      definition_digest,
-      ..
-    } => {
-      expected_current_version == Some(*intent_version)
-        && reference.id() == *id
-        && reference.version().get() == intent_version.get().saturating_add(1)
-        && reference.definition_digest() == *definition_digest
-    }
-  };
-  if matches {
-    Ok(())
-  } else {
-    Err(StoreError::invalid(
-      operation,
-      crate::StoreInputError::InvalidFactoryConfiguration,
-    ))
-  }
+  intent
+    .matches_configuration(configuration, expected_current_version)
+    .then_some(())
+    .ok_or_else(|| StoreError::invalid(operation, crate::StoreInputError::InvalidFactoryConfiguration))
 }
 
 fn not_found(entity: EntityKind) -> StoreError {

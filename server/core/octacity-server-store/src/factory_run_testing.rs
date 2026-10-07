@@ -17,10 +17,10 @@ use crate::{
   ClaimedFactoryOutbox, ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome,
   FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
   FactoryRunClaimRecord, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlStore,
-  FactoryRunCurrentProjection, FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore,
-  MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS,
-  ManagementMutation, MutationAuditContext, MutationDisposition, PublishedFactoryAdmission, SettleFactoryOutbox,
-  StoreError, StoreInputError, StoreOperation,
+  FactoryRunCurrentProjection, FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord,
+  FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore, ListFactoryRunDiagnostics,
+  MAX_FACTORY_RUN_SNAPSHOT_RECORDS, ManagementMutation, MutationAuditContext, MutationDisposition,
+  PublishedFactoryAdmission, SettleFactoryOutbox, StoreError, StoreInputError, StoreOperation,
 };
 
 use crate::factory_configuration_testing::InMemoryFactoryConfigurationStore;
@@ -64,6 +64,22 @@ pub(super) struct StoredFactoryRun {
 impl StoredFactoryRun {
   pub(super) const fn run(&self) -> &FactoryRun {
     &self.run
+  }
+
+  pub(super) const fn work(&self) -> &WorkEnvelope {
+    &self.work
+  }
+
+  pub(super) const fn admitted_at(&self) -> octacity_server_domain::Timestamp {
+    self.admitted_at
+  }
+
+  pub(super) fn updated_at(&self) -> Result<octacity_server_domain::Timestamp, StoreError> {
+    self
+      .lifecycle_checkpoints
+      .get(&self.current.lifecycle_checkpoint_id)
+      .map(|checkpoint| checkpoint.recorded_at)
+      .ok_or(StoreError::Unavailable)
   }
 
   pub(super) fn admitted(
@@ -557,6 +573,86 @@ impl StoredFactoryRun {
   }
 }
 
+fn diagnostic_records(snapshot: FactoryRunSnapshot, kind: FactoryRunDiagnosticKind) -> Vec<FactoryRunDiagnosticRecord> {
+  match kind {
+    FactoryRunDiagnosticKind::StageAttempt => snapshot
+      .stage_attempts
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::StageAttempt(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::StageAttemptCompletion => snapshot
+      .stage_attempt_completions
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::StageAttemptCompletion(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::MacroCall => snapshot
+      .macro_calls
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::MacroCall(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::SignalRequest => snapshot
+      .signal_requests
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::SignalRequest(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::SignalReceipt => snapshot
+      .signal_receipts
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::SignalReceipt(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::BuildLink => snapshot
+      .linked_builds
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::BuildLink(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::BuildObservation => snapshot
+      .build_observations
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::BuildObservation(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::Candidate => snapshot
+      .candidates
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::Candidate(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::Evidence => snapshot
+      .evidence
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::Evidence(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::EvaluationPlan => snapshot
+      .evaluation_plans
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::EvaluationPlan(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::Assessment => snapshot
+      .assessments
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::Assessment(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::Decision => snapshot
+      .decisions
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::Decision(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::Escalation => snapshot
+      .escalations
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::Escalation(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::DeliveryAttempt => snapshot
+      .delivery_attempts
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::DeliveryAttempt(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::ReportingAttempt => snapshot
+      .reporting_attempts
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::ReportingAttempt(Box::new(value)))
+      .collect(),
+  }
+}
+
 #[async_trait]
 impl FactoryRunStore for InMemoryFactoryConfigurationStore {
   async fn factory_run_snapshot(&self, run_id: FactoryRunId) -> Result<FactoryRunSnapshot, StoreError> {
@@ -568,6 +664,30 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
         entity: EntityKind::FactoryRun,
       })?
       .snapshot()
+  }
+
+  async fn list_factory_run_diagnostics(
+    &self,
+    request: ListFactoryRunDiagnostics,
+  ) -> Result<FactoryRunDiagnosticPage, StoreError> {
+    let snapshot = self
+      .lock()?
+      .factory_runs
+      .get(&request.run_id)
+      .ok_or(StoreError::NotFound {
+        entity: EntityKind::FactoryRun,
+      })?
+      .snapshot()?;
+    let mut records = diagnostic_records(snapshot, request.kind);
+    records.sort_unstable_by_key(FactoryRunDiagnosticRecord::cursor);
+    if let Some(after) = &request.after {
+      records.retain(|record| record.cursor() > *after);
+    }
+    let limit = usize::from(request.limit.get());
+    let has_next = records.len() > limit;
+    records.truncate(limit);
+    let next = has_next.then(|| records.last().expect("non-zero page limit").cursor());
+    Ok(FactoryRunDiagnosticPage { items: records, next })
   }
 
   async fn claim_factory_run(&self, request: ClaimFactoryRun) -> Result<ClaimFactoryRunOutcome, StoreError> {
@@ -605,7 +725,7 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     let mut staged_runs = state.factory_runs.clone();
     let run_ids = staged_runs
       .iter()
-      .filter(|(_, stored)| stored.run.state() != FactoryRunState::Completed)
+      .filter(|(_, stored)| stored.run.state().is_active())
       .filter(|(_, stored)| claim_is_selectable(stored, &request))
       .map(|(run_id, _)| *run_id)
       .take(usize::from(request.limit.get()))
@@ -900,11 +1020,7 @@ fn apply_control(
     .ok_or(StoreError::Unavailable)?;
   let (next_state, next_progress, cancellation_requested, audit_outcome) = match &request.intent {
     FactoryRunControlIntent::Cancel => {
-      if matches!(
-        stored.run.state(),
-        FactoryRunState::Rejected | FactoryRunState::Cancelled | FactoryRunState::Completed
-      ) || current_checkpoint.cancellation_requested
-      {
+      if stored.run.state().is_terminal() || current_checkpoint.cancellation_requested {
         return Err(conflict());
       }
       (
@@ -1162,7 +1278,7 @@ fn configuration_wip_usage(
   let mut active_stages = 0_u32;
   for stored in runs
     .values()
-    .filter(|stored| stored.run.configuration() == configuration && stored.run.state() != FactoryRunState::Completed)
+    .filter(|stored| stored.run.configuration() == configuration && stored.run.state().is_active())
   {
     active_runs = active_runs.saturating_add(1);
     if let Some(checkpoint) = stored
@@ -1245,46 +1361,11 @@ fn validate_claim(stored: &StoredFactoryRun, request: &ClaimFactoryRun) -> Resul
 }
 
 fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTransition) -> Result<(), StoreError> {
-  if request.append.record_count() > MAX_FACTORY_TRANSITION_RECORDS
-    || request.outbox.len() > MAX_FACTORY_TRANSITION_OUTBOX_RECORDS
-  {
-    return Err(invalid_transition(StoreOperation::CommitFactoryRunTransition));
-  }
-  let added = request
-    .append
-    .record_count()
-    .checked_add(request.outbox.len())
-    .and_then(|count| count.checked_add(3))
-    .ok_or_else(|| invalid_transition(StoreOperation::CommitFactoryRunTransition))?;
-  if stored
-    .record_count()
-    .checked_add(added)
-    .is_none_or(|count| count > MAX_FACTORY_RUN_SNAPSHOT_RECORDS)
-  {
-    return Err(invalid_transition(StoreOperation::CommitFactoryRunTransition));
-  }
-  if request.expected_version != stored.run.version() {
-    return Err(conflict());
-  }
-  let next_version = stored
-    .run
-    .version()
-    .get()
-    .checked_add(1)
-    .and_then(|value| FactoryRunVersion::new(value).ok())
-    .ok_or(StoreError::Unavailable)?;
   let claim = stored
     .current_claim_id
     .filter(|id| *id == request.claim_id)
     .and_then(|id| stored.claims.get(&id))
     .ok_or_else(conflict)?;
-  if claim.owner != request.owner {
-    return Err(conflict());
-  }
-  claim
-    .claim
-    .authorize(request.fence, request.committed_at)
-    .map_err(|_| conflict())?;
   let current_budget = stored
     .budgets
     .get(&stored.current.budget_id)
@@ -1293,138 +1374,19 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
     .lifecycle_checkpoints
     .get(&stored.current.lifecycle_checkpoint_id)
     .ok_or(StoreError::Unavailable)?;
-  let mut expected_attempt_number = u64::try_from(stored.stage_attempts.len())
-    .ok()
-    .and_then(|value| value.checked_add(1))
-    .ok_or(StoreError::Unavailable)?;
-  let appended_attempts_are_valid = request.append.stage_attempts.iter().all(|stage| {
-    if let Some(existing) = stored.stage_attempts.get(&stage.id()) {
-      return existing == stage;
-    }
-    let valid = stage.run_id() == request.run_id
-      && stage.subject() == stored.run.subject()
-      && stage.owner() == &request.owner
-      && stage.claim() == claim.claim
-      && stage.number().get() == expected_attempt_number;
-    expected_attempt_number = expected_attempt_number.saturating_add(1);
-    valid
-  });
-  let appended_completions_are_valid = request.append.stage_attempt_completions.iter().all(|completion| {
-    let stage = stored.stage_attempts.get(&completion.stage_attempt_id()).or_else(|| {
-      request
-        .append
-        .stage_attempts
-        .iter()
-        .find(|stage| stage.id() == completion.stage_attempt_id())
-    });
-    completion.run_id() == request.run_id
-      && completion.owner() == &request.owner
-      && completion.claim() == claim.claim
-      && !stored
-        .stage_attempt_completions
-        .values()
-        .any(|current| current.stage_attempt_id() == completion.stage_attempt_id())
-      && stage.is_some_and(|stage| completion.usage().validate(stage.budget()).is_ok())
-  });
-  require_with(
-    request.next_run.id() == stored.run.id()
-      && request.next_run.work_id() == stored.run.work_id()
-      && request.next_run.configuration() == stored.run.configuration()
-      && request.next_run.subject() == stored.run.subject()
-      && request.next_run.version() == next_version
-      && request.budget
-        == FactoryBudgetRecord::new(request.run_id, next_version, request.budget.usage, request.committed_at)
-      && budget_is_monotonic(current_budget.usage, request.budget.usage)
-      && request.current.budget_id == request.budget.id
-      && request.lifecycle_checkpoint
-        == FactoryLifecycleCheckpoint::new(
-          request.run_id,
-          next_version,
-          request.lifecycle_checkpoint.progress.clone(),
-          request.lifecycle_checkpoint.signal,
-          request.lifecycle_checkpoint.cancellation_requested,
-          request.committed_at,
-        )
-      && octacity_server_factory::validate_lifecycle_progress(
-        request.next_run.state(),
-        &request.lifecycle_checkpoint.progress,
-      )
-      .is_ok()
-      && octacity_server_factory::validate_lifecycle_transition(
-        stored.run.state(),
-        &current_checkpoint.progress,
-        request.next_run.state(),
-        &request.lifecycle_checkpoint.progress,
-      )
-      .is_ok()
-      && appended_attempts_are_valid
-      && appended_completions_are_valid
-      && completion_budget_is_covered(
-        current_budget.usage,
-        request.budget.usage,
-        &request.append.stage_attempt_completions,
-      )
-      && request.current.lifecycle_checkpoint_id == request.lifecycle_checkpoint.id
-      && request.audit.run_id == request.run_id
-      && request.audit.recorded_at == request.committed_at
-      && request.audit
-        == FactoryAuditFact::new(
-          request.audit.run_id,
-          request.audit.actor_kind,
-          request.audit.actor_identity_digest,
-          request.audit.operation.clone(),
-          request.audit.request_identity_digest,
-          request.audit.outcome.clone(),
-          request.audit.recorded_at,
-        )
-      && request.outbox.iter().all(|record| {
-        record.run_id == request.run_id
-          && record.recorded_at == request.committed_at
-          && record.available_at >= request.committed_at
-          && record.state == crate::FactoryOutboxState::Pending
-          && record.attempt == 0
-          && record.is_canonical()
-      }),
-    StoreOperation::CommitFactoryRunTransition,
-    StoreInputError::InvalidFactoryRunTransition,
+  crate::validate_factory_transition(
+    &crate::FactoryTransitionBaseline {
+      run: &stored.run,
+      budget: current_budget,
+      lifecycle: current_checkpoint,
+      current: &stored.current,
+      claim,
+      stage_attempts: &stored.stage_attempts,
+      stage_completions: &stored.stage_attempt_completions,
+      record_count: stored.record_count(),
+    },
+    request,
   )
-}
-
-fn completion_budget_is_covered(
-  current: octacity_server_factory::BudgetUsage,
-  next: octacity_server_factory::BudgetUsage,
-  completions: &[StageAttemptCompletion],
-) -> bool {
-  let Some(elapsed_millis) = completions
-    .iter()
-    .try_fold(current.elapsed_millis, |total, completion| {
-      total.checked_add(completion.usage().elapsed_millis)
-    })
-  else {
-    return false;
-  };
-  let Some(tokens) = completions.iter().try_fold(current.tokens, |total, completion| {
-    total.checked_add(completion.usage().tokens)
-  }) else {
-    return false;
-  };
-  let Some(cost_micro_units) = completions
-    .iter()
-    .try_fold(current.cost_micro_units, |total, completion| {
-      total.checked_add(completion.usage().cost_micro_units)
-    })
-  else {
-    return false;
-  };
-  let Some(output_bytes) = completions.iter().try_fold(current.output_bytes, |total, completion| {
-    total.checked_add(completion.usage().output_bytes)
-  }) else {
-    return false;
-  };
-  next.elapsed_millis >= elapsed_millis
-    && next.tokens >= tokens
-    && next.cost_micro_units >= cost_micro_units
-    && next.output_bytes >= output_bytes
 }
 
 fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppend) -> Result<(), StoreError> {
@@ -1564,17 +1526,6 @@ fn validate_outbox(stored: &StoredFactoryRun) -> Result<(), StoreError> {
     }
   }
   Ok(())
-}
-
-const fn budget_is_monotonic(
-  current: octacity_server_factory::BudgetUsage,
-  next: octacity_server_factory::BudgetUsage,
-) -> bool {
-  next.attempts >= current.attempts
-    && next.elapsed_millis >= current.elapsed_millis
-    && next.tokens >= current.tokens
-    && next.cost_micro_units >= current.cost_micro_units
-    && next.output_bytes >= current.output_bytes
 }
 
 fn append_unique<K, V>(map: &mut BTreeMap<K, V>, key: K, value: V) -> Result<(), StoreError>
@@ -2092,6 +2043,71 @@ mod tests {
         assert_eq!(snapshot.current_claim, Some(takeover));
       },
       "Factory claim contract is ready",
+    );
+  }
+
+  #[test]
+  fn diagnostic_pages_are_bounded_stable_and_collection_typed() {
+    run_ready(
+      async {
+        let fixture = fixture();
+        seed_full_history(&fixture).await;
+        let second = ReportingAttempt::new(
+          id::<ReportingAttemptId>(34),
+          &fixture.run,
+          ReportingAttemptNumber::new(2).unwrap(),
+          ReportingState::Succeeded,
+          key("manual"),
+        );
+        fixture
+          .store
+          .lock()
+          .unwrap()
+          .factory_runs
+          .get_mut(&fixture.run.id())
+          .unwrap()
+          .reporting_attempts
+          .insert(second.id(), second.clone());
+
+        let first = fixture
+          .store
+          .list_factory_run_diagnostics(
+            ListFactoryRunDiagnostics::new(fixture.run.id(), FactoryRunDiagnosticKind::ReportingAttempt, None, 1)
+              .unwrap(),
+          )
+          .await
+          .unwrap();
+        assert_eq!(first.items.len(), 1);
+        let cursor = first.next.expect("another reporting attempt exists");
+        let final_page = fixture
+          .store
+          .list_factory_run_diagnostics(
+            ListFactoryRunDiagnostics::new(
+              fixture.run.id(),
+              FactoryRunDiagnosticKind::ReportingAttempt,
+              Some(cursor),
+              1,
+            )
+            .unwrap(),
+          )
+          .await
+          .unwrap();
+        assert_eq!(
+          final_page.items,
+          vec![FactoryRunDiagnosticRecord::ReportingAttempt(Box::new(second))]
+        );
+        assert!(final_page.next.is_none());
+        assert!(
+          ListFactoryRunDiagnostics::new(
+            fixture.run.id(),
+            FactoryRunDiagnosticKind::ReportingAttempt,
+            None,
+            crate::MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE + 1,
+          )
+          .is_err()
+        );
+      },
+      "Factory diagnostic pagination contract is ready",
     );
   }
 

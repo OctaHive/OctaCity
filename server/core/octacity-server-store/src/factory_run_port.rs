@@ -4,7 +4,7 @@ use octacity_server_factory::FactoryRunId;
 use crate::{
   ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
   ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryOutboxRecord,
-  FactoryRunSnapshot, SettleFactoryOutbox, StoreError,
+  FactoryRunDiagnosticPage, FactoryRunSnapshot, ListFactoryRunDiagnostics, SettleFactoryOutbox, StoreError,
 };
 
 /// Backend-neutral atomic operations for durable Factory Run reconciliation.
@@ -16,6 +16,12 @@ use crate::{
 pub trait FactoryRunStore: Send + Sync {
   /// Loads the complete bounded authoritative snapshot for one Run.
   async fn factory_run_snapshot(&self, run_id: FactoryRunId) -> Result<FactoryRunSnapshot, StoreError>;
+
+  /// Lists one typed bounded diagnostic collection in stable identity order.
+  async fn list_factory_run_diagnostics(
+    &self,
+    request: ListFactoryRunDiagnostics,
+  ) -> Result<FactoryRunDiagnosticPage, StoreError>;
 
   /// Appends one exclusive claim or returns its exact prior result.
   async fn claim_factory_run(&self, request: ClaimFactoryRun) -> Result<ClaimFactoryRunOutcome, StoreError>;

@@ -17,6 +17,37 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
+const FACTORY_TABLES: [&str; 28] = [
+  "factory_assessments",
+  "factory_audit_links",
+  "factory_build_link_jobs",
+  "factory_build_links",
+  "factory_build_observations",
+  "factory_call_nodes",
+  "factory_changesets",
+  "factory_configuration_versions",
+  "factory_configurations",
+  "factory_decision_signal_receipts",
+  "factory_decision_signal_requests",
+  "factory_decision_assessments",
+  "factory_decisions",
+  "factory_delivery_attempts",
+  "factory_escalations",
+  "factory_evaluation_plans",
+  "factory_evidence_manifests",
+  "factory_lifecycle_checkpoints",
+  "factory_outbox_records",
+  "factory_reporting_attempts",
+  "factory_run_budgets",
+  "factory_run_claims",
+  "factory_run_controls",
+  "factory_run_current",
+  "factory_runs",
+  "factory_stage_attempt_completions",
+  "factory_stage_attempts",
+  "factory_work_envelopes",
+];
+const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
   ("create-project", "legacy-management", "trusted-network"),
   ("claim-ready-job", "legacy-agent", "legacy-agent-data-plane"),
@@ -46,10 +77,17 @@ async fn rehearses_forward_failure_and_previous_binary_snapshot_rollback() {
 }
 
 async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
-  assert_eq!(PREVIOUS_BINARY_SCHEMA_VERSION + 1, current_schema_version());
+  assert_eq!(PREVIOUS_BINARY_SCHEMA_VERSION, 46);
+  assert!(current_schema_version() > PREVIOUS_BINARY_SCHEMA_VERSION);
 
   let mut previous = TestDatabase::empty().await;
   MIGRATOR.run_to(PREVIOUS_BINARY_SCHEMA_VERSION, &previous.pool).await?;
+  for table in FACTORY_TABLES {
+    assert!(!table_exists(&previous.pool, table).await?);
+  }
+  for table in FACTORY_RETENTION_TABLES {
+    assert!(!table_exists(&previous.pool, table).await?);
+  }
   seed_snapshot_marker(&previous.pool).await?;
   seed_legacy_idempotency_record(&previous.pool).await?;
   assert_eq!(
@@ -69,6 +107,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   verify_build_discovery_indexes(&previous.pool).await?;
   verify_resource_search_indexes(&previous.pool).await?;
   verify_operator_attention_schema(&previous.pool).await?;
+  verify_factory_schema(&previous.pool).await?;
   assert_snapshot_marker(&previous.pool).await?;
 
   let failed = snapshot.restore().await;
@@ -103,6 +142,12 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   verify_build_discovery_indexes(&rollback.pool).await?;
   verify_resource_search_indexes(&rollback.pool).await?;
   verify_operator_attention_schema(&rollback.pool).await?;
+  for table in FACTORY_TABLES {
+    assert!(!table_exists(&rollback.pool, table).await?);
+  }
+  for table in FACTORY_RETENTION_TABLES {
+    assert!(!table_exists(&rollback.pool, table).await?);
+  }
   assert_legacy_idempotency_record(&rollback.pool).await?;
   assert_snapshot_marker(&rollback.pool).await?;
 
@@ -346,6 +391,36 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "builds",
     "build_result_retention_holds",
     "cache_sessions",
+    "factory_assessments",
+    "factory_artifact_references",
+    "factory_audit_links",
+    "factory_build_link_jobs",
+    "factory_build_links",
+    "factory_build_observations",
+    "factory_call_nodes",
+    "factory_changesets",
+    "factory_configuration_versions",
+    "factory_configurations",
+    "factory_decision_signal_receipts",
+    "factory_decision_signal_requests",
+    "factory_decision_assessments",
+    "factory_decisions",
+    "factory_delivery_attempts",
+    "factory_escalations",
+    "factory_evaluation_plans",
+    "factory_evidence_manifests",
+    "factory_lifecycle_checkpoints",
+    "factory_outbox_records",
+    "factory_reporting_attempts",
+    "factory_retention_work",
+    "factory_run_budgets",
+    "factory_run_claims",
+    "factory_run_controls",
+    "factory_run_current",
+    "factory_runs",
+    "factory_stage_attempt_completions",
+    "factory_stage_attempts",
+    "factory_work_envelopes",
     "cache_actions",
     "cache_blobs",
     "idempotency_records",
@@ -427,6 +502,8 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   verify_build_discovery_indexes(pool).await?;
   verify_resource_search_indexes(pool).await?;
   verify_operator_attention_schema(pool).await?;
+  verify_factory_schema(pool).await?;
+  verify_factory_constraint_enforcement(pool).await?;
   Ok(())
 }
 
@@ -586,6 +663,191 @@ async fn operator_attention_index_definitions(pool: &sqlx::PgPool) -> Result<Vec
   )
   .fetch_all(pool)
   .await
+}
+
+async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  let actual_tables: BTreeSet<String> = sqlx::query_scalar(
+    "SELECT tablename FROM pg_tables \
+     WHERE schemaname = 'public' AND tablename LIKE 'factory_%'",
+  )
+  .fetch_all(pool)
+  .await?
+  .into_iter()
+  .collect();
+  let expected_tables = FACTORY_TABLES
+    .into_iter()
+    .chain(FACTORY_RETENTION_TABLES)
+    .map(str::to_owned)
+    .collect();
+  assert_eq!(actual_tables, expected_tables);
+
+  let (is_deferrable, initially_deferred): (bool, bool) = sqlx::query_as(
+    "SELECT condeferrable, condeferred FROM pg_constraint \
+     WHERE conrelid = 'factory_configurations'::regclass \
+       AND conname = 'factory_configurations_current_version_fkey'",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert!(is_deferrable && initially_deferred);
+
+  let missing_primary_keys: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM pg_tables AS tables \
+     WHERE tables.schemaname = 'public' AND tables.tablename LIKE 'factory_%' \
+       AND NOT EXISTS (\
+         SELECT 1 FROM pg_constraint AS table_constraint \
+         WHERE table_constraint.conrelid = format('public.%I', tables.tablename)::regclass \
+           AND table_constraint.contype = 'p'\
+       )",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(missing_primary_keys, 0, "every Factory record needs a stable identity");
+
+  let cascading_foreign_keys: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM pg_constraint AS table_constraint \
+     JOIN pg_class AS relation ON relation.oid = table_constraint.conrelid \
+     JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+     WHERE namespace.nspname = 'public' AND relation.relname LIKE 'factory_%' \
+       AND table_constraint.contype = 'f' \
+       AND (table_constraint.confupdtype <> 'a' OR table_constraint.confdeltype <> 'a')",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(
+    cascading_foreign_keys, 0,
+    "immutable Factory history must never cascade updates or deletes"
+  );
+
+  let unbounded_documents: i64 = sqlx::query_scalar(
+    "SELECT COUNT(*) FROM information_schema.columns AS column_definition \
+     WHERE column_definition.table_schema = 'public' \
+       AND column_definition.table_name LIKE 'factory_%' \
+       AND column_definition.data_type = 'jsonb' \
+       AND NOT EXISTS (\
+         SELECT 1 FROM pg_constraint AS table_constraint \
+         WHERE table_constraint.conrelid = format('public.%I', column_definition.table_name)::regclass \
+           AND table_constraint.contype = 'c' \
+           AND pg_get_constraintdef(table_constraint.oid) LIKE '%' || column_definition.column_name || '%' \
+           AND pg_get_constraintdef(table_constraint.oid) LIKE '%jsonb_typeof%' \
+           AND pg_get_constraintdef(table_constraint.oid) LIKE '%octet_length%'\
+       )",
+  )
+  .fetch_one(pool)
+  .await?;
+  assert_eq!(
+    unbounded_documents, 0,
+    "Factory JSON metadata must be typed and bounded"
+  );
+
+  let indexes: BTreeSet<String> = sqlx::query_scalar(
+    "SELECT indexname FROM pg_indexes WHERE schemaname = 'public' \
+     AND indexname = ANY($1::text[])",
+  )
+  .bind(
+    [
+      "factory_configurations_discovery_idx",
+      "factory_outbox_due_idx",
+      "factory_outbox_operation_history_idx",
+      "factory_run_claims_history_idx",
+      "factory_runs_configuration_discovery_idx",
+      "factory_runs_project_discovery_idx",
+      "factory_runs_reconciliation_idx",
+      "factory_runs_state_discovery_idx",
+      "factory_work_envelopes_source_discovery_idx",
+    ]
+    .as_slice(),
+  )
+  .fetch_all(pool)
+  .await?
+  .into_iter()
+  .collect();
+  assert_eq!(indexes.len(), 9);
+  Ok(())
+}
+
+async fn verify_factory_constraint_enforcement(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+  let project_id = uuid::Uuid::new_v4();
+  let configuration_id = uuid::Uuid::new_v4();
+  let mut transaction = pool.begin().await?;
+  sqlx::query(
+    "INSERT INTO projects (id, parent_id, name, version, created_at, updated_at) \
+     VALUES ($1, NULL, $2, 1, now(), now())",
+  )
+  .bind(project_id)
+  .bind(format!("factory-schema-{}", project_id.simple()))
+  .execute(&mut *transaction)
+  .await?;
+  sqlx::query(
+    "INSERT INTO factory_configurations (id, project_id, current_version, created_at, updated_at) \
+     VALUES ($1, $2, 1, now(), now())",
+  )
+  .bind(configuration_id)
+  .bind(project_id)
+  .execute(&mut *transaction)
+  .await?;
+  sqlx::query(
+    "INSERT INTO factory_configuration_versions \
+       (factory_configuration_id, version, definition_digest, definition, enabled, published_at) \
+     VALUES ($1, 1, $2, '{}', true, now())",
+  )
+  .bind(configuration_id)
+  .bind(vec![1_u8; 32])
+  .execute(&mut *transaction)
+  .await?;
+  transaction.commit().await?;
+
+  let duplicate = sqlx::query(
+    "INSERT INTO factory_configuration_versions \
+       (factory_configuration_id, version, definition_digest, definition, enabled, published_at) \
+     VALUES ($1, 1, $2, '{}', true, now())",
+  )
+  .bind(configuration_id)
+  .bind(vec![2_u8; 32])
+  .execute(pool)
+  .await
+  .unwrap_err();
+  assert_eq!(
+    duplicate.as_database_error().and_then(|error| error.code()).as_deref(),
+    Some("23505")
+  );
+
+  let unbounded = sqlx::query(
+    "INSERT INTO factory_configuration_versions \
+       (factory_configuration_id, version, definition_digest, definition, enabled, published_at) \
+     VALUES ($1, 2, $2, jsonb_build_object('payload', repeat('x', 1048577)), true, now())",
+  )
+  .bind(configuration_id)
+  .bind(vec![3_u8; 32])
+  .execute(pool)
+  .await
+  .unwrap_err();
+  assert_eq!(
+    unbounded.as_database_error().and_then(|error| error.code()).as_deref(),
+    Some("23514")
+  );
+
+  let foreign_key = sqlx::query(
+    "INSERT INTO factory_runs \
+       (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
+        state, version, subject_digest, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, 1, 'admitted', 1, $5, now(), now())",
+  )
+  .bind(uuid::Uuid::new_v4())
+  .bind(project_id)
+  .bind(uuid::Uuid::new_v4())
+  .bind(configuration_id)
+  .bind(vec![4_u8; 32])
+  .execute(pool)
+  .await
+  .unwrap_err();
+  assert_eq!(
+    foreign_key
+      .as_database_error()
+      .and_then(|error| error.code())
+      .as_deref(),
+    Some("23503")
+  );
+  Ok(())
 }
 
 async fn verify_security_scoped_idempotency(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {

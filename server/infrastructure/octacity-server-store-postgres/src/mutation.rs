@@ -112,6 +112,26 @@ impl MutationIdentity {
     )
   }
 
+  /// Builds a read-only replay identity when the accepted management scope is
+  /// already part of the immutable probe and no audit fact will be written.
+  pub(crate) fn new_management_replay<T: Serialize>(
+    security_scope: &ManagementSecurityScope,
+    kind: MutationKind,
+    key: String,
+    occurred_at: Timestamp,
+    conflict_entity: EntityKind,
+    request: &T,
+  ) -> Result<Self, StoreError> {
+    Self::new_in_namespace(
+      MutationNamespace::Management(security_scope.clone()),
+      kind,
+      key,
+      occurred_at,
+      conflict_entity,
+      request,
+    )
+  }
+
   pub(crate) fn new_management_with_request_identity<T: Serialize>(
     audit: &MutationAuditContext,
     kind: MutationKind,
@@ -295,6 +315,9 @@ pub(crate) enum MutationKind {
   PublishRepositoryVersion,
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
+  CreateFactoryConfiguration,
+  ReplaceFactoryConfiguration,
+  AdmitFactoryWork,
   CreateTriggerDefinition,
   PublishInternalTriggerVersion,
   CreateUnmanagedWebhook,
@@ -446,6 +469,24 @@ impl MutationKind {
         "publish-build-configuration-version",
         "build_configuration",
         "build-configuration.version-published"
+      ),
+      Self::CreateFactoryConfiguration => metadata!(
+        b"octacity.create-factory-configuration.v1\0",
+        "create-factory-configuration",
+        "factory_configuration",
+        "factory-configuration.created"
+      ),
+      Self::ReplaceFactoryConfiguration => metadata!(
+        b"octacity.replace-factory-configuration.v1\0",
+        "replace-factory-configuration",
+        "factory_configuration",
+        "factory-configuration.version-published"
+      ),
+      Self::AdmitFactoryWork => metadata!(
+        b"octacity.admit-factory-work.v1\0",
+        "admit-factory-work",
+        "factory_run",
+        "factory.run-admitted"
       ),
       Self::CreateTriggerDefinition => metadata!(
         b"octacity.create-trigger-definition.v1\0",
@@ -809,7 +850,7 @@ pub(crate) async fn append_additional_audit_fact(
   Ok(())
 }
 
-fn stable_record_id(record_kind: &str, identity: &MutationIdentity) -> Uuid {
+pub(crate) fn stable_record_id(record_kind: &str, identity: &MutationIdentity) -> Uuid {
   let mut digest = Sha256::new();
   if matches!(identity.namespace, MutationNamespace::Management(_)) {
     digest.update(b"octacity.store-mutation-record.v2\0");

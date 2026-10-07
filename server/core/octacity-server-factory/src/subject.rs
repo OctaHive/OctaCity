@@ -1,9 +1,11 @@
 use octacity_server_domain::{ImmutableRevision, ProjectId, RepositoryId};
+use serde::{Deserialize, Serialize};
 
 use crate::FactoryDigest;
 
 /// Exact immutable repository subject shared across one Factory Run.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExactSubject {
   project_id: ProjectId,
   repository_id: RepositoryId,
@@ -41,7 +43,8 @@ impl ExactSubject {
 }
 
 /// Exact immutable candidate identity derived from one [`ExactSubject`].
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CandidateSubject {
   exact: ExactSubject,
   candidate_revision: ImmutableRevision,

@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{FactoryDigest, FactoryError, FactoryKey, FactoryText, ImmutableReference};
 
 /// Maximum finite choices accepted by one Decision Signal request.
@@ -8,7 +10,7 @@ pub const MAX_DECISION_SIGNAL_QUESTIONS: usize = 32;
 pub const DECISION_SIGNAL_PROBABILITY_SCALE: u32 = 1_000_000;
 
 /// A provider-reported probability represented as millionths, without floating-point ambiguity.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct DecisionSignalProbability(u32);
 
 impl DecisionSignalProbability {
@@ -28,7 +30,8 @@ impl DecisionSignalProbability {
 }
 
 /// Non-empty, duplicate-free finite answer domain retained in request order.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct DecisionSignalChoices(Vec<FactoryKey>);
 
 impl DecisionSignalChoices {
@@ -64,7 +67,8 @@ impl DecisionSignalChoices {
 }
 
 /// Finite outgoing routes declared for one immutable lifecycle state.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DecisionSignalRouteSet {
   state: FactoryKey,
   choices: DecisionSignalChoices,
@@ -91,7 +95,7 @@ impl DecisionSignalRouteSet {
 }
 
 /// Provider-neutral media type used for a bounded redacted state document.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum DecisionSignalInputMedia {
   /// Canonical JSON encoded as UTF-8.
   CanonicalJson,
@@ -100,7 +104,7 @@ pub enum DecisionSignalInputMedia {
 }
 
 /// Provider-neutral question shape supported by a Decision Signal capability.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum DecisionSignalQuestionKind {
   /// One answer from a finite declared choice set.
   FiniteChoice,
@@ -109,7 +113,7 @@ pub enum DecisionSignalQuestionKind {
 }
 
 /// Inclusive finite integer score domain for one versioned question.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalScoreDomain {
   minimum: i32,
   maximum: i32,
@@ -144,7 +148,7 @@ impl DecisionSignalScoreDomain {
 }
 
 /// Finite provider-neutral answer domain for one versioned question.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalQuestionDomain {
   /// Exactly one declared symbolic answer.
   FiniteChoice(DecisionSignalChoices),
@@ -153,7 +157,7 @@ pub enum DecisionSignalQuestionDomain {
 }
 
 /// One finite choice and the semantic boundary description shown to a provider.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalChoiceCriterion {
   choice: FactoryKey,
   description: FactoryText,
@@ -180,7 +184,7 @@ impl DecisionSignalChoiceCriterion {
 }
 
 /// Semantic criteria paired with one typed Decision Signal domain.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalQuestionCriteria {
   /// One description for every finite choice, in the domain's canonical order.
   FiniteChoice(Vec<DecisionSignalChoiceCriterion>),
@@ -198,7 +202,7 @@ impl DecisionSignalQuestionDomain {
 }
 
 /// One exact versioned question and its finite answer domain.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalQuestion {
   reference: ImmutableReference,
   instructions: FactoryText,
@@ -272,7 +276,7 @@ fn criteria_match_domain(domain: &DecisionSignalQuestionDomain, criteria: &Decis
 }
 
 /// Bounded request limits advertised by one exact provider/model capability.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalProviderLimits {
   max_input_bytes: u32,
   max_questions: u16,
@@ -324,7 +328,7 @@ impl DecisionSignalProviderLimits {
 }
 
 /// Bounded provider input with no provider-specific message or wire type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalProviderInput {
   media: DecisionSignalInputMedia,
   state_document: FactoryText,

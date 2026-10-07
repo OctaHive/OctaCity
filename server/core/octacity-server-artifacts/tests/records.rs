@@ -5,6 +5,7 @@ use octacity_server_artifacts::{
   ArtifactReportFormat, ArtifactRetentionPolicy, ArtifactState, ArtifactType,
 };
 use octacity_server_domain::{ArtifactName, ArtifactVersion, Timestamp};
+use serde::de::DeserializeOwned;
 
 #[test]
 fn lifecycle_preserves_identity_and_controls_visibility_by_retention() {
@@ -86,6 +87,23 @@ fn bounded_metadata_and_persisted_shapes_are_revalidated() {
     ),
     Err(ArtifactRecordError::InvalidPersistedShape)
   );
+}
+
+#[test]
+fn bounded_metadata_rejects_invalid_serde_input() {
+  assert_invalid_json::<ArtifactMediaType>("");
+  assert_invalid_json::<ArtifactMediaType>(" text/plain");
+  assert_invalid_json::<ArtifactMediaType>("text/plain\nprivate");
+  assert_invalid_json::<ArtifactMediaType>(&"x".repeat(257));
+
+  assert_invalid_json::<ArtifactReportFormat>("");
+  assert_invalid_json::<ArtifactReportFormat>("junit ");
+  assert_invalid_json::<ArtifactReportFormat>("junit\tprivate");
+  assert_invalid_json::<ArtifactReportFormat>(&"x".repeat(257));
+}
+
+fn assert_invalid_json<T: DeserializeOwned>(value: &str) {
+  assert!(serde_json::from_value::<T>(serde_json::json!(value)).is_err());
 }
 
 fn transition(

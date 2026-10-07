@@ -322,7 +322,8 @@ impl<'de> Deserialize<'de> for FactoryKey {
 }
 
 /// Bounded deterministic metadata attached to one admitted Work Envelope.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
 pub struct FactoryMetadata(BTreeMap<String, String>);
 
 impl FactoryMetadata {

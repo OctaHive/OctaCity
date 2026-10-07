@@ -33,10 +33,15 @@ mod factory_admission_model;
 mod factory_admission_port;
 mod factory_configuration_model;
 mod factory_configuration_port;
+mod factory_discovery_model;
+mod factory_discovery_port;
+mod factory_retention_model;
+mod factory_retention_port;
 mod factory_run_control;
 mod factory_run_control_port;
 mod factory_run_model;
 mod factory_run_port;
+mod factory_run_transition;
 mod idempotency;
 mod internal_trigger_model;
 mod internal_trigger_port;
@@ -247,6 +252,18 @@ pub use factory_configuration_model::{
   ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation,
 };
 pub use factory_configuration_port::FactoryConfigurationStore;
+pub use factory_discovery_model::{
+  CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary, FactoryConfigurationPagePosition,
+  FactoryRunFilter, FactoryRunPage, FactoryRunPagePosition, FactoryRunSummary, ListFactoryRuns,
+  ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE, MAX_FACTORY_RUN_PAGE_SIZE,
+};
+pub use factory_discovery_port::FactoryDiscoveryStore;
+pub use factory_retention_model::{
+  AdvanceFactoryRetentionWork, ClaimFactoryRetentionWork, FactoryArtifactRole, FactoryRetentionPassOutcome,
+  FactoryRetentionPhase, FactoryRetentionWorkClaim, FailFactoryRetentionWork, MAX_FACTORY_RETENTION_CLEANUP_BATCH_SIZE,
+  MAX_FACTORY_RETENTION_WORK_BATCH_SIZE,
+};
+pub use factory_retention_port::FactoryRetentionStore;
 pub use factory_run_control::{
   ApplyFactoryRunControl, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlRecord,
 };
@@ -257,11 +274,13 @@ pub use factory_run_model::{
   FactoryBudgetRecord, FactoryBuildLink, FactoryBuildLinkInput, FactoryBuildObservationInput,
   FactoryBuildObservationRecord, FactoryBuildParent, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
   FactoryOutboxSettlement, FactoryOutboxState, FactoryRunClaimRecord, FactoryRunCurrentProjection,
-  FactoryRunHistoryAppend, FactoryRunSnapshot, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
-  MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS,
-  SettleFactoryOutbox,
+  FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend,
+  FactoryRunSnapshot, ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
+  MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS,
+  MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
 };
 pub use factory_run_port::FactoryRunStore;
+pub use factory_run_transition::{FactoryTransitionBaseline, validate_factory_transition};
 pub use idempotency::{
   IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementIdempotencyKey,
   ManagementSecurityScope,
@@ -359,9 +378,9 @@ pub use project_port::ProjectStore;
 pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
-  InternalTriggerListVisibility, JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility,
-  ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
-  TriggerDefinitionListVisibility,
+  FactoryConfigurationListVisibility, FactoryRunListVisibility, InternalTriggerListVisibility, JobEventReadVisibility,
+  MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility, ProjectListVisibility, ReadVisibilityError,
+  ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility, TriggerDefinitionListVisibility,
 };
 pub use resource_search_model::{
   MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
@@ -373,7 +392,7 @@ pub use resource_search_model::{
 pub use resource_search_port::ResourceSearchStore;
 pub use restore::{
   MAX_RESTORE_RECONCILIATION_BATCH_SIZE, RestoreArtifactPage, RestoreCacheBlobPage, RestoreCacheCursor,
-  RestoreInventoryStore, RestoreLogChunkPage,
+  RestoreFactoryArtifactPage, RestoreFactoryRecovery, RestoreInventoryStore, RestoreLogChunkPage,
 };
 pub use retention_hold_model::{
   BuildResultRetentionState, BuildResultVisibility, GetBuildResultRetention, MAX_RETENTION_HOLD_REASON_BYTES,

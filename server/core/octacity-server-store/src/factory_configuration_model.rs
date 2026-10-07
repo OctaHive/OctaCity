@@ -3,6 +3,7 @@ use octacity_server_factory::{
   FactoryConfiguration, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
   FactoryConfigurationVersion, FactoryDigest,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{IdempotencyKey, MutationDisposition, StoreError};
 
@@ -16,7 +17,8 @@ pub enum FactoryConfigurationAvailability {
 }
 
 /// One immutable published Factory Configuration version and its publication time.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublishedFactoryConfiguration {
   /// Fully resolved immutable Factory Configuration.
   pub configuration: FactoryConfiguration,
@@ -26,7 +28,8 @@ pub struct PublishedFactoryConfiguration {
 
 /// Immutable command input used to detect an exact replay before resolving
 /// mutable deployment capabilities again.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", deny_unknown_fields)]
 pub enum FactoryConfigurationMutationIntent {
   /// Initial publication intent.
   Create {
@@ -50,6 +53,44 @@ pub enum FactoryConfigurationMutationIntent {
     /// Complete unresolved replacement as originally submitted.
     draft: FactoryConfigurationDraft,
   },
+}
+
+impl FactoryConfigurationMutationIntent {
+  /// Reports whether this immutable caller intent describes the supplied
+  /// resolved configuration and replacement precondition exactly.
+  #[must_use]
+  pub fn matches_configuration(
+    &self,
+    configuration: &FactoryConfiguration,
+    expected_current_version: Option<FactoryConfigurationVersion>,
+  ) -> bool {
+    let reference = configuration.reference();
+    match self {
+      Self::Create {
+        id,
+        project_id,
+        definition_digest,
+        ..
+      } => {
+        expected_current_version.is_none()
+          && reference.id() == *id
+          && reference.project_id() == *project_id
+          && reference.version() == FactoryConfigurationVersion::INITIAL
+          && reference.definition_digest() == *definition_digest
+      }
+      Self::Replace {
+        id,
+        expected_current_version: intent_version,
+        definition_digest,
+        ..
+      } => {
+        expected_current_version == Some(*intent_version)
+          && reference.id() == *id
+          && reference.version().get() == intent_version.get().saturating_add(1)
+          && reference.definition_digest() == *definition_digest
+      }
+    }
+  }
 }
 
 /// Read-only replay probe for one Factory Configuration mutation intent.
@@ -90,7 +131,8 @@ pub struct ReplaceFactoryConfiguration {
 }
 
 /// Result of one Factory Configuration create or replacement command.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryConfigurationMutationOutcome {
   /// Whether the mutation was newly applied or exactly replayed.
   pub disposition: MutationDisposition,

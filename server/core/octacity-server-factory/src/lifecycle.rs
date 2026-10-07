@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use octacity_server_domain::{ArtifactId, ProjectId};
+use serde::{Deserialize, Serialize};
 
 use crate::{
   CandidateSubject, Decision, DecisionId, DecisionOutcome, DeliveryAttemptId, DeliveryAttemptNumber, DeliveryState,
@@ -13,7 +14,8 @@ use crate::{
 pub const MAX_WORK_SPECIFICATION_REFERENCES: usize = 64;
 
 /// Bounded admission classification attached to one Work Envelope.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkClassification {
   priority: WorkPriority,
   risk: RiskClass,
@@ -51,7 +53,8 @@ impl WorkClassification {
 }
 
 /// Exact immutable Factory Configuration version bound at admission.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryConfigurationRef {
   id: FactoryConfigurationId,
   version: FactoryConfigurationVersion,
@@ -102,7 +105,8 @@ impl FactoryConfigurationRef {
 }
 
 /// Immutable Artifact references carried by one Work Envelope.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkArtifacts {
   task: ArtifactId,
   acceptance: ArtifactId,
@@ -157,7 +161,8 @@ impl WorkArtifacts {
 }
 
 /// Immutable normalized Work admitted to the Factory lifecycle.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkEnvelope {
   id: WorkEnvelopeId,
   configuration: FactoryConfigurationRef,
@@ -244,7 +249,8 @@ impl WorkEnvelope {
 }
 
 /// Durable Factory Run identity, exact input, state, and aggregate version.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryRun {
   id: FactoryRunId,
   configuration: FactoryConfigurationRef,
@@ -328,7 +334,7 @@ impl FactoryRun {
 }
 
 /// Immutable record that a Run requires human or deterministic-policy disposition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Escalation {
   id: EscalationId,
   run_id: FactoryRunId,
@@ -394,7 +400,7 @@ impl Escalation {
 }
 
 /// Append-only delivery-for-review attempt for one candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DeliveryAttempt {
   id: DeliveryAttemptId,
   decision_id: DecisionId,
@@ -466,7 +472,7 @@ impl DeliveryAttempt {
 }
 
 /// Append-only attempt to project authoritative Run state to an external system.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ReportingAttempt {
   id: ReportingAttemptId,
   run_id: FactoryRunId,

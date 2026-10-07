@@ -3,6 +3,7 @@ use std::fmt;
 use octacity_server_domain::{
   ArtifactId, ArtifactName, ArtifactVersion, AttemptId, BuildId, JobId, LeaseId, Timestamp,
 };
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{ArtifactEvent, ArtifactState};
@@ -13,7 +14,7 @@ pub const MAX_ARTIFACT_MEDIA_TYPE_BYTES: usize = 256;
 pub const MAX_ARTIFACT_REPORT_FORMAT_BYTES: usize = 256;
 
 /// Exact SHA-256 identity of immutable Artifact bytes.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ArtifactContentDigest([u8; 32]);
 
 impl ArtifactContentDigest {
@@ -58,7 +59,8 @@ impl fmt::Display for ArtifactContentDigest {
 macro_rules! bounded_text {
   ($name:ident, $limit:expr, $error:ident, $documentation:literal) => {
     #[doc = $documentation]
-    #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+    #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+    #[serde(try_from = "String")]
     pub struct $name(String);
 
     impl $name {
@@ -75,6 +77,14 @@ macro_rules! bounded_text {
       #[must_use]
       pub fn as_str(&self) -> &str {
         &self.0
+      }
+    }
+
+    impl TryFrom<String> for $name {
+      type Error = ArtifactRecordError;
+
+      fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
       }
     }
   };
@@ -94,7 +104,7 @@ bounded_text!(
 );
 
 /// Logical output semantics independent of its media type.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ArtifactType {
   /// A user-visible file or archive.
   Artifact,
@@ -123,7 +133,7 @@ impl ArtifactType {
 }
 
 /// Logical retention decision attached to an Artifact at reservation time.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ArtifactRetentionPolicy {
   /// Keep the Artifact until an explicit policy replacement is implemented.
   Keep,
@@ -143,7 +153,7 @@ impl ArtifactRetentionPolicy {
 }
 
 /// Immutable logical and content identity of one Artifact.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ArtifactIdentity {
   /// Server-owned logical Artifact identity.
   pub artifact_id: ArtifactId,

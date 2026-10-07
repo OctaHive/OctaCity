@@ -8,7 +8,7 @@ use sqlx::{
 /// A rollback to that binary requires restoring a database snapshot captured
 /// at this exact version. A previous binary is never allowed to open a database
 /// containing migrations it does not know.
-pub const PREVIOUS_BINARY_SCHEMA_VERSION: i64 = 45;
+pub const PREVIOUS_BINARY_SCHEMA_VERSION: i64 = 46;
 
 /// Ordered embedded forward migrations for the authoritative PostgreSQL store.
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
@@ -104,7 +104,8 @@ mod tests {
   use super::*;
 
   #[test]
-  fn rollback_version_is_the_immediately_preceding_schema() {
-    assert_eq!(PREVIOUS_BINARY_SCHEMA_VERSION + 1, current_schema_version());
+  fn rollback_version_matches_the_last_released_binary_schema() {
+    assert_eq!(PREVIOUS_BINARY_SCHEMA_VERSION, 46);
+    assert!(current_schema_version() > PREVIOUS_BINARY_SCHEMA_VERSION);
   }
 }

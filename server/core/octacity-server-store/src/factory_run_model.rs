@@ -10,8 +10,9 @@ use octacity_server_factory::{
   ReportingAttempt, StageAttempt, StageAttemptCompletion, StageAttemptNumber, WorkEnvelope,
 };
 use octacity_server_orchestrator::BuildState;
+use serde::{Deserialize, Serialize};
 
-use crate::{AuditActorKind, MutationDisposition, StoreError};
+use crate::{AuditActorKind, MutationDisposition, StoreError, StoreInputError, StoreOperation};
 
 /// Maximum immutable history rows appended by one Factory transition.
 pub const MAX_FACTORY_TRANSITION_RECORDS: usize = 256;
@@ -19,6 +20,8 @@ pub const MAX_FACTORY_TRANSITION_RECORDS: usize = 256;
 pub const MAX_FACTORY_TRANSITION_OUTBOX_RECORDS: usize = 32;
 /// Maximum immutable rows loaded in one complete Factory Run snapshot.
 pub const MAX_FACTORY_RUN_SNAPSHOT_RECORDS: usize = 32_768;
+/// Maximum immutable diagnostic rows returned by one paged read.
+pub const MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE: u16 = 100;
 /// Maximum Factory Runs claimed by one bounded reconciliation pass.
 pub const MAX_FACTORY_RECONCILIATION_BATCH_SIZE: u16 = 100;
 /// Maximum Factory outbox operations claimed by one bounded dispatch pass.
@@ -150,7 +153,7 @@ impl FactoryLifecycleCheckpoint {
 }
 
 /// Immutable causal link from one Factory Stage Attempt to an ordinary Build.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactoryBuildLink {
   /// Factory Run owning the causal link.
   pub run_id: FactoryRunId,
@@ -212,7 +215,7 @@ pub struct FactoryBuildLinkInput {
 }
 
 /// Exact immutable predecessor of a Factory-owned ordinary Build.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum FactoryBuildParent {
   /// Candidate whose exact revision is validated or evaluated.
   ChangeSet(ChangeSetId),
@@ -245,7 +248,7 @@ impl FactoryBuildLink {
 }
 
 /// Immutable terminal observation of one Factory-linked ordinary Build.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactoryBuildObservationRecord {
   /// Content-derived identity of this exact observation.
   pub id: FactoryDigest,
@@ -673,8 +676,9 @@ impl FactoryOutboxRecord {
     }
   }
 
-  #[cfg(any(test, feature = "test-support"))]
-  pub(crate) fn is_canonical(&self) -> bool {
+  /// Returns whether this row is the canonical representation of its fields.
+  #[must_use]
+  pub fn is_canonical(&self) -> bool {
     let ownership_is_valid = match self.state {
       FactoryOutboxState::Pending => self.owner.is_none() && self.claim.is_none(),
       FactoryOutboxState::Claimed | FactoryOutboxState::Delivered | FactoryOutboxState::Failed => {
@@ -918,6 +922,148 @@ pub struct FactoryRunSnapshot {
   pub outbox: Vec<FactoryOutboxRecord>,
   /// Current indexed pointers validated against the immutable collections above.
   pub current: FactoryRunCurrentProjection,
+}
+
+/// One append-only Factory Run diagnostic collection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FactoryRunDiagnosticKind {
+  /// Stage attempts.
+  StageAttempt,
+  /// Terminal stage-attempt completions.
+  StageAttemptCompletion,
+  /// Macro-call DAG nodes.
+  MacroCall,
+  /// Decision Signal requests.
+  SignalRequest,
+  /// Decision Signal receipts.
+  SignalReceipt,
+  /// Ordinary Build causal links.
+  BuildLink,
+  /// Terminal ordinary-Build observations.
+  BuildObservation,
+  /// Exact ChangeSet candidates.
+  Candidate,
+  /// Evidence manifests.
+  Evidence,
+  /// Evaluation plans.
+  EvaluationPlan,
+  /// Evaluator assessments.
+  Assessment,
+  /// Deterministic decisions.
+  Decision,
+  /// Escalations.
+  Escalation,
+  /// Delivery attempts.
+  DeliveryAttempt,
+  /// Reporting attempts.
+  ReportingAttempt,
+}
+
+/// Typed immutable row returned by a Factory diagnostic collection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactoryRunDiagnosticRecord {
+  /// Stage attempt.
+  StageAttempt(Box<StageAttempt>),
+  /// Terminal stage completion.
+  StageAttemptCompletion(Box<StageAttemptCompletion>),
+  /// Macro-call node.
+  MacroCall(Box<MacroCall>),
+  /// Decision Signal request.
+  SignalRequest(Box<DecisionSignalRequest>),
+  /// Decision Signal receipt.
+  SignalReceipt(Box<DecisionSignalReceipt>),
+  /// Ordinary Build link.
+  BuildLink(Box<FactoryBuildLink>),
+  /// Terminal Build observation.
+  BuildObservation(Box<FactoryBuildObservationRecord>),
+  /// Exact candidate.
+  Candidate(Box<ChangeSet>),
+  /// Evidence manifest.
+  Evidence(Box<EvidenceManifest>),
+  /// Evaluation plan.
+  EvaluationPlan(Box<EvaluationPlan>),
+  /// Evaluator assessment.
+  Assessment(Box<Assessment>),
+  /// Deterministic decision.
+  Decision(Box<Decision>),
+  /// Escalation.
+  Escalation(Box<Escalation>),
+  /// Delivery attempt.
+  DeliveryAttempt(Box<DeliveryAttempt>),
+  /// Reporting attempt.
+  ReportingAttempt(Box<ReportingAttempt>),
+}
+
+impl FactoryRunDiagnosticRecord {
+  /// Returns the stable cursor identity used by deterministic pagination.
+  #[must_use]
+  pub fn cursor(&self) -> FactoryKey {
+    let value = match self {
+      Self::StageAttempt(value) => value.id().to_string(),
+      Self::StageAttemptCompletion(value) => value.id().to_string(),
+      Self::MacroCall(value) => value.id().to_string(),
+      Self::SignalRequest(value) => value.id().to_string(),
+      Self::SignalReceipt(value) => value.id().to_string(),
+      Self::BuildLink(value) => value.build_id.to_string(),
+      Self::BuildObservation(value) => value.id.to_string(),
+      Self::Candidate(value) => value.id().to_string(),
+      Self::Evidence(value) => value.id().to_string(),
+      Self::EvaluationPlan(value) => value.id().to_string(),
+      Self::Assessment(value) => value.id().to_string(),
+      Self::Decision(value) => value.id().to_string(),
+      Self::Escalation(value) => value.id().to_string(),
+      Self::DeliveryAttempt(value) => value.id().to_string(),
+      Self::ReportingAttempt(value) => value.id().to_string(),
+    };
+    FactoryKey::new(value).expect("Factory diagnostic identities are canonical keys")
+  }
+}
+
+/// Bounded deterministic Factory diagnostic page request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListFactoryRunDiagnostics {
+  /// Factory Run owning every returned row.
+  pub run_id: FactoryRunId,
+  /// Requested typed collection.
+  pub kind: FactoryRunDiagnosticKind,
+  /// Exclusive last-seen identity.
+  pub after: Option<FactoryKey>,
+  /// Positive bounded page size.
+  pub limit: NonZeroU16,
+}
+
+impl ListFactoryRunDiagnostics {
+  /// Validates a bounded diagnostic page request.
+  pub fn new(
+    run_id: FactoryRunId,
+    kind: FactoryRunDiagnosticKind,
+    after: Option<FactoryKey>,
+    limit: u16,
+  ) -> Result<Self, StoreError> {
+    let limit = NonZeroU16::new(limit)
+      .filter(|value| value.get() <= MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE)
+      .ok_or_else(|| {
+        StoreError::invalid(
+          StoreOperation::ListFactoryRunDiagnostics,
+          StoreInputError::InvalidFactoryRunDiagnosticPageSize,
+        )
+      })?;
+    Ok(Self {
+      run_id,
+      kind,
+      after,
+      limit,
+    })
+  }
+}
+
+/// One deterministic bounded Factory diagnostic page.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryRunDiagnosticPage {
+  /// Typed rows in ascending immutable-identity order.
+  pub items: Vec<FactoryRunDiagnosticRecord>,
+  /// Cursor for the next page, absent when this page is terminal.
+  pub next: Option<FactoryKey>,
 }
 
 /// Request to append and publish one exclusive Factory claim.

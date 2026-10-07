@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use octacity_server_cache::CacheBlobObject;
-use octacity_server_domain::{ArtifactId, LogChunkId};
+use octacity_server_domain::{ArtifactId, LogChunkId, Timestamp};
 
 use crate::{ArtifactUploadRecord, LogChunkManifest, StoreError};
 
@@ -14,6 +14,28 @@ pub struct RestoreArtifactPage {
   pub items: Vec<ArtifactUploadRecord>,
   /// Exclusive cursor for the next page.
   pub next_after: Option<ArtifactId>,
+}
+
+/// Bounded page of exact Artifacts retained by visible Factory Runs.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoreFactoryArtifactPage {
+  /// Published objects ordered by Artifact identity.
+  pub items: Vec<ArtifactUploadRecord>,
+  /// Exclusive cursor for the next page.
+  pub next_after: Option<ArtifactId>,
+}
+
+/// Result of one bounded offline Factory ownership recovery pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RestoreFactoryRecovery {
+  /// Run claims made non-authoritative in this pass.
+  pub expired_claims: u16,
+  /// Factory-retention claims made non-authoritative in this pass.
+  pub expired_retention_claims: u16,
+  /// Claimed outbox operations returned to pending work.
+  pub requeued_outbox: u16,
+  /// Whether another bounded recovery pass is required.
+  pub has_more: bool,
 }
 
 /// Bounded page of visible immutable Build-log chunks.
@@ -50,12 +72,26 @@ pub struct RestoreCacheBlobPage {
 /// restored deployment to serve traffic.
 #[async_trait]
 pub trait RestoreInventoryStore: Send + Sync {
+  /// Expires process ownership restored from a quiesced database snapshot.
+  async fn recover_restored_factory_state(
+    &self,
+    observed_at: Timestamp,
+    limit: u16,
+  ) -> Result<RestoreFactoryRecovery, StoreError>;
+
   /// Reads one stable page of visible published Artifacts.
   async fn restore_artifact_page(
     &self,
     after: Option<ArtifactId>,
     limit: u16,
   ) -> Result<RestoreArtifactPage, StoreError>;
+
+  /// Reads one stable page of exact Artifacts retained by visible Factory Runs.
+  async fn restore_factory_artifact_page(
+    &self,
+    after: Option<ArtifactId>,
+    limit: u16,
+  ) -> Result<RestoreFactoryArtifactPage, StoreError>;
 
   /// Reads one stable page of visible committed Build-log chunks.
   async fn restore_log_chunk_page(

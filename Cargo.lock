@@ -4471,6 +4471,8 @@ name = "octacity-server-artifacts"
 version = "0.1.0"
 dependencies = [
  "octacity-server-domain",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror",
  "uuid",
@@ -4639,6 +4641,7 @@ dependencies = [
  "octacity-protocol",
  "octacity-server-cache",
  "octacity-server-domain",
+ "octacity-server-factory",
  "octacity-server-job",
  "octacity-server-orchestrator",
  "octacity-server-pipeline",

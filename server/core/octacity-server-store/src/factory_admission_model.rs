@@ -1,11 +1,13 @@
 use octacity_server_domain::{ProjectId, RepositoryId, RepositoryVersion, Timestamp};
 use octacity_server_factory::{
   ExternalWorkIdentity, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryRun,
-  WorkEnvelope,
+  FactoryRunState, FactoryRunVersion, WorkEnvelope,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::{
   IdempotencyKey, ManagementSecurityScope, MutationDisposition, PublishedFactoryConfiguration, PublishedRepository,
+  StoreError, StoreInputError, StoreOperation,
 };
 
 /// Provider-neutral namespace that scopes an external Work identity.
@@ -69,8 +71,37 @@ pub struct AdmitFactoryWork {
   pub admitted_at: Timestamp,
 }
 
+impl AdmitFactoryWork {
+  /// Revalidates the complete initial admission relationship at the store seam.
+  ///
+  /// Mutable source resolution happens before this request exists, so adapters
+  /// must accept only an admitted version-one Run that repeats the immutable
+  /// Work identities and the authenticated source security scope exactly.
+  pub fn validate(&self, security_scope: &ManagementSecurityScope) -> Result<(), StoreError> {
+    if security_scope != &self.probe.source_scope.security_scope {
+      return Err(StoreError::invalid(
+        StoreOperation::AdmitFactoryWork,
+        StoreInputError::InvalidMutationAuditContext,
+      ));
+    }
+    let valid = self.work.external_identity() == &self.probe.external_identity
+      && self.run.state() == FactoryRunState::Admitted
+      && self.run.version() == FactoryRunVersion::INITIAL
+      && self.run.configuration() == self.work.configuration()
+      && self.run.work_id() == self.work.id()
+      && self.run.subject() == self.work.subject();
+    valid.then_some(()).ok_or_else(|| {
+      StoreError::invalid(
+        StoreOperation::AdmitFactoryWork,
+        StoreInputError::InvalidFactoryAdmission,
+      )
+    })
+  }
+}
+
 /// Immutable outcome of one accepted Work admission.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PublishedFactoryAdmission {
   /// Immutable normalized Work input.
   pub work: WorkEnvelope,
@@ -81,7 +112,8 @@ pub struct PublishedFactoryAdmission {
 }
 
 /// Result of applying or replaying one Work admission.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryAdmissionMutationOutcome {
   /// Whether this invocation applied the admission or observed its original result.
   pub disposition: MutationDisposition,

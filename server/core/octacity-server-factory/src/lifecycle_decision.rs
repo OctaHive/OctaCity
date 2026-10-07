@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use octacity_server_domain::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use crate::{
   BudgetLimit, BudgetResource, BudgetUsage, DecisionOutcome, DecisionSignalPurpose, FactoryDigest, FactoryError,
@@ -29,7 +30,7 @@ const EXTERNAL_BUDGET_RESOURCES: [BudgetResource; 4] = [
 ];
 
 /// Opaque content-derived fencing value for one Factory reconciler claim.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct FactoryClaimFence(FactoryDigest);
 
 impl FactoryClaimFence {
@@ -47,7 +48,7 @@ impl FactoryClaimFence {
 }
 
 /// Current exclusive ownership window for one Factory Run reconciliation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactoryClaim {
   fence: FactoryClaimFence,
   claimed_at: Timestamp,
@@ -175,7 +176,7 @@ impl FactoryDecisionGuard {
 }
 
 /// Progress of an optional non-authoritative Decision Signal gate.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalProgress {
   /// No signal is configured for the current deterministic choice.
   Disabled,
@@ -190,7 +191,7 @@ pub enum DecisionSignalProgress {
 }
 
 /// One program-owned stage, including an evaluation branch when applicable.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum FactoryStageTarget {
   /// Candidate implementation.
   Implementation,
@@ -227,7 +228,7 @@ impl FactoryStageTarget {
 }
 
 /// Persisted progress of one implementation, validation, or rework stage.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum FactoryStageProgress {
   /// No attempt has been created.
   Ready,
@@ -252,7 +253,7 @@ pub enum FactoryStageProgress {
 }
 
 /// Persisted progress for one evaluator branch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EvaluationBranchState {
   /// The expected branch has no Stage Attempt yet.
   Pending,
@@ -275,7 +276,7 @@ pub enum EvaluationBranchState {
 }
 
 /// One expected evaluator branch and its authoritative progress.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvaluationBranch {
   key: FactoryKey,
   required: bool,
@@ -311,7 +312,7 @@ impl EvaluationBranch {
 }
 
 /// Canonically ordered evaluator branches and their deterministic quorum.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvaluationProgress {
   branches: Vec<EvaluationBranch>,
   required_quorum: u16,
@@ -410,7 +411,7 @@ const fn valid_evaluation_branch_transition(previous: EvaluationBranchState, nex
 }
 
 /// Persisted evaluation planning, fan-out, join, and Decision progress.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EvaluationState {
   /// Exact evidence exists but no immutable Evaluation Plan has been recorded.
   PlanRequired,
@@ -428,7 +429,7 @@ pub enum EvaluationState {
 }
 
 /// Human delivery intent recorded before any write-capable adapter runs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DeliveryIntent {
   /// Human approval has not been recorded.
   AwaitingApproval,
@@ -461,7 +462,7 @@ impl FactoryEscalationDisposition {
 }
 
 /// Non-authoritative external reporting progress.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ReportingProgress {
   /// No reporter is configured.
   Disabled,
@@ -478,7 +479,7 @@ pub enum ReportingProgress {
 }
 
 /// Delivery-for-human-review progress.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DeliveryProgress {
   /// An accepted intent is ready for adapter dispatch.
   Ready,
@@ -495,7 +496,7 @@ pub enum DeliveryProgress {
 }
 
 /// Persisted facts sufficient for one pure Factory next-action decision.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum FactoryLifecycleProgress {
   /// Admitted Work has not started implementation.
   Admitted,
@@ -760,19 +761,13 @@ pub fn decide_next_action(snapshot: &FactoryLifecycleSnapshot) -> Result<Factory
   validate_lifecycle_progress(snapshot.state, &snapshot.progress)?;
 
   if snapshot.cancellation_requested {
-    if matches!(
-      snapshot.state,
-      FactoryRunState::Rejected | FactoryRunState::Cancelled | FactoryRunState::Completed
-    ) {
+    if snapshot.state.is_terminal() {
       return Err(invalid_lifecycle(snapshot.state));
     }
     return Ok(FactoryNextAction::Cancel);
   }
 
-  if !matches!(
-    snapshot.state,
-    FactoryRunState::Rejected | FactoryRunState::Cancelled | FactoryRunState::Completed
-  ) {
+  if snapshot.state.is_active() {
     match snapshot.signal {
       DecisionSignalProgress::ReadyToRequest(purpose) => {
         return guard_action(snapshot, FactoryNextAction::RequestDecisionSignal(purpose));

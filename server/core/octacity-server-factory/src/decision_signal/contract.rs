@@ -1,4 +1,5 @@
 use octacity_server_domain::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use crate::{
   BudgetUsage, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose, DecisionSignalRequest,
@@ -13,7 +14,7 @@ use super::question::{
 };
 
 /// Exact capability advertised by one provider adapter and model pair.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalProviderCapability {
   provider: ImmutableReference,
   adapter: ImmutableReference,
@@ -158,7 +159,7 @@ impl DecisionSignalProviderCapability {
 }
 
 /// Purpose-specific calibrated threshold interpreted under exact probability semantics.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalThreshold {
   purpose: DecisionSignalPurpose,
   probability_semantics: ImmutableReference,
@@ -230,7 +231,7 @@ impl DecisionSignalThreshold {
 }
 
 /// Canonical provider-neutral request sent through the Decision Signal seam.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalProviderRequest {
   request: DecisionSignalRequest,
   provider: ImmutableReference,
@@ -497,7 +498,7 @@ fn encode_budget_limit(limit: crate::BudgetLimit) -> Vec<u8> {
 }
 
 /// Typed value returned for one exact versioned question.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalAnswerValue {
   /// A finite symbolic answer with calibrated probability context.
   FiniteChoice {
@@ -518,7 +519,7 @@ pub enum DecisionSignalAnswerValue {
 }
 
 /// One provider answer bound to the exact immutable question definition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalAnswer {
   question: ImmutableReference,
   value: DecisionSignalAnswerValue,
@@ -545,7 +546,7 @@ impl DecisionSignalAnswer {
 }
 
 /// Schema-valid typed result returned by a Decision Signal provider adapter.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalProviderResult {
   request_id: DecisionSignalRequestId,
   provider: ImmutableReference,
@@ -771,7 +772,7 @@ fn answers_match_questions(answers: &[DecisionSignalAnswer], questions: &[Decisi
 }
 
 /// Secret-safe terminal provider failure bound to one exact request and model.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DecisionSignalProviderFailure {
   request_id: DecisionSignalRequestId,
   provider: ImmutableReference,
@@ -858,7 +859,7 @@ impl DecisionSignalProviderFailure {
 }
 
 /// Provider observation accepted by the pure Decision Signal consumption policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionSignalProviderObservation {
   /// A typed provider result that still requires exact request validation.
   Result(DecisionSignalProviderResult),

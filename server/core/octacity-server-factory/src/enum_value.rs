@@ -80,6 +80,20 @@ factory_enum!(
     Completed => "completed",
   }
 );
+
+impl FactoryRunState {
+  /// Returns whether the run can no longer consume Factory WIP or be reconciled.
+  #[must_use]
+  pub const fn is_terminal(self) -> bool {
+    matches!(self, Self::Rejected | Self::Cancelled | Self::Completed)
+  }
+
+  /// Returns whether the run still consumes Factory WIP and may be reconciled.
+  #[must_use]
+  pub const fn is_active(self) -> bool {
+    !self.is_terminal()
+  }
+}
 factory_enum!(
   PermissionCategory,
   FactoryEnumKind::PermissionCategory,
@@ -325,5 +339,14 @@ mod tests {
         .into_iter()
         .all(|error| matches!(error, FactoryError::UnsupportedEnum { .. }))
     );
+  }
+
+  #[test]
+  fn run_terminality_has_one_canonical_definition() {
+    assert!(FactoryRunState::Rejected.is_terminal());
+    assert!(FactoryRunState::Cancelled.is_terminal());
+    assert!(FactoryRunState::Completed.is_terminal());
+    assert!(FactoryRunState::Admitted.is_active());
+    assert!(FactoryRunState::Escalated.is_active());
   }
 }

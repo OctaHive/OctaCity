@@ -74,12 +74,20 @@ pub enum StoreOperation {
   ReadCurrentFactoryConfiguration,
   /// Read trusted Factory Configuration capability choices for a Project.
   ReadFactoryConfigurationCapabilities,
+  /// List one bounded page of current Factory Configurations owned by a Project.
+  ListProjectFactoryConfigurations,
   /// Read exact definitions needed to admit Factory Work.
   ReadFactoryAdmissionContext,
   /// Deduplicate and persist one immutable Work Envelope and Factory Run.
   AdmitFactoryWork,
+  /// List one bounded newest-first page of Factory Runs.
+  ListFactoryRuns,
+  /// Read one current Factory Run summary.
+  ReadFactoryRunSummary,
   /// Read one complete bounded Factory Run snapshot.
   ReadFactoryRunSnapshot,
+  /// List one bounded deterministic page of Factory Run diagnostics.
+  ListFactoryRunDiagnostics,
   /// Append and publish one fenced Factory Run claim.
   ClaimFactoryRun,
   /// Claim one bounded batch of eligible Factory Runs.
@@ -92,6 +100,12 @@ pub enum StoreOperation {
   ClaimFactoryOutbox,
   /// Settle one owned Factory outbox operation.
   SettleFactoryOutbox,
+  /// Claim one bounded batch of due Factory retention work.
+  ClaimFactoryRetentionWork,
+  /// Hide one Factory Run and release a bounded reference page.
+  AdvanceFactoryRetentionWork,
+  /// Retry or dead-letter one Factory retention operation.
+  FailFactoryRetentionWork,
   /// List one bounded newest-first page of Builds owned by a Project.
   ListProjectBuilds,
   /// Create one immutable Trigger definition.
@@ -295,6 +309,21 @@ pub enum StoreInputError {
   /// A Project Build page size was zero or exceeded its fixed bound.
   #[error("a Project Build page size is outside its allowed range")]
   InvalidProjectBuildPageSize,
+  /// A Factory Configuration page size was zero or exceeded its fixed bound.
+  #[error("a Factory Configuration page size is outside its allowed range")]
+  InvalidFactoryConfigurationPageSize,
+  /// A Factory Run page size was zero or exceeded its fixed bound.
+  #[error("a Factory Run page size is outside its allowed range")]
+  InvalidFactoryRunPageSize,
+  /// A Factory Run diagnostic page size was zero or exceeded its fixed bound.
+  #[error("a Factory Run diagnostic page size is outside its allowed range")]
+  InvalidFactoryRunDiagnosticPageSize,
+  /// A Factory Run diagnostic continuation cursor is malformed for its collection.
+  #[error("a Factory Run diagnostic cursor is invalid")]
+  InvalidFactoryRunDiagnosticCursor,
+  /// A Factory Run filter has inconsistent admission-time bounds.
+  #[error("a Factory Run filter is invalid")]
+  InvalidFactoryRunFilter,
   /// An Agent Pool page size is zero or exceeds the store contract bound.
   #[error("an agent pool page size is outside its allowed range")]
   InvalidAgentPoolPageSize,

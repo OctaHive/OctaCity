@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use octacity_server_domain::ArtifactId;
+use serde::{Deserialize, Serialize};
 
 use crate::{
   AssessmentId, AssessmentOutcome, CandidateSubject, ChangeSetId, DecisionId, DecisionOutcome, EvaluationPlanId,
@@ -22,7 +23,7 @@ pub const MAX_DECISION_ASSESSMENTS: usize = 64;
 pub const MAX_DECISION_REASONS: usize = MAX_CRITERION_PACKS + MAX_EVALUATORS + 1;
 
 /// Trusted immutable source candidate captured after a writable Stage Attempt.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ChangeSet {
   id: ChangeSetId,
   stage_attempt_id: StageAttemptId,
@@ -97,7 +98,7 @@ impl ChangeSet {
 }
 
 /// One typed, content-addressed report or Artifact in an Evidence Manifest.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvidenceItem {
   kind: FactoryKey,
   artifact_id: ArtifactId,
@@ -135,7 +136,7 @@ impl EvidenceItem {
 }
 
 /// Immutable bounded deterministic evidence for one exact candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvidenceManifest {
   id: EvidenceManifestId,
   changeset_id: ChangeSetId,
@@ -200,7 +201,7 @@ impl EvidenceManifest {
 }
 
 /// Immutable selection of criterion packs and evaluator branches for one candidate.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvaluationPlan {
   id: EvaluationPlanId,
   evidence_id: EvidenceManifestId,
@@ -264,7 +265,7 @@ impl EvaluationPlan {
 }
 
 /// One schema-valid typed finding returned by an evaluator.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum AssessmentFinding {
   /// A policy-relevant violation with an ordered severity.
   Violation {
@@ -300,7 +301,7 @@ impl AssessmentFinding {
 }
 
 /// Immutable schema-valid evaluator result for one exact Evaluation Plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Assessment {
   id: AssessmentId,
   plan_id: EvaluationPlanId,
@@ -395,7 +396,7 @@ impl Assessment {
 }
 
 /// Typed deterministic reason recorded by the Decision Engine.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum DecisionReason {
   /// Every mandatory gate and evaluator policy was satisfied.
   PolicySatisfied,
@@ -433,7 +434,7 @@ pub(crate) struct DecisionBindings {
 }
 
 /// Immutable deterministic candidate disposition input to later lifecycle policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Decision {
   id: DecisionId,
   plan_id: EvaluationPlanId,
