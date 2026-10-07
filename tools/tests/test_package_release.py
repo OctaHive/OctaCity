@@ -378,18 +378,23 @@ class PackageReleaseTests(unittest.TestCase):
         self.assertIn("cargo test --locked -p octacity-release-harness --test release_vertical_slice", action)
         self.assertIn("codex-fixture:", action)
         self.assertIn("OCTACITY_RELEASE_CODEX_FIXTURE", action)
-        fixture = REPOSITORY / "server/tests/octacity-release-harness/fixtures/release-matrix/Octafile.yml"
+        fixture_root = REPOSITORY / "server/tests/octacity-release-harness/fixtures/release-matrix"
+        fixture = fixture_root / "Octafile.yml"
+        codex_fixture = fixture_root / "CodexOctafile.yml"
         self.assertTrue(fixture.is_file())
+        self.assertTrue(codex_fixture.is_file())
         fixture_text = fixture.read_text(encoding="utf-8")
+        codex_fixture_text = codex_fixture.read_text(encoding="utf-8")
         self.assertIn("cache: {}", fixture_text)
         self.assertIn("failing:", fixture_text)
         self.assertIn("exit 23", fixture_text)
-        self.assertIn("codex-fixture:", fixture_text)
-        self.assertIn("codex-overflow:", fixture_text)
-        self.assertIn("codex-cancel:", fixture_text)
-        self.assertIn("OCTA_CODEX_FIXTURE_SECRET: CODEX_FIXTURE_SECRET", fixture_text)
         self.assertIn("sleep 120 &", fixture_text)
-        self.assertIn("result_schema:", fixture_text)
+        self.assertNotIn("CODEX_FIXTURE_SECRET", fixture_text)
+        self.assertIn("codex-fixture:", codex_fixture_text)
+        self.assertIn("codex-overflow:", codex_fixture_text)
+        self.assertIn("codex-cancel:", codex_fixture_text)
+        self.assertIn("OCTA_CODEX_FIXTURE_SECRET: CODEX_FIXTURE_SECRET", codex_fixture_text)
+        self.assertIn("result_schema:", codex_fixture_text)
         self.assertTrue(
             (REPOSITORY / "server/tests/octacity-release-harness/src/bin/codex_fixture.rs").is_file()
         )

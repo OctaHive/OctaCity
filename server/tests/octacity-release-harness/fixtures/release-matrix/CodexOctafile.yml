@@ -1,0 +1,68 @@
+version: 1
+
+vars:
+  CODEX_FIXTURE_PUBLIC: release-public-canary
+  CODEX_FIXTURE_SECRET:
+    value: release-secret-canary-must-not-appear
+    secret: true
+  CODEX_FIXTURE_UNMAPPED:
+    value: release-unmapped-canary-must-not-appear
+    secret: true
+
+tasks:
+  codex-fixture:
+    vars:
+      CODEX_FIXTURE_MODE: redaction
+    cmds:
+      - id: codex
+        codex:
+          prompt: >-
+            Execute the bounded release fixture. The prompt canary
+            OCTACITY_CODEX_PROMPT_MUST_NOT_APPEAR_IN_TRACE must not be retained
+            in the sanitized trace.
+          result_schema:
+            type: object
+            properties:
+              outcome: { const: completed }
+              files: { const: 1 }
+            required: [outcome, files]
+            additionalProperties: false
+          environment:
+            public:
+              OCTA_CODEX_FIXTURE_MODE: CODEX_FIXTURE_MODE
+              OCTA_CODEX_FIXTURE_PUBLIC: CODEX_FIXTURE_PUBLIC
+            secret:
+              OCTA_CODEX_FIXTURE_SECRET: CODEX_FIXTURE_SECRET
+          run_records: .octa/release-codex-runs
+    outputs:
+      outcome: { step: codex, field: outcome }
+
+  codex-overflow:
+    vars:
+      CODEX_FIXTURE_MODE: overflow
+    cmds:
+      - id: codex
+        codex:
+          prompt: Exercise the bounded release overflow fixture.
+          environment:
+            public:
+              OCTA_CODEX_FIXTURE_MODE: CODEX_FIXTURE_MODE
+              OCTA_CODEX_FIXTURE_PUBLIC: CODEX_FIXTURE_PUBLIC
+            secret:
+              OCTA_CODEX_FIXTURE_SECRET: CODEX_FIXTURE_SECRET
+          run_records: .octa/release-codex-runs
+
+  codex-cancel:
+    vars:
+      CODEX_FIXTURE_MODE: cancel
+    cmds:
+      - id: codex
+        codex:
+          prompt: Exercise cancellation of the complete Codex process tree.
+          environment:
+            public:
+              OCTA_CODEX_FIXTURE_MODE: CODEX_FIXTURE_MODE
+              OCTA_CODEX_FIXTURE_PUBLIC: CODEX_FIXTURE_PUBLIC
+            secret:
+              OCTA_CODEX_FIXTURE_SECRET: CODEX_FIXTURE_SECRET
+          run_records: .octa/release-codex-runs

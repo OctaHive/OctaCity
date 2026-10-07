@@ -49,6 +49,8 @@ use scenarios::{
 use support::*;
 
 const FIXTURE_OCTAFILE: &str = "server/tests/octacity-release-harness/fixtures/release-matrix/Octafile.yml";
+const CODEX_FIXTURE_OCTAFILE: &str = "server/tests/octacity-release-harness/fixtures/release-matrix/CodexOctafile.yml";
+const CODEX_FIXTURE_TASKS: [&str; 3] = ["codex-fixture", "codex-overflow", "codex-cancel"];
 const CACHE_NAMESPACE: &str = "release-linux-native";
 const MICROSANDBOX_HOST_ALIAS: &str = "host.microsandbox.internal";
 const ARTIFACT_BYTES: usize = 1024 * 1024;
@@ -787,18 +789,27 @@ fn matrix_configuration_body(input: &ConfigurationInput<'_>) -> Value {
 }
 
 fn matrix_pipeline_node(task: &str, backend: &ReleaseBackend) -> Value {
+  let octafile = matrix_octafile(task);
   json!({
     "id": task,
     "name": task,
     "dependency_policy": "all_succeeded",
     "required_capabilities": backend.required_capabilities(),
     "execution": {
-      "octafile": FIXTURE_OCTAFILE,
+      "octafile": octafile,
       "commands": [task],
       "parallel": false,
       "failfast": true
     }
   })
+}
+
+fn matrix_octafile(task: &str) -> &'static str {
+  if CODEX_FIXTURE_TASKS.contains(&task) {
+    CODEX_FIXTURE_OCTAFILE
+  } else {
+    FIXTURE_OCTAFILE
+  }
 }
 
 async fn publish_matrix_policy(
@@ -954,24 +965,29 @@ mod tests {
   }
 
   #[test]
-  fn release_cache_fixture_does_not_inherit_codex_secrets() {
+  fn release_cache_and_codex_fixtures_have_separate_variable_scopes() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let fixture = repository.join(FIXTURE_OCTAFILE);
-    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fs::read_to_string(fixture).unwrap()).unwrap();
+    let cache_fixture = repository.join(FIXTURE_OCTAFILE);
+    let codex_fixture = repository.join(CODEX_FIXTURE_OCTAFILE);
+    let cache_document: serde_yaml_ng::Value =
+      serde_yaml_ng::from_str(&fs::read_to_string(cache_fixture).unwrap()).unwrap();
+    let codex_document: serde_yaml_ng::Value =
+      serde_yaml_ng::from_str(&fs::read_to_string(codex_fixture).unwrap()).unwrap();
 
     assert!(
-      document["vars"]
+      cache_document["vars"]
         .as_mapping()
         .is_none_or(|variables| variables.values().all(|value| value["secret"] != true)),
       "root secrets make every task ineligible for the result cache"
     );
-    for task in ["codex-fixture", "codex-overflow", "codex-cancel"] {
-      assert_eq!(document["tasks"][task]["vars"]["CODEX_FIXTURE_SECRET"]["secret"], true);
-      assert_eq!(
-        document["tasks"][task]["vars"]["CODEX_FIXTURE_UNMAPPED"]["secret"],
-        true
-      );
+    assert_eq!(codex_document["vars"]["CODEX_FIXTURE_SECRET"]["secret"], true);
+    assert_eq!(codex_document["vars"]["CODEX_FIXTURE_UNMAPPED"]["secret"], true);
+    for task in CODEX_FIXTURE_TASKS {
+      assert!(codex_document["tasks"][task]["vars"]["CODEX_FIXTURE_SECRET"].is_null());
+      assert!(codex_document["tasks"][task]["vars"]["CODEX_FIXTURE_UNMAPPED"].is_null());
+      assert_eq!(matrix_octafile(task), CODEX_FIXTURE_OCTAFILE);
     }
+    assert_eq!(matrix_octafile("cacheable"), FIXTURE_OCTAFILE);
   }
 }
 
