@@ -1,6 +1,10 @@
 use std::{collections::BTreeMap, num::NonZeroU64};
 
-use octacity_protocol::{CachePolicy, OctaSpec, OutputLimits, RuntimeSpec, RuntimeSpecV2, SignedEnvelope};
+use octacity_protocol::{
+  CachePolicy, EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, FactoryCausalityV3,
+  FactoryEnforcementCapabilityV3, FactoryPermissionSetV3, ManagedOctaExecutionV3, OctaSpec, OutputLimits,
+  ProtectedInputManifestV3, RuntimeSpec, RuntimeSpecV2, SignedEnvelope,
+};
 use octacity_server_domain::{
   BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference,
 };
@@ -238,15 +242,63 @@ pub struct JobSpecTemplate {
   source_reference: Option<SourceReference>,
   repository_locator: RepositoryLocator,
   parameters: BTreeMap<String, Value>,
-  execution: JobExecutionTemplate,
+  execution: JobExecutionIntent,
   policy: JobSpecPolicySnapshot,
+}
+
+/// Server-owned protected execution facts embedded in a stable v3 template.
+///
+/// The type deliberately has no transfer URL, credential, lease, or fence
+/// field. Those short-lived capabilities belong to lease acquisition rather
+/// than signed stable intent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedJobSpecIntent {
+  pub(super) execution: ManagedOctaExecutionV3,
+  pub(super) factory: FactoryCausalityV3,
+  pub(super) protected_inputs: ProtectedInputManifestV3,
+  pub(super) permissions: FactoryPermissionSetV3,
+  pub(super) required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
+}
+
+impl ManagedJobSpecIntent {
+  /// Captures exact generated tasks, immutable input metadata, narrowed
+  /// permissions, and the semantic enforcement requirements for JobSpec v3.
+  #[must_use]
+  pub fn new(
+    execution: ManagedOctaExecutionV3,
+    factory: FactoryCausalityV3,
+    protected_inputs: ProtectedInputManifestV3,
+    permissions: FactoryPermissionSetV3,
+    required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
+  ) -> Self {
+    Self {
+      execution,
+      factory,
+      protected_inputs,
+      permissions,
+      required_enforcement,
+    }
+  }
+}
+
+/// Ordinary repository-owned execution or protected server-managed execution.
+///
+/// Untagged serialization keeps the existing ordinary template bytes and
+/// persisted JSON shape unchanged. The two strict variants have disjoint
+/// required fields, so managed intent cannot be decoded as repository input.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub(super) enum JobExecutionIntent {
+  Ordinary(JobExecutionTemplate),
+  Managed(Box<ManagedJobSpecIntent>),
 }
 
 /// Immutable toolchain and runtime facts used before a ready Job is leased.
 ///
 /// The view deliberately omits repository parameters and other execution
 /// payload. Placement needs exact installed identities, while the signed
-/// [`octacity_protocol::JobSpecV1`] remains the execution authority.
+/// versioned JobSpec remains the execution authority.
 #[derive(Clone, Copy, Debug)]
 pub struct JobPlacementPolicy<'a> {
   /// Logical source-plugin identity.
@@ -261,6 +313,8 @@ pub struct JobPlacementPolicy<'a> {
   pub runtime: &'a JobRuntimePolicy,
   /// Whether this Job requires the registered Octa cache capability.
   pub requires_cache: bool,
+  /// Oldest negotiated execution contract capable of decoding this template.
+  pub minimum_execution_contract: u16,
 }
 
 impl JobSpecTemplate {
@@ -277,7 +331,27 @@ impl JobSpecTemplate {
       source_reference: build.source_reference.clone(),
       repository_locator: build.repository_locator.clone(),
       parameters: build.parameters.clone(),
-      execution,
+      execution: JobExecutionIntent::Ordinary(execution),
+      policy: policy.clone(),
+    };
+    value.validate()?;
+    Ok(value)
+  }
+
+  pub(super) fn new_managed(
+    build: &JobSpecBuildSnapshot,
+    pipeline_node_id: PipelineNodeId,
+    execution: ManagedJobSpecIntent,
+    policy: &JobSpecPolicySnapshot,
+  ) -> Result<Self, JobSpecDerivationError> {
+    let value = Self {
+      build_id: build.build_id,
+      pipeline_node_id,
+      immutable_revision: build.immutable_revision.clone(),
+      source_reference: build.source_reference.clone(),
+      repository_locator: build.repository_locator.clone(),
+      parameters: build.parameters.clone(),
+      execution: JobExecutionIntent::Managed(Box::new(execution)),
       policy: policy.clone(),
     };
     value.validate()?;
@@ -309,8 +383,16 @@ impl JobSpecTemplate {
     {
       return Err(JobSpecDerivationError::InvalidPolicy);
     }
-    super::derive::validate_execution_template(&self.execution)?;
-    super::derive::execution_variables(&self.parameters)?;
+    match &self.execution {
+      JobExecutionIntent::Ordinary(execution) => {
+        super::derive::validate_execution_template(execution)?;
+        super::derive::execution_variables(&self.parameters)?;
+      }
+      JobExecutionIntent::Managed(_) if !self.parameters.is_empty() || self.policy.secrets_profile.is_some() => {
+        return Err(JobSpecDerivationError::InvalidPolicy);
+      }
+      JobExecutionIntent::Managed(_) => {}
+    }
     super::derive::validate_protocol_template(self)
   }
 
@@ -324,6 +406,11 @@ impl JobSpecTemplate {
       octa: &self.policy.octa,
       runtime: &self.policy.runtime,
       requires_cache: self.policy.cache.is_some(),
+      minimum_execution_contract: match (&self.execution, &self.policy.runtime) {
+        (JobExecutionIntent::Managed(_), _) => EXECUTION_CONTRACT_V3,
+        (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Current(_)) => EXECUTION_CONTRACT_V2,
+        (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Legacy(_)) => EXECUTION_CONTRACT_V1,
+      },
     }
   }
 
@@ -339,7 +426,19 @@ impl JobSpecTemplate {
     &self.policy.outputs
   }
 
-  pub(super) const fn execution(&self) -> &JobExecutionTemplate {
+  /// Borrows the immutable protected-input manifest for managed v3 execution.
+  ///
+  /// Transfer credentials deliberately remain outside this stable template and
+  /// are minted only after a Lease has committed.
+  #[must_use]
+  pub fn protected_inputs(&self) -> Option<&ProtectedInputManifestV3> {
+    match &self.execution {
+      JobExecutionIntent::Ordinary(_) => None,
+      JobExecutionIntent::Managed(managed) => Some(&managed.protected_inputs),
+    }
+  }
+
+  pub(super) const fn execution(&self) -> &JobExecutionIntent {
     &self.execution
   }
 

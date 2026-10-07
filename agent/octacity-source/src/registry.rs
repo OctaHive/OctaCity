@@ -187,6 +187,13 @@ impl SourcePluginRegistry {
         message: "installed executable digest differs from the required digest".to_owned(),
       });
     }
+    validate_regular_file(&plugin.executable, true)?;
+    if file_sha256(&plugin.executable)? != plugin.manifest.sha256 {
+      return Err(RegistryError::Requirement {
+        name: requirement.provider.clone(),
+        message: "installed executable changed after registry inventory".to_owned(),
+      });
+    }
     Ok(plugin)
   }
 }

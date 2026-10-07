@@ -7,8 +7,10 @@ use async_trait::async_trait;
 use octacity_observability::{ErrorClass, Operation, ServerOperationMetric};
 use octacity_protocol::{AcquireLeaseRequest, AgentCredentialToken, COORDINATOR_PROTOCOL_VERSION};
 use octacity_server_domain::{LeaseId, Timestamp};
+use octacity_server_job::JobFailureClass;
 use octacity_server_store::{
-  JobClaim, JobClaimOutcome, JobExecutionStore, LeaseFence, LeaseGrant, LeaseWindow, StoreError,
+  IdempotencyKey, JobClaim, JobClaimOutcome, JobCompletion, JobCompletionKind, JobExecutionStore, LeaseAccess,
+  LeaseFence, LeaseGrant, LeaseWindow, StoreError,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -30,6 +32,15 @@ pub struct AcquireAgentLeaseInput {
   /// Current registration bearer.
   pub credential: AgentCredentialToken,
   /// Server-observed request arrival time.
+  pub observed_at_unix_ms: i64,
+}
+
+/// Committed Lease whose permanent assignment payload could not be delivered.
+#[derive(Clone, Debug)]
+pub struct FailAgentLeaseAssignmentInput {
+  /// Exact committed grant being fenced.
+  pub grant: LeaseGrant,
+  /// Server-observed failure time.
   pub observed_at_unix_ms: i64,
 }
 
@@ -62,6 +73,9 @@ pub trait ReadyJobWaiter: Send + Sync {
 pub trait AgentLeaseUseCases: Send + Sync {
   /// Authenticates one current registration and performs a bounded long poll.
   async fn acquire(&self, input: AcquireAgentLeaseInput) -> Result<AgentLeaseOutcome, AgentLeaseError>;
+
+  /// Fences one committed but permanently undeliverable assignment.
+  async fn fail_assignment(&self, input: FailAgentLeaseAssignmentInput) -> Result<(), AgentLeaseError>;
 }
 
 /// Store-backed placement service that never holds store state while waiting.
@@ -155,6 +169,31 @@ where
       },
     )
     .await
+  }
+
+  async fn fail_assignment(&self, input: FailAgentLeaseAssignmentInput) -> Result<(), AgentLeaseError> {
+    let completed_at =
+      Timestamp::from_unix_millis(input.observed_at_unix_ms).map_err(|_| AgentLeaseError::InvalidRequest)?;
+    let grant = input.grant;
+    let completion_id = IdempotencyKey::new(format!("assignment-delivery:{}", grant.lease_id))
+      .map_err(|_| AgentLeaseError::InvalidRequest)?;
+    self
+      .store
+      .fail_lease_assignment(JobCompletion {
+        completion_id,
+        lease: LeaseAccess {
+          lease_id: grant.lease_id,
+          fence: grant.fence,
+          agent_id: grant.agent_id,
+          registration_epoch: grant.registration_epoch,
+        },
+        final_sequence: None,
+        kind: JobCompletionKind::Failed(JobFailureClass::Infrastructure),
+        execution: None,
+        completed_at,
+      })
+      .await?;
+    Ok(())
   }
 }
 
@@ -285,9 +324,11 @@ mod tests {
     task::{Context, Poll, Waker},
   };
 
-  use octacity_server_domain::PoolId;
+  use octacity_server_domain::{AttemptNumber, PoolId};
+  use octacity_server_orchestrator::{AttemptState, BuildState};
   use octacity_server_store::{
-    AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, JobCompletion, RegistrationEpoch,
+    AppendJobEvents, AppendJobEventsOutcome, CompletionDisposition, JobCompletion, MutationDisposition,
+    RegistrationEpoch,
   };
 
   use super::*;
@@ -320,6 +361,7 @@ mod tests {
   #[derive(Default)]
   struct EmptyStore {
     claims: Mutex<Vec<JobClaim>>,
+    assignment_failures: Mutex<Vec<JobCompletion>>,
   }
 
   #[async_trait]
@@ -335,6 +377,21 @@ mod tests {
 
     async fn complete_job(&self, _request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
       unreachable!("placement does not complete Jobs")
+    }
+
+    async fn fail_lease_assignment(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
+      request.validate_assignment_failure()?;
+      self.assignment_failures.lock().unwrap().push(request);
+      Ok(CompletionDisposition {
+        disposition: MutationDisposition::Applied,
+        job_id: "00000000-0000-0000-0000-000000000002".parse().unwrap(),
+        failure_class: Some(JobFailureClass::Infrastructure),
+        ready_jobs: Vec::new(),
+        ready_pools: Default::default(),
+        skipped_jobs: Vec::new(),
+        attempt_state: AttemptState::Failed,
+        build_state: BuildState::Failed,
+      })
     }
   }
 
@@ -423,6 +480,56 @@ mod tests {
     assert_eq!(waiter.0.load(Ordering::SeqCst), 1);
   }
 
+  #[test]
+  fn permanent_assignment_failure_is_fenced_as_infrastructure_failure() {
+    let registration = Arc::new(RegistrationStub {
+      authority: authority(),
+      calls: AtomicUsize::new(0),
+      drain_after_first_authorization: false,
+    });
+    let store = Arc::new(EmptyStore::default());
+    let service = AgentLeaseService::new(
+      registration,
+      store.clone(),
+      Arc::new(ImmediateWaiter::default()),
+      Duration::from_secs(60),
+    )
+    .unwrap();
+    let grant = LeaseGrant {
+      lease_id: "00000000-0000-0000-0000-000000000001".parse().unwrap(),
+      fence: LeaseFence::from_bytes([7; 32]),
+      job_id: "00000000-0000-0000-0000-000000000002".parse().unwrap(),
+      attempt: AttemptNumber::new(1).unwrap(),
+      agent_id: "00000000-0000-0000-0000-000000000003".parse().unwrap(),
+      registration_epoch: RegistrationEpoch::new(1).unwrap(),
+      pool_id: "00000000-0000-0000-0000-000000000004".parse().unwrap(),
+      claimed_at: time(1_000),
+      expires_at: time(61_000),
+      signed_job_spec: octacity_protocol::SignedEnvelope {
+        key_id: "test".to_owned(),
+        algorithm: octacity_protocol::SIGNATURE_ALGORITHM.to_owned(),
+        payload: String::new(),
+        signature: String::new(),
+      },
+      protected_inputs: None,
+    };
+
+    run_ready(service.fail_assignment(FailAgentLeaseAssignmentInput {
+      grant,
+      observed_at_unix_ms: 2_000,
+    }))
+    .unwrap();
+
+    let failures = store.assignment_failures.lock().unwrap();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(
+      failures[0].kind,
+      JobCompletionKind::Failed(JobFailureClass::Infrastructure)
+    );
+    assert!(failures[0].final_sequence.is_none());
+    assert!(failures[0].execution.is_none());
+  }
+
   fn authority() -> crate::AuthorizedAgent {
     crate::AuthorizedAgent::for_test(
       stable_agent_id("agent").unwrap(),
@@ -464,6 +571,10 @@ mod tests {
       .unwrap(),
       observed_at_unix_ms: 1_000,
     }
+  }
+
+  fn time(value: i64) -> Timestamp {
+    Timestamp::from_unix_millis(value).unwrap()
   }
 
   fn run_ready<T>(future: impl Future<Output = T>) -> T {

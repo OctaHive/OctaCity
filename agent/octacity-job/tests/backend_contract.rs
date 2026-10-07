@@ -60,6 +60,10 @@ enum OciProbe {
 
 #[async_trait]
 impl SourceMaterializer for FixtureSource {
+  fn verify(&self, _requirement: &SourceSpec) -> Result<(), SourceError> {
+    Ok(())
+  }
+
   async fn materialize(
     &self,
     requirement: &SourceSpec,
@@ -536,6 +540,7 @@ async fn exercise_contract(
         spec,
         source_credentials: BTreeMap::new(),
         cache_grant,
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &sender,
@@ -595,6 +600,7 @@ async fn run_cancellation_contract(executor: &JobExecutor, spec: VerifiedJobSpec
       spec,
       source_credentials: BTreeMap::new(),
       cache_grant: None,
+      protected_inputs: Vec::new(),
     },
     cancellation.clone(),
     &sender,
@@ -807,6 +813,11 @@ fn cancellation_spec(mut spec: VerifiedJobSpec) -> VerifiedJobSpec {
       spec.execution.commands = vec!["wait".to_owned()];
       spec.cache = None;
     }
+    VerifiedJobSpec::V3(spec) => {
+      spec.job_id.push_str("-cancel");
+      spec.execution.tasks = vec!["wait".to_owned()];
+      spec.cache = None;
+    }
   }
   spec
 }
@@ -832,6 +843,7 @@ fn executor_config(
     cancellation_grace: Duration::from_secs(5),
     runner_supervision: RunnerSupervisionPolicy::default(),
     external_executables: BTreeMap::new(),
+    factory_permissions: None,
   }
 }
 

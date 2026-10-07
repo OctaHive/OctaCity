@@ -15,7 +15,7 @@ use octacity_protocol::{
   AcquireLeaseResponse, AgentInventory, AgentTelemetrySample, AppendEventsResponse, AttemptEventEnvelope,
   BeginCacheSessionRequest, BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse,
   CompleteLeaseRequest, CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity, HostSnapshot,
-  IngestAgentTelemetryResponse, JobSpecError, LeaseAssignment, RevokeCacheSessionRequest,
+  IngestAgentTelemetryResponse, JobSpecError, LeaseAssignment, RevokeCacheSessionRequest, VerifiedJobSpec,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -318,6 +318,7 @@ pub(crate) fn verify_assignment(
   keys: &BTreeMap<String, VerifyingKey>,
   now: u64,
   safety_margin: Duration,
+  negotiated_execution_contract: u16,
 ) -> Result<VerifiedLease, CoordinatorError> {
   lease.validate(now, safety_margin.as_secs())?;
   let spec = octacity_protocol::verify_compatible_job_spec(
@@ -330,6 +331,32 @@ pub(crate) fn verify_assignment(
     },
   )
   .map_err(|error| CoordinatorError::JobSpec(Box::new(error)))?;
+  if spec.protocol_version() > negotiated_execution_contract {
+    return Err(invalid(format!(
+      "leased JobSpec v{} exceeds negotiated execution contract v{negotiated_execution_contract}",
+      spec.protocol_version()
+    )));
+  }
+  match &spec {
+    VerifiedJobSpec::V3(value) => {
+      let transferred = lease
+        .protected_inputs
+        .iter()
+        .map(|transfer| transfer.input.clone())
+        .collect::<Vec<_>>();
+      if transferred != value.protected_inputs.inputs {
+        return Err(invalid(
+          "lease protected-input transfers differ from signed JobSpec v3 intent",
+        ));
+      }
+    }
+    VerifiedJobSpec::V1(_) | VerifiedJobSpec::V2(_) if !lease.protected_inputs.is_empty() => {
+      return Err(invalid(
+        "ordinary JobSpec lease must not carry protected-input transfers",
+      ));
+    }
+    VerifiedJobSpec::V1(_) | VerifiedJobSpec::V2(_) => {}
+  }
   Ok(VerifiedLease { lease, spec })
 }
 
@@ -348,6 +375,13 @@ pub(crate) type SharedCoordinator = Arc<dyn CoordinatorClient>;
 
 #[cfg(test)]
 mod tests {
+  use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+  use ed25519_dalek::{Signer as _, SigningKey};
+  use octacity_protocol::{
+    ArtifactTransferCapability, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, JobSpecV3, LeaseAssignment,
+    ProtectedInputTransferV3, SIGNATURE_ALGORITHM, SignedEnvelope,
+  };
+
   use super::*;
 
   #[test]
@@ -379,5 +413,68 @@ mod tests {
       .is_retryable()
     );
     assert!(!CoordinatorError::Invalid("invalid request".to_owned()).is_retryable());
+  }
+
+  #[test]
+  fn rejects_a_signed_job_newer_than_the_negotiated_registration() {
+    let spec: JobSpecV3 = serde_json::from_str(include_str!(
+      "../../../shared/protocol-fixtures/job-spec/job-spec-v3.json"
+    ))
+    .unwrap();
+    let signing_key = SigningKey::from_bytes(&[9; 32]);
+    let payload = serde_json::to_vec(&spec).unwrap();
+    let lease = LeaseAssignment {
+      lease_id: "lease-v3".to_owned(),
+      job_id: spec.job_id.clone(),
+      attempt: spec.attempt,
+      fencing_token: "fence-v3".to_owned(),
+      issued_at: 99,
+      expires_at: 200,
+      signed_job_spec: SignedEnvelope {
+        key_id: "primary".to_owned(),
+        algorithm: SIGNATURE_ALGORITHM.to_owned(),
+        payload: BASE64.encode(&payload),
+        signature: BASE64.encode(signing_key.sign(&payload).to_bytes()),
+      },
+      protected_inputs: spec
+        .protected_inputs
+        .inputs
+        .iter()
+        .cloned()
+        .map(|input| ProtectedInputTransferV3 {
+          input,
+          capability: ArtifactTransferCapability {
+            url: "https://objects.example/protected?signature=redacted".to_owned(),
+            required_headers: BTreeMap::new(),
+            expires_at_unix_ms: 150_000,
+          },
+        })
+        .collect(),
+    };
+    let keys = BTreeMap::from([("primary".to_owned(), signing_key.verifying_key())]);
+
+    assert!(matches!(
+      verify_assignment(lease.clone(), &keys, 100, Duration::from_secs(10), EXECUTION_CONTRACT_V2),
+      Err(CoordinatorError::Invalid(message)) if message.contains("exceeds negotiated")
+    ));
+    let mut mismatched = lease.clone();
+    mismatched.protected_inputs[0].input.destination = "/octacity/protected/other.json".to_owned();
+    assert!(matches!(
+      verify_assignment(mismatched, &keys, 100, Duration::from_secs(10), EXECUTION_CONTRACT_V3),
+      Err(CoordinatorError::Invalid(message)) if message.contains("differ from signed")
+    ));
+    let mut expired = lease.clone();
+    expired.protected_inputs[0].capability.expires_at_unix_ms = 100_000;
+    assert!(matches!(
+      verify_assignment(expired, &keys, 100, Duration::from_secs(10), EXECUTION_CONTRACT_V3),
+      Err(CoordinatorError::Protocol(_))
+    ));
+    assert_eq!(
+      verify_assignment(lease, &keys, 100, Duration::from_secs(10), EXECUTION_CONTRACT_V3)
+        .unwrap()
+        .spec
+        .protocol_version(),
+      EXECUTION_CONTRACT_V3
+    );
   }
 }

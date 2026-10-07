@@ -49,6 +49,9 @@ mod factory_control_tests;
 mod factory_decision_signal;
 #[cfg(test)]
 mod factory_decision_signal_tests;
+mod factory_job_spec;
+#[cfg(test)]
+mod factory_job_spec_tests;
 mod factory_reconciliation;
 #[cfg(test)]
 mod factory_reconciliation_tests;
@@ -110,7 +113,8 @@ pub use agent_execution::{
 };
 pub use agent_heartbeat::{AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatService, AgentHeartbeatUseCases};
 pub use agent_placement::{
-  AcquireAgentLeaseInput, AgentLeaseError, AgentLeaseOutcome, AgentLeaseService, AgentLeaseUseCases, ReadyJobWaiter,
+  AcquireAgentLeaseInput, AgentLeaseError, AgentLeaseOutcome, AgentLeaseService, AgentLeaseUseCases,
+  FailAgentLeaseAssignmentInput, ReadyJobWaiter,
 };
 pub use agent_registration::{
   AgentOperation, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationService,
@@ -122,7 +126,7 @@ pub use agent_telemetry::{
 };
 pub use artifact_transfer::{
   AgentArtifactError, AgentArtifactTransferUseCases, ArtifactDownloadProjection, ArtifactHandlers, ArtifactProjection,
-  ArtifactProjectionKind, AuthorizeArtifactDownloadQuery, BeginAgentArtifactUploadInput,
+  ArtifactProjectionKind, AuthorizeArtifactDownloadQuery, AuthorizeProtectedInputsInput, BeginAgentArtifactUploadInput,
   CompleteAgentArtifactUploadInput, GetArtifactQuery, ListBuildArtifactsQuery,
 };
 pub use audit_query::{
@@ -192,6 +196,9 @@ pub use factory_control::{
 pub use factory_decision_signal::{
   DecisionSignalApplicationError, DecisionSignalCapabilityDiscovery, DecisionSignalDispatch, DecisionSignalPortError,
   DecisionSignalReceiptPublication, DecisionSignalRequestObservation, DecisionSignalService,
+};
+pub use factory_job_spec::{
+  FactoryManagedJobSpecInput, FactoryManagedJobSpecTemplateError, derive_factory_managed_job_spec_template,
 };
 pub use factory_reconciliation::{
   FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,

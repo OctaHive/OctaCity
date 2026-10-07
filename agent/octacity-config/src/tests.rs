@@ -88,6 +88,7 @@ impl Fixture {
       virtualization_providers: Vec::new(),
       allow_unrestricted_network: false,
       allowed_network_hosts: vec!["vault.example.com".to_owned()],
+      factory_permissions: None,
       allowed_upload_origins: vec!["https://objects.example".to_owned()],
       max_archive_entries: 10_000,
       upload_timeout_seconds: 30,

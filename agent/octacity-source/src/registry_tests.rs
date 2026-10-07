@@ -131,6 +131,36 @@ fn resolves_only_the_exact_signed_plugin_requirement() {
 }
 
 #[test]
+fn resolve_rejects_plugin_drift_after_inventory() {
+  let (root, executable) = plugin_fixture();
+  let registry = SourcePluginRegistry::discover(root.path()).unwrap();
+  let installed = registry.get("git").unwrap();
+  let requirement = SourceSpec {
+    provider: "git".to_owned(),
+    plugin_version: installed.manifest.version.clone(),
+    plugin_sha256: installed.manifest.sha256.clone(),
+    revision: "revision".to_owned(),
+    reference: None,
+    parameters: BTreeMap::new(),
+  };
+
+  File::options()
+    .append(true)
+    .open(executable)
+    .unwrap()
+    .write_all(b"drift")
+    .unwrap();
+
+  assert!(
+    registry
+      .resolve(&requirement)
+      .unwrap_err()
+      .to_string()
+      .contains("changed after registry inventory")
+  );
+}
+
+#[test]
 fn accepts_an_empty_registry_for_an_unschedulable_agent() {
   let root = tempfile::tempdir().unwrap();
   let registry = SourcePluginRegistry::discover(root.path()).unwrap();

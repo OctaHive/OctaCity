@@ -1,6 +1,6 @@
 //! Provider-neutral and legacy execution intent normalized for orchestration.
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use octacity_cache_session::CacheExecutionIdentity;
 use octacity_execution::{
@@ -9,18 +9,19 @@ use octacity_execution::{
 };
 use octacity_protocol::{
   CachePolicy, ExecutionCacheIdentityV2, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionEvidenceV2,
-  ExecutionMode, ExecutionSpec, JobSpecV1, JobSpecV2, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OctaSpec,
-  OutputLimits, PlatformArchitecture, PlatformOs, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec,
-  VerifiedJobSpec,
+  ExecutionMode, ExecutionSpec, FactoryEnforcementCapabilityV3, JobSpecV1, JobSpecV2, JobSpecV3, NetworkPolicy,
+  OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, RuntimeSpec,
+  RuntimeSpecV2, RuntimeTarget, SourceSpec, VerifiedJobSpec,
 };
 
-use crate::JobError;
+use crate::{JobError, factory_preflight::ManagedFactoryExecution};
 
 /// One operator-selected provider route for negotiated execution contract v2.
 pub struct ExecutionBackendRoute {
   pub(super) capability: ExecutionCapabilityV2,
   pub(super) environment: ExecutionEnvironmentId,
   pub(super) backend: Arc<dyn ExecutionBackend>,
+  pub(super) factory_enforcement: BTreeSet<FactoryEnforcementCapabilityV3>,
 }
 
 impl ExecutionBackendRoute {
@@ -35,6 +36,7 @@ impl ExecutionBackendRoute {
       capability,
       environment,
       backend,
+      factory_enforcement: BTreeSet::new(),
     })
   }
 
@@ -43,12 +45,31 @@ impl ExecutionBackendRoute {
   pub const fn capability(&self) -> &ExecutionCapabilityV2 {
     &self.capability
   }
+
+  /// Records semantic Factory controls proved by backend conformance.
+  ///
+  /// Ordinary routes advertise none by default. Backend-specific assembly must
+  /// opt in only after its positive and negative enforcement contracts pass.
+  pub fn with_factory_enforcement(
+    mut self,
+    capabilities: impl IntoIterator<Item = FactoryEnforcementCapabilityV3>,
+  ) -> Result<Self, JobError> {
+    let capabilities = capabilities.into_iter().collect::<Vec<_>>();
+    self.factory_enforcement = capabilities.iter().copied().collect();
+    if self.factory_enforcement.len() != capabilities.len() {
+      return Err(JobError::Invalid(
+        "Factory enforcement capabilities must not contain duplicates".to_owned(),
+      ));
+    }
+    Ok(self)
+  }
 }
 
 pub(super) struct SelectedBackend {
   pub(super) backend: Arc<dyn ExecutionBackend>,
   pub(super) evidence: Option<ExecutionEvidenceV2>,
   pub(super) cache_identity: Option<ExecutionCacheIdentityV2>,
+  pub(super) factory_enforcement: BTreeSet<FactoryEnforcementCapabilityV3>,
 }
 
 pub(super) struct ExecutableJobSpec {
@@ -56,17 +77,41 @@ pub(super) struct ExecutableJobSpec {
   pub(super) attempt: u32,
   pub(super) source: SourceSpec,
   pub(super) octa: OctaSpec,
-  pub(super) execution: ExecutionSpec,
+  pub(super) execution: ExecutableExecution,
   pub(super) runtime: ExecutableRuntime,
   pub(super) cache: Option<CachePolicy>,
   pub(super) outputs: OutputLimits,
 }
 
-impl From<VerifiedJobSpec> for ExecutableJobSpec {
-  fn from(spec: VerifiedJobSpec) -> Self {
+pub(super) enum ExecutableExecution {
+  Ordinary(ExecutionSpec),
+  Managed(Box<ManagedFactoryExecution>),
+}
+
+impl ExecutableExecution {
+  pub(super) const fn managed(&self) -> Option<&ManagedFactoryExecution> {
+    match self {
+      Self::Ordinary(_) => None,
+      Self::Managed(value) => Some(value),
+    }
+  }
+
+  pub(super) const fn ordinary(&self) -> Option<&ExecutionSpec> {
+    match self {
+      Self::Ordinary(value) => Some(value),
+      Self::Managed(_) => None,
+    }
+  }
+}
+
+impl TryFrom<VerifiedJobSpec> for ExecutableJobSpec {
+  type Error = JobError;
+
+  fn try_from(spec: VerifiedJobSpec) -> Result<Self, Self::Error> {
     match spec {
-      VerifiedJobSpec::V1(spec) => Self::from(spec),
-      VerifiedJobSpec::V2(spec) => Self::from(spec),
+      VerifiedJobSpec::V1(spec) => Ok(Self::from(spec)),
+      VerifiedJobSpec::V2(spec) => Ok(Self::from(spec)),
+      VerifiedJobSpec::V3(spec) => Ok(Self::from(*spec)),
     }
   }
 }
@@ -78,7 +123,7 @@ impl From<JobSpecV1> for ExecutableJobSpec {
       attempt: spec.attempt,
       source: spec.source,
       octa: spec.octa,
-      execution: spec.execution,
+      execution: ExecutableExecution::Ordinary(spec.execution),
       runtime: ExecutableRuntime::Legacy(spec.runtime),
       cache: spec.cache,
       outputs: spec.outputs,
@@ -93,7 +138,27 @@ impl From<JobSpecV2> for ExecutableJobSpec {
       attempt: spec.attempt,
       source: spec.source,
       octa: spec.octa,
-      execution: spec.execution,
+      execution: ExecutableExecution::Ordinary(spec.execution),
+      runtime: ExecutableRuntime::Current(spec.runtime),
+      cache: spec.cache,
+      outputs: spec.outputs,
+    }
+  }
+}
+
+impl From<JobSpecV3> for ExecutableJobSpec {
+  fn from(spec: JobSpecV3) -> Self {
+    Self {
+      job_id: spec.job_id,
+      attempt: spec.attempt,
+      source: spec.source,
+      octa: spec.octa,
+      execution: ExecutableExecution::Managed(Box::new(ManagedFactoryExecution {
+        execution: spec.execution,
+        protected_inputs: spec.protected_inputs,
+        permissions: spec.permissions,
+        required_enforcement: spec.required_enforcement,
+      })),
       runtime: ExecutableRuntime::Current(spec.runtime),
       cache: spec.cache,
       outputs: spec.outputs,

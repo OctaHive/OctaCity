@@ -12,10 +12,13 @@ use octacity_execution::{
 };
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2, ExecutionCapabilityV2,
-  ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, ExecutionSpec, ExecutionTargetV2, JobSpecV1, JobSpecV2,
-  NetworkPolicy, OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs,
-  PlatformSpec, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, guarantees_for,
+  AGENT_PROTOCOL_VERSION, ArtifactTransferCapability, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2,
+  EXECUTION_CONTRACT_V3, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId,
+  ExecutionSpec, ExecutionTargetV2, FactoryEnforcementCapabilityV3, FactoryMountModeV3, FactoryMountPermissionV3,
+  FactoryOutputPermissionsV3, FactoryPermissionSetV3, FactoryResourceLimitsV3, JobBinding, JobSpecV1, JobSpecV2,
+  JobSpecV3, ManagedOctaExecutionV3, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits,
+  PlatformArchitecture, PlatformOs, PlatformSpec, ProtectedInputManifestV3, ProtectedInputTransferV3, ProtectedInputV3,
+  RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerCapabilities};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -32,6 +35,10 @@ struct FakeSource {
 
 #[async_trait]
 impl SourceMaterializer for FakeSource {
+  fn verify(&self, _requirement: &SourceSpec) -> Result<(), SourceError> {
+    Ok(())
+  }
+
   async fn materialize(
     &self,
     requirement: &SourceSpec,
@@ -376,6 +383,7 @@ fn executor_with_identity(
       cancellation_grace: Duration::from_secs(1),
       runner_supervision: RunnerSupervisionPolicy::default(),
       external_executables: BTreeMap::new(),
+      factory_permissions: None,
     },
   )
   .unwrap()
@@ -406,6 +414,7 @@ async fn runs_a_verified_job_through_the_selected_backend_and_cleans_up() {
         spec: spec.clone().into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &events,
@@ -448,6 +457,7 @@ async fn rejects_unknown_workload_identity_before_source_activity() {
         spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &events,
@@ -494,6 +504,7 @@ async fn provisions_identity_for_execution_and_revokes_it_before_completion() {
         spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &events,
@@ -531,6 +542,7 @@ async fn rejects_an_unavailable_backend_without_materializing_source() {
         spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &events,
@@ -567,6 +579,7 @@ async fn retains_a_failed_workspace_for_ordered_caller_cleanup() {
         spec: spec.into(),
         source_credentials: BTreeMap::new(),
         cache_grant: None,
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &events,
@@ -650,6 +663,7 @@ fn permits_an_unschedulable_executor_but_rejects_invalid_policies() {
     cancellation_grace: Duration::from_secs(1),
     runner_supervision: RunnerSupervisionPolicy::default(),
     external_executables: BTreeMap::new(),
+    factory_permissions: None,
   };
   assert!(
     JobExecutor::new(
@@ -705,6 +719,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
           spec: oversized.into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
+          protected_inputs: Vec::new(),
         },
         CancellationToken::new(),
         &events,
@@ -722,6 +737,7 @@ async fn rejects_workspace_limits_and_pre_execution_cancellation() {
           spec: specification(RuntimeMode::Native).into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
+          protected_inputs: Vec::new(),
         },
         cancelled,
         &events,
@@ -760,6 +776,7 @@ async fn rejects_network_and_output_policy_before_source_activity() {
           spec: network.into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
+          protected_inputs: Vec::new(),
         },
         CancellationToken::new(),
         &events,
@@ -783,6 +800,7 @@ async fn rejects_network_and_output_policy_before_source_activity() {
           spec: outputs.into(),
           source_credentials: BTreeMap::new(),
           cache_grant: None,
+          protected_inputs: Vec::new(),
         },
         CancellationToken::new(),
         &events,
@@ -826,6 +844,7 @@ async fn rejects_cache_authority_without_local_support_and_cleans_the_job() {
           scope_id: "scope".to_owned(),
           remote: None,
         }),
+        protected_inputs: Vec::new(),
       },
       CancellationToken::new(),
       &events,

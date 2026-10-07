@@ -90,6 +90,7 @@ pub(super) async fn claim(store: &InMemoryStore, request: JobClaim) -> Result<Jo
     claimed_at: request.claimed_at,
     expires_at: request.expires_at,
     signed_job_spec,
+    protected_inputs: job.materialized.job_spec_template.protected_inputs().cloned(),
   };
   let evidence_identity = format!("claim-ready-job:{}", request.lease_id);
   ensure_evidence_available(&state, &evidence_identity)?;

@@ -453,6 +453,10 @@ mod tests {
         build_state: BuildState::Succeeded,
       })
     }
+
+    async fn fail_lease_assignment(&self, _request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
+      unreachable!("Agent execution routes do not deliver Lease assignments")
+    }
   }
 
   #[async_trait]

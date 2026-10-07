@@ -317,7 +317,7 @@ impl StoredFactoryRun {
         completion.run_id() == run_id
           && completion
             .claim()
-            .authorize(completion.claim().fence(), completion.observed_at())
+            .verify_fence(completion.claim().fence(), completion.observed_at())
             .is_ok()
           && self
             .claims
@@ -904,7 +904,7 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     current
       .claim
       .ok_or_else(conflict)?
-      .authorize(request.fence, request.observed_at)
+      .verify_fence(request.fence, request.observed_at)
       .map_err(|_| conflict())?;
     let next = match request.settlement {
       FactoryOutboxSettlement::Delivered => {

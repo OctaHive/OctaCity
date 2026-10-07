@@ -197,6 +197,7 @@ async fn real_octa_vault_job_publishes_outputs_without_leaking_secrets() {
           ..RunnerSupervisionPolicy::default()
         },
         external_executables: BTreeMap::new(),
+        factory_permissions: None,
       },
     )
     .unwrap(),

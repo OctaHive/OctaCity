@@ -367,6 +367,55 @@ impl RunnerInstallation {
     Ok(verified)
   }
 
+  /// Re-hashes the already inventoried runner, plugins, and selected external
+  /// executables immediately before a protected execution boundary.
+  ///
+  /// Startup inventory is not sufficient for long-lived Agents: an
+  /// operator-owned file can be replaced after registration but before a Job
+  /// starts. Callers deliberately map these detailed local failures to a
+  /// stable secret-safe execution classification.
+  pub fn revalidate_files(
+    &self,
+    external_executables: &BTreeMap<String, VerifiedExternalExecutable>,
+  ) -> Result<(), RunnerInstallationError> {
+    validate_regular_file("octa-runner", &self.executable, true)?;
+    octacity_private_fs::validate_no_untrusted_write_access(&self.executable)
+      .map_err(|error| invalid(format!("octa-runner access changed: {error}")))?;
+    if file_sha256(&self.executable)? != self.sha256 {
+      return requirement_error("octa-runner bytes changed after installation inventory");
+    }
+    for (name, plugin) in &self.plugins {
+      validate_regular_file(&format!("plugin '{name}'"), &plugin.executable, true)?;
+      octacity_private_fs::validate_no_untrusted_write_access(&plugin.executable)
+        .map_err(|error| invalid(format!("plugin '{name}' access changed: {error}")))?;
+      if file_sha256(&plugin.executable)? != plugin.sha256 {
+        return requirement_error(format!("plugin '{name}' bytes changed after installation inventory"));
+      }
+    }
+    for (product, executable) in external_executables {
+      if product != &executable.product {
+        return requirement_error("external executable inventory key differs from its product identity");
+      }
+      validate_regular_file(
+        &format!("external executable '{product}'"),
+        &executable.executable,
+        true,
+      )?;
+      octacity_private_fs::validate_no_untrusted_write_access(&executable.executable)
+        .map_err(|error| invalid(format!("external executable '{product}' access changed: {error}")))?;
+      let canonical = executable
+        .executable
+        .canonicalize()
+        .map_err(|error| invalid(format!("external executable '{product}' cannot be resolved: {error}")))?;
+      if canonical != executable.executable || file_sha256(&canonical)? != executable.sha256 {
+        return requirement_error(format!(
+          "external executable '{product}' changed after installation inventory"
+        ));
+      }
+    }
+    Ok(())
+  }
+
   /// Returns the verified host paths that an execution backend may expose to
   /// the runner. Protocol requirements remain owned by this inventory.
   pub fn program(&self) -> RunnerProgram {

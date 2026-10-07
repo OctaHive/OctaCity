@@ -336,6 +336,7 @@ pub(crate) enum MutationKind {
   RecoverExpiredLease,
   AppendJobEvents,
   CompleteJob,
+  FailLeaseAssignment,
   CancelBuild,
   RetryBuild,
   IssueAgentEnrollment,
@@ -357,7 +358,7 @@ impl MutationKind {
       | Self::RotateManagedWebhook
       | Self::DeleteManagedWebhook => NonManagementMutationClass::Adapter,
       Self::AcceptTrigger | Self::SuppressTrigger => NonManagementMutationClass::Trigger,
-      Self::RecoverExpiredLease => NonManagementMutationClass::Worker,
+      Self::RecoverExpiredLease | Self::FailLeaseAssignment => NonManagementMutationClass::Worker,
       _ => panic!("management mutation kind cannot use a non-management namespace"),
     }
   }
@@ -586,6 +587,12 @@ impl MutationKind {
         "job.events-appended"
       ),
       Self::CompleteJob => metadata!(b"octacity.complete-job.v1\0", "complete-job", "job", "job.completed"),
+      Self::FailLeaseAssignment => metadata!(
+        b"octacity.fail-lease-assignment.v1\0",
+        "fail-lease-assignment",
+        "job",
+        "job.completed"
+      ),
       Self::CancelBuild => metadata!(
         b"octacity.cancel-build.v1\0",
         "cancel-build",

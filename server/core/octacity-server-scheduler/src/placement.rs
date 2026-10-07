@@ -46,7 +46,8 @@ pub fn is_compatible_with_contract(
   };
   let source_plugin_platform = plugin_platform(inventory.host_platform);
   let task_plugin_platform = plugin_platform(platform);
-  labels_match(inventory, requirements)
+  execution_contract_version >= policy.minimum_execution_contract
+    && labels_match(inventory, requirements)
     && resources_match(snapshot, requirements)
     && backend_is_available(inventory, snapshot, requirements, policy.runtime)
     && capabilities_match(inventory, requirements, requirements.runtime_class.is_legacy())

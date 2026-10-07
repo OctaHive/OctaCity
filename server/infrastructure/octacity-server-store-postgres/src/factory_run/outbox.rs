@@ -132,7 +132,7 @@ pub(crate) async fn settle_outbox(
   current
     .claim
     .ok_or_else(conflict)?
-    .authorize(request.fence, request.observed_at)
+    .verify_fence(request.fence, request.observed_at)
     .map_err(|_| conflict())?;
   let (next, outcome) = match request.settlement {
     FactoryOutboxSettlement::Delivered => (

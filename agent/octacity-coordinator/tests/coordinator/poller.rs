@@ -135,6 +135,7 @@ fn signed_lease(signing_key: &SigningKey, now: u64) -> LeaseAssignment {
       payload: BASE64.encode(&payload),
       signature: BASE64.encode(signing_key.sign(&payload).to_bytes()),
     },
+    protected_inputs: Vec::new(),
   }
 }
 
@@ -159,7 +160,7 @@ async fn poller_exposes_no_work_then_a_verified_lease() {
       Ok(AcquireLeaseResponse::Lease {
         protocol_version: 1,
         request_id: "poll-2".to_owned(),
-        lease,
+        lease: Box::new(lease),
       }),
     ])),
     heartbeats: Mutex::new(VecDeque::new()),
@@ -194,7 +195,7 @@ async fn poller_rejects_a_job_signature_that_does_not_match_the_lease() {
     leases: Mutex::new(VecDeque::from([Ok(AcquireLeaseResponse::Lease {
       protocol_version: 1,
       request_id: "poll-1".to_owned(),
-      lease,
+      lease: Box::new(lease),
     })])),
     heartbeats: Mutex::new(VecDeque::new()),
   });
@@ -221,7 +222,7 @@ async fn poller_rejects_a_lease_while_local_admission_is_paused() {
     leases: Mutex::new(VecDeque::from([Ok(AcquireLeaseResponse::Lease {
       protocol_version: 1,
       request_id: "poll-1".to_owned(),
-      lease,
+      lease: Box::new(lease),
     })])),
     heartbeats: Mutex::new(VecDeque::new()),
   });

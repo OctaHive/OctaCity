@@ -10,10 +10,12 @@ use crate::{NetworkPolicy, PlatformSpec, immutable_oci_reference, non_empty};
 pub const EXECUTION_CONTRACT_V1: u16 = 1;
 /// Provider-neutral execution contract understood by [`crate::JobSpecV2`].
 pub const EXECUTION_CONTRACT_V2: u16 = 2;
+/// Protected managed-execution contract understood by [`crate::JobSpecV3`].
+pub const EXECUTION_CONTRACT_V3: u16 = 3;
 /// Execution-contract revisions implemented by this protocol release.
 pub const SUPPORTED_EXECUTION_CONTRACTS: ExecutionContractRange = ExecutionContractRange {
   min: EXECUTION_CONTRACT_V1,
-  max: EXECUTION_CONTRACT_V2,
+  max: EXECUTION_CONTRACT_V3,
 };
 /// Maximum UTF-8 bytes in one execution provider or environment identity.
 pub const MAX_EXECUTION_IDENTITY_BYTES: usize = 256;
@@ -374,6 +376,14 @@ mod tests {
 
   #[test]
   fn negotiation_selects_the_latest_common_revision() {
+    assert_eq!(
+      ExecutionContractRange { min: 1, max: 3 }.negotiate(ExecutionContractRange { min: 1, max: 2 }),
+      Some(2)
+    );
+    assert_eq!(
+      ExecutionContractRange { min: 1, max: 3 }.negotiate(ExecutionContractRange { min: 3, max: 3 }),
+      Some(3)
+    );
     assert_eq!(
       ExecutionContractRange { min: 1, max: 2 }.negotiate(ExecutionContractRange { min: 1, max: 1 }),
       Some(1)

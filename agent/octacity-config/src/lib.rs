@@ -14,7 +14,7 @@ use std::{
 };
 
 use ed25519_dalek::VerifyingKey;
-use octacity_protocol::{ExecutionEnvironmentId, OutputLimits, PlatformSpec, RuntimeMode};
+use octacity_protocol::{ExecutionEnvironmentId, FactoryPermissionSetV3, OutputLimits, PlatformSpec, RuntimeMode};
 use serde::Deserialize;
 
 pub use octa_cache_protocol::LocalCacheCapacity;
@@ -116,6 +116,12 @@ pub struct AgentConfig {
   /// Complete set of hosts that a restricted signed job may request.
   #[serde(default)]
   pub allowed_network_hosts: Vec<String>,
+  /// Optional independent ceiling for protected Factory execution authority.
+  ///
+  /// Omitting this value keeps Factory execution disabled while ordinary CI
+  /// jobs continue to use their existing runtime policy.
+  #[serde(default)]
+  pub factory_permissions: Option<FactoryPermissionSetV3>,
   /// HTTPS origins allowed for output uploads.
   pub allowed_upload_origins: Vec<String>,
   /// Maximum filesystem entries traversed in one directory artifact.
@@ -701,6 +707,11 @@ impl AgentConfig {
       if host.trim() != host || host.chars().any(char::is_control) || !network_hosts.insert(host) {
         return invalid("allowed network hosts must be unique trimmed values without control characters");
       }
+    }
+    if let Some(permissions) = &self.factory_permissions {
+      permissions
+        .validate()
+        .map_err(|error| ConfigError::Invalid(format!("invalid factory_permissions: {error}")))?;
     }
 
     if self.allowed_upload_origins.is_empty() {

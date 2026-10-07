@@ -552,21 +552,21 @@ where
     registration_epoch: failed_grant.registration_epoch,
   };
   let failure = JobCompletion {
-    completion_id: IdempotencyKey::new("failed-root-completion").unwrap(),
+    completion_id: IdempotencyKey::new("assignment-delivery:failed-root").unwrap(),
     lease: failed_access,
     final_sequence: None,
     kind: JobCompletionKind::Failed(JobFailureClass::Infrastructure),
     execution: None,
     completed_at: time(4_100),
   };
-  let failed = store.complete_job(failure.clone()).await.unwrap();
+  let failed = store.fail_lease_assignment(failure.clone()).await.unwrap();
   assert!(failed.ready_jobs.is_empty());
   assert_eq!(failed.skipped_jobs, [independent_child]);
   assert_eq!(failed.failure_class, Some(JobFailureClass::Infrastructure));
   assert_eq!(failed.attempt_state, AttemptState::Failed);
   assert_eq!(failed.build_state, BuildState::Failed);
   let replayed_failure = store
-    .complete_job(JobCompletion {
+    .fail_lease_assignment(JobCompletion {
       completed_at: time(4_101),
       ..failure.clone()
     })

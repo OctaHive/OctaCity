@@ -177,6 +177,32 @@ fn verifies_external_executable_against_release_compatibility() {
 }
 
 #[test]
+fn revalidation_rejects_plugin_and_executable_drift_before_spawn() {
+  let (_release, installation, executable) = codex_release();
+  let configured = ConfiguredExternalExecutable {
+    product: "codex-cli".to_owned(),
+    version: "0.130.0".to_owned(),
+    platform: "linux-x86_64".to_owned(),
+    executable: executable.clone(),
+    sha256: file_sha256(&executable).unwrap(),
+  };
+  let verified = installation.verify_external_executables(&[configured]).unwrap();
+  installation.revalidate_files(&verified).unwrap();
+
+  fs::write(
+    &executable,
+    linux_x86_64_executable_with_version("codex-cli 0.130.0 drift"),
+  )
+  .unwrap();
+  assert!(installation.revalidate_files(&verified).is_err());
+
+  let (_release, installation, _executable) = codex_release();
+  let plugin = installation.plugins["codex"].executable.clone();
+  fs::write(plugin, b"changed plugin fixture").unwrap();
+  assert!(installation.revalidate_files(&BTreeMap::new()).is_err());
+}
+
+#[test]
 fn permits_ordinary_jobs_without_an_external_executable_configuration() {
   let (_release, installation, _executable) = codex_release();
 

@@ -262,6 +262,7 @@ pub(super) fn lease(spec: &JobSpecV1) -> LeaseAssignment {
       payload: STANDARD.encode(&payload),
       signature: STANDARD.encode(signing.sign(&payload).to_bytes()),
     },
+    protected_inputs: Vec::new(),
   }
 }
 

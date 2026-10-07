@@ -251,6 +251,35 @@ impl LeaseAssignment {
     if usable_until >= self.expires_at {
       return invalid("lease expires within the configured safety margin");
     }
+    if self.protected_inputs.len() > crate::MAX_PROTECTED_INPUTS {
+      return invalid("protected input transfer count exceeds the protocol bound");
+    }
+    let manifest = crate::ProtectedInputManifestV3 {
+      inputs: self
+        .protected_inputs
+        .iter()
+        .map(|transfer| transfer.input.clone())
+        .collect(),
+    };
+    if !self.protected_inputs.is_empty() {
+      manifest.validate().map_err(CoordinatorProtocolError::new)?;
+    }
+    let now_ms = now
+      .checked_mul(1_000)
+      .ok_or_else(|| CoordinatorProtocolError::new("lease time overflowed"))?;
+    let lease_expiry_ms = self
+      .expires_at
+      .checked_mul(1_000)
+      .ok_or_else(|| CoordinatorProtocolError::new("lease expiry overflowed"))?;
+    for transfer in &self.protected_inputs {
+      transfer
+        .capability
+        .validate()
+        .map_err(|_| CoordinatorProtocolError::new("protected input transfer capability is invalid"))?;
+      if transfer.capability.expires_at_unix_ms <= now_ms || transfer.capability.expires_at_unix_ms > lease_expiry_ms {
+        return invalid("protected input transfer capability is outside the lease window");
+      }
+    }
     Ok(())
   }
 }

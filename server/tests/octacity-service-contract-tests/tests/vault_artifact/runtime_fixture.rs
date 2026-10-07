@@ -12,6 +12,10 @@ pub(super) struct ServiceContractSource {
 
 #[async_trait]
 impl SourceMaterializer for ServiceContractSource {
+  fn verify(&self, _requirement: &SourceSpec) -> Result<(), SourceError> {
+    Ok(())
+  }
+
   async fn materialize(
     &self,
     requirement: &SourceSpec,

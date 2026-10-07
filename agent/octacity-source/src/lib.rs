@@ -34,6 +34,11 @@ pub enum SourceError {
 /// Materializes the exact source revision selected by a signed job.
 #[async_trait]
 pub trait SourceMaterializer: Send + Sync {
+  /// Revalidates the exact source plugin without starting it or creating a
+  /// destination. Executors call this before allocating or exposing a source
+  /// workspace.
+  fn verify(&self, requirement: &SourceSpec) -> Result<(), SourceError>;
+
   /// Materializes one signed source requirement into its prepared destination.
   async fn materialize(
     &self,
@@ -47,6 +52,11 @@ pub trait SourceMaterializer: Send + Sync {
 
 #[async_trait]
 impl SourceMaterializer for SourcePluginRegistry {
+  fn verify(&self, requirement: &SourceSpec) -> Result<(), SourceError> {
+    self.resolve(requirement)?;
+    Ok(())
+  }
+
   async fn materialize(
     &self,
     requirement: &SourceSpec,

@@ -170,6 +170,7 @@ async fn network_failure_replays_without_loss_or_reordering() {
       payload: String::new(),
       signature: String::new(),
     },
+    protected_inputs: Vec::new(),
   };
   let work_available = Arc::new(Notify::new());
   let (progress_sender, progress) = watch::channel(0_u64);
@@ -295,6 +296,7 @@ async fn permanent_event_rejection_stops_delivery_without_a_retry_loop() {
         payload: String::new(),
         signature: String::new(),
       },
+      protected_inputs: Vec::new(),
     },
     spool,
     work_available: work_available.clone(),

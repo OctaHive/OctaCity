@@ -117,6 +117,112 @@ fn v2_spec() -> JobSpecV2 {
   }
 }
 
+fn v3_spec() -> JobSpecV3 {
+  let mut current = v2_spec();
+  current
+    .octa
+    .plugin_digests
+    .insert("codex".to_owned(), DIGEST.to_owned());
+  let executable = FactoryImmutableReferenceV3 {
+    identity: "codex-cli".to_owned(),
+    version: "0.116.0".to_owned(),
+    sha256: DIGEST.to_owned(),
+  };
+  JobSpecV3 {
+    protocol_version: EXECUTION_CONTRACT_V3,
+    job_id: current.job_id,
+    attempt: current.attempt,
+    issued_at: current.issued_at,
+    expires_at: current.expires_at,
+    source: current.source,
+    octa: current.octa,
+    execution: ManagedOctaExecutionV3 {
+      octafile_input: "managed-octafile".to_owned(),
+      tasks: vec!["implement".to_owned()],
+    },
+    runtime: RuntimeSpecV2 {
+      network: NetworkPolicy::Restricted {
+        allowed_hosts: vec!["api.openai.com".to_owned()],
+      },
+      ..current.runtime
+    },
+    cache: current.cache,
+    outputs: current.outputs,
+    factory: Some(FactoryCausalityV3 {
+      factory_run_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+      factory_configuration_id: "00000000-0000-0000-0000-000000000002".to_owned(),
+      factory_configuration_version: 1,
+      stage_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+      stage_kind: FactoryStageKindV3::Implementation,
+      task_envelope_digest: DIGEST.to_owned(),
+      subject_digest: DIGEST.to_owned(),
+      parent: None,
+    }),
+    protected_inputs: ProtectedInputManifestV3 {
+      inputs: vec![
+        ProtectedInputV3 {
+          artifact_id: "context-manifest".to_owned(),
+          size_bytes: 128,
+          sha256: DIGEST.to_owned(),
+          media_type: "application/json".to_owned(),
+          destination: "/octacity/protected/context-manifest.json".to_owned(),
+        },
+        ProtectedInputV3 {
+          artifact_id: "managed-octafile".to_owned(),
+          size_bytes: 256,
+          sha256: DIGEST.to_owned(),
+          media_type: "application/yaml".to_owned(),
+          destination: "/octacity/protected/Octafile.yml".to_owned(),
+        },
+      ],
+    },
+    permissions: FactoryPermissionSetV3 {
+      plugins: vec![FactoryImmutableReferenceV3 {
+        identity: "codex".to_owned(),
+        version: "0.5.0".to_owned(),
+        sha256: DIGEST.to_owned(),
+      }],
+      executables: vec![executable.clone()],
+      tools: Vec::new(),
+      commands: vec![FactoryCommandPermissionV3 {
+        executable,
+        arguments: vec![FactoryCommandArgumentV3::Exact {
+          value: "--json".to_owned(),
+        }],
+      }],
+      max_descendants: 4,
+      mounts: vec![
+        FactoryMountPermissionV3 {
+          root: "/octacity/protected".to_owned(),
+          mode: FactoryMountModeV3::ReadOnly,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/source".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+      ],
+      network_hosts: vec!["api.openai.com".to_owned()],
+      secret_profiles: vec!["model-coding".to_owned()],
+      workload_identity_profiles: Vec::new(),
+      resources: FactoryResourceLimitsV3 {
+        cpu_millis: 1_000,
+        memory_bytes: 512 * 1024 * 1024,
+        disk_bytes: 1024 * 1024 * 1024,
+        process_count: 8,
+        elapsed_millis: 600_000,
+      },
+      outputs: FactoryOutputPermissionsV3 {
+        kinds: vec!["codex-result".to_owned()],
+        max_artifact_count: 10,
+        max_artifact_bytes: 1_024,
+        max_report_count: 10,
+        max_report_bytes: 1_024,
+      },
+    },
+    required_enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
+  }
+}
+
 fn binding(spec: &JobSpecV1) -> JobBinding<'_> {
   JobBinding {
     job_id: &spec.job_id,
@@ -216,6 +322,119 @@ fn negotiates_v2_without_reinterpreting_legacy_envelopes() {
       .get("provider")
       .is_none()
   );
+}
+
+#[test]
+fn canonical_job_spec_fixtures_preserve_legacy_bytes_and_define_v3() {
+  let fixtures = [
+    (
+      include_str!("../../protocol-fixtures/job-spec/job-spec-v1.json").trim(),
+      serde_json::to_vec(&spec()).unwrap(),
+    ),
+    (
+      include_str!("../../protocol-fixtures/job-spec/job-spec-v2.json").trim(),
+      serde_json::to_vec(&v2_spec()).unwrap(),
+    ),
+    (
+      include_str!("../../protocol-fixtures/job-spec/job-spec-v3.json").trim(),
+      serde_json::to_vec(&v3_spec()).unwrap(),
+    ),
+  ];
+  for (fixture, encoded) in &fixtures {
+    assert_eq!(encoded, fixture.as_bytes());
+  }
+  let decoded: JobSpecV3 = serde_json::from_str(fixtures[2].0).unwrap();
+  decoded
+    .validate(&JobBinding {
+      job_id: &decoded.job_id,
+      attempt: decoded.attempt,
+      now: decoded.issued_at,
+    })
+    .unwrap();
+}
+
+#[test]
+fn verifies_v3_only_after_signature_and_strict_semantic_validation() {
+  let signing_key = SigningKey::from_bytes(&[7; 32]);
+  let keys = BTreeMap::from([("test-key".to_owned(), signing_key.verifying_key())]);
+  let current = v3_spec();
+  let verified = verify_compatible_job_spec(
+    &signed_envelope(&current, &signing_key),
+    &keys,
+    JobBinding {
+      job_id: &current.job_id,
+      attempt: current.attempt,
+      now: current.issued_at,
+    },
+  )
+  .unwrap();
+  assert_eq!(verified, VerifiedJobSpec::V3(Box::new(current)));
+
+  let mut malformed = serde_json::to_value(v3_spec()).unwrap();
+  malformed["transfer_url"] = serde_json::json!("https://storage.invalid/private");
+  let envelope = signed_envelope(&malformed, &signing_key);
+  assert!(matches!(
+    verify_compatible_job_spec(
+      &envelope,
+      &keys,
+      JobBinding {
+        job_id: "job-1",
+        attempt: 1,
+        now: 100,
+      },
+    ),
+    Err(JobSpecError::Json(_))
+  ));
+}
+
+#[test]
+fn v3_rejects_unsafe_inputs_incomplete_enforcement_and_host_fallback() {
+  let mut value = v3_spec();
+  value.protected_inputs.inputs[0].destination = "/octacity/protected/../escape".to_owned();
+  assert!(value.validate(&binding(&spec())).is_err());
+
+  let mut value = v3_spec();
+  value.required_enforcement.pop();
+  assert!(value.validate(&binding(&spec())).is_err());
+
+  let mut value = v3_spec();
+  value.runtime.target.mode = ExecutionMode::Host;
+  value.runtime.target.target_platform = value.runtime.target.host_platform;
+  value.runtime.target.required_guarantees.clear();
+  value.runtime.target.immutable_image = None;
+  assert!(value.validate(&binding(&spec())).is_err());
+
+  let mut value = v3_spec();
+  value.permissions.mounts.swap(0, 1);
+  assert!(value.validate(&binding(&spec())).is_err());
+}
+
+#[test]
+fn v3_wildcard_command_arguments_have_explicit_enforceable_bounds() {
+  let mut value = v3_spec();
+  value.permissions.commands[0].arguments = vec![FactoryCommandArgumentV3::Any { max_bytes: 4 }];
+  value.permissions.validate().unwrap();
+  assert!(value.permissions.commands[0].permits_arguments(&["four".to_owned()]));
+  assert!(!value.permissions.commands[0].permits_arguments(&["longer".to_owned()]));
+
+  value.permissions.commands[0].arguments = vec![FactoryCommandArgumentV3::Any { max_bytes: 0 }];
+  assert!(value.permissions.validate().is_err());
+  value.permissions.commands[0].arguments = vec![FactoryCommandArgumentV3::Any {
+    max_bytes: u32::try_from(MAX_FACTORY_COMMAND_ARGUMENT_BYTES + 1).unwrap(),
+  }];
+  assert!(value.permissions.validate().is_err());
+}
+
+#[test]
+fn older_agents_remain_eligible_for_v1_and_v2_but_not_v3() {
+  let old_agent = ExecutionContractRange { min: 1, max: 2 };
+  let v3_agent = ExecutionContractRange { min: 1, max: 3 };
+  assert_eq!(SUPPORTED_EXECUTION_CONTRACTS.negotiate(old_agent), Some(2));
+  assert_eq!(SUPPORTED_EXECUTION_CONTRACTS.negotiate(v3_agent), Some(3));
+  assert!(old_agent.contains(EXECUTION_CONTRACT_V1));
+  assert!(old_agent.contains(EXECUTION_CONTRACT_V2));
+  assert!(!old_agent.contains(EXECUTION_CONTRACT_V3));
+  assert!(v3_agent.contains(EXECUTION_CONTRACT_V3));
 }
 
 #[test]

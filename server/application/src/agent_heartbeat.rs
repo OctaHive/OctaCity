@@ -216,6 +216,10 @@ mod tests {
     async fn complete_job(&self, _request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
       unreachable!("heartbeat does not complete Jobs")
     }
+
+    async fn fail_lease_assignment(&self, _request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
+      unreachable!("heartbeat does not deliver Lease assignments")
+    }
   }
 
   struct DirectiveStore(LeaseHeartbeatOutcome);

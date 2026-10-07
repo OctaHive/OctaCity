@@ -71,6 +71,10 @@ pub trait JobExecutionStore: Send + Sync {
   /// Commits an idempotent terminal outcome only when the declared final event
   /// cursor is already durable for the current Lease.
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError>;
+
+  /// Fences a committed Lease whose permanent assignment payload could not be
+  /// delivered, and records an infrastructure failure without Agent evidence.
+  async fn fail_lease_assignment(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError>;
 }
 
 /// Authoritative visibility check used before deleting an orphan object.

@@ -95,7 +95,13 @@ impl LeasePoller {
             "coordinator assigned a lease while the agent was not accepting jobs",
           ));
         }
-        let lease = verify_assignment(lease, &self.signing_keys, unix_now()?, self.lease_safety_margin)?;
+        let lease = verify_assignment(
+          *lease,
+          &self.signing_keys,
+          unix_now()?,
+          self.lease_safety_margin,
+          self.registration.execution_contract_version,
+        )?;
         info!(job_id = %lease.lease.job_id, attempt = lease.lease.attempt, lease_id = %lease.lease.lease_id, "acquired verified lease");
         Ok(LeasePollOutcome::Lease(Box::new(lease)))
       }

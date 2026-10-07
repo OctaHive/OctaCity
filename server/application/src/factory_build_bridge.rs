@@ -486,7 +486,7 @@ impl<'a> DispatchContext<'a> {
       .ok_or(FactoryBuildBridgeError::InvalidSnapshot)?;
     let outbox_claim = claimed.record.claim.ok_or(FactoryBuildBridgeError::InvalidSnapshot)?;
     outbox_claim
-      .authorize(outbox_claim.fence(), observed_at)
+      .verify_fence(outbox_claim.fence(), observed_at)
       .map_err(|_| FactoryBuildBridgeError::InvalidSnapshot)?;
     let run_claim = snapshot
       .current_claim
@@ -497,7 +497,7 @@ impl<'a> DispatchContext<'a> {
     }
     run_claim
       .claim
-      .authorize(run_claim.claim.fence(), observed_at)
+      .verify_fence(run_claim.claim.fence(), observed_at)
       .map_err(|_| FactoryBuildBridgeError::InvalidSnapshot)?;
     let stage_id = snapshot
       .current
@@ -944,7 +944,7 @@ fn validate_run_claim(
   claimed
     .record
     .claim
-    .authorize(claimed.record.claim.fence(), observed_at)
+    .verify_fence(claimed.record.claim.fence(), observed_at)
     .map_err(|_| FactoryBuildBridgeError::InvalidSnapshot)
 }
 

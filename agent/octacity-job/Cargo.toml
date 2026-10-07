@@ -15,12 +15,14 @@ octacity-private-fs = { path = "../octacity-private-fs" }
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }
+reqwest.workspace = true
 sha2.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true

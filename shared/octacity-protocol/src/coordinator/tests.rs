@@ -112,6 +112,7 @@ fn lease() -> LeaseAssignment {
     issued_at: 100,
     expires_at: 200,
     signed_job_spec: envelope(),
+    protected_inputs: Vec::new(),
   }
 }
 
@@ -212,7 +213,7 @@ fn correlates_responses_and_validates_renewal() {
   let response = AcquireLeaseResponse::Lease {
     protocol_version: COORDINATOR_PROTOCOL_VERSION,
     request_id: "request-1".to_owned(),
-    lease: lease(),
+    lease: Box::new(lease()),
   };
   response.validate("request-1", 120, 10).unwrap();
   assert!(response.validate("another-request", 120, 10).is_err());

@@ -459,6 +459,11 @@ impl JobExecutionStore for InMemoryStore {
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     lease_events::complete(self, request).await
   }
+
+  async fn fail_lease_assignment(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
+    request.validate_assignment_failure()?;
+    lease_events::complete(self, request).await
+  }
 }
 
 #[async_trait]

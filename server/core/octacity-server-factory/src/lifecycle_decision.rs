@@ -87,7 +87,7 @@ impl FactoryClaim {
   }
 
   /// Verifies that a presented fence owns the claim at an authoritative time.
-  pub fn authorize(self, presented_fence: FactoryClaimFence, observed_at: Timestamp) -> Result<(), FactoryError> {
+  pub fn verify_fence(self, presented_fence: FactoryClaimFence, observed_at: Timestamp) -> Result<(), FactoryError> {
     if self.fence != presented_fence {
       return Err(FactoryError::StaleClaim);
     }
@@ -169,7 +169,7 @@ impl FactoryDecisionGuard {
   }
 
   fn validate(self) -> Result<(), FactoryError> {
-    self.claim.authorize(self.presented_fence, self.observed_at)?;
+    self.claim.verify_fence(self.presented_fence, self.observed_at)?;
     self.budget_usage.validate(self.budget_limit)?;
     self.wip_usage.validate(self.wip_limits)
   }

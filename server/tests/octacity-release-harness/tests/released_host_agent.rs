@@ -398,7 +398,7 @@ fn lease_response(
   AcquireLeaseResponse::Lease {
     protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
     request_id: request_id.to_owned(),
-    lease: LeaseAssignment {
+    lease: Box::new(LeaseAssignment {
       lease_id: format!("lease-{job_id}"),
       job_id: job_id.to_owned(),
       attempt: 1,
@@ -406,7 +406,8 @@ fn lease_response(
       issued_at: now,
       expires_at: now + 120,
       signed_job_spec: signed_spec(&spec),
-    },
+      protected_inputs: Vec::new(),
+    }),
   }
 }
 

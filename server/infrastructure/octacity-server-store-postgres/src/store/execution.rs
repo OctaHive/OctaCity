@@ -116,6 +116,14 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
     )
     .await
   }
+
+  async fn fail_lease_assignment(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
+    crate::telemetry::observe(
+      Operation::Complete,
+      crate::job_completion::fail_assignment(&self.store.pool, &self.job_spec_signer, request),
+    )
+    .await
+  }
 }
 
 #[async_trait]

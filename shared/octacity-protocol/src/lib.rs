@@ -5,10 +5,12 @@
 //! agree on one canonical security boundary before a job reaches an agent.
 //!
 //! The language-neutral wire specification is documented in
-//! [Signed JobSpec protocol v1] and its negotiated [execution contract v2].
+//! [Signed JobSpec protocol v1], its negotiated [execution contract v2], and
+//! the protected managed-execution [execution contract v3].
 //!
 //! [Signed JobSpec protocol v1]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v1.md
 //! [execution contract v2]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v2.md
+//! [execution contract v3]: https://github.com/OctaHive/OctaCity/blob/main/docs/reference/protocols/signed-job-spec-v3.md
 
 #![warn(missing_docs)]
 
@@ -22,10 +24,12 @@ use thiserror::Error;
 mod artifact;
 mod coordinator;
 mod execution;
+mod factory;
 
 pub use artifact::*;
 pub use coordinator::*;
 pub use execution::*;
+pub use factory::*;
 
 /// Signed JobSpec wire version supported by this crate.
 pub const AGENT_PROTOCOL_VERSION: u16 = 1;
@@ -125,6 +129,47 @@ pub struct JobSpecV2 {
   pub outputs: OutputLimits,
 }
 
+/// Protected provider-neutral managed execution introduced by contract v3.
+///
+/// Revision three deliberately has a distinct strict shape: repository-owned
+/// v1/v2 execution fields cannot be reinterpreted as protected Factory input.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct JobSpecV3 {
+  /// Wire version; must equal [`EXECUTION_CONTRACT_V3`].
+  pub protocol_version: u16,
+  /// Stable identity of the job bound to the surrounding lease.
+  pub job_id: String,
+  /// Positive execution attempt bound to the surrounding lease.
+  pub attempt: u32,
+  /// First Unix second in which this specification is valid.
+  pub issued_at: u64,
+  /// First Unix second in which this specification is no longer valid.
+  pub expires_at: u64,
+  /// Exact source provider and immutable revision to materialize.
+  pub source: SourceSpec,
+  /// Exact Octa release and plugin set authorized to run.
+  pub octa: OctaSpec,
+  /// Server-owned Octafile and exact protected tasks to execute.
+  pub execution: ManagedOctaExecutionV3,
+  /// Provider-neutral mode, platforms, guarantees, resources, and network policy.
+  pub runtime: RuntimeSpecV2,
+  /// Optional logical cache authority; transport credentials remain out of band.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cache: Option<CachePolicy>,
+  /// Upper bounds for outputs accepted from the job.
+  pub outputs: OutputLimits,
+  /// Optional logical Factory provenance without transport capabilities.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub factory: Option<FactoryCausalityV3>,
+  /// Immutable protected inputs materialized through fenced transfer grants.
+  pub protected_inputs: ProtectedInputManifestV3,
+  /// Complete signed permission ceiling for this managed execution.
+  pub permissions: FactoryPermissionSetV3,
+  /// Semantic capabilities that the selected Agent/backend must enforce.
+  pub required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
+}
+
 /// Authenticated JobSpec from any revision supported during the compatibility window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum VerifiedJobSpec {
@@ -132,6 +177,9 @@ pub enum VerifiedJobSpec {
   V1(JobSpecV1),
   /// Provider-neutral host/isolation/virtualization execution intent.
   V2(JobSpecV2),
+  /// Protected managed-execution intent. Agents must not execute it until they
+  /// advertise and enforce the complete v3 capability vocabulary.
+  V3(Box<JobSpecV3>),
 }
 
 impl VerifiedJobSpec {
@@ -141,6 +189,7 @@ impl VerifiedJobSpec {
     match self {
       Self::V1(spec) => spec.cache.as_ref(),
       Self::V2(spec) => spec.cache.as_ref(),
+      Self::V3(spec) => spec.cache.as_ref(),
     }
   }
 
@@ -150,6 +199,7 @@ impl VerifiedJobSpec {
     match self {
       Self::V1(spec) => &spec.job_id,
       Self::V2(spec) => &spec.job_id,
+      Self::V3(spec) => &spec.job_id,
     }
   }
 }
@@ -166,6 +216,12 @@ impl From<JobSpecV2> for VerifiedJobSpec {
   }
 }
 
+impl From<JobSpecV3> for VerifiedJobSpec {
+  fn from(spec: JobSpecV3) -> Self {
+    Self::V3(Box::new(spec))
+  }
+}
+
 impl VerifiedJobSpec {
   /// Returns the exact execution-contract revision carried by the signed payload.
   #[must_use]
@@ -173,6 +229,7 @@ impl VerifiedJobSpec {
     match self {
       Self::V1(_) => EXECUTION_CONTRACT_V1,
       Self::V2(_) => EXECUTION_CONTRACT_V2,
+      Self::V3(_) => EXECUTION_CONTRACT_V3,
     }
   }
 }
@@ -537,7 +594,7 @@ pub fn verify_job_spec(
   Ok(spec)
 }
 
-/// Verifies and decodes either the legacy v1 or provider-neutral v2 JobSpec.
+/// Verifies and decodes a supported strict JobSpec revision.
 ///
 /// Dispatch occurs only after signature verification and uses only the
 /// authenticated top-level `protocol_version`. This keeps the compatibility
@@ -563,6 +620,11 @@ pub fn verify_compatible_job_spec(
       let spec: JobSpecV2 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
       spec.validate(&binding).map_err(JobSpecError::Validation)?;
       Ok(VerifiedJobSpec::V2(spec))
+    }
+    EXECUTION_CONTRACT_V3 => {
+      let spec: JobSpecV3 = serde_json::from_slice(&payload).map_err(JobSpecError::Json)?;
+      spec.validate(&binding).map_err(JobSpecError::Validation)?;
+      Ok(VerifiedJobSpec::V3(Box::new(spec)))
     }
     version => Err(JobSpecError::Validation(format!(
       "unsupported protocol version {version}"
@@ -618,13 +680,8 @@ impl JobSpecV1 {
       binding,
     )?;
     self.runtime.validate()?;
-    validate_job_payload(
-      &self.source,
-      &self.octa,
-      &self.execution,
-      self.cache.as_ref(),
-      &self.outputs,
-    )
+    self.execution.validate()?;
+    validate_job_payload(&self.source, &self.octa, self.cache.as_ref(), &self.outputs)
   }
 }
 
@@ -641,12 +698,37 @@ impl JobSpecV2 {
       binding,
     )?;
     self.runtime.validate()?;
-    validate_job_payload(
-      &self.source,
-      &self.octa,
-      &self.execution,
-      self.cache.as_ref(),
+    self.execution.validate()?;
+    validate_job_payload(&self.source, &self.octa, self.cache.as_ref(), &self.outputs)
+  }
+}
+
+impl JobSpecV3 {
+  /// Validates protected managed intent against its lease and signed limits.
+  pub fn validate(&self, binding: &JobBinding<'_>) -> Result<(), String> {
+    validate_job_identity(
+      self.protocol_version,
+      EXECUTION_CONTRACT_V3,
+      &self.job_id,
+      self.attempt,
+      self.issued_at,
+      self.expires_at,
+      binding,
+    )?;
+    self.runtime.validate()?;
+    validate_job_payload(&self.source, &self.octa, self.cache.as_ref(), &self.outputs)?;
+    self.protected_inputs.validate()?;
+    self.execution.validate(&self.protected_inputs)?;
+    self.permissions.validate()?;
+    validate_factory_toolchain(&self.octa, &self.permissions)?;
+    if let Some(factory) = &self.factory {
+      factory.validate()?;
+    }
+    validate_factory_execution(
+      &self.runtime,
       &self.outputs,
+      &self.permissions,
+      &self.required_enforcement,
     )
   }
 }
@@ -654,13 +736,11 @@ impl JobSpecV2 {
 fn validate_job_payload(
   source: &SourceSpec,
   octa: &OctaSpec,
-  execution: &ExecutionSpec,
   cache: Option<&CachePolicy>,
   outputs: &OutputLimits,
 ) -> Result<(), String> {
   source.validate()?;
   octa.validate()?;
-  execution.validate()?;
   if let Some(cache) = cache {
     cache.validate()?;
   }

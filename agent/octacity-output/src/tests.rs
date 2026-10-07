@@ -384,5 +384,6 @@ fn lease() -> LeaseAssignment {
       payload: "unused".to_owned(),
       signature: "unused".to_owned(),
     },
+    protected_inputs: Vec::new(),
   }
 }

@@ -431,6 +431,7 @@ mod tests {
       virtualization_providers: Vec::new(),
       allow_unrestricted_network: false,
       allowed_network_hosts: Vec::new(),
+      factory_permissions: None,
       allowed_upload_origins: Vec::new(),
       max_archive_entries: 1,
       upload_timeout_seconds: 1,

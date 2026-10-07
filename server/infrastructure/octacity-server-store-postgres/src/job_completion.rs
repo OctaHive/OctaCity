@@ -30,6 +30,30 @@ pub(crate) async fn execute(
   signer: &JobSpecSigner,
   request: JobCompletion,
 ) -> Result<CompletionDisposition, StoreError> {
+  execute_with_origin(pool, signer, request, CompletionOrigin::Agent).await
+}
+
+pub(crate) async fn fail_assignment(
+  pool: &PgPool,
+  signer: &JobSpecSigner,
+  request: JobCompletion,
+) -> Result<CompletionDisposition, StoreError> {
+  request.validate_assignment_failure()?;
+  execute_with_origin(pool, signer, request, CompletionOrigin::AssignmentDelivery).await
+}
+
+#[derive(Clone, Copy)]
+enum CompletionOrigin {
+  Agent,
+  AssignmentDelivery,
+}
+
+async fn execute_with_origin(
+  pool: &PgPool,
+  signer: &JobSpecSigner,
+  request: JobCompletion,
+  origin: CompletionOrigin,
+) -> Result<CompletionDisposition, StoreError> {
   let digest_input = json!({
     "agent_id": request.lease.agent_id,
     "final_sequence": request.final_sequence.map(EventSequence::get),
@@ -41,7 +65,10 @@ pub(crate) async fn execute(
     "registration_epoch": request.lease.registration_epoch.get(),
   });
   let identity = MutationIdentity::new_non_management(
-    MutationKind::CompleteJob,
+    match origin {
+      CompletionOrigin::Agent => MutationKind::CompleteJob,
+      CompletionOrigin::AssignmentDelivery => MutationKind::FailLeaseAssignment,
+    },
     request.completion_id.to_string(),
     request.completed_at,
     EntityKind::Job,
@@ -93,7 +120,7 @@ pub(crate) async fn execute(
       crate::mutation::commit(
         transaction,
         &identity,
-        facts(&request, &outcome, attention_build_id),
+        facts(&request, &outcome, attention_build_id, origin),
         encode_outcome(&StoredOutcome::from(&outcome))?,
       )
       .await?;
@@ -146,7 +173,7 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(&request, &outcome, attention_build_id),
+    facts(&request, &outcome, attention_build_id, origin),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
@@ -205,7 +232,7 @@ fn execution_evidence_is_valid(
     (JobRuntimePolicy::Legacy(_), Some(_)) => false,
     (JobRuntimePolicy::Current(_), None) => kind != JobCompletionKind::Succeeded,
     (JobRuntimePolicy::Current(runtime), Some(evidence)) => {
-      execution_contract_version == i16::try_from(EXECUTION_CONTRACT_V2).expect("v2 fits PostgreSQL SMALLINT")
+      execution_contract_version >= i16::try_from(EXECUTION_CONTRACT_V2).expect("v2 fits PostgreSQL SMALLINT")
         && evidence.target == runtime.target
         && inventory
           .executions
@@ -471,9 +498,13 @@ fn facts(
   request: &JobCompletion,
   outcome: &CompletionDisposition,
   build_id: octacity_server_domain::BuildId,
+  origin: CompletionOrigin,
 ) -> MutationFacts {
   let facts = MutationFacts::non_management(
-    NonManagementActor::Agent(request.lease.agent_id.to_string()),
+    match origin {
+      CompletionOrigin::Agent => NonManagementActor::Agent(request.lease.agent_id.to_string()),
+      CompletionOrigin::AssignmentDelivery => NonManagementActor::Worker("lease-assignment-delivery".to_owned()),
+    },
     outcome.job_id.to_string(),
     json!({
       "final_sequence": request.final_sequence.map(EventSequence::get),

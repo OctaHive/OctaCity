@@ -32,8 +32,8 @@ use octacity_server_application::{
   AgentRegistrationInput, AgentRegistrationOutcome, AgentRegistrationUseCases, AgentTelemetryBatch,
   AgentTelemetryError, AgentTelemetryExportError, AgentTelemetryExporter, AgentTelemetryInput, AgentTelemetryUseCases,
   AppendAgentEventsInput, AuthorizeAgentInput, AuthorizedAgent, BeginAgentArtifactUploadInput,
-  BeginAgentCacheSessionInput, CompleteAgentArtifactUploadInput, CompleteAgentLeaseInput, LeaseHeartbeatOutcome,
-  RegistrationEpoch, RevokeAgentCacheSessionInput,
+  BeginAgentCacheSessionInput, CompleteAgentArtifactUploadInput, CompleteAgentLeaseInput,
+  FailAgentLeaseAssignmentInput, LeaseHeartbeatOutcome, RegistrationEpoch, RevokeAgentCacheSessionInput,
 };
 use tower::ServiceExt as _;
 
@@ -140,6 +140,10 @@ impl AgentLeaseUseCases for RecordingApplication {
     self.lease_called.store(true, Ordering::SeqCst);
     Ok(AgentLeaseOutcome::NoWork)
   }
+
+  async fn fail_assignment(&self, _input: FailAgentLeaseAssignmentInput) -> Result<(), AgentLeaseError> {
+    unreachable!("no assignment is returned by this test application")
+  }
 }
 
 #[async_trait]
@@ -174,6 +178,10 @@ struct FailedPlacement;
 impl AgentLeaseUseCases for FailedPlacement {
   async fn acquire(&self, _input: AcquireAgentLeaseInput) -> Result<AgentLeaseOutcome, AgentLeaseError> {
     Err(AgentLeaseError::Unavailable)
+  }
+
+  async fn fail_assignment(&self, _input: FailAgentLeaseAssignmentInput) -> Result<(), AgentLeaseError> {
+    unreachable!("no assignment is returned by this test application")
   }
 }
 
@@ -216,6 +224,28 @@ impl AgentCacheSessionUseCases for CacheApplication {
 
 #[async_trait]
 impl AgentArtifactTransferUseCases for ArtifactApplication {
+  async fn authorize_protected_inputs(
+    &self,
+    input: octacity_server_application::AuthorizeProtectedInputsInput,
+  ) -> Result<Vec<octacity_protocol::ProtectedInputTransferV3>, AgentArtifactError> {
+    let expires_at_unix_ms = u64::try_from(input.lease_expires_at.unix_millis()).unwrap();
+    Ok(
+      input
+        .manifest
+        .inputs
+        .into_iter()
+        .map(|input| octacity_protocol::ProtectedInputTransferV3 {
+          input,
+          capability: octacity_protocol::ArtifactTransferCapability {
+            url: "https://objects.example/download?signature=opaque".to_owned(),
+            required_headers: BTreeMap::new(),
+            expires_at_unix_ms,
+          },
+        })
+        .collect(),
+    )
+  }
+
   async fn begin_upload(
     &self,
     input: BeginAgentArtifactUploadInput,

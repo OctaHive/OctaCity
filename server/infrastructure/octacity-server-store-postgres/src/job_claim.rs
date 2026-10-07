@@ -1,4 +1,4 @@
-use octacity_protocol::{AgentInventory, HostSnapshot, SignedEnvelope};
+use octacity_protocol::{AgentInventory, HostSnapshot, ProtectedInputManifestV3, SignedEnvelope};
 use octacity_server_domain::{AttemptNumber, EntityKind, JobId};
 use octacity_server_job::{JobRequirements, JobSpecTemplate};
 use octacity_server_store::{
@@ -145,7 +145,14 @@ pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaim
   let job_id = JobId::from_uuid(job_id).map_err(|_| StoreError::Unavailable)?;
   let attempt = AttemptNumber::new(u64::try_from(candidate.attempt_number).map_err(|_| StoreError::Unavailable)?)
     .map_err(|_| StoreError::Unavailable)?;
-  let grant = grant(&request, job_id, attempt, candidate.signed_job_spec.0);
+  let protected_inputs = candidate.job_spec_template.0.protected_inputs().cloned();
+  let grant = grant(
+    &request,
+    job_id,
+    attempt,
+    candidate.signed_job_spec.0,
+    protected_inputs.clone(),
+  );
   crate::mutation::commit(
     transaction,
     &identity,
@@ -154,6 +161,7 @@ pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaim
       job_id,
       attempt,
       signed_job_spec: grant.signed_job_spec.clone(),
+      protected_inputs,
       claimed_at: grant.claimed_at,
       expires_at: grant.expires_at,
     })?,
@@ -358,19 +366,33 @@ struct StoredOutcome {
   job_id: JobId,
   attempt: AttemptNumber,
   signed_job_spec: SignedEnvelope,
+  #[serde(default)]
+  protected_inputs: Option<ProtectedInputManifestV3>,
   claimed_at: octacity_server_domain::Timestamp,
   expires_at: octacity_server_domain::Timestamp,
 }
 
 fn replay(request: JobClaim, value: Value) -> Result<JobClaimOutcome, StoreError> {
   let stored: StoredOutcome = decode_outcome(value)?;
-  let mut grant = grant(&request, stored.job_id, stored.attempt, stored.signed_job_spec);
+  let mut grant = grant(
+    &request,
+    stored.job_id,
+    stored.attempt,
+    stored.signed_job_spec,
+    stored.protected_inputs,
+  );
   grant.claimed_at = stored.claimed_at;
   grant.expires_at = stored.expires_at;
   Ok(JobClaimOutcome::Claimed(Box::new(grant)))
 }
 
-fn grant(request: &JobClaim, job_id: JobId, attempt: AttemptNumber, signed_job_spec: SignedEnvelope) -> LeaseGrant {
+fn grant(
+  request: &JobClaim,
+  job_id: JobId,
+  attempt: AttemptNumber,
+  signed_job_spec: SignedEnvelope,
+  protected_inputs: Option<ProtectedInputManifestV3>,
+) -> LeaseGrant {
   LeaseGrant {
     lease_id: request.lease_id,
     fence: request.fence,
@@ -382,6 +404,7 @@ fn grant(request: &JobClaim, job_id: JobId, attempt: AttemptNumber, signed_job_s
     claimed_at: request.claimed_at,
     expires_at: request.expires_at,
     signed_job_spec,
+    protected_inputs,
   }
 }
 

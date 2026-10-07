@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use octacity_artifact_store::{ArtifactObject, ArtifactStore, ArtifactStoreError};
 use octacity_observability::{ErrorClass, Operation, ServerOperationMetric};
 use octacity_protocol::{
-  AgentCredentialToken, BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION,
-  CompleteOutputUploadRequest, CompleteOutputUploadResponse, OutputKind,
+  AgentCredentialToken, ArtifactTransferCapability, BeginOutputUploadRequest, BeginOutputUploadResponse,
+  COORDINATOR_PROTOCOL_VERSION, CompleteOutputUploadRequest, CompleteOutputUploadResponse, OutputKind,
+  ProtectedInputManifestV3, ProtectedInputTransferV3,
 };
 use octacity_server_domain::{ArtifactId, ArtifactName, ArtifactUploadId, BuildId, EntityKind, Timestamp};
 use octacity_server_store::{
@@ -49,9 +50,26 @@ pub struct CompleteAgentArtifactUploadInput {
   pub observed_at_unix_ms: i64,
 }
 
+/// Authoritative facts used to mint lease-scoped protected-input downloads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthorizeProtectedInputsInput {
+  /// Immutable metadata copied from the committed managed Job template.
+  pub manifest: ProtectedInputManifestV3,
+  /// Server-observed capability issue time.
+  pub observed_at_unix_ms: i64,
+  /// Current Lease deadline that no capability may outlive.
+  pub lease_expires_at: Timestamp,
+}
+
 /// Application boundary used by fenced Agent output routes.
 #[async_trait]
 pub trait AgentArtifactTransferUseCases: Send + Sync {
+  /// Verifies published bytes and mints bounded downloads for one managed Lease.
+  async fn authorize_protected_inputs(
+    &self,
+    input: AuthorizeProtectedInputsInput,
+  ) -> Result<Vec<ProtectedInputTransferV3>, AgentArtifactError>;
+
   /// Reserves logical metadata before issuing a short-lived upload capability.
   async fn begin_upload(
     &self,
@@ -232,6 +250,60 @@ where
   S: ArtifactRecordStore + 'static,
   B: ArtifactStore + 'static,
 {
+  async fn authorize_protected_inputs(
+    &self,
+    input: AuthorizeProtectedInputsInput,
+  ) -> Result<Vec<ProtectedInputTransferV3>, AgentArtifactError> {
+    input
+      .manifest
+      .validate()
+      .map_err(|_| AgentArtifactError::InvalidRequest)?;
+    let observed_at =
+      Timestamp::from_unix_millis(input.observed_at_unix_ms).map_err(|_| AgentArtifactError::InvalidRequest)?;
+    let remaining_millis = input
+      .lease_expires_at
+      .unix_millis()
+      .checked_sub(observed_at.unix_millis())
+      .filter(|remaining| *remaining > 0)
+      .ok_or(AgentArtifactError::Expired)?;
+    let lifetime = self.download_capability_lifetime.min(Duration::from_millis(
+      u64::try_from(remaining_millis).map_err(|_| AgentArtifactError::InvalidRequest)?,
+    ));
+    let mut transfers = Vec::with_capacity(input.manifest.inputs.len());
+    for protected in input.manifest.inputs {
+      let artifact_id = protected
+        .artifact_id
+        .parse::<ArtifactId>()
+        .map_err(|_| AgentArtifactError::InvalidRequest)?;
+      let upload = self.store.published_artifact(artifact_id).await?;
+      let identity = upload.artifact.identity();
+      if identity.size_bytes != protected.size_bytes
+        || identity.digest.to_string() != protected.sha256
+        || identity.media_type.as_str() != protected.media_type
+        || upload.transport_media_type.as_str() != protected.media_type
+      {
+        return Err(AgentArtifactError::Integrity);
+      }
+      let object = artifact_object(&upload)?;
+      self.bytes.verify_published(&object).await?;
+      let authorization = self.bytes.authorize_download(&object, lifetime).await?;
+      if authorization.expires_in > lifetime {
+        return Err(AgentArtifactError::Unavailable);
+      }
+      let expires_at = deadline(observed_at, authorization.expires_in)?;
+      transfers.push(ProtectedInputTransferV3 {
+        input: protected,
+        capability: ArtifactTransferCapability {
+          url: authorization.url,
+          required_headers: Default::default(),
+          expires_at_unix_ms: u64::try_from(expires_at.unix_millis())
+            .map_err(|_| AgentArtifactError::InvalidRequest)?,
+        },
+      });
+    }
+    Ok(transfers)
+  }
+
   async fn begin_upload(
     &self,
     input: BeginAgentArtifactUploadInput,

@@ -200,7 +200,7 @@ impl StageAttemptCompletion {
     usage: BudgetUsage,
     observed_at: Timestamp,
   ) -> Result<Self, FactoryError> {
-    ownership.claim().authorize(ownership.claim().fence(), observed_at)?;
+    ownership.claim().verify_fence(ownership.claim().fence(), observed_at)?;
     usage.validate(stage.budget)?;
     let id = FactoryDigest::sha256(
       "octacity.factory.stage-attempt-completion.v1",

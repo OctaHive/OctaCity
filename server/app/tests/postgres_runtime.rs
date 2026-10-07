@@ -365,7 +365,7 @@ async fn acquire(
   )
   .await;
   match response {
-    AcquireLeaseResponse::Lease { lease, .. } => lease,
+    AcquireLeaseResponse::Lease { lease, .. } => *lease,
     other => panic!("expected a Lease, got {other:?}"),
   }
 }

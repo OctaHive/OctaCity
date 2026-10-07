@@ -492,6 +492,7 @@ impl JobLifecycle {
     let (event_sender, events) = mpsc::channel(self.config.event_channel_capacity);
     let executor = self.executor.clone();
     let spec = verified.spec;
+    let protected_inputs = lease.protected_inputs.clone();
     let job_cancellation = cancellation.clone();
     let job = tokio::spawn(async move {
       executor
@@ -500,6 +501,7 @@ impl JobLifecycle {
             spec,
             source_credentials: BTreeMap::new(),
             cache_grant,
+            protected_inputs,
           },
           job_cancellation,
           &event_sender,

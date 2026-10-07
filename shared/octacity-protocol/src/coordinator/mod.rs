@@ -16,8 +16,8 @@ pub use octa_cache_protocol::{
 };
 
 use crate::{
-  CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, ExecutionEvidenceV2, OciIsolation, PlatformSpec,
-  RuntimeMode, SignedEnvelope,
+  ArtifactTransferCapability, CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, ExecutionEvidenceV2,
+  OciIsolation, PlatformSpec, ProtectedInputV3, RuntimeMode, SignedEnvelope,
 };
 
 mod credential;
@@ -257,7 +257,7 @@ pub enum AcquireLeaseResponse {
     /// Echo of the request identifier.
     request_id: String,
     /// Complete lease and signed execution intent.
-    lease: LeaseAssignment,
+    lease: Box<LeaseAssignment>,
   },
   /// No matching job became available during the poll.
   NoWork {
@@ -295,6 +295,22 @@ pub struct LeaseAssignment {
   pub expires_at: u64,
   /// Signed execution intent for this exact job attempt.
   pub signed_job_spec: SignedEnvelope,
+  /// Short-lived download capabilities for the exact signed v3 inputs.
+  ///
+  /// This transport authority is deliberately outside `signed_job_spec` and
+  /// omitted for ordinary v1/v2 Jobs.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub protected_inputs: Vec<ProtectedInputTransferV3>,
+}
+
+/// One signed logical protected input paired with lease-scoped transport authority.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProtectedInputTransferV3 {
+  /// Stable metadata copied exactly from the signed v3 manifest.
+  pub input: ProtectedInputV3,
+  /// Opaque short-lived direct-download capability.
+  pub capability: ArtifactTransferCapability,
 }
 
 /// Lease identity copied onto heartbeat and future job operations.

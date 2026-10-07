@@ -3,7 +3,7 @@ use std::fmt;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use octacity_protocol::{
-  JobBinding, JobSpecV1, JobSpecV2, MAX_SIGNED_JOB_SPEC_BYTES, SIGNATURE_ALGORITHM, SignedEnvelope,
+  JobBinding, JobSpecV1, JobSpecV2, JobSpecV3, MAX_SIGNED_JOB_SPEC_BYTES, SIGNATURE_ALGORITHM, SignedEnvelope,
   valid_signing_key_id,
 };
 use serde::Serialize;
@@ -66,6 +66,17 @@ impl JobSpecSigner {
   }
 
   pub(super) fn sign_v2(&self, spec: &JobSpecV2) -> Result<SignedEnvelope, JobSpecSigningError> {
+    spec
+      .validate(&JobBinding {
+        job_id: &spec.job_id,
+        attempt: spec.attempt,
+        now: spec.issued_at,
+      })
+      .map_err(JobSpecSigningError::Validation)?;
+    self.sign_validated(spec)
+  }
+
+  pub(super) fn sign_v3(&self, spec: &JobSpecV3) -> Result<SignedEnvelope, JobSpecSigningError> {
     spec
       .validate(&JobBinding {
         job_id: &spec.job_id,

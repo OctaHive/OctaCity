@@ -13,8 +13,8 @@ use crate::test_support::management_query;
 use crate::{
   AgentArtifactError, AgentArtifactTransferUseCases, AgentOperation, AgentRegistrationError, AgentRegistrationInput,
   AgentRegistrationOutcome, AgentRegistrationUseCases, ArtifactHandlers, AuthorizeAgentInput,
-  AuthorizeArtifactDownloadQuery, AuthorizedAgent, BeginAgentArtifactUploadInput, CompleteAgentArtifactUploadInput,
-  GetArtifactQuery, ListBuildArtifactsQuery,
+  AuthorizeArtifactDownloadQuery, AuthorizeProtectedInputsInput, AuthorizedAgent, BeginAgentArtifactUploadInput,
+  CompleteAgentArtifactUploadInput, GetArtifactQuery, ListBuildArtifactsQuery,
 };
 use async_trait::async_trait;
 use octacity_artifact_store::{
@@ -22,7 +22,7 @@ use octacity_artifact_store::{
 };
 use octacity_protocol::{
   AgentCredentialToken, BeginOutputUploadRequest, COORDINATOR_PROTOCOL_VERSION, CompleteOutputUploadRequest,
-  LeaseFence as ProtocolLeaseFence, OutputKind, OutputUploadMetadata,
+  LeaseFence as ProtocolLeaseFence, OutputKind, OutputUploadMetadata, ProtectedInputManifestV3, ProtectedInputV3,
 };
 use octacity_server_domain::{AttemptNumber, JobId, LeaseId, Timestamp};
 use octacity_server_store::{
@@ -186,6 +186,46 @@ fn published_metadata_is_not_returned_after_its_object_fails_verification() {
   ))
   .unwrap_err();
   assert_eq!(list.classification(), crate::ApplicationFailure::Unavailable);
+}
+
+#[test]
+fn protected_downloads_match_published_identity_and_never_outlive_the_lease() {
+  let (store, service) = service(false);
+  let begun = run_ready(service.begin_upload(begin_input("request-1"))).unwrap();
+  run_ready(service.complete_upload(complete_input("complete-1", &begun.upload_id))).unwrap();
+  let upload = run_ready(store.artifact_upload(begun.upload_id.parse().unwrap())).unwrap();
+  let identity = upload.artifact.identity();
+  let manifest = ProtectedInputManifestV3 {
+    inputs: vec![ProtectedInputV3 {
+      artifact_id: identity.artifact_id.to_string(),
+      size_bytes: identity.size_bytes,
+      sha256: identity.digest.to_string(),
+      media_type: identity.media_type.as_str().to_owned(),
+      destination: "/octacity/protected/results.xml".to_owned(),
+    }],
+  };
+
+  let transfers = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    manifest: manifest.clone(),
+    observed_at_unix_ms: 3_000,
+    lease_expires_at: time(8_000),
+  }))
+  .unwrap();
+  assert_eq!(transfers.len(), 1);
+  assert_eq!(transfers[0].input, manifest.inputs[0]);
+  assert_eq!(transfers[0].capability.expires_at_unix_ms, 8_000);
+  assert!(!format!("{:?}", transfers[0].capability).contains("signature=secret"));
+
+  let mut mismatched = manifest;
+  mismatched.inputs[0].sha256 = "0".repeat(64);
+  assert_eq!(
+    run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+      manifest: mismatched,
+      observed_at_unix_ms: 3_000,
+      lease_expires_at: time(8_000),
+    })),
+    Err(AgentArtifactError::Integrity)
+  );
 }
 
 fn service(

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use octacity_protocol::{HostSnapshot, SignedEnvelope};
+use octacity_protocol::{HostSnapshot, ProtectedInputManifestV3, SignedEnvelope};
 use octacity_server_artifacts::{BuildLogStream, LogChunkManifest};
 use octacity_server_domain::{AgentId, AttemptNumber, JobId, LeaseId, PoolId, Timestamp, canonicalize_json};
 use octacity_server_job::{JobEvent, JobFailureClass, JobState};
@@ -122,6 +122,9 @@ pub struct LeaseGrant {
   pub expires_at: Timestamp,
   /// Persisted server-signed execution intent for this exact Job and Attempt.
   pub signed_job_spec: SignedEnvelope,
+  /// Immutable metadata for protected inputs whose transfer grants are minted
+  /// only after this Lease has committed.
+  pub protected_inputs: Option<ProtectedInputManifestV3>,
 }
 
 /// Outcome of one bounded compatible ready-Job claim.
@@ -543,6 +546,22 @@ pub struct JobCompletion {
   pub execution: Option<octacity_protocol::ExecutionEvidenceV2>,
   /// Authoritative completion time.
   pub completed_at: Timestamp,
+}
+
+impl JobCompletion {
+  /// Revalidates the restricted coordinator-originated assignment-failure shape.
+  pub fn validate_assignment_failure(&self) -> Result<(), StoreError> {
+    if self.final_sequence.is_some()
+      || self.kind != JobCompletionKind::Failed(JobFailureClass::Infrastructure)
+      || self.execution.is_some()
+    {
+      return Err(StoreError::invalid(
+        StoreOperation::CompleteJob,
+        StoreInputError::InvalidExecutionEvidence,
+      ));
+    }
+    Ok(())
+  }
 }
 
 /// Result of an idempotent terminal completion.

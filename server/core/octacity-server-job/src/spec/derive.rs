@@ -1,19 +1,22 @@
 use std::collections::BTreeMap;
 
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, EXECUTION_CONTRACT_V2, ExecutionSpec, JobBinding, JobSpecV1, JobSpecV2, SourceSpec,
+  AGENT_PROTOCOL_VERSION, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, ExecutionSpec, JobBinding, JobSpecV1,
+  JobSpecV2, JobSpecV3, SourceSpec,
 };
 use octacity_server_domain::{AttemptNumber, JobId, PipelineNodeId, Timestamp};
 use serde_json::Value;
 
+use super::model::JobExecutionIntent;
 use super::{
   DerivedJobSpec, JobExecutionTemplate, JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecDerivationError,
-  JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate,
+  JobSpecPolicySnapshot, JobSpecSigner, JobSpecTemplate, ManagedJobSpecIntent,
 };
 
 enum WireJobSpec {
   Legacy(JobSpecV1),
   Current(JobSpecV2),
+  Managed(Box<JobSpecV3>),
 }
 
 impl WireJobSpec {
@@ -21,6 +24,7 @@ impl WireJobSpec {
     match self {
       Self::Legacy(spec) => spec.validate(binding),
       Self::Current(spec) => spec.validate(binding),
+      Self::Managed(spec) => spec.validate(binding),
     }
   }
 
@@ -28,8 +32,19 @@ impl WireJobSpec {
     match self {
       Self::Legacy(spec) => signer.sign_v1(spec),
       Self::Current(spec) => signer.sign_v2(spec),
+      Self::Managed(spec) => signer.sign_v3(spec),
     }
   }
+}
+
+/// Derives stable protected v3 intent from immutable Build, Factory, and policy facts.
+pub fn derive_managed_job_spec_template(
+  build: &JobSpecBuildSnapshot,
+  pipeline_node_id: PipelineNodeId,
+  intent: ManagedJobSpecIntent,
+  policy: &JobSpecPolicySnapshot,
+) -> Result<JobSpecTemplate, JobSpecDerivationError> {
+  JobSpecTemplate::new_managed(build, pipeline_node_id, intent, policy)
 }
 
 /// Derives stable server-owned intent from immutable Build, Pipeline, and policy snapshots.
@@ -94,7 +109,6 @@ fn wire_job_spec(
     template.policy().source.repository_parameter.clone(),
     Value::String(template.repository_locator().to_owned()),
   );
-  let execution = template.execution();
   let source = SourceSpec {
     provider: template.policy().source.provider.clone(),
     plugin_version: template.policy().source.plugin_version.clone(),
@@ -105,20 +119,8 @@ fn wire_job_spec(
       .map(|reference| reference.as_str().to_owned()),
     parameters: source_parameters,
   };
-  let execution = ExecutionSpec {
-    octafile: execution.octafile.clone(),
-    commands: execution.commands.clone(),
-    variables: execution_variables(template.parameters())?,
-    arguments: execution.arguments.clone(),
-    concurrency: execution.concurrency,
-    parallel: execution.parallel,
-    failfast: execution.failfast,
-    secrets_profile: template.policy().secrets_profile.as_ref().map(ToString::to_string),
-  };
-  let common = || (job_id, attempt, issued_at, expires_at, source, execution);
-  match &template.policy().runtime {
-    JobRuntimePolicy::Legacy(runtime) => {
-      let (job_id, attempt, issued_at, expires_at, source, execution) = common();
+  match (template.execution(), &template.policy().runtime) {
+    (JobExecutionIntent::Ordinary(execution), JobRuntimePolicy::Legacy(runtime)) => {
       Ok(WireJobSpec::Legacy(JobSpecV1 {
         protocol_version: AGENT_PROTOCOL_VERSION,
         job_id,
@@ -127,14 +129,13 @@ fn wire_job_spec(
         expires_at,
         source,
         octa: template.policy().octa.clone(),
-        execution,
+        execution: wire_execution(template, execution)?,
         runtime: runtime.clone(),
         cache: template.policy().cache.clone(),
         outputs: template.policy().outputs.clone(),
       }))
     }
-    JobRuntimePolicy::Current(runtime) => {
-      let (job_id, attempt, issued_at, expires_at, source, execution) = common();
+    (JobExecutionIntent::Ordinary(execution), JobRuntimePolicy::Current(runtime)) => {
       Ok(WireJobSpec::Current(JobSpecV2 {
         protocol_version: EXECUTION_CONTRACT_V2,
         job_id,
@@ -143,13 +144,49 @@ fn wire_job_spec(
         expires_at,
         source,
         octa: template.policy().octa.clone(),
-        execution,
+        execution: wire_execution(template, execution)?,
         runtime: runtime.clone(),
         cache: template.policy().cache.clone(),
         outputs: template.policy().outputs.clone(),
       }))
     }
+    (JobExecutionIntent::Managed(intent), JobRuntimePolicy::Current(runtime)) => {
+      Ok(WireJobSpec::Managed(Box::new(JobSpecV3 {
+        protocol_version: EXECUTION_CONTRACT_V3,
+        job_id,
+        attempt,
+        issued_at,
+        expires_at,
+        source,
+        octa: template.policy().octa.clone(),
+        execution: intent.execution.clone(),
+        runtime: runtime.clone(),
+        cache: template.policy().cache.clone(),
+        outputs: template.policy().outputs.clone(),
+        factory: Some(intent.factory.clone()),
+        protected_inputs: intent.protected_inputs.clone(),
+        permissions: intent.permissions.clone(),
+        required_enforcement: intent.required_enforcement.clone(),
+      })))
+    }
+    (JobExecutionIntent::Managed(_), JobRuntimePolicy::Legacy(_)) => Err(JobSpecDerivationError::InvalidPolicy),
   }
+}
+
+fn wire_execution(
+  template: &JobSpecTemplate,
+  execution: &JobExecutionTemplate,
+) -> Result<ExecutionSpec, JobSpecDerivationError> {
+  Ok(ExecutionSpec {
+    octafile: execution.octafile.clone(),
+    commands: execution.commands.clone(),
+    variables: execution_variables(template.parameters())?,
+    arguments: execution.arguments.clone(),
+    concurrency: execution.concurrency,
+    parallel: execution.parallel,
+    failfast: execution.failfast,
+    secrets_profile: template.policy().secrets_profile.as_ref().map(ToString::to_string),
+  })
 }
 
 pub(super) fn validate_execution_template(template: &JobExecutionTemplate) -> Result<(), JobSpecDerivationError> {

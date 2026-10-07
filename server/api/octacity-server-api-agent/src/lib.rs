@@ -21,10 +21,11 @@ use octacity_protocol::{
   RegisterAgentRequest, RegisterAgentResponse,
 };
 use octacity_server_application::{
-  AcquireAgentLeaseInput, AgentArtifactTransferUseCases, AgentCacheSessionUseCases, AgentExecutionError,
-  AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatUseCases, AgentLeaseError,
-  AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError, AgentRegistrationInput, AgentRegistrationUseCases,
-  AppendAgentEventsInput, CompleteAgentLeaseInput, LeaseHeartbeatOutcome,
+  AcquireAgentLeaseInput, AgentArtifactError, AgentArtifactTransferUseCases, AgentCacheSessionUseCases,
+  AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatUseCases,
+  AgentLeaseError, AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError, AgentRegistrationInput,
+  AgentRegistrationUseCases, AppendAgentEventsInput, AuthorizeProtectedInputsInput, CompleteAgentLeaseInput,
+  FailAgentLeaseAssignmentInput, LeaseHeartbeatOutcome, Timestamp,
 };
 
 mod artifact;
@@ -329,21 +330,48 @@ async fn acquire_lease(
     })
     .await
   {
-    Ok(AgentLeaseOutcome::Lease(grant)) => match assignment(*grant) {
-      Some(lease) => Json(AcquireLeaseResponse::Lease {
-        protocol_version: COORDINATOR_PROTOCOL_VERSION,
-        request_id,
-        lease,
-      })
-      .into_response(),
-      None => protocol_error(
-        StatusCode::SERVICE_UNAVAILABLE,
-        &request_id,
-        "unavailable",
-        "lease placement unavailable",
-        true,
-      ),
-    },
+    Ok(AgentLeaseOutcome::Lease(grant)) => {
+      let Some(assignment_observed_at_unix_ms) = unix_now_millis() else {
+        return protocol_error(
+          StatusCode::SERVICE_UNAVAILABLE,
+          &request_id,
+          "unavailable",
+          "lease assignment clock is unavailable",
+          true,
+        );
+      };
+      let assignment_observed_at_unix_ms = assignment_observed_at_unix_ms.max(grant.claimed_at.unix_millis());
+      match assignment(&state, &grant, assignment_observed_at_unix_ms).await {
+        Ok(lease) => Json(AcquireLeaseResponse::Lease {
+          protocol_version: COORDINATOR_PROTOCOL_VERSION,
+          request_id,
+          lease: Box::new(lease),
+        })
+        .into_response(),
+        Err(error) if error.requires_compensation() => {
+          if state
+            .leases
+            .fail_assignment(FailAgentLeaseAssignmentInput {
+              grant: *grant,
+              observed_at_unix_ms: assignment_observed_at_unix_ms,
+            })
+            .await
+            .is_err()
+          {
+            protocol_error(
+              StatusCode::SERVICE_UNAVAILABLE,
+              &request_id,
+              "unavailable",
+              "lease assignment recovery is temporarily unavailable",
+              true,
+            )
+          } else {
+            assignment_error(&request_id, error)
+          }
+        }
+        Err(error) => assignment_error(&request_id, error),
+      }
+    }
     Ok(AgentLeaseOutcome::Drain) => Json(AcquireLeaseResponse::Drain {
       protocol_version: COORDINATOR_PROTOCOL_VERSION,
       request_id,
@@ -359,16 +387,113 @@ async fn acquire_lease(
   }
 }
 
-fn assignment(grant: octacity_server_application::LeaseGrant) -> Option<LeaseAssignment> {
-  Some(LeaseAssignment {
+async fn assignment(
+  state: &AgentState,
+  grant: &octacity_server_application::LeaseGrant,
+  observed_at_unix_ms: i64,
+) -> Result<LeaseAssignment, AssignmentError> {
+  let issued_at = wire_timestamp_seconds(grant.claimed_at)?;
+  let (expires_at, capability_deadline) = wire_capability_deadline(grant.expires_at)?;
+  let protected_inputs = match &grant.protected_inputs {
+    Some(manifest) => state
+      .artifacts
+      .authorize_protected_inputs(AuthorizeProtectedInputsInput {
+        manifest: manifest.clone(),
+        observed_at_unix_ms,
+        // The wire Lease carries whole seconds. Capabilities must be bounded by
+        // that same observable deadline, not by discarded sub-second precision.
+        lease_expires_at: capability_deadline,
+      })
+      .await
+      .map_err(AssignmentError::ProtectedInputs)?,
+    None => Vec::new(),
+  };
+  Ok(LeaseAssignment {
     lease_id: grant.lease_id.to_string(),
     job_id: grant.job_id.to_string(),
-    attempt: u32::try_from(grant.attempt.get()).ok()?,
+    attempt: u32::try_from(grant.attempt.get()).map_err(|_| AssignmentError::InvalidGrant)?,
     fencing_token: encode_fence(grant.fence.expose()),
-    issued_at: u64::try_from(grant.claimed_at.unix_millis().div_euclid(1_000)).ok()?,
-    expires_at: u64::try_from(grant.expires_at.unix_millis().div_euclid(1_000)).ok()?,
-    signed_job_spec: grant.signed_job_spec,
+    issued_at,
+    expires_at,
+    signed_job_spec: grant.signed_job_spec.clone(),
+    protected_inputs,
   })
+}
+
+#[derive(Debug)]
+enum AssignmentError {
+  InvalidGrant,
+  ProtectedInputs(AgentArtifactError),
+}
+
+impl AssignmentError {
+  fn requires_compensation(&self) -> bool {
+    matches!(
+      self,
+      Self::InvalidGrant
+        | Self::ProtectedInputs(
+          AgentArtifactError::InvalidRequest
+            | AgentArtifactError::Integrity
+            | AgentArtifactError::Conflict
+            | AgentArtifactError::NotFound
+        )
+    )
+  }
+}
+
+fn wire_timestamp_seconds(timestamp: Timestamp) -> Result<u64, AssignmentError> {
+  u64::try_from(timestamp.unix_millis().div_euclid(1_000)).map_err(|_| AssignmentError::InvalidGrant)
+}
+
+fn wire_capability_deadline(timestamp: Timestamp) -> Result<(u64, Timestamp), AssignmentError> {
+  let seconds = wire_timestamp_seconds(timestamp)?;
+  let milliseconds = i64::try_from(seconds)
+    .ok()
+    .and_then(|value| value.checked_mul(1_000))
+    .ok_or(AssignmentError::InvalidGrant)?;
+  let deadline = Timestamp::from_unix_millis(milliseconds).map_err(|_| AssignmentError::InvalidGrant)?;
+  Ok((seconds, deadline))
+}
+
+fn assignment_error(request_id: &str, error: AssignmentError) -> Response {
+  let (status, code, message, retryable) = match error {
+    AssignmentError::InvalidGrant | AssignmentError::ProtectedInputs(AgentArtifactError::InvalidRequest) => (
+      StatusCode::UNPROCESSABLE_ENTITY,
+      "invalid_assignment",
+      "committed lease cannot be represented by the Agent protocol",
+      false,
+    ),
+    AssignmentError::ProtectedInputs(
+      AgentArtifactError::Integrity | AgentArtifactError::NotFound | AgentArtifactError::Conflict,
+    ) => (
+      StatusCode::CONFLICT,
+      "protected_input_unavailable",
+      "a protected input cannot satisfy its committed immutable identity",
+      false,
+    ),
+    AssignmentError::ProtectedInputs(AgentArtifactError::CredentialRejected) => (
+      StatusCode::UNAUTHORIZED,
+      "credential_rejected",
+      "agent credential rejected",
+      false,
+    ),
+    AssignmentError::ProtectedInputs(AgentArtifactError::Fenced) => (
+      StatusCode::CONFLICT,
+      "lease_fenced",
+      "lease is no longer current",
+      false,
+    ),
+    AssignmentError::ProtectedInputs(AgentArtifactError::Expired) => {
+      (StatusCode::CONFLICT, "lease_expired", "lease has expired", false)
+    }
+    AssignmentError::ProtectedInputs(AgentArtifactError::Unavailable) => (
+      StatusCode::SERVICE_UNAVAILABLE,
+      "unavailable",
+      "protected input authorization is temporarily unavailable",
+      true,
+    ),
+  };
+  protocol_error(status, request_id, code, message, retryable)
 }
 
 fn encode_fence(bytes: [u8; 32]) -> String {
@@ -626,6 +751,7 @@ fn protocol_error(status: StatusCode, request_id: &str, code: &str, message: &st
 
 #[cfg(test)]
 mod tests {
+  use axum::body::to_bytes;
   use octacity_server_application::LeaseHeartbeatOutcome;
   use serde_json::json;
 
@@ -657,5 +783,40 @@ mod tests {
       heartbeat_directive(draining),
       Some(HeartbeatDirective::Drain { expires_at: 61 })
     );
+  }
+
+  #[test]
+  fn assignment_capability_deadline_uses_the_same_floor_as_the_wire_lease() {
+    let authoritative = Timestamp::from_unix_millis(61_999).unwrap();
+    let (wire_seconds, capability_deadline) = wire_capability_deadline(authoritative).unwrap();
+
+    assert_eq!(wire_seconds, 61);
+    assert_eq!(capability_deadline.unix_millis(), 61_000);
+    assert!(capability_deadline <= authoritative);
+  }
+
+  #[tokio::test]
+  async fn assignment_failures_preserve_permanent_and_retryable_classification() {
+    for (error, expected_status, expected_code, expected_retryable) in [
+      (
+        AgentArtifactError::Integrity,
+        StatusCode::CONFLICT,
+        "protected_input_unavailable",
+        false,
+      ),
+      (
+        AgentArtifactError::Unavailable,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "unavailable",
+        true,
+      ),
+    ] {
+      let response = assignment_error("assignment-1", AssignmentError::ProtectedInputs(error));
+      assert_eq!(response.status(), expected_status);
+      let body = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+      let body: CoordinatorErrorResponse = serde_json::from_slice(&body).unwrap();
+      assert_eq!(body.code, expected_code);
+      assert_eq!(body.retryable, expected_retryable);
+    }
   }
 }

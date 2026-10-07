@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, str::FromStr};
 
 use octacity_protocol::{
-  ExecutionMode, ExecutionTargetV2, JobBinding, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture,
+  ExecutionMode, ExecutionTargetV2, JobBinding, JobSpecV3, NetworkPolicy, OctaSpec, OutputLimits, PlatformArchitecture,
   PlatformOs, PlatformSpec, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, VerifiedJobSpec, guarantees_for,
   verify_compatible_job_spec, verify_job_spec,
 };
@@ -10,8 +10,8 @@ use octacity_server_domain::{
 };
 use octacity_server_job::{
   JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecDerivationError, JobSpecPolicySnapshot, JobSpecSigner,
-  JobSpecTemplate, JobSpecValidity, MAX_JOB_SPEC_VALIDITY_SECONDS, SourcePluginPolicy, derive_job_spec_template,
-  sign_ready_job_spec,
+  JobSpecTemplate, JobSpecValidity, MAX_JOB_SPEC_VALIDITY_SECONDS, ManagedJobSpecIntent, SourcePluginPolicy,
+  derive_job_spec_template, derive_managed_job_spec_template, sign_ready_job_spec,
 };
 use octacity_server_secrets::SecretProfileName;
 use serde_json::{Value, json};
@@ -138,6 +138,146 @@ fn signs_v2_intent_without_reinterpreting_the_legacy_signing_path() {
 }
 
 #[test]
+fn ordinary_template_persistence_keeps_its_existing_execution_shape() {
+  let (template, _) = fixture(json!({
+    "commands": ["build"],
+    "arguments": ["--locked"]
+  }))
+  .unwrap();
+
+  let persisted = serde_json::to_value(&template).unwrap();
+  assert_eq!(persisted["execution"]["commands"], json!(["build"]));
+  assert_eq!(persisted["execution"]["arguments"], json!(["--locked"]));
+  assert!(persisted["execution"].get("ordinary").is_none());
+  assert!(persisted["execution"].get("managed").is_none());
+  assert_eq!(serde_json::from_value::<JobSpecTemplate>(persisted).unwrap(), template);
+}
+
+#[test]
+fn derives_and_signs_stable_managed_v3_intent_without_transfer_capabilities() {
+  let canonical = canonical_v3_spec();
+  let build = JobSpecBuildSnapshot::new(
+    build_id(),
+    ImmutableRevision::new(canonical.source.revision.clone()).unwrap(),
+    None,
+    RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+    BTreeMap::new(),
+  )
+  .unwrap();
+  let policy = managed_policy(&canonical);
+  let intent = ManagedJobSpecIntent::new(
+    canonical.execution.clone(),
+    canonical.factory.clone().unwrap(),
+    canonical.protected_inputs.clone(),
+    canonical.permissions.clone(),
+    canonical.required_enforcement.clone(),
+  );
+  let mut untrusted = serde_json::to_value(&intent).unwrap();
+  untrusted["transfer_url"] = json!("https://storage.invalid/bearer-secret");
+  assert!(serde_json::from_value::<ManagedJobSpecIntent>(untrusted).is_err());
+
+  let template = derive_managed_job_spec_template(&build, node_id(), intent, &policy).unwrap();
+  assert_eq!(template.protected_inputs(), Some(&canonical.protected_inputs));
+  let persisted = serde_json::to_string(&template).unwrap();
+  for forbidden in ["transfer_url", "download_url", "bearer", "credential"] {
+    assert!(!persisted.contains(forbidden));
+  }
+
+  let signer = JobSpecSigner::new("active-key", [7; 32]).unwrap();
+  let first = sign_ready_job_spec(&template, AttemptNumber::FIRST, job_id(), issued_at(), &signer).unwrap();
+  let second = sign_ready_job_spec(&template, AttemptNumber::FIRST, job_id(), issued_at(), &signer).unwrap();
+  assert_eq!(first, second);
+  let verified = verify_compatible_job_spec(
+    first.envelope(),
+    &BTreeMap::from([(signer.key_id().to_owned(), signer.verifying_key())]),
+    JobBinding {
+      job_id: &job_id().to_string(),
+      attempt: 1,
+      now: 100,
+    },
+  )
+  .unwrap();
+  let VerifiedJobSpec::V3(verified) = verified else {
+    panic!("managed intent must produce JobSpec v3");
+  };
+  assert_eq!(verified.execution, canonical.execution);
+  assert_eq!(verified.factory, canonical.factory);
+  assert_eq!(verified.protected_inputs, canonical.protected_inputs);
+  assert_eq!(verified.permissions, canonical.permissions);
+  assert_eq!(verified.required_enforcement, canonical.required_enforcement);
+}
+
+#[test]
+fn managed_v3_rejects_legacy_runtime_and_discarded_ordinary_inputs() {
+  let canonical = canonical_v3_spec();
+  let intent = || {
+    ManagedJobSpecIntent::new(
+      canonical.execution.clone(),
+      canonical.factory.clone().unwrap(),
+      canonical.protected_inputs.clone(),
+      canonical.permissions.clone(),
+      canonical.required_enforcement.clone(),
+    )
+  };
+  let build = JobSpecBuildSnapshot::new(
+    build_id(),
+    ImmutableRevision::new(canonical.source.revision.clone()).unwrap(),
+    None,
+    RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+    BTreeMap::new(),
+  )
+  .unwrap();
+  let legacy = policy();
+  assert!(matches!(
+    derive_managed_job_spec_template(&build, node_id(), intent(), &legacy),
+    Err(JobSpecDerivationError::InvalidPolicy)
+  ));
+
+  let parameterized = JobSpecBuildSnapshot::new(
+    build_id(),
+    ImmutableRevision::new(canonical.source.revision.clone()).unwrap(),
+    None,
+    RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+    BTreeMap::from([("repository-controlled".to_owned(), json!("ignored"))]),
+  )
+  .unwrap();
+  assert!(matches!(
+    derive_managed_job_spec_template(&parameterized, node_id(), intent(), &managed_policy(&canonical)),
+    Err(JobSpecDerivationError::InvalidPolicy)
+  ));
+}
+
+#[test]
+fn placement_policy_requires_the_wire_revision_derived_from_execution_intent() {
+  let (legacy, _) = fixture(json!({"commands": ["build"]})).unwrap();
+  assert_eq!(legacy.placement_policy().minimum_execution_contract, 1);
+
+  let canonical = canonical_v3_spec();
+  let build = JobSpecBuildSnapshot::new(
+    build_id(),
+    ImmutableRevision::new(canonical.source.revision.clone()).unwrap(),
+    None,
+    RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+    BTreeMap::new(),
+  )
+  .unwrap();
+  let managed = derive_managed_job_spec_template(
+    &build,
+    node_id(),
+    ManagedJobSpecIntent::new(
+      canonical.execution.clone(),
+      canonical.factory.clone().unwrap(),
+      canonical.protected_inputs.clone(),
+      canonical.permissions.clone(),
+      canonical.required_enforcement.clone(),
+    ),
+    &managed_policy(&canonical),
+  )
+  .unwrap();
+  assert_eq!(managed.placement_policy().minimum_execution_contract, 3);
+}
+
+#[test]
 fn rejects_every_caller_controlled_server_owned_field() {
   for forbidden in [
     "secrets",
@@ -261,6 +401,32 @@ fn policy() -> JobSpecPolicySnapshot {
       single_output_bytes: 512,
     },
     JobSpecValidity::new(600).unwrap(),
+  )
+  .unwrap()
+}
+
+fn canonical_v3_spec() -> JobSpecV3 {
+  serde_json::from_str(include_str!(
+    "../../../../shared/protocol-fixtures/job-spec/job-spec-v3.json"
+  ))
+  .unwrap()
+}
+
+fn managed_policy(spec: &JobSpecV3) -> JobSpecPolicySnapshot {
+  JobSpecPolicySnapshot::new(
+    SourcePluginPolicy::new(
+      spec.source.provider.clone(),
+      spec.source.plugin_version.clone(),
+      spec.source.plugin_sha256.clone(),
+      "url",
+    )
+    .unwrap(),
+    spec.octa.clone(),
+    JobRuntimePolicy::Current(spec.runtime.clone()),
+    None,
+    spec.cache.clone(),
+    spec.outputs.clone(),
+    JobSpecValidity::new(spec.expires_at - spec.issued_at).unwrap(),
   )
   .unwrap()
 }

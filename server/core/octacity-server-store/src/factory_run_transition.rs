@@ -79,7 +79,7 @@ pub fn validate_factory_transition(
     || baseline
       .claim
       .claim
-      .authorize(request.fence, request.committed_at)
+      .verify_fence(request.fence, request.committed_at)
       .is_err()
   {
     return Err(StoreError::Conflict {
@@ -133,7 +133,7 @@ pub fn validate_factory_transition(
       && completion.claim() == baseline.claim.claim
       && completion
         .claim()
-        .authorize(request.fence, completion.observed_at())
+        .verify_fence(request.fence, completion.observed_at())
         .is_ok()
       && stage.is_some_and(|stage| completion.usage().validate(stage.budget()).is_ok())
   });

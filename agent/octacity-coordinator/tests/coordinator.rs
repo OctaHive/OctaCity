@@ -198,7 +198,7 @@ async fn respond(stream: &mut TcpStream, action: Action, request: &RecordedReque
         let body = serde_json::to_vec(&AcquireLeaseResponse::Lease {
           protocol_version: COORDINATOR_PROTOCOL_VERSION,
           request_id: request.request_id.clone(),
-          lease,
+          lease: Box::new(lease),
         })
         .unwrap();
         write_response(stream, 200, &body).await;
@@ -695,7 +695,7 @@ async fn sends_fenced_lease_and_heartbeat_documents_to_exact_endpoints() {
     .unwrap();
   assert!(matches!(
     acquired,
-    AcquireLeaseResponse::Lease { lease: received, .. } if received == lease
+    AcquireLeaseResponse::Lease { lease: received, .. } if *received == lease
   ));
   let directive = client
     .heartbeat(

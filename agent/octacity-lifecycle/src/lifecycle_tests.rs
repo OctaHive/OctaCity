@@ -356,6 +356,10 @@ struct LifecycleSource;
 
 #[async_trait]
 impl SourceMaterializer for LifecycleSource {
+  fn verify(&self, _requirement: &SourceSpec) -> Result<(), SourceError> {
+    Ok(())
+  }
+
   async fn materialize(
     &self,
     requirement: &SourceSpec,
@@ -687,6 +691,7 @@ fn lifecycle_fixture(
     issued_at: now,
     expires_at: now + 60,
     signed_job_spec: signed_spec(&spec),
+    protected_inputs: Vec::new(),
   };
   let cache_root = cache_fixture_root(state_root);
   let executor = Arc::new(
@@ -715,6 +720,7 @@ fn lifecycle_fixture(
           ..RunnerSupervisionPolicy::default()
         },
         external_executables: BTreeMap::new(),
+        factory_permissions: None,
       },
     )
     .unwrap()

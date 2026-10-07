@@ -4155,6 +4155,7 @@ dependencies = [
  "octacity-protocol",
  "octacity-runner",
  "octacity-source",
+ "reqwest",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
@@ -4162,6 +4163,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]

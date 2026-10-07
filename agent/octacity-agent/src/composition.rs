@@ -488,6 +488,7 @@ async fn build_executor(
         max_accounting_failures: validated.config.max_accounting_failures,
       },
       external_executables: tool_executables,
+      factory_permissions: validated.config.factory_permissions.clone(),
     },
   )?
   .with_execution_backends(assembly.routes)?

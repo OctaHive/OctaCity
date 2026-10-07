@@ -16,9 +16,16 @@
 #![warn(missing_docs)]
 
 mod execution_route;
+mod factory_preflight;
+mod protected_inputs;
 
 pub use execution_route::ExecutionBackendRoute;
 use execution_route::{ExecutableJobSpec, ExecutableRuntime, SelectedBackend};
+use factory_preflight::FactoryAdmission;
+pub use factory_preflight::FactoryPreflightError;
+pub use protected_inputs::{
+  ProtectedInputError, ProtectedInputStager, ProtectedInputStagerConfig, StagedProtectedInputs,
+};
 
 use std::{
   collections::{BTreeMap, BTreeSet},
@@ -33,7 +40,7 @@ use octacity_execution::{ExecutionBackend, ExecutionError, NetworkAccess, StartE
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
   BeginCacheSessionResponse, ExecutionCacheIdentityV2, ExecutionEvidenceV2, ExecutionMode, ExecutionProviderId,
-  NetworkPolicy, OutputLimits, RuntimeMode, VerifiedJobSpec,
+  FactoryPermissionSetV3, NetworkPolicy, OutputLimits, ProtectedInputTransferV3, RuntimeMode, VerifiedJobSpec,
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
@@ -55,6 +62,9 @@ pub struct ExecuteJobRequest {
   pub source_credentials: BTreeMap<String, PathBuf>,
   /// Fenced cache authority obtained out of band from the signed JobSpec.
   pub cache_grant: Option<BeginCacheSessionResponse>,
+  /// Lease-scoped transfer capabilities matching a signed v3 manifest.
+  /// Ordinary v1/v2 Jobs must provide an empty collection.
+  pub protected_inputs: Vec<ProtectedInputTransferV3>,
 }
 
 /// Successful terminal data from source acquisition and `octa-runner`.
@@ -207,6 +217,10 @@ pub struct JobExecutorConfig {
   pub runner_supervision: RunnerSupervisionPolicy,
   /// Operator-selected executables already matched to the installed Octa release.
   pub external_executables: BTreeMap<String, VerifiedExternalExecutable>,
+  /// Independent operator-owned ceiling for signed Factory permissions.
+  ///
+  /// Absence disables Factory execution without affecting ordinary CI jobs.
+  pub factory_permissions: Option<FactoryPermissionSetV3>,
 }
 
 /// Construction or lifecycle failure for one job.
@@ -263,6 +277,12 @@ pub enum JobError {
   #[error("job output limits exceed the agent's local maxima")]
   /// At least one signed artifact or report quota exceeds local policy.
   OutputLimit,
+  /// Signed Factory authority exceeded local policy or verified inventory.
+  #[error("Factory execution preflight failed: {0}")]
+  FactoryPreflight(#[source] FactoryPreflightError),
+  /// Generic admission succeeded, but no backend-specific v3 projection is enabled yet.
+  #[error("qualified Factory backend projection is not enabled")]
+  ManagedExecutionUnavailable,
   #[error("job was cancelled before runner execution")]
   /// Cancellation stopped the job lifecycle.
   Cancelled,
@@ -309,6 +329,7 @@ pub struct JobExecutor {
   cancellation_grace: Duration,
   runner_supervision: RunnerSupervisionPolicy,
   external_executables: BTreeMap<String, VerifiedExternalExecutable>,
+  factory_permissions: Option<FactoryPermissionSetV3>,
 }
 
 impl JobExecutor {
@@ -332,6 +353,11 @@ impl JobExecutor {
       .validate()
       .map_err(|error| JobError::Invalid(error.to_string()))?;
     config.max_output_limits.validate().map_err(JobError::Invalid)?;
+    if let Some(permissions) = &config.factory_permissions {
+      permissions
+        .validate()
+        .map_err(|_| JobError::FactoryPreflight(FactoryPreflightError::InvalidLocalGrants))?;
+    }
     let configured_network_host_count = config.allowed_network_hosts.len();
     let allowed_network_hosts = config.allowed_network_hosts.into_iter().collect::<BTreeSet<_>>();
     if allowed_network_hosts.len() != configured_network_host_count {
@@ -369,6 +395,7 @@ impl JobExecutor {
       cancellation_grace: config.cancellation_grace,
       runner_supervision: config.runner_supervision,
       external_executables: config.external_executables,
+      factory_permissions: config.factory_permissions,
     })
   }
 
@@ -402,7 +429,7 @@ impl JobExecutor {
     cancellation: CancellationToken,
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
-    let spec = ExecutableJobSpec::from(request.spec);
+    let spec = ExecutableJobSpec::try_from(request.spec).map_err(JobFailure::from)?;
     if spec.cache.is_some() != request.cache_grant.is_some() {
       return Err(
         JobError::Invalid("signed cache policy and fenced cache grant must be present together".to_owned()).into(),
@@ -415,6 +442,10 @@ impl JobExecutor {
       .runner
       .verify(&spec.octa)
       .map_err(|error| JobError::RunnerInstallation(Box::new(error)))?;
+    self
+      .source
+      .verify(&spec.source)
+      .map_err(|error| JobError::Source(Box::new(error)))?;
     let selected = self.select_backend(&spec.runtime)?;
     if spec.runtime.workload_identity_profile().is_some()
       && selected
@@ -445,6 +476,34 @@ impl JobExecutor {
     if cancellation.is_cancelled() {
       return Err(JobError::Cancelled.into());
     }
+
+    let external_executables = if let Some(intent) = spec.execution.managed() {
+      let ExecutableRuntime::Current(runtime) = &spec.runtime else {
+        return Err(JobError::FactoryPreflight(FactoryPreflightError::BackendCapability).into());
+      };
+      FactoryAdmission {
+        intent,
+        runtime,
+        outputs: &spec.outputs,
+        transfers: &request.protected_inputs,
+        local: self.factory_permissions.as_ref(),
+        backend_capabilities: &selected.factory_enforcement,
+        runner: &self.runner,
+        external_executables: &self.external_executables,
+      }
+      .authorize()
+      .map_err(JobError::FactoryPreflight)?;
+
+      // Task 5.4 admits only the generic authority envelope. Concrete
+      // protected-input staging and backend projection are enabled together by
+      // the backend-specific conformance work, never by falling back to Host.
+      return Err(JobError::ManagedExecutionUnavailable.into());
+    } else {
+      if !request.protected_inputs.is_empty() {
+        return Err(JobError::FactoryPreflight(FactoryPreflightError::ProtectedInputTransfer).into());
+      }
+      self.external_executables.clone()
+    };
 
     let execution_id = execution_id(&spec.job_id, spec.attempt);
     let job_root = self.work_root.join(&execution_id);
@@ -548,7 +607,11 @@ impl JobExecutor {
               root,
               network,
             },
-            spec: spec.execution.clone(),
+            spec: spec
+              .execution
+              .ordinary()
+              .expect("managed execution returned before runner supervision")
+              .clone(),
             cache: cache.as_ref().map(|session| session.runner().clone()),
             redactions: RunnerRedactions::new(
               identity
@@ -557,7 +620,7 @@ impl JobExecutor {
                 .chain(cache.iter().filter_map(|session| session.sensitive_value())),
             ),
             cancellation_grace: self.cancellation_grace,
-            external_executables: self.external_executables.clone(),
+            external_executables,
           },
           cancellation,
           events,
@@ -668,6 +731,7 @@ impl JobExecutor {
           backend,
           evidence: None,
           cache_identity: None,
+          factory_enforcement: BTreeSet::new(),
         })
       }
       ExecutableRuntime::Current(runtime) => {
@@ -687,6 +751,7 @@ impl JobExecutor {
             environment: route.environment.clone(),
           }),
           evidence: Some(evidence),
+          factory_enforcement: route.factory_enforcement.clone(),
         })
       }
     }
