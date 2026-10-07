@@ -4447,6 +4447,7 @@ dependencies = [
  "octacity-artifact-store",
  "octacity-observability",
  "octacity-protocol",
+ "octacity-server-artifacts",
  "octacity-server-cache",
  "octacity-server-domain",
  "octacity-server-factory",
@@ -4500,6 +4501,21 @@ dependencies = [
  "thiserror",
  "zeroize",
  "zstd 0.14.0",
+]
+
+[[package]]
+name = "octacity-server-decision-signal"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "octacity-server-domain",
+ "octacity-server-factory",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]

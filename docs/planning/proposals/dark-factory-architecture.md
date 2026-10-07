@@ -2,7 +2,7 @@
 
 - Статус: целевая архитектура и снимок реализации
 - Создано: 2026-09-27
-- Актуализировано: 2026-10-06
+- Актуализировано: 2026-10-07
 - Область: OctaCity, Octa, coding harnesses, evaluation и delivery
 
 ## 1. Резюме
@@ -130,18 +130,18 @@ opt-in `codex` task к обычным Pipelines; он не включает Dark
 | Isolation и resource policy | Реализовано для квалифицированных backends | v2 target фиксирует mode, platform и required guarantees; containerd, Microsandbox, Apple VF и Native имеют отдельные contracts без fallback на более слабый mode |
 | Network, secret и identity restrictions | Частично реализовано | Есть restricted host allowlist, Project/Pool/execution-target policy, logical secret и workload-identity profiles; полного factory-level tool/command/path/mount vocabulary ещё нет |
 | Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.0`; Factory lifecycle ещё не включён |
-| Source intake | Частично реализовано | REST/manual, schedule, authenticated webhook и internal Trigger sources нормализуют Build occurrences, но provider-neutral Work Envelope и Factory admission отсутствуют |
-| Factory Controller | Не реализовано | Нет Factory Run, Stage Attempt, меж-Build reconciliation, budgets и WIP ownership |
+| Source intake | Реализован in-memory foundation | Provider-neutral Work Envelope, manual Factory admission, exact replay и Project/configuration visibility реализованы; PostgreSQL, REST и внешние Work Source adapters ещё впереди |
+| Factory Controller | Реализован core/in-memory foundation | Factory Run, exact Stage Attempt target, budgets, WIP, fenced reconciliation, operator retry authorization, ordinary-Build links и terminal provenance работают в pure core и deterministic in-memory store; production persistence/composition ещё не подключены |
 | ChangeSet capture | Не реализовано | Agent публикует generic outputs, но trusted base/candidate capture и immutable ChangeSet contract отсутствуют |
-| Evaluation Plane | Не реализовано | Нет Evidence Manifest, Criterion Pack, Assessment, Evaluation Round и Decision Engine |
-| Decision Signal Plane | Не реализовано | Нет provider-neutral request/receipt, routing/tool-risk policies или JEV adapter; decision-модель не является частью текущего execution substrate |
+| Evaluation Plane | Частично реализовано | Provider-neutral ChangeSet, Evidence Manifest, Evaluation Plan, Assessment и deterministic Decision Engine реализованы в core; trusted output projection, evaluators и durable production flow ещё не подключены |
+| Decision Signal Plane | Реализован foundation, не включён runtime | Provider-neutral typed request/result/receipt, exact replay, deadlines/budgets, rollout/fallback policy, registry, fake conformance и bounded JEV adapter реализованы; PostgreSQL storage, configuration loading, readiness и composition-root wiring остаются задачей production integration |
 | Delivery | Не реализовано | VCS reads и revision resolution существуют; write-capable branch/PR/merge adapter отсутствует |
 | Factory operator UX | Не реализовано | Console управляет Projects, Builds, Agents и audit, но не показывает Factory Runs, evaluation rounds или delivery decisions |
 
 Dark factory строится поверх реализованного execution substrate и не заменяет
 существующие Orchestrator, Scheduler, Agent, REST control plane или Octa runtime.
-Следующая архитектурная граница — durable меж-Build coordination, а не ещё один
-Job backend.
+Следующая архитектурная граница — PostgreSQL-backed production composition и
+execution protocols; новые Job backends для этого не требуются.
 
 ## 4. Главные архитектурные решения
 
@@ -794,13 +794,15 @@ Required failure или indeterminate ведёт к Escalate, а не pass. High
 
 ## 13. Целевое module ownership и текущая реализация
 
-Factory modules и protocols ниже ещё не реализованы; названия предварительные.
-Они дополняют существующие CI/CD modules, а не заменяют Build application,
-Orchestrator, Scheduler, Agent protocol или management API.
+Core contracts и in-memory coordination уже реализуются в
+`octacity-server-factory`, `octacity-server-store` и application use cases.
+Остальные названия описывают целевое владение и не означают существующий crate.
+Эти модули дополняют CI/CD, а не заменяют Build application, Orchestrator,
+Scheduler, Agent protocol или management API.
 
 | Module | Owns | Explicitly does not own |
 | --- | --- | --- |
-| `octacity-server-factory` | Factory Run, stages, attempts, budgets, reconciliation | Job placement, harness execution, provider SDKs |
+| `octacity-server-factory` | Реализованные Factory Run, stages, attempts, budgets, evaluation и Decision Signal contracts | Job placement, harness execution, provider SDKs |
 | `octacity-server-work` | Work Envelope, admission, deduplication | Provider payloads, tracker SDKs |
 | `octacity-server-evaluation` | Evaluation Round, Plan, Assessment, Decision | Model calls, scanners, repo execution |
 | `octacity-server-delivery` | Delivery policy and commands | Forge SDKs, repo execution |
@@ -971,8 +973,8 @@ target добавляет Delivery Adapter. Factory Controller не изменя
 | Generic Artifact/report/result contracts | Готово |
 | Codex plugin conformance и release packaging в Octa | Готово upstream |
 | OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.5.0`, revision `8b4269eff298dccadf38bc7011b759464fcdc1e1` |
-| Factory Work/Task/ChangeSet/Assessment contracts и durable storage | Не готово |
-| Decision Signal provider seam и JEV adapter | Не готово; сначала shadow, затем отдельная калибровка routing/tool-risk |
+| Factory Work/Task/ChangeSet/Assessment contracts и durable storage | Core contracts и in-memory history готовы; PostgreSQL и Task/Context schemas не готовы |
+| Decision Signal provider seam и JEV adapter | Foundation готов и fail-closed; runtime composition/persistence и shadow calibration не готовы |
 | Factory Permission Set и malicious-repository negative contracts | Частично; требуется закрыть gap из 14.1 |
 | Trusted ChangeSet capture, evaluation и delivery | Не готово |
 

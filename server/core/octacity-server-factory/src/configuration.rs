@@ -289,34 +289,54 @@ pub struct DecisionSignalProfile {
   routes: Option<DecisionSignalRouteSet>,
 }
 
+/// Named exact inputs for one resolved Decision Signal profile.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecisionSignalProfileDefinition {
+  /// Purpose governed by this profile.
+  pub purpose: DecisionSignalPurpose,
+  /// Exact decision-service identity.
+  pub provider: ImmutableReference,
+  /// Exact protocol-adapter identity.
+  pub adapter: ImmutableReference,
+  /// Exact model identity.
+  pub model: ImmutableReference,
+  /// Exact versioned question-set identity.
+  pub question_set: ImmutableReference,
+  /// Exact deterministic consumption-policy identity.
+  pub policy: ImmutableReference,
+  /// Configured rollout authority.
+  pub mode: DecisionSignalMode,
+  /// Fail-closed fallback for an unavailable or unusable signal.
+  pub fallback: DecisionSignalFallback,
+  /// Hard budget for one signal request.
+  pub budget: BudgetLimit,
+  /// Finite outgoing routes for a routing profile.
+  pub routes: Option<DecisionSignalRouteSet>,
+}
+
 impl DecisionSignalProfile {
-  #[expect(
-    clippy::too_many_arguments,
-    reason = "resolved profile stores one exact immutable selection"
-  )]
-  pub(crate) const fn from_resolved(
-    purpose: DecisionSignalPurpose,
-    provider: ImmutableReference,
-    adapter: ImmutableReference,
-    model: ImmutableReference,
-    question_set: ImmutableReference,
-    policy: ImmutableReference,
-    mode: DecisionSignalMode,
-    fallback: DecisionSignalFallback,
-    budget: BudgetLimit,
-    routes: Option<DecisionSignalRouteSet>,
-  ) -> Self {
+  /// Constructs one exact resolved profile with purpose-compatible routing data.
+  pub fn new(definition: DecisionSignalProfileDefinition) -> Result<Self, FactoryError> {
+    if matches!(definition.purpose, DecisionSignalPurpose::Routing) != definition.routes.is_some() {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "decision_signal_routes",
+      });
+    }
+    Ok(Self::from_resolved(definition))
+  }
+
+  pub(crate) fn from_resolved(definition: DecisionSignalProfileDefinition) -> Self {
     Self {
-      purpose,
-      provider,
-      adapter,
-      model,
-      question_set,
-      policy,
-      mode,
-      fallback,
-      budget,
-      routes,
+      purpose: definition.purpose,
+      provider: definition.provider,
+      adapter: definition.adapter,
+      model: definition.model,
+      question_set: definition.question_set,
+      policy: definition.policy,
+      mode: definition.mode,
+      fallback: definition.fallback,
+      budget: definition.budget,
+      routes: definition.routes,
     }
   }
 
@@ -737,18 +757,18 @@ fn resolve_decision_signals(
         field: "Decision Signal routing routes",
       });
     }
-    profiles.push(DecisionSignalProfile::from_resolved(
-      profile.purpose,
-      choices.resolve_reference(FactoryChoiceKind::DecisionSignalProvider, &profile.provider)?,
-      choices.resolve_reference(FactoryChoiceKind::DecisionSignalAdapter, &profile.adapter)?,
-      choices.resolve_reference(FactoryChoiceKind::DecisionSignalModel, &profile.model)?,
-      choices.resolve_reference(FactoryChoiceKind::DecisionSignalQuestionSet, &profile.question_set)?,
-      choices.resolve_reference(FactoryChoiceKind::DecisionSignalPolicy, &profile.policy)?,
-      profile.mode,
-      profile.fallback,
-      profile.budget,
-      profile.routes.clone(),
-    ));
+    profiles.push(DecisionSignalProfile::from_resolved(DecisionSignalProfileDefinition {
+      purpose: profile.purpose,
+      provider: choices.resolve_reference(FactoryChoiceKind::DecisionSignalProvider, &profile.provider)?,
+      adapter: choices.resolve_reference(FactoryChoiceKind::DecisionSignalAdapter, &profile.adapter)?,
+      model: choices.resolve_reference(FactoryChoiceKind::DecisionSignalModel, &profile.model)?,
+      question_set: choices.resolve_reference(FactoryChoiceKind::DecisionSignalQuestionSet, &profile.question_set)?,
+      policy: choices.resolve_reference(FactoryChoiceKind::DecisionSignalPolicy, &profile.policy)?,
+      mode: profile.mode,
+      fallback: profile.fallback,
+      budget: profile.budget,
+      routes: profile.routes.clone(),
+    }));
   }
   Ok(profiles)
 }

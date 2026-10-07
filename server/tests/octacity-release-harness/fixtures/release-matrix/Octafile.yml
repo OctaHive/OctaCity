@@ -2,12 +2,6 @@ version: 1
 
 vars:
   CODEX_FIXTURE_PUBLIC: release-public-canary
-  CODEX_FIXTURE_SECRET:
-    value: release-secret-canary-must-not-appear
-    secret: true
-  CODEX_FIXTURE_UNMAPPED:
-    value: release-unmapped-canary-must-not-appear
-    secret: true
 
 tasks:
   cacheable:
@@ -47,6 +41,12 @@ tasks:
   codex-fixture:
     vars:
       CODEX_FIXTURE_MODE: redaction
+      CODEX_FIXTURE_SECRET:
+        value: release-secret-canary-must-not-appear
+        secret: true
+      CODEX_FIXTURE_UNMAPPED:
+        value: release-unmapped-canary-must-not-appear
+        secret: true
     cmds:
       - id: codex
         codex:
@@ -74,6 +74,12 @@ tasks:
   codex-overflow:
     vars:
       CODEX_FIXTURE_MODE: overflow
+      CODEX_FIXTURE_SECRET:
+        value: release-secret-canary-must-not-appear
+        secret: true
+      CODEX_FIXTURE_UNMAPPED:
+        value: release-unmapped-canary-must-not-appear
+        secret: true
     cmds:
       - id: codex
         codex:
@@ -89,6 +95,12 @@ tasks:
   codex-cancel:
     vars:
       CODEX_FIXTURE_MODE: cancel
+      CODEX_FIXTURE_SECRET:
+        value: release-secret-canary-must-not-appear
+        secret: true
+      CODEX_FIXTURE_UNMAPPED:
+        value: release-unmapped-canary-must-not-appear
+        secret: true
     cmds:
       - id: codex
         codex:

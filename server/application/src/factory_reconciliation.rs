@@ -583,7 +583,7 @@ fn transition_for_action(
     StageAttemptId::generate(),
     &snapshot.run,
     number,
-    target.kind(),
+    target.clone(),
     stage_definition.budget(),
     input_digest,
     FactoryClaimOwnership::new(claimed.record.owner.clone(), claimed.record.claim),

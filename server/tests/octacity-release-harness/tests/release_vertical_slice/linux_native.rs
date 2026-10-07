@@ -952,6 +952,27 @@ mod tests {
       payload.len() / encoded.len().max(1)
     );
   }
+
+  #[test]
+  fn release_cache_fixture_does_not_inherit_codex_secrets() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let fixture = repository.join(FIXTURE_OCTAFILE);
+    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fs::read_to_string(fixture).unwrap()).unwrap();
+
+    assert!(
+      document["vars"]
+        .as_mapping()
+        .is_none_or(|variables| variables.values().all(|value| value["secret"] != true)),
+      "root secrets make every task ineligible for the result cache"
+    );
+    for task in ["codex-fixture", "codex-overflow", "codex-cancel"] {
+      assert_eq!(document["tasks"][task]["vars"]["CODEX_FIXTURE_SECRET"]["secret"], true);
+      assert_eq!(
+        document["tasks"][task]["vars"]["CODEX_FIXTURE_UNMAPPED"]["secret"],
+        true
+      );
+    }
+  }
 }
 
 #[test]

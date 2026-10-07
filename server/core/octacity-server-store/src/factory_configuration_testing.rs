@@ -11,6 +11,7 @@ use octacity_server_factory::{
 };
 
 use crate::factory_run_testing::StoredFactoryRun;
+use crate::factory_run_testing::StoredFactoryRunControl;
 use crate::testing::{
   ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
   recorded_management_audit,
@@ -153,6 +154,7 @@ pub(super) struct FactoryConfigurationMemoryState {
   evidence: BTreeSet<String>,
   audit: BTreeSet<RecordedManagementAuditFact>,
   pub(super) factory_runs: BTreeMap<octacity_server_factory::FactoryRunId, StoredFactoryRun>,
+  pub(super) factory_run_controls: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredFactoryRunControl>,
 }
 
 #[derive(Clone)]

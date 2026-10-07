@@ -239,6 +239,8 @@ pub enum FactoryStageProgress {
   BuildSucceeded,
   /// A provider-independent failure may start another bounded attempt.
   RetryableFailure,
+  /// An operator authorized exactly one bounded retry of the failed attempt.
+  RetryRequested,
   /// The stage failed without an eligible retry.
   Failed,
   /// The linked Build was cancelled.
@@ -262,6 +264,8 @@ pub enum EvaluationBranchState {
   Succeeded,
   /// A provider-independent failure may create another bounded attempt.
   RetryableFailure,
+  /// An operator authorized exactly one bounded retry of this branch.
+  RetryRequested,
   /// The branch exhausted its failure policy.
   Failed,
   /// A required planned branch is absent from persisted execution facts.
@@ -283,6 +287,18 @@ impl EvaluationBranch {
   #[must_use]
   pub const fn new(key: FactoryKey, required: bool, state: EvaluationBranchState) -> Self {
     Self { key, required, state }
+  }
+
+  /// Returns the stable evaluator branch key.
+  #[must_use]
+  pub const fn key(&self) -> &FactoryKey {
+    &self.key
+  }
+
+  /// Returns the current authoritative branch progress.
+  #[must_use]
+  pub const fn state(&self) -> EvaluationBranchState {
+    self.state
   }
 
   fn with_state(&self, state: EvaluationBranchState) -> Self {
@@ -346,6 +362,12 @@ impl EvaluationProgress {
     })
   }
 
+  /// Returns evaluator branches in canonical key order.
+  #[must_use]
+  pub fn branches(&self) -> &[EvaluationBranch] {
+    &self.branches
+  }
+
   fn is_immediate_successor(&self, next: &Self) -> bool {
     if self.required_quorum != next.required_quorum || self.branches.len() != next.branches.len() {
       return false;
@@ -368,8 +390,11 @@ const fn valid_evaluation_branch_transition(previous: EvaluationBranchState, nex
   matches!(
     (previous, next),
     (
-      EvaluationBranchState::Pending | EvaluationBranchState::RetryableFailure,
+      EvaluationBranchState::Pending | EvaluationBranchState::RetryRequested,
       EvaluationBranchState::AttemptCreated
+    ) | (
+      EvaluationBranchState::RetryableFailure,
+      EvaluationBranchState::RetryRequested
     ) | (
       EvaluationBranchState::AttemptCreated,
       EvaluationBranchState::BuildActive
@@ -409,6 +434,30 @@ pub enum DeliveryIntent {
   AwaitingApproval,
   /// A preconditioned delivery-for-review intent was accepted.
   Requested,
+}
+
+/// Closed operator dispositions for a Run that is waiting in escalation.
+///
+/// The value is deliberately smaller than [`FactoryRunState`]: management
+/// clients may acknowledge reviewed escalation or request cancellation, but
+/// cannot manufacture acceptance, rejection, delivery, or completion facts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FactoryEscalationDisposition {
+  /// Record that the escalated outcome was reviewed and close the Run.
+  Acknowledge,
+  /// Request the normal cancellation path and its active-Build propagation.
+  Cancel,
+}
+
+impl FactoryEscalationDisposition {
+  /// Returns the stable value used in audit and idempotency material.
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Acknowledge => "acknowledge",
+      Self::Cancel => "cancel",
+    }
+  }
 }
 
 /// Non-authoritative external reporting progress.
@@ -547,6 +596,8 @@ pub enum FactoryWaitReason {
   DecisionSignal,
   /// Waiting for an ordinary linked Build.
   Build(FactoryStageTarget),
+  /// Waiting for explicit authorization to retry an infrastructure failure.
+  RetryApproval(FactoryStageTarget),
   /// Stage WIP is currently full.
   StageCapacity,
   /// Waiting for at least one evaluator branch.
@@ -692,6 +743,7 @@ const fn wait_reason_key(reason: &FactoryWaitReason) -> &'static str {
   match reason {
     FactoryWaitReason::DecisionSignal => "decision_signal",
     FactoryWaitReason::Build(_) => "build",
+    FactoryWaitReason::RetryApproval(_) => "retry_approval",
     FactoryWaitReason::StageCapacity => "stage_capacity",
     FactoryWaitReason::EvaluationJoin => "evaluation_join",
     FactoryWaitReason::DeliveryApproval => "delivery_approval",
@@ -795,7 +847,10 @@ fn decide_evaluation_branches(progress: &EvaluationProgress) -> Result<FactoryNe
     let action = match branch.state {
       EvaluationBranchState::Pending => Some(FactoryNextAction::CreateStageAttempt(target)),
       EvaluationBranchState::AttemptCreated => Some(FactoryNextAction::CreateBuild(target)),
-      EvaluationBranchState::RetryableFailure => Some(FactoryNextAction::RetryStage(target)),
+      EvaluationBranchState::RetryableFailure => {
+        Some(FactoryNextAction::Wait(FactoryWaitReason::RetryApproval(target)))
+      }
+      EvaluationBranchState::RetryRequested => Some(FactoryNextAction::RetryStage(target)),
       EvaluationBranchState::BuildActive
       | EvaluationBranchState::Succeeded
       | EvaluationBranchState::Failed
@@ -929,8 +984,11 @@ pub fn validate_lifecycle_transition(
       ) if previous_target == next_target && previous_state == next_state => matches!(
         (previous_progress, next_progress),
         (
-          FactoryStageProgress::Ready | FactoryStageProgress::RetryableFailure,
+          FactoryStageProgress::Ready | FactoryStageProgress::RetryRequested,
           FactoryStageProgress::AttemptCreated
+        ) | (
+          FactoryStageProgress::RetryableFailure,
+          FactoryStageProgress::RetryRequested
         ) | (FactoryStageProgress::AttemptCreated, FactoryStageProgress::BuildActive)
           | (
             FactoryStageProgress::BuildActive,
@@ -966,6 +1024,23 @@ pub fn validate_lifecycle_transition(
           && next_state == FactoryRunState::Evaluating
           && previous.is_immediate_successor(next)
       }
+      (
+        FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(previous)),
+        FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
+          completed_rework_cycles,
+          max_rework_cycles,
+          ..
+        }),
+      ) => {
+        previous_state == FactoryRunState::Evaluating
+          && next_state == FactoryRunState::Evaluating
+          && completed_rework_cycles <= max_rework_cycles
+          && matches!(decide_evaluation_branches(previous), Ok(FactoryNextAction::Decide))
+      }
+      (
+        FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::AwaitingApproval),
+        FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::Requested),
+      ) => previous_state == FactoryRunState::ReadyForDelivery && next_state == previous_state,
       _ => allowed_state_successor(previous_state, next_state),
     }
   };
@@ -1002,7 +1077,10 @@ const fn allowed_state_successor(previous: FactoryRunState, next: FactoryRunStat
       FactoryRunState::Delivering,
       FactoryRunState::Completed | FactoryRunState::Escalated | FactoryRunState::Cancelled
     ) | (
-      FactoryRunState::Escalated | FactoryRunState::Rejected | FactoryRunState::Cancelled,
+      FactoryRunState::Escalated,
+      FactoryRunState::Cancelled | FactoryRunState::Completed
+    ) | (
+      FactoryRunState::Rejected | FactoryRunState::Cancelled,
       FactoryRunState::Completed
     )
   )
@@ -1017,7 +1095,8 @@ fn decide_stage(
     FactoryStageProgress::Ready => FactoryNextAction::CreateStageAttempt(target.clone()),
     FactoryStageProgress::AttemptCreated => FactoryNextAction::CreateBuild(target.clone()),
     FactoryStageProgress::BuildActive => FactoryNextAction::Wait(FactoryWaitReason::Build(target.clone())),
-    FactoryStageProgress::RetryableFailure => FactoryNextAction::RetryStage(target.clone()),
+    FactoryStageProgress::RetryableFailure => FactoryNextAction::Wait(FactoryWaitReason::RetryApproval(target.clone())),
+    FactoryStageProgress::RetryRequested => FactoryNextAction::RetryStage(target.clone()),
     FactoryStageProgress::Failed => FactoryNextAction::Escalate(FactoryEscalationReason::StageFailed(target.clone())),
     FactoryStageProgress::Cancelled => FactoryNextAction::Cancel,
     FactoryStageProgress::BuildSucceeded

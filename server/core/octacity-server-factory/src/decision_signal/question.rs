@@ -152,6 +152,42 @@ pub enum DecisionSignalQuestionDomain {
   BoundedScore(DecisionSignalScoreDomain),
 }
 
+/// One finite choice and the semantic boundary description shown to a provider.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecisionSignalChoiceCriterion {
+  choice: FactoryKey,
+  description: FactoryText,
+}
+
+impl DecisionSignalChoiceCriterion {
+  /// Binds one declared choice to its bounded provider-neutral description.
+  #[must_use]
+  pub const fn new(choice: FactoryKey, description: FactoryText) -> Self {
+    Self { choice, description }
+  }
+
+  /// Returns the declared finite choice.
+  #[must_use]
+  pub const fn choice(&self) -> &FactoryKey {
+    &self.choice
+  }
+
+  /// Returns the semantic boundary description for the choice.
+  #[must_use]
+  pub const fn description(&self) -> &FactoryText {
+    &self.description
+  }
+}
+
+/// Semantic criteria paired with one typed Decision Signal domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DecisionSignalQuestionCriteria {
+  /// One description for every finite choice, in the domain's canonical order.
+  FiniteChoice(Vec<DecisionSignalChoiceCriterion>),
+  /// Ordered tier descriptions from the score domain's minimum to maximum.
+  BoundedScore(Vec<FactoryText>),
+}
+
 impl DecisionSignalQuestionDomain {
   pub(super) fn kind(&self) -> DecisionSignalQuestionKind {
     match self {
@@ -165,14 +201,31 @@ impl DecisionSignalQuestionDomain {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecisionSignalQuestion {
   reference: ImmutableReference,
+  instructions: FactoryText,
   domain: DecisionSignalQuestionDomain,
+  criteria: DecisionSignalQuestionCriteria,
 }
 
 impl DecisionSignalQuestion {
-  /// Binds one immutable question definition to its answer domain.
-  #[must_use]
-  pub const fn new(reference: ImmutableReference, domain: DecisionSignalQuestionDomain) -> Self {
-    Self { reference, domain }
+  /// Binds one immutable question definition to semantic instructions and a
+  /// complete typed answer-domain description.
+  pub fn new(
+    reference: ImmutableReference,
+    instructions: FactoryText,
+    domain: DecisionSignalQuestionDomain,
+    criteria: DecisionSignalQuestionCriteria,
+  ) -> Result<Self, FactoryError> {
+    if !criteria_match_domain(&domain, &criteria) {
+      return Err(FactoryError::InvalidDecisionSignal {
+        field: "question criteria",
+      });
+    }
+    Ok(Self {
+      reference,
+      instructions,
+      domain,
+      criteria,
+    })
   }
 
   /// Returns the exact question definition.
@@ -181,10 +234,40 @@ impl DecisionSignalQuestion {
     &self.reference
   }
 
+  /// Returns the provider-neutral decision instructions.
+  #[must_use]
+  pub const fn instructions(&self) -> &FactoryText {
+    &self.instructions
+  }
+
   /// Returns the finite typed answer domain.
   #[must_use]
   pub const fn domain(&self) -> &DecisionSignalQuestionDomain {
     &self.domain
+  }
+
+  /// Returns the semantic descriptions aligned with the typed domain.
+  #[must_use]
+  pub const fn criteria(&self) -> &DecisionSignalQuestionCriteria {
+    &self.criteria
+  }
+}
+
+fn criteria_match_domain(domain: &DecisionSignalQuestionDomain, criteria: &DecisionSignalQuestionCriteria) -> bool {
+  match (domain, criteria) {
+    (DecisionSignalQuestionDomain::FiniteChoice(choices), DecisionSignalQuestionCriteria::FiniteChoice(criteria)) => {
+      choices.as_slice().len() == criteria.len()
+        && choices
+          .as_slice()
+          .iter()
+          .zip(criteria)
+          .all(|(choice, criterion)| choice == criterion.choice())
+    }
+    (DecisionSignalQuestionDomain::BoundedScore(domain), DecisionSignalQuestionCriteria::BoundedScore(criteria)) => {
+      i64::try_from(criteria.len())
+        .is_ok_and(|count| count == i64::from(domain.maximum()) - i64::from(domain.minimum()) + 1)
+    }
+    _ => false,
   }
 }
 
@@ -398,16 +481,30 @@ fn encode_question(question: &DecisionSignalQuestion) -> Vec<u8> {
     question.reference().digest()
   )
   .into_bytes();
+  value.push(0);
+  value.extend_from_slice(question.instructions().as_str().as_bytes());
   match question.domain() {
     DecisionSignalQuestionDomain::FiniteChoice(choices) => {
       value.extend_from_slice(b"\0choice");
-      for choice in choices.as_slice() {
+      let DecisionSignalQuestionCriteria::FiniteChoice(criteria) = question.criteria() else {
+        unreachable!("question criteria are validated by construction")
+      };
+      for (choice, criterion) in choices.as_slice().iter().zip(criteria) {
         value.push(0);
         value.extend_from_slice(choice.as_str().as_bytes());
+        value.push(0);
+        value.extend_from_slice(criterion.description().as_str().as_bytes());
       }
     }
     DecisionSignalQuestionDomain::BoundedScore(domain) => {
       value.extend_from_slice(format!("\0score\0{}\0{}", domain.minimum(), domain.maximum()).as_bytes());
+      let DecisionSignalQuestionCriteria::BoundedScore(criteria) = question.criteria() else {
+        unreachable!("question criteria are validated by construction")
+      };
+      for criterion in criteria {
+        value.push(0);
+        value.extend_from_slice(criterion.as_str().as_bytes());
+      }
     }
   }
   value

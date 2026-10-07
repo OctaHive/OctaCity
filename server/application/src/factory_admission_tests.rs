@@ -44,7 +44,7 @@ fn exact(identity: &str, value: u8) -> ImmutableReference {
   ImmutableReference::new(key(identity), key("v1"), digest(value))
 }
 
-fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryConfiguration {
+pub(super) fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryConfiguration {
   let build = BuildConfigurationRef::new(
     BuildConfigurationId::generate(),
     BuildConfigurationVersion::INITIAL,
@@ -131,7 +131,7 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
   .unwrap()
 }
 
-fn repository(
+pub(super) fn repository(
   project_id: ProjectId,
   id: RepositoryId,
   default_reference: Option<SourceReference>,
@@ -155,7 +155,7 @@ fn repository(
   }
 }
 
-fn command(
+pub(super) fn command(
   project_id: ProjectId,
   configuration_id: FactoryConfigurationId,
   repository_id: RepositoryId,
@@ -179,17 +179,17 @@ fn command(
   }
 }
 
-fn context() -> ManagementRequestContext {
+pub(super) fn context() -> ManagementRequestContext {
   ManagementRequestContext::trusted_network(
     ManagementRequestId::new(Uuid::from_u128(0x1d3c_437b_e606_4895_9677_0c86_3466_b5f4)).unwrap(),
   )
 }
 
-fn time(value: i64) -> Timestamp {
+pub(super) fn time(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
 
-fn seeded_store(
+pub(super) fn seeded_store(
   project_id: ProjectId,
   configuration_id: FactoryConfigurationId,
   repository: PublishedRepository,
@@ -207,12 +207,12 @@ fn seeded_store(
 }
 
 #[derive(Default)]
-struct RecordingResolver {
+pub(super) struct RecordingResolver {
   requests: Mutex<Vec<RevisionResolutionRequest>>,
 }
 
 impl RecordingResolver {
-  fn call_count(&self) -> usize {
+  pub(super) fn call_count(&self) -> usize {
     self.requests.lock().unwrap().len()
   }
 }
@@ -228,7 +228,7 @@ impl RevisionResolver for RecordingResolver {
   }
 }
 
-async fn admit(
+pub(super) async fn admit(
   handlers: &FactoryAdmissionHandlers<InMemoryFactoryConfigurationStore>,
   command: AdmitManualFactoryWorkCommand,
 ) -> Result<crate::FactoryAdmissionOutcome, crate::ApplicationError> {

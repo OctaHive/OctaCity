@@ -1,12 +1,15 @@
 use std::num::NonZeroU16;
 
-use octacity_server_domain::{BuildId, Timestamp};
+use octacity_server_artifacts::ArtifactIdentity;
+use octacity_server_domain::{AttemptId, AttemptVersion, BuildId, BuildVersion, ImmutableRevision, JobId, Timestamp};
 use octacity_server_factory::{
-  Assessment, BudgetUsage, ChangeSet, Decision, DecisionSignalProgress, DecisionSignalReceipt, DecisionSignalRequest,
-  DeliveryAttempt, Escalation, EvaluationPlan, EvidenceManifest, FactoryClaim, FactoryClaimFence, FactoryDigest,
-  FactoryKey, FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunVersion, FactoryWipUsage, MacroCall,
-  ReportingAttempt, StageAttempt, StageAttemptCompletion, WorkEnvelope,
+  Assessment, BudgetUsage, BuildConfigurationRef, ChangeSet, ChangeSetId, Decision, DecisionId, DecisionSignalProgress,
+  DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation, EvaluationPlan, EvidenceManifest,
+  FactoryClaim, FactoryClaimFence, FactoryConfigurationRef, FactoryDigest, FactoryKey, FactoryLifecycleProgress,
+  FactoryRun, FactoryRunId, FactoryRunVersion, FactoryStageKind, FactoryStageTarget, FactoryWipUsage, MacroCall,
+  ReportingAttempt, StageAttempt, StageAttemptCompletion, StageAttemptNumber, WorkEnvelope,
 };
+use octacity_server_orchestrator::BuildState;
 
 use crate::{AuditActorKind, MutationDisposition, StoreError};
 
@@ -155,20 +158,267 @@ pub struct FactoryBuildLink {
   pub stage_attempt_id: octacity_server_factory::StageAttemptId,
   /// Ordinary immutable Build identity.
   pub build_id: BuildId,
-  /// Digest of the exact Build creation input.
+  /// Initial immutable Attempt created by ordinary Build admission.
+  pub attempt_id: AttemptId,
+  /// Complete initial Job DAG identities in stable order.
+  pub job_ids: Vec<JobId>,
+  /// Exact Factory Configuration version admitted for the Run.
+  pub factory_configuration: FactoryConfigurationRef,
+  /// Program-owned stage kind.
+  pub stage_kind: FactoryStageKind,
+  /// Append-only attempt number within the Run.
+  pub stage_attempt_number: StageAttemptNumber,
+  /// Exact program-owned stage or evaluator branch target.
+  pub target: FactoryStageTarget,
+  /// Exact Build Configuration selected by the immutable Factory Configuration.
+  pub build_configuration: BuildConfigurationRef,
+  /// Digest of the immutable Task Envelope input selected for this attempt.
+  pub task_envelope_digest: FactoryDigest,
+  /// Exact source revision supplied to the ordinary Build application.
+  pub exact_revision: ImmutableRevision,
+  /// Exact predecessor that made this stage eligible, when one exists.
+  pub parent: Option<FactoryBuildParent>,
+  /// Digest of the narrowed Factory permission set accepted for the Build.
+  pub effective_policy_digest: FactoryDigest,
+  /// Digest of the complete exact Build creation input.
   pub input_digest: FactoryDigest,
 }
 
+/// Named immutable inputs for one ordinary-Build causal link.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryBuildLinkInput {
+  /// Ordinary immutable Build identity.
+  pub build_id: BuildId,
+  /// First immutable Attempt created by Build admission.
+  pub attempt_id: AttemptId,
+  /// Complete initial Job DAG identities in stable order.
+  pub job_ids: Vec<JobId>,
+  /// Exact Factory Configuration version admitted for the Run.
+  pub factory_configuration: FactoryConfigurationRef,
+  /// Exact program-owned stage or evaluator branch target.
+  pub target: FactoryStageTarget,
+  /// Exact Build Configuration selected for the stage.
+  pub build_configuration: BuildConfigurationRef,
+  /// Digest of the immutable Task Envelope.
+  pub task_envelope_digest: FactoryDigest,
+  /// Exact source revision supplied to ordinary Build admission.
+  pub exact_revision: ImmutableRevision,
+  /// Exact predecessor that made the stage eligible.
+  pub parent: Option<FactoryBuildParent>,
+  /// Digest of the narrowed Factory permission set.
+  pub effective_policy_digest: FactoryDigest,
+  /// Digest of the complete exact Build creation input.
+  pub input_digest: FactoryDigest,
+}
+
+/// Exact immutable predecessor of a Factory-owned ordinary Build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FactoryBuildParent {
+  /// Candidate whose exact revision is validated or evaluated.
+  ChangeSet(ChangeSetId),
+  /// Decision whose findings authorize one bounded rework attempt.
+  Decision(DecisionId),
+}
+
 impl FactoryBuildLink {
-  /// Constructs one immutable ordinary-Build link from its producing stage.
+  /// Constructs one immutable ordinary-Build link from bounded causality.
   #[must_use]
-  pub fn new(stage: &StageAttempt, build_id: BuildId, input_digest: FactoryDigest) -> Self {
+  pub fn new(stage: &StageAttempt, input: FactoryBuildLinkInput) -> Self {
     Self {
       run_id: stage.run_id(),
       stage_attempt_id: stage.id(),
-      build_id,
-      input_digest,
+      build_id: input.build_id,
+      attempt_id: input.attempt_id,
+      job_ids: input.job_ids,
+      factory_configuration: input.factory_configuration,
+      stage_kind: stage.kind(),
+      stage_attempt_number: stage.number(),
+      target: input.target,
+      build_configuration: input.build_configuration,
+      task_envelope_digest: input.task_envelope_digest,
+      exact_revision: input.exact_revision,
+      parent: input.parent,
+      effective_policy_digest: input.effective_policy_digest,
+      input_digest: input.input_digest,
     }
+  }
+}
+
+/// Immutable terminal observation of one Factory-linked ordinary Build.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryBuildObservationRecord {
+  /// Content-derived identity of this exact observation.
+  pub id: FactoryDigest,
+  /// Factory Run owning the Stage Attempt.
+  pub run_id: FactoryRunId,
+  /// Stage Attempt whose Build reached a terminal state.
+  pub stage_attempt_id: octacity_server_factory::StageAttemptId,
+  /// Exact program-owned stage or evaluator branch target.
+  pub target: FactoryStageTarget,
+  /// Ordinary immutable Build identity.
+  pub build_id: BuildId,
+  /// Authoritative terminal Build version.
+  pub build_version: BuildVersion,
+  /// Latest immutable Attempt observed for the Build.
+  pub attempt_id: AttemptId,
+  /// Authoritative latest Attempt version.
+  pub attempt_version: AttemptVersion,
+  /// Complete latest Attempt Job identities in stable order.
+  pub job_ids: Vec<JobId>,
+  /// Published logical outputs with exact immutable content provenance.
+  pub outputs: Vec<ArtifactIdentity>,
+  /// Authoritative terminal Build state.
+  pub state: BuildState,
+  /// Whether every failed Job had an infrastructure failure classification.
+  pub infrastructure_retry_eligible: bool,
+  /// Authoritative observation time used by the fenced commit.
+  pub observed_at: Timestamp,
+}
+
+/// Named authoritative inputs for one terminal ordinary-Build observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryBuildObservationInput {
+  /// Authoritative terminal Build version.
+  pub build_version: BuildVersion,
+  /// Latest immutable Attempt observed for the Build.
+  pub attempt_id: AttemptId,
+  /// Authoritative latest Attempt version.
+  pub attempt_version: AttemptVersion,
+  /// Complete latest Attempt Job identities.
+  pub job_ids: Vec<JobId>,
+  /// Published logical outputs with exact immutable content provenance.
+  pub outputs: Vec<ArtifactIdentity>,
+  /// Authoritative terminal Build state.
+  pub state: BuildState,
+  /// Whether every failed Job had an infrastructure failure classification.
+  pub infrastructure_retry_eligible: bool,
+  /// Authoritative observation time used by the fenced commit.
+  pub observed_at: Timestamp,
+}
+
+impl FactoryBuildObservationRecord {
+  /// Constructs a canonical terminal observation bound to its causal link.
+  pub fn new(link: &FactoryBuildLink, input: FactoryBuildObservationInput) -> Result<Self, StoreError> {
+    let FactoryBuildObservationInput {
+      build_version,
+      attempt_id,
+      attempt_version,
+      mut job_ids,
+      mut outputs,
+      state,
+      infrastructure_retry_eligible,
+      observed_at,
+    } = input;
+    if !state.is_terminal() || outputs.len() > usize::from(crate::MAX_ARTIFACT_PAGE_SIZE) {
+      return Err(StoreError::InvalidInput {
+        operation: crate::StoreOperation::CommitFactoryRunTransition,
+        source: crate::StoreInputError::InvalidFactoryRunTransition,
+      });
+    }
+    job_ids.sort_unstable();
+    if job_ids.windows(2).any(|pair| pair[0] == pair[1]) {
+      return Err(StoreError::InvalidInput {
+        operation: crate::StoreOperation::CommitFactoryRunTransition,
+        source: crate::StoreInputError::InvalidFactoryRunTransition,
+      });
+    }
+    outputs.sort_unstable_by_key(|output| output.artifact_id);
+    if outputs
+      .windows(2)
+      .any(|pair| pair[0].artifact_id == pair[1].artifact_id)
+      || outputs.iter().any(|output| {
+        output.build_id != link.build_id || output.attempt_id != attempt_id || !job_ids.contains(&output.job_id)
+      })
+    {
+      return Err(StoreError::InvalidInput {
+        operation: crate::StoreOperation::CommitFactoryRunTransition,
+        source: crate::StoreInputError::InvalidFactoryRunTransition,
+      });
+    }
+    let output_digest_bytes = outputs
+      .iter()
+      .map(|output| output_identity_digest(output).as_bytes())
+      .collect::<Vec<_>>();
+    let output_digest_parts = output_digest_bytes.iter().map(<[u8; 32]>::as_slice).collect::<Vec<_>>();
+    let outputs_digest = FactoryDigest::sha256("octacity.factory.build-output-references.v1", &output_digest_parts);
+    let job_id_bytes = job_ids.iter().map(|id| *id.as_uuid().as_bytes()).collect::<Vec<_>>();
+    let job_id_parts = job_id_bytes.iter().map(<[u8; 16]>::as_slice).collect::<Vec<_>>();
+    let jobs_digest = FactoryDigest::sha256("octacity.factory.build-observation-jobs.v1", &job_id_parts);
+    let run_id = link.run_id.as_uuid();
+    let stage_attempt_id = link.stage_attempt_id.as_uuid();
+    let target = link.target.canonical_key();
+    let build_id = link.build_id.as_uuid();
+    let attempt_uuid = attempt_id.as_uuid();
+    let build_version_bytes = build_version.get().to_be_bytes();
+    let attempt_version_bytes = attempt_version.get().to_be_bytes();
+    let observed_at_bytes = observed_at.unix_millis().to_be_bytes();
+    let retry_eligible = [u8::from(infrastructure_retry_eligible)];
+    let id = FactoryDigest::sha256(
+      "octacity.factory.build-observation.v1",
+      &[
+        run_id.as_bytes(),
+        stage_attempt_id.as_bytes(),
+        target.as_bytes(),
+        build_id.as_bytes(),
+        &build_version_bytes,
+        attempt_uuid.as_bytes(),
+        &attempt_version_bytes,
+        &jobs_digest.as_bytes(),
+        &outputs_digest.as_bytes(),
+        build_state_key(state).as_bytes(),
+        &retry_eligible,
+        &observed_at_bytes,
+      ],
+    );
+    Ok(Self {
+      id,
+      run_id: link.run_id,
+      stage_attempt_id: link.stage_attempt_id,
+      target: link.target.clone(),
+      build_id: link.build_id,
+      build_version,
+      attempt_id,
+      attempt_version,
+      job_ids,
+      outputs,
+      state,
+      infrastructure_retry_eligible,
+      observed_at,
+    })
+  }
+}
+
+fn output_identity_digest(output: &ArtifactIdentity) -> FactoryDigest {
+  let output_type = output.artifact_type.as_str();
+  let report_format = output
+    .artifact_type
+    .report_format()
+    .map_or("", |format| format.as_str());
+  FactoryDigest::sha256(
+    "octacity.factory.build-output-reference.v1",
+    &[
+      output.artifact_id.as_uuid().as_bytes(),
+      output.build_id.as_uuid().as_bytes(),
+      output.attempt_id.as_uuid().as_bytes(),
+      output.job_id.as_uuid().as_bytes(),
+      output.lease_id.as_uuid().as_bytes(),
+      output.logical_name.as_str().as_bytes(),
+      output_type.as_bytes(),
+      report_format.as_bytes(),
+      output.media_type.as_str().as_bytes(),
+      &output.size_bytes.to_be_bytes(),
+      &output.digest.as_bytes(),
+    ],
+  )
+}
+
+const fn build_state_key(state: BuildState) -> &'static str {
+  match state {
+    BuildState::Queued => "queued",
+    BuildState::Running => "running",
+    BuildState::Succeeded => "succeeded",
+    BuildState::Failed => "failed",
+    BuildState::Cancelled => "cancelled",
   }
 }
 
@@ -540,6 +790,8 @@ pub struct FactoryRunHistoryAppend {
   pub signal_receipts: Vec<DecisionSignalReceipt>,
   /// Newly linked ordinary Builds.
   pub linked_builds: Vec<FactoryBuildLink>,
+  /// Newly accepted terminal ordinary-Build observations.
+  pub build_observations: Vec<FactoryBuildObservationRecord>,
   /// Newly captured exact candidates.
   pub candidates: Vec<ChangeSet>,
   /// Newly constructed deterministic evidence.
@@ -568,6 +820,7 @@ impl FactoryRunHistoryAppend {
       + self.signal_requests.len()
       + self.signal_receipts.len()
       + self.linked_builds.len()
+      + self.build_observations.len()
       + self.candidates.len()
       + self.evidence.len()
       + self.evaluation_plans.len()
@@ -639,6 +892,8 @@ pub struct FactoryRunSnapshot {
   pub signal_receipts: Vec<DecisionSignalReceipt>,
   /// Append-only ordinary Build links.
   pub linked_builds: Vec<FactoryBuildLink>,
+  /// Append-only terminal ordinary-Build observations.
+  pub build_observations: Vec<FactoryBuildObservationRecord>,
   /// Append-only exact candidates.
   pub candidates: Vec<ChangeSet>,
   /// Append-only deterministic evidence.
@@ -657,6 +912,8 @@ pub struct FactoryRunSnapshot {
   pub reporting_attempts: Vec<ReportingAttempt>,
   /// Append-only secret-safe audit facts.
   pub audit: Vec<FactoryAuditFact>,
+  /// Append-only accepted operator control intents.
+  pub controls: Vec<crate::FactoryRunControlRecord>,
   /// Append-only outbox state rows.
   pub outbox: Vec<FactoryOutboxRecord>,
   /// Current indexed pointers validated against the immutable collections above.

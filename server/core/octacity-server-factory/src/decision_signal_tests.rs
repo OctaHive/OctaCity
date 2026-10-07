@@ -1,19 +1,19 @@
 use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId, Timestamp};
 
 use crate::{
-  BudgetLimit, BudgetUsage, DecisionSignalAnswer, DecisionSignalAnswerValue, DecisionSignalChoices,
-  DecisionSignalDigests, DecisionSignalDisposition, DecisionSignalFallback, DecisionSignalInputMedia,
-  DecisionSignalMode, DecisionSignalProbability, DecisionSignalProfile, DecisionSignalProviderCapability,
-  DecisionSignalProviderFailure, DecisionSignalProviderInput, DecisionSignalProviderLimits,
-  DecisionSignalProviderObservation, DecisionSignalProviderRequest, DecisionSignalProviderResult,
-  DecisionSignalPurpose, DecisionSignalQuestion, DecisionSignalQuestionDomain, DecisionSignalQuestionKind,
-  DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId, DecisionSignalRouteSet,
-  DecisionSignalScoreDomain, DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity,
-  FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryError,
-  FactoryKey, FactoryMetadata, FactoryRun, FactoryRunId, FactoryStageKind, FactoryText, ImmutableReference,
-  MAX_DECISION_SIGNAL_CHOICES, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, ToolRiskChoiceMapping,
-  WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority, consume_routing_signal,
-  consume_tool_risk_signal,
+  BudgetLimit, BudgetUsage, DecisionSignalAnswer, DecisionSignalAnswerValue, DecisionSignalChoiceCriterion,
+  DecisionSignalChoices, DecisionSignalDigests, DecisionSignalDisposition, DecisionSignalFallback,
+  DecisionSignalInputMedia, DecisionSignalMode, DecisionSignalProbability, DecisionSignalProfile,
+  DecisionSignalProfileDefinition, DecisionSignalProviderCapability, DecisionSignalProviderFailure,
+  DecisionSignalProviderInput, DecisionSignalProviderLimits, DecisionSignalProviderObservation,
+  DecisionSignalProviderRequest, DecisionSignalProviderResult, DecisionSignalPurpose, DecisionSignalQuestion,
+  DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain, DecisionSignalQuestionKind, DecisionSignalReceiptId,
+  DecisionSignalRequest, DecisionSignalRequestId, DecisionSignalRouteSet, DecisionSignalScoreDomain,
+  DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity, FactoryConfigurationId,
+  FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata,
+  FactoryRun, FactoryRunId, FactoryText, ImmutableReference, MAX_DECISION_SIGNAL_CHOICES, RiskClass, StageAttempt,
+  StageAttemptId, StageAttemptNumber, ToolRiskChoiceMapping, WorkArtifacts, WorkClassification, WorkEnvelope,
+  WorkEnvelopeId, WorkPriority, consume_routing_signal, consume_tool_risk_signal,
 };
 
 fn key(value: &str) -> FactoryKey {
@@ -62,7 +62,7 @@ fn stage() -> StageAttempt {
     StageAttemptId::generate(),
     &run,
     StageAttemptNumber::INITIAL,
-    FactoryStageKind::Implementation,
+    crate::FactoryStageTarget::Implementation,
     budget(),
     digest(2),
     crate::FactoryClaimOwnership::new(
@@ -81,15 +81,35 @@ fn choices(values: &[&str]) -> DecisionSignalChoices {
   DecisionSignalChoices::try_new(values.iter().map(|value| key(value)).collect()).expect("fixture choices")
 }
 
+fn choice_question(identity: &str, values: &[&str]) -> DecisionSignalQuestion {
+  let choices = choices(values);
+  DecisionSignalQuestion::new(
+    exact(identity, "v1", 31),
+    FactoryText::new("Choose the declared outcome that matches the redacted state.").expect("fixture instructions"),
+    DecisionSignalQuestionDomain::FiniteChoice(choices.clone()),
+    DecisionSignalQuestionCriteria::FiniteChoice(
+      choices
+        .as_slice()
+        .iter()
+        .map(|choice| {
+          DecisionSignalChoiceCriterion::new(
+            choice.clone(),
+            FactoryText::new(format!("State belongs to the '{}' outcome.", choice.as_str()))
+              .expect("fixture criterion"),
+          )
+        })
+        .collect(),
+    ),
+  )
+  .expect("fixture question")
+}
+
 fn provider_input(purpose: DecisionSignalPurpose, values: &[&str]) -> DecisionSignalProviderInput {
   let consuming_question = key("route-or-risk");
   DecisionSignalProviderInput::new(
     DecisionSignalInputMedia::CanonicalJson,
     FactoryText::new("{\"state\":\"redacted\"}").expect("fixture state"),
-    vec![DecisionSignalQuestion::new(
-      exact("route-or-risk", "v1", 31),
-      DecisionSignalQuestionDomain::FiniteChoice(choices(values)),
-    )],
+    vec![choice_question("route-or-risk", values)],
     consuming_question,
     (purpose == DecisionSignalPurpose::Routing).then(|| key("current-state")),
   )
@@ -102,19 +122,19 @@ fn profile(
   fallback: DecisionSignalFallback,
   choice_values: &[&str],
 ) -> DecisionSignalProfile {
-  DecisionSignalProfile::from_resolved(
+  DecisionSignalProfile::from_resolved(DecisionSignalProfileDefinition {
     purpose,
-    exact("provider", "v1", 3),
-    exact("adapter", "v1", 32),
-    exact("model", "v7", 4),
-    exact("questions", "v2", 5),
-    exact("policy", "v4", 6),
+    provider: exact("provider", "v1", 3),
+    adapter: exact("adapter", "v1", 32),
+    model: exact("model", "v7", 4),
+    question_set: exact("questions", "v2", 5),
+    policy: exact("policy", "v4", 6),
     mode,
     fallback,
-    budget(),
-    (purpose == DecisionSignalPurpose::Routing)
+    budget: budget(),
+    routes: (purpose == DecisionSignalPurpose::Routing)
       .then(|| DecisionSignalRouteSet::new(key("current-state"), choices(choice_values))),
-  )
+  })
 }
 
 fn provider_request(
@@ -223,10 +243,7 @@ fn finite_choices_reject_empty_duplicate_and_oversized_domains() {
 
 #[test]
 fn canonical_json_and_versioned_question_domains_are_bound_to_the_input_digest() {
-  let question = DecisionSignalQuestion::new(
-    exact("route-or-risk", "v1", 31),
-    DecisionSignalQuestionDomain::FiniteChoice(choices(&["left", "right"])),
-  );
+  let question = choice_question("route-or-risk", &["left", "right"]);
   let first = DecisionSignalProviderInput::new(
     DecisionSignalInputMedia::CanonicalJson,
     FactoryText::new("{\"z\":2,\"a\":1}").expect("fixture JSON"),
@@ -442,12 +459,31 @@ fn provider_result_answers_every_typed_question_and_rejects_an_out_of_domain_sco
     vec![
       DecisionSignalQuestion::new(
         exact("route-or-risk", "v1", 31),
+        FactoryText::new("Choose whether the action is permitted or denied.").expect("fixture instructions"),
         DecisionSignalQuestionDomain::FiniteChoice(choices(&["allow", "deny"])),
-      ),
+        DecisionSignalQuestionCriteria::FiniteChoice(vec![
+          DecisionSignalChoiceCriterion::new(
+            key("allow"),
+            FactoryText::new("The action remains inside every authoritative boundary.").expect("fixture criterion"),
+          ),
+          DecisionSignalChoiceCriterion::new(
+            key("deny"),
+            FactoryText::new("The action must not execute under the current risk policy.").expect("fixture criterion"),
+          ),
+        ]),
+      )
+      .expect("fixture choice question"),
       DecisionSignalQuestion::new(
         exact("risk-score", "v2", 44),
+        FactoryText::new("Rate the action risk from negligible to critical.").expect("fixture instructions"),
         DecisionSignalQuestionDomain::BoundedScore(DecisionSignalScoreDomain::new(0, 10).expect("score domain")),
-      ),
+        DecisionSignalQuestionCriteria::BoundedScore(
+          (0..=10)
+            .map(|score| FactoryText::new(format!("Risk tier {score}.")).expect("fixture score criterion"))
+            .collect(),
+        ),
+      )
+      .expect("fixture score question"),
     ],
     key("route-or-risk"),
     None,

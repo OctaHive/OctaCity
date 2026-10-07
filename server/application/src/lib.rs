@@ -37,12 +37,23 @@ mod external_trigger;
 mod factory_admission;
 #[cfg(test)]
 mod factory_admission_tests;
+mod factory_build_bridge;
+#[cfg(test)]
+mod factory_build_bridge_tests;
 mod factory_configuration_cqrs;
 #[cfg(test)]
 mod factory_configuration_cqrs_tests;
+mod factory_control;
+#[cfg(test)]
+mod factory_control_tests;
+mod factory_decision_signal;
+#[cfg(test)]
+mod factory_decision_signal_tests;
 mod factory_reconciliation;
 #[cfg(test)]
 mod factory_reconciliation_tests;
+#[cfg(test)]
+mod factory_vertical_slice_tests;
 mod internal_trigger;
 mod internal_trigger_management;
 mod job_event_cqrs;
@@ -163,10 +174,24 @@ pub use external_trigger::{
   WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
 };
 pub use factory_admission::{AdmitManualFactoryWorkCommand, FactoryAdmissionHandlers, FactoryAdmissionOutcome};
+pub use factory_build_bridge::{
+  CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildBridge, FactoryBuildBridgeError, FactoryBuildCausality,
+  FactoryBuildDispatchOutcome, FactoryBuildObservation, FactoryBuildOutputSource, FactoryBuildPolicyLayers,
+  FactoryBuildPolicyRequest, FactoryBuildPolicySource, FactoryBuildPolicySourceError, OrdinaryBuildApplication,
+  OrdinaryBuildApplicationError,
+};
 pub use factory_configuration_cqrs::{
   CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
   FactoryConfigurationProjection, FactoryConfigurationValidation, GetCurrentFactoryConfigurationQuery,
   GetFactoryConfigurationQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
+};
+pub use factory_control::{
+  CancelFactoryRunCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome, RequestFactoryDeliveryCommand,
+  ResolveFactoryEscalationCommand, RetryFactoryStageCommand,
+};
+pub use factory_decision_signal::{
+  DecisionSignalApplicationError, DecisionSignalCapabilityDiscovery, DecisionSignalDispatch, DecisionSignalPortError,
+  DecisionSignalReceiptPublication, DecisionSignalRequestObservation, DecisionSignalService,
 };
 pub use factory_reconciliation::{
   FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,

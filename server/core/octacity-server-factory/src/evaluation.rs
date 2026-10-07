@@ -574,8 +574,7 @@ mod tests {
 
   use crate::{
     BudgetLimit, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryRun,
-    FactoryRunId, FactoryStageKind, StageAttemptNumber, WorkArtifacts, WorkClassification, WorkEnvelope,
-    WorkEnvelopeId, WorkPriority,
+    FactoryRunId, StageAttemptNumber, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
   };
 
   use super::*;
@@ -613,7 +612,7 @@ mod tests {
       crate::StageAttemptId::generate(),
       &FactoryRun::admitted(FactoryRunId::generate(), &work),
       StageAttemptNumber::INITIAL,
-      FactoryStageKind::Implementation,
+      crate::FactoryStageTarget::Implementation,
       BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget"),
       digest(2),
       crate::FactoryClaimOwnership::new(

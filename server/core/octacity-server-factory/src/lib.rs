@@ -37,24 +37,26 @@ pub use budget::{
   MAX_FACTORY_ELAPSED_MILLIS, MAX_FACTORY_OUTPUT_BYTES, MAX_FACTORY_TOKENS,
 };
 pub use configuration::{
-  BuildConfigurationRef, DecisionSignalProfile, DecisionSignalProfileDraft, DeliveryPolicy, DeliveryPolicyDraft,
-  EvaluationPolicy, EvaluationPolicyDraft, FactoryConfiguration, FactoryConfigurationChoiceEntries,
-  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryReferenceChoice, FactoryStageDefinition,
-  FactoryStageDraft, FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND, MAX_FACTORY_ACTIVE_RUNS,
-  MAX_FACTORY_ACTIVE_STAGES, MAX_FACTORY_REWORK_CYCLES, MAX_FACTORY_STAGES, ReworkPolicy, ReworkPolicyDraft,
+  BuildConfigurationRef, DecisionSignalProfile, DecisionSignalProfileDefinition, DecisionSignalProfileDraft,
+  DeliveryPolicy, DeliveryPolicyDraft, EvaluationPolicy, EvaluationPolicyDraft, FactoryConfiguration,
+  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryReferenceChoice,
+  FactoryStageDefinition, FactoryStageDraft, FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND,
+  MAX_FACTORY_ACTIVE_RUNS, MAX_FACTORY_ACTIVE_STAGES, MAX_FACTORY_REWORK_CYCLES, MAX_FACTORY_STAGES, ReworkPolicy,
+  ReworkPolicyDraft,
 };
 pub use decision_engine::{
   DecisionEngineInput, DecisionPolicy, DecisionPolicyDefinition, DeterministicGate, evaluate_decision,
 };
 pub use decision_signal::{
-  DECISION_SIGNAL_PROBABILITY_SCALE, DecisionSignalAnswer, DecisionSignalAnswerValue, DecisionSignalChoices,
-  DecisionSignalConsumption, DecisionSignalConsumptionKind, DecisionSignalDisposition, DecisionSignalInputMedia,
-  DecisionSignalProbability, DecisionSignalProvider, DecisionSignalProviderCapability, DecisionSignalProviderFailure,
-  DecisionSignalProviderFuture, DecisionSignalProviderInput, DecisionSignalProviderLimits,
-  DecisionSignalProviderObservation, DecisionSignalProviderRequest, DecisionSignalProviderResult,
-  DecisionSignalQuestion, DecisionSignalQuestionDomain, DecisionSignalQuestionKind, DecisionSignalReceipt,
-  DecisionSignalRouteSet, DecisionSignalScoreDomain, DecisionSignalThreshold, MAX_DECISION_SIGNAL_CHOICES,
-  MAX_DECISION_SIGNAL_QUESTIONS, ToolRiskChoiceMapping, consume_routing_signal, consume_tool_risk_signal,
+  DECISION_SIGNAL_PROBABILITY_SCALE, DecisionSignalAnswer, DecisionSignalAnswerValue, DecisionSignalChoiceCriterion,
+  DecisionSignalChoices, DecisionSignalConsumption, DecisionSignalConsumptionKind, DecisionSignalDisposition,
+  DecisionSignalInputMedia, DecisionSignalProbability, DecisionSignalProvider, DecisionSignalProviderCapability,
+  DecisionSignalProviderFailure, DecisionSignalProviderFuture, DecisionSignalProviderInput,
+  DecisionSignalProviderLimits, DecisionSignalProviderObservation, DecisionSignalProviderRequest,
+  DecisionSignalProviderResult, DecisionSignalQuestion, DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain,
+  DecisionSignalQuestionKind, DecisionSignalReceipt, DecisionSignalRouteSet, DecisionSignalScoreDomain,
+  DecisionSignalThreshold, MAX_DECISION_SIGNAL_CHOICES, MAX_DECISION_SIGNAL_QUESTIONS, ToolRiskChoiceMapping,
+  consume_routing_signal, consume_tool_risk_signal,
 };
 pub use enum_value::{
   AssessmentOutcome, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
@@ -82,10 +84,10 @@ pub use lifecycle::{
 };
 pub use lifecycle_decision::{
   DecisionSignalProgress, DeliveryIntent, DeliveryProgress, EvaluationBranch, EvaluationBranchState,
-  EvaluationProgress, EvaluationState, FactoryClaim, FactoryClaimFence, FactoryDecisionGuard, FactoryEscalationReason,
-  FactoryLifecycleProgress, FactoryLifecycleSnapshot, FactoryNextAction, FactoryStageProgress, FactoryStageTarget,
-  FactoryWaitReason, FactoryWipUsage, ReportingProgress, decide_next_action, validate_lifecycle_progress,
-  validate_lifecycle_transition,
+  EvaluationProgress, EvaluationState, FactoryClaim, FactoryClaimFence, FactoryDecisionGuard,
+  FactoryEscalationDisposition, FactoryEscalationReason, FactoryLifecycleProgress, FactoryLifecycleSnapshot,
+  FactoryNextAction, FactoryStageProgress, FactoryStageTarget, FactoryWaitReason, FactoryWipUsage, ReportingProgress,
+  decide_next_action, validate_lifecycle_progress, validate_lifecycle_transition,
 };
 pub use permission::{
   CommandArgumentPattern, CommandPermission, FactoryOutputPermissions, FactoryPath, FactoryPermissionDraft,

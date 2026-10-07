@@ -1,8 +1,8 @@
 use std::{collections::BTreeSet, net::IpAddr, str::FromStr};
 
 use crate::{
-  FactoryError, FactoryKey, FactoryText, ImmutableReference, MAX_FACTORY_ELAPSED_MILLIS, MAX_FACTORY_OUTPUT_BYTES,
-  MountMode, PermissionCategory,
+  FactoryDigest, FactoryError, FactoryKey, FactoryText, ImmutableReference, MAX_FACTORY_ELAPSED_MILLIS,
+  MAX_FACTORY_OUTPUT_BYTES, MountMode, PermissionCategory,
 };
 
 /// Maximum grants accepted in any one permission category.
@@ -481,6 +481,76 @@ impl FactoryPermissionSet {
     self.intersection(enclosing) == *self
   }
 
+  /// Returns a canonical digest of the complete permission set.
+  ///
+  /// The private encoding includes category markers and length-prefixed
+  /// values, allowing callers to bind immutable execution intent without
+  /// serializing provider or adapter representations.
+  #[must_use]
+  pub fn digest(&self) -> FactoryDigest {
+    let mut encoded = Vec::new();
+    encode_references(&mut encoded, b"plugins", &self.plugins);
+    encode_references(&mut encoded, b"executables", &self.executables);
+    encode_references(&mut encoded, b"tools", &self.tools);
+    encode_text(&mut encoded, b"commands");
+    encode_count(&mut encoded, self.commands.len());
+    for command in &self.commands {
+      encode_reference(&mut encoded, command.executable());
+      encode_count(&mut encoded, command.arguments.len());
+      for argument in &command.arguments {
+        match argument {
+          CommandArgumentPattern::Exact(value) => {
+            encoded.push(1);
+            encode_text(&mut encoded, value.as_str().as_bytes());
+          }
+          CommandArgumentPattern::Any => encoded.push(0),
+        }
+      }
+    }
+    encode_text(&mut encoded, b"descendants");
+    encoded.extend_from_slice(&self.max_descendants.to_be_bytes());
+    encode_text(&mut encoded, b"mounts");
+    encode_count(&mut encoded, self.mounts.len());
+    for mount in &self.mounts {
+      encode_text(&mut encoded, mount.root.as_str().as_bytes());
+      encoded.push(match mount.mode {
+        MountMode::ReadOnly => 0,
+        MountMode::ReadWrite => 1,
+      });
+    }
+    encode_texts(
+      &mut encoded,
+      b"network",
+      self.network_hosts.iter().map(NetworkHost::as_str),
+    );
+    encode_texts(
+      &mut encoded,
+      b"secrets",
+      self.secret_profiles.iter().map(FactoryKey::as_str),
+    );
+    encode_texts(
+      &mut encoded,
+      b"identities",
+      self.workload_identity_profiles.iter().map(FactoryKey::as_str),
+    );
+    encode_text(&mut encoded, b"resources");
+    encoded.extend_from_slice(&self.resources.cpu_millis.to_be_bytes());
+    encoded.extend_from_slice(&self.resources.memory_bytes.to_be_bytes());
+    encoded.extend_from_slice(&self.resources.disk_bytes.to_be_bytes());
+    encoded.extend_from_slice(&self.resources.process_count.to_be_bytes());
+    encoded.extend_from_slice(&self.resources.elapsed_millis.to_be_bytes());
+    encode_text(&mut encoded, b"outputs");
+    encode_count(&mut encoded, self.outputs.kinds.len());
+    for kind in &self.outputs.kinds {
+      encode_text(&mut encoded, kind.as_str().as_bytes());
+    }
+    encoded.extend_from_slice(&self.outputs.max_artifact_count.to_be_bytes());
+    encoded.extend_from_slice(&self.outputs.max_artifact_bytes.to_be_bytes());
+    encoded.extend_from_slice(&self.outputs.max_report_count.to_be_bytes());
+    encoded.extend_from_slice(&self.outputs.max_report_bytes.to_be_bytes());
+    FactoryDigest::sha256("octacity.factory.permission-set.v1", &[&encoded])
+  }
+
   /// Iterates over exact plugin identities in canonical order.
   pub fn plugins(&self) -> impl ExactSizeIterator<Item = &ImmutableReference> {
     self.plugins.iter()
@@ -538,6 +608,41 @@ impl FactoryPermissionSet {
   pub const fn outputs(&self) -> &FactoryOutputPermissions {
     &self.outputs
   }
+}
+
+fn encode_references(encoded: &mut Vec<u8>, category: &[u8], references: &BTreeSet<ImmutableReference>) {
+  encode_text(encoded, category);
+  encode_count(encoded, references.len());
+  for reference in references {
+    encode_reference(encoded, reference);
+  }
+}
+
+fn encode_reference(encoded: &mut Vec<u8>, reference: &ImmutableReference) {
+  encode_text(encoded, reference.identity().as_str().as_bytes());
+  encode_text(encoded, reference.version().as_str().as_bytes());
+  encoded.extend_from_slice(&reference.digest().as_bytes());
+}
+
+fn encode_texts<'a>(encoded: &mut Vec<u8>, category: &[u8], values: impl ExactSizeIterator<Item = &'a str>) {
+  encode_text(encoded, category);
+  encode_count(encoded, values.len());
+  for value in values {
+    encode_text(encoded, value.as_bytes());
+  }
+}
+
+fn encode_text(encoded: &mut Vec<u8>, value: &[u8]) {
+  encode_count(encoded, value.len());
+  encoded.extend_from_slice(value);
+}
+
+fn encode_count(encoded: &mut Vec<u8>, value: usize) {
+  encoded.extend_from_slice(
+    &u64::try_from(value)
+      .expect("bounded Factory collections fit into u64")
+      .to_be_bytes(),
+  );
 }
 
 /// Agent-local grants plus semantic enforcement capabilities of the selected backend.

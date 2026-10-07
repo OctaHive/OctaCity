@@ -103,6 +103,12 @@ fn stage_progression_is_program_owned_and_typed() {
       FactoryRunState::Reworking,
       FactoryStageTarget::Rework,
       FactoryStageProgress::RetryableFailure,
+      FactoryNextAction::Wait(FactoryWaitReason::RetryApproval(FactoryStageTarget::Rework)),
+    ),
+    (
+      FactoryRunState::Reworking,
+      FactoryStageTarget::Rework,
+      FactoryStageProgress::RetryRequested,
       FactoryNextAction::RetryStage(FactoryStageTarget::Rework),
     ),
   ];
@@ -477,6 +483,53 @@ fn evaluation_join_requires_quorum_before_decision() {
 }
 
 #[test]
+fn only_a_completed_evaluation_join_may_record_a_decision() {
+  let completed = EvaluationProgress::try_new(
+    vec![EvaluationBranch::new(
+      key("architecture"),
+      true,
+      EvaluationBranchState::Succeeded,
+    )],
+    1,
+  )
+  .expect("fixture evaluation is valid");
+  let pending = EvaluationProgress::try_new(
+    vec![EvaluationBranch::new(
+      key("architecture"),
+      true,
+      EvaluationBranchState::Pending,
+    )],
+    1,
+  )
+  .expect("fixture evaluation is valid");
+  let decision = FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
+    outcome: DecisionOutcome::Accept,
+    completed_rework_cycles: 0,
+    max_rework_cycles: 0,
+  });
+
+  assert!(
+    validate_lifecycle_transition(
+      FactoryRunState::Evaluating,
+      &FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(completed)),
+      FactoryRunState::Evaluating,
+      &decision,
+    )
+    .is_ok()
+  );
+  assert!(
+    validate_lifecycle_transition(
+      FactoryRunState::Evaluating,
+      &FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(pending)),
+      FactoryRunState::Evaluating,
+      &decision,
+    )
+    .is_err(),
+    "a Decision cannot bypass unfinished evaluator work"
+  );
+}
+
+#[test]
 fn recorded_decisions_cover_delivery_rework_and_terminal_dispositions() {
   let cases = [
     (DecisionOutcome::Accept, 0, 1, FactoryNextAction::PrepareDelivery),
@@ -559,4 +612,36 @@ fn delivery_reporting_and_completion_remain_separate_actions() {
       Ok(expected)
     );
   }
+}
+
+#[test]
+fn operator_control_transitions_are_closed_and_single_step() {
+  assert!(
+    validate_lifecycle_transition(
+      FactoryRunState::ReadyForDelivery,
+      &FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::AwaitingApproval),
+      FactoryRunState::ReadyForDelivery,
+      &FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::Requested),
+    )
+    .is_ok()
+  );
+  assert!(
+    validate_lifecycle_transition(
+      FactoryRunState::Escalated,
+      &FactoryLifecycleProgress::Escalated(ReportingProgress::Succeeded),
+      FactoryRunState::Cancelled,
+      &FactoryLifecycleProgress::Cancelled(ReportingProgress::Ready),
+    )
+    .is_ok()
+  );
+  assert!(
+    validate_lifecycle_transition(
+      FactoryRunState::Escalated,
+      &FactoryLifecycleProgress::Escalated(ReportingProgress::Succeeded),
+      FactoryRunState::ReadyForDelivery,
+      &FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::Requested),
+    )
+    .is_err(),
+    "an escalation disposition cannot manufacture delivery approval"
+  );
 }

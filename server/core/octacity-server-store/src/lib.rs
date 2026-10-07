@@ -33,6 +33,8 @@ mod factory_admission_model;
 mod factory_admission_port;
 mod factory_configuration_model;
 mod factory_configuration_port;
+mod factory_run_control;
+mod factory_run_control_port;
 mod factory_run_model;
 mod factory_run_port;
 mod idempotency;
@@ -245,13 +247,19 @@ pub use factory_configuration_model::{
   ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation,
 };
 pub use factory_configuration_port::FactoryConfigurationStore;
+pub use factory_run_control::{
+  ApplyFactoryRunControl, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlRecord,
+};
+pub use factory_run_control_port::FactoryRunControlStore;
 pub use factory_run_model::{
   ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
   ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
-  FactoryBudgetRecord, FactoryBuildLink, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
-  FactoryOutboxState, FactoryRunClaimRecord, FactoryRunCurrentProjection, FactoryRunHistoryAppend, FactoryRunSnapshot,
-  MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS,
-  MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
+  FactoryBudgetRecord, FactoryBuildLink, FactoryBuildLinkInput, FactoryBuildObservationInput,
+  FactoryBuildObservationRecord, FactoryBuildParent, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
+  FactoryOutboxSettlement, FactoryOutboxState, FactoryRunClaimRecord, FactoryRunCurrentProjection,
+  FactoryRunHistoryAppend, FactoryRunSnapshot, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
+  MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS,
+  SettleFactoryOutbox,
 };
 pub use factory_run_port::FactoryRunStore;
 pub use idempotency::{

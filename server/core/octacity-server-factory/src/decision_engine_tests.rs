@@ -48,7 +48,7 @@ fn fixture() -> Fixture {
     StageAttemptId::generate(),
     &FactoryRun::admitted(FactoryRunId::generate(), &work),
     StageAttemptNumber::INITIAL,
-    FactoryStageKind::Implementation,
+    crate::FactoryStageTarget::Implementation,
     BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget is valid"),
     digest(2),
     FactoryClaimOwnership::new(

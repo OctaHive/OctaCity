@@ -56,6 +56,7 @@ fn deny_all_is_the_safe_default() {
   assert_eq!(permissions.workload_identity_profiles().len(), 0);
   assert_eq!(permissions.resources(), FactoryResourceLimits::default());
   assert_eq!(permissions.outputs(), &FactoryOutputPermissions::default());
+  assert_eq!(permissions.digest(), FactoryPermissionSet::deny_all().digest());
 }
 
 #[test]
@@ -160,6 +161,9 @@ fn every_permission_category_only_narrows_across_all_four_layers() {
     &LocalPermissionCeiling::fully_enforced(local_grants.clone()),
   )
   .expect("all categories are enforceable");
+
+  assert_eq!(effective.digest(), effective.clone().digest());
+  assert_ne!(effective.digest(), task.digest());
 
   for enclosing in [&project, &configuration, &task, &local_grants] {
     assert!(effective.is_no_broader_than(enclosing));

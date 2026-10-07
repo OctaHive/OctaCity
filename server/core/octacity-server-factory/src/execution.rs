@@ -1,7 +1,7 @@
 use crate::{
   BudgetLimit, BudgetUsage, DecisionSignalPurpose, DecisionSignalRequestId, ExactSubject, FactoryClaim, FactoryDigest,
-  FactoryError, FactoryKey, FactoryRun, FactoryRunId, FactoryStageKind, MacroCallId, MacroCallKind, StageAttemptId,
-  StageAttemptNumber,
+  FactoryError, FactoryKey, FactoryRun, FactoryRunId, FactoryStageKind, FactoryStageTarget, MacroCallId, MacroCallKind,
+  StageAttemptId, StageAttemptNumber,
 };
 use octacity_server_domain::Timestamp;
 
@@ -66,7 +66,7 @@ pub struct StageAttempt {
   run_id: FactoryRunId,
   subject: ExactSubject,
   number: StageAttemptNumber,
-  kind: FactoryStageKind,
+  target: FactoryStageTarget,
   budget: BudgetLimit,
   input_digest: FactoryDigest,
   ownership: FactoryClaimOwnership,
@@ -79,7 +79,7 @@ impl StageAttempt {
     id: StageAttemptId,
     run: &FactoryRun,
     number: StageAttemptNumber,
-    kind: FactoryStageKind,
+    target: FactoryStageTarget,
     budget: BudgetLimit,
     input_digest: FactoryDigest,
     ownership: FactoryClaimOwnership,
@@ -89,7 +89,7 @@ impl StageAttempt {
       run_id: run.id(),
       subject: run.subject().clone(),
       number,
-      kind,
+      target,
       budget,
       input_digest,
       ownership,
@@ -123,7 +123,13 @@ impl StageAttempt {
   /// Returns the stage kind.
   #[must_use]
   pub const fn kind(&self) -> FactoryStageKind {
-    self.kind
+    self.target.kind()
+  }
+
+  /// Returns the exact program-owned stage or evaluator branch target.
+  #[must_use]
+  pub const fn target(&self) -> &FactoryStageTarget {
+    &self.target
   }
 
   /// Returns the immutable hard budget.
@@ -494,7 +500,7 @@ mod tests {
       StageAttemptId::generate(),
       &run,
       StageAttemptNumber::INITIAL,
-      FactoryStageKind::Implementation,
+      FactoryStageTarget::Implementation,
       BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget"),
       digest(2),
       FactoryClaimOwnership::new(

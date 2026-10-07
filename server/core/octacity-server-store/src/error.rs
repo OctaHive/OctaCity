@@ -86,6 +86,8 @@ pub enum StoreOperation {
   ClaimFactoryRuns,
   /// Append one fenced Factory transition and advance its current projection.
   CommitFactoryRunTransition,
+  /// Apply one closed management control intent to a Factory Run.
+  ControlFactoryRun,
   /// Claim one bounded batch of due Factory outbox operations.
   ClaimFactoryOutbox,
   /// Settle one owned Factory outbox operation.
@@ -338,6 +340,9 @@ pub enum StoreInputError {
   /// A Factory transition is malformed or references absent immutable history.
   #[error("a Factory Run transition is invalid")]
   InvalidFactoryRunTransition,
+  /// A Factory control intent is ineligible or does not match current history.
+  #[error("a Factory Run control intent is invalid")]
+  InvalidFactoryRunControl,
   /// A Trigger occurrence is malformed or violates source-specific invariants.
   #[error("a normalized trigger occurrence is invalid")]
   InvalidNormalizedTrigger,

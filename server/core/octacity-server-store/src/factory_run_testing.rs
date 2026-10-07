@@ -5,23 +5,31 @@ use octacity_server_domain::{BuildId, EntityKind};
 use octacity_server_factory::{
   Assessment, AssessmentId, ChangeSet, ChangeSetId, Decision, DecisionId, DecisionSignalReceipt,
   DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId, DeliveryAttempt, DeliveryAttemptId,
-  Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvidenceManifest, EvidenceManifestId, FactoryClaim,
-  FactoryClaimFence, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunState,
-  FactoryRunVersion, FactoryWipUsage, MacroCall, MacroCallId, ReportingAttempt, ReportingAttemptId, StageAttempt,
-  StageAttemptCompletion, StageAttemptId, WorkEnvelope,
+  DeliveryIntent, Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvidenceManifest, EvidenceManifestId,
+  FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryEscalationDisposition, FactoryKey, FactoryLifecycleProgress,
+  FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion, FactoryStageProgress, FactoryWipUsage, MacroCall,
+  MacroCallId, ReportingAttempt, ReportingAttemptId, StageAttempt, StageAttemptCompletion, StageAttemptId,
+  WorkEnvelope,
 };
 
 use crate::{
-  ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
-  ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
-  FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement, FactoryRunClaimRecord,
+  ApplyFactoryRunControl, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns,
+  ClaimedFactoryOutbox, ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome,
+  FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
+  FactoryRunClaimRecord, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlStore,
   FactoryRunCurrentProjection, FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore,
   MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS,
-  MutationAuditContext, MutationDisposition, PublishedFactoryAdmission, SettleFactoryOutbox, StoreError,
-  StoreInputError, StoreOperation,
+  ManagementMutation, MutationAuditContext, MutationDisposition, PublishedFactoryAdmission, SettleFactoryOutbox,
+  StoreError, StoreInputError, StoreOperation,
 };
 
 use crate::factory_configuration_testing::InMemoryFactoryConfigurationStore;
+
+#[derive(Clone)]
+pub(super) struct StoredFactoryRunControl {
+  request: ApplyFactoryRunControl,
+  outcome: FactoryRunControlOutcome,
+}
 
 #[derive(Clone)]
 pub(super) struct StoredFactoryRun {
@@ -38,6 +46,7 @@ pub(super) struct StoredFactoryRun {
   signal_requests: BTreeMap<DecisionSignalRequestId, DecisionSignalRequest>,
   signal_receipts: BTreeMap<DecisionSignalReceiptId, DecisionSignalReceipt>,
   linked_builds: BTreeMap<BuildId, crate::FactoryBuildLink>,
+  build_observations: BTreeMap<FactoryDigest, crate::FactoryBuildObservationRecord>,
   candidates: BTreeMap<ChangeSetId, ChangeSet>,
   evidence: BTreeMap<EvidenceManifestId, EvidenceManifest>,
   evaluation_plans: BTreeMap<EvaluationPlanId, EvaluationPlan>,
@@ -47,6 +56,7 @@ pub(super) struct StoredFactoryRun {
   delivery_attempts: BTreeMap<DeliveryAttemptId, DeliveryAttempt>,
   reporting_attempts: BTreeMap<ReportingAttemptId, ReportingAttempt>,
   audit: BTreeMap<FactoryDigest, FactoryAuditFact>,
+  controls: BTreeMap<FactoryDigest, crate::FactoryRunControlRecord>,
   outbox: BTreeMap<FactoryDigest, FactoryOutboxRecord>,
   current: FactoryRunCurrentProjection,
 }
@@ -145,6 +155,7 @@ impl StoredFactoryRun {
       signal_requests: BTreeMap::new(),
       signal_receipts: BTreeMap::new(),
       linked_builds: BTreeMap::new(),
+      build_observations: BTreeMap::new(),
       candidates: BTreeMap::new(),
       evidence: BTreeMap::new(),
       evaluation_plans: BTreeMap::new(),
@@ -154,6 +165,7 @@ impl StoredFactoryRun {
       delivery_attempts: BTreeMap::new(),
       reporting_attempts: BTreeMap::new(),
       audit: BTreeMap::from([(audit.id, audit)]),
+      controls: BTreeMap::new(),
       outbox: BTreeMap::from([(outbox.id, outbox)]),
       current,
     })
@@ -182,6 +194,7 @@ impl StoredFactoryRun {
       signal_requests: values(&self.signal_requests),
       signal_receipts: values(&self.signal_receipts),
       linked_builds: values(&self.linked_builds),
+      build_observations: values(&self.build_observations),
       candidates: values(&self.candidates),
       evidence: values(&self.evidence),
       evaluation_plans: values(&self.evaluation_plans),
@@ -191,6 +204,7 @@ impl StoredFactoryRun {
       delivery_attempts: values(&self.delivery_attempts),
       reporting_attempts: values(&self.reporting_attempts),
       audit: values(&self.audit),
+      controls: values(&self.controls),
       outbox: values(&self.outbox),
       current: self.current.clone(),
     })
@@ -345,8 +359,74 @@ impl StoredFactoryRun {
           && self.signal_requests.contains_key(&receipt.request_id()),
       )?;
     }
+    let mut linked_stages = BTreeSet::new();
     for link in self.linked_builds.values() {
-      require(link.run_id == run_id && self.stage_attempts.contains_key(&link.stage_attempt_id))?;
+      let stage = self.stage_attempts.get(&link.stage_attempt_id);
+      let unique_jobs = link.job_ids.iter().copied().collect::<BTreeSet<_>>();
+      let parent_is_valid = match (&link.target, link.parent) {
+        (octacity_server_factory::FactoryStageTarget::Implementation, None) => {
+          link.exact_revision == *subject.base_revision()
+        }
+        (
+          octacity_server_factory::FactoryStageTarget::Validation
+          | octacity_server_factory::FactoryStageTarget::Evaluation(_),
+          Some(crate::FactoryBuildParent::ChangeSet(id)),
+        ) => self
+          .candidates
+          .get(&id)
+          .is_some_and(|candidate| candidate.subject().candidate_revision() == &link.exact_revision),
+        (octacity_server_factory::FactoryStageTarget::Rework, Some(crate::FactoryBuildParent::Decision(id))) => self
+          .decisions
+          .get(&id)
+          .is_some_and(|decision| decision.subject().candidate_revision() == &link.exact_revision),
+        _ => false,
+      };
+      require(
+        link.run_id == run_id
+          && link.factory_configuration == *self.run.configuration()
+          && link.build_configuration.project_id() == subject.project_id()
+          && !link.job_ids.is_empty()
+          && link.job_ids.len() <= crate::MAX_MATERIALIZED_JOBS
+          && unique_jobs.len() == link.job_ids.len()
+          && linked_stages.insert(link.stage_attempt_id)
+          && stage.is_some_and(|stage| {
+            stage.run_id() == run_id
+              && stage.kind() == link.stage_kind
+              && stage.kind() == link.target.kind()
+              && stage.number() == link.stage_attempt_number
+              && stage.input_digest() == link.task_envelope_digest
+          })
+          && parent_is_valid,
+      )?;
+    }
+    let mut observed_builds = BTreeSet::new();
+    for observation in self.build_observations.values() {
+      let link = self
+        .linked_builds
+        .get(&observation.build_id)
+        .ok_or_else(|| invalid_transition(StoreOperation::ReadFactoryRunSnapshot))?;
+      let canonical = crate::FactoryBuildObservationRecord::new(
+        link,
+        crate::FactoryBuildObservationInput {
+          build_version: observation.build_version,
+          attempt_id: observation.attempt_id,
+          attempt_version: observation.attempt_version,
+          job_ids: observation.job_ids.clone(),
+          outputs: observation.outputs.clone(),
+          state: observation.state,
+          infrastructure_retry_eligible: observation.infrastructure_retry_eligible,
+          observed_at: observation.observed_at,
+        },
+      )?;
+      require(
+        observation.run_id == run_id
+          && observation.stage_attempt_id == link.stage_attempt_id
+          && observation.target == link.target
+          && observation.build_id == link.build_id
+          && observed_builds.insert(observation.build_id)
+          && observation.state.is_terminal()
+          && observation == &canonical,
+      )?;
     }
     for candidate in self.candidates.values() {
       require(
@@ -422,6 +502,26 @@ impl StoredFactoryRun {
             fact.recorded_at,
           )
     }))?;
+    require(self.controls.values().all(|record| {
+      record.run_id == run_id
+        && record.run_version <= self.run.version()
+        && record
+          == &crate::FactoryRunControlRecord::new(
+            record.run_id,
+            record.run_version,
+            record.intent.clone(),
+            record.recorded_at,
+          )
+    }))?;
+    require(
+      self
+        .controls
+        .values()
+        .map(|record| record.run_version)
+        .collect::<BTreeSet<_>>()
+        .len()
+        == self.controls.len(),
+    )?;
     require(
       self
         .outbox
@@ -442,6 +542,7 @@ impl StoredFactoryRun {
       + self.signal_requests.len()
       + self.signal_receipts.len()
       + self.linked_builds.len()
+      + self.build_observations.len()
       + self.candidates.len()
       + self.evidence.len()
       + self.evaluation_plans.len()
@@ -451,6 +552,7 @@ impl StoredFactoryRun {
       + self.delivery_attempts.len()
       + self.reporting_attempts.len()
       + self.audit.len()
+      + self.controls.len()
       + self.outbox.len()
   }
 }
@@ -725,6 +827,270 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     state.factory_runs.insert(run_id, staged);
     Ok(next)
   }
+}
+
+#[async_trait]
+impl FactoryRunControlStore for InMemoryFactoryConfigurationStore {
+  async fn apply_factory_run_control(
+    &self,
+    request: ManagementMutation<ApplyFactoryRunControl>,
+  ) -> Result<FactoryRunControlOutcome, StoreError> {
+    let (request, audit_context) = request.into_parts();
+    let operation = request.intent.operation();
+    let idempotency = audit_context.scoped_idempotency_key(&request.idempotency_key);
+    let mut state = self.lock()?;
+    if let Some(stored) = state.factory_run_controls.get(&(operation, idempotency.clone())) {
+      if stored.request != request {
+        return Err(conflict());
+      }
+      let mut outcome = stored.outcome.clone();
+      outcome.disposition = MutationDisposition::Replayed;
+      return Ok(outcome);
+    }
+
+    let stored = state.factory_runs.get(&request.run_id).ok_or(StoreError::NotFound {
+      entity: EntityKind::FactoryRun,
+    })?;
+    if stored.run.version() != request.expected_version {
+      return Err(conflict());
+    }
+    let mut next = stored.clone();
+    let outcome = apply_control(&mut next, &request, &audit_context)?;
+    state.factory_run_controls.insert(
+      (operation, idempotency),
+      StoredFactoryRunControl {
+        request: request.clone(),
+        outcome: outcome.clone(),
+      },
+    );
+    state.factory_runs.insert(request.run_id, next);
+    Ok(outcome)
+  }
+}
+
+fn apply_control(
+  stored: &mut StoredFactoryRun,
+  request: &ApplyFactoryRunControl,
+  context: &MutationAuditContext,
+) -> Result<FactoryRunControlOutcome, StoreError> {
+  let current_checkpoint = stored
+    .lifecycle_checkpoints
+    .get(&stored.current.lifecycle_checkpoint_id)
+    .cloned()
+    .ok_or(StoreError::Unavailable)?;
+  let current_budget = stored
+    .budgets
+    .get(&stored.current.budget_id)
+    .cloned()
+    .ok_or(StoreError::Unavailable)?;
+  if request.requested_at < current_checkpoint.recorded_at
+    || stored
+      .record_count()
+      .checked_add(4)
+      .is_none_or(|count| count > MAX_FACTORY_RUN_SNAPSHOT_RECORDS)
+  {
+    return Err(invalid_control());
+  }
+  let next_version = stored
+    .run
+    .version()
+    .get()
+    .checked_add(1)
+    .and_then(|value| FactoryRunVersion::new(value).ok())
+    .ok_or(StoreError::Unavailable)?;
+  let (next_state, next_progress, cancellation_requested, audit_outcome) = match &request.intent {
+    FactoryRunControlIntent::Cancel => {
+      if matches!(
+        stored.run.state(),
+        FactoryRunState::Rejected | FactoryRunState::Cancelled | FactoryRunState::Completed
+      ) || current_checkpoint.cancellation_requested
+      {
+        return Err(conflict());
+      }
+      (
+        stored.run.state(),
+        current_checkpoint.progress.clone(),
+        true,
+        key("cancel-requested"),
+      )
+    }
+    FactoryRunControlIntent::RetryInfrastructure { stage_attempt_id } => {
+      let stage = stored
+        .stage_attempts
+        .get(stage_attempt_id)
+        .ok_or_else(invalid_control)?;
+      if current_checkpoint.cancellation_requested || stored.current.stage_attempt_id != Some(*stage_attempt_id) {
+        return Err(invalid_control());
+      }
+      let next_progress = request_retry(&current_checkpoint.progress, stage.target())?;
+      (
+        stored.run.state(),
+        next_progress,
+        current_checkpoint.cancellation_requested,
+        key("retry-requested"),
+      )
+    }
+    FactoryRunControlIntent::ResolveEscalation {
+      escalation_id,
+      disposition,
+      ..
+    } => {
+      if stored.run.state() != FactoryRunState::Escalated
+        || stored.current.escalation_id != Some(*escalation_id)
+        || !stored.escalations.contains_key(escalation_id)
+        || current_checkpoint.cancellation_requested
+        || !escalation_accepts_disposition(&current_checkpoint.progress)
+      {
+        return Err(invalid_control());
+      }
+      match disposition {
+        FactoryEscalationDisposition::Acknowledge => (
+          FactoryRunState::Completed,
+          FactoryLifecycleProgress::Completed,
+          false,
+          key("acknowledged"),
+        ),
+        FactoryEscalationDisposition::Cancel => (
+          FactoryRunState::Escalated,
+          current_checkpoint.progress.clone(),
+          true,
+          key("cancel-requested"),
+        ),
+      }
+    }
+    FactoryRunControlIntent::RequestDelivery {
+      candidate_id,
+      decision_id,
+    } => {
+      let candidate = stored.candidates.get(candidate_id).ok_or_else(invalid_control)?;
+      let decision = stored.decisions.get(decision_id).ok_or_else(invalid_control)?;
+      if stored.run.state() != FactoryRunState::ReadyForDelivery
+        || current_checkpoint.cancellation_requested
+        || current_checkpoint.progress != FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::AwaitingApproval)
+        || stored.current.candidate_id != Some(*candidate_id)
+        || stored.current.decision_id != Some(*decision_id)
+        || decision.outcome() != octacity_server_factory::DecisionOutcome::Accept
+        || decision.subject() != candidate.subject()
+      {
+        return Err(invalid_control());
+      }
+      (
+        FactoryRunState::ReadyForDelivery,
+        FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::Requested),
+        false,
+        key("delivery-requested"),
+      )
+    }
+  };
+
+  let next_run = FactoryRun::restore(
+    stored.run.id(),
+    stored.run.configuration().clone(),
+    &stored.work,
+    stored.run.subject().clone(),
+    next_state,
+    next_version,
+  )
+  .map_err(|_| invalid_control())?;
+  let budget = FactoryBudgetRecord::new(
+    stored.run.id(),
+    next_version,
+    current_budget.usage,
+    request.requested_at,
+  );
+  let checkpoint = FactoryLifecycleCheckpoint::new(
+    stored.run.id(),
+    next_version,
+    next_progress,
+    current_checkpoint.signal,
+    cancellation_requested,
+    request.requested_at,
+  );
+  octacity_server_factory::validate_lifecycle_transition(
+    stored.run.state(),
+    &current_checkpoint.progress,
+    next_state,
+    &checkpoint.progress,
+  )
+  .map_err(|_| invalid_control())?;
+  let control = crate::FactoryRunControlRecord::new(
+    stored.run.id(),
+    next_version,
+    request.intent.clone(),
+    request.requested_at,
+  );
+  let actor_identity_digest = context
+    .actor()
+    .identity
+    .as_deref()
+    .map(|identity| FactoryDigest::sha256("octacity.factory.audit-actor.v1", &[identity.as_bytes()]));
+  let audit = FactoryAuditFact::new(
+    stored.run.id(),
+    context.actor().kind,
+    actor_identity_digest,
+    key(request.intent.operation()),
+    FactoryDigest::sha256(
+      "octacity.factory.audit-request.v1",
+      &[context.request_identity().as_bytes()],
+    ),
+    audit_outcome,
+    request.requested_at,
+  );
+  append_unique(&mut stored.budgets, budget.id, budget.clone())?;
+  append_unique(&mut stored.lifecycle_checkpoints, checkpoint.id, checkpoint.clone())?;
+  append_unique(&mut stored.controls, control.id, control)?;
+  append_unique(&mut stored.audit, audit.id, audit)?;
+  stored.run = next_run;
+  stored.current_claim_id = None;
+  stored.current.budget_id = budget.id;
+  stored.current.lifecycle_checkpoint_id = checkpoint.id;
+  stored.validate_integrity()?;
+  Ok(FactoryRunControlOutcome {
+    disposition: MutationDisposition::Applied,
+    run_id: stored.run.id(),
+    version: next_version,
+    state: next_state,
+    cancellation_requested,
+  })
+}
+
+fn request_retry(
+  progress: &FactoryLifecycleProgress,
+  target: &octacity_server_factory::FactoryStageTarget,
+) -> Result<FactoryLifecycleProgress, StoreError> {
+  match progress {
+    FactoryLifecycleProgress::Stage {
+      target: current,
+      progress: FactoryStageProgress::RetryableFailure,
+    } if current == target => Ok(FactoryLifecycleProgress::Stage {
+      target: current.clone(),
+      progress: FactoryStageProgress::RetryRequested,
+    }),
+    FactoryLifecycleProgress::Evaluating(octacity_server_factory::EvaluationState::Branches(branches)) => {
+      let octacity_server_factory::FactoryStageTarget::Evaluation(key) = target else {
+        return Err(invalid_control());
+      };
+      Ok(FactoryLifecycleProgress::Evaluating(
+        octacity_server_factory::EvaluationState::Branches(
+          branches
+            .advance_branch(key, octacity_server_factory::EvaluationBranchState::RetryRequested)
+            .map_err(|_| invalid_control())?,
+        ),
+      ))
+    }
+    _ => Err(invalid_control()),
+  }
+}
+
+fn escalation_accepts_disposition(progress: &FactoryLifecycleProgress) -> bool {
+  matches!(
+    progress,
+    FactoryLifecycleProgress::Escalated(
+      octacity_server_factory::ReportingProgress::Disabled
+        | octacity_server_factory::ReportingProgress::Succeeded
+        | octacity_server_factory::ReportingProgress::Exhausted
+    )
+  )
 }
 
 fn claim_is_selectable(stored: &StoredFactoryRun, request: &ClaimFactoryRuns) -> bool {
@@ -1080,6 +1446,9 @@ fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppen
   for record in &append.linked_builds {
     append_unique(&mut stored.linked_builds, record.build_id, record.clone())?;
   }
+  for record in &append.build_observations {
+    append_unique(&mut stored.build_observations, record.id, record.clone())?;
+  }
   for record in &append.candidates {
     append_unique(&mut stored.candidates, record.id(), record.clone())?;
   }
@@ -1109,10 +1478,24 @@ fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppen
 
 fn validate_projection(stored: &StoredFactoryRun) -> Result<(), StoreError> {
   let current = &stored.current;
+  let decision_matches_checkpoint = stored
+    .lifecycle_checkpoints
+    .get(&current.lifecycle_checkpoint_id)
+    .is_some_and(|checkpoint| match &checkpoint.progress {
+      octacity_server_factory::FactoryLifecycleProgress::Evaluating(
+        octacity_server_factory::EvaluationState::DecisionRecorded { outcome, .. },
+      ) => current.decision_id.is_some_and(|id| {
+        stored.decisions.get(&id).is_some_and(|decision| {
+          decision.outcome() == *outcome && Some(decision.plan_id()) == current.evaluation_plan_id
+        })
+      }),
+      _ => true,
+    });
   require(
-    current
-      .stage_attempt_id
-      .is_none_or(|id| stored.stage_attempts.contains_key(&id))
+    decision_matches_checkpoint
+      && current
+        .stage_attempt_id
+        .is_none_or(|id| stored.stage_attempts.contains_key(&id))
       && current
         .macro_call_id
         .is_none_or(|id| stored.macro_calls.contains_key(&id))
@@ -1228,6 +1611,13 @@ fn invalid_transition(operation: StoreOperation) -> StoreError {
   StoreError::invalid(operation, StoreInputError::InvalidFactoryRunTransition)
 }
 
+fn invalid_control() -> StoreError {
+  StoreError::invalid(
+    StoreOperation::ControlFactoryRun,
+    StoreInputError::InvalidFactoryRunControl,
+  )
+}
+
 fn invalid_claim(operation: StoreOperation) -> StoreError {
   StoreError::invalid(operation, StoreInputError::InvalidFactoryRunClaim)
 }
@@ -1246,18 +1636,23 @@ fn key(value: &str) -> FactoryKey {
 mod tests {
   use std::sync::Arc;
 
-  use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId};
+  use octacity_server_domain::{
+    ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, ProjectId, RepositoryId,
+  };
   use octacity_server_factory::{
-    AssessmentOutcome, BudgetLimit, BudgetUsage, CandidateSubject, DecisionEngineInput, DecisionOutcome,
-    DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryAttemptNumber, DeliveryState,
-    DeterministicGate, DeterministicGateOutcome, EvidenceItem, ExternalWorkIdentity, FactoryClaim, FactoryClaimFence,
-    FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryMetadata, FactoryRunState,
-    FactoryStageKind, FindingSeverity, IndeterminatePolicy, MacroCallKind, ReportingAttemptNumber, ReportingState,
+    AssessmentOutcome, BudgetLimit, BudgetUsage, BuildConfigurationRef, CandidateSubject, DecisionEngineInput,
+    DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryAttemptNumber,
+    DeliveryState, DeterministicGate, DeterministicGateOutcome, EvidenceItem, ExternalWorkIdentity, FactoryClaim,
+    FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryMetadata,
+    FactoryRunState, FindingSeverity, IndeterminatePolicy, MacroCallKind, ReportingAttemptNumber, ReportingState,
     RiskClass, StageAttemptNumber, WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority, evaluate_decision,
   };
 
   use crate::test_support::{id, run_ready, time};
-  use crate::{AuditActor, AuditActorKind, FactoryBuildLink, FactoryOutboxState, ManagementSecurityScope, StoreError};
+  use crate::{
+    AuditActor, AuditActorKind, FactoryBuildLink, FactoryOutboxState, IdempotencyKey, ManagementSecurityScope,
+    StoreError,
+  };
 
   use super::*;
 
@@ -1353,7 +1748,7 @@ mod tests {
       id::<StageAttemptId>(20),
       run,
       StageAttemptNumber::INITIAL,
-      FactoryStageKind::Implementation,
+      octacity_server_factory::FactoryStageTarget::Implementation,
       budget(),
       digest(20),
       octacity_server_factory::FactoryClaimOwnership::new(
@@ -1370,7 +1765,27 @@ mod tests {
       None,
     )
     .unwrap();
-    let build = FactoryBuildLink::new(&stage, id::<BuildId>(22), digest(22));
+    let build = FactoryBuildLink::new(
+      &stage,
+      crate::FactoryBuildLinkInput {
+        build_id: id::<BuildId>(22),
+        attempt_id: id::<octacity_server_domain::AttemptId>(22),
+        job_ids: vec![id::<octacity_server_domain::JobId>(22)],
+        factory_configuration: run.configuration().clone(),
+        target: octacity_server_factory::FactoryStageTarget::Implementation,
+        build_configuration: BuildConfigurationRef::new(
+          id::<BuildConfigurationId>(22),
+          BuildConfigurationVersion::INITIAL,
+          run.subject().project_id(),
+          digest(21),
+        ),
+        task_envelope_digest: digest(20),
+        exact_revision: run.subject().base_revision().clone(),
+        parent: None,
+        effective_policy_digest: digest(22),
+        input_digest: digest(23),
+      },
+    );
     let candidate_subject = CandidateSubject::new(
       run.subject().clone(),
       ImmutableRevision::new("candidate-revision").unwrap(),
@@ -1546,6 +1961,85 @@ mod tests {
         time(20),
       )],
     }
+  }
+
+  async fn seed_full_history(fixture: &Fixture) {
+    let claim = claim(fixture);
+    fixture.store.claim_factory_run(claim.clone()).await.unwrap();
+    fixture
+      .store
+      .commit_factory_run_transition(transition(fixture, &claim, full_history(&fixture.run)))
+      .await
+      .unwrap();
+  }
+
+  fn set_current_lifecycle(fixture: &Fixture, state: FactoryRunState, progress: FactoryLifecycleProgress) {
+    let mut memory = fixture.store.lock().unwrap();
+    let stored = memory.factory_runs.get_mut(&fixture.run.id()).unwrap();
+    let version = FactoryRunVersion::new(stored.run.version().get() + 1).unwrap();
+    let usage = stored.budgets.get(&stored.current.budget_id).unwrap().usage;
+    let budget = FactoryBudgetRecord::new(stored.run.id(), version, usage, time(25));
+    let checkpoint = FactoryLifecycleCheckpoint::new(
+      stored.run.id(),
+      version,
+      progress,
+      octacity_server_factory::DecisionSignalProgress::Disabled,
+      false,
+      time(25),
+    );
+    stored.run = FactoryRun::restore(
+      stored.run.id(),
+      stored.run.configuration().clone(),
+      &stored.work,
+      stored.run.subject().clone(),
+      state,
+      version,
+    )
+    .unwrap();
+    stored.current_claim_id = None;
+    stored.current.budget_id = budget.id;
+    stored.current.lifecycle_checkpoint_id = checkpoint.id;
+    stored.budgets.insert(budget.id, budget);
+    stored.lifecycle_checkpoints.insert(checkpoint.id, checkpoint);
+    stored.validate_integrity().unwrap();
+  }
+
+  fn control_context(request_identity: &str) -> MutationAuditContext {
+    MutationAuditContext::try_new(
+      AuditActor {
+        kind: AuditActorKind::AuthenticatedManagement,
+        identity: Some("operator-1".to_owned()),
+      },
+      ManagementSecurityScope::trusted_network(),
+      request_identity,
+    )
+    .unwrap()
+  }
+
+  fn control_request(
+    fixture: &Fixture,
+    intent: FactoryRunControlIntent,
+    key: &str,
+  ) -> ManagementMutation<ApplyFactoryRunControl> {
+    let version = fixture
+      .store
+      .lock()
+      .unwrap()
+      .factory_runs
+      .get(&fixture.run.id())
+      .unwrap()
+      .run
+      .version();
+    ManagementMutation::new(
+      ApplyFactoryRunControl {
+        run_id: fixture.run.id(),
+        expected_version: version,
+        idempotency_key: IdempotencyKey::new(key).unwrap(),
+        intent,
+        requested_at: time(30),
+      },
+      control_context(&format!("request-{key}")),
+    )
   }
 
   #[test]
@@ -1797,6 +2291,30 @@ mod tests {
   }
 
   #[test]
+  fn build_links_reject_inconsistent_factory_causality_atomically() {
+    run_ready(
+      async {
+        let fixture = fixture();
+        let claim = claim(&fixture);
+        fixture.store.claim_factory_run(claim.clone()).await.unwrap();
+        let mut request = transition(&fixture, &claim, full_history(&fixture.run));
+        request.append.linked_builds[0].task_envelope_digest = digest(99);
+        let before = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+
+        assert!(matches!(
+          fixture.store.commit_factory_run_transition(request).await.unwrap_err(),
+          StoreError::InvalidInput { .. }
+        ));
+        assert_eq!(
+          fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap(),
+          before
+        );
+      },
+      "Factory Build causality validation is ready",
+    );
+  }
+
+  #[test]
   fn rejected_rewrites_missing_projections_and_stale_fences_are_atomic() {
     run_ready(
       async {
@@ -1951,6 +2469,208 @@ mod tests {
         );
       },
       "Factory history rewrite rejection is ready",
+    );
+  }
+
+  #[test]
+  fn cancellation_is_replayable_and_preserves_completed_factory_evidence() {
+    run_ready(
+      async {
+        let fixture = fixture();
+        seed_full_history(&fixture).await;
+        let before = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let request = control_request(&fixture, FactoryRunControlIntent::Cancel, "cancel-1");
+
+        let applied = fixture.store.apply_factory_run_control(request.clone()).await.unwrap();
+        let replayed = fixture.store.apply_factory_run_control(request).await.unwrap();
+        assert_eq!(applied.disposition, MutationDisposition::Applied);
+        assert_eq!(replayed.disposition, MutationDisposition::Replayed);
+        assert_eq!(applied.version, replayed.version);
+        assert!(applied.cancellation_requested);
+
+        let after = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        assert!(after.current_claim.is_none());
+        assert_eq!(after.candidates, before.candidates);
+        assert_eq!(after.evidence, before.evidence);
+        assert_eq!(after.assessments, before.assessments);
+        assert_eq!(after.decisions, before.decisions);
+        assert_eq!(after.delivery_attempts, before.delivery_attempts);
+        assert_eq!(after.controls.len(), 1);
+        assert!(matches!(after.controls[0].intent, FactoryRunControlIntent::Cancel));
+
+        let conflicting = control_request(&fixture, FactoryRunControlIntent::Cancel, "cancel-1");
+        assert_eq!(
+          fixture.store.apply_factory_run_control(conflicting).await.unwrap_err(),
+          conflict()
+        );
+      },
+      "Factory cancellation control is ready",
+    );
+  }
+
+  #[test]
+  fn infrastructure_retry_requires_the_current_retryable_stage() {
+    run_ready(
+      async {
+        let fixture = fixture();
+        seed_full_history(&fixture).await;
+        set_current_lifecycle(
+          &fixture,
+          FactoryRunState::Implementing,
+          FactoryLifecycleProgress::Stage {
+            target: octacity_server_factory::FactoryStageTarget::Implementation,
+            progress: FactoryStageProgress::RetryableFailure,
+          },
+        );
+        let stage_id = fixture
+          .store
+          .factory_run_snapshot(fixture.run.id())
+          .await
+          .unwrap()
+          .current
+          .stage_attempt_id
+          .unwrap();
+        let stale = control_request(
+          &fixture,
+          FactoryRunControlIntent::RetryInfrastructure {
+            stage_attempt_id: id::<StageAttemptId>(999),
+          },
+          "retry-stale",
+        );
+        assert!(matches!(
+          fixture.store.apply_factory_run_control(stale).await.unwrap_err(),
+          StoreError::InvalidInput { .. }
+        ));
+
+        let accepted = control_request(
+          &fixture,
+          FactoryRunControlIntent::RetryInfrastructure {
+            stage_attempt_id: stage_id,
+          },
+          "retry-current",
+        );
+        let outcome = fixture.store.apply_factory_run_control(accepted).await.unwrap();
+        assert_eq!(outcome.state, FactoryRunState::Implementing);
+        let snapshot = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let checkpoint = snapshot
+          .lifecycle_checkpoints
+          .iter()
+          .find(|checkpoint| checkpoint.id == snapshot.current.lifecycle_checkpoint_id)
+          .unwrap();
+        assert!(matches!(
+          checkpoint.progress,
+          FactoryLifecycleProgress::Stage {
+            progress: FactoryStageProgress::RetryRequested,
+            ..
+          }
+        ));
+        assert!(matches!(
+          snapshot.controls.last().map(|record| &record.intent),
+          Some(FactoryRunControlIntent::RetryInfrastructure { stage_attempt_id }) if *stage_attempt_id == stage_id
+        ));
+      },
+      "Factory infrastructure retry control is ready",
+    );
+  }
+
+  #[test]
+  fn escalation_and_delivery_controls_accept_only_current_bounded_facts() {
+    run_ready(
+      async {
+        let escalation_fixture = fixture();
+        seed_full_history(&escalation_fixture).await;
+        set_current_lifecycle(
+          &escalation_fixture,
+          FactoryRunState::Escalated,
+          FactoryLifecycleProgress::Escalated(octacity_server_factory::ReportingProgress::Disabled),
+        );
+        let escalation_id = escalation_fixture
+          .store
+          .factory_run_snapshot(escalation_fixture.run.id())
+          .await
+          .unwrap()
+          .current
+          .escalation_id
+          .unwrap();
+        let resolution = control_request(
+          &escalation_fixture,
+          FactoryRunControlIntent::ResolveEscalation {
+            escalation_id,
+            disposition: FactoryEscalationDisposition::Acknowledge,
+            reason: octacity_server_factory::FactoryText::new("reviewed by operator").unwrap(),
+          },
+          "resolve-1",
+        );
+        let resolved = escalation_fixture
+          .store
+          .apply_factory_run_control(resolution)
+          .await
+          .unwrap();
+        assert_eq!(resolved.state, FactoryRunState::Completed);
+        let snapshot = escalation_fixture
+          .store
+          .factory_run_snapshot(escalation_fixture.run.id())
+          .await
+          .unwrap();
+        assert!(matches!(
+          &snapshot.controls.last().unwrap().intent,
+          FactoryRunControlIntent::ResolveEscalation { reason, .. } if reason.as_str() == "reviewed by operator"
+        ));
+
+        let delivery_fixture = fixture();
+        seed_full_history(&delivery_fixture).await;
+        set_current_lifecycle(
+          &delivery_fixture,
+          FactoryRunState::ReadyForDelivery,
+          FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::AwaitingApproval),
+        );
+        let before = delivery_fixture
+          .store
+          .factory_run_snapshot(delivery_fixture.run.id())
+          .await
+          .unwrap();
+        let stale = control_request(
+          &delivery_fixture,
+          FactoryRunControlIntent::RequestDelivery {
+            candidate_id: id::<ChangeSetId>(999),
+            decision_id: before.current.decision_id.unwrap(),
+          },
+          "delivery-stale",
+        );
+        assert!(matches!(
+          delivery_fixture
+            .store
+            .apply_factory_run_control(stale)
+            .await
+            .unwrap_err(),
+          StoreError::InvalidInput { .. }
+        ));
+        let request = control_request(
+          &delivery_fixture,
+          FactoryRunControlIntent::RequestDelivery {
+            candidate_id: before.current.candidate_id.unwrap(),
+            decision_id: before.current.decision_id.unwrap(),
+          },
+          "delivery-current",
+        );
+        delivery_fixture.store.apply_factory_run_control(request).await.unwrap();
+        let after = delivery_fixture
+          .store
+          .factory_run_snapshot(delivery_fixture.run.id())
+          .await
+          .unwrap();
+        assert_eq!(after.delivery_attempts, before.delivery_attempts);
+        let checkpoint = after
+          .lifecycle_checkpoints
+          .iter()
+          .find(|checkpoint| checkpoint.id == after.current.lifecycle_checkpoint_id)
+          .unwrap();
+        assert_eq!(
+          checkpoint.progress,
+          FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::Requested)
+        );
+      },
+      "Factory escalation and delivery controls are ready",
     );
   }
 }

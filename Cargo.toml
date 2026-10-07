@@ -43,6 +43,7 @@ members = [
   "server/core/octacity-server-trigger",
   "server/infrastructure/octacity-artifact-s3",
   "server/infrastructure/octacity-server-adapter-host",
+  "server/infrastructure/octacity-server-decision-signal",
   "server/infrastructure/octacity-server-store-postgres",
   "server/infrastructure/octacity-server-vcs",
   "server/infrastructure/octacity-server-webhook",

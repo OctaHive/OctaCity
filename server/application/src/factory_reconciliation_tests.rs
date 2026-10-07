@@ -28,7 +28,7 @@ use octacity_server_store::{
   SettleFactoryOutbox, StoreError, testing::InMemoryFactoryConfigurationStore,
 };
 
-fn key(value: &str) -> FactoryKey {
+pub(super) fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).expect("fixture key is valid")
 }
 
@@ -40,7 +40,7 @@ fn exact(identity: &str, value: u8) -> ImmutableReference {
   ImmutableReference::new(key(identity), key("v1"), digest(value))
 }
 
-fn time(value: i64) -> crate::Timestamp {
+pub(super) fn time(value: i64) -> crate::Timestamp {
   crate::Timestamp::from_unix_millis(value).expect("fixture time is valid")
 }
 
@@ -52,7 +52,13 @@ impl FactoryReconciliationClock for FixedClock {
   }
 }
 
-fn reconciler<S>(store: Arc<S>, owner: &str, batch_size: u16, concurrency: u16, now: i64) -> FactoryReconciler<S>
+pub(super) fn reconciler<S>(
+  store: Arc<S>,
+  owner: &str,
+  batch_size: u16,
+  concurrency: u16,
+  now: i64,
+) -> FactoryReconciler<S>
 where
   S: FactoryRunStore + FactoryConfigurationStore + 'static,
 {
@@ -155,7 +161,7 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
   .expect("fixture configuration is valid")
 }
 
-fn seeded_store(run_count: usize) -> Arc<InMemoryFactoryConfigurationStore> {
+pub(super) fn seeded_store(run_count: usize) -> Arc<InMemoryFactoryConfigurationStore> {
   let store = Arc::new(InMemoryFactoryConfigurationStore::new());
   let project_id = ProjectId::generate();
   let configuration = configuration(project_id, FactoryConfigurationId::generate());
@@ -445,7 +451,7 @@ impl FactoryConfigurationStore for MeasuredStore {
   }
 }
 
-fn run_to_completion<F: Future>(future: F) -> F::Output {
+pub(super) fn run_to_completion<F: Future>(future: F) -> F::Output {
   let mut future = std::pin::pin!(future);
   let mut context = Context::from_waker(Waker::noop());
   for _ in 0..10_000 {

@@ -1,0 +1,22 @@
+[package]
+name = "octacity-server-decision-signal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Exact Decision Signal provider registry and JEV HTTP adapter for OctaCity"
+
+[dependencies]
+futures-util.workspace = true
+octacity-server-factory = { path = "../../core/octacity-server-factory" }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+octacity-server-domain = { path = "../../core/octacity-server-domain" }
+tokio.workspace = true
