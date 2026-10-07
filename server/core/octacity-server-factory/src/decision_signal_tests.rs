@@ -65,6 +65,15 @@ fn stage() -> StageAttempt {
     FactoryStageKind::Implementation,
     budget(),
     digest(2),
+    crate::FactoryClaimOwnership::new(
+      key("worker"),
+      crate::FactoryClaim::new(
+        crate::FactoryClaimFence::new(digest(9)),
+        Timestamp::from_unix_millis(1).expect("fixture claim start"),
+        Timestamp::from_unix_millis(2).expect("fixture claim deadline"),
+      )
+      .expect("fixture claim"),
+    ),
   )
 }
 

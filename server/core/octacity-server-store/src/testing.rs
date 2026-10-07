@@ -81,6 +81,7 @@ pub use crate::definition_discovery_contract_testing::{
   verify_seeded_pipeline_definition_discovery_contract, verify_seeded_trigger_definition_discovery_contract,
 };
 pub use crate::definition_discovery_testing::InMemoryTriggerDefinitionDiscoveryStore;
+pub use crate::factory_configuration_testing::InMemoryFactoryConfigurationStore;
 pub use crate::log_search_contract_testing::{
   verify_in_memory_log_search_index_contract, verify_log_search_index_contract,
 };

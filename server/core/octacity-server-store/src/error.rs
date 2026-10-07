@@ -64,6 +64,32 @@ pub enum StoreOperation {
   ReadBuildConfigurationVersion,
   /// List one bounded page of current Build Configurations owned by a Project.
   ListProjectBuildConfigurations,
+  /// Create one immutable Factory Configuration identity and initial version.
+  CreateFactoryConfiguration,
+  /// Append exactly the next immutable Factory Configuration version.
+  ReplaceFactoryConfiguration,
+  /// Read one exact immutable Factory Configuration version.
+  ReadFactoryConfigurationVersion,
+  /// Read the current immutable Factory Configuration version.
+  ReadCurrentFactoryConfiguration,
+  /// Read trusted Factory Configuration capability choices for a Project.
+  ReadFactoryConfigurationCapabilities,
+  /// Read exact definitions needed to admit Factory Work.
+  ReadFactoryAdmissionContext,
+  /// Deduplicate and persist one immutable Work Envelope and Factory Run.
+  AdmitFactoryWork,
+  /// Read one complete bounded Factory Run snapshot.
+  ReadFactoryRunSnapshot,
+  /// Append and publish one fenced Factory Run claim.
+  ClaimFactoryRun,
+  /// Claim one bounded batch of eligible Factory Runs.
+  ClaimFactoryRuns,
+  /// Append one fenced Factory transition and advance its current projection.
+  CommitFactoryRunTransition,
+  /// Claim one bounded batch of due Factory outbox operations.
+  ClaimFactoryOutbox,
+  /// Settle one owned Factory outbox operation.
+  SettleFactoryOutbox,
   /// List one bounded newest-first page of Builds owned by a Project.
   ListProjectBuilds,
   /// Create one immutable Trigger definition.
@@ -300,6 +326,18 @@ pub enum StoreInputError {
   /// A Build Configuration definition is malformed or exceeds its encoded bound.
   #[error("an immutable build configuration is invalid")]
   InvalidBuildConfiguration,
+  /// A Factory Configuration mutation intent does not match its resolved version.
+  #[error("an immutable Factory Configuration mutation is invalid")]
+  InvalidFactoryConfiguration,
+  /// A Work Envelope and initial Factory Run do not match their exact admission context.
+  #[error("a Factory Work admission is invalid")]
+  InvalidFactoryAdmission,
+  /// A Factory claim is malformed, overlaps current ownership, or lacks matching audit evidence.
+  #[error("a Factory Run claim is invalid")]
+  InvalidFactoryRunClaim,
+  /// A Factory transition is malformed or references absent immutable history.
+  #[error("a Factory Run transition is invalid")]
+  InvalidFactoryRunTransition,
   /// A Trigger occurrence is malformed or violates source-specific invariants.
   #[error("a normalized trigger occurrence is invalid")]
   InvalidNormalizedTrigger,

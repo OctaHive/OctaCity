@@ -26,6 +26,20 @@ pub enum BudgetResource {
   OutputBytes,
 }
 
+impl BudgetResource {
+  /// Returns the canonical stable representation used by durable action identities.
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::Attempts => "attempts",
+      Self::ElapsedTime => "elapsed_time",
+      Self::Tokens => "tokens",
+      Self::Cost => "cost",
+      Self::OutputBytes => "output_bytes",
+    }
+  }
+}
+
 /// Immutable hard limits for one bounded Factory scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BudgetLimit {

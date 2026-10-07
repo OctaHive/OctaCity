@@ -66,6 +66,10 @@ pub enum ManagementResourceKind {
   Repository,
   /// Versioned Build Configuration.
   BuildConfiguration,
+  /// Versioned Dark Factory Configuration.
+  FactoryConfiguration,
+  /// Durable Dark Factory Run.
+  FactoryRun,
   /// Manual, scheduled, external, or internal Trigger definition.
   Trigger,
   /// Durable schedule definition.
@@ -100,13 +104,15 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 21] = [
+  pub const ALL: [Self; 23] = [
     Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
     Self::Pipeline,
     Self::Repository,
     Self::BuildConfiguration,
+    Self::FactoryConfiguration,
+    Self::FactoryRun,
     Self::Trigger,
     Self::Schedule,
     Self::Build,
@@ -384,6 +390,8 @@ const fn supports_collection(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::AgentPool
       | ManagementResourceKind::Agent
       | ManagementResourceKind::AuditFact
+      | ManagementResourceKind::FactoryConfiguration
+      | ManagementResourceKind::FactoryRun
   )
 }
 
@@ -394,6 +402,8 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::Pipeline
       | ManagementResourceKind::Repository
       | ManagementResourceKind::BuildConfiguration
+      | ManagementResourceKind::FactoryConfiguration
+      | ManagementResourceKind::FactoryRun
       | ManagementResourceKind::Trigger
       | ManagementResourceKind::Schedule
       | ManagementResourceKind::Build
@@ -420,6 +430,11 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
         ManagementResourceKind::BuildConfiguration,
         ManagementResourceKind::Project
       )
+      | (
+        ManagementResourceKind::FactoryConfiguration,
+        ManagementResourceKind::Project
+      )
+      | (ManagementResourceKind::FactoryRun, ManagementResourceKind::Project)
       | (ManagementResourceKind::Trigger, ManagementResourceKind::Project)
       | (
         ManagementResourceKind::Trigger,

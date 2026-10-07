@@ -29,6 +29,12 @@ mod definition_port;
 mod error;
 mod external_trigger_model;
 mod external_trigger_port;
+mod factory_admission_model;
+mod factory_admission_port;
+mod factory_configuration_model;
+mod factory_configuration_port;
+mod factory_run_model;
+mod factory_run_port;
 mod idempotency;
 mod internal_trigger_model;
 mod internal_trigger_port;
@@ -77,6 +83,12 @@ mod configuration_contract_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod configuration_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod factory_configuration_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod factory_run_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod definition_discovery_testing;
@@ -222,6 +234,26 @@ pub use external_trigger_port::{
   ManagedWebhookOperationStore, ManagedWebhookRegistrationStore, WebhookConfigurationStore,
   WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
 };
+pub use factory_admission_model::{
+  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionMutationOutcome, FactoryAdmissionProbe,
+  FactoryWorkSourceScope, PublishedFactoryAdmission, ReadFactoryAdmissionContext,
+};
+pub use factory_admission_port::FactoryAdmissionStore;
+pub use factory_configuration_model::{
+  CreateFactoryConfiguration, FactoryConfigurationAvailability, FactoryConfigurationMutationIntent,
+  FactoryConfigurationMutationOutcome, PublishedFactoryConfiguration, ReplaceFactoryConfiguration,
+  ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation,
+};
+pub use factory_configuration_port::FactoryConfigurationStore;
+pub use factory_run_model::{
+  ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
+  ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
+  FactoryBudgetRecord, FactoryBuildLink, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
+  FactoryOutboxState, FactoryRunClaimRecord, FactoryRunCurrentProjection, FactoryRunHistoryAppend, FactoryRunSnapshot,
+  MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS,
+  MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
+};
+pub use factory_run_port::FactoryRunStore;
 pub use idempotency::{
   IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementIdempotencyKey,
   ManagementSecurityScope,

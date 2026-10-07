@@ -9,8 +9,9 @@ or durable data flow must update this model and its executable evidence.
 
 The model covers the server process, static Agents, Octa and runner release
 bundles, the optional static operator console and same-origin reverse proxy,
-provider adapter processes, PostgreSQL, S3-compatible object storage, and the
-cache, artifact, webhook, VCS, and management protocols between them. The
+provider adapter processes, the opt-in Dark Factory control plane, PostgreSQL,
+S3-compatible object storage, and the cache, artifact, webhook, VCS, and
+management protocols between them. The
 operating system, selected execution backend, database, object store,
 release-signing infrastructure, and explicitly configured reverse proxy are
 trusted according to their documented responsibilities.
@@ -19,6 +20,10 @@ Repository contents, build commands, source repositories, webhook payloads,
 management request bodies, browser state and input, Agent protocol messages
 before authentication, adapter output, object-store responses, and cached
 bytes are untrusted.
+Factory task bodies, Stage outputs, model responses, external Work identities,
+and delivery-provider responses are also untrusted. They are evidence or input,
+never authority to choose an undeclared lifecycle transition or widen execution
+permissions.
 Direct Host execution deliberately gives repository code the Agent host's
 security boundary. It is therefore allowed only by explicit Project and Pool
 policy and is not suitable for mutually untrusted workloads.
@@ -34,6 +39,9 @@ identity-aware policy; network placement is not treated as user identity.
 
 - authoritative Project, Build, Attempt, Job, Lease, audit, idempotency, and
   outbox state;
+- immutable Factory Configurations, Work Envelopes, Run and Stage histories,
+  exact candidate/evidence/decision provenance, claims, budgets, and current
+  projections;
 - signing keys, Agent enrollment and registration credentials, webhook keys,
   provider credentials, cache grants, and presigned transfer capabilities;
 - source, logs, artifacts, reports, cache entries, and their Project scope;
@@ -61,6 +69,8 @@ management responses, audit facts, metrics, traces, logs, or durable errors.
 | PostgreSQL | Concurrent replicas and restored state | Use-case-shaped transactions, declarative constraints, fencing, atomic audit/idempotency/outbox evidence, migration and race contracts |
 | Object storage and cache | Missing, stale, corrupt, or cross-scope bytes | Private layouts, digest verification, immutable identities, scoped grants, transactional visibility, corruption and outage tests |
 | Provider adapters | Executable, manifest, stdout frames, diagnostics | Regular-file and permission validation, digest lock, bounded versioned protocol, deadline and forced termination, redacted errors |
+| Factory admission and reconciliation | External Work identity, mutable source reference, task artifacts, model and Stage results, concurrent workers | Replay probe before mutable resolution, exact immutable subject, enabled-configuration and WIP admission transaction, bounded snapshots, monotonic versions and budgets, owner/deadline/fence checks, immediate lifecycle-transition validation, atomic audit and outbox append |
+| Factory side effects | Build creation, Decision Signal, delivery and reporting requests; missing or ambiguous responses | Stable operation and input digests, durable pending/claimed/terminal rows, bounded claim expiry and takeover, idempotent observe-before-retry, fenced settlement, no provider response as lifecycle authority |
 | Release supply chain | Third-party crates, actions, tools, service images, archives | Locked dependencies, pinned actions/toolchains/images, advisory and license/source gates, checksums and attestations |
 | Diagnostics | Errors, URLs, headers, identifiers, output text | Pre-persistence redaction, closed metric labels, bounded diagnostics, secret-leak assertions and repository secret scan |
 
@@ -96,6 +106,16 @@ selector. Operators must therefore use a dedicated Agent and Pool constrained
 to the intended Projects and must not install model credentials in that
 profile. Factory Permission Sets in JobSpec v3 will replace this deployment
 scope with signed per-Job selection; v1/v2 are deliberately unchanged.
+
+Factory admission stores the unresolved command intent as its idempotency
+fingerprint before mutable capability or source resolution. An exact retry
+therefore returns the original immutable result even if a Project is later
+disabled or aliases change; a mismatched retry conflicts. Admission counts
+active Runs under the same store lock that inserts Work, so concurrent callers
+cannot exceed the immutable configuration WIP limit. Reconciliation may append
+only an immediate code-owned lifecycle successor. Every Stage Attempt records
+its creating owner, deadline and fence; terminal observations record their own
+fenced owner and consumed budget.
 
 ### Cross-project disclosure and secret leakage
 
@@ -138,6 +158,9 @@ execution resources are bounded. Heartbeats have independent admission so
 ordinary overload cannot silently expire healthy work. Adapter and runner
 processes have deadlines and a force-stop path. Durable work can be reclaimed
 after process loss without relying on an in-memory queue.
+Factory outbox work follows the same rule: an unknown response remains claimed
+until expiry, after which another worker appends a new attempt under the same
+logical operation identity. Stale owners cannot settle it.
 
 ### Repudiation, replay, and rollback ambiguity
 

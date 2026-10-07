@@ -1,7 +1,36 @@
 use crate::{
-  BudgetLimit, DecisionSignalPurpose, DecisionSignalRequestId, ExactSubject, FactoryDigest, FactoryError, FactoryRun,
-  FactoryRunId, FactoryStageKind, MacroCallId, MacroCallKind, StageAttemptId, StageAttemptNumber,
+  BudgetLimit, BudgetUsage, DecisionSignalPurpose, DecisionSignalRequestId, ExactSubject, FactoryClaim, FactoryDigest,
+  FactoryError, FactoryKey, FactoryRun, FactoryRunId, FactoryStageKind, MacroCallId, MacroCallKind, StageAttemptId,
+  StageAttemptNumber,
 };
+use octacity_server_domain::Timestamp;
+
+/// Fenced worker ownership attached to immutable Factory execution records.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryClaimOwnership {
+  owner: FactoryKey,
+  claim: FactoryClaim,
+}
+
+impl FactoryClaimOwnership {
+  /// Binds one bounded worker identity to its exclusive claim window.
+  #[must_use]
+  pub const fn new(owner: FactoryKey, claim: FactoryClaim) -> Self {
+    Self { owner, claim }
+  }
+
+  /// Returns the bounded worker identity.
+  #[must_use]
+  pub const fn owner(&self) -> &FactoryKey {
+    &self.owner
+  }
+
+  /// Returns the exclusive fenced claim window.
+  #[must_use]
+  pub const fn claim(&self) -> FactoryClaim {
+    self.claim
+  }
+}
 
 /// Canonical input and deterministic policy digests for one Decision Signal request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +69,7 @@ pub struct StageAttempt {
   kind: FactoryStageKind,
   budget: BudgetLimit,
   input_digest: FactoryDigest,
+  ownership: FactoryClaimOwnership,
 }
 
 impl StageAttempt {
@@ -52,6 +82,7 @@ impl StageAttempt {
     kind: FactoryStageKind,
     budget: BudgetLimit,
     input_digest: FactoryDigest,
+    ownership: FactoryClaimOwnership,
   ) -> Self {
     Self {
       id,
@@ -61,6 +92,7 @@ impl StageAttempt {
       kind,
       budget,
       input_digest,
+      ownership,
     }
   }
 
@@ -104,6 +136,137 @@ impl StageAttempt {
   #[must_use]
   pub const fn input_digest(&self) -> FactoryDigest {
     self.input_digest
+  }
+
+  /// Returns the reconciler owner that created this attempt.
+  #[must_use]
+  pub const fn owner(&self) -> &FactoryKey {
+    self.ownership.owner()
+  }
+
+  /// Returns the fenced ownership window under which this attempt was created.
+  #[must_use]
+  pub const fn claim(&self) -> FactoryClaim {
+    self.ownership.claim()
+  }
+}
+
+/// Provider-neutral terminal outcome of one Stage Attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StageAttemptOutcome {
+  /// The attempt produced its required immutable result.
+  Succeeded,
+  /// The attempt ended without a usable result.
+  Failed,
+  /// Cancellation was authoritatively observed.
+  Cancelled,
+}
+
+impl StageAttemptOutcome {
+  const fn as_str(self) -> &'static str {
+    match self {
+      Self::Succeeded => "succeeded",
+      Self::Failed => "failed",
+      Self::Cancelled => "cancelled",
+    }
+  }
+}
+
+/// Immutable terminal observation and consumed budget for one Stage Attempt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StageAttemptCompletion {
+  id: FactoryDigest,
+  stage_attempt_id: StageAttemptId,
+  run_id: FactoryRunId,
+  ownership: FactoryClaimOwnership,
+  outcome: StageAttemptOutcome,
+  usage: BudgetUsage,
+  observed_at: Timestamp,
+}
+
+impl StageAttemptCompletion {
+  /// Constructs a fenced terminal observation within the attempt's hard budget.
+  pub fn new(
+    stage: &StageAttempt,
+    ownership: FactoryClaimOwnership,
+    outcome: StageAttemptOutcome,
+    usage: BudgetUsage,
+    observed_at: Timestamp,
+  ) -> Result<Self, FactoryError> {
+    ownership.claim().authorize(ownership.claim().fence(), observed_at)?;
+    usage.validate(stage.budget)?;
+    let id = FactoryDigest::sha256(
+      "octacity.factory.stage-attempt-completion.v1",
+      &[
+        stage.id.as_uuid().as_bytes(),
+        ownership.owner().as_str().as_bytes(),
+        &ownership.claim().fence().digest().as_bytes(),
+        outcome.as_str().as_bytes(),
+        &usage.attempts.to_be_bytes(),
+        &usage.elapsed_millis.to_be_bytes(),
+        &usage.tokens.to_be_bytes(),
+        &usage.cost_micro_units.to_be_bytes(),
+        &usage.output_bytes.to_be_bytes(),
+        &observed_at.unix_millis().to_be_bytes(),
+      ],
+    );
+    Ok(Self {
+      id,
+      stage_attempt_id: stage.id,
+      run_id: stage.run_id,
+      ownership,
+      outcome,
+      usage,
+      observed_at,
+    })
+  }
+
+  /// Returns the content-derived observation identity.
+  #[must_use]
+  pub const fn id(&self) -> FactoryDigest {
+    self.id
+  }
+
+  /// Returns the completed Stage Attempt.
+  #[must_use]
+  pub const fn stage_attempt_id(&self) -> StageAttemptId {
+    self.stage_attempt_id
+  }
+
+  /// Returns the owning Factory Run.
+  #[must_use]
+  pub const fn run_id(&self) -> FactoryRunId {
+    self.run_id
+  }
+
+  /// Returns the terminal observer identity.
+  #[must_use]
+  pub const fn owner(&self) -> &FactoryKey {
+    self.ownership.owner()
+  }
+
+  /// Returns the fenced terminal observation window.
+  #[must_use]
+  pub const fn claim(&self) -> FactoryClaim {
+    self.ownership.claim()
+  }
+
+  /// Returns the provider-neutral terminal outcome.
+  #[must_use]
+  pub const fn outcome(&self) -> StageAttemptOutcome {
+    self.outcome
+  }
+
+  /// Returns consumed budget measured for this attempt.
+  #[must_use]
+  pub const fn usage(&self) -> BudgetUsage {
+    self.usage
+  }
+
+  /// Returns the authoritative terminal observation time.
+  #[must_use]
+  pub const fn observed_at(&self) -> Timestamp {
+    self.observed_at
   }
 }
 
@@ -334,6 +497,15 @@ mod tests {
       FactoryStageKind::Implementation,
       BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget"),
       digest(2),
+      FactoryClaimOwnership::new(
+        FactoryKey::new("worker").expect("fixture owner"),
+        FactoryClaim::new(
+          crate::FactoryClaimFence::new(digest(9)),
+          octacity_server_domain::Timestamp::from_unix_millis(1).expect("fixture claim start"),
+          octacity_server_domain::Timestamp::from_unix_millis(2).expect("fixture claim deadline"),
+        )
+        .expect("fixture claim"),
+      ),
     )
   }
 
@@ -360,5 +532,53 @@ mod tests {
       ),
       Err(FactoryError::InvalidReference { .. })
     ));
+  }
+
+  #[test]
+  fn stage_completion_requires_a_live_fence_and_stays_within_the_stage_budget() {
+    let stage = stage();
+    let ownership = FactoryClaimOwnership::new(
+      FactoryKey::new("completion-worker").expect("fixture owner"),
+      FactoryClaim::new(
+        crate::FactoryClaimFence::new(digest(10)),
+        Timestamp::from_unix_millis(10).expect("fixture claim start"),
+        Timestamp::from_unix_millis(20).expect("fixture claim deadline"),
+      )
+      .expect("fixture claim"),
+    );
+
+    assert!(
+      StageAttemptCompletion::new(
+        &stage,
+        ownership.clone(),
+        StageAttemptOutcome::Succeeded,
+        BudgetUsage::default(),
+        Timestamp::from_unix_millis(15).expect("fixture observation"),
+      )
+      .is_ok()
+    );
+    assert!(
+      StageAttemptCompletion::new(
+        &stage,
+        ownership.clone(),
+        StageAttemptOutcome::Succeeded,
+        BudgetUsage {
+          tokens: 2,
+          ..BudgetUsage::default()
+        },
+        Timestamp::from_unix_millis(15).expect("fixture observation"),
+      )
+      .is_err()
+    );
+    assert!(
+      StageAttemptCompletion::new(
+        &stage,
+        ownership,
+        StageAttemptOutcome::Succeeded,
+        BudgetUsage::default(),
+        Timestamp::from_unix_millis(20).expect("fixture expired observation"),
+      )
+      .is_err()
+    );
   }
 }

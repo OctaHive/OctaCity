@@ -38,6 +38,12 @@ impl FactoryClaimFence {
   pub const fn new(value: FactoryDigest) -> Self {
     Self(value)
   }
+
+  /// Returns the opaque digest for durable equality and identity binding.
+  #[must_use]
+  pub const fn digest(self) -> FactoryDigest {
+    self.0
+  }
 }
 
 /// Current exclusive ownership window for one Factory Run reconciliation.
@@ -61,7 +67,26 @@ impl FactoryClaim {
     })
   }
 
-  fn validate(self, presented_fence: FactoryClaimFence, observed_at: Timestamp) -> Result<(), FactoryError> {
+  /// Returns the opaque fence bound to this ownership window.
+  #[must_use]
+  pub const fn fence(self) -> FactoryClaimFence {
+    self.fence
+  }
+
+  /// Returns the authoritative instant at which ownership began.
+  #[must_use]
+  pub const fn claimed_at(self) -> Timestamp {
+    self.claimed_at
+  }
+
+  /// Returns the exclusive ownership deadline.
+  #[must_use]
+  pub const fn expires_at(self) -> Timestamp {
+    self.expires_at
+  }
+
+  /// Verifies that a presented fence owns the claim at an authoritative time.
+  pub fn authorize(self, presented_fence: FactoryClaimFence, observed_at: Timestamp) -> Result<(), FactoryError> {
     if self.fence != presented_fence {
       return Err(FactoryError::StaleClaim);
     }
@@ -143,7 +168,7 @@ impl FactoryDecisionGuard {
   }
 
   fn validate(self) -> Result<(), FactoryError> {
-    self.claim.validate(self.presented_fence, self.observed_at)?;
+    self.claim.authorize(self.presented_fence, self.observed_at)?;
     self.budget_usage.validate(self.budget_limit)?;
     self.wip_usage.validate(self.wip_limits)
   }
@@ -186,6 +211,17 @@ impl FactoryStageTarget {
       Self::Validation => FactoryStageKind::Validation,
       Self::Rework => FactoryStageKind::Rework,
       Self::Evaluation(_) => FactoryStageKind::Evaluation,
+    }
+  }
+
+  /// Returns a canonical stable key for durable action identities.
+  #[must_use]
+  pub fn canonical_key(&self) -> String {
+    match self {
+      Self::Implementation => "implementation".to_owned(),
+      Self::Validation => "validation".to_owned(),
+      Self::Rework => "rework".to_owned(),
+      Self::Evaluation(key) => format!("evaluation.{}", key.as_str()),
     }
   }
 }
@@ -248,6 +284,14 @@ impl EvaluationBranch {
   pub const fn new(key: FactoryKey, required: bool, state: EvaluationBranchState) -> Self {
     Self { key, required, state }
   }
+
+  fn with_state(&self, state: EvaluationBranchState) -> Self {
+    Self {
+      key: self.key.clone(),
+      required: self.required,
+      state,
+    }
+  }
 }
 
 /// Canonically ordered evaluator branches and their deterministic quorum.
@@ -276,6 +320,68 @@ impl EvaluationProgress {
       required_quorum,
     })
   }
+
+  /// Advances exactly one evaluator branch through an allowed immediate transition.
+  pub fn advance_branch(&self, key: &FactoryKey, next_state: EvaluationBranchState) -> Result<Self, FactoryError> {
+    let Some(current) = self.branches.iter().find(|branch| &branch.key == key) else {
+      return Err(invalid_lifecycle(FactoryRunState::Evaluating));
+    };
+    if !valid_evaluation_branch_transition(current.state, next_state) {
+      return Err(invalid_lifecycle(FactoryRunState::Evaluating));
+    }
+    let branches = self
+      .branches
+      .iter()
+      .map(|branch| {
+        if &branch.key == key {
+          branch.with_state(next_state)
+        } else {
+          branch.clone()
+        }
+      })
+      .collect();
+    Ok(Self {
+      branches,
+      required_quorum: self.required_quorum,
+    })
+  }
+
+  fn is_immediate_successor(&self, next: &Self) -> bool {
+    if self.required_quorum != next.required_quorum || self.branches.len() != next.branches.len() {
+      return false;
+    }
+    let mut changed = 0_u8;
+    self.branches.iter().zip(&next.branches).all(|(previous, next)| {
+      if previous.key != next.key || previous.required != next.required {
+        return false;
+      }
+      if previous.state == next.state {
+        return true;
+      }
+      changed = changed.saturating_add(1);
+      changed == 1 && valid_evaluation_branch_transition(previous.state, next.state)
+    }) && changed == 1
+  }
+}
+
+const fn valid_evaluation_branch_transition(previous: EvaluationBranchState, next: EvaluationBranchState) -> bool {
+  matches!(
+    (previous, next),
+    (
+      EvaluationBranchState::Pending | EvaluationBranchState::RetryableFailure,
+      EvaluationBranchState::AttemptCreated
+    ) | (
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive
+    ) | (
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::Succeeded
+        | EvaluationBranchState::RetryableFailure
+        | EvaluationBranchState::Failed
+        | EvaluationBranchState::Missing
+        | EvaluationBranchState::Cancelled
+    )
+  )
 }
 
 /// Persisted evaluation planning, fan-out, join, and Decision progress.
@@ -365,6 +471,43 @@ pub enum FactoryLifecycleProgress {
   Cancelled(ReportingProgress),
   /// Fully completed lifecycle.
   Completed,
+}
+
+impl FactoryLifecycleProgress {
+  /// Returns the number of Stage Attempts that currently consume stage WIP.
+  ///
+  /// The value is derived only from persisted lifecycle facts and can be
+  /// reconstructed after a process restart.
+  #[must_use]
+  pub fn active_stage_count(&self) -> u32 {
+    match self {
+      Self::Stage {
+        progress: FactoryStageProgress::AttemptCreated | FactoryStageProgress::BuildActive,
+        ..
+      } => 1,
+      Self::Evaluating(EvaluationState::Branches(progress)) => progress
+        .branches
+        .iter()
+        .filter(|branch| {
+          matches!(
+            branch.state,
+            EvaluationBranchState::AttemptCreated | EvaluationBranchState::BuildActive
+          )
+        })
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX),
+      Self::Admitted
+      | Self::Stage { .. }
+      | Self::Evaluating(_)
+      | Self::ReadyForDelivery(_)
+      | Self::Delivering(_)
+      | Self::Escalated(_)
+      | Self::Rejected(_)
+      | Self::Cancelled(_)
+      | Self::Completed => 0,
+    }
+  }
 }
 
 /// Complete immutable input to one pure lifecycle decision.
@@ -480,10 +623,89 @@ pub enum FactoryNextAction {
   Complete,
 }
 
+impl FactoryNextAction {
+  /// Returns the canonical stable representation used for durable operation identities.
+  #[must_use]
+  pub fn canonical_key(&self) -> String {
+    match self {
+      Self::Wait(reason) => format!("wait:{}", wait_reason_key(reason)),
+      Self::RequestDecisionSignal(purpose) => format!("signal.request:{}", purpose.as_str()),
+      Self::ConsumeDecisionSignal => "signal.consume".to_owned(),
+      Self::CreateStageAttempt(target) => format!("stage.create:{}", target.canonical_key()),
+      Self::CreateBuild(target) => format!("build.create:{}", target.canonical_key()),
+      Self::RetryStage(target) => format!("stage.retry:{}", target.canonical_key()),
+      Self::CaptureCandidate => "candidate.capture".to_owned(),
+      Self::ConstructEvidence => "evidence.construct".to_owned(),
+      Self::PlanEvaluations => "evaluation.plan".to_owned(),
+      Self::Decide => "decision.compute".to_owned(),
+      Self::RequestRework => "rework.request".to_owned(),
+      Self::Escalate(reason) => format!("escalate:{}", escalation_reason_key(reason)),
+      Self::Reject => "reject".to_owned(),
+      Self::Cancel => "cancel".to_owned(),
+      Self::PrepareDelivery => "delivery.prepare".to_owned(),
+      Self::RequestDelivery => "delivery.request".to_owned(),
+      Self::Report => "report".to_owned(),
+      Self::Complete => "complete".to_owned(),
+    }
+  }
+
+  /// Returns the stable worker kind when this action requires a durable
+  /// external dispatch rather than only an aggregate transition.
+  #[must_use]
+  pub const fn dispatch_key(&self) -> Option<&'static str> {
+    match self {
+      Self::RequestDecisionSignal(_) => Some("signal.request"),
+      Self::ConsumeDecisionSignal => Some("signal.consume"),
+      Self::CreateBuild(_) => Some("build.create"),
+      Self::CaptureCandidate => Some("candidate.capture"),
+      Self::ConstructEvidence => Some("evidence.construct"),
+      Self::PlanEvaluations => Some("evaluation.plan"),
+      Self::Decide => Some("decision.compute"),
+      Self::Cancel => Some("run.cancel"),
+      Self::RequestDelivery => Some("delivery.request"),
+      Self::Report => Some("report.dispatch"),
+      Self::Wait(_)
+      | Self::CreateStageAttempt(_)
+      | Self::RetryStage(_)
+      | Self::RequestRework
+      | Self::Escalate(_)
+      | Self::Reject
+      | Self::PrepareDelivery
+      | Self::Complete => None,
+    }
+  }
+}
+
+fn escalation_reason_key(reason: &FactoryEscalationReason) -> String {
+  match reason {
+    FactoryEscalationReason::BudgetExhausted(resource) => format!("budget.{}", resource.as_str()),
+    FactoryEscalationReason::StageFailed(target) => format!("stage.{}", target.canonical_key()),
+    FactoryEscalationReason::RequiredEvaluationFailed(key) => format!("evaluation.{}", key.as_str()),
+    FactoryEscalationReason::EvaluationQuorum => "evaluation.quorum".to_owned(),
+    FactoryEscalationReason::ReworkExhausted => "rework.exhausted".to_owned(),
+    FactoryEscalationReason::Decision => "decision".to_owned(),
+    FactoryEscalationReason::DeliveryFailed => "delivery.failed".to_owned(),
+  }
+}
+
+const fn wait_reason_key(reason: &FactoryWaitReason) -> &'static str {
+  match reason {
+    FactoryWaitReason::DecisionSignal => "decision_signal",
+    FactoryWaitReason::Build(_) => "build",
+    FactoryWaitReason::StageCapacity => "stage_capacity",
+    FactoryWaitReason::EvaluationJoin => "evaluation_join",
+    FactoryWaitReason::DeliveryApproval => "delivery_approval",
+    FactoryWaitReason::Delivery => "delivery",
+    FactoryWaitReason::EscalationDisposition => "escalation_disposition",
+    FactoryWaitReason::Reporting => "reporting",
+    FactoryWaitReason::Completed => "completed",
+  }
+}
+
 /// Derives exactly one permitted next action from a complete immutable snapshot.
 pub fn decide_next_action(snapshot: &FactoryLifecycleSnapshot) -> Result<FactoryNextAction, FactoryError> {
   snapshot.guard.validate()?;
-  validate_progress(snapshot.state, &snapshot.progress)?;
+  validate_lifecycle_progress(snapshot.state, &snapshot.progress)?;
 
   if snapshot.cancellation_requested {
     if matches!(
@@ -631,7 +853,11 @@ const fn decide_reporting(progress: ReportingProgress, requires_disposition: boo
   }
 }
 
-fn validate_progress(state: FactoryRunState, progress: &FactoryLifecycleProgress) -> Result<(), FactoryError> {
+/// Verifies that a persisted lifecycle checkpoint matches its Run state.
+pub fn validate_lifecycle_progress(
+  state: FactoryRunState,
+  progress: &FactoryLifecycleProgress,
+) -> Result<(), FactoryError> {
   let valid = matches!(
     (state, progress),
     (FactoryRunState::Admitted, FactoryLifecycleProgress::Admitted)
@@ -668,6 +894,118 @@ fn validate_progress(state: FactoryRunState, progress: &FactoryLifecycleProgress
       | (FactoryRunState::Completed, FactoryLifecycleProgress::Completed)
   );
   if valid { Ok(()) } else { Err(invalid_lifecycle(state)) }
+}
+
+/// Validates that one persisted lifecycle checkpoint is the immediate successor
+/// of another rather than an arbitrary valid state jump.
+pub fn validate_lifecycle_transition(
+  previous_state: FactoryRunState,
+  previous: &FactoryLifecycleProgress,
+  next_state: FactoryRunState,
+  next: &FactoryLifecycleProgress,
+) -> Result<(), FactoryError> {
+  validate_lifecycle_progress(previous_state, previous)?;
+  validate_lifecycle_progress(next_state, next)?;
+  let valid = if previous_state == next_state && previous == next {
+    true
+  } else {
+    match (previous, next) {
+      (
+        FactoryLifecycleProgress::Admitted,
+        FactoryLifecycleProgress::Stage {
+          target: FactoryStageTarget::Implementation,
+          progress: FactoryStageProgress::AttemptCreated,
+        },
+      ) => previous_state == FactoryRunState::Admitted && next_state == FactoryRunState::Implementing,
+      (
+        FactoryLifecycleProgress::Stage {
+          target: previous_target,
+          progress: previous_progress,
+        },
+        FactoryLifecycleProgress::Stage {
+          target: next_target,
+          progress: next_progress,
+        },
+      ) if previous_target == next_target && previous_state == next_state => matches!(
+        (previous_progress, next_progress),
+        (
+          FactoryStageProgress::Ready | FactoryStageProgress::RetryableFailure,
+          FactoryStageProgress::AttemptCreated
+        ) | (FactoryStageProgress::AttemptCreated, FactoryStageProgress::BuildActive)
+          | (
+            FactoryStageProgress::BuildActive,
+            FactoryStageProgress::BuildSucceeded
+              | FactoryStageProgress::RetryableFailure
+              | FactoryStageProgress::Failed
+              | FactoryStageProgress::Cancelled
+          )
+          | (
+            FactoryStageProgress::BuildSucceeded,
+            FactoryStageProgress::CandidateCaptured
+          )
+          | (
+            FactoryStageProgress::BuildSucceeded,
+            FactoryStageProgress::EvidenceConstructed
+          )
+      ),
+      (
+        FactoryLifecycleProgress::Stage {
+          target: FactoryStageTarget::Implementation | FactoryStageTarget::Rework,
+          progress: FactoryStageProgress::CandidateCaptured,
+        },
+        FactoryLifecycleProgress::Stage {
+          target: FactoryStageTarget::Validation,
+          progress: FactoryStageProgress::AttemptCreated,
+        },
+      ) => next_state == FactoryRunState::Validating,
+      (
+        FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(previous)),
+        FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(next)),
+      ) => {
+        previous_state == FactoryRunState::Evaluating
+          && next_state == FactoryRunState::Evaluating
+          && previous.is_immediate_successor(next)
+      }
+      _ => allowed_state_successor(previous_state, next_state),
+    }
+  };
+  if valid {
+    Ok(())
+  } else {
+    Err(invalid_lifecycle(next_state))
+  }
+}
+
+const fn allowed_state_successor(previous: FactoryRunState, next: FactoryRunState) -> bool {
+  matches!(
+    (previous, next),
+    (
+      FactoryRunState::Admitted,
+      FactoryRunState::Escalated | FactoryRunState::Cancelled
+    ) | (
+      FactoryRunState::Implementing | FactoryRunState::Reworking,
+      FactoryRunState::Validating | FactoryRunState::Escalated | FactoryRunState::Cancelled
+    ) | (
+      FactoryRunState::Validating,
+      FactoryRunState::Evaluating | FactoryRunState::Escalated | FactoryRunState::Cancelled
+    ) | (
+      FactoryRunState::Evaluating,
+      FactoryRunState::Reworking
+        | FactoryRunState::ReadyForDelivery
+        | FactoryRunState::Escalated
+        | FactoryRunState::Rejected
+        | FactoryRunState::Cancelled
+    ) | (
+      FactoryRunState::ReadyForDelivery,
+      FactoryRunState::Delivering | FactoryRunState::Escalated | FactoryRunState::Cancelled
+    ) | (
+      FactoryRunState::Delivering,
+      FactoryRunState::Completed | FactoryRunState::Escalated | FactoryRunState::Cancelled
+    ) | (
+      FactoryRunState::Escalated | FactoryRunState::Rejected | FactoryRunState::Cancelled,
+      FactoryRunState::Completed
+    )
+  )
 }
 
 fn decide_stage(

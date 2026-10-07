@@ -51,6 +51,15 @@ fn fixture() -> Fixture {
     FactoryStageKind::Implementation,
     BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget is valid"),
     digest(2),
+    FactoryClaimOwnership::new(
+      key("worker"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(digest(9)),
+        octacity_server_domain::Timestamp::from_unix_millis(1).expect("fixture claim start"),
+        octacity_server_domain::Timestamp::from_unix_millis(2).expect("fixture claim deadline"),
+      )
+      .expect("fixture claim"),
+    ),
   );
   let candidate = CandidateSubject::new(
     stage.subject().clone(),

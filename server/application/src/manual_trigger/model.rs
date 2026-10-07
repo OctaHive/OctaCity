@@ -21,7 +21,7 @@ use crate::{
 /// Source expression supplied by a trusted-network manual Build command.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ManualSourceSelection {
+pub enum RepositorySourceSelection {
   /// Resolve the immutable Repository version's configured default reference.
   DefaultReference,
   /// Resolve one explicitly allowed mutable branch or tag.
@@ -29,6 +29,9 @@ pub enum ManualSourceSelection {
   /// Verify and use an explicitly supplied immutable revision.
   ExactRevision(ImmutableRevision),
 }
+
+/// Backward-compatible name used by the existing manual Build command.
+pub type ManualSourceSelection = RepositorySourceSelection;
 
 /// Transport-independent intent to create one manual Build.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

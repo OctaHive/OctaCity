@@ -390,6 +390,37 @@ fn evaluation_fans_out_in_canonical_order_and_waits_for_the_join() {
 }
 
 #[test]
+fn evaluation_branch_progression_is_single_step_and_monotonic() {
+  let pending = EvaluationProgress::try_new(
+    vec![
+      EvaluationBranch::new(key("architecture"), true, EvaluationBranchState::Pending),
+      EvaluationBranch::new(key("security"), true, EvaluationBranchState::Pending),
+    ],
+    2,
+  )
+  .expect("fixture evaluation is valid");
+  let started = pending
+    .advance_branch(&key("architecture"), EvaluationBranchState::AttemptCreated)
+    .expect("pending branch may create an attempt");
+
+  assert!(
+    validate_lifecycle_transition(
+      FactoryRunState::Evaluating,
+      &FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(pending.clone())),
+      FactoryRunState::Evaluating,
+      &FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(started)),
+    )
+    .is_ok()
+  );
+  assert!(
+    pending
+      .advance_branch(&key("architecture"), EvaluationBranchState::Succeeded)
+      .is_err(),
+    "a pending branch cannot skip attempt creation and Build execution"
+  );
+}
+
+#[test]
 fn a_missing_required_evaluation_branch_prevents_other_dispatch() {
   let progress = EvaluationProgress::try_new(
     vec![

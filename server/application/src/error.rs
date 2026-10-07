@@ -1,4 +1,4 @@
-use octacity_server_store::{ReleaseBuildResultHoldError, StoreError};
+use octacity_server_store::{ReleaseBuildResultHoldError, ReplaceFactoryConfigurationError, StoreError};
 use thiserror::Error;
 
 use crate::ProjectionError;
@@ -92,6 +92,15 @@ impl From<ReleaseBuildResultHoldError> for ApplicationError {
     match error {
       ReleaseBuildResultHoldError::PreconditionFailed => Self::PreconditionFailed,
       ReleaseBuildResultHoldError::Store(error) => Self::Store(error),
+    }
+  }
+}
+
+impl From<ReplaceFactoryConfigurationError> for ApplicationError {
+  fn from(error: ReplaceFactoryConfigurationError) -> Self {
+    match error {
+      ReplaceFactoryConfigurationError::PreconditionFailed => Self::PreconditionFailed,
+      ReplaceFactoryConfigurationError::Store(error) => Self::Store(error),
     }
   }
 }

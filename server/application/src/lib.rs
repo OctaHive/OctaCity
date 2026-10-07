@@ -34,6 +34,15 @@ mod definition_discovery;
 mod diagnostic;
 mod error;
 mod external_trigger;
+mod factory_admission;
+#[cfg(test)]
+mod factory_admission_tests;
+mod factory_configuration_cqrs;
+#[cfg(test)]
+mod factory_configuration_cqrs_tests;
+mod factory_reconciliation;
+#[cfg(test)]
+mod factory_reconciliation_tests;
 mod internal_trigger;
 mod internal_trigger_management;
 mod job_event_cqrs;
@@ -153,6 +162,15 @@ pub use external_trigger::{
   WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
   WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
 };
+pub use factory_admission::{AdmitManualFactoryWorkCommand, FactoryAdmissionHandlers, FactoryAdmissionOutcome};
+pub use factory_configuration_cqrs::{
+  CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
+  FactoryConfigurationProjection, FactoryConfigurationValidation, GetCurrentFactoryConfigurationQuery,
+  GetFactoryConfigurationQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
+};
+pub use factory_reconciliation::{
+  FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,
+};
 pub use internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
 pub use internal_trigger_management::{
   CreateInternalTriggerCommand, GetInternalTriggerQuery, InternalTriggerCommandOutcome, InternalTriggerDefinition,
@@ -192,8 +210,8 @@ pub use manual_trigger::{
   EffectiveProjectPolicySourceError, ExactRevisionResolver, JobSpecToolchainPolicy, ManualSourceSelection,
   ManualTriggerCommand, ManualTriggerContext, ManualTriggerContextError, ManualTriggerContextProvider,
   ManualTriggerError, ManualTriggerInputError, ManualTriggerOutcome, ManualTriggerRetryBatchOutcome,
-  ManualTriggerRetryWorker, ManualTriggerRetryWorkerError, ManualTriggerService, RevisionResolutionError,
-  RevisionResolutionRequest, RevisionResolver, StoreBackedEffectiveProjectPolicySource,
+  ManualTriggerRetryWorker, ManualTriggerRetryWorkerError, ManualTriggerService, RepositorySourceSelection,
+  RevisionResolutionError, RevisionResolutionRequest, RevisionResolver, StoreBackedEffectiveProjectPolicySource,
   StoreBackedManualTriggerContext,
 };
 pub use octacity_server_cache::CacheCredentialKey;

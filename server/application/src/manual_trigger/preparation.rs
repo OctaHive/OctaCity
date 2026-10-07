@@ -139,7 +139,7 @@ fn artifact_policy_within(
     && requested.single_output_bytes <= allowed.single_output_bytes
 }
 
-fn select_source(
+pub(crate) fn select_source(
   selection: &ManualSourceSelection,
   repository: &PublishedRepository,
 ) -> Result<ManualSourceSelection, ManualTriggerInputError> {

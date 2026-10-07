@@ -9,6 +9,12 @@ pub enum EntityKind {
   Project,
   /// Versioned build configuration.
   Configuration,
+  /// Versioned Dark Factory configuration.
+  FactoryConfiguration,
+  /// Immutable normalized Work admitted to the Dark Factory.
+  WorkEnvelope,
+  /// Durable Dark Factory lifecycle aggregate.
+  FactoryRun,
   /// Immutable Pipeline resource.
   Pipeline,
   /// Versioned source repository definition.
@@ -60,6 +66,9 @@ impl std::fmt::Display for EntityKind {
     formatter.write_str(match self {
       Self::Project => "project",
       Self::Configuration => "configuration",
+      Self::FactoryConfiguration => "factory_configuration",
+      Self::WorkEnvelope => "work_envelope",
+      Self::FactoryRun => "factory_run",
       Self::Pipeline => "pipeline",
       Self::Repository => "repository",
       Self::Build => "build",

@@ -67,7 +67,10 @@ pub use evaluation::{
   MAX_ASSESSMENT_FINDINGS, MAX_CRITERION_PACKS, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_EVALUATORS,
   MAX_EVIDENCE_ITEMS,
 };
-pub use execution::{DecisionSignalDigests, DecisionSignalRequest, MacroCall, StageAttempt};
+pub use execution::{
+  DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership, MacroCall, StageAttempt, StageAttemptCompletion,
+  StageAttemptOutcome,
+};
 pub use identity::{
   AssessmentId, ChangeSetId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId, DeliveryAttemptId,
   EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId, MacroCallId,
@@ -81,7 +84,8 @@ pub use lifecycle_decision::{
   DecisionSignalProgress, DeliveryIntent, DeliveryProgress, EvaluationBranch, EvaluationBranchState,
   EvaluationProgress, EvaluationState, FactoryClaim, FactoryClaimFence, FactoryDecisionGuard, FactoryEscalationReason,
   FactoryLifecycleProgress, FactoryLifecycleSnapshot, FactoryNextAction, FactoryStageProgress, FactoryStageTarget,
-  FactoryWaitReason, FactoryWipUsage, ReportingProgress, decide_next_action,
+  FactoryWaitReason, FactoryWipUsage, ReportingProgress, decide_next_action, validate_lifecycle_progress,
+  validate_lifecycle_transition,
 };
 pub use permission::{
   CommandArgumentPattern, CommandPermission, FactoryOutputPermissions, FactoryPath, FactoryPermissionDraft,
