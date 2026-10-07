@@ -190,8 +190,10 @@ function IdlePoolReassignment({
 }) {
   const { t } = usePresentation();
   const [targetPoolId, setTargetPoolId] = useState('');
-  const pools = useCursorPage(queryKeys.agentPools, (cursor, signal) =>
-    api.listAgentPools(cursor, signal),
+  const pools = useCursorPage(
+    queryKeys.agentPools,
+    (cursor, signal) => api.listAgentPools(cursor, signal),
+    { refetchStaleOnMount: false },
   );
   const loaded = pools.data?.pages.flatMap((page) => page.items) ?? [];
   const targets = loaded.filter((pool) => pool.id !== agent.pool_id);

@@ -6,6 +6,7 @@ import { FIXTURE_IDS, installOperatorFixture } from './operatorFixture';
 test('keeps loaded Agent branches stable while expanding and selecting', async ({ page }) => {
   await installOperatorFixture(page);
   let agentListReads = 0;
+  let poolListReads = 0;
   let releaseAgentDetail: () => void = () => undefined;
   const agentDetail = new Promise<void>((resolve) => {
     releaseAgentDetail = resolve;
@@ -13,6 +14,10 @@ test('keeps loaded Agent branches stable while expanding and selecting', async (
 
   await page.route(/\/api\/v1\/agents(?:\?.*)?$/u, async (route) => {
     agentListReads += 1;
+    await route.fallback();
+  });
+  await page.route(/\/api\/v1\/agent-pools(?:\?.*)?$/u, async (route) => {
+    poolListReads += 1;
     await route.fallback();
   });
   await page.route(
@@ -33,6 +38,7 @@ test('keeps loaded Agent branches stable while expanding and selecting', async (
   await explorer.getByRole('button', { name: 'Expand Accessible Pool' }).click();
   await expect(agentLink).toBeVisible();
   expect(agentListReads).toBe(1);
+  expect(poolListReads).toBe(1);
 
   const tree = explorer.getByRole('tree', { name: 'Agent capacity hierarchy' });
   await tree.evaluate((element) => {
@@ -46,4 +52,5 @@ test('keeps loaded Agent branches stable while expanding and selecting', async (
   releaseAgentDetail();
   await expect(page.getByRole('heading', { name: 'Accessible Agent' })).toBeVisible();
   await expect(explorer.locator('[data-stability-marker="original-tree"]')).toHaveCount(1);
+  expect(poolListReads).toBe(1);
 });
