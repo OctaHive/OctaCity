@@ -904,7 +904,7 @@ fn oci_v3_specification(ordinary: &JobSpecV2, runner: &RunnerInstallation, octaf
       executables: Vec::new(),
       tools: Vec::new(),
       commands: Vec::new(),
-      max_descendants: 31,
+      max_descendants: 30,
       mounts: vec![
         FactoryMountPermissionV3 {
           root: "/octacity/protected".to_owned(),
@@ -1048,18 +1048,46 @@ async fn exercise_factory_negative_contracts(
   baseline: &JobSpecV3,
   protected_input: ProtectedInputTransferV3,
 ) {
-  let cases = [
+  for (name, spec, expected) in factory_negative_cases(baseline) {
+    let (sender, _receiver) = mpsc::channel(1);
+    let failure = executor
+      .execute(
+        ExecuteJobRequest {
+          spec: spec.into(),
+          source_credentials: BTreeMap::new(),
+          cache_grant: None,
+          protected_inputs: vec![protected_input.clone()],
+        },
+        CancellationToken::new(),
+        &sender,
+      )
+      .await
+      .expect_err("broader Factory authority must fail before real-backend spawn");
+    assert!(
+      matches!(failure.error(), JobError::FactoryPreflight(actual) if *actual == expected),
+      "unexpected {name} Factory backend result: {failure:?}"
+    );
+    failure.cleanup().await.unwrap();
+  }
+}
+
+fn factory_negative_cases(baseline: &JobSpecV3) -> [(&'static str, JobSpecV3, FactoryPreflightError); 6] {
+  [
     factory_negative_case(baseline, "descendants", FactoryPreflightError::Descendants, |spec| {
       spec.permissions.max_descendants += 1;
     }),
     factory_negative_case(baseline, "mount", FactoryPreflightError::Mount, |spec| {
-      spec.permissions.mounts.push(FactoryMountPermissionV3 {
-        root: "/workspace/escape".to_owned(),
-        mode: FactoryMountModeV3::ReadWrite,
-      });
+      spec.permissions.mounts.insert(
+        1,
+        FactoryMountPermissionV3 {
+          root: "/workspace/escape".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+      );
     }),
     factory_negative_case(baseline, "network", FactoryPreflightError::Network, |spec| {
       spec.permissions.network_hosts.push("outside-policy.invalid".to_owned());
+      spec.permissions.network_hosts.sort();
     }),
     factory_negative_case(baseline, "resources", FactoryPreflightError::Resources, |spec| {
       spec.permissions.resources.memory_bytes += 1;
@@ -1077,41 +1105,37 @@ async fn exercise_factory_negative_contracts(
         max_report_bytes: 0,
       };
     }),
-  ];
-
-  for (spec, expected) in cases {
-    let (sender, _receiver) = mpsc::channel(1);
-    let failure = executor
-      .execute(
-        ExecuteJobRequest {
-          spec: spec.into(),
-          source_credentials: BTreeMap::new(),
-          cache_grant: None,
-          protected_inputs: vec![protected_input.clone()],
-        },
-        CancellationToken::new(),
-        &sender,
-      )
-      .await
-      .expect_err("broader Factory authority must fail before real-backend spawn");
-    assert!(
-      matches!(failure.error(), JobError::FactoryPreflight(actual) if *actual == expected),
-      "unexpected negative Factory backend result: {failure:?}"
-    );
-    failure.cleanup().await.unwrap();
-  }
+  ]
 }
 
 fn factory_negative_case(
   baseline: &JobSpecV3,
-  name: &str,
+  name: &'static str,
   expected: FactoryPreflightError,
   mutate: impl FnOnce(&mut JobSpecV3),
-) -> (JobSpecV3, FactoryPreflightError) {
+) -> (&'static str, JobSpecV3, FactoryPreflightError) {
   let mut spec = baseline.clone();
   spec.job_id = format!("{}-{name}", spec.job_id);
   mutate(&mut spec);
-  (spec, expected)
+  (name, spec, expected)
+}
+
+#[test]
+fn negative_factory_backend_cases_preserve_valid_permission_shapes() {
+  let mut baseline: JobSpecV3 = serde_json::from_str(include_str!(
+    "../../../shared/protocol-fixtures/job-spec/job-spec-v3.json"
+  ))
+  .unwrap();
+  baseline.permissions.max_descendants = 30;
+  baseline.permissions.resources.process_count = 32;
+  baseline.permissions.network_hosts = vec!["z.example".to_owned()];
+
+  for (name, spec, _) in factory_negative_cases(&baseline) {
+    spec
+      .permissions
+      .validate()
+      .unwrap_or_else(|error| panic!("{name} case invalidated signed permissions: {error}"));
+  }
 }
 
 fn cancellation_spec(mut spec: VerifiedJobSpec) -> VerifiedJobSpec {
