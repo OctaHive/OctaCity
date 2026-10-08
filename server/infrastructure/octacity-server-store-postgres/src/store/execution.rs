@@ -109,6 +109,16 @@ impl JobExecutionStore for PostgresAuthoritativeStore {
     crate::job_events::prepare(&self.store.pool, lease, accepted_at).await
   }
 
+  async fn authorize_tool_action_lease(
+    &self,
+    lease: LeaseAccess,
+    job_id: octacity_server_domain::JobId,
+    attempt: octacity_server_domain::AttemptNumber,
+    observed_at: octacity_server_domain::Timestamp,
+  ) -> Result<(), StoreError> {
+    crate::lease::authorize_tool_action(&self.store.pool, lease, job_id, attempt, observed_at).await
+  }
+
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     crate::telemetry::observe(
       Operation::Complete,

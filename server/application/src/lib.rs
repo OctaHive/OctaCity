@@ -17,6 +17,7 @@ mod agent_registration;
 mod agent_telemetry;
 #[cfg(test)]
 mod agent_telemetry_tests;
+mod agent_tool_action;
 mod artifact_transfer;
 #[cfg(test)]
 mod artifact_transfer_tests;
@@ -55,6 +56,9 @@ mod factory_job_spec_tests;
 mod factory_reconciliation;
 #[cfg(test)]
 mod factory_reconciliation_tests;
+mod factory_tool_action;
+#[cfg(test)]
+mod factory_tool_action_tests;
 #[cfg(test)]
 mod factory_vertical_slice_tests;
 mod internal_trigger;
@@ -123,6 +127,10 @@ pub use agent_registration::{
 pub use agent_telemetry::{
   AgentTelemetryBatch, AgentTelemetryError, AgentTelemetryExportError, AgentTelemetryExporter, AgentTelemetryInput,
   AgentTelemetryService, AgentTelemetryUseCases,
+};
+pub use agent_tool_action::{
+  AgentToolActionError, AgentToolActionInput, AgentToolActionService, AgentToolActionUseCases,
+  FailClosedToolActionAuthorizer, LeaseBoundToolActionAuthorizer, LeaseBoundToolActionInput,
 };
 pub use artifact_transfer::{
   AgentArtifactError, AgentArtifactTransferUseCases, ArtifactDownloadProjection, ArtifactHandlers, ArtifactProjection,
@@ -202,6 +210,10 @@ pub use factory_job_spec::{
 };
 pub use factory_reconciliation::{
   FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,
+};
+pub use factory_tool_action::{
+  DeterministicToolActionRule, PreparedToolAction, ProtectedToolActionGate, ToolActionGateError, ToolRiskAssessment,
+  ToolRiskSignalEvaluation, ToolRiskSignalEvaluator,
 };
 pub use internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
 pub use internal_trigger_management::{

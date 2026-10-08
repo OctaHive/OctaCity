@@ -240,6 +240,9 @@ function agentResource() {
       agent_version: '0.1.0',
       cache: null,
       coordinator_protocols: [1],
+      execution_contract: { min: 1, max: 1 },
+      executions: [],
+      factory_executions: [],
       host_platform: { architecture: 'arm64', os: 'macos' },
       labels: {},
       octa: {

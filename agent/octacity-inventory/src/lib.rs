@@ -321,6 +321,7 @@ pub fn build_inventory(
     host_capacity: capacity,
     runtimes,
     executions: Vec::new(),
+    factory_executions: Vec::new(),
     octa: OctaInventory {
       version: runner.capabilities.octa_version.clone(),
       runner_sha256: runner.sha256.clone(),

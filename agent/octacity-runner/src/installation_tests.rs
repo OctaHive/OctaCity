@@ -35,7 +35,7 @@ fn codex_release() -> (PrivateDirectoryFixture, RunnerInstallation, PathBuf) {
   fs::write(
     release.path().join("Octa.lock"),
     format!(
-      "version: 1\nplugins:\n  codex:\n    version: '0.5.0'\n    protocol: 1\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {plugin_digest}\n    capabilities: []\n    source: codex.plugin.yml\n"
+      "version: 1\nplugins:\n  codex:\n    version: '0.5.1'\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {plugin_digest}\n    capabilities: [codex.blocking-pre-tool-authorization.v1]\n    source: codex.plugin.yml\n"
     ),
   )
   .unwrap();
@@ -43,7 +43,7 @@ fn codex_release() -> (PrivateDirectoryFixture, RunnerInstallation, PathBuf) {
   write_executable(&runner, b"runner fixture");
   fs::write(
     release.path().join(RUNNER_CAPABILITIES_FILE),
-    r#"{"type":"capabilities","octa_version":"0.5.0","runner_protocols":[1],"event_schemas":[3],"plugin_protocols":[1],"octafile_versions":[1],"platform":"linux-x86_64","features":[]}"#,
+    r#"{"type":"capabilities","octa_version":"0.5.1","runner_protocols":[1],"event_schemas":[3],"plugin_protocols":[2],"octafile_versions":[1],"platform":"linux-x86_64","features":[]}"#,
   )
   .unwrap();
   fs::write(
@@ -52,13 +52,13 @@ fn codex_release() -> (PrivateDirectoryFixture, RunnerInstallation, PathBuf) {
       "format_version": 1,
       "plugin": {
         "name": "codex",
-        "version": "0.5.0",
-        "protocol": 1,
+        "version": "0.5.1",
+        "protocol": 2,
         "manifest": "plugins/codex.plugin.yml"
       },
       "executable": {
         "product": "codex-cli",
-        "supported_versions": ["0.130.0"],
+        "supported_versions": ["0.161.0"],
         "selection_environment": "OCTA_CODEX_EXECUTABLE"
       }
     }))
@@ -69,7 +69,7 @@ fn codex_release() -> (PrivateDirectoryFixture, RunnerInstallation, PathBuf) {
   let executable_root = release.path().join("operator-tools");
   octacity_private_fs::create_private_directory(&executable_root).unwrap();
   let executable = executable_root.join(if cfg!(windows) { "codex.exe" } else { "codex" });
-  write_executable(&executable, &linux_x86_64_executable_with_version("codex-cli 0.130.0"));
+  write_executable(&executable, &linux_x86_64_executable_with_version("codex-cli 0.161.0"));
   (release, installation, executable)
 }
 
@@ -159,7 +159,7 @@ fn verifies_external_executable_against_release_compatibility() {
   let digest = file_sha256(&executable).unwrap();
   let configured = ConfiguredExternalExecutable {
     product: "codex-cli".to_owned(),
-    version: "0.130.0".to_owned(),
+    version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
     executable: executable.clone(),
     sha256: digest.clone(),
@@ -182,7 +182,7 @@ fn revalidation_rejects_plugin_and_executable_drift_before_spawn() {
   let (_release, installation, executable) = codex_release();
   let configured = ConfiguredExternalExecutable {
     product: "codex-cli".to_owned(),
-    version: "0.130.0".to_owned(),
+    version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
     executable: executable.clone(),
     sha256: file_sha256(&executable).unwrap(),
@@ -192,7 +192,7 @@ fn revalidation_rejects_plugin_and_executable_drift_before_spawn() {
 
   fs::write(
     &executable,
-    linux_x86_64_executable_with_version("codex-cli 0.130.0 drift"),
+    linux_x86_64_executable_with_version("codex-cli 0.161.0 drift"),
   )
   .unwrap();
   assert!(installation.revalidate_files(&verified).is_err());
@@ -216,7 +216,7 @@ fn rejects_compatibility_metadata_drift_after_release_inventory() {
   let (release, installation, _executable) = codex_release();
   fs::write(
     release.path().join(CODEX_COMPATIBILITY_FILE),
-    r#"{"format_version":1,"plugin":{"name":"codex","version":"0.5.1","protocol":1,"manifest":"plugins/codex.plugin.yml"},"executable":{"product":"codex-cli","supported_versions":["0.130.0"],"selection_environment":"OCTA_CODEX_EXECUTABLE"}}"#,
+    r#"{"format_version":1,"plugin":{"name":"codex","version":"0.5.1","protocol":1,"manifest":"plugins/codex.plugin.yml"},"executable":{"product":"codex-cli","supported_versions":["0.161.0"],"selection_environment":"OCTA_CODEX_EXECUTABLE"}}"#,
   )
   .unwrap();
 
@@ -235,7 +235,7 @@ fn rejects_absent_wrong_version_digest_and_platform_external_executables() {
   let digest = file_sha256(&executable).unwrap();
   let configured = ConfiguredExternalExecutable {
     product: "codex-cli".to_owned(),
-    version: "0.130.0".to_owned(),
+    version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
     executable,
     sha256: digest,
@@ -289,7 +289,7 @@ fn rejects_binary_platform_and_version_claims_not_present_in_the_executable() {
   let digest = file_sha256(&executable).unwrap();
   let wrong_version_bytes = ConfiguredExternalExecutable {
     product: "codex-cli".to_owned(),
-    version: "0.130.0".to_owned(),
+    version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
     executable: executable.clone(),
     sha256: digest,
@@ -302,12 +302,12 @@ fn rejects_binary_platform_and_version_claims_not_present_in_the_executable() {
       .contains("version identity")
   );
 
-  let mut arm = linux_x86_64_executable_with_version("codex-cli 0.130.0");
+  let mut arm = linux_x86_64_executable_with_version("codex-cli 0.161.0");
   arm[18..20].copy_from_slice(&183_u16.to_le_bytes());
   write_executable(&executable, &arm);
   let wrong_platform_bytes = ConfiguredExternalExecutable {
     product: "codex-cli".to_owned(),
-    version: "0.130.0".to_owned(),
+    version: "0.161.0".to_owned(),
     platform: "linux-x86_64".to_owned(),
     sha256: file_sha256(&executable).unwrap(),
     executable,
@@ -332,7 +332,7 @@ fn rejects_external_executable_writable_by_other_users() {
   let error = installation
     .verify_external_executables(&[ConfiguredExternalExecutable {
       product: "codex-cli".to_owned(),
-      version: "0.130.0".to_owned(),
+      version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
       executable,
       sha256: digest,

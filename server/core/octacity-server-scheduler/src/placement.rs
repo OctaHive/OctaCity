@@ -1,8 +1,9 @@
 use std::collections::BTreeSet;
 
 use octacity_protocol::{
-  AgentInventory, BackendHealthStatus, EXECUTION_CONTRACT_V2, ExecutionMode, HostSnapshot, OciIsolation, PlatformSpec,
-  RuntimeMode, RuntimeTarget, SUPPORTED_EXECUTION_CONTRACTS, TaskPluginInventory,
+  AgentInventory, BackendHealthStatus, EXECUTION_CONTRACT_V2, ExecutionCapabilityV2, ExecutionMode,
+  FactoryEnforcementCapabilityV3, HostSnapshot, OciIsolation, PlatformSpec, RuntimeMode, RuntimeTarget,
+  SUPPORTED_EXECUTION_CONTRACTS, TaskPluginInventory,
 };
 use octacity_server_domain::RuntimeClass;
 use octacity_server_job::{JobRequirements, JobRuntimePolicy, JobSpecTemplate};
@@ -49,14 +50,25 @@ pub fn is_compatible_with_contract(
   execution_contract_version >= policy.minimum_execution_contract
     && labels_match(inventory, requirements)
     && resources_match(snapshot, requirements)
-    && backend_is_available(inventory, snapshot, requirements, policy.runtime)
+    && backend_is_available(
+      inventory,
+      snapshot,
+      requirements,
+      policy.runtime,
+      template.required_factory_enforcement(),
+    )
     && capabilities_match(inventory, requirements, requirements.runtime_class.is_legacy())
     && inventory.octa.version == policy.octa.version
     && inventory.octa.runner_sha256 == policy.octa.runner_sha256
     && inventory.octa.runner_protocols.contains(&policy.octa.runner_protocol)
     && inventory.octa.event_schemas.contains(&policy.octa.event_schema)
     && inventory.octa.plugin_protocols.contains(&policy.octa.plugin_protocol)
-    && plugins_match(&inventory.octa.plugins, policy.octa, &task_plugin_platform)
+    && plugins_match(
+      &inventory.octa.plugins,
+      policy.octa,
+      &task_plugin_platform,
+      template.required_tool_control(),
+    )
     && inventory.source_plugins.iter().any(|source| {
       source.name == policy.source_provider
         && source.version == policy.source_plugin_version
@@ -111,6 +123,7 @@ fn backend_is_available(
   snapshot: &HostSnapshot,
   requirements: &JobRequirements,
   runtime_policy: &JobRuntimePolicy,
+  required_factory_enforcement: Option<&[FactoryEnforcementCapabilityV3]>,
 ) -> bool {
   let platform = PlatformSpec {
     os: requirements.operating_system,
@@ -128,6 +141,7 @@ fn backend_is_available(
     }
     return inventory.executions.iter().any(|execution| {
       execution.satisfies(&runtime.target)
+        && factory_enforcement_matches(inventory, execution, required_factory_enforcement)
         && snapshot.backends.iter().any(|health| {
           health.backend == execution.provider.as_str()
             && health.execution.as_ref() == Some(execution)
@@ -151,6 +165,21 @@ fn backend_is_available(
         .backends
         .iter()
         .any(|health| health.backend == runtime.backend && !matches!(health.status, BackendHealthStatus::Unavailable))
+  })
+}
+
+fn factory_enforcement_matches(
+  inventory: &AgentInventory,
+  execution: &ExecutionCapabilityV2,
+  required: Option<&[FactoryEnforcementCapabilityV3]>,
+) -> bool {
+  required.is_none_or(|required| {
+    inventory.factory_executions.iter().any(|candidate| {
+      candidate.execution == *execution
+        && required
+          .iter()
+          .all(|capability| candidate.enforcement.binary_search(capability).is_ok())
+    })
   })
 }
 
@@ -238,15 +267,22 @@ fn capabilities_match(
     .all(|capability| advertised.contains(capability.as_str()))
 }
 
-fn plugins_match(installed: &[TaskPluginInventory], required: &octacity_protocol::OctaSpec, platform: &str) -> bool {
+fn plugins_match(
+  installed: &[TaskPluginInventory],
+  required: &octacity_protocol::OctaSpec,
+  platform: &str,
+  tool_control: Option<&octacity_protocol::FactoryToolControlV3>,
+) -> bool {
   required.plugin_digests.iter().all(|(name, digest)| {
     installed.iter().any(|plugin| {
       plugin.name == *name
         && plugin.sha256 == *digest
         && plugin.protocol == required.plugin_protocol
         && plugin.platforms.iter().any(|candidate| candidate == platform)
+        && tool_control
+          .is_none_or(|control| control.plugin != *name || plugin.capabilities.contains(&control.capability))
     })
-  })
+  }) && tool_control.is_none_or(|control| required.plugin_digests.contains_key(&control.plugin))
 }
 
 #[cfg(test)]
@@ -254,15 +290,16 @@ mod tests {
   use std::collections::{BTreeMap, BTreeSet};
 
   use octacity_protocol::{
-    BackendHealth, BackendHealthStatus, ExecutionCapabilityV2, ExecutionContractRange, ExecutionMode,
-    ExecutionTargetV2, HostCapacity, HostSnapshot, NetworkPolicy, OctaInventory, OctaSpec, OutputLimits,
-    PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeSpec, RuntimeSpecV2, SourcePluginInventory,
-    guarantees_for,
+    BLOCKING_TOOL_AUTHORIZATION_CAPABILITY, BackendHealth, BackendHealthStatus, ExecutionCapabilityV2,
+    ExecutionContractRange, ExecutionMode, ExecutionTargetV2, FactoryEnforcementCapabilityV3,
+    FactoryExecutionCapabilityV3, FactoryToolControlModeV3, FactoryToolControlV3, HostCapacity, HostSnapshot,
+    JobSpecV3, NetworkPolicy, OctaInventory, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs,
+    RuntimeCapability, RuntimeSpec, RuntimeSpecV2, SourcePluginInventory, guarantees_for,
   };
   use octacity_server_domain::{BuildId, ImmutableRevision, PipelineNodeId, RepositoryLocator};
   use octacity_server_job::{
-    JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecPolicySnapshot, JobSpecValidity, SourcePluginPolicy,
-    derive_job_spec_template,
+    JobRuntimePolicy, JobSpecBuildSnapshot, JobSpecPolicySnapshot, JobSpecValidity, ManagedJobSpecIntent,
+    SourcePluginPolicy, derive_job_spec_template, derive_managed_job_spec_template,
   };
   use octacity_server_pipeline::ExecutionCapability;
   use serde_json::json;
@@ -318,6 +355,38 @@ mod tests {
       &requirements,
       &template
     ));
+  }
+
+  #[test]
+  fn tool_risk_control_requires_the_exact_blocking_plugin_capability() {
+    let required = OctaSpec {
+      version: "0.5.1".to_owned(),
+      runner_sha256: DIGEST.to_owned(),
+      runner_protocol: 3,
+      event_schema: 4,
+      plugin_protocol: 2,
+      plugin_digests: BTreeMap::from([("codex".to_owned(), DIGEST.to_owned())]),
+    };
+    let control = FactoryToolControlV3 {
+      plugin: "codex".to_owned(),
+      capability: BLOCKING_TOOL_AUTHORIZATION_CAPABILITY.to_owned(),
+      mode: FactoryToolControlModeV3::ToolRisk,
+    };
+    let mut installed = vec![TaskPluginInventory {
+      name: "codex".to_owned(),
+      version: "0.5.1".to_owned(),
+      protocol: 2,
+      platforms: vec!["linux-amd64".to_owned()],
+      sha256: DIGEST.to_owned(),
+      capabilities: vec![],
+    }];
+
+    assert!(!plugins_match(&installed, &required, "linux-amd64", Some(&control)));
+    assert!(plugins_match(&installed, &required, "linux-amd64", None));
+    installed[0]
+      .capabilities
+      .push(BLOCKING_TOOL_AUTHORIZATION_CAPABILITY.to_owned());
+    assert!(plugins_match(&installed, &required, "linux-amd64", Some(&control)));
   }
 
   #[test]
@@ -422,6 +491,117 @@ mod tests {
     assert!(!is_compatible(&inventory, &snapshot, &requirements, &template));
   }
 
+  #[test]
+  fn factory_enforcement_matching_is_provider_neutral_and_complete() {
+    let mut inventory = inventory();
+    let required = FactoryEnforcementCapabilityV3::ALL;
+    for provider in ["containerd", "microsandbox"] {
+      let execution = ExecutionCapabilityV2 {
+        provider: octacity_protocol::ExecutionProviderId::new(provider).unwrap(),
+        mode: ExecutionMode::Isolation,
+        host_platform: platform(),
+        target_platform: platform(),
+        guarantees: guarantees_for(ExecutionMode::Isolation),
+        immutable_images: true,
+      };
+      inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
+        execution: execution.clone(),
+        enforcement: required.to_vec(),
+      }];
+      assert!(factory_enforcement_matches(&inventory, &execution, Some(&required)));
+    }
+
+    inventory.factory_executions[0].enforcement.pop();
+    let execution = inventory.factory_executions[0].execution.clone();
+    assert!(!factory_enforcement_matches(&inventory, &execution, Some(&required),));
+  }
+
+  #[test]
+  fn managed_v3_placement_requires_every_advertised_semantic_control() {
+    let canonical: JobSpecV3 = serde_json::from_str(include_str!(
+      "../../../../shared/protocol-fixtures/job-spec/job-spec-v3.json"
+    ))
+    .unwrap();
+    let template = managed_template(&canonical);
+    let target = &canonical.runtime.target;
+    let mut requirements = requirements();
+    requirements.capabilities.clear();
+    requirements.runtime_class = RuntimeClass::Virtualization;
+    requirements.operating_system = target.target_platform.os;
+    requirements.architecture = target.target_platform.architecture;
+    requirements.host_platform = Some(target.host_platform);
+    requirements.required_guarantees = target.required_guarantees.clone();
+    requirements.minimum_cpu_millis = canonical.runtime.cpu_millis;
+    requirements.minimum_memory_bytes = canonical.runtime.memory_bytes;
+    requirements.minimum_disk_bytes = canonical.runtime.writable_disk_bytes;
+
+    let execution = ExecutionCapabilityV2 {
+      provider: octacity_protocol::ExecutionProviderId::new("qualified-vm").unwrap(),
+      mode: target.mode,
+      host_platform: target.host_platform,
+      target_platform: target.target_platform,
+      guarantees: target.required_guarantees.clone(),
+      immutable_images: true,
+    };
+    let mut inventory = inventory();
+    inventory.execution_contract = ExecutionContractRange { min: 1, max: 3 };
+    inventory.host_platform = target.host_platform;
+    inventory.runtimes.clear();
+    inventory.executions = vec![execution.clone()];
+    inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
+      execution: execution.clone(),
+      enforcement: canonical.required_enforcement.clone(),
+    }];
+    inventory.octa = OctaInventory {
+      version: canonical.octa.version.clone(),
+      runner_sha256: canonical.octa.runner_sha256.clone(),
+      build_commit: None,
+      runner_protocols: vec![canonical.octa.runner_protocol],
+      event_schemas: vec![canonical.octa.event_schema],
+      plugin_protocols: vec![canonical.octa.plugin_protocol],
+      octafile_versions: vec![1],
+      features: Vec::new(),
+      plugins: canonical
+        .octa
+        .plugin_digests
+        .iter()
+        .map(|(name, digest)| TaskPluginInventory {
+          name: name.clone(),
+          version: "0.5.0".to_owned(),
+          protocol: canonical.octa.plugin_protocol,
+          platforms: vec![plugin_platform(target.target_platform)],
+          sha256: digest.clone(),
+          capabilities: Vec::new(),
+        })
+        .collect(),
+    };
+    inventory.source_plugins = vec![SourcePluginInventory {
+      name: canonical.source.provider.clone(),
+      version: canonical.source.plugin_version.clone(),
+      protocol_min: 1,
+      protocol_max: 1,
+      platforms: vec![plugin_platform(target.host_platform)],
+      sha256: canonical.source.plugin_sha256.clone(),
+    }];
+    let snapshot = HostSnapshot {
+      available_cpu_millis: 2_000,
+      available_memory_bytes: 1_073_741_824,
+      work_disk_free_bytes: 2_147_483_648,
+      state_disk_free_bytes: 2_147_483_648,
+      backends: vec![BackendHealth {
+        backend: execution.provider.to_string(),
+        execution: Some(execution),
+        status: BackendHealthStatus::Ready,
+        message: None,
+      }],
+      ..snapshot()
+    };
+
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+    inventory.factory_executions[0].enforcement.pop();
+    assert!(!is_compatible(&inventory, &snapshot, &requirements, &template));
+  }
+
   fn requirements() -> JobRequirements {
     JobRequirements {
       capabilities: BTreeSet::from([
@@ -462,6 +642,7 @@ mod tests {
         isolation: None,
       }],
       executions: Vec::new(),
+      factory_executions: Vec::new(),
       octa: OctaInventory {
         version: "1.0.0".to_owned(),
         runner_sha256: DIGEST.to_owned(),
@@ -560,6 +741,46 @@ mod tests {
       &build,
       PipelineNodeId::new("build").unwrap(),
       json!({"commands": ["build"]}),
+      &policy,
+    )
+    .unwrap()
+  }
+
+  fn managed_template(canonical: &JobSpecV3) -> JobSpecTemplate {
+    let build = JobSpecBuildSnapshot::new(
+      BuildId::from_uuid(Uuid::from_u128(1)).unwrap(),
+      ImmutableRevision::new(canonical.source.revision.clone()).unwrap(),
+      None,
+      RepositoryLocator::new("https://example.test/repository.git").unwrap(),
+      BTreeMap::new(),
+    )
+    .unwrap();
+    let policy = JobSpecPolicySnapshot::new(
+      SourcePluginPolicy::new(
+        canonical.source.provider.clone(),
+        canonical.source.plugin_version.clone(),
+        canonical.source.plugin_sha256.clone(),
+        "url",
+      )
+      .unwrap(),
+      canonical.octa.clone(),
+      JobRuntimePolicy::Current(canonical.runtime.clone()),
+      None,
+      canonical.cache.clone(),
+      canonical.outputs.clone(),
+      JobSpecValidity::new(canonical.expires_at - canonical.issued_at).unwrap(),
+    )
+    .unwrap();
+    derive_managed_job_spec_template(
+      &build,
+      PipelineNodeId::new("factory").unwrap(),
+      ManagedJobSpecIntent::new(
+        canonical.execution.clone(),
+        canonical.factory.clone().unwrap(),
+        canonical.protected_inputs.clone(),
+        canonical.permissions.clone(),
+        canonical.required_enforcement.clone(),
+      ),
       &policy,
     )
     .unwrap()

@@ -1,10 +1,14 @@
 //! Portable contract checks for the Linux containerd adapter.
 
-use std::os::{fd::FromRawFd as _, unix::net::UnixListener};
+use std::{
+  collections::BTreeMap,
+  os::{fd::FromRawFd as _, unix::net::UnixListener},
+};
 
 use super::*;
 use octacity_execution::{
-  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionCacheMounts, LocalCacheCapacity,
+  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionCacheMounts, FACTORY_OUTPUT_ROOT,
+  FACTORY_PROTECTED_INPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT, FactoryExecutionLayout, LocalCacheCapacity,
   WORKLOAD_IDENTITY_PATH,
 };
 
@@ -63,6 +67,7 @@ impl Fixture {
       data_dir: self.workspace.join("data").canonicalize().unwrap(),
       workload_identity: None,
       cache: None,
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 64 * 1024 * 1024,
       writable_disk_bytes: u64::MAX,
@@ -217,6 +222,7 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
       token_file: Some(cache_token.clone()),
       ca_certificate_file: Some(cache_ca.clone()),
     }),
+    factory: None,
     cpu_millis: 2000,
     memory_bytes: 1024,
     writable_disk_bytes: 2048,
@@ -306,6 +312,86 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
       readonly
     );
   }
+}
+
+#[test]
+fn projects_the_factory_layout_without_a_writable_parent_mount() {
+  let fixture = Fixture::new();
+  let release = fixture._temporary.path().join("release");
+  fs::create_dir(&release).unwrap();
+  for file in [release.join("octa-runner"), release.join("Octa.lock")] {
+    fs::write(file, "fixture").unwrap();
+  }
+  fs::create_dir(release.join("plugins")).unwrap();
+  let job_root = fixture.workspace.clone();
+  let source = job_root.join("source");
+  let scratch = job_root.join("scratch");
+  let output = job_root.join("output");
+  let protected = job_root.join("protected");
+  let data_dir = scratch.join(".octacity");
+  for directory in [&source, &scratch, &output, &protected, &data_dir] {
+    fs::create_dir(directory).unwrap();
+  }
+  let mut permissions = fs::metadata(&protected).unwrap().permissions();
+  permissions.set_readonly(true);
+  fs::set_permissions(&protected, permissions).unwrap();
+  let runner = RunnerProgram {
+    release_root: release.clone(),
+    executable: release.join("octa-runner"),
+    plugins_dir: release.join("plugins"),
+    plugin_lock: release.join("Octa.lock"),
+    external_executables: BTreeMap::new(),
+  };
+  let request = StartExecution {
+    execution_id: "factory-job".to_owned(),
+    workspace_root: fixture.config.work_root.clone(),
+    workspace: source.clone(),
+    data_dir,
+    workload_identity: None,
+    cache: None,
+    factory: Some(FactoryExecutionLayout {
+      protected_inputs: protected.clone(),
+      source: source.clone(),
+      scratch: scratch.clone(),
+      output: output.clone(),
+      process_limit: 3,
+    }),
+    cpu_millis: 1000,
+    memory_bytes: 64 * 1024 * 1024,
+    writable_disk_bytes: u64::MAX,
+    max_duration: Duration::from_secs(1),
+    root: ExecutionTarget::Oci {
+      reference: format!("example/build@sha256:{}", "0".repeat(64)),
+      platform: host_capability().unwrap().platform,
+      isolation: OciIsolation::Process,
+    },
+    network: NetworkAccess::Disabled,
+  };
+  let paths = guest_paths(&runner, &request).unwrap();
+  let spec = oci_spec(&fixture.config, &runner, &request, &paths, &[], "factory-job").unwrap();
+  assert_eq!(paths.workspace, Path::new(FACTORY_SOURCE_ROOT));
+  assert_eq!(paths.data_dir, Path::new(FACTORY_SCRATCH_ROOT).join(".octacity"));
+  assert_eq!(spec["linux"]["resources"]["pids"]["limit"], 3);
+  let mounts = spec["mounts"].as_array().unwrap();
+  assert!(!mounts.iter().any(|mount| mount["destination"] == "/workspace"));
+  for (destination, source, readonly) in [
+    (FACTORY_SOURCE_ROOT, source, false),
+    (FACTORY_SCRATCH_ROOT, scratch, false),
+    (FACTORY_OUTPUT_ROOT, output, false),
+    (FACTORY_PROTECTED_INPUT_ROOT, protected.clone(), true),
+  ] {
+    let mount = mounts.iter().find(|mount| mount["destination"] == destination).unwrap();
+    assert_eq!(mount["source"], source.to_string_lossy().as_ref());
+    assert_eq!(
+      mount["options"].as_array().unwrap().iter().any(|value| value == "ro"),
+      readonly
+    );
+  }
+
+  let mut permissions = fs::metadata(&protected).unwrap().permissions();
+  use std::os::unix::fs::PermissionsExt as _;
+  permissions.set_mode(permissions.mode() | 0o200);
+  fs::set_permissions(protected, permissions).unwrap();
 }
 
 #[test]

@@ -104,8 +104,10 @@ JobSpec v1/v2 contract has no per-Job tool selector: when a tool is configured,
 every admitted Job on that Agent can reach it through the release-owned plugin
 selector. Operators must therefore use a dedicated Agent and Pool constrained
 to the intended Projects and must not install model credentials in that
-profile. Factory Permission Sets in JobSpec v3 will replace this deployment
-scope with signed per-Job selection; v1/v2 are deliberately unchanged.
+profile. Factory Permission Sets in JobSpec v3 provide signed per-Job selection
+for qualified v3 Jobs; v1/v2 are deliberately unchanged and still require this
+deployment scope. Per-action Codex bounded control remains disabled until its
+exact-action adapter and Agent-local broker path are release-qualified.
 
 Factory admission stores the unresolved command intent as its idempotency
 fingerprint before mutable capability or source resolution. An exact retry

@@ -340,6 +340,7 @@ mod tests {
         token_file: Some(cache_token.clone()),
         ca_certificate_file: Some(cache_ca.clone()),
       }),
+      factory: None,
       cpu_millis: 2000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,

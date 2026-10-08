@@ -189,6 +189,7 @@ struct VerifiedPlugin {
   version: String,
   protocol: u16,
   manifest: PathBuf,
+  capabilities: Vec<String>,
 }
 
 fn verify_plugins(
@@ -249,6 +250,7 @@ fn verify_plugins(
         version: plugin.version,
         protocol: plugin.protocol,
         manifest: source,
+        capabilities: plugin.capabilities,
       },
     );
   }
@@ -271,7 +273,7 @@ impl CodexCompatibility {
       },
       executable: CodexExecutableCompatibility {
         product: "codex-cli".to_owned(),
-        supported_versions: vec!["0.130.0".to_owned()],
+        supported_versions: vec!["0.161.0".to_owned()],
         selection_environment: "OCTA_CODEX_EXECUTABLE".to_owned(),
       },
     };
@@ -285,6 +287,7 @@ impl CodexCompatibility {
     if plugin.version != self.plugin.version
       || plugin.protocol != self.plugin.protocol
       || plugin.manifest != Path::new(&self.plugin.manifest)
+      || plugin.capabilities != ["codex.blocking-pre-tool-authorization.v1"]
     {
       return Err(invalid("Octa Codex compatibility metadata differs from Octa.lock"));
     }

@@ -339,6 +339,9 @@ function agent(id: string, name: string, poolId: string): AgentResource {
       agent_version: '0.1.0',
       cache: null,
       coordinator_protocols: [1],
+      execution_contract: { min: 1, max: 1 },
+      executions: [],
+      factory_executions: [],
       host_platform: { architecture: 'amd64', os: 'linux' },
       labels: { region: 'local' },
       octa: {

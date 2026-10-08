@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, num::NonZeroU64};
 
 use octacity_protocol::{
   CachePolicy, EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, FactoryCausalityV3,
-  FactoryEnforcementCapabilityV3, FactoryPermissionSetV3, ManagedOctaExecutionV3, OctaSpec, OutputLimits,
-  ProtectedInputManifestV3, RuntimeSpec, RuntimeSpecV2, SignedEnvelope,
+  FactoryEnforcementCapabilityV3, FactoryPermissionSetV3, FactoryToolControlV3, ManagedOctaExecutionV3, OctaSpec,
+  OutputLimits, ProtectedInputManifestV3, RuntimeSpec, RuntimeSpecV2, SignedEnvelope,
 };
 use octacity_server_domain::{
   BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference,
@@ -411,6 +411,31 @@ impl JobSpecTemplate {
         (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Current(_)) => EXECUTION_CONTRACT_V2,
         (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Legacy(_)) => EXECUTION_CONTRACT_V1,
       },
+    }
+  }
+
+  /// Borrows the semantic controls an execution route must enforce for this Job.
+  ///
+  /// Ordinary Jobs do not require the protected Factory execution contract.
+  /// Provider identities are deliberately absent: scheduling is based on the
+  /// guarantees expressed by the signed v3 intent.
+  #[must_use]
+  pub fn required_factory_enforcement(&self) -> Option<&[FactoryEnforcementCapabilityV3]> {
+    match &self.execution {
+      JobExecutionIntent::Ordinary(_) => None,
+      JobExecutionIntent::Managed(managed) => Some(&managed.required_enforcement),
+    }
+  }
+
+  /// Borrows the blocking harness capability required by a managed tool-using task.
+  ///
+  /// Ordinary CI/CD templates and managed tasks without tool authority return
+  /// `None`, so Factory bounded control cannot reduce their eligible capacity.
+  #[must_use]
+  pub fn required_tool_control(&self) -> Option<&FactoryToolControlV3> {
+    match &self.execution {
+      JobExecutionIntent::Ordinary(_) => None,
+      JobExecutionIntent::Managed(managed) => managed.execution.tool_control.as_ref(),
     }
   }
 

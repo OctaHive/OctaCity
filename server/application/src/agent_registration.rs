@@ -53,6 +53,8 @@ pub enum AgentOperation {
   Upload,
   /// Begin or revoke remote-cache authority.
   Cache,
+  /// Request a disposition for one blocked protected tool action.
+  ToolAction,
   /// Commit terminal job state.
   Complete,
 }

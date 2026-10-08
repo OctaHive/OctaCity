@@ -60,9 +60,15 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
       [
         ("agent_version", non_empty_string()),
         ("coordinator_protocols", unique_array(positive_integer())),
+        ("execution_contract", schema_ref("AgentExecutionContractRange")),
         ("labels", string_map()),
         ("host_platform", schema_ref("ProtocolPlatform")),
         ("runtimes", array(schema_ref("AgentRuntimeCapability"))),
+        ("executions", array(schema_ref("AgentExecutionCapability"))),
+        (
+          "factory_executions",
+          array(schema_ref("AgentFactoryExecutionCapability")),
+        ),
         ("octa", schema_ref("AgentOctaInventory")),
         ("source_plugins", array(schema_ref("AgentSourcePluginInventory"))),
         ("cache", nullable(schema_ref("AgentCacheCapability"))),
@@ -70,9 +76,12 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
       &[
         "agent_version",
         "coordinator_protocols",
+        "execution_contract",
         "labels",
         "host_platform",
         "runtimes",
+        "executions",
+        "factory_executions",
         "octa",
         "source_plugins",
         "cache",

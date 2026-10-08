@@ -18,6 +18,7 @@
 mod execution_route;
 mod factory_preflight;
 mod protected_inputs;
+mod tool_action_gate;
 
 pub use execution_route::ExecutionBackendRoute;
 use execution_route::{ExecutableJobSpec, ExecutableRuntime, SelectedBackend};
@@ -25,6 +26,9 @@ use factory_preflight::FactoryAdmission;
 pub use factory_preflight::FactoryPreflightError;
 pub use protected_inputs::{
   ProtectedInputError, ProtectedInputStager, ProtectedInputStagerConfig, StagedProtectedInputs,
+};
+pub use tool_action_gate::{
+  AuthorizedFactoryToolAction, FactoryToolActionEnforcementError, enforce_factory_tool_action,
 };
 
 use std::{
@@ -36,11 +40,12 @@ use std::{
 };
 
 use octacity_cache_session::{CacheSessionContext, CacheSessionError, CacheSessionManager, PreparedCacheSession};
-use octacity_execution::{ExecutionBackend, ExecutionError, NetworkAccess, StartExecution};
+use octacity_execution::{ExecutionBackend, ExecutionError, FactoryExecutionLayout, NetworkAccess, StartExecution};
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
   BeginCacheSessionResponse, ExecutionCacheIdentityV2, ExecutionEvidenceV2, ExecutionMode, ExecutionProviderId,
-  FactoryPermissionSetV3, NetworkPolicy, OutputLimits, ProtectedInputTransferV3, RuntimeMode, VerifiedJobSpec,
+  ExecutionSpec, FactoryPermissionSetV3, NetworkPolicy, OutputLimits, ProtectedInputTransferV3, RuntimeMode,
+  VerifiedJobSpec,
 };
 use octacity_runner::{
   RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
@@ -280,9 +285,17 @@ pub enum JobError {
   /// Signed Factory authority exceeded local policy or verified inventory.
   #[error("Factory execution preflight failed: {0}")]
   FactoryPreflight(#[source] FactoryPreflightError),
-  /// Generic admission succeeded, but no backend-specific v3 projection is enabled yet.
-  #[error("qualified Factory backend projection is not enabled")]
-  ManagedExecutionUnavailable,
+  /// Protected Factory inputs could not be staged or revalidated safely.
+  #[error("protected Factory inputs failed: {0}")]
+  ProtectedInputs(#[source] ProtectedInputError),
+  /// Execution failed and protected-input cleanup also failed.
+  #[error("job failed ({operation}) and protected-input cleanup also failed: {cleanup}")]
+  OperationAndProtectedInputCleanup {
+    /// Original lifecycle failure.
+    operation: Box<JobError>,
+    /// Additional immutable-input cleanup failure.
+    cleanup: ProtectedInputError,
+  },
   #[error("job was cancelled before runner execution")]
   /// Cancellation stopped the job lifecycle.
   Cancelled,
@@ -330,6 +343,7 @@ pub struct JobExecutor {
   runner_supervision: RunnerSupervisionPolicy,
   external_executables: BTreeMap<String, VerifiedExternalExecutable>,
   factory_permissions: Option<FactoryPermissionSetV3>,
+  protected_input_stager: Option<ProtectedInputStager>,
 }
 
 impl JobExecutor {
@@ -396,12 +410,19 @@ impl JobExecutor {
       runner_supervision: config.runner_supervision,
       external_executables: config.external_executables,
       factory_permissions: config.factory_permissions,
+      protected_input_stager: None,
     })
   }
 
   /// Enables job-scoped cache grants for an installation that advertises them.
   pub fn with_cache(mut self, cache: Arc<CacheSessionManager>) -> Self {
     self.cache = Some(cache);
+    self
+  }
+
+  /// Enables lease-scoped protected-input transfers for admitted Factory jobs.
+  pub fn with_protected_input_stager(mut self, stager: ProtectedInputStager) -> Self {
+    self.protected_input_stager = Some(stager);
     self
   }
 
@@ -477,11 +498,12 @@ impl JobExecutor {
       return Err(JobError::Cancelled.into());
     }
 
-    let external_executables = if let Some(intent) = spec.execution.managed() {
+    let managed = spec.execution.managed().cloned();
+    let external_executables = if let Some(intent) = managed.as_ref() {
       let ExecutableRuntime::Current(runtime) = &spec.runtime else {
         return Err(JobError::FactoryPreflight(FactoryPreflightError::BackendCapability).into());
       };
-      FactoryAdmission {
+      let selected = FactoryAdmission {
         intent,
         runtime,
         outputs: &spec.outputs,
@@ -493,11 +515,10 @@ impl JobExecutor {
       }
       .authorize()
       .map_err(JobError::FactoryPreflight)?;
-
-      // Task 5.4 admits only the generic authority envelope. Concrete
-      // protected-input staging and backend projection are enabled together by
-      // the backend-specific conformance work, never by falling back to Host.
-      return Err(JobError::ManagedExecutionUnavailable.into());
+      if self.protected_input_stager.is_none() {
+        return Err(JobError::ProtectedInputs(ProtectedInputError::Policy).into());
+      }
+      selected
     } else {
       if !request.protected_inputs.is_empty() {
         return Err(JobError::FactoryPreflight(FactoryPreflightError::ProtectedInputTransfer).into());
@@ -508,9 +529,29 @@ impl JobExecutor {
     let execution_id = execution_id(&spec.job_id, spec.attempt);
     let job_root = self.work_root.join(&execution_id);
     create_private_directory(&job_root)?;
+    let staged = match (&managed, &self.protected_input_stager) {
+      (Some(_), Some(stager)) => Some(
+        stager
+          .stage(&request.protected_inputs, &job_root, &cancellation)
+          .await
+          .map_err(JobError::ProtectedInputs)
+          .map_err(|error| JobFailure::with_workspace(error, job_root.clone()))?,
+      ),
+      (None, _) => None,
+      (Some(_), None) => unreachable!("managed execution checked protected-input policy before workspace creation"),
+    };
     let result = async {
-      let workspace = job_root.join("workspace");
+      let workspace = job_root.join(if managed.is_some() { "source" } else { "workspace" });
       create_private_directory(&workspace)?;
+      let (scratch, output) = if managed.is_some() {
+        let scratch = job_root.join("scratch");
+        let output = job_root.join("output");
+        create_private_directory(&scratch)?;
+        create_private_directory(&output)?;
+        (Some(scratch), Some(output))
+      } else {
+        (None, None)
+      };
       let deadline = Instant::now() + Duration::from_secs(spec.runtime.timeout_seconds());
       info!(job_id = %spec.job_id, attempt = spec.attempt, runtime = ?spec.runtime.label(), "starting job");
 
@@ -537,7 +578,7 @@ impl JobExecutor {
       if cancellation.is_cancelled() {
         return Err(JobError::Cancelled);
       }
-      let data_dir = workspace.join(".octacity");
+      let data_dir = scratch.as_ref().unwrap_or(&workspace).join(".octacity");
       create_private_directory(&data_dir)?;
       let identity = match spec.runtime.workload_identity_profile() {
         Some(profile) => Some(
@@ -586,6 +627,38 @@ impl JobExecutor {
         }
       };
       let root = spec.runtime.execution_target()?;
+      let (runner_spec, factory) = match (&managed, &staged, &scratch, &output) {
+        (Some(intent), Some(staged), Some(scratch), Some(output)) => {
+          let protected_inputs = staged
+            .revalidate_for_runner()
+            .map_err(JobError::ProtectedInputs)?
+            .to_owned();
+          let process_limit = intent
+            .permissions
+            .max_descendants
+            .saturating_add(1)
+            .min(intent.permissions.resources.process_count);
+          (
+            managed_runner_spec(intent)?,
+            Some(FactoryExecutionLayout {
+              protected_inputs,
+              source: workspace.clone(),
+              scratch: scratch.clone(),
+              output: output.clone(),
+              process_limit,
+            }),
+          )
+        }
+        (None, None, None, None) => (
+          spec
+            .execution
+            .ordinary()
+            .expect("ordinary execution has an ordinary runner specification")
+            .clone(),
+          None,
+        ),
+        _ => return Err(JobError::Invalid("managed execution layout is incomplete".to_owned())),
+      };
       let operation = async {
         supervise(
           &self.runner,
@@ -600,6 +673,7 @@ impl JobExecutor {
               data_dir,
               workload_identity: identity.as_ref().map(|lease| lease.path().to_owned()),
               cache: cache.as_ref().map(|session| session.execution().clone()),
+              factory,
               cpu_millis: spec.runtime.cpu_millis(),
               memory_bytes: spec.runtime.memory_bytes(),
               writable_disk_bytes: spec.runtime.writable_disk_bytes(),
@@ -607,11 +681,7 @@ impl JobExecutor {
               root,
               network,
             },
-            spec: spec
-              .execution
-              .ordinary()
-              .expect("managed execution returned before runner supervision")
-              .clone(),
+            spec: runner_spec,
             cache: cache.as_ref().map(|session| session.runner().clone()),
             redactions: RunnerRedactions::new(
               identity
@@ -637,6 +707,7 @@ impl JobExecutor {
       Ok((source, runner, workspace))
     }
     .await;
+    let result = finish_protected_inputs(result, staged);
     match result {
       Ok((source, runner, workspace)) => Ok(JobCompletion {
         source,
@@ -755,6 +826,45 @@ impl JobExecutor {
         })
       }
     }
+  }
+}
+
+fn managed_runner_spec(intent: &factory_preflight::ManagedFactoryExecution) -> Result<ExecutionSpec, JobError> {
+  let octafile = intent
+    .protected_inputs
+    .inputs
+    .iter()
+    .find(|input| input.artifact_id == intent.execution.octafile_input)
+    .ok_or_else(|| JobError::FactoryPreflight(FactoryPreflightError::ProtectedInputMount))?;
+  Ok(ExecutionSpec {
+    octafile: Some(octafile.destination.clone()),
+    commands: intent.execution.tasks.clone(),
+    variables: BTreeMap::new(),
+    arguments: Vec::new(),
+    concurrency: None,
+    parallel: false,
+    failfast: true,
+    // Task 6.3 resolves a selected logical profile to scoped material. A
+    // permission alone never selects or exposes a secret.
+    secrets_profile: None,
+  })
+}
+
+/// Makes removal of immutable protected state authoritative without hiding an
+/// earlier lifecycle failure.
+fn finish_protected_inputs<T>(
+  operation: Result<T, JobError>,
+  staged: Option<StagedProtectedInputs>,
+) -> Result<T, JobError> {
+  let cleanup = staged.map_or(Ok(()), StagedProtectedInputs::cleanup);
+  match (operation, cleanup) {
+    (Ok(value), Ok(())) => Ok(value),
+    (Err(operation), Ok(())) => Err(operation),
+    (Ok(_), Err(cleanup)) => Err(JobError::ProtectedInputs(cleanup)),
+    (Err(operation), Err(cleanup)) => Err(JobError::OperationAndProtectedInputCleanup {
+      operation: Box::new(operation),
+      cleanup,
+    }),
   }
 }
 

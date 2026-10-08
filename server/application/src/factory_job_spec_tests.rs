@@ -162,6 +162,8 @@ fn permissions(broad: bool) -> FactoryPermissionSet {
   ];
   let mut mounts = vec![
     MountPermission::new(FactoryPath::new("/octacity/protected").unwrap(), MountMode::ReadOnly),
+    MountPermission::new(FactoryPath::new("/workspace/output").unwrap(), MountMode::ReadWrite),
+    MountPermission::new(FactoryPath::new("/workspace/scratch").unwrap(), MountMode::ReadWrite),
     MountPermission::new(FactoryPath::new("/workspace/source").unwrap(), MountMode::ReadWrite),
   ];
   let mut network_hosts = vec![NetworkHost::new("api.openai.com").unwrap()];

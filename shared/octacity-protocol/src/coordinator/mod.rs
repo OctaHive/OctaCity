@@ -17,7 +17,8 @@ pub use octa_cache_protocol::{
 
 use crate::{
   ArtifactTransferCapability, CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, ExecutionEvidenceV2,
-  OciIsolation, PlatformSpec, ProtectedInputV3, RuntimeMode, SignedEnvelope,
+  FactoryEnforcementCapabilityV3, FactoryToolActionDecisionV3, FactoryToolActionSummaryV3, OciIsolation, PlatformSpec,
+  ProtectedInputV3, RuntimeMode, SignedEnvelope,
 };
 
 mod credential;
@@ -82,6 +83,9 @@ pub struct AgentInventory {
   /// Provider-neutral v2 execution routes; provider names remain diagnostic evidence.
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub executions: Vec<ExecutionCapabilityV2>,
+  /// Provider-neutral execution routes qualified for protected Factory work.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub factory_executions: Vec<FactoryExecutionCapabilityV3>,
   /// Verified Octa runner and task-plugin release.
   pub octa: OctaInventory,
   /// Verified operator-installed source plugins.
@@ -89,6 +93,19 @@ pub struct AgentInventory {
   /// Verified Octa task-result cache capability, when installed.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub cache: Option<CacheCapability>,
+}
+
+/// One execution route and the semantic Factory controls it can enforce.
+///
+/// The provider nested in `execution` is diagnostic evidence only. Placement
+/// matches the semantic target, guarantees, and enforcement capabilities.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryExecutionCapabilityV3 {
+  /// Provider-neutral execution route proved by backend startup validation.
+  pub execution: ExecutionCapabilityV2,
+  /// Ordered semantic controls enforced by this exact route.
+  pub enforcement: Vec<FactoryEnforcementCapabilityV3>,
 }
 
 /// Scheduler-visible cache support derived from the installed Octa runner.
@@ -515,6 +532,52 @@ pub struct AppendEventsResponse {
   pub request_id: String,
   /// Largest contiguous attempt sequence durably stored by the coordinator.
   pub acknowledged_sequence: u64,
+}
+
+/// One blocked harness action submitted through the Agent's current lease.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeToolActionRequest {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Idempotency and response-correlation identifier.
+  pub request_id: String,
+  /// Current registration epoch. The bearer itself remains in the Agent process.
+  pub registration_id: String,
+  /// Job, attempt, lease, and fencing value authorizing this exact request.
+  pub lease: LeaseFence,
+  /// Digest of the exact canonical action retained by the Agent broker.
+  pub proposal_sha256: String,
+  /// Bounded secret-free characteristics allowed to cross the server boundary.
+  pub proposal_summary: FactoryToolActionSummaryV3,
+}
+
+impl std::fmt::Debug for AuthorizeToolActionRequest {
+  fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    formatter
+      .debug_struct("AuthorizeToolActionRequest")
+      .field("protocol_version", &self.protocol_version)
+      .field("request_id", &self.request_id)
+      .field("registration_id", &self.registration_id)
+      .field("lease", &self.lease)
+      .field("proposal_sha256", &self.proposal_sha256)
+      .field("proposal_summary", &self.proposal_summary)
+      .finish()
+  }
+}
+
+/// Server disposition for the exact proposal blocked by the Agent broker.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorizeToolActionResponse {
+  /// Coordinator wire version.
+  pub protocol_version: u16,
+  /// Echo of the request identifier.
+  pub request_id: String,
+  /// Secret-free digest-bound code-owned decision.
+  pub decision: FactoryToolActionDecisionV3,
+  /// Digest binding the decision and optional receipt to the exact fenced request.
+  pub authorization_sha256: String,
 }
 
 /// Terminal status of one fenced attempt.

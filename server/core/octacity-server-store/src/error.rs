@@ -188,6 +188,8 @@ pub enum StoreOperation {
   AppendJobEvents,
   /// Inspect current cursor before preparing immutable log objects.
   PrepareJobEventAppend,
+  /// Verify current Lease ownership before a protected tool-action decision.
+  AuthorizeToolAction,
   /// Check whether a logical log chunk is durably visible.
   ReadLogChunkManifest,
   /// Claim a bounded batch of durable Build-log indexing work.

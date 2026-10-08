@@ -148,7 +148,7 @@ fn validates_operator_installed_tool_executable_identity() {
     "codex-cli".to_owned(),
     ToolExecutableConfig {
       path: executable.clone(),
-      version: "0.130.0".to_owned(),
+      version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
       sha256: "a".repeat(64),
     },
@@ -165,7 +165,7 @@ fn rejects_absent_or_job_writable_tool_executables() {
     "codex-cli".to_owned(),
     ToolExecutableConfig {
       path: absent._temp.path().join("missing-codex"),
-      version: "0.130.0".to_owned(),
+      version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
       sha256: "a".repeat(64),
     },
@@ -191,7 +191,7 @@ fn rejects_absent_or_job_writable_tool_executables() {
     "codex-cli".to_owned(),
     ToolExecutableConfig {
       path: executable,
-      version: "0.130.0".to_owned(),
+      version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
       sha256: "a".repeat(64),
     },
@@ -219,7 +219,7 @@ fn rejects_tool_executable_writable_by_an_untrusted_local_user() {
     "codex-cli".to_owned(),
     ToolExecutableConfig {
       path: executable,
-      version: "0.130.0".to_owned(),
+      version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
       sha256: "a".repeat(64),
     },

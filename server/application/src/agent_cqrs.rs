@@ -2,7 +2,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use octacity_protocol::{
-  CacheCapability, HostCapacity, OctaInventory, PlatformSpec, RuntimeCapability, SourcePluginInventory,
+  CacheCapability, ExecutionCapabilityV2, ExecutionContractRange, FactoryExecutionCapabilityV3, HostCapacity,
+  OctaInventory, PlatformSpec, RuntimeCapability, SourcePluginInventory,
 };
 use octacity_server_domain::{
   AgentId, AgentVersion, AttemptId, BuildId, JobId, LeaseId, PoolId, PoolVersion, Timestamp,
@@ -179,12 +180,18 @@ pub struct AgentInventoryProjection {
   pub agent_version: String,
   /// Coordinator protocols accepted by the Agent.
   pub coordinator_protocols: Vec<u16>,
+  /// Inclusive signed execution-contract revisions accepted by the Agent.
+  pub execution_contract: ExecutionContractRange,
   /// Operator-owned scheduler labels.
   pub labels: BTreeMap<String, String>,
   /// Host platform.
   pub host_platform: PlatformSpec,
   /// Validated execution capabilities.
   pub runtimes: Vec<RuntimeCapability>,
+  /// Provider-backed current execution routes used for provider-neutral placement.
+  pub executions: Vec<ExecutionCapabilityV2>,
+  /// Current routes and the semantic Factory controls each can enforce.
+  pub factory_executions: Vec<FactoryExecutionCapabilityV3>,
   /// Verified Octa installation.
   pub octa: OctaInventory,
   /// Verified source plugins.
@@ -394,9 +401,12 @@ impl From<octacity_server_store::EnrolledAgent> for AgentProjection {
     let inventory = AgentInventoryProjection {
       agent_version: agent.inventory.agent_version,
       coordinator_protocols: agent.inventory.coordinator_protocols,
+      execution_contract: agent.inventory.execution_contract,
       labels: agent.inventory.labels,
       host_platform: agent.inventory.host_platform,
       runtimes: agent.inventory.runtimes,
+      executions: agent.inventory.executions,
+      factory_executions: agent.inventory.factory_executions,
       octa: agent.inventory.octa,
       source_plugins: agent.inventory.source_plugins,
       cache: agent.inventory.cache,

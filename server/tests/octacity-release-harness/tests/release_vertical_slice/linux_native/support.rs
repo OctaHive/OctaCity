@@ -249,24 +249,6 @@ pub(super) fn directory_entries(path: &Path) -> BTreeSet<OsString> {
     .collect()
 }
 
-pub(super) fn contains_file_named(root: &Path, expected: &str) -> bool {
-  let mut pending = vec![(root.to_owned(), 0_u8)];
-  while let Some((directory, depth)) = pending.pop() {
-    let Ok(entries) = fs::read_dir(directory) else {
-      continue;
-    };
-    for entry in entries.flatten() {
-      if entry.file_name() == expected {
-        return entry.file_type().is_ok_and(|kind| kind.is_file());
-      }
-      if depth < 4 && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-        pending.push((entry.path(), depth + 1));
-      }
-    }
-  }
-  false
-}
-
 pub(super) async fn wait_for_directory_baseline(path: &Path, baseline: &BTreeSet<OsString>, description: &str) {
   let deadline = Instant::now() + Duration::from_secs(30);
   loop {

@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::{ExecutionMode, ExecutionProviderId, ExecutionTargetV2, PlatformArchitecture, PlatformOs, guarantees_for};
+use crate::{
+  EXECUTION_CONTRACT_V1, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3, ExecutionMode, ExecutionProviderId,
+  ExecutionTargetV2, PlatformArchitecture, PlatformOs, guarantees_for,
+};
 
 use super::*;
 
@@ -73,6 +76,7 @@ fn inventory() -> AgentInventory {
       isolation: Some(OciIsolation::Hypervisor),
     }],
     executions: Vec::new(),
+    factory_executions: Vec::new(),
     octa: OctaInventory {
       version: "0.3.0".to_owned(),
       runner_sha256: "1".repeat(64),
@@ -101,6 +105,48 @@ fn inventory() -> AgentInventory {
     }],
     cache: None,
   }
+}
+
+#[test]
+fn factory_execution_capabilities_are_bound_to_v3_isolated_routes() {
+  let mut inventory = inventory();
+  inventory.execution_contract = ExecutionContractRange {
+    min: EXECUTION_CONTRACT_V1,
+    max: EXECUTION_CONTRACT_V3,
+  };
+  let execution = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new("qualified-provider").unwrap(),
+    mode: ExecutionMode::Isolation,
+    host_platform: inventory.host_platform,
+    target_platform: inventory.host_platform,
+    guarantees: guarantees_for(ExecutionMode::Isolation),
+    immutable_images: true,
+  };
+  inventory.executions.push(execution.clone());
+  inventory.factory_executions.push(FactoryExecutionCapabilityV3 {
+    execution: execution.clone(),
+    enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
+  });
+  assert!(inventory.validate().is_ok());
+
+  inventory.execution_contract.max = EXECUTION_CONTRACT_V2;
+  assert!(inventory.validate().is_err());
+  inventory.execution_contract.max = EXECUTION_CONTRACT_V3;
+
+  inventory.factory_executions[0].enforcement.pop();
+  assert!(
+    inventory.validate().is_ok(),
+    "partial semantic ceilings are valid diagnostics"
+  );
+  inventory.factory_executions[0].enforcement.reverse();
+  assert!(inventory.validate().is_err());
+
+  inventory.factory_executions[0] = FactoryExecutionCapabilityV3 {
+    execution,
+    enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
+  };
+  inventory.executions.clear();
+  assert!(inventory.validate().is_err());
 }
 
 fn lease() -> LeaseAssignment {

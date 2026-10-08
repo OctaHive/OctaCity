@@ -140,7 +140,7 @@ class LocalStandContextTests(unittest.TestCase):
         )
         self.assertEqual(set(entries), set(VERIFY.STAGING_POLICY))
         self.assertEqual(entries["microsandbox"]["filename"], "microsandbox-darwin-aarch64.tar.gz")
-        self.assertEqual(entries["octa"]["filename"], "octa-linux-arm64-v0.5.0.tar.gz")
+        self.assertEqual(entries["octa"]["filename"], "octa-linux-arm64-v0.5.1.tar.gz")
         self.assertEqual(
             entries["octacity_release_harness"]["filename"],
             "octacity-release-harness-macos-arm64",

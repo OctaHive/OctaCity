@@ -323,6 +323,7 @@ def validate_octa(value: dict[str, Any]) -> None:
             "manifest",
             "plugin_name",
             "plugin_protocol",
+            "required_capabilities",
             "selection_environment",
             "supported_cli_versions",
         },
@@ -333,8 +334,9 @@ def validate_octa(value: dict[str, Any]) -> None:
         "manifest": "plugins/codex.plugin.yml",
         "plugin_name": "codex",
         "plugin_protocol": 2,
+        "required_capabilities": ["codex.blocking-pre-tool-authorization.v1"],
         "selection_environment": "OCTA_CODEX_EXECUTABLE",
-        "supported_cli_versions": ["0.130.0"],
+        "supported_cli_versions": ["0.161.0"],
     }:
         raise InputError("native.octa.codex identity is unexpected")
     if value["license"] != "MIT":

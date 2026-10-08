@@ -13,9 +13,10 @@ use async_trait::async_trait;
 use ed25519_dalek::VerifyingKey;
 use octacity_protocol::{
   AcquireLeaseResponse, AgentInventory, AgentTelemetrySample, AppendEventsResponse, AttemptEventEnvelope,
-  BeginCacheSessionRequest, BeginCacheSessionResponse, BeginOutputUploadRequest, BeginOutputUploadResponse,
-  CompleteLeaseRequest, CompleteOutputUploadRequest, HeartbeatDirective, HostCapacity, HostSnapshot,
-  IngestAgentTelemetryResponse, JobSpecError, LeaseAssignment, RevokeCacheSessionRequest, VerifiedJobSpec,
+  AuthorizeToolActionRequest, AuthorizeToolActionResponse, BeginCacheSessionRequest, BeginCacheSessionResponse,
+  BeginOutputUploadRequest, BeginOutputUploadResponse, CompleteLeaseRequest, CompleteOutputUploadRequest,
+  HeartbeatDirective, HostCapacity, HostSnapshot, IngestAgentTelemetryResponse, JobSpecError, LeaseAssignment,
+  RevokeCacheSessionRequest, VerifiedJobSpec,
 };
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -252,6 +253,22 @@ pub trait CoordinatorClient: Send + Sync {
     completion: &CompleteLeaseRequest,
     cancellation: CancellationToken,
   ) -> Result<(), CoordinatorError>;
+}
+
+/// Narrow coordinator boundary used only by the lease-bound tool-action broker.
+///
+/// Keeping this operation outside [`CoordinatorClient`] avoids forcing ordinary
+/// CI/CD test doubles and agents without Factory tool control to implement it.
+#[async_trait]
+pub trait ToolActionCoordinator: Send + Sync {
+  /// Requests a disposition for one exact action blocked under the current lease.
+  async fn authorize_tool_action(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &AuthorizeToolActionRequest,
+    cancellation: CancellationToken,
+  ) -> Result<AuthorizeToolActionResponse, CoordinatorError>;
 }
 
 /// Narrow coordinator interface used only by immutable output publication.

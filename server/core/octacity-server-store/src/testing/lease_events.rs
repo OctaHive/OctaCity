@@ -440,6 +440,21 @@ pub(super) async fn prepare_append(
   Ok(JobEventAppendPreparation { durable_through })
 }
 
+pub(super) async fn authorize_tool_action(
+  store: &InMemoryStore,
+  lease: LeaseAccess,
+  job_id: JobId,
+  attempt: AttemptNumber,
+  observed_at: Timestamp,
+) -> Result<(), StoreError> {
+  let state = store.lock()?;
+  let grant = current_grant(&state, lease, observed_at)?;
+  if grant.job_id != job_id || grant.attempt != attempt {
+    return Err(StoreError::Fenced { lease: lease.lease_id });
+  }
+  Ok(())
+}
+
 fn same_completion(left: &JobCompletion, right: &JobCompletion) -> bool {
   left.completion_id == right.completion_id
     && left.lease == right.lease

@@ -10,8 +10,8 @@ source_plugins_dir = "/opt/octacity/current/source-plugins"
 # so use a dedicated Agent/Pool without model credentials. Keep the executable
 # outside all job-writable roots.
 # [tool_executables.codex-cli]
-# path = "/opt/codex/0.130.0/codex"
-# version = "0.130.0"
+# path = "/opt/codex/0.161.0/codex"
+# version = "0.161.0"
 # platform = "linux-x86_64"
 # sha256 = "replace-with-the-lowercase-sha256-of-the-installed-executable"
 # Logical names are selected by signed jobs; values are operator-owned files

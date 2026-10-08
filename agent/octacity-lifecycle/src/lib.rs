@@ -7,13 +7,17 @@
 
 #![warn(missing_docs)]
 
+mod codex_hook;
 mod delivery;
 mod journal;
 mod lifecycle;
 mod spool;
+mod tool_action_broker;
 
+pub use codex_hook::{CodexHookError, CodexPreToolUseInput, codex_denied_output, codex_permitted_output};
 pub use lifecycle::{
   JobLifecycle, JobLifecycleConfig, JobLifecycleError, JobLifecycleOutcome, RecoveredAttempt,
   cleanup_incomplete_attempts,
 };
 pub use spool::{SpoolError, SpoolLimits};
+pub use tool_action_broker::{AgentToolActionBroker, AgentToolActionBrokerError};

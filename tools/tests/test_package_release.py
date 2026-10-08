@@ -131,7 +131,7 @@ class PackageReleaseTests(unittest.TestCase):
             root = Path(temporary)
             arguments = self.fixture(root, "macos-arm64", "agent.tar.gz")
             fixture = root / "codex-fixture"
-            fixture.write_text("#!/bin/sh\n# codex-cli 0.130.0\n", encoding="utf-8")
+            fixture.write_text("#!/bin/sh\n# codex-cli 0.161.0\n", encoding="utf-8")
             arguments.codex_fixture = fixture
 
             with mock.patch.object(Path, "chmod", autospec=True):

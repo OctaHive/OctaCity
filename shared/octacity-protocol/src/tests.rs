@@ -139,6 +139,7 @@ fn v3_spec() -> JobSpecV3 {
     execution: ManagedOctaExecutionV3 {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
+      tool_control: None,
     },
     runtime: RuntimeSpecV2 {
       network: NetworkPolicy::Restricted {
@@ -195,6 +196,14 @@ fn v3_spec() -> JobSpecV3 {
         FactoryMountPermissionV3 {
           root: "/octacity/protected".to_owned(),
           mode: FactoryMountModeV3::ReadOnly,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/output".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/scratch".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
         },
         FactoryMountPermissionV3 {
           root: "/workspace/source".to_owned(),
@@ -407,6 +416,13 @@ fn v3_rejects_unsafe_inputs_incomplete_enforcement_and_host_fallback() {
   let mut value = v3_spec();
   value.permissions.mounts.swap(0, 1);
   assert!(value.validate(&binding(&spec())).is_err());
+
+  let mut value = v3_spec();
+  value.permissions.mounts.push(FactoryMountPermissionV3 {
+    root: "/z".to_owned(),
+    mode: FactoryMountModeV3::ReadWrite,
+  });
+  assert!(value.validate(&binding(&spec())).is_err());
 }
 
 #[test]
@@ -423,6 +439,30 @@ fn v3_wildcard_command_arguments_have_explicit_enforceable_bounds() {
     max_bytes: u32::try_from(MAX_FACTORY_COMMAND_ARGUMENT_BYTES + 1).unwrap(),
   }];
   assert!(value.permissions.validate().is_err());
+}
+
+#[test]
+fn v3_protected_tools_require_the_exact_blocking_plugin_contract() {
+  let mut value = v3_spec();
+  value.permissions.tools = vec![FactoryImmutableReferenceV3 {
+    identity: "bash".to_owned(),
+    version: "1.0.0".to_owned(),
+    sha256: DIGEST.to_owned(),
+  }];
+  assert!(value.validate(&binding(&spec())).is_err());
+
+  value.execution.tool_control = Some(FactoryToolControlV3 {
+    plugin: "codex".to_owned(),
+    capability: "unsupported".to_owned(),
+    mode: FactoryToolControlModeV3::ToolRisk,
+  });
+  assert!(value.validate(&binding(&spec())).is_err());
+
+  value.execution.tool_control.as_mut().unwrap().capability = BLOCKING_TOOL_AUTHORIZATION_CAPABILITY.to_owned();
+  value.validate(&binding(&spec())).unwrap();
+
+  value.execution.tool_control.as_mut().unwrap().plugin = "missing".to_owned();
+  assert!(value.validate(&binding(&spec())).is_err());
 }
 
 #[test]

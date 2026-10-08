@@ -456,6 +456,16 @@ impl JobExecutionStore for InMemoryStore {
     lease_events::prepare_append(self, lease, accepted_at).await
   }
 
+  async fn authorize_tool_action_lease(
+    &self,
+    lease: LeaseAccess,
+    job_id: octacity_server_domain::JobId,
+    attempt: octacity_server_domain::AttemptNumber,
+    observed_at: Timestamp,
+  ) -> Result<(), StoreError> {
+    lease_events::authorize_tool_action(self, lease, job_id, attempt, observed_at).await
+  }
+
   async fn complete_job(&self, request: JobCompletion) -> Result<CompletionDisposition, StoreError> {
     lease_events::complete(self, request).await
   }

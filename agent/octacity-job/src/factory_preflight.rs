@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use octacity_protocol::{
   FactoryCommandArgumentV3, FactoryCommandPermissionV3, FactoryEnforcementCapabilityV3, FactoryImmutableReferenceV3,
-  FactoryMountModeV3, FactoryMountPermissionV3, FactoryPermissionSetV3, ManagedOctaExecutionV3, OutputLimits,
-  PROTECTED_INPUT_ROOT, ProtectedInputManifestV3, ProtectedInputTransferV3, RuntimeSpecV2,
+  FactoryMountModeV3, FactoryMountPermissionV3, FactoryPermissionSetV3, ManagedOctaExecutionV3, NetworkPolicy,
+  OutputLimits, PROTECTED_INPUT_ROOT, ProtectedInputManifestV3, ProtectedInputTransferV3, RuntimeSpecV2,
 };
 use octacity_runner::{RunnerInstallation, VerifiedExternalExecutable};
 use thiserror::Error;
@@ -92,7 +92,7 @@ pub(super) struct FactoryAdmission<'a> {
 
 impl FactoryAdmission<'_> {
   /// Revalidates every v3 authority boundary before source materialization.
-  pub(super) fn authorize(self) -> Result<(), FactoryPreflightError> {
+  pub(super) fn authorize(self) -> Result<BTreeMap<String, VerifiedExternalExecutable>, FactoryPreflightError> {
     self
       .intent
       .permissions
@@ -114,13 +114,17 @@ impl FactoryAdmission<'_> {
     {
       return Err(FactoryPreflightError::BackendCapability);
     }
-    verify_plugins(&self.intent.permissions.plugins, self.runner)?;
+    verify_plugins(
+      &self.intent.permissions.plugins,
+      self.intent.execution.tool_control.as_ref(),
+      self.runner,
+    )?;
     let selected = verify_executables(&self.intent.permissions.executables, self.external_executables)?;
     self
       .runner
       .revalidate_files(&selected)
       .map_err(|_| FactoryPreflightError::ToolchainDrift)?;
-    Ok(())
+    Ok(selected)
   }
 }
 
@@ -236,6 +240,13 @@ fn verify_runtime_projection(
   {
     return Err(FactoryPreflightError::WorkloadIdentityProfile);
   }
+  match &runtime.network {
+    NetworkPolicy::Disabled if permissions.network_hosts.is_empty() => {}
+    NetworkPolicy::Restricted { allowed_hosts } if allowed_hosts == &permissions.network_hosts => {}
+    NetworkPolicy::Disabled | NetworkPolicy::Restricted { .. } | NetworkPolicy::Unrestricted => {
+      return Err(FactoryPreflightError::Network);
+    }
+  }
   let resources = permissions.resources;
   if resources.cpu_millis > runtime.cpu_millis
     || resources.memory_bytes > runtime.memory_bytes
@@ -257,14 +268,21 @@ fn verify_runtime_projection(
 
 fn verify_plugins(
   required: &[FactoryImmutableReferenceV3],
+  tool_control: Option<&octacity_protocol::FactoryToolControlV3>,
   runner: &RunnerInstallation,
 ) -> Result<(), FactoryPreflightError> {
   if required.iter().any(|reference| {
-    runner
-      .plugins
-      .get(&reference.identity)
-      .is_none_or(|installed| installed.version != reference.version || installed.sha256 != reference.sha256)
+    runner.plugins.get(&reference.identity).is_none_or(|installed| {
+      installed.version != reference.version
+        || installed.sha256 != reference.sha256
+        || tool_control.is_some_and(|control| {
+          control.plugin == reference.identity && !installed.capabilities.contains(&control.capability)
+        })
+    })
   }) {
+    return Err(FactoryPreflightError::Plugin);
+  }
+  if tool_control.is_some_and(|control| !required.iter().any(|plugin| plugin.identity == control.plugin)) {
     return Err(FactoryPreflightError::Plugin);
   }
   Ok(())
@@ -463,6 +481,14 @@ mod tests {
         FactoryMountPermissionV3 {
           root: "/octacity/protected".to_owned(),
           mode: FactoryMountModeV3::ReadOnly,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/output".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/scratch".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
         },
         FactoryMountPermissionV3 {
           root: "/workspace/source".to_owned(),

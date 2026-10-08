@@ -1,5 +1,7 @@
 use super::*;
 
+const FACTORY_RUNNER_BYTES: &[u8] = b"factory runner fixture";
+
 #[tokio::test]
 async fn reports_an_unqualified_mode_without_falling_back_to_a_legacy_backend() {
   let work_root = tempfile::tempdir().unwrap();
@@ -262,6 +264,105 @@ async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
 }
 
 #[tokio::test]
+async fn stages_and_projects_an_admitted_factory_job() {
+  use sha2::Digest as _;
+  use std::time::SystemTime;
+  use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+  let octafile = b"version: 1\n\ntasks:\n  implement:\n    shell: echo managed\n";
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let address = listener.local_addr().unwrap();
+  let server = tokio::spawn(async move {
+    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+      .await
+      .unwrap()
+      .unwrap();
+    let mut request = [0_u8; 4096];
+    let _ = socket.read(&mut request).await.unwrap();
+    let response = format!(
+      "HTTP/1.1 200 OK\r\nContent-Type: application/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      octafile.len()
+    );
+    socket.write_all(response.as_bytes()).await.unwrap();
+    socket.write_all(octafile).await.unwrap();
+  });
+  let origin = format!("http://{address}");
+  let work_root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let mut spec = factory_spec();
+  spec.protected_inputs.inputs[0].size_bytes = octafile.len() as u64;
+  spec.protected_inputs.inputs[0].sha256 = hex::encode(sha2::Sha256::digest(octafile));
+  spec.protected_inputs.inputs[0].media_type = "application/yaml".to_owned();
+  spec.octa.runner_sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
+  let mut executor = factory_executor(
+    work_root.path(),
+    source_calls.clone(),
+    starts.clone(),
+    &spec,
+    FactoryEnforcementCapabilityV3::ALL,
+  );
+  install_revalidatable_runner(&mut executor, work_root.path());
+  executor.factory_permissions = Some(spec.permissions.clone());
+  let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
+    allowed_origins: vec![origin.clone()],
+    download_timeout: Duration::from_secs(2),
+  })
+  .unwrap();
+  let executor = executor.with_protected_input_stager(stager);
+  let mut protected_inputs = transfers(&spec.protected_inputs);
+  protected_inputs[0].capability.url = format!("{origin}/managed-octafile");
+  protected_inputs[0].capability.expires_at_unix_ms = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .unwrap()
+    .as_millis()
+    .saturating_add(60_000) as u64;
+  let (events, _receiver) = mpsc::channel(8);
+
+  let completion = executor
+    .execute(
+      ExecuteJobRequest {
+        protected_inputs,
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap();
+  server.await.unwrap();
+
+  assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(starts.load(Ordering::SeqCst), 1);
+  assert!(!completion.workspace().parent().unwrap().join("protected").exists());
+  completion.cleanup().await.unwrap();
+}
+
+fn install_revalidatable_runner(executor: &mut JobExecutor, work_root: &Path) {
+  let release = work_root.join(".factory-runner");
+  octacity_private_fs::create_private_directory(&release).unwrap();
+  let executable = release.join("octa-runner");
+  fs::write(&executable, FACTORY_RUNNER_BYTES).unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+  }
+  let plugins = release.join("plugins");
+  fs::create_dir(&plugins).unwrap();
+  let lock = release.join("Octa.lock");
+  fs::write(&lock, "version: 1\nplugins: {}\n").unwrap();
+  executor.runner.root = release.canonicalize().unwrap();
+  executor.runner.executable = executable.canonicalize().unwrap();
+  executor.runner.plugins_dir = plugins.canonicalize().unwrap();
+  executor.runner.default_plugin_lock = lock.canonicalize().unwrap();
+  executor.runner.sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
+  executor.runner.revalidate_files(&BTreeMap::new()).unwrap();
+}
+
+#[tokio::test]
 async fn never_falls_back_to_host_for_a_factory_job() {
   let work_root = tempfile::tempdir().unwrap();
   let source_calls = Arc::new(AtomicUsize::new(0));
@@ -445,6 +546,14 @@ fn factory_spec() -> JobSpecV3 {
         mode: FactoryMountModeV3::ReadOnly,
       },
       FactoryMountPermissionV3 {
+        root: "/workspace/output".to_owned(),
+        mode: FactoryMountModeV3::ReadWrite,
+      },
+      FactoryMountPermissionV3 {
+        root: "/workspace/scratch".to_owned(),
+        mode: FactoryMountModeV3::ReadWrite,
+      },
+      FactoryMountPermissionV3 {
         root: "/workspace/source".to_owned(),
         mode: FactoryMountModeV3::ReadWrite,
       },
@@ -478,6 +587,7 @@ fn factory_spec() -> JobSpecV3 {
     execution: ManagedOctaExecutionV3 {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
+      tool_control: None,
     },
     runtime: current.runtime,
     cache: current.cache,

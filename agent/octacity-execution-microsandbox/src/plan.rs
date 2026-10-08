@@ -1,6 +1,7 @@
 //! Builds bounded host-to-guest paths and the immutable sandbox plan.
 
 use super::*;
+use octacity_execution::{FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT};
 
 pub(super) fn canonical_runtime_file(name: &str, path: &Path) -> Result<PathBuf, ExecutionError> {
   if !path.is_absolute() || !path.is_file() {
@@ -22,10 +23,10 @@ pub(super) struct SandboxPlan {
   pub(super) memory_mib: u32,
   /// RAM-backed capacity for writes outside the mounted job root.
   pub(super) root_tmpfs_mib: u32,
-  /// Canonical job-private host root mounted into the guest.
+  /// Canonical job-private host root used for aggregate accounting.
   pub(super) host_job_root: PathBuf,
-  /// Remaining disk allowance after accounting for existing job files.
-  pub(super) job_root_quota_mib: u32,
+  /// Writable host roots projected into the guest with non-overlapping quotas.
+  pub(super) writable_mounts: Vec<SandboxWritableMount>,
   /// Fixed job-private mount point visible inside the guest.
   pub(super) guest_job_root: String,
   /// Workspace path below the guest job root.
@@ -44,10 +45,25 @@ pub(super) struct SandboxPlan {
   pub(super) external_executables: Vec<(String, PathBuf, String)>,
   /// Optional job-private identity source exposed read-only in the guest.
   pub(super) workload_identity: Option<PathBuf>,
+  /// Optional immutable Factory input root exposed only at its canonical path.
+  pub(super) protected_inputs: Option<PathBuf>,
+  /// Optional Factory-wide process-tree ceiling.
+  pub(super) process_limit: Option<u32>,
   /// Job-private credential directories hidden behind empty read-only mounts.
   pub(super) masked_job_directories: Vec<String>,
   /// Canonical cache mount plus the remaining VM-enforced growth quota.
   pub(super) cache: Option<SandboxCachePlan>,
+}
+
+/// One writable Microsandbox bind whose quota contributes to the Job ceiling.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SandboxWritableMount {
+  /// Canonical host directory.
+  pub(super) host: PathBuf,
+  /// Fixed guest directory.
+  pub(super) guest: String,
+  /// Additional MiB this mount may allocate.
+  pub(super) quota_mib: u32,
 }
 
 /// Persistent cache projection with a Microsandbox-enforced byte boundary.
@@ -84,8 +100,15 @@ impl SandboxPlan {
       .filter(|parent| parent.parent() == Some(workspace_root.as_path()))
       .ok_or_else(|| invalid("Microsandbox workspace must be inside one job-private root below work_root"))?
       .to_owned();
-    if workspace.file_name() != Some(std::ffi::OsStr::new("workspace")) {
-      return Err(invalid("Microsandbox job-private workspace must be named 'workspace'"));
+    let expected_workspace_name = if request.factory.is_some() {
+      "source"
+    } else {
+      "workspace"
+    };
+    if workspace.file_name() != Some(std::ffi::OsStr::new(expected_workspace_name)) {
+      return Err(invalid(format!(
+        "Microsandbox job-private workspace must be named '{expected_workspace_name}'"
+      )));
     }
     let memory_mib = exact_mib("memory", request.memory_bytes)?;
     // Keep incidental writes outside /work off disk without allowing the
@@ -99,7 +122,7 @@ impl SandboxPlan {
       ));
     }
     let existing_mib = existing_bytes.div_ceil(MEBIBYTE);
-    let job_root_quota_mib = u32::try_from(u64::from(job_root_limit_mib).saturating_sub(existing_mib))
+    let remaining_quota_mib = u32::try_from(u64::from(job_root_limit_mib).saturating_sub(existing_mib))
       .map_err(|_| unavailable("Microsandbox job-root quota is not representable"))?;
     let cache = match &request.cache {
       Some(cache) => {
@@ -133,8 +156,16 @@ impl SandboxPlan {
         (projection.selector, projection.source, destination)
       })
       .collect();
-    let guest_job_root = "/work".to_owned();
-    let guest_workspace = guest_path(&guest_job_root, &job_root, &workspace)?;
+    let guest_job_root = if request.factory.is_some() {
+      "/workspace"
+    } else {
+      "/work"
+    }
+    .to_owned();
+    let guest_workspace = request.factory.as_ref().map_or_else(
+      || guest_path(&guest_job_root, &job_root, &workspace),
+      |_| Ok(FACTORY_SOURCE_ROOT.to_owned()),
+    )?;
     let private_files = request
       .workload_identity
       .iter()
@@ -154,8 +185,40 @@ impl SandboxPlan {
       }
       masked_job_directories.push(guest_path(&guest_job_root, &job_root, directory)?);
     }
+    if let Some(factory) = &request.factory {
+      masked_job_directories.push(guest_path(&guest_job_root, &job_root, &factory.protected_inputs)?);
+    }
     masked_job_directories.sort();
     masked_job_directories.dedup();
+    let writable_mounts = match &request.factory {
+      Some(factory) => {
+        let roots = [
+          (FACTORY_SOURCE_ROOT, &factory.source),
+          (FACTORY_SCRATCH_ROOT, &factory.scratch),
+          (FACTORY_OUTPUT_ROOT, &factory.output),
+        ];
+        if remaining_quota_mib < u32::try_from(roots.len()).expect("Factory writable-root count fits u32") {
+          return Err(unavailable(
+            "Microsandbox Factory execution requires at least one writable MiB per projected root",
+          ));
+        }
+        let root_count = roots.len();
+        roots
+          .into_iter()
+          .enumerate()
+          .map(|(index, (guest, host))| SandboxWritableMount {
+            host: host.clone(),
+            guest: guest.to_owned(),
+            quota_mib: partition_quota(remaining_quota_mib, root_count, index),
+          })
+          .collect()
+      }
+      None => vec![SandboxWritableMount {
+        host: job_root.clone(),
+        guest: guest_job_root.clone(),
+        quota_mib: remaining_quota_mib,
+      }],
+    };
     Ok(Self {
       name: sandbox_name(agent_id, &request.execution_id),
       image: reference.clone(),
@@ -163,20 +226,31 @@ impl SandboxPlan {
       memory_mib,
       root_tmpfs_mib,
       host_job_root: job_root.clone(),
-      job_root_quota_mib,
+      writable_mounts,
       guest_job_root: guest_job_root.clone(),
       guest_executable: guest_path(&guest_release, &runner.release_root, &runner.executable)?,
-      guest_data_dir: guest_path_buf(&guest_job_root, &job_root, &request.data_dir)?,
+      guest_data_dir: match &request.factory {
+        Some(factory) => guest_path_buf(FACTORY_SCRATCH_ROOT, &factory.scratch, &request.data_dir)?,
+        None => guest_path_buf(&guest_job_root, &job_root, &request.data_dir)?,
+      },
       guest_plugins_dir: guest_path_buf(&guest_release, &runner.release_root, &runner.plugins_dir)?,
       guest_plugin_lock: guest_path_buf(&guest_release, &runner.release_root, &runner.plugin_lock)?,
       external_executables,
       workload_identity: request.workload_identity.clone(),
+      protected_inputs: request.factory.as_ref().map(|factory| factory.protected_inputs.clone()),
+      process_limit: request.factory.as_ref().map(|factory| factory.process_limit),
       masked_job_directories,
       cache,
       guest_workspace,
       guest_release,
     })
   }
+}
+
+fn partition_quota(total: u32, partitions: usize, index: usize) -> u32 {
+  let partitions = u32::try_from(partitions).expect("Factory writable-root count fits u32");
+  let index = u32::try_from(index).expect("Factory writable-root index fits u32");
+  total / partitions + u32::from(index < total % partitions)
 }
 
 pub(super) fn guest_path(guest_root: &str, host_root: &Path, host_path: &Path) -> Result<String, ExecutionError> {

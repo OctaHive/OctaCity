@@ -15,10 +15,11 @@ use octacity_private_fs::{
 };
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AgentInventory, AgentTelemetrySample,
-  AppendEventsRequest, AppendEventsResponse, AttemptEventEnvelope, BeginCacheSessionRequest, BeginCacheSessionResponse,
-  BeginOutputUploadRequest, BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
-  CompleteLeaseResponse, CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse,
-  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, IngestAgentTelemetryRequest,
+  AppendEventsRequest, AppendEventsResponse, AttemptEventEnvelope, AuthorizeToolActionRequest,
+  AuthorizeToolActionResponse, BeginCacheSessionRequest, BeginCacheSessionResponse, BeginOutputUploadRequest,
+  BeginOutputUploadResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse,
+  CompleteOutputUploadRequest, CompleteOutputUploadResponse, CoordinatorErrorResponse, HeartbeatDirective,
+  HeartbeatRequest, HeartbeatResponse, HostCapacity, HostSnapshot, IngestAgentTelemetryRequest,
   IngestAgentTelemetryResponse, LeaseAssignment, RegisterAgentRequest, RegisterAgentResponse,
   RevokeCacheSessionRequest, RevokeCacheSessionResponse,
 };
@@ -31,7 +32,7 @@ use uuid::Uuid;
 
 use crate::{
   AgentTelemetryCoordinator, CacheSessionCoordinator, CoordinatorClient, CoordinatorError, OutputUploadCoordinator,
-  Registration, RetryPolicy, invalid, unix_now,
+  Registration, RetryPolicy, ToolActionCoordinator, invalid, unix_now,
 };
 
 const MAX_CREDENTIAL_BYTES: u64 = 64 * 1024;
@@ -566,6 +567,38 @@ impl CoordinatorClient for HttpCoordinatorClient {
       .await?;
     response.validate(&completion.request_id, &completion.completion_id)?;
     Ok(())
+  }
+}
+
+#[async_trait]
+impl ToolActionCoordinator for HttpCoordinatorClient {
+  async fn authorize_tool_action(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+    request: &AuthorizeToolActionRequest,
+    cancellation: CancellationToken,
+  ) -> Result<AuthorizeToolActionResponse, CoordinatorError> {
+    registration.validate()?;
+    request.validate()?;
+    if request.registration_id != registration.registration_id || request.lease != lease.into() {
+      return Err(invalid("tool-action request does not match its registration and lease"));
+    }
+    let response: AuthorizeToolActionResponse = self
+      .post(
+        PostCall {
+          operation: "authorize tool action",
+          path: &["api", "v1", "leases", &lease.lease_id, "tool-actions:authorize"],
+          request_id: &request.request_id,
+          operation_timeout: self.request_timeout,
+          server_max_retry: registration.max_retry_delay,
+          cancellation,
+        },
+        request,
+      )
+      .await?;
+    response.validate(request)?;
+    Ok(response)
   }
 }
 

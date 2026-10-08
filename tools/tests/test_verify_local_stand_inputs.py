@@ -182,6 +182,13 @@ class LocalStandInputTests(unittest.TestCase):
     def test_rejects_octa_codex_license_and_provenance_drift(self):
         mutations = (
             ("codex", {**self.document["native"]["octa"]["codex"], "plugin_protocol": 3}),
+            (
+                "codex",
+                {
+                    **self.document["native"]["octa"]["codex"],
+                    "required_capabilities": [],
+                },
+            ),
             ("license", "Apache-2.0"),
             ("provenance", "unsigned"),
         )

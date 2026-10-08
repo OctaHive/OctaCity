@@ -88,6 +88,11 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 # package-specific so another core crate cannot acquire private-key handling by
 # depending on the same libraries.
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
+    # Canonical Agent/server action bytes are hashed at their shared wire
+    # contract boundary. Keep the cryptographic primitive package-specific so
+    # other shared crates cannot acquire implementation dependencies by
+    # implication.
+    "octacity-protocol": frozenset({"sha2"}),
     # The shared observability contract emits through provider-neutral facades;
     # it owns no recorder, exporter, queue, or subscriber. tracing-subscriber
     # is test-only and verifies structured correlation at the facade boundary.

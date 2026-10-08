@@ -27,18 +27,13 @@ pub(super) struct ManualBuildInput<'a> {
 pub(super) struct CancellationInput<'a> {
   pub(super) build: ManualBuildInput<'a>,
   pub(super) native_cgroup: Option<NativeCgroupAssertion<'a>>,
-  pub(super) ready_marker: Option<ReadyMarkerAssertion<'a>>,
+  pub(super) ready_progress: Option<&'a str>,
   pub(super) maximum_disk_bytes: u64,
 }
 
 pub(super) struct NativeCgroupAssertion<'a> {
   pub(super) root: &'a Path,
   pub(super) baseline: &'a BTreeSet<OsString>,
-}
-
-pub(super) struct ReadyMarkerAssertion<'a> {
-  pub(super) root: &'a Path,
-  pub(super) file_name: &'a str,
 }
 
 pub(super) struct RetryInput<'a> {
@@ -93,9 +88,8 @@ pub(super) async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Chi
       .iter()
       .any(|event| event["payload"]["source"] == "agent" && event["payload"]["event"]["type"] == "resource_usage");
     let fixture_ready = input
-      .ready_marker
-      .as_ref()
-      .is_none_or(|marker| super::contains_file_named(marker.root, marker.file_name));
+      .ready_progress
+      .is_none_or(|message| has_runner_progress(&events, message));
     if started && sampled && fixture_ready {
       if let Some(cgroup) = &input.native_cgroup {
         assert_native_resource_controls(cgroup.root, cgroup.baseline);
@@ -148,6 +142,17 @@ pub(super) async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Chi
   assert_lifecycle_order(events["items"].as_array().unwrap());
   assert_resource_samples(events["items"].as_array().unwrap(), input.maximum_disk_bytes);
   json!({"accepted": accepted, "cancellation": cancellation, "build": build, "attempt": attempt, "events": events})
+}
+
+fn has_runner_progress(events: &Value, expected_message: &str) -> bool {
+  events["items"].as_array().is_some_and(|items| {
+    items.iter().any(|event| {
+      event["payload"]["source"] == "runner"
+        && event["payload"]["event"]["category"] == "execution"
+        && event["payload"]["event"]["data"]["type"] == "progress"
+        && event["payload"]["event"]["data"]["progress"]["message"] == expected_message
+    })
+  })
 }
 
 pub(super) async fn run_and_retry(input: RetryInput<'_>, agent: &mut Child) -> Value {
@@ -244,4 +249,32 @@ fn assert_failed_attempt(attempt: &Value, number: u64, retry_of_attempt_id: Opti
   assert_eq!(jobs.len(), 1);
   assert_eq!(jobs[0]["state"], "failed");
   assert_eq!(jobs[0]["terminal"]["failure_classification"], "execution");
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn cancellation_readiness_requires_the_exact_runner_progress_event() {
+    let events = json!({
+      "items": [
+        {
+          "payload": {
+            "source": "agent",
+            "event": {"category": "execution", "data": {"type": "progress", "progress": {"message": "Codex turn started"}}}
+          }
+        },
+        {
+          "payload": {
+            "source": "runner",
+            "event": {"category": "execution", "data": {"type": "progress", "progress": {"message": "Codex turn started"}}}
+          }
+        }
+      ]
+    });
+
+    assert!(has_runner_progress(&events, "Codex turn started"));
+    assert!(!has_runner_progress(&events, "Codex turn completed"));
+  }
 }

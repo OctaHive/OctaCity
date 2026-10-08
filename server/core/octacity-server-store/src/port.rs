@@ -64,6 +64,18 @@ pub trait JobExecutionStore: Send + Sync {
     Err(StoreError::Unavailable)
   }
 
+  /// Verifies current Lease, Job, and Attempt ownership without mutating state.
+  async fn authorize_tool_action_lease(
+    &self,
+    lease: LeaseAccess,
+    job_id: octacity_server_domain::JobId,
+    attempt: octacity_server_domain::AttemptNumber,
+    observed_at: octacity_server_domain::Timestamp,
+  ) -> Result<(), StoreError> {
+    let _ = (lease, job_id, attempt, observed_at);
+    Err(StoreError::Unavailable)
+  }
+
   /// Appends a contiguous idempotent Job-event batch and advances its durable
   /// cursor only after the complete batch commits.
   async fn append_job_events(&self, request: AppendJobEvents) -> Result<AppendJobEventsOutcome, StoreError>;

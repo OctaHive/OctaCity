@@ -2,7 +2,9 @@
 
 use super::plan::{directory_size, exact_mib, guest_path};
 use super::*;
-use octacity_execution::LocalCacheCapacity;
+use octacity_execution::{
+  FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT, FactoryExecutionLayout, LocalCacheCapacity,
+};
 
 fn runner(root: &Path) -> RunnerProgram {
   RunnerProgram {
@@ -259,6 +261,7 @@ fn request(workspace: &Path) -> StartExecution {
     data_dir: workspace.join(".octacity"),
     workload_identity: None,
     cache: None,
+    factory: None,
     cpu_millis: 2000,
     memory_bytes: 512 * MEBIBYTE,
     writable_disk_bytes: 1024 * MEBIBYTE,
@@ -320,7 +323,10 @@ async fn maps_verified_host_paths_into_the_guest() {
   assert_eq!(plan.guest_workspace, "/work/workspace");
   assert_eq!(plan.guest_data_dir, Path::new("/work/workspace/.octacity"));
   assert_eq!(plan.root_tmpfs_mib, 256);
-  assert_eq!(plan.job_root_quota_mib, 1023);
+  assert_eq!(plan.writable_mounts.len(), 1);
+  assert_eq!(plan.writable_mounts[0].host, job_root);
+  assert_eq!(plan.writable_mounts[0].guest, "/work");
+  assert_eq!(plan.writable_mounts[0].quota_mib, 1023);
   assert_eq!(
     plan.masked_job_directories,
     vec!["/work/cache-session".to_owned(), "/work/identity".to_owned()]
@@ -339,6 +345,69 @@ async fn maps_verified_host_paths_into_the_guest() {
     SandboxPlan::build("agent-1", &runner(&release), &request).await,
     Err(ExecutionError::Invalid(message)) if message.contains("dedicated directory")
   ));
+}
+
+#[tokio::test]
+async fn projects_only_the_bounded_factory_roots() {
+  let temporary = tempfile::tempdir().unwrap();
+  let root = temporary.path().canonicalize().unwrap();
+  let release = root.join("release");
+  let work_root = root.join("work");
+  let job_root = work_root.join("job-1");
+  let source = job_root.join("source");
+  let scratch = job_root.join("scratch");
+  let output = job_root.join("output");
+  let protected = job_root.join("protected");
+  let data_dir = scratch.join(".octacity");
+  for directory in [
+    &release, &work_root, &job_root, &source, &scratch, &output, &protected, &data_dir,
+  ] {
+    fs::create_dir(directory).unwrap();
+  }
+  let mut permissions = fs::metadata(&protected).unwrap().permissions();
+  permissions.set_readonly(true);
+  fs::set_permissions(&protected, permissions).unwrap();
+  let mut request = request(&source);
+  request.workspace_root = work_root;
+  request.data_dir = data_dir;
+  request.factory = Some(FactoryExecutionLayout {
+    protected_inputs: protected.clone(),
+    source: source.clone(),
+    scratch: scratch.clone(),
+    output: output.clone(),
+    process_limit: 3,
+  });
+
+  let plan = SandboxPlan::build("agent-1", &runner(&release), &request)
+    .await
+    .unwrap();
+  assert_eq!(plan.guest_workspace, FACTORY_SOURCE_ROOT);
+  assert_eq!(plan.guest_data_dir, Path::new(FACTORY_SCRATCH_ROOT).join(".octacity"));
+  assert_eq!(plan.protected_inputs, Some(protected.clone()));
+  assert_eq!(plan.process_limit, Some(3));
+  assert_eq!(
+    plan
+      .writable_mounts
+      .iter()
+      .map(|mount| mount.guest.as_str())
+      .collect::<Vec<_>>(),
+    [FACTORY_SOURCE_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_OUTPUT_ROOT]
+  );
+  assert_eq!(
+    plan.writable_mounts.iter().map(|mount| mount.quota_mib).sum::<u32>(),
+    1024
+  );
+  assert!(plan.masked_job_directories.contains(&"/workspace/protected".to_owned()));
+
+  let mut permissions = fs::metadata(&protected).unwrap().permissions();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    permissions.set_mode(permissions.mode() | 0o200);
+  }
+  #[cfg(windows)]
+  permissions.set_readonly(false);
+  fs::set_permissions(protected, permissions).unwrap();
 }
 
 #[tokio::test]

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use octacity_server_domain::{AgentId, EntityKind, PoolId, TriggerIdentity};
+use octacity_server_domain::{AgentId, AttemptNumber, EntityKind, JobId, PoolId, TriggerIdentity};
 use octacity_server_job::JobFailureClass;
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use serde_json::json;
@@ -301,6 +301,41 @@ where
     fence: LeaseFence::from_bytes([0xff; 32]),
     ..access
   };
+  store
+    .authorize_tool_action_lease(access, root_job, grant.attempt, time(2_000))
+    .await
+    .expect("the current exact lease must authorize its own blocked tool action");
+  for (job_id, attempt, description) in [
+    (id::<JobId>(99_999), grant.attempt, "different Job"),
+    (
+      root_job,
+      AttemptNumber::new(grant.attempt.get() + 1).unwrap(),
+      "different Attempt",
+    ),
+  ] {
+    assert_eq!(
+      store
+        .authorize_tool_action_lease(access, job_id, attempt, time(2_000))
+        .await
+        .unwrap_err(),
+      StoreError::Fenced { lease: grant.lease_id },
+      "a current Lease must not authorize a {description}"
+    );
+  }
+  assert_eq!(
+    store
+      .authorize_tool_action_lease(fenced_access, root_job, grant.attempt, time(2_000))
+      .await
+      .unwrap_err(),
+    StoreError::Fenced { lease: grant.lease_id }
+  );
+  assert_eq!(
+    store
+      .authorize_tool_action_lease(access, root_job, grant.attempt, time(CONTRACT_LEASE_EXPIRY_MILLIS))
+      .await
+      .unwrap_err(),
+    StoreError::Expired { lease: grant.lease_id }
+  );
   assert_eq!(
     store
       .append_job_events(append(fenced_access, &[(1, 1)]))

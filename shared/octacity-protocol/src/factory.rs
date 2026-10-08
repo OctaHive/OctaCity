@@ -22,6 +22,15 @@ pub const MAX_FACTORY_COMMAND_ARGUMENTS: usize = 64;
 pub const MAX_FACTORY_COMMAND_ARGUMENT_BYTES: usize = 16 * 1024;
 /// Reserved read-only root for server-owned v3 inputs.
 pub const PROTECTED_INPUT_ROOT: &str = "/octacity/protected";
+/// Reserved writable root containing the exact materialized source revision.
+pub const FACTORY_SOURCE_ROOT: &str = "/workspace/source";
+/// Capability advertised by a harness plugin that blocks every protected tool
+/// action until an external authorizer returns a disposition.
+pub const BLOCKING_TOOL_AUTHORIZATION_CAPABILITY: &str = "codex.blocking-pre-tool-authorization.v1";
+/// Reserved writable root for disposable Factory task state.
+pub const FACTORY_SCRATCH_ROOT: &str = "/workspace/scratch";
+/// Reserved writable root for declared Factory outputs.
+pub const FACTORY_OUTPUT_ROOT: &str = "/workspace/output";
 
 /// Program-owned Factory stage represented as causal metadata only.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -173,6 +182,31 @@ pub struct ManagedOctaExecutionV3 {
   pub octafile_input: String,
   /// Exact non-empty Octa task names, in execution order.
   pub tasks: Vec<String>,
+  /// Optional protected tool-control contract for tasks that may invoke tools.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub tool_control: Option<FactoryToolControlV3>,
+}
+
+/// Strength of protected tool control required by one managed task.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryToolControlModeV3 {
+  /// Code-owned deterministic rules decide every in-envelope action.
+  Deterministic,
+  /// Ambiguous in-envelope actions may use a server-side Decision Signal.
+  ToolRisk,
+}
+
+/// Exact blocking-hook capability required for one managed tool-using task.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryToolControlV3 {
+  /// Plugin whose immutable executable installs the blocking hook.
+  pub plugin: String,
+  /// Exact semantic capability advertised by the pinned plugin release.
+  pub capability: String,
+  /// Maximum decision mechanism enabled for this task.
+  pub mode: FactoryToolControlModeV3,
 }
 
 impl ManagedOctaExecutionV3 {
@@ -189,6 +223,12 @@ impl ManagedOctaExecutionV3 {
       bounded_identity("execution.tasks", task)?;
       if !seen.insert(task) {
         return Err("managed task names must not contain duplicates".to_owned());
+      }
+    }
+    if let Some(control) = &self.tool_control {
+      bounded_key("execution.tool_control.plugin", &control.plugin)?;
+      if control.capability != BLOCKING_TOOL_AUTHORIZATION_CAPABILITY {
+        return Err("managed tool control requires the supported blocking-hook capability".to_owned());
       }
     }
     Ok(())
@@ -208,7 +248,7 @@ pub struct FactoryImmutableReferenceV3 {
 }
 
 impl FactoryImmutableReferenceV3 {
-  fn validate(&self, name: &str) -> Result<(), String> {
+  pub(crate) fn validate(&self, name: &str) -> Result<(), String> {
     bounded_key(name, &self.identity)?;
     bounded_identity(name, &self.version)?;
     digest(name, &self.sha256)
@@ -532,6 +572,27 @@ pub(crate) fn validate_factory_execution(
   if required != FactoryEnforcementCapabilityV3::ALL {
     return Err("JobSpec v3 requires the complete ordered enforcement vocabulary".to_owned());
   }
+  let required_mounts = [
+    FactoryMountPermissionV3 {
+      root: PROTECTED_INPUT_ROOT.to_owned(),
+      mode: FactoryMountModeV3::ReadOnly,
+    },
+    FactoryMountPermissionV3 {
+      root: FACTORY_OUTPUT_ROOT.to_owned(),
+      mode: FactoryMountModeV3::ReadWrite,
+    },
+    FactoryMountPermissionV3 {
+      root: FACTORY_SCRATCH_ROOT.to_owned(),
+      mode: FactoryMountModeV3::ReadWrite,
+    },
+    FactoryMountPermissionV3 {
+      root: FACTORY_SOURCE_ROOT.to_owned(),
+      mode: FactoryMountModeV3::ReadWrite,
+    },
+  ];
+  if permissions.mounts.as_slice() != required_mounts.as_slice() {
+    return Err("Factory permissions must exactly authorize the protected/source/scratch/output layout".to_owned());
+  }
   let resources = permissions.resources;
   if resources.cpu_millis > runtime.cpu_millis
     || resources.memory_bytes > runtime.memory_bytes
@@ -545,13 +606,8 @@ pub(crate) fn validate_factory_execution(
     NetworkPolicy::Disabled if !permissions.network_hosts.is_empty() => {
       return Err("disabled runtime network cannot grant Factory hosts".to_owned());
     }
-    NetworkPolicy::Restricted { allowed_hosts }
-      if permissions
-        .network_hosts
-        .iter()
-        .any(|host| !allowed_hosts.contains(host)) =>
-    {
-      return Err("Factory network hosts exceed the signed runtime allowlist".to_owned());
+    NetworkPolicy::Restricted { allowed_hosts } if allowed_hosts != &permissions.network_hosts => {
+      return Err("Factory runtime and permission network allowlists must match exactly".to_owned());
     }
     NetworkPolicy::Disabled | NetworkPolicy::Restricted { .. } => {}
   }
@@ -573,7 +629,11 @@ pub(crate) fn validate_factory_execution(
   Ok(())
 }
 
-pub(crate) fn validate_factory_toolchain(octa: &OctaSpec, permissions: &FactoryPermissionSetV3) -> Result<(), String> {
+pub(crate) fn validate_factory_toolchain(
+  octa: &OctaSpec,
+  execution: &ManagedOctaExecutionV3,
+  permissions: &FactoryPermissionSetV3,
+) -> Result<(), String> {
   if octa.plugin_digests.len() != permissions.plugins.len()
     || octa.plugin_digests.iter().any(|(identity, digest)| {
       !permissions
@@ -583,6 +643,17 @@ pub(crate) fn validate_factory_toolchain(octa: &OctaSpec, permissions: &FactoryP
     })
   {
     return Err("Factory plugin permissions do not match the signed Octa plugin set".to_owned());
+  }
+  match (&execution.tool_control, permissions.tools.is_empty()) {
+    (None, true) => {}
+    (Some(control), false)
+      if permissions
+        .plugins
+        .iter()
+        .any(|plugin| plugin.identity == control.plugin) => {}
+    (None, false) => return Err("Factory tool authority requires blocking tool control".to_owned()),
+    (Some(_), true) => return Err("Factory tool control is present without tool authority".to_owned()),
+    (Some(_), false) => return Err("Factory tool-control plugin is absent from signed permissions".to_owned()),
   }
   Ok(())
 }
@@ -607,7 +678,7 @@ fn bounded_text(name: &str, value: &str, maximum: usize) -> Result<(), String> {
   }
 }
 
-fn bounded_key(name: &str, value: &str) -> Result<(), String> {
+pub(crate) fn bounded_key(name: &str, value: &str) -> Result<(), String> {
   bounded_identity(name, value)?;
   let mut bytes = value.bytes();
   if !bytes
@@ -633,11 +704,7 @@ fn validate_hosts(hosts: &[String]) -> Result<(), String> {
   bounded_count("permissions.network_hosts", hosts.len())?;
   strictly_ordered("permissions.network_hosts", hosts, |host| host)?;
   for host in hosts {
-    let canonical_ip = host.parse::<IpAddr>().is_ok_and(|address| address.to_string() == *host);
-    let canonical_dns = host.len() <= 253 && host.split('.').all(valid_dns_label);
-    if !canonical_ip && !canonical_dns {
-      return Err("Factory network host is not a canonical DNS name or IP address".to_owned());
-    }
+    validate_host("permissions.network_hosts", host)?;
   }
   Ok(())
 }
@@ -664,7 +731,19 @@ fn digest(name: &str, value: &str) -> Result<(), String> {
   }
 }
 
-fn portable_absolute_path(name: &str, value: &str) -> Result<(), String> {
+pub(crate) fn validate_host(name: &str, value: &str) -> Result<(), String> {
+  let canonical_ip = value
+    .parse::<IpAddr>()
+    .is_ok_and(|address| address.to_string() == value);
+  let canonical_dns = value.len() <= 253 && value.split('.').all(valid_dns_label);
+  if !canonical_ip && !canonical_dns {
+    Err(format!("{name} is not a canonical DNS name or IP address"))
+  } else {
+    Ok(())
+  }
+}
+
+pub(crate) fn portable_absolute_path(name: &str, value: &str) -> Result<(), String> {
   if value.is_empty()
     || value.len() > MAX_FACTORY_PATH_BYTES
     || !value.starts_with('/')
@@ -691,7 +770,7 @@ fn protected_destination(value: &str) -> Result<(), String> {
   Ok(())
 }
 
-fn path_contains(root: &str, candidate: &str) -> bool {
+pub(crate) fn path_contains(root: &str, candidate: &str) -> bool {
   candidate == root
     || candidate
       .strip_prefix(root)

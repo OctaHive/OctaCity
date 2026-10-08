@@ -1,8 +1,9 @@
 //! Runs `octa-runner` inside an attached Microsandbox microVM.
 //!
 //! The adapter maps the backend-neutral execution contract to one ephemeral,
-//! digest-pinned sandbox. The job-private root is the only disk-backed writable
-//! mount and has the job's quota; the OCI root overlay is RAM-backed and therefore
+//! digest-pinned sandbox. Ordinary jobs receive one writable job-root mount;
+//! Factory jobs receive only their source, scratch, and output roots, with the
+//! remaining aggregate Job quota partitioned across them. The OCI root overlay is RAM-backed and therefore
 //! charged to the VM memory limit. The verified Octa release is mounted
 //! read-only. Runner stdin/stdout/stderr remain byte streams, so the
 //! higher-level supervisor uses exactly the same protocol in Native and
@@ -19,12 +20,14 @@ use std::{
 };
 
 use async_trait::async_trait;
-use microsandbox::{Backend, ExecControl, ExecEvent, LocalBackend, NetworkPolicy, Sandbox, with_backend};
+use microsandbox::{
+  Backend, ExecControl, ExecEvent, LocalBackend, NetworkPolicy, Sandbox, sandbox::RlimitResource, with_backend,
+};
 use octacity_execution::{
   CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionArchitecture, ExecutionCacheMounts,
   ExecutionError, ExecutionExit, ExecutionIo, ExecutionOs, ExecutionPaths, ExecutionPlatform, ExecutionReader,
-  ExecutionTarget, ExecutionWriter, NetworkAccess, OciIsolation, ResourceUsage, RunnerProgram, RunningExecution,
-  StartExecution, WORKLOAD_IDENTITY_PATH,
+  ExecutionTarget, ExecutionWriter, FACTORY_PROTECTED_INPUT_ROOT, NetworkAccess, OciIsolation, ResourceUsage,
+  RunnerProgram, RunningExecution, StartExecution, WORKLOAD_IDENTITY_PATH,
 };
 use octacity_execution_oci::{OciCapability, OciEngine};
 use sha2::{Digest as _, Sha256};
@@ -239,19 +242,27 @@ impl OciEngine for MicrosandboxEngine {
           .max_duration(duration_seconds_ceil(request.max_duration))
           .metrics_sample_interval(self.metrics_sample_interval)
           .label(OWNER_LABEL, &self.agent_id)
-          .volume(&plan.guest_job_root, |mount| {
-            mount
-              .bind(&plan.host_job_root)
-              .quota(plan.job_root_quota_mib)
-              .nosuid()
-              .nodev()
-          })
           .volume(&plan.guest_release, |mount| {
             mount.bind(&runner.release_root).readonly().nosuid().nodev()
           });
+        if plan.protected_inputs.is_some() {
+          builder = builder.volume(&plan.guest_job_root, |mount| {
+            mount.tmpfs().size(1_u32).readonly().noexec().nosuid().nodev()
+          });
+        }
+        for writable in &plan.writable_mounts {
+          builder = builder.volume(&writable.guest, |mount| {
+            mount.bind(&writable.host).quota(writable.quota_mib).nosuid().nodev()
+          });
+        }
         if let Some(identity) = &plan.workload_identity {
           builder = builder.volume(WORKLOAD_IDENTITY_PATH, |mount| {
             mount.bind(identity).readonly().nosuid().nodev()
+          });
+        }
+        if let Some(protected_inputs) = &plan.protected_inputs {
+          builder = builder.volume(FACTORY_PROTECTED_INPUT_ROOT, |mount| {
+            mount.bind(protected_inputs).readonly().noexec().nosuid().nodev()
           });
         }
         for (_, executable, guest_path) in &plan.external_executables {
@@ -305,6 +316,9 @@ impl OciEngine for MicrosandboxEngine {
     }
     let exec = sandbox.exec_stream_with(&plan.guest_executable, |mut options| {
       options = options.stdin_pipe().cwd(&plan.guest_workspace);
+      if let Some(process_limit) = plan.process_limit {
+        options = options.rlimit(RlimitResource::Nproc, u64::from(process_limit));
+      }
       for (selector, _, executable) in &plan.external_executables {
         options = options.env(selector, executable);
       }

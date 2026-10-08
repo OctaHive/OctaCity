@@ -1,6 +1,8 @@
 use serde_json::{Map, Value};
 
-use super::super::{array, boolean, non_empty_string, nullable, object, positive_integer, schema_ref, string_enum};
+use super::super::{
+  array, boolean, non_empty_string, nullable, object, positive_integer, schema_ref, string_enum, unique_array,
+};
 
 pub(super) fn insert_agent_detail_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert(
@@ -31,6 +33,69 @@ pub(super) fn insert_agent_detail_schemas(schemas: &mut Map<String, Value>) {
         ("isolation", nullable(string_enum(&["process", "hypervisor"]))),
       ],
       &["backend", "mode", "platform", "isolation"],
+    ),
+  );
+  schemas.insert(
+    "AgentExecutionContractRange".to_owned(),
+    object(
+      [("min", positive_integer()), ("max", positive_integer())],
+      &["min", "max"],
+    ),
+  );
+  schemas.insert(
+    "AgentExecutionCapability".to_owned(),
+    object(
+      [
+        ("provider", non_empty_string()),
+        ("mode", string_enum(&["host", "isolation", "virtualization"])),
+        ("host_platform", schema_ref("ProtocolPlatform")),
+        ("target_platform", schema_ref("ProtocolPlatform")),
+        ("guarantees", unique_array(schema_ref("ExecutionGuarantee"))),
+        ("immutable_images", boolean()),
+      ],
+      &[
+        "provider",
+        "mode",
+        "host_platform",
+        "target_platform",
+        "guarantees",
+        "immutable_images",
+      ],
+    ),
+  );
+  schemas.insert(
+    "FactoryEnforcementCapability".to_owned(),
+    string_enum(&[
+      "plugin_identity",
+      "executable_identity",
+      "tool_identity",
+      "command_arguments",
+      "descendant_processes",
+      "filesystem_paths",
+      "mount_modes",
+      "network_hosts",
+      "secret_profiles",
+      "workload_identity_profiles",
+      "cpu",
+      "memory",
+      "disk",
+      "process_count",
+      "elapsed_time",
+      "outputs",
+      "protected_input_integrity",
+      "read_only_protected_inputs",
+      "workspace_separation",
+      "managed_octa_execution",
+    ]),
+  );
+  schemas.insert(
+    "AgentFactoryExecutionCapability".to_owned(),
+    object(
+      [
+        ("execution", schema_ref("AgentExecutionCapability")),
+        ("enforcement", unique_array(schema_ref("FactoryEnforcementCapability"))),
+      ],
+      &["execution", "enforcement"],
     ),
   );
   schemas.insert(

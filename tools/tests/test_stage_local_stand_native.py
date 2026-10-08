@@ -237,11 +237,11 @@ class NativeStandStagingTests(unittest.TestCase):
         name = STAGER.input_set_name(self.document, REVISION)
         self.assertEqual(
             name,
-            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.5.0-msb-0.7.6",
+            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.5.1-msb-0.7.6",
         )
         self.assertEqual(
             STAGER.installation_name(self.document, REVISION),
-            "agent-0.1.0-aaaaaaaaaaaa-octa-0.5.0-msb-0.7.6",
+            "agent-0.1.0-aaaaaaaaaaaa-octa-0.5.1-msb-0.7.6",
         )
 
     def test_prepare_proves_microsandbox_release_and_asset_identity(self):

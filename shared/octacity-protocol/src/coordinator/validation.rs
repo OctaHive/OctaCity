@@ -48,6 +48,17 @@ impl AgentInventory {
     {
       return invalid("v2 execution capabilities require execution-contract v2 support");
     }
+    bounded_len("Factory execution capabilities", self.factory_executions.len())?;
+    let mut factory_executions = BTreeSet::new();
+    for capability in &self.factory_executions {
+      capability.validate(self)?;
+      if !factory_executions.insert(&capability.execution) {
+        return invalid("Factory execution capabilities must not contain duplicate routes");
+      }
+    }
+    if !self.factory_executions.is_empty() && !self.execution_contract.contains(crate::EXECUTION_CONTRACT_V3) {
+      return invalid("Factory execution capabilities require execution-contract v3 support");
+    }
     self.octa.validate()?;
     if let Some(cache) = &self.cache {
       cache.validate(&self.octa)?;
@@ -59,6 +70,68 @@ impl AgentInventory {
       if !source_names.insert(&plugin.name) {
         return invalid("source plugin names must not contain duplicates");
       }
+    }
+    Ok(())
+  }
+}
+
+impl AuthorizeToolActionRequest {
+  /// Validates correlation, fence shape, and the redacted bounded proposal identity.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    request(self.protocol_version, &self.request_id)?;
+    identifier("registration_id", &self.registration_id)?;
+    self.lease.validate()?;
+    sha256("proposal_sha256", &self.proposal_sha256)?;
+    self.proposal_summary.validate().map_err(CoordinatorProtocolError::new)
+  }
+}
+
+impl AuthorizeToolActionResponse {
+  /// Constructs a response bound to the exact fenced request and optional receipt.
+  pub fn new(
+    request: &AuthorizeToolActionRequest,
+    decision: crate::FactoryToolActionDecisionV3,
+  ) -> Result<Self, CoordinatorProtocolError> {
+    request.validate()?;
+    if decision.proposal_sha256() != request.proposal_sha256 {
+      return invalid("tool-action decision does not match the blocked proposal");
+    }
+    let authorization_sha256 =
+      crate::factory_tool_action_authorization_sha256(&request.request_id, &request.lease, &decision);
+    Ok(Self {
+      protocol_version: COORDINATOR_PROTOCOL_VERSION,
+      request_id: request.request_id.clone(),
+      decision,
+      authorization_sha256,
+    })
+  }
+
+  /// Validates correlation and the complete lease/proposal/receipt binding.
+  pub fn validate(&self, request: &AuthorizeToolActionRequest) -> Result<(), CoordinatorProtocolError> {
+    response(self.protocol_version, &self.request_id, &request.request_id)?;
+    sha256("authorization_sha256", &self.authorization_sha256)?;
+    if self.decision.proposal_sha256() != request.proposal_sha256
+      || self.authorization_sha256
+        != crate::factory_tool_action_authorization_sha256(&request.request_id, &request.lease, &self.decision)
+    {
+      return invalid("tool-action response binding does not match the blocked request");
+    }
+    Ok(())
+  }
+}
+
+impl FactoryExecutionCapabilityV3 {
+  fn validate(&self, inventory: &AgentInventory) -> Result<(), CoordinatorProtocolError> {
+    self.execution.validate().map_err(CoordinatorProtocolError::new)?;
+    if self.execution.host_platform != inventory.host_platform
+      || self.execution.mode == crate::ExecutionMode::Host
+      || !inventory.executions.contains(&self.execution)
+    {
+      return invalid("Factory execution capability does not identify an advertised isolated execution route");
+    }
+    bounded_len("Factory enforcement capabilities", self.enforcement.len())?;
+    if self.enforcement.is_empty() || self.enforcement.windows(2).any(|pair| pair[0] >= pair[1]) {
+      return invalid("Factory enforcement capabilities must be non-empty, unique, and canonically ordered");
     }
     Ok(())
   }

@@ -43,8 +43,7 @@ mod support;
 use cache_proxy::TlsCacheProxy;
 use checks::*;
 use scenarios::{
-  CancellationInput, ManualBuildInput, NativeCgroupAssertion, ReadyMarkerAssertion, RetryInput, run_and_cancel,
-  run_and_retry,
+  CancellationInput, ManualBuildInput, NativeCgroupAssertion, RetryInput, run_and_cancel, run_and_retry,
 };
 use support::*;
 
@@ -388,7 +387,7 @@ async fn run_matrix(expected_backend: &str) {
           root: cgroup_root,
           baseline,
         }),
-      ready_marker: None,
+      ready_progress: None,
       maximum_disk_bytes: backend.workspace_bytes(),
     },
     agent_b.child_mut(),
@@ -419,7 +418,6 @@ async fn run_matrix(expected_backend: &str) {
     revision: &revision,
     native_roots,
     cgroup_baseline: cgroup_baseline.as_ref(),
-    work_root,
     server_stdout: &server_stdout,
     server_stderr: &server_stderr,
   })

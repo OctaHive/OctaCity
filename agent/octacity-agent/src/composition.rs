@@ -27,11 +27,14 @@ use octacity_execution_native::{LinuxNativeConfig, NATIVE_BACKEND_NAME, NativeBa
 use octacity_execution_oci::{OciBackend, OciCapability, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_inventory::{AgentInventoryConfig, HostMonitor, build_inventory, host_platform};
-use octacity_job::{ExecutionBackendRoute, JobExecutor, JobExecutorConfig};
+use octacity_job::{
+  ExecutionBackendRoute, JobExecutor, JobExecutorConfig, ProtectedInputStager, ProtectedInputStagerConfig,
+};
 use octacity_output::{OutputPublisher, PresignedOutputPublisher, PresignedOutputPublisherConfig};
 use octacity_protocol::{
-  AgentInventory, BackendHealth, BackendHealthStatus, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode,
-  ExecutionProviderId, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode, guarantees_for,
+  AgentInventory, BackendHealth, BackendHealthStatus, EXECUTION_CONTRACT_V3, ExecutionCapabilityV2,
+  ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, FactoryEnforcementCapabilityV3,
+  FactoryExecutionCapabilityV3, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode, guarantees_for,
 };
 use octacity_runner::{
   ConfiguredExternalExecutable, RunnerInstallation, RunnerSupervisionPolicy, VerifiedExternalExecutable,
@@ -79,6 +82,7 @@ impl Components {
       executor,
       runtimes,
       executions,
+      factory_executions,
       backend_health,
       cache,
     } = build_executor(
@@ -108,6 +112,12 @@ impl Components {
       host.capacity().clone(),
     )?;
     inventory.executions = executions;
+    if validated.config.factory_permissions.is_some() {
+      inventory.factory_executions = factory_executions;
+      if !inventory.factory_executions.is_empty() {
+        inventory.execution_contract.max = EXECUTION_CONTRACT_V3;
+      }
+    }
     inventory.validate()?;
     let retry = RetryPolicy {
       max_attempts: validated.config.retry_max_attempts,
@@ -157,6 +167,7 @@ struct ExecutorAssembly {
   executor: JobExecutor,
   runtimes: Vec<RuntimeCapability>,
   executions: Vec<ExecutionCapabilityV2>,
+  factory_executions: Vec<FactoryExecutionCapabilityV3>,
   backend_health: Vec<BackendHealth>,
   cache: Arc<CacheSessionManager>,
 }
@@ -167,6 +178,7 @@ struct BackendAssembly {
   routes: Vec<ExecutionBackendRoute>,
   runtimes: Vec<RuntimeCapability>,
   executions: Vec<ExecutionCapabilityV2>,
+  factory_executions: Vec<FactoryExecutionCapabilityV3>,
   health: Vec<BackendHealth>,
 }
 
@@ -182,12 +194,19 @@ impl BackendAssembly {
     capability: ExecutionCapabilityV2,
     environment_identity: ExecutionEnvironmentId,
     backend: Arc<dyn ExecutionBackend>,
+    factory_enforcement: Option<&'static [FactoryEnforcementCapabilityV3]>,
   ) -> Result<(), octacity_job::JobError> {
-    self.routes.push(ExecutionBackendRoute::new(
-      capability.clone(),
-      environment_identity,
-      backend,
-    )?);
+    let route = ExecutionBackendRoute::new(capability.clone(), environment_identity, backend)?;
+    if let Some(capabilities) = factory_enforcement {
+      self.factory_executions.push(FactoryExecutionCapabilityV3 {
+        execution: capability.clone(),
+        enforcement: capabilities.to_vec(),
+      });
+    }
+    self.routes.push(match factory_enforcement {
+      Some(capabilities) => route.with_factory_enforcement(capabilities.iter().copied())?,
+      None => route,
+    });
     self.health.push(ready_execution(&capability));
     self.executions.push(capability);
     Ok(())
@@ -263,8 +282,13 @@ impl BackendAssembly {
     providers: &[IsolationProviderConfig],
   ) -> Result<(), Box<dyn std::error::Error>> {
     for provider in providers {
-      let (provider_name, environment_identity, engine, isolation_error): (_, _, Arc<dyn OciEngine>, _) = match provider
-      {
+      let (provider_name, environment_identity, engine, isolation_error, factory_enforcement): (
+        _,
+        _,
+        Arc<dyn OciEngine>,
+        _,
+        Option<&'static [FactoryEnforcementCapabilityV3]>,
+      ) = match provider {
         IsolationProviderConfig::Containerd {
           environment_identity,
           endpoint,
@@ -293,6 +317,7 @@ impl BackendAssembly {
             environment_identity,
             engine,
             "containerd isolation provider must enforce process isolation",
+            Some(&FactoryEnforcementCapabilityV3::ALL),
           )
         }
         IsolationProviderConfig::AppleVf {
@@ -316,6 +341,7 @@ impl BackendAssembly {
             environment_identity,
             engine,
             "Apple VF isolation provider must implement the isolation contract",
+            None,
           )
         }
       };
@@ -325,7 +351,7 @@ impl BackendAssembly {
       }
       let capability = execution_capability(provider_name, ExecutionMode::Isolation, engine_capability.platform)?;
       let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
-      self.add_execution(capability, environment_identity.clone(), backend)?;
+      self.add_execution(capability, environment_identity.clone(), backend, factory_enforcement)?;
     }
     Ok(())
   }
@@ -360,7 +386,12 @@ impl BackendAssembly {
         engine_capability.platform,
       )?;
       let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
-      self.add_execution(capability, environment_identity.clone(), backend)?;
+      self.add_execution(
+        capability,
+        environment_identity.clone(),
+        backend,
+        Some(&FactoryEnforcementCapabilityV3::ALL),
+      )?;
     }
     Ok(())
   }
@@ -414,7 +445,7 @@ async fn build_executor(
           guarantees: guarantees_for(ExecutionMode::Host),
           immutable_images: false,
         };
-        assembly.add_execution(capability, environment_identity.clone(), backend)?;
+        assembly.add_execution(capability, environment_identity.clone(), backend, None)?;
       }
       ValidatedRuntimeConfig::Native {
         cgroup_root,
@@ -493,10 +524,19 @@ async fn build_executor(
   )?
   .with_execution_backends(assembly.routes)?
   .with_cache(cache.clone());
+  let executor = if validated.config.factory_permissions.is_some() {
+    executor.with_protected_input_stager(ProtectedInputStager::new(ProtectedInputStagerConfig {
+      allowed_origins: validated.config.allowed_upload_origins.clone(),
+      download_timeout: Duration::from_secs(validated.config.upload_timeout_seconds),
+    })?)
+  } else {
+    executor
+  };
   Ok(ExecutorAssembly {
     executor,
     runtimes: assembly.runtimes,
     executions: assembly.executions,
+    factory_executions: assembly.factory_executions,
     backend_health: assembly.health,
     cache,
   })

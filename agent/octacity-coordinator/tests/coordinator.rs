@@ -329,6 +329,7 @@ fn inventory() -> AgentInventory {
       isolation: None,
     }],
     executions: Vec::new(),
+    factory_executions: Vec::new(),
     octa: OctaInventory {
       version: "0.3.0".to_owned(),
       runner_sha256: "1".repeat(64),

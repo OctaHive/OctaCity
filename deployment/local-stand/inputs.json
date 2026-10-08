@@ -83,28 +83,31 @@
       "codex": {
         "executable_product": "codex-cli",
         "manifest": "plugins/codex.plugin.yml",
-        "plugin_name": "codex",
-        "plugin_protocol": 2,
-        "selection_environment": "OCTA_CODEX_EXECUTABLE",
+      "plugin_name": "codex",
+      "plugin_protocol": 2,
+      "required_capabilities": [
+        "codex.blocking-pre-tool-authorization.v1"
+      ],
+      "selection_environment": "OCTA_CODEX_EXECUTABLE",
         "supported_cli_versions": [
-          "0.130.0"
+          "0.161.0"
         ]
       },
       "license": "MIT",
       "platform": "linux-arm64",
       "provenance": "github-build-provenance",
-      "release_name": "octa-linux-arm64-v0.5.0",
-      "release_url": "https://github.com/OctaHive/octa/releases/download/v0.5.0/octa-Linux-arm64.tar.gz",
+      "release_name": "octa-linux-arm64-v0.5.1",
+      "release_url": "https://github.com/OctaHive/octa/releases/download/v0.5.1/octa-Linux-arm64.tar.gz",
       "repository": "https://github.com/OctaHive/octa",
-      "sha256": "9239528b6a022eb3257a0f73e88525059b4633a79d33aa8557dd094aa6579ac0",
+      "sha256": "3c44b08cbd92d371449161782e199d62f81792279cad7cbda80175fdfd56193e",
       "source_archive_expanded_max_bytes": 536870912,
       "source_archive_file_max_bytes": 67108864,
       "source_archive_max_bytes": 67108864,
       "source_archive_member_max_count": 32768,
-      "source_archive_sha256": "7a0bf8ea01e20ebbadac9c51275b42c4c9d2d76c687d7059978860988fbe3cb2",
-      "source_archive_url": "https://codeload.github.com/OctaHive/octa/tar.gz/8b4269eff298dccadf38bc7011b759464fcdc1e1",
-      "source_revision": "8b4269eff298dccadf38bc7011b759464fcdc1e1",
-      "version": "0.5.0"
+      "source_archive_sha256": "66c9e847796f0134705cf5093e0484ae2b38f5bee39cca39fd90142612194b9b",
+      "source_archive_url": "https://codeload.github.com/OctaHive/octa/tar.gz/e0a3c65fe010220c5a8162c52368b7c8f624ddb5",
+      "source_revision": "e0a3c65fe010220c5a8162c52368b7c8f624ddb5",
+      "version": "0.5.1"
     },
     "octacity_agent": {
       "platform": "macos-arm64",

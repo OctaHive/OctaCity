@@ -85,17 +85,7 @@ impl ExecutionBackend for FakeBackend {
     _cancellation: CancellationToken,
   ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
     self.starts.fetch_add(1, Ordering::SeqCst);
-    let isolated = matches!(
-      request.root,
-      ExecutionTarget::Oci {
-        platform: ExecutionPlatform {
-          os: ExecutionOs::Linux,
-          architecture: ExecutionArchitecture::Amd64,
-        },
-        isolation: ExecutionOciIsolation::Process,
-        ..
-      }
-    );
+    let isolated = matches!(request.root, ExecutionTarget::Oci { .. });
     assert!(matches!(
       request.root,
       ExecutionTarget::Native {
@@ -113,18 +103,40 @@ impl ExecutionBackend for FakeBackend {
           os: ExecutionOs::Linux,
           architecture: ExecutionArchitecture::Amd64,
         },
-        isolation: ExecutionOciIsolation::Process,
+        isolation: ExecutionOciIsolation::Process | ExecutionOciIsolation::Hypervisor,
         ..
       }
     ));
-    assert_eq!(
-      request.network,
-      if isolated {
-        NetworkAccess::Disabled
-      } else {
-        NetworkAccess::Unrestricted
-      }
-    );
+    if let Some(factory) = &request.factory {
+      assert!(isolated);
+      assert_eq!(
+        request.network,
+        NetworkAccess::Restricted {
+          allowed_hosts: vec!["api.openai.com".to_owned()]
+        }
+      );
+      assert_eq!(factory.source, request.workspace);
+      assert!(request.data_dir.starts_with(&factory.scratch));
+      assert_ne!(factory.source, factory.scratch);
+      assert_ne!(factory.source, factory.output);
+      assert_ne!(factory.source, factory.protected_inputs);
+      assert_eq!(factory.process_limit, 2);
+      assert!(
+        fs::metadata(&factory.protected_inputs)
+          .unwrap()
+          .permissions()
+          .readonly()
+      );
+    } else {
+      assert_eq!(
+        request.network,
+        if isolated {
+          NetworkAccess::Disabled
+        } else {
+          NetworkAccess::Unrestricted
+        }
+      );
+    }
     let exposed_identity = request
       .workload_identity
       .as_ref()

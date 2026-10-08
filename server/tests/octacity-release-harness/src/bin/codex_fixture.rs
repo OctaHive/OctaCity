@@ -35,7 +35,7 @@ fn main() {
     run_heartbeat(Path::new(heartbeat));
   }
   if arguments == ["--version"] {
-    println!("codex-cli 0.130.0");
+    println!("codex-cli 0.161.0");
     return;
   }
 

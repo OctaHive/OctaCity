@@ -219,6 +219,22 @@ fn rejects_codex_plugin_lock_drift_even_with_fresh_checksums() {
 }
 
 #[test]
+fn rejects_codex_without_the_blocking_tool_authorization_capability() {
+  let temporary = tempfile::tempdir().unwrap();
+  let bundles = fixture(temporary.path());
+  let lock_path = bundles.octa.join("Octa.lock");
+  let lock = fs::read_to_string(&lock_path)
+    .unwrap()
+    .replace("    capabilities: [codex.blocking-pre-tool-authorization.v1]\n", "");
+  fs::write(lock_path, lock).unwrap();
+  write_checksums(&bundles.octa);
+
+  let error = install(&bundles, &temporary.path().join("rejected-codex-capability")).unwrap_err();
+
+  assert!(error.to_string().contains("differs from Octa.lock"));
+}
+
+#[test]
 fn rejects_source_plugin_identity_drift_even_with_fresh_checksums() {
   let temporary = tempfile::tempdir().unwrap();
   let bundles = fixture(temporary.path());
@@ -552,7 +568,7 @@ fn fixture(root: &Path) -> ReleaseBundles {
   fs::write(
     octa.join("Octa.lock"),
     format!(
-      "version: 1\nplugins:\n  codex:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {}\n    source: codex.plugin.yml\n  shell:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_shell\n    sha256: {}\n    capabilities: [shell]\n    source: shell.plugin.yml\n",
+      "version: 1\nplugins:\n  codex:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {}\n    capabilities: [codex.blocking-pre-tool-authorization.v1]\n    source: codex.plugin.yml\n  shell:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_shell\n    sha256: {}\n    capabilities: [shell]\n    source: shell.plugin.yml\n",
       sha256(&codex_plugin),
       sha256(&octa_plugin)
     ),
@@ -570,7 +586,7 @@ fn fixture(root: &Path) -> ReleaseBundles {
       },
       "executable": {
         "product": "codex-cli",
-        "supported_versions": ["0.130.0"],
+        "supported_versions": ["0.161.0"],
         "selection_environment": "OCTA_CODEX_EXECUTABLE"
       }
     }),

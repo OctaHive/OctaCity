@@ -46,7 +46,7 @@ LOCAL_AGENT_LABELS = {
     "environment": "local-stand",
 }
 LOCAL_HOST_PLATFORM = {"os": "macos", "architecture": "arm64"}
-LOCAL_CODEX_VERSION = "0.130.0"
+LOCAL_CODEX_VERSION = "0.161.0"
 LOCAL_CODEX_PLATFORM = "linux-aarch64"
 MICROSANDBOX_STATE_PARENT = Path("/tmp").resolve()
 

@@ -105,11 +105,11 @@ Octa уже предоставляет task DAG, headless `octa-runner`, version
 process plugins, JSON Schema, structured outputs, progress, cancellation,
 artifacts, reports и digest-pinned `Octa.lock`.
 
-В закреплённом Octa release `v0.5.0` с source revision
-`8b4269eff298dccadf38bc7011b759464fcdc1e1` реализован и упакован официальный
+В закреплённом Octa release `v0.5.1` с source revision
+`e0a3c65fe010220c5a8162c52368b7c8f624ddb5` реализован и упакован официальный
 `octa_plugin_codex`. Он запускает Codex CLI
 как обычный Octa task, использует строгую schema, проверяет совместимую версию
-CLI (сейчас exact `0.130.0`) и явно выбранный absolute executable, передаёт
+CLI (сейчас exact `0.161.0`) и явно выбранный absolute executable, передаёт
 только явно выбранное environment, завершает всё дерево процессов, санитизирует
 JSONL events и публикует versioned trace, result и provenance через обычные Octa
 artifacts/reports. Plugin намеренно не добавляет Codex-specific JobSpec, runner
@@ -128,8 +128,8 @@ opt-in `codex` task к обычным Pipelines; он не включает Dark
 | --- | --- | --- |
 | Build execution substrate | Реализовано | Exact revision, immutable configuration snapshots, signed JobSpec, placement, fenced lifecycle и generic result publication работают end-to-end |
 | Isolation и resource policy | Реализовано для квалифицированных backends | v2 target фиксирует mode, platform и required guarantees; containerd, Microsandbox, Apple VF и Native имеют отдельные contracts без fallback на более слабый mode |
-| Network, secret и identity restrictions | Частично реализовано | Есть restricted host allowlist, Project/Pool/execution-target policy, logical secret и workload-identity profiles; полного factory-level tool/command/path/mount vocabulary ещё нет |
-| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.0`; Factory lifecycle ещё не включён |
+| Network, secret и identity restrictions | Частично реализовано | JobSpec v3 и preflight содержат factory-level tool/command/path/mount vocabulary, но полная release qualification secrets/outputs и per-action Codex bounded control ещё не завершены |
+| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, blocking `PreToolUse` hook, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.1`; production Agent-local helper/IPC и exact-action adapter ещё не подключены |
 | Source intake | Реализован in-memory foundation | Provider-neutral Work Envelope, manual Factory admission, exact replay и Project/configuration visibility реализованы; PostgreSQL, REST и внешние Work Source adapters ещё впереди |
 | Factory Controller | Реализован core/in-memory foundation | Factory Run, exact Stage Attempt target, budgets, WIP, fenced reconciliation, operator retry authorization, ordinary-Build links и terminal provenance работают в pure core и deterministic in-memory store; production persistence/composition ещё не подключены |
 | ChangeSet capture | Не реализовано | Agent публикует generic outputs, но trusted base/candidate capture и immutable ChangeSet contract отсутствуют |
@@ -216,14 +216,16 @@ Provider outage, invalid output и недостаточная confidence при�
 другую модель для того же logical decision.
 
 Для `tool_risk` недостаточно post-factum telemetry: выбранный pinned harness
-adapter обязан иметь blocking pre-execution hook. Trusted Octa plugin передаёт
-canonical proposal в Agent-local authorization broker, связанный с текущими
-Job, lease и fence. Broker применяет signed hard policy и только ambiguous
-in-envelope request отправляет server-side Decision Signal adapter. Provider
-credential остаётся на server; workload ждёт deterministic disposition, после
-чего Agent/backend повторно проверяют неизменённое действие. Timeout,
-cancellation, stale fence, broker loss или receipt mismatch означают deny.
-Harness без этого capability не допускается к `tool_risk` bounded control.
+adapter обязан иметь blocking pre-execution hook. Target flow требует, чтобы
+trusted exact-action adapter передал canonical proposal в Agent-local broker,
+связанный с текущими Job, lease и fence. Broker применяет signed hard policy и
+отправляет server-side Decision Signal adapter только redacted ambiguous
+in-envelope request. Provider credential остаётся на server; workload ждёт
+deterministic disposition, после чего Agent/backend повторно проверяют
+неизменённое действие. Timeout, cancellation, stale fence, broker loss или
+receipt mismatch означают deny. Сейчас shared gate и redacted exchange покрыты
+component tests, но Agent-local helper/IPC и exact Codex mapping ещё не
+release-qualified, поэтому bounded control не рекламируется и не включается.
 
 Каждый provider/model и каждая purpose (`routing`, `tool_risk`) имеют отдельные
 versioned questions, thresholds, margin rules и calibration corpus. Rollout
@@ -972,7 +974,7 @@ target добавляет Delivery Adapter. Factory Controller не изменя
 | Квалифицированные isolation backends и запрет слабого fallback | Готово; pilot выбирает один поддерживаемый deployment profile |
 | Generic Artifact/report/result contracts | Готово |
 | Codex plugin conformance и release packaging в Octa | Готово upstream |
-| OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.5.0`, revision `8b4269eff298dccadf38bc7011b759464fcdc1e1` |
+| OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.5.1`, revision `e0a3c65fe010220c5a8162c52368b7c8f624ddb5` |
 | Factory Work/Task/ChangeSet/Assessment contracts и durable storage | Core contracts и in-memory history готовы; PostgreSQL и Task/Context schemas не готовы |
 | Decision Signal provider seam и JEV adapter | Foundation готов и fail-closed; runtime composition/persistence и shadow calibration не готовы |
 | Factory Permission Set и malicious-repository negative contracts | Частично; требуется закрыть gap из 14.1 |
@@ -1007,8 +1009,8 @@ deterministic tests. Второй реальный Work Source и Claude не я
 Завершены CI/CD Build/Attempt/Job lifecycle, PostgreSQL-backed orchestration,
 Agents/Pools, signed JobSpec, isolation backends, artifacts/cache/secrets,
 management REST, Operator Console и release/local-stand contracts. Официальный
-Codex task/plugin входит в закреплённый Octa `v0.5.0`, а OctaCity проверяет его
-release metadata, plugin lock и совместимость CLI.
+Codex task/plugin входит в закреплённый Octa `v0.5.1`, а OctaCity проверяет его
+release metadata, plugin lock, blocking-hook capability и совместимость CLI.
 
 ### Phase A: factory contracts — следующий этап
 

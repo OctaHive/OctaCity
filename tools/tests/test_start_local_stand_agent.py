@@ -116,7 +116,7 @@ class NativeAgentStartupTests(unittest.TestCase):
             path.chmod(0o755 if path != self.libkrunfw else 0o644)
         self.codex = self.installation / "agent/share/local-stand-codex-fixture"
         self.codex.parent.mkdir(parents=True, exist_ok=True)
-        self.codex.write_text("#!/bin/sh\n# codex-cli 0.130.0\n", encoding="utf-8")
+        self.codex.write_text("#!/bin/sh\n# codex-cli 0.161.0\n", encoding="utf-8")
         self.codex.chmod(0o755)
         codex_digest = hashlib.sha256(self.codex.read_bytes()).hexdigest()
         manifest = self.installation / "installation-manifest.json"
@@ -143,7 +143,7 @@ class NativeAgentStartupTests(unittest.TestCase):
                     "metrics_sample_interval_seconds = 1",
                     "[tool_executables.codex-cli]",
                     f'path = "{self.codex}"',
-                    'version = "0.130.0"',
+                    'version = "0.161.0"',
                     'platform = "linux-aarch64"',
                     f'sha256 = "{codex_digest}"',
                     "[labels]",

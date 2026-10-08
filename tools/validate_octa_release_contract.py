@@ -21,7 +21,7 @@ EXPECTED_CONTRACT = {
     "checksums": "SHA256SUMS",
     "provenance": "github-build-provenance",
 }
-SUPPORTED_CODEX_CLI_VERSIONS = ["0.130.0"]
+SUPPORTED_CODEX_CLI_VERSIONS = ["0.161.0"]
 MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 
 

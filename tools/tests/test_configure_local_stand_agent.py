@@ -137,12 +137,12 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         )
         (self.installation / "octa/Octa.lock").write_text(
             "version: 1\nplugins:\n  codex:\n"
-            "    version: '0.5.0'\n"
-            "    protocol: 1\n"
+            "    version: '0.5.1'\n"
+            "    protocol: 2\n"
             "    platforms: [linux-aarch64]\n"
             "    entrypoint: octa_plugin_codex\n"
             f"    sha256: {codex_digest}\n"
-            "    capabilities: []\n"
+            "    capabilities: [codex.blocking-pre-tool-authorization.v1]\n"
             "    source: codex.plugin.yml\n",
             encoding="utf-8",
         )
@@ -152,13 +152,13 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
                     "format_version": 1,
                     "plugin": {
                         "name": "codex",
-                        "version": "0.5.0",
-                        "protocol": 1,
+                        "version": "0.5.1",
+                        "protocol": 2,
                         "manifest": "plugins/codex.plugin.yml",
                     },
                     "executable": {
                         "product": "codex-cli",
-                        "supported_versions": ["0.130.0"],
+                        "supported_versions": ["0.161.0"],
                         "selection_environment": "OCTA_CODEX_EXECUTABLE",
                     },
                 }
@@ -169,10 +169,10 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
             json.dumps(
                 {
                     "type": "capabilities",
-                    "octa_version": "0.5.0",
+                    "octa_version": "0.5.1",
                     "runner_protocols": [1],
                     "event_schemas": [1],
-                    "plugin_protocols": [1],
+                    "plugin_protocols": [2],
                     "octafile_versions": [1],
                     "platform": "linux-aarch64",
                     "features": [],
@@ -211,7 +211,7 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         plugin.chmod(0o644)
         self._executable(
             "agent/share/local-stand-codex-fixture",
-            "#!/bin/sh\n# codex-cli 0.130.0\nexit 0\n",
+            "#!/bin/sh\n# codex-cli 0.161.0\nexit 0\n",
         )
         self._write_manifest()
 
@@ -257,7 +257,7 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         )
         self.assertEqual(configuration["enabled_runtime_modes"], [])
         tool = configuration["tool_executables"]["codex-cli"]
-        self.assertEqual(tool["version"], "0.130.0")
+        self.assertEqual(tool["version"], "0.161.0")
         self.assertEqual(tool["platform"], "linux-aarch64")
         self.assertEqual(
             Path(tool["path"]),

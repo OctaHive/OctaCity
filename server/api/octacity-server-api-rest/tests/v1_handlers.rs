@@ -351,9 +351,12 @@ fn agent_projection(agent_id: impl serde::Serialize) -> AgentProjection {
     "inventory": {
       "agent_version": "0.1.0",
       "coordinator_protocols": [1],
+      "execution_contract": {"min": 1, "max": 1},
       "labels": {"region": "local"},
       "host_platform": {"os": "linux", "architecture": "amd64"},
       "runtimes": [],
+      "executions": [],
+      "factory_executions": [],
       "octa": {
         "version": "0.1.0",
         "runner_sha256": "1111111111111111111111111111111111111111111111111111111111111111",

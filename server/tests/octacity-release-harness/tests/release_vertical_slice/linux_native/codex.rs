@@ -24,7 +24,6 @@ pub(super) struct CodexScenarioInput<'a> {
   pub(super) revision: &'a str,
   pub(super) native_roots: Option<(&'a Path, &'a Path)>,
   pub(super) cgroup_baseline: Option<&'a BTreeSet<OsString>>,
-  pub(super) work_root: &'a Path,
   pub(super) server_stdout: &'a Path,
   pub(super) server_stderr: &'a Path,
 }
@@ -47,7 +46,7 @@ pub(super) async fn run(input: CodexScenarioInput<'_>) -> Option<Value> {
   let tool = AgentToolExecutable {
     product: "codex-cli",
     path: fixture,
-    version: "0.130.0",
+    version: "0.161.0",
     platform: &input.release.octa_platform,
     sha256: &digest,
   };
@@ -141,10 +140,9 @@ pub(super) async fn run(input: CodexScenarioInput<'_>) -> Option<Value> {
         .native_roots
         .zip(input.cgroup_baseline)
         .map(|((_, root), baseline)| NativeCgroupAssertion { root, baseline }),
-      ready_marker: Some(ReadyMarkerAssertion {
-        root: input.work_root,
-        file_name: "codex-fixture-descendant-ready",
-      }),
+      // The fixture publishes this only after its descendant has written the
+      // readiness marker, so cancellation cannot race process-tree startup.
+      ready_progress: Some("Codex turn started"),
       maximum_disk_bytes: input.backend.workspace_bytes(),
     },
     agent.child_mut(),

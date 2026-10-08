@@ -2,9 +2,12 @@
 
 Status: strict schema, compatibility negotiation, stable server-side template
 derivation/signing, lease-scoped download authorization, Agent-side
-protected-input staging, and the generic pre-source/pre-spawn permission gate
-are implemented. v3 execution remains disabled until the concrete isolation
-backends project and prove the complete permission set.
+protected-input staging, the pre-source/pre-spawn permission gate, and the
+qualified containerd and Microsandbox projections are implemented. The shared
+protected tool-action gate and redacted lease-bound exchange are implemented,
+but the production Agent-local helper/IPC path and exact Codex action adapter
+are not release-qualified. Host and unqualified isolation providers remain
+ineligible for v3.
 
 Revision 3 adds protected managed execution without changing the bytes or
 meaning of revision 1 or 2. The signed envelope, signature verification,
@@ -80,8 +83,10 @@ host paths.
 
 The managed Octafile is selected by logical protected-input identity. It
 cannot be replaced by a workspace-relative repository path. Every named task
-must be explicit and unique. Source, protected inputs, scratch space, and
-outputs are separate portable roots; v3 rejects direct Host execution.
+must be explicit and unique. Backends expose only the fixed portable roots
+`/octacity/protected`, `/workspace/source`, `/workspace/scratch`, and
+`/workspace/output`; the first is read-only and the other three are distinct
+writable scopes below one private Job. v3 rejects direct Host execution.
 
 ## Factory Permission Set
 
@@ -110,6 +115,25 @@ separation, and managed Octa execution. A future vocabulary extension requires
 a new execution-contract revision; unknown values never imply best-effort
 fallback.
 
+## Placement and capacity diagnostics
+
+Registration inventory exposes `factory_executions` separately from ordinary
+`executions`. Each entry binds one validated execution route to its canonical,
+ordered semantic enforcement ceiling. The nested provider identity is
+diagnostic evidence only: placement matches the provider-neutral mode,
+platforms, execution guarantees, and every capability in the signed
+`required_enforcement` list. An Agent may advertise these entries only while
+also advertising execution-contract v3, and only for a non-Host route already
+present in its ordinary execution inventory.
+
+The management Agent projection exposes the negotiated execution-contract
+range, ordinary routes, and Factory-qualified route ceilings. Operators can
+therefore diagnose a missing semantic control without teaching Factory policy
+about containerd, Microsandbox, or another provider name. A route missing even
+one required control is ineligible for that Job. Candidate selection continues
+past incompatible ready Jobs, so unavailable Factory capacity does not block
+unrelated compatible CI/CD work.
+
 ## Agent admission boundary
 
 Immediately before source checkout, the Agent intersects the already verified
@@ -131,8 +155,76 @@ files are reopened and rehashed against their verified inventory immediately
 before use. Drift, missing local grants, capability gaps, and
 repository-requested widening are secret-safe preflight failures: they create
 no workspace, perform no source checkout, spawn no process, and never fall back
-to Host execution. Until backend-specific projection is implemented, a request
-that passes this generic gate is still rejected rather than partially run.
+to Host execution.
+
+After admission, the Agent passes a provider-neutral Factory layout to the
+selected backend. Containerd binds only the three writable roots, binds the
+protected root read-only/no-exec, and applies the effective process count to
+the OCI cgroup. Microsandbox seals the `/workspace` parent, binds the three
+writable roots separately, partitions their growth quotas so their sum cannot
+exceed the Job disk ceiling, binds protected inputs read-only/no-exec, applies
+`RLIMIT_NPROC`, and translates the exact restricted-host policy into its
+default-deny network policy. Both retain the existing CPU, memory, elapsed-time,
+identity, immutable image, read-only release/tool, and output supervision
+boundaries. Concrete provider names are used only for diagnostics and
+composition; signed policy and admission use semantic capabilities.
+
+Apple VF is not Factory-qualified and does not receive v3 Jobs because its
+current adapter cannot enforce an exact restricted-host allowlist. Host and
+legacy Native routes likewise never advertise the v3 enforcement vocabulary.
+
+## Protected tool-action decisions
+
+This section defines the target contract and the implemented shared gate. It
+does not claim that `tool_risk` bounded control is currently deployable. The
+server route is unavailable unless composition explicitly installs a concrete
+authorizer, and the Agent does not yet project an authorizer helper into a
+running Codex task.
+
+A coding harness proposal is untrusted input. Before any optional model-backed
+assessment, the trusted Agent-side adapter must normalize it into one bounded canonical action covering
+the exact tool and executable identities, concrete arguments, portable paths
+and access modes, network destinations, logical secret and workload-identity
+profiles, descendants, resources, and output authority. The action must fit
+both the signed Factory Permission Set and the independent local/backend
+ceiling. An out-of-envelope or malformed action is denied without invoking a
+Decision Signal provider.
+
+Deterministic policy then hard-allows, hard-denies, or marks an in-envelope
+action for bounded `tool_risk` assessment. The provider receives only a
+domain-separated proposal digest and bounded counts; it never receives raw
+commands, paths, profile names, credentials, or secret material. Consuming code
+can preserve allow for that same digest or narrow it to deny/escalate. Missing,
+invalid, mismatched, or unavailable assessment applies the configured
+deny/escalate fallback and cannot increase authority. Durable decisions contain
+only the proposal digest, disposition, decision source, and optional immutable
+receipt digest.
+
+Immediately before backend use, the Agent canonicalizes the proposed action
+again, compares its domain-separated digest with the decision, requires an
+`allow` disposition, and reapplies both signed and local/backend permission
+ceilings. Only the exact canonical value returned by this final gate may be
+executed; a separately retained or modified proposal is not an executable
+authorization. Stable errors and `Debug` output redact raw action material.
+
+The signed managed execution declares `tool_control` whenever its permission
+set contains protected tools. The declaration names the exact signed plugin,
+the mode (`deterministic` or `tool_risk`), and the capability
+`codex.blocking-pre-tool-authorization.v1`. Agents missing that exact verified
+plugin capability are rejected at placement and again at preflight. Managed
+execution without protected tools omits `tool_control`, so ordinary CI/CD and
+Factory tasks without per-action control retain their existing behavior.
+
+Octa 0.5.1 supplies the pinned synchronous Codex `PreToolUse` integration and
+requires a protected native helper. OctaCity currently has the bounded parser,
+deny/allow output encoder, redacted broker request, local permission checks,
+fenced request/receipt response binding, and final unchanged-action gate as
+tested components. It deliberately does not manufacture exact path, host,
+secret, descendant, resource, or output requests by copying the complete Job
+ceiling: the generic Codex hook document does not prove those effects. Until a
+trusted exact-action adapter and Agent-local IPC helper are composed and
+release-tested, no Agent advertises or enables `tool_risk` bounded control for
+Codex. Ordinary execution and backend enforcement remain unchanged.
 
 ## Stable template derivation
 

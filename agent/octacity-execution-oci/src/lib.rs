@@ -211,6 +211,7 @@ mod tests {
       data_dir: workspace.join("data"),
       workload_identity: None,
       cache: None,
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 1024,
       writable_disk_bytes: 1024,

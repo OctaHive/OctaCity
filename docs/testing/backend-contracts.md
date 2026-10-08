@@ -45,6 +45,21 @@ Virtualization.framework boundary, so neither suite is treated as portable CI
 evidence. The portable CI matrix remains independent of privileged host
 configuration.
 
+The containerd and Microsandbox contracts also execute one JobSpec v3 Factory
+Job after the ordinary v2 lifecycle. A loopback transfer fixture serves the
+exact server-owned Octafile; the Agent verifies and seals it before source
+materialization. The guest then proves the protected input and workload
+identity are read-only, source/scratch/output are independently writable, the
+`/workspace` parent cannot acquire an undeclared sibling, no cache secret is
+implicitly present, and the configured disabled or exact-host network policy
+is effective. The test retains normal CPU, memory, disk, process, elapsed-time,
+event, output, and teardown accounting. Positive and negative stage-secret
+delivery plus per-kind bounded-output contracts are still required before this
+backend slice is release-qualified for the complete Factory permission
+vocabulary. Apple VF continues to run only the v2
+contract until it can enforce restricted host allowlists, so backend names do
+not stand in for semantic qualification.
+
 ### Release-matrix cadence and runner evidence
 
 The workflow uses the following fixed cadence:

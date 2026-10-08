@@ -1,15 +1,28 @@
 //! Builds the fixed OCI runtime specification and guest path mapping.
 
 use super::*;
-use octacity_execution::{CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, WORKLOAD_IDENTITY_PATH};
+use octacity_execution::{
+  CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, FACTORY_OUTPUT_ROOT, FACTORY_PROTECTED_INPUT_ROOT,
+  FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT, WORKLOAD_IDENTITY_PATH,
+};
 
 pub(super) const LINUX_UTS_HOSTNAME_MAX_BYTES: usize = 64;
 
 /// Maps verified host paths into fixed paths inside the OCI root filesystem.
 pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> Result<ExecutionPaths, ExecutionError> {
+  let (workspace, data_dir) = match &request.factory {
+    Some(factory) => (
+      PathBuf::from(FACTORY_SOURCE_ROOT),
+      map_path(&factory.scratch, &request.data_dir, Path::new(FACTORY_SCRATCH_ROOT))?,
+    ),
+    None => (
+      PathBuf::from(GUEST_WORKSPACE),
+      map_path(&request.workspace, &request.data_dir, Path::new(GUEST_WORKSPACE))?,
+    ),
+  };
   Ok(ExecutionPaths {
-    workspace: PathBuf::from(GUEST_WORKSPACE),
-    data_dir: map_path(&request.workspace, &request.data_dir, Path::new(GUEST_WORKSPACE))?,
+    workspace,
+    data_dir,
     plugins_dir: map_path(&runner.release_root, &runner.plugins_dir, Path::new(GUEST_RELEASE))?,
     plugin_lock: map_path(&runner.release_root, &runner.plugin_lock, Path::new(GUEST_RELEASE))?,
     cache: request
@@ -77,7 +90,7 @@ pub(super) fn oci_spec(
       "resources": {
         "cpu": { "quota": cpu_quota, "period": cpu_period },
         "memory": { "limit": request.memory_bytes },
-        "pids": { "limit": config.pids_limit },
+        "pids": { "limit": request.factory.as_ref().map_or(config.pids_limit, |factory| factory.process_limit) },
         "devices": [
           { "allow": false, "access": "rwm" },
           { "allow": true, "type": "c", "major": 1, "minor": 3, "access": "rwm" },
@@ -132,6 +145,35 @@ pub(super) fn oci_spec(
     .as_array_mut()
     .expect("OCI mounts are an array")
     .extend(external_mounts);
+  if let Some(factory) = &request.factory {
+    if factory.process_limit > config.pids_limit {
+      return Err(unavailable(
+        "Factory process limit exceeds the containerd backend ceiling",
+      ));
+    }
+    let mounts = spec["mounts"]
+      .as_array_mut()
+      .expect("the static OCI specification always contains a mounts array");
+    mounts.retain(|mount| mount["destination"] != GUEST_WORKSPACE);
+    for (destination, source, readonly) in [
+      (FACTORY_SOURCE_ROOT, &factory.source, false),
+      (FACTORY_SCRATCH_ROOT, &factory.scratch, false),
+      (FACTORY_OUTPUT_ROOT, &factory.output, false),
+      (FACTORY_PROTECTED_INPUT_ROOT, &factory.protected_inputs, true),
+    ] {
+      let mut options = vec!["rbind", "rw", "nosuid", "nodev"];
+      if readonly {
+        options[1] = "ro";
+        options.push("noexec");
+      }
+      mounts.push(serde_json::json!({
+        "destination": destination,
+        "type": "bind",
+        "source": source,
+        "options": options,
+      }));
+    }
+  }
   if let Some(identity) = &request.workload_identity {
     spec["mounts"]
       .as_array_mut()

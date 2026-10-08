@@ -23,17 +23,27 @@ use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngi
 use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
-use octacity_job::{ExecuteJobRequest, ExecutionBackendRoute, JobExecutor, JobExecutorConfig};
+use octacity_job::{
+  ExecuteJobRequest, ExecutionBackendRoute, JobExecutor, JobExecutorConfig, ProtectedInputStager,
+  ProtectedInputStagerConfig,
+};
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2, ExecutionCapabilityV2,
-  ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, ExecutionSpec, ExecutionTargetV2, JobSpecV1, JobSpecV2,
-  NetworkPolicy, OciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec,
+  AGENT_PROTOCOL_VERSION, ArtifactTransferCapability, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2,
+  EXECUTION_CONTRACT_V3, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId,
+  ExecutionSpec, ExecutionTargetV2, FactoryEnforcementCapabilityV3, FactoryImmutableReferenceV3, FactoryMountModeV3,
+  FactoryMountPermissionV3, FactoryOutputPermissionsV3, FactoryPermissionSetV3, FactoryResourceLimitsV3, JobSpecV1,
+  JobSpecV2, JobSpecV3, ManagedOctaExecutionV3, NetworkPolicy, OciIsolation, OctaSpec, OutputLimits,
+  PlatformArchitecture, PlatformOs, PlatformSpec, ProtectedInputManifestV3, ProtectedInputTransferV3, ProtectedInputV3,
   RemoteCacheGrant, RuntimeMode, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, VerifiedJobSpec,
   guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerInstallation, RunnerStreamItem, RunnerSupervisionPolicy};
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
-use tokio::sync::mpsc;
+use sha2::{Digest as _, Sha256};
+use tokio::{
+  io::{AsyncReadExt as _, AsyncWriteExt as _},
+  sync::mpsc,
+};
 use tokio_util::sync::CancellationToken;
 
 const FIXTURE_OCTAFILE: &str =
@@ -227,6 +237,7 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
       allowed_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_ALLOWED_HOST"),
       denied_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST"),
     },
+    factory_enforcement: Some(&FactoryEnforcementCapabilityV3::ALL),
   })
   .await;
 }
@@ -268,6 +279,7 @@ async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
     host_platform: platform,
     target_platform: platform,
     probe: OciProbe::DisabledNetwork,
+    factory_enforcement: Some(&FactoryEnforcementCapabilityV3::ALL),
   })
   .await;
 }
@@ -309,6 +321,7 @@ async fn apple_vf_isolation_provider_satisfies_the_real_runner_contract() {
     host_platform: host_platform(),
     target_platform: linux_platform(),
     probe: OciProbe::DisabledNetwork,
+    factory_enforcement: None,
   })
   .await;
 }
@@ -324,6 +337,7 @@ struct OciV2Contract {
   host_platform: PlatformSpec,
   target_platform: PlatformSpec,
   probe: OciProbe,
+  factory_enforcement: Option<&'static [FactoryEnforcementCapabilityV3]>,
 }
 
 async fn run_oci_v2_contract(contract: OciV2Contract) {
@@ -338,6 +352,7 @@ async fn run_oci_v2_contract(contract: OciV2Contract) {
     host_platform,
     target_platform,
     probe,
+    factory_enforcement,
   } = contract;
   assert!(
     matches!(mode, ExecutionMode::Isolation | ExecutionMode::Virtualization),
@@ -360,10 +375,45 @@ async fn run_oci_v2_contract(contract: OciV2Contract) {
     "backend-contract".to_owned(),
     identity_source.path().to_owned(),
   )]));
+  let now = unix_now();
+  let mut spec = oci_v2_specification(
+    mode,
+    host_platform,
+    target_platform,
+    image,
+    workspace_bytes,
+    now,
+    &runner,
+  );
+  if let OciProbe::RestrictedNetwork { allowed_host, .. } = &probe {
+    spec.runtime.network = NetworkPolicy::Restricted {
+      allowed_hosts: vec![allowed_host.clone()],
+    };
+  }
+  spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
+  let factory_setup = if factory_enforcement.is_some() {
+    let factory_body = factory_octafile(&probe);
+    let factory_spec = oci_v3_specification(&spec, &runner, &factory_body);
+    let (protected_origin, protected_server) = protected_input_server(factory_body.clone()).await;
+    Some((factory_spec, factory_body, protected_origin, protected_server))
+  } else {
+    None
+  };
   let mut configuration = executor_config(work_root, workspace_bytes, false, Vec::new());
   if provider == APPLE_VF_PROVIDER_NAME {
     configuration.runner_supervision.resource_sample_timeout = Duration::from_secs(5);
   }
+  configuration.factory_permissions = factory_setup.as_ref().map(|setup| setup.0.permissions.clone());
+  let route = ExecutionBackendRoute::new(
+    capability,
+    ExecutionEnvironmentId::new(required_string(environment_identity_variable)).unwrap(),
+    backend,
+  )
+  .unwrap();
+  let route = match factory_enforcement {
+    Some(capabilities) => route.with_factory_enforcement(capabilities.iter().copied()).unwrap(),
+    None => route,
+  };
   let executor = JobExecutor::new(
     runner.clone(),
     Arc::new(FixtureSource {
@@ -380,30 +430,20 @@ async fn run_oci_v2_contract(contract: OciV2Contract) {
     },
   )
   .expect("job executor configuration must be valid")
-  .with_execution_backends([ExecutionBackendRoute::new(
-    capability,
-    ExecutionEnvironmentId::new(required_string(environment_identity_variable)).unwrap(),
-    backend,
-  )
-  .unwrap()])
-  .expect("v2 OCI execution route must be valid");
+  .with_execution_backends([route])
+  .expect("v2/v3 OCI execution route must be valid");
+  let executor = if let Some((_, _, protected_origin, _)) = &factory_setup {
+    executor.with_protected_input_stager(
+      ProtectedInputStager::new(ProtectedInputStagerConfig {
+        allowed_origins: vec![protected_origin.clone()],
+        download_timeout: Duration::from_secs(10),
+      })
+      .unwrap(),
+    )
+  } else {
+    executor
+  };
   executor.cleanup_orphans().await.expect("pre-test cleanup must succeed");
-  let now = unix_now();
-  let mut spec = oci_v2_specification(
-    mode,
-    host_platform,
-    target_platform,
-    image,
-    workspace_bytes,
-    now,
-    &runner,
-  );
-  if let OciProbe::RestrictedNetwork { allowed_host, .. } = probe {
-    spec.runtime.network = NetworkPolicy::Restricted {
-      allowed_hosts: vec![allowed_host],
-    };
-  }
-  spec.runtime.workload_identity_profile = Some("backend-contract".to_owned());
   exercise_contract(
     &executor,
     spec.into(),
@@ -412,6 +452,15 @@ async fn run_oci_v2_contract(contract: OciV2Contract) {
     &format!("{provider} {mode:?}"),
   )
   .await;
+  if let Some((factory_spec, factory_body, protected_origin, protected_server)) = factory_setup {
+    exercise_factory_contract(
+      &executor,
+      factory_spec,
+      protected_transfer(&factory_body, &protected_origin),
+    )
+    .await;
+    protected_server.await.unwrap();
+  }
   executor
     .cleanup_orphans()
     .await
@@ -799,6 +848,185 @@ fn oci_v2_specification(
     cache: None,
     outputs: legacy.outputs,
   }
+}
+
+fn oci_v3_specification(ordinary: &JobSpecV2, runner: &RunnerInstallation, octafile: &[u8]) -> JobSpecV3 {
+  let protected_input = ProtectedInputV3 {
+    artifact_id: "factory-octafile".to_owned(),
+    size_bytes: octafile.len() as u64,
+    sha256: hex::encode(Sha256::digest(octafile)),
+    media_type: "application/yaml".to_owned(),
+    destination: "/octacity/protected/Octafile.yml".to_owned(),
+  };
+  let network_hosts = match &ordinary.runtime.network {
+    NetworkPolicy::Restricted { allowed_hosts } => allowed_hosts.clone(),
+    NetworkPolicy::Disabled => Vec::new(),
+    NetworkPolicy::Unrestricted => panic!("Factory backend contract cannot use unrestricted networking"),
+  };
+  let plugins = runner
+    .plugins
+    .iter()
+    .map(|(identity, plugin)| FactoryImmutableReferenceV3 {
+      identity: identity.clone(),
+      version: plugin.version.clone(),
+      sha256: plugin.sha256.clone(),
+    })
+    .collect();
+  JobSpecV3 {
+    protocol_version: EXECUTION_CONTRACT_V3,
+    job_id: format!("{}-factory", ordinary.job_id),
+    attempt: ordinary.attempt,
+    issued_at: ordinary.issued_at,
+    expires_at: ordinary.expires_at,
+    source: ordinary.source.clone(),
+    octa: ordinary.octa.clone(),
+    execution: ManagedOctaExecutionV3 {
+      octafile_input: protected_input.artifact_id.clone(),
+      tasks: vec!["contract".to_owned()],
+      tool_control: None,
+    },
+    runtime: ordinary.runtime.clone(),
+    cache: None,
+    outputs: ordinary.outputs.clone(),
+    factory: None,
+    protected_inputs: ProtectedInputManifestV3 {
+      inputs: vec![protected_input],
+    },
+    permissions: FactoryPermissionSetV3 {
+      plugins,
+      executables: Vec::new(),
+      tools: Vec::new(),
+      commands: Vec::new(),
+      max_descendants: 31,
+      mounts: vec![
+        FactoryMountPermissionV3 {
+          root: "/octacity/protected".to_owned(),
+          mode: FactoryMountModeV3::ReadOnly,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/output".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/scratch".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+        FactoryMountPermissionV3 {
+          root: "/workspace/source".to_owned(),
+          mode: FactoryMountModeV3::ReadWrite,
+        },
+      ],
+      network_hosts,
+      secret_profiles: Vec::new(),
+      workload_identity_profiles: vec!["backend-contract".to_owned()],
+      resources: FactoryResourceLimitsV3 {
+        cpu_millis: ordinary.runtime.cpu_millis,
+        memory_bytes: ordinary.runtime.memory_bytes,
+        disk_bytes: ordinary.runtime.writable_disk_bytes,
+        process_count: 32,
+        elapsed_millis: ordinary.runtime.timeout_seconds * 1_000,
+      },
+      outputs: FactoryOutputPermissionsV3 {
+        kinds: Vec::new(),
+        max_artifact_count: 0,
+        max_artifact_bytes: 0,
+        max_report_count: 0,
+        max_report_bytes: 0,
+      },
+    },
+    required_enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
+  }
+}
+
+fn factory_octafile(probe: &OciProbe) -> Vec<u8> {
+  let network_probe = match probe {
+    OciProbe::RestrictedNetwork {
+      allowed_host,
+      denied_host,
+    } => format!(
+      "      curl --fail --silent --show-error --max-time 10 https://{allowed_host}/ > /dev/null\n      ! curl --fail --silent --show-error --max-time 3 https://{denied_host}/ > /dev/null 2>&1\n"
+    ),
+    OciProbe::DisabledNetwork => {
+      "      ! curl --fail --silent --show-error --max-time 3 https://example.com/ > /dev/null 2>&1\n".to_owned()
+    }
+  };
+  format!(
+    "version: 1\n\ntasks:\n  contract:\n    shell: |\n      test \"$(cat /run/octa-identity)\" = backend-contract-identity\n      ! printf tamper >> /run/octa-identity\n      test -r /octacity/protected/Octafile.yml\n      ! printf tamper >> /octacity/protected/Octafile.yml\n      test ! -e /workspace/protected/Octafile.yml\n      printf source > /workspace/source/factory-source\n      printf scratch > /workspace/scratch/factory-scratch\n      printf output > /workspace/output/factory-output\n      ! mkdir /workspace/escape\n      test ! -e /run/octa-cache/token\n{network_probe}      echo octacity-factory-backend-contract\n"
+  )
+  .into_bytes()
+}
+
+async fn protected_input_server(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let address = listener.local_addr().unwrap();
+  let task = tokio::spawn(async move {
+    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(120), listener.accept())
+      .await
+      .expect("Factory protected-input request timed out")
+      .unwrap();
+    let mut request = [0_u8; 4096];
+    let _ = socket.read(&mut request).await.unwrap();
+    let response = format!(
+      "HTTP/1.1 200 OK\r\nContent-Type: application/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      body.len()
+    );
+    socket.write_all(response.as_bytes()).await.unwrap();
+    socket.write_all(&body).await.unwrap();
+  });
+  (format!("http://{address}"), task)
+}
+
+fn protected_transfer(body: &[u8], origin: &str) -> ProtectedInputTransferV3 {
+  ProtectedInputTransferV3 {
+    input: ProtectedInputV3 {
+      artifact_id: "factory-octafile".to_owned(),
+      size_bytes: body.len() as u64,
+      sha256: hex::encode(Sha256::digest(body)),
+      media_type: "application/yaml".to_owned(),
+      destination: "/octacity/protected/Octafile.yml".to_owned(),
+    },
+    capability: ArtifactTransferCapability {
+      url: format!("{origin}/factory-octafile"),
+      required_headers: BTreeMap::new(),
+      expires_at_unix_ms: SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .saturating_add(300_000) as u64,
+    },
+  }
+}
+
+async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, protected_input: ProtectedInputTransferV3) {
+  let (sender, mut receiver) = mpsc::channel(128);
+  let completion = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: vec![protected_input],
+      },
+      CancellationToken::new(),
+      &sender,
+    )
+    .await
+    .expect("qualified real backend Factory execution must succeed");
+  drop(sender);
+  let mut saw_event = false;
+  while let Some(item) = receiver.recv().await {
+    saw_event |= matches!(item, RunnerStreamItem::Event(_));
+  }
+  assert!(saw_event, "Factory runner must emit at least one event");
+  assert_eq!(completion.runner().status, RunStatus::Succeeded);
+  let job_root = completion.workspace().parent().unwrap().to_owned();
+  assert!(completion.workspace().join("factory-source").is_file());
+  assert!(job_root.join("scratch/factory-scratch").is_file());
+  assert!(job_root.join("output/factory-output").is_file());
+  assert!(!job_root.join("protected").exists());
+  assert!(!job_root.join("escape").exists());
+  completion.cleanup().await.unwrap();
+  assert!(!job_root.exists());
 }
 
 fn cancellation_spec(mut spec: VerifiedJobSpec) -> VerifiedJobSpec {

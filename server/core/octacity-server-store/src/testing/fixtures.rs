@@ -100,6 +100,7 @@ pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
       isolation: None,
     }],
     executions: Vec::new(),
+    factory_executions: Vec::new(),
     octa: OctaInventory {
       version: "0.4.0".to_owned(),
       runner_sha256: DIGEST.to_owned(),

@@ -21,6 +21,7 @@ fn execution_request(root: &Path) -> StartExecution {
     data_dir,
     workload_identity: None,
     cache: None,
+    factory: None,
     cpu_millis: 1500,
     memory_bytes: 64 * 1024 * 1024,
     writable_disk_bytes: u64::MAX,

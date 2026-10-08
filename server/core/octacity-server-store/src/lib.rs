@@ -437,15 +437,17 @@ mod tests {
   use serde_json::json;
 
   use super::testing::{
-    InMemoryStore, authoritative_store_contract_fixture, verify_in_memory_agent_credential_contract,
-    verify_in_memory_log_search_index_contract, verify_in_memory_store_contract,
+    InMemoryStore, authoritative_store_contract_fixture, compatible_snapshot,
+    verify_in_memory_agent_credential_contract, verify_in_memory_log_search_index_contract,
+    verify_in_memory_store_contract,
   };
   use super::{
-    AppendJobEvents, DurableJobEvent, EventSequence, IdempotencyKey, JobEventKind, LeaseAccess, LeaseFence,
-    ListProjects, MAX_IDEMPOTENCY_KEY_BYTES, MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_PAYLOAD_BYTES,
-    MAX_MATERIALIZED_JOBS, MAX_PROJECT_PAGE_SIZE, MAX_WEBHOOK_HEADER_NAME_BYTES, MutationDisposition,
-    RegistrationEpoch, StoreError, StoreInputError, StoreOperation, TriggerAcceptanceStore, TriggerEventKind,
-    UnmanagedWebhookDefinition, WEBHOOK_ADAPTER_SHA256_BYTES, canonical_webhook_headers,
+    AppendJobEvents, DurableJobEvent, EventSequence, IdempotencyKey, JobClaim, JobClaimOutcome, JobEventKind,
+    JobExecutionStore, LeaseAccess, LeaseFence, LeaseWindow, ListProjects, MAX_IDEMPOTENCY_KEY_BYTES,
+    MAX_JOB_EVENT_BATCH_SIZE, MAX_JOB_EVENT_PAYLOAD_BYTES, MAX_MATERIALIZED_JOBS, MAX_PROJECT_PAGE_SIZE,
+    MAX_WEBHOOK_HEADER_NAME_BYTES, MutationDisposition, RegistrationEpoch, StoreError, StoreInputError, StoreOperation,
+    TriggerAcceptanceStore, TriggerEventKind, UnmanagedWebhookDefinition, WEBHOOK_ADAPTER_SHA256_BYTES,
+    canonical_webhook_headers,
   };
 
   #[test]
@@ -501,6 +503,47 @@ mod tests {
         );
       },
       "the in-memory transaction unexpectedly yielded",
+    );
+  }
+
+  #[test]
+  fn incompatible_ready_work_does_not_block_a_later_compatible_job() {
+    let mut fixture = authoritative_store_contract_fixture();
+    let blocked_job = fixture.request.jobs[0].id;
+    fixture.request.jobs[0]
+      .requirements
+      .labels
+      .insert("factory-enforcement".to_owned(), "missing".to_owned());
+    fixture.request.jobs[1].dependencies.clear();
+    let expected_job = fixture.request.jobs[1].id;
+    let store = InMemoryStore::new();
+    store.seed_authoritative_contract_prerequisites(&fixture).unwrap();
+
+    super::test_support::run_ready(
+      async {
+        store.accept_trigger(fixture.request).await.unwrap();
+        let outcome = store
+          .claim_ready_job(
+            JobClaim::new(
+              super::test_support::id(990),
+              LeaseFence::from_bytes([9; 32]),
+              fixture.agent_id,
+              fixture.registration_epoch,
+              fixture.allowed_pool,
+              compatible_snapshot(),
+              LeaseWindow::new(super::test_support::time(1_000), super::test_support::time(2_000)).unwrap(),
+            )
+            .unwrap(),
+          )
+          .await
+          .unwrap();
+        let JobClaimOutcome::Claimed(grant) = outcome else {
+          panic!("the compatible Job behind an incompatible ready Job must remain schedulable");
+        };
+        assert_eq!(grant.job_id, expected_job);
+        assert_ne!(grant.job_id, blocked_job);
+      },
+      "the in-memory placement check unexpectedly yielded",
     );
   }
 

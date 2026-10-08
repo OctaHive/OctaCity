@@ -1,4 +1,5 @@
 use octacity_server_domain::Timestamp;
+use octacity_server_domain::{AttemptNumber, JobId};
 use octacity_server_store::{LeaseAccess, LeaseFence, StoreError, StoreOperation};
 use sha2::{Digest as _, Sha256};
 use sqlx::{FromRow, Postgres, Transaction};
@@ -71,6 +72,23 @@ pub(crate) fn require_current(row: &LeaseRow, access: LeaseAccess, observed_at: 
     return Err(StoreError::Fenced { lease: access.lease_id });
   }
   Ok(())
+}
+
+pub(crate) async fn authorize_tool_action(
+  pool: &sqlx::PgPool,
+  access: LeaseAccess,
+  job_id: JobId,
+  attempt: AttemptNumber,
+  observed_at: Timestamp,
+) -> Result<(), StoreError> {
+  let mut transaction = pool.begin().await.map_err(unavailable)?;
+  let row = load(&mut transaction, access, StoreOperation::AuthorizeToolAction).await?;
+  require_current(&row, access, observed_at)?;
+  if row.job_id != job_id.as_uuid() || row.attempt_number != number(attempt.get(), StoreOperation::AuthorizeToolAction)?
+  {
+    return Err(StoreError::Fenced { lease: access.lease_id });
+  }
+  transaction.commit().await.map_err(unavailable)
 }
 
 pub(crate) fn fence_hash(fence: LeaseFence) -> Vec<u8> {

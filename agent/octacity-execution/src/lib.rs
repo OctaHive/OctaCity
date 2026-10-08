@@ -38,6 +38,14 @@ pub const CACHE_DIRECTORY_PATH: &str = "/var/cache/octa";
 pub const CACHE_TOKEN_PATH: &str = "/run/octa-cache/token";
 /// Stable read-only path for an optional private cache CA certificate.
 pub const CACHE_CA_CERTIFICATE_PATH: &str = "/run/octa-cache/ca.pem";
+/// Stable read-only root containing server-owned Factory inputs.
+pub const FACTORY_PROTECTED_INPUT_ROOT: &str = "/octacity/protected";
+/// Stable writable root containing the exact materialized source revision.
+pub const FACTORY_SOURCE_ROOT: &str = "/workspace/source";
+/// Stable writable root for disposable Factory task state.
+pub const FACTORY_SCRATCH_ROOT: &str = "/workspace/scratch";
+/// Stable writable root reserved for declared Factory outputs.
+pub const FACTORY_OUTPUT_ROOT: &str = "/workspace/output";
 /// Stable filename prefix for operator-selected executables projected by isolated backends.
 pub const EXTERNAL_EXECUTABLE_FILE_PREFIX: &str = "tool-";
 
@@ -244,6 +252,74 @@ pub enum NetworkAccess {
   },
 }
 
+/// Backend-neutral host layout for one admitted Factory execution.
+///
+/// Authorization and portable-path policy are decided before this value is
+/// constructed. Backends only project these already verified roots at the
+/// canonical paths above and enforce the effective process-tree ceiling.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryExecutionLayout {
+  /// Immutable host directory projected at [`FACTORY_PROTECTED_INPUT_ROOT`].
+  pub protected_inputs: PathBuf,
+  /// Writable source directory projected at [`FACTORY_SOURCE_ROOT`].
+  pub source: PathBuf,
+  /// Writable disposable state projected at [`FACTORY_SCRATCH_ROOT`].
+  pub scratch: PathBuf,
+  /// Writable declared-output root projected at [`FACTORY_OUTPUT_ROOT`].
+  pub output: PathBuf,
+  /// Maximum processes in the complete runner process tree, including the runner.
+  pub process_limit: u32,
+}
+
+impl FactoryExecutionLayout {
+  fn validate(&self, workspace_root: &Path, workspace: &Path, data_dir: &Path) -> Result<(), ExecutionError> {
+    if self.process_limit == 0 {
+      return Err(ExecutionError::Invalid(
+        "Factory process limit must be greater than zero".to_owned(),
+      ));
+    }
+    let canonical_work_root = canonical_directory(workspace_root, "workspace_root")?;
+    let source = canonical_directory(&self.source, "Factory source")?;
+    let scratch = canonical_directory(&self.scratch, "Factory scratch")?;
+    let output = canonical_directory(&self.output, "Factory output")?;
+    let protected = canonical_directory(&self.protected_inputs, "Factory protected inputs")?;
+    let Some(job_root) = source.parent() else {
+      return Err(ExecutionError::Invalid("Factory source has no job root".to_owned()));
+    };
+    let roots = [
+      source.as_path(),
+      scratch.as_path(),
+      output.as_path(),
+      protected.as_path(),
+    ];
+    if job_root.parent() != Some(canonical_work_root.as_path())
+      || workspace != source
+      || scratch.parent() != Some(job_root)
+      || output.parent() != Some(job_root)
+      || protected.parent() != Some(job_root)
+      || data_dir.strip_prefix(&scratch).is_err()
+      || roots
+        .iter()
+        .enumerate()
+        .any(|(index, path)| roots.iter().skip(index + 1).any(|other| path == other))
+    {
+      return Err(ExecutionError::Invalid(
+        "Factory source, scratch, output, and protected roots must be distinct siblings below one job root".to_owned(),
+      ));
+    }
+    if !std::fs::symlink_metadata(&protected)
+      .map_err(ExecutionError::Io)?
+      .permissions()
+      .readonly()
+    {
+      return Err(ExecutionError::Invalid(
+        "Factory protected inputs must be read-only before backend projection".to_owned(),
+      ));
+    }
+    Ok(())
+  }
+}
+
 /// Resources and filesystem locations needed to start a job.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StartExecution {
@@ -260,6 +336,8 @@ pub struct StartExecution {
   pub workload_identity: Option<PathBuf>,
   /// Optional cache paths mounted with backend-appropriate permissions.
   pub cache: Option<ExecutionCacheMounts>,
+  /// Optional admitted Factory layout. Absence preserves the ordinary CI/CD layout.
+  pub factory: Option<FactoryExecutionLayout>,
   /// CPU allocation in thousandths of one logical CPU.
   pub cpu_millis: u32,
   /// Maximum addressable memory in bytes.
@@ -305,7 +383,7 @@ impl StartExecution {
         "workspace must resolve inside workspace_root".to_owned(),
       ));
     }
-    if !canonical_data.starts_with(&canonical_workspace) {
+    if self.factory.is_none() && !canonical_data.starts_with(&canonical_workspace) {
       return Err(ExecutionError::Invalid(
         "data_dir must resolve inside workspace".to_owned(),
       ));
@@ -362,6 +440,9 @@ impl StartExecution {
           }
         }
       }
+    }
+    if let Some(factory) = &self.factory {
+      factory.validate(&canonical_root, &canonical_workspace, &canonical_data)?;
     }
     if self.cpu_millis == 0 || self.memory_bytes == 0 || self.writable_disk_bytes == 0 || self.max_duration.is_zero() {
       return Err(ExecutionError::Invalid(
@@ -665,6 +746,7 @@ mod tests {
       data_dir: temporary.path().canonicalize().unwrap().join("data"),
       workload_identity: None,
       cache: None,
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -689,6 +771,74 @@ mod tests {
   }
 
   #[test]
+  fn validates_the_factory_layout_before_backend_projection() {
+    let temporary = tempfile::tempdir().unwrap();
+    let work_root = temporary.path().join("work");
+    let job_root = work_root.join("job");
+    let source = job_root.join("source");
+    let scratch = job_root.join("scratch");
+    let output = job_root.join("output");
+    let protected = job_root.join("protected");
+    let data_dir = scratch.join(".octacity");
+    for directory in [&work_root, &job_root, &source, &scratch, &output, &protected, &data_dir] {
+      std::fs::create_dir(directory).unwrap();
+    }
+    let mut protected_permissions = std::fs::metadata(&protected).unwrap().permissions();
+    protected_permissions.set_readonly(true);
+    std::fs::set_permissions(&protected, protected_permissions).unwrap();
+    let layout = FactoryExecutionLayout {
+      protected_inputs: protected.canonicalize().unwrap(),
+      source: source.canonicalize().unwrap(),
+      scratch: scratch.canonicalize().unwrap(),
+      output: output.canonicalize().unwrap(),
+      process_limit: 4,
+    };
+    let mut request = StartExecution {
+      execution_id: "factory-job".to_owned(),
+      workspace_root: work_root.canonicalize().unwrap(),
+      workspace: source.canonicalize().unwrap(),
+      data_dir: data_dir.canonicalize().unwrap(),
+      workload_identity: None,
+      cache: None,
+      factory: Some(layout.clone()),
+      cpu_millis: 1000,
+      memory_bytes: 1024,
+      writable_disk_bytes: 1024,
+      max_duration: Duration::from_secs(1),
+      root: ExecutionTarget::Oci {
+        reference: format!("example.invalid/factory@sha256:{}", "0".repeat(64)),
+        platform: ExecutionPlatform {
+          os: ExecutionOs::Linux,
+          architecture: ExecutionArchitecture::Amd64,
+        },
+        isolation: OciIsolation::Process,
+      },
+      network: NetworkAccess::Disabled,
+    };
+    assert!(request.validate().is_ok());
+
+    request.factory.as_mut().unwrap().process_limit = 0;
+    assert!(request.validate().is_err());
+    request.factory = Some(FactoryExecutionLayout {
+      output: layout.scratch.clone(),
+      ..layout.clone()
+    });
+    assert!(request.validate().is_err());
+
+    let mut writable_permissions = std::fs::metadata(&protected).unwrap().permissions();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt as _;
+      writable_permissions.set_mode(writable_permissions.mode() | 0o200);
+    }
+    #[cfg(windows)]
+    writable_permissions.set_readonly(false);
+    std::fs::set_permissions(&protected, writable_permissions).unwrap();
+    request.factory = Some(layout);
+    assert!(request.validate().is_err());
+  }
+
+  #[test]
   fn rejects_mutable_execution_images_at_the_backend_boundary() {
     let temporary = tempfile::tempdir().unwrap();
     let data_dir = temporary.path().join("data");
@@ -700,6 +850,7 @@ mod tests {
       data_dir: data_dir.canonicalize().unwrap(),
       workload_identity: None,
       cache: None,
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -748,6 +899,7 @@ mod tests {
       data_dir,
       workload_identity: Some(identity.clone()),
       cache: None,
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,
@@ -820,6 +972,7 @@ mod tests {
       data_dir: data_dir.canonicalize().unwrap(),
       workload_identity: None,
       cache: Some(mounts.clone()),
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 1024,
       writable_disk_bytes: 1024,
@@ -885,6 +1038,7 @@ mod tests {
       data_dir,
       workload_identity: Some(alias.join("job.identity")),
       cache: None,
+      factory: None,
       cpu_millis: 1000,
       memory_bytes: 512 * 1024 * 1024,
       writable_disk_bytes: 1024 * 1024 * 1024,

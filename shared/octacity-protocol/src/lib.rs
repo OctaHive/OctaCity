@@ -25,11 +25,13 @@ mod artifact;
 mod coordinator;
 mod execution;
 mod factory;
+mod tool_action;
 
 pub use artifact::*;
 pub use coordinator::*;
 pub use execution::*;
 pub use factory::*;
+pub use tool_action::*;
 
 /// Signed JobSpec wire version supported by this crate.
 pub const AGENT_PROTOCOL_VERSION: u16 = 1;
@@ -720,7 +722,7 @@ impl JobSpecV3 {
     self.protected_inputs.validate()?;
     self.execution.validate(&self.protected_inputs)?;
     self.permissions.validate()?;
-    validate_factory_toolchain(&self.octa, &self.permissions)?;
+    validate_factory_toolchain(&self.octa, &self.execution, &self.permissions)?;
     if let Some(factory) = &self.factory {
       factory.validate()?;
     }

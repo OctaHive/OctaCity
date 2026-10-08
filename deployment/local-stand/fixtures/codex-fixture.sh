@@ -2,7 +2,7 @@
 set -eu
 
 if [ "${1-}" = "--version" ]; then
-  printf '%s\n' 'codex-cli 0.130.0'
+  printf '%s\n' 'codex-cli 0.161.0'
   exit 0
 fi
 

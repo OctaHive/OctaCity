@@ -98,7 +98,7 @@ fn codex_tool_selection_is_explicit_and_absent_from_ordinary_agent_configuration
   let tool = AgentToolExecutable {
     product: "codex-cli",
     path: &executable,
-    version: "0.130.0",
+    version: "0.161.0",
     platform: "linux-x86_64",
     sha256: &digest,
   };
@@ -127,7 +127,7 @@ fn codex_tool_selection_is_explicit_and_absent_from_ordinary_agent_configuration
   let document: toml::Value = toml::from_str(&fs::read_to_string(config).unwrap()).unwrap();
   let configured = &document["tool_executables"]["codex-cli"];
   assert_eq!(configured["path"].as_str(), executable.to_str());
-  assert_eq!(configured["version"].as_str(), Some("0.130.0"));
+  assert_eq!(configured["version"].as_str(), Some("0.161.0"));
   assert_eq!(configured["platform"].as_str(), Some("linux-x86_64"));
 }
 

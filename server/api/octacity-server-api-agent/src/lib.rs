@@ -16,16 +16,17 @@ use axum::{
 };
 use octacity_protocol::{
   AcquireLeaseRequest, AcquireLeaseResponse, AgentCredentialToken, AppendEventsRequest, AppendEventsResponse,
-  COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest, CompleteLeaseResponse, CoordinatorErrorResponse,
-  HeartbeatDirective, HeartbeatRequest, HeartbeatResponse, LeaseAssignment, MAX_AGENT_TELEMETRY_REQUEST_BYTES,
-  RegisterAgentRequest, RegisterAgentResponse,
+  AuthorizeToolActionRequest, AuthorizeToolActionResponse, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
+  CompleteLeaseResponse, CoordinatorErrorResponse, HeartbeatDirective, HeartbeatRequest, HeartbeatResponse,
+  LeaseAssignment, MAX_AGENT_TELEMETRY_REQUEST_BYTES, RegisterAgentRequest, RegisterAgentResponse,
 };
 use octacity_server_application::{
   AcquireAgentLeaseInput, AgentArtifactError, AgentArtifactTransferUseCases, AgentCacheSessionUseCases,
   AgentExecutionError, AgentExecutionUseCases, AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatUseCases,
   AgentLeaseError, AgentLeaseOutcome, AgentLeaseUseCases, AgentRegistrationError, AgentRegistrationInput,
-  AgentRegistrationUseCases, AppendAgentEventsInput, AuthorizeProtectedInputsInput, CompleteAgentLeaseInput,
-  FailAgentLeaseAssignmentInput, LeaseHeartbeatOutcome, Timestamp,
+  AgentRegistrationUseCases, AgentToolActionError, AgentToolActionInput, AgentToolActionUseCases,
+  AppendAgentEventsInput, AuthorizeProtectedInputsInput, CompleteAgentLeaseInput, FailAgentLeaseAssignmentInput,
+  LeaseHeartbeatOutcome, Timestamp,
 };
 
 mod artifact;
@@ -71,6 +72,7 @@ pub struct AgentRouterDependencies {
   execution: Arc<dyn AgentExecutionUseCases>,
   artifacts: Arc<dyn AgentArtifactTransferUseCases>,
   cache: Arc<dyn AgentCacheSessionUseCases>,
+  tool_actions: Option<Arc<dyn AgentToolActionUseCases>>,
 }
 
 impl AgentRouterDependencies {
@@ -92,7 +94,15 @@ impl AgentRouterDependencies {
       execution,
       artifacts,
       cache,
+      tool_actions: None,
     }
+  }
+
+  /// Replaces the fail-closed default with the configured server-side policy.
+  #[must_use]
+  pub fn with_tool_actions(mut self, tool_actions: Arc<dyn AgentToolActionUseCases>) -> Self {
+    self.tool_actions = Some(tool_actions);
+    self
   }
 }
 
@@ -106,6 +116,7 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
     execution,
     artifacts,
     cache,
+    tool_actions,
   } = dependencies;
   let state = AgentState {
     registrations,
@@ -115,6 +126,7 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
     execution,
     artifacts,
     cache,
+    tool_actions,
     config,
   };
   Router::new()
@@ -126,6 +138,10 @@ pub fn agent_router(dependencies: AgentRouterDependencies, config: AgentApiConfi
       post(telemetry::ingest).layer(DefaultBodyLimit::max(MAX_AGENT_TELEMETRY_REQUEST_BYTES)),
     )
     .route("/api/v1/leases/{lease_id}/events:append", post(append_events))
+    .route(
+      "/api/v1/leases/{lease_id}/tool-actions:authorize",
+      post(authorize_tool_action),
+    )
     .route("/api/v1/leases/{lease_id}/complete", post(complete_lease))
     .route(
       "/api/v1/leases/{lease_id}/artifacts:begin",
@@ -151,7 +167,44 @@ struct AgentState {
   execution: Arc<dyn AgentExecutionUseCases>,
   artifacts: Arc<dyn AgentArtifactTransferUseCases>,
   cache: Arc<dyn AgentCacheSessionUseCases>,
+  tool_actions: Option<Arc<dyn AgentToolActionUseCases>>,
   config: AgentApiConfig,
+}
+
+async fn authorize_tool_action(
+  State(state): State<AgentState>,
+  Path(lease_id): Path<String>,
+  request: Request<Body>,
+) -> Response {
+  let headers = request.headers().clone();
+  let parsed = match Json::<AuthorizeToolActionRequest>::from_request(request, &()).await {
+    Ok(Json(request)) => request,
+    Err(rejection) => return rejection_response(rejection),
+  };
+  let request_id = parsed.request_id.clone();
+  let binding_request = parsed.clone();
+  let Some(tool_actions) = state.tool_actions.as_ref() else {
+    return tool_action_error(&request_id, AgentToolActionError::Unavailable);
+  };
+  let (credential, observed_at_unix_ms) = match operation_context(&headers, &request_id) {
+    Ok(context) => context,
+    Err(error) => return operation_context_error(&request_id, error),
+  };
+  match tool_actions
+    .authorize_tool_action(AgentToolActionInput {
+      route_lease_id: lease_id,
+      request: parsed,
+      credential,
+      observed_at_unix_ms,
+    })
+    .await
+  {
+    Ok(decision) => match AuthorizeToolActionResponse::new(&binding_request, decision) {
+      Ok(response) => Json(response).into_response(),
+      Err(_) => tool_action_error(&request_id, AgentToolActionError::Unavailable),
+    },
+    Err(error) => tool_action_error(&request_id, error),
+  }
 }
 
 async fn append_events(
@@ -663,6 +716,46 @@ fn execution_error(request_id: &str, error: AgentExecutionError) -> Response {
       request_id,
       "unavailable",
       "Agent execution service unavailable",
+      true,
+    ),
+  }
+}
+
+fn tool_action_error(request_id: &str, error: AgentToolActionError) -> Response {
+  match error {
+    AgentToolActionError::InvalidRequest => protocol_error(
+      StatusCode::BAD_REQUEST,
+      request_id,
+      "invalid_request",
+      "protected tool-action request is invalid",
+      false,
+    ),
+    AgentToolActionError::CredentialRejected => protocol_error(
+      StatusCode::UNAUTHORIZED,
+      request_id,
+      "credential_rejected",
+      "agent credential rejected",
+      false,
+    ),
+    AgentToolActionError::Fenced => protocol_error(
+      StatusCode::CONFLICT,
+      request_id,
+      "lease_fenced",
+      "lease is no longer current",
+      false,
+    ),
+    AgentToolActionError::Expired => protocol_error(
+      StatusCode::CONFLICT,
+      request_id,
+      "lease_expired",
+      "lease has expired",
+      false,
+    ),
+    AgentToolActionError::Unavailable => protocol_error(
+      StatusCode::SERVICE_UNAVAILABLE,
+      request_id,
+      "unavailable",
+      "protected tool-action authorization unavailable",
       true,
     ),
   }
