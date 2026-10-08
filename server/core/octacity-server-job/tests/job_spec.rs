@@ -178,10 +178,8 @@ fn derives_and_signs_stable_managed_v3_intent_without_transfer_capabilities() {
 
   let template = derive_managed_job_spec_template(&build, node_id(), intent, &policy).unwrap();
   assert_eq!(template.protected_inputs(), Some(&canonical.protected_inputs));
-  let persisted = serde_json::to_string(&template).unwrap();
-  for forbidden in ["transfer_url", "download_url", "bearer", "credential"] {
-    assert!(!persisted.contains(forbidden));
-  }
+  let persisted = serde_json::to_value(&template).unwrap();
+  assert_json_omits_fields(&persisted, &["transfer_url", "download_url", "bearer", "credential"]);
 
   let signer = JobSpecSigner::new("active-key", [7; 32]).unwrap();
   let first = sign_ready_job_spec(&template, AttemptNumber::FIRST, job_id(), issued_at(), &signer).unwrap();
@@ -429,6 +427,23 @@ fn managed_policy(spec: &JobSpecV3) -> JobSpecPolicySnapshot {
     JobSpecValidity::new(spec.expires_at - spec.issued_at).unwrap(),
   )
   .unwrap()
+}
+
+fn assert_json_omits_fields(value: &Value, forbidden: &[&str]) {
+  match value {
+    Value::Object(fields) => {
+      for (name, nested) in fields {
+        assert!(!forbidden.contains(&name.as_str()), "persisted forbidden field {name}");
+        assert_json_omits_fields(nested, forbidden);
+      }
+    }
+    Value::Array(values) => {
+      for nested in values {
+        assert_json_omits_fields(nested, forbidden);
+      }
+    }
+    _ => {}
+  }
 }
 
 fn issued_at() -> Timestamp {
