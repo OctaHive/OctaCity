@@ -407,13 +407,13 @@ fn authoritative_build_cancellation_advances_only_factory_observation() {
     clock.set(21);
     let observation = bridge.observe(&claimed_run).await.unwrap();
 
-    assert_eq!(observation.build_id, dispatched.build_id);
-    assert_eq!(observation.state, BuildState::Cancelled);
-    assert_eq!(observation.attempt_id, retried_attempt);
-    assert_ne!(observation.attempt_id, dispatched.attempt_id);
-    assert_eq!(observation.disposition, Some(MutationDisposition::Applied));
-    assert!(observation.job_ids.is_empty());
-    assert!(observation.outputs.is_empty());
+    assert_eq!(observation.build_id(), dispatched.build_id);
+    assert_eq!(observation.state(), BuildState::Cancelled);
+    assert_eq!(observation.attempt_id(), retried_attempt);
+    assert_ne!(observation.attempt_id(), dispatched.attempt_id);
+    assert_eq!(observation.disposition(), Some(MutationDisposition::Applied));
+    assert!(observation.job_ids().is_empty());
+    assert!(observation.outputs().is_empty());
     assert_eq!(*builds.latest_attempt_reads.lock().unwrap(), 1);
     let snapshot = store.factory_run_snapshot(claimed_run.run_id).await.unwrap();
     assert_eq!(snapshot.build_observations.len(), 1);

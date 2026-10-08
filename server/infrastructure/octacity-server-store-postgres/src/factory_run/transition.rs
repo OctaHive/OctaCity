@@ -48,6 +48,8 @@ async fn validate_transition(
     .ok_or(StoreError::Unavailable)?;
   let (record_count, _) = super::snapshot::snapshot_record_counts(transaction, request.run_id).await?;
   let (stage_attempts, stage_completions) = super::history::stage_history(transaction, request.run_id).await?;
+  let (stage_handoffs, context_manifests, macro_calls, macro_call_completions) =
+    super::history::call_context_history(transaction, request.run_id).await?;
   validate_factory_transition(
     &FactoryTransitionBaseline {
       run: &locked.run,
@@ -57,6 +59,10 @@ async fn validate_transition(
       claim: &claim,
       stage_attempts: &stage_attempts,
       stage_completions: &stage_completions,
+      stage_handoffs: &stage_handoffs,
+      context_manifests: &context_manifests,
+      macro_calls: &macro_calls,
+      macro_call_completions: &macro_call_completions,
       record_count,
     },
     request,

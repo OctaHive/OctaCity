@@ -8,11 +8,11 @@ use octacity_server_domain::{
 };
 use octacity_server_factory::{
   BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity,
-  FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices,
-  FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey,
-  FactoryMetadata, FactoryReferenceChoice, FactoryRun, FactoryRunId, FactoryStageDraft, FactoryStageKind,
-  FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope,
-  WorkEnvelopeId, WorkPriority,
+  FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries,
+  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryRun,
+  FactoryRunId, FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
+  RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 use octacity_server_store::{
   AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionProbe, FactoryAdmissionStore as _,
@@ -414,6 +414,7 @@ fn fixture(project_id: ProjectId) -> Fixture {
     wip_limits: FactoryWipLimits::new(20, 20).unwrap(),
     hard_budget: budget(),
     permission_ceiling: key("permissions"),
+    credential_profiles: credential_profiles(),
     decision_signals: Vec::new(),
     evaluation: EvaluationPolicyDraft {
       criterion_packs: vec![key("criteria")],
@@ -432,6 +433,16 @@ fn fixture(project_id: ProjectId) -> Fixture {
     enabled: true,
   };
   Fixture { choices, draft }
+}
+
+fn credential_profiles() -> FactoryCredentialProfiles {
+  FactoryCredentialProfiles::new(
+    key("model-coding"),
+    key("model-evaluation"),
+    key("source-read"),
+    key("delivery-write"),
+  )
+  .unwrap()
 }
 
 fn admission(
@@ -458,7 +469,7 @@ fn admission(
       repository.id,
       ImmutableRevision::new(format!("revision-{run}")).unwrap(),
     ),
-    WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), Vec::new()).unwrap(),
+    WorkArtifacts::new(artifact(90), artifact(91), Vec::new()).unwrap(),
     WorkClassification::new(
       WorkPriority::new(20).unwrap(),
       RiskClass::Medium,
@@ -647,6 +658,10 @@ fn digest(value: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([value; 32])
 }
 
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).unwrap()
+}
+
 fn time(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
@@ -677,9 +692,11 @@ fn work_id(value: u128) -> WorkEnvelopeId {
 
 mod run_contract {
   use octacity_server_factory::{
-    BudgetUsage, DecisionSignalProgress, FactoryClaim, FactoryClaimFence, FactoryLifecycleProgress, FactoryRunState,
-    FactoryRunVersion, FactoryStageProgress, FactoryStageTarget, MacroCall, MacroCallId, MacroCallKind, StageAttempt,
-    StageAttemptId, StageAttemptNumber,
+    BoundedSummary, BudgetUsage, ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind,
+    DecisionSignalProgress, FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryContextReference,
+    FactoryLifecycleProgress, FactoryRunState, FactoryRunVersion, FactorySafeText, FactoryStageProgress,
+    FactoryStageTarget, FactoryTaskSubject, MacroCall, MacroCallDeclaration, MacroCallId, MacroCallKind, StageAttempt,
+    StageAttemptId, StageAttemptNumber, StageHandoff, StageHandoffId, StageHandoffOutcome,
   };
   use octacity_server_store::{
     AuditActorKind, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRuns, CommitFactoryRunTransition,
@@ -908,13 +925,107 @@ mod run_contract {
       digest(80),
       ownership,
     );
-    let call = MacroCall::new(
-      MacroCallId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
-      &stage,
-      MacroCallKind::Implement,
+    let call_subject = FactoryTaskSubject::Exact(stage.subject().clone());
+    let context_artifact_id = ArtifactId::generate();
+    let context = ContextManifest::new(
+      ContextManifestId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
+      call_subject.clone(),
       digest(81),
-      BudgetLimit::new(2, 100, 100, 100, 100).unwrap(),
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Task,
+          FactoryKey::new("task").unwrap(),
+          call_subject.clone(),
+          FactoryContextReference::Artifact(FactoryArtifactReference::new(context_artifact_id, digest(81), 1).unwrap()),
+          digest(81),
+          1,
+          FactorySafeText::new("required task").unwrap(),
+          digest(81),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap();
+    let handoff_artifact_id = ArtifactId::generate();
+    let handoff = StageHandoff::new(
+      octacity_server_factory::StageHandoffDeclaration {
+        id: StageHandoffId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
+        stage_attempt_id: stage.id(),
+        subject: call_subject.clone(),
+        outcome: StageHandoffOutcome::Succeeded,
+      },
+      octacity_server_factory::StageHandoffContent {
+        summary: BoundedSummary::new(
+          call_subject.clone(),
+          FactorySafeText::new("stage result").unwrap(),
+          digest(82),
+        ),
+        decisions: vec![],
+        assumptions: vec![],
+        unresolved_items: vec![],
+        changed_components: vec![],
+        validation_observations: vec![],
+        prior_findings: vec![],
+      },
+      octacity_server_factory::StageHandoffReferences {
+        artifacts: vec![FactoryArtifactReference::new(handoff_artifact_id, digest(85), 1).unwrap()],
+        changeset_id: None,
+        evidence_manifest_id: None,
+        result_digest: digest(82),
+        policy_digest: digest(83),
+        provenance_digest: digest(84),
+      },
+    )
+    .unwrap();
+    let call = MacroCall::new(
+      MacroCallDeclaration::new(
+        MacroCallId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
+        call_subject,
+        MacroCallKind::Implement,
+        BudgetLimit::new(2, 100, 100, 100, 100).unwrap(),
+        vec![],
+        vec![],
+        1,
+      )
+      .unwrap(),
+      &stage,
+      &context,
       None,
+    )
+    .unwrap();
+    let child_context = ContextManifest::new(
+      ContextManifestId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
+      call.subject().clone(),
+      digest(86),
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Task,
+          FactoryKey::new("task").unwrap(),
+          call.subject().clone(),
+          FactoryContextReference::Artifact(FactoryArtifactReference::new(context_artifact_id, digest(81), 1).unwrap()),
+          digest(81),
+          1,
+          FactorySafeText::new("required task").unwrap(),
+          digest(81),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap();
+    let child_call = MacroCall::new(
+      MacroCallDeclaration::new(
+        MacroCallId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
+        call.subject().clone(),
+        MacroCallKind::Summarize,
+        BudgetLimit::new(2, 100, 100, 100, 100).unwrap(),
+        vec![],
+        vec![call.id()],
+        2,
+      )
+      .unwrap(),
+      &stage,
+      &child_context,
+      Some(&call),
     )
     .unwrap();
     let mut request = transition(
@@ -925,8 +1036,12 @@ mod run_contract {
       "history.accepted",
     );
     request.current.stage_attempt_id = Some(stage.id());
-    request.current.macro_call_id = Some(call.id());
+    request.current.macro_call_id = Some(child_call.id());
     request.append.stage_attempts.push(stage.clone());
+    request.append.stage_handoffs.push(handoff.clone());
+    request.append.context_manifests.push(child_context.clone());
+    request.append.context_manifests.push(context.clone());
+    request.append.macro_calls.push(child_call.clone());
     request.append.macro_calls.push(call.clone());
     setup.postgres.commit_factory_run_transition(request).await.unwrap();
 
@@ -936,7 +1051,25 @@ mod run_contract {
       .await
       .unwrap();
     assert_eq!(snapshot.stage_attempts, vec![stage.clone()]);
-    assert_eq!(snapshot.macro_calls, vec![call]);
+    assert_eq!(snapshot.stage_handoffs, vec![handoff.clone()]);
+    assert_eq!(snapshot.context_manifests.len(), 2);
+    assert!(snapshot.context_manifests.contains(&context));
+    assert!(snapshot.context_manifests.contains(&child_context));
+    assert_eq!(snapshot.macro_calls.len(), 2);
+    assert!(snapshot.macro_calls.contains(&call));
+    assert!(snapshot.macro_calls.contains(&child_call));
+    let retained_context_artifacts = sqlx::query_scalar::<_, i64>(
+      "SELECT COUNT(*) FROM factory_artifact_references \
+       WHERE run_id = $1 AND ((artifact_id = $2 AND role = 'call_context') \
+         OR (artifact_id = $3 AND role = 'stage_handoff'))",
+    )
+    .bind(setup.admission.run.id().as_uuid())
+    .bind(context_artifact_id.as_uuid())
+    .bind(handoff_artifact_id.as_uuid())
+    .fetch_one(&setup.database.pool)
+    .await
+    .unwrap();
+    assert_eq!(retained_context_artifacts, 2);
     let page = setup
       .postgres
       .list_factory_run_diagnostics(
@@ -955,6 +1088,23 @@ mod run_contract {
       vec![FactoryRunDiagnosticRecord::StageAttempt(Box::new(stage))]
     );
     assert!(page.next.is_none());
+    let handoff_page = setup
+      .postgres
+      .list_factory_run_diagnostics(
+        ListFactoryRunDiagnostics::new(
+          setup.admission.run.id(),
+          FactoryRunDiagnosticKind::StageHandoff,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      handoff_page.items,
+      vec![FactoryRunDiagnosticRecord::StageHandoff(Box::new(handoff))]
+    );
     setup.cleanup().await;
   }
 

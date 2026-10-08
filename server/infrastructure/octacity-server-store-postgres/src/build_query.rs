@@ -434,9 +434,10 @@ fn terminal(
     Some("infrastructure") => Some(JobFailureClass::Infrastructure),
     Some(_) => return Err(StoreError::Unavailable),
   };
+  let timed_out = kind == Some("timed_out");
   let valid = match state {
     JobState::Succeeded => kind == Some("succeeded") && failure_class.is_none(),
-    JobState::Failed => kind == Some("failed") && failure_class.is_some(),
+    JobState::Failed => matches!(kind, Some("failed" | "timed_out")) && failure_class.is_some(),
     JobState::Cancelled => kind.is_none() || kind == Some("cancelled"),
     JobState::Skipped => kind.is_none(),
     _ => false,
@@ -445,6 +446,7 @@ fn terminal(
     .then_some(Some(JobTerminalRecord {
       state,
       failure_class,
+      timed_out,
       completed_at,
     }))
     .ok_or(StoreError::Unavailable)

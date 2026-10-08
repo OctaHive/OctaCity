@@ -1,13 +1,14 @@
 use std::collections::HashSet;
 
-use octacity_server_domain::{ArtifactId, ProjectId};
+use octacity_server_domain::ProjectId;
 use serde::{Deserialize, Serialize};
 
 use crate::{
   CandidateSubject, Decision, DecisionId, DecisionOutcome, DeliveryAttemptId, DeliveryAttemptNumber, DeliveryState,
-  EscalationId, ExactSubject, ExternalWorkIdentity, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest,
-  FactoryError, FactoryKey, FactoryMetadata, FactoryRunId, FactoryRunState, FactoryRunVersion, FactoryText,
-  ReportingAttemptId, ReportingAttemptNumber, ReportingState, RiskClass, WorkEnvelopeId, WorkPriority,
+  EscalationId, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryConfigurationId,
+  FactoryConfigurationVersion, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata, FactoryRunId, FactoryRunState,
+  FactoryRunVersion, FactoryText, ReportingAttemptId, ReportingAttemptNumber, ReportingState, RiskClass,
+  WorkEnvelopeId, WorkPriority,
 };
 
 /// Maximum specification references carried by one Work Envelope.
@@ -108,28 +109,31 @@ impl FactoryConfigurationRef {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkArtifacts {
-  task: ArtifactId,
-  acceptance: ArtifactId,
-  specifications: Vec<ArtifactId>,
+  task: FactoryArtifactReference,
+  acceptance: FactoryArtifactReference,
+  specifications: Vec<FactoryArtifactReference>,
 }
 
 impl WorkArtifacts {
   /// Constructs distinct, bounded Work input references.
-  pub fn new(task: ArtifactId, acceptance: ArtifactId, specifications: Vec<ArtifactId>) -> Result<Self, FactoryError> {
-    if task == acceptance {
+  pub fn new(
+    task: FactoryArtifactReference,
+    acceptance: FactoryArtifactReference,
+    specifications: Vec<FactoryArtifactReference>,
+  ) -> Result<Self, FactoryError> {
+    if task.artifact_id() == acceptance.artifact_id() {
       return Err(FactoryError::InvalidReference {
         relationship: "task and acceptance artifacts",
       });
     }
-    validate_unique_ids(
+    validate_unique_artifacts(
       &specifications,
       MAX_WORK_SPECIFICATION_REFERENCES,
       "specification references",
     )?;
-    if specifications
-      .iter()
-      .any(|artifact| *artifact == task || *artifact == acceptance)
-    {
+    if specifications.iter().any(|artifact| {
+      artifact.artifact_id() == task.artifact_id() || artifact.artifact_id() == acceptance.artifact_id()
+    }) {
       return Err(FactoryError::InvalidReference {
         relationship: "work artifact",
       });
@@ -143,19 +147,19 @@ impl WorkArtifacts {
 
   /// Returns the task Artifact.
   #[must_use]
-  pub const fn task(&self) -> ArtifactId {
-    self.task
+  pub const fn task(&self) -> &FactoryArtifactReference {
+    &self.task
   }
 
   /// Returns the acceptance-criteria Artifact.
   #[must_use]
-  pub const fn acceptance(&self) -> ArtifactId {
-    self.acceptance
+  pub const fn acceptance(&self) -> &FactoryArtifactReference {
+    &self.acceptance
   }
 
   /// Returns the bounded specification Artifacts.
   #[must_use]
-  pub fn specifications(&self) -> &[ArtifactId] {
+  pub fn specifications(&self) -> &[FactoryArtifactReference] {
     &self.specifications
   }
 }
@@ -539,11 +543,21 @@ impl ReportingAttempt {
   }
 }
 
-fn validate_unique_ids(ids: &[ArtifactId], limit: usize, collection: &'static str) -> Result<(), FactoryError> {
-  if ids.len() > limit {
+fn validate_unique_artifacts(
+  artifacts: &[FactoryArtifactReference],
+  limit: usize,
+  collection: &'static str,
+) -> Result<(), FactoryError> {
+  if artifacts.len() > limit {
     return Err(FactoryError::CollectionLimitExceeded { collection });
   }
-  if ids.iter().copied().collect::<HashSet<_>>().len() != ids.len() {
+  if artifacts
+    .iter()
+    .map(FactoryArtifactReference::artifact_id)
+    .collect::<HashSet<_>>()
+    .len()
+    != artifacts.len()
+  {
     return Err(FactoryError::InvalidReference {
       relationship: collection,
     });
@@ -553,12 +567,16 @@ fn validate_unique_ids(ids: &[ArtifactId], limit: usize, collection: &'static st
 
 #[cfg(test)]
 mod tests {
-  use octacity_server_domain::{ImmutableRevision, RepositoryId};
+  use octacity_server_domain::{ArtifactId, ImmutableRevision, RepositoryId};
 
   use super::*;
 
   fn digest(byte: u8) -> FactoryDigest {
     FactoryDigest::from_bytes([byte; 32])
+  }
+
+  fn artifact(byte: u8) -> FactoryArtifactReference {
+    FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).expect("fixture artifact")
   }
 
   fn subject() -> ExactSubject {
@@ -581,7 +599,7 @@ mod tests {
       configuration,
       ExternalWorkIdentity::new("tracker/work-1").expect("fixture identity"),
       subject,
-      WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).expect("fixture artifacts"),
+      WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("fixture artifacts"),
       WorkClassification::new(
         WorkPriority::new(10).expect("fixture priority"),
         RiskClass::Medium,
@@ -593,18 +611,16 @@ mod tests {
 
   #[test]
   fn work_artifacts_reject_duplicate_references_and_oversized_collections() {
-    let artifact = ArtifactId::generate();
+    let duplicate = artifact(92);
     assert!(matches!(
-      WorkArtifacts::new(artifact, artifact, vec![]),
+      WorkArtifacts::new(duplicate.clone(), duplicate, vec![]),
       Err(FactoryError::InvalidReference { .. })
     ));
     assert!(matches!(
       WorkArtifacts::new(
-        ArtifactId::generate(),
-        ArtifactId::generate(),
-        (0..=MAX_WORK_SPECIFICATION_REFERENCES)
-          .map(|_| ArtifactId::generate())
-          .collect(),
+        artifact(93),
+        artifact(94),
+        (0..=MAX_WORK_SPECIFICATION_REFERENCES).map(|_| artifact(95)).collect(),
       ),
       Err(FactoryError::CollectionLimitExceeded { .. })
     ));

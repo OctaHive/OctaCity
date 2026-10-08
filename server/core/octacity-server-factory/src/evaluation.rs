@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   AssessmentId, AssessmentOutcome, CandidateSubject, ChangeSetId, DecisionId, DecisionOutcome, EvaluationPlanId,
-  EvidenceManifestId, FactoryDigest, FactoryError, FactoryKey, FactoryText, FindingSeverity, StageAttempt,
-  StageAttemptId,
+  EvidenceManifestId, FactoryArtifactReference, FactoryDigest, FactoryError, FactoryKey, FactoryText, FindingSeverity,
+  StageAttempt, StageAttemptId,
 };
 
 /// Maximum typed evidence items in one manifest.
@@ -101,19 +101,14 @@ impl ChangeSet {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvidenceItem {
   kind: FactoryKey,
-  artifact_id: ArtifactId,
-  digest: FactoryDigest,
+  artifact: FactoryArtifactReference,
 }
 
 impl EvidenceItem {
   /// Constructs one typed evidence reference.
   #[must_use]
-  pub const fn new(kind: FactoryKey, artifact_id: ArtifactId, digest: FactoryDigest) -> Self {
-    Self {
-      kind,
-      artifact_id,
-      digest,
-    }
+  pub const fn new(kind: FactoryKey, artifact: FactoryArtifactReference) -> Self {
+    Self { kind, artifact }
   }
 
   /// Returns the stable evidence kind.
@@ -125,13 +120,19 @@ impl EvidenceItem {
   /// Returns the immutable evidence Artifact.
   #[must_use]
   pub const fn artifact_id(&self) -> ArtifactId {
-    self.artifact_id
+    self.artifact.artifact_id()
   }
 
   /// Returns the exact evidence content digest.
   #[must_use]
   pub const fn digest(&self) -> FactoryDigest {
-    self.digest
+    self.artifact.content_digest()
+  }
+
+  /// Returns the exact immutable Artifact reference.
+  #[must_use]
+  pub const fn artifact(&self) -> &FactoryArtifactReference {
+    &self.artifact
   }
 }
 
@@ -584,6 +585,10 @@ mod tests {
     FactoryDigest::from_bytes([byte; 32])
   }
 
+  fn artifact(byte: u8) -> FactoryArtifactReference {
+    FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).expect("fixture artifact")
+  }
+
   fn stage() -> StageAttempt {
     let subject = crate::ExactSubject::new(
       ProjectId::generate(),
@@ -601,7 +606,7 @@ mod tests {
       configuration,
       crate::ExternalWorkIdentity::new("source/1").expect("fixture identity"),
       subject,
-      WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).expect("fixture artifacts"),
+      WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("fixture artifacts"),
       WorkClassification::new(
         WorkPriority::new(1).expect("fixture priority"),
         crate::RiskClass::Low,
@@ -674,8 +679,7 @@ mod tests {
       candidate.clone(),
       vec![EvidenceItem::new(
         FactoryKey::new("tests").expect("fixture key"),
-        ArtifactId::generate(),
-        digest(4),
+        artifact(4),
       )],
     )
     .expect("fixture evidence");

@@ -9,11 +9,11 @@ use crate::{
   DecisionSignalProviderRequest, DecisionSignalProviderResult, DecisionSignalPurpose, DecisionSignalQuestion,
   DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain, DecisionSignalQuestionKind, DecisionSignalReceiptId,
   DecisionSignalRequest, DecisionSignalRequestId, DecisionSignalRouteSet, DecisionSignalScoreDomain,
-  DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity, FactoryConfigurationId,
-  FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata,
-  FactoryRun, FactoryRunId, FactoryText, ImmutableReference, MAX_DECISION_SIGNAL_CHOICES, RiskClass, StageAttempt,
-  StageAttemptId, StageAttemptNumber, ToolRiskChoiceMapping, WorkArtifacts, WorkClassification, WorkEnvelope,
-  WorkEnvelopeId, WorkPriority, consume_routing_signal, consume_tool_risk_signal,
+  DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference,
+  FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryError,
+  FactoryKey, FactoryMetadata, FactoryRun, FactoryRunId, FactoryText, ImmutableReference, MAX_DECISION_SIGNAL_CHOICES,
+  RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, ToolRiskChoiceMapping, WorkArtifacts,
+  WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority, consume_routing_signal, consume_tool_risk_signal,
 };
 
 fn key(value: &str) -> FactoryKey {
@@ -22,6 +22,10 @@ fn key(value: &str) -> FactoryKey {
 
 fn digest(value: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([value; 32])
+}
+
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).expect("fixture artifact")
 }
 
 fn exact(identity: &str, version: &str, digest_value: u8) -> ImmutableReference {
@@ -49,7 +53,7 @@ fn stage() -> StageAttempt {
     configuration,
     ExternalWorkIdentity::new("source/1").expect("fixture identity"),
     subject,
-    WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).expect("fixture artifacts"),
+    WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("fixture artifacts"),
     WorkClassification::new(
       WorkPriority::new(0).expect("fixture priority"),
       RiskClass::Low,

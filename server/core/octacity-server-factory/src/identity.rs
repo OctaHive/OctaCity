@@ -97,6 +97,26 @@ factory_id!(
   "Opaque identity of one bounded macro reasoning call."
 );
 factory_id!(
+  TaskEnvelopeId,
+  FactoryEntityKind::TaskEnvelope,
+  "Opaque identity of one immutable versioned Factory Task Envelope."
+);
+factory_id!(
+  StageHandoffId,
+  FactoryEntityKind::StageHandoff,
+  "Opaque identity of one immutable completed-stage handoff."
+);
+factory_id!(
+  ContextManifestId,
+  FactoryEntityKind::ContextManifest,
+  "Opaque identity of one immutable ordered call-context manifest."
+);
+factory_id!(
+  RetrievalReceiptId,
+  FactoryEntityKind::RetrievalReceipt,
+  "Opaque identity of one immutable revision-bound repository retrieval receipt."
+);
+factory_id!(
   DecisionSignalRequestId,
   FactoryEntityKind::DecisionSignalRequest,
   "Opaque identity of one durable Decision Signal request."

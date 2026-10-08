@@ -17,16 +17,20 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 28] = [
+const FACTORY_TABLES: [&str; 33] = [
   "factory_assessments",
   "factory_audit_links",
   "factory_build_link_jobs",
   "factory_build_links",
   "factory_build_observations",
+  "factory_call_dependencies",
+  "factory_call_completions",
   "factory_call_nodes",
+  "factory_call_stage_dependencies",
   "factory_changesets",
   "factory_configuration_versions",
   "factory_configurations",
+  "factory_context_manifests",
   "factory_decision_signal_receipts",
   "factory_decision_signal_requests",
   "factory_decision_assessments",
@@ -45,6 +49,7 @@ const FACTORY_TABLES: [&str; 28] = [
   "factory_runs",
   "factory_stage_attempt_completions",
   "factory_stage_attempts",
+  "factory_stage_handoffs",
   "factory_work_envelopes",
 ];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
@@ -397,10 +402,14 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_build_link_jobs",
     "factory_build_links",
     "factory_build_observations",
+    "factory_call_dependencies",
+    "factory_call_completions",
     "factory_call_nodes",
+    "factory_call_stage_dependencies",
     "factory_changesets",
     "factory_configuration_versions",
     "factory_configurations",
+    "factory_context_manifests",
     "factory_decision_signal_receipts",
     "factory_decision_signal_requests",
     "factory_decision_assessments",
@@ -420,6 +429,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_runs",
     "factory_stage_attempt_completions",
     "factory_stage_attempts",
+    "factory_stage_handoffs",
     "factory_work_envelopes",
     "cache_actions",
     "cache_blobs",
@@ -746,6 +756,7 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   .bind(
     [
       "factory_configurations_discovery_idx",
+      "factory_context_manifests_diagnostics_idx",
       "factory_outbox_due_idx",
       "factory_outbox_operation_history_idx",
       "factory_run_claims_history_idx",
@@ -753,6 +764,7 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
       "factory_runs_project_discovery_idx",
       "factory_runs_reconciliation_idx",
       "factory_runs_state_discovery_idx",
+      "factory_stage_handoffs_diagnostics_idx",
       "factory_work_envelopes_source_discovery_idx",
     ]
     .as_slice(),
@@ -761,7 +773,7 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   .await?
   .into_iter()
   .collect();
-  assert_eq!(indexes.len(), 9);
+  assert_eq!(indexes.len(), 11);
   Ok(())
 }
 

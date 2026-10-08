@@ -27,6 +27,12 @@ pub enum FactoryArtifactRole {
   ChangeSetManifest,
   /// Exact deterministic evidence item.
   Evidence,
+  /// Exact Artifact referenced by an immutable Stage Handoff.
+  StageHandoff,
+  /// Exact Artifact selected into a frozen Context Manifest.
+  CallContext,
+  /// Exact typed result, bounded summary, trace, or provenance of a completed macro call.
+  CallOutput,
 }
 
 impl FactoryArtifactRole {
@@ -41,6 +47,9 @@ impl FactoryArtifactRole {
       Self::ChangeSetBundle => "changeset_bundle",
       Self::ChangeSetManifest => "changeset_manifest",
       Self::Evidence => "evidence",
+      Self::StageHandoff => "stage_handoff",
+      Self::CallContext => "call_context",
+      Self::CallOutput => "call_output",
     }
   }
 }

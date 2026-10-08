@@ -12,10 +12,11 @@ use octacity_server_domain::{
 };
 use octacity_server_factory::{
   BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, ExternalWorkIdentity,
-  FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices,
-  FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey,
-  FactoryMetadata, FactoryReferenceChoice, FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference,
-  ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkPriority,
+  FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries,
+  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryStageDraft,
+  FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts,
+  WorkClassification, WorkPriority,
 };
 use octacity_server_store::{
   FactoryRunStore, IdempotencyKey, PublishedFactoryConfiguration, PublishedRepository, RepositoryDefinition,
@@ -38,6 +39,10 @@ fn key(value: &str) -> FactoryKey {
 
 fn digest(value: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([value; 32])
+}
+
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).unwrap()
 }
 
 fn exact(identity: &str, value: u8) -> ImmutableReference {
@@ -109,6 +114,7 @@ pub(super) fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -
       wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
       hard_budget: budget(),
       permission_ceiling: key("permissions"),
+      credential_profiles: credential_profiles(),
       decision_signals: Vec::new(),
       evaluation: EvaluationPolicyDraft {
         criterion_packs: vec![key("criteria")],
@@ -127,6 +133,16 @@ pub(super) fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -
       enabled: true,
     },
     &choices,
+  )
+  .unwrap()
+}
+
+fn credential_profiles() -> FactoryCredentialProfiles {
+  FactoryCredentialProfiles::new(
+    key("model-coding"),
+    key("model-evaluation"),
+    key("source-read"),
+    key("delivery-write"),
   )
   .unwrap()
 }
@@ -168,7 +184,7 @@ pub(super) fn command(
     repository_version: RepositoryVersion::INITIAL,
     external_identity: ExternalWorkIdentity::new("manual/work-42").unwrap(),
     source: RepositorySourceSelection::DefaultReference,
-    artifacts: WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), Vec::new()).unwrap(),
+    artifacts: WorkArtifacts::new(artifact(90), artifact(91), Vec::new()).unwrap(),
     classification: WorkClassification::new(
       WorkPriority::new(20).unwrap(),
       RiskClass::Medium,

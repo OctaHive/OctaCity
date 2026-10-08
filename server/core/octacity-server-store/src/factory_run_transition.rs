@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use octacity_server_factory::{
-  BudgetUsage, FactoryDigest, FactoryRun, StageAttempt, StageAttemptCompletion, StageAttemptId,
+  BudgetUsage, ContextManifest, ContextManifestId, FactoryDigest, FactoryRun, MacroCall, MacroCallCompletion,
+  MacroCallId, StageAttempt, StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId,
   validate_lifecycle_progress, validate_lifecycle_transition,
 };
 
@@ -30,6 +31,14 @@ pub struct FactoryTransitionBaseline<'a> {
   pub stage_attempts: &'a BTreeMap<StageAttemptId, StageAttempt>,
   /// Existing Stage completions keyed by immutable identity.
   pub stage_completions: &'a BTreeMap<FactoryDigest, StageAttemptCompletion>,
+  /// Existing Stage Handoffs keyed by immutable identity.
+  pub stage_handoffs: &'a BTreeMap<StageHandoffId, StageHandoff>,
+  /// Existing Context Manifests keyed by immutable identity.
+  pub context_manifests: &'a BTreeMap<ContextManifestId, ContextManifest>,
+  /// Existing macro-call nodes keyed by immutable identity.
+  pub macro_calls: &'a BTreeMap<MacroCallId, MacroCall>,
+  /// Existing terminal macro-call observations keyed by call identity.
+  pub macro_call_completions: &'a BTreeMap<MacroCallId, MacroCallCompletion>,
   /// Total immutable rows already retained in the bounded snapshot.
   pub record_count: usize,
 }
@@ -137,6 +146,7 @@ pub fn validate_factory_transition(
         .is_ok()
       && stage.is_some_and(|stage| completion.usage().validate(stage.budget()).is_ok())
   });
+  let call_context_is_valid = call_context_is_valid(baseline, request);
   let canonical_budget =
     FactoryBudgetRecord::new(request.run_id, next_version, request.budget.usage, request.committed_at);
   let canonical_lifecycle = FactoryLifecycleCheckpoint::new(
@@ -199,6 +209,7 @@ pub fn validate_factory_transition(
     .is_err()
     || !appended_attempts_are_valid
     || !appended_completions_are_valid
+    || !call_context_is_valid
     || request.current.lifecycle_checkpoint_id != request.lifecycle_checkpoint.id
     || !projection_is_valid
     || request.audit.run_id != request.run_id
@@ -209,6 +220,122 @@ pub fn validate_factory_transition(
     return Err(invalid());
   }
   Ok(())
+}
+
+fn call_context_is_valid(baseline: &FactoryTransitionBaseline<'_>, request: &CommitFactoryRunTransition) -> bool {
+  let mut stages = baseline.stage_attempts.clone();
+  if request
+    .append
+    .stage_attempts
+    .iter()
+    .any(|record| stages.insert(record.id(), record.clone()).is_some())
+  {
+    return false;
+  }
+
+  let mut handoffs = baseline.stage_handoffs.clone();
+  let mut handoff_stages = handoffs
+    .values()
+    .map(StageHandoff::stage_attempt_id)
+    .collect::<BTreeSet<_>>();
+  for handoff in &request.append.stage_handoffs {
+    let Some(stage) = stages.get(&handoff.stage_attempt_id()) else {
+      return false;
+    };
+    if handoffs.insert(handoff.id(), handoff.clone()).is_some()
+      || !handoff_stages.insert(handoff.stage_attempt_id())
+      || handoff.subject().exact() != stage.subject()
+    {
+      return false;
+    }
+  }
+
+  let mut manifests = baseline.context_manifests.clone();
+  if request
+    .append
+    .context_manifests
+    .iter()
+    .any(|record| manifests.insert(record.id(), record.clone()).is_some())
+  {
+    return false;
+  }
+
+  let mut calls = baseline.macro_calls.clone();
+  if request
+    .append
+    .macro_calls
+    .iter()
+    .any(|record| calls.insert(record.id(), record.clone()).is_some())
+  {
+    return false;
+  }
+
+  if request.append.context_manifests.iter().any(|manifest| {
+    request
+      .append
+      .macro_calls
+      .iter()
+      .all(|call| call.context_manifest_id() != manifest.id())
+  }) {
+    return false;
+  }
+
+  let calls_are_valid = request.append.macro_calls.iter().all(|call| {
+    let stage = stages.get(&call.stage_attempt_id());
+    let manifest = manifests.get(&call.context_manifest_id());
+    let expected_depth = call
+      .call_dependencies()
+      .iter()
+      .filter_map(|id| calls.get(id))
+      .map(MacroCall::depth)
+      .max()
+      .unwrap_or(0)
+      .checked_add(1);
+    call.run_id() == request.run_id
+      && call.subject().exact() == baseline.run.subject()
+      && stage.is_some_and(|stage| stage.subject() == baseline.run.subject())
+      && manifest.is_some_and(|manifest| {
+        manifest.subject() == call.subject() && manifest.digest().ok() == Some(call.context_digest())
+      })
+      && call.stage_dependencies().iter().all(|id| {
+        stages.get(id).is_some_and(|dependency_stage| {
+          dependency_stage.run_id() == request.run_id
+            && dependency_stage.subject() == baseline.run.subject()
+            && handoffs
+              .values()
+              .any(|handoff| handoff.stage_attempt_id() == *id && handoff.subject().exact() == baseline.run.subject())
+        })
+      })
+      && call.call_dependencies().iter().all(|id| {
+        calls.get(id).is_some_and(|dependency| {
+          dependency.run_id() == request.run_id
+            && dependency.subject() == call.subject()
+            && dependency.depth() < call.depth()
+        })
+      })
+      && expected_depth == Some(call.depth())
+      && call.parent_id().is_none_or(|parent| {
+        call.call_dependencies().contains(&parent)
+          && calls.get(&parent).is_some_and(|value| {
+            value.run_id() == request.run_id
+              && value.stage_attempt_id() == call.stage_attempt_id()
+              && value.subject() == call.subject()
+          })
+      })
+  });
+  let mut completed_calls = BTreeSet::new();
+  calls_are_valid
+    && request.append.macro_call_completions.iter().all(|completion| {
+      !baseline.macro_call_completions.contains_key(&completion.call_id())
+        && completed_calls.insert(completion.call_id())
+        && calls.get(&completion.call_id()).is_some_and(|call| {
+          call.subject() == completion.subject()
+            && stages
+              .get(&call.stage_attempt_id())
+              .is_some_and(|stage| completion.task_envelope_digest() == stage.input_digest())
+            && completion.usage_is_valid_for(call.budget())
+        })
+    })
 }
 
 fn projection_is_valid(current: &FactoryRunCurrentProjection, request: &CommitFactoryRunTransition) -> bool {

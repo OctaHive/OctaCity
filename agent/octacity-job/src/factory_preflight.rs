@@ -105,6 +105,7 @@ impl FactoryAdmission<'_> {
     verify_transfers(&self.intent.protected_inputs, self.transfers)?;
     verify_protected_mount(self.intent)?;
     verify_grant_subset(&self.intent.permissions, local)?;
+    verify_secret_profile_selection(&self.intent.execution, &self.intent.permissions)?;
     verify_runtime_projection(&self.intent.permissions, self.runtime, self.outputs)?;
     if self
       .intent
@@ -125,6 +126,17 @@ impl FactoryAdmission<'_> {
       .revalidate_files(&selected)
       .map_err(|_| FactoryPreflightError::ToolchainDrift)?;
     Ok(selected)
+  }
+}
+
+fn verify_secret_profile_selection(
+  execution: &ManagedOctaExecutionV3,
+  permissions: &FactoryPermissionSetV3,
+) -> Result<(), FactoryPreflightError> {
+  match &execution.credential_profile {
+    Some(profile) if permissions.secret_profiles.as_slice() == [profile.as_str()] => Ok(()),
+    None if permissions.secret_profiles.is_empty() => Ok(()),
+    Some(_) | None => Err(FactoryPreflightError::SecretProfile),
   }
 }
 
@@ -451,6 +463,25 @@ mod tests {
     assert_eq!(
       verify_grant_subset(&requested, &local),
       Err(FactoryPreflightError::Command)
+    );
+  }
+
+  #[test]
+  fn selected_secret_profile_must_be_the_only_signed_profile() {
+    let execution = ManagedOctaExecutionV3 {
+      octafile_input: "managed-octafile".to_owned(),
+      tasks: vec!["implement".to_owned()],
+      credential_profile: Some("model-coding".to_owned()),
+      tool_control: None,
+    };
+    let permissions = permissions();
+    assert_eq!(verify_secret_profile_selection(&execution, &permissions), Ok(()));
+
+    let mut mismatched = permissions.clone();
+    mismatched.secret_profiles = vec!["delivery-write".to_owned()];
+    assert_eq!(
+      verify_secret_profile_selection(&execution, &mismatched),
+      Err(FactoryPreflightError::SecretProfile)
     );
   }
 

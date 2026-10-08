@@ -11,6 +11,10 @@ fn digest(byte: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([byte; 32])
 }
 
+fn artifact(byte: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).expect("fixture artifact")
+}
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).expect("fixture key is valid")
 }
@@ -36,7 +40,7 @@ fn fixture() -> Fixture {
     configuration,
     ExternalWorkIdentity::new("source/work").expect("fixture identity is valid"),
     exact,
-    WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).expect("fixture artifacts are valid"),
+    WorkArtifacts::new(artifact(40), artifact(41), vec![]).expect("fixture artifacts are valid"),
     WorkClassification::new(
       WorkPriority::new(1).expect("fixture priority is valid"),
       RiskClass::Low,
@@ -79,8 +83,8 @@ fn fixture() -> Fixture {
     &changeset,
     candidate.clone(),
     vec![
-      EvidenceItem::new(key("tests"), ArtifactId::generate(), digest(4)),
-      EvidenceItem::new(key("security"), ArtifactId::generate(), digest(5)),
+      EvidenceItem::new(key("tests"), artifact(4)),
+      EvidenceItem::new(key("security"), artifact(5)),
     ],
   )
   .expect("fixture evidence is valid");

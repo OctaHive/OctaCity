@@ -36,7 +36,8 @@ or process spawn.
 v3-only sections:
 
 - `execution` selects a protected input containing the server-generated
-  Octafile and an ordered non-empty list of exact Octa task names;
+  Octafile, an ordered non-empty list of exact Octa task names, and at most one
+  logical stage-scoped credential profile;
 - `factory` optionally carries only bounded logical Factory identities,
   immutable configuration version, stage kind, and SHA-256 digests;
 - `protected_inputs` contains bounded logical Artifact identities, exact sizes,
@@ -85,8 +86,10 @@ The managed Octafile is selected by logical protected-input identity. It
 cannot be replaced by a workspace-relative repository path. Every named task
 must be explicit and unique. Backends expose only the fixed portable roots
 `/octacity/protected`, `/workspace/source`, `/workspace/scratch`, and
-`/workspace/output`; the first is read-only and the other three are distinct
-writable scopes below one private Job. v3 rejects direct Host execution.
+`/workspace/output`; protected inputs are always read-only, source is
+read-only for evaluation and read-write for the other current stage kinds,
+and the scratch/output roots are distinct writable scopes below one private
+Job. v3 rejects direct Host execution.
 
 ## Factory Permission Set
 
@@ -108,6 +111,17 @@ digests must exactly match the plugin permissions. Permission resource,
 network, identity, and output authority must be no broader than the common
 signed runtime and output sections. Unrestricted network access is invalid for
 v3.
+
+When `execution.credential_profile` is present, it must be the sole logical
+secret profile in the signed permission set. When it is absent, the permission
+set must grant no secret profile. The Factory Configuration freezes distinct
+model, evaluator, source, and delivery profiles. The application resolves a
+profile only for its trusted consumer: coding, evaluation, source resolution,
+or delivery. Cross-purpose requests are rejected before any credential bytes
+are materialized. In particular, a coding stage cannot resolve delivery
+identity, and an evaluation stage cannot receive a writable candidate mount.
+Credential values remain transient secret-provider output and are excluded
+from the JobSpec, persisted templates, logs, traces, and debug formatting.
 
 The initial v3 revision requires every known semantic enforcement capability,
 including protected-input integrity, read-only publication, workspace
@@ -142,6 +156,10 @@ It rejects any widening of plugin, executable, tool, command/argument,
 descendant, mount, network, secret-profile, workload-identity, resource, or
 output authority. Portable path containment is segment-aware; a lexical prefix
 such as `/workspace-escape` is never a child of `/workspace`.
+
+The Agent also requires the single selected execution credential profile to
+equal the single signed secret-profile permission before source checkout or
+spawn. Missing, additional, or substituted profiles fail closed.
 
 The Agent also requires the lease transfer metadata to exactly repeat the
 signed protected-input manifest, requires the protected root to be read-only,

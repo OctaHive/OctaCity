@@ -1,10 +1,10 @@
 use crate::{
-  BudgetLimit, BudgetUsage, DecisionSignalPurpose, DecisionSignalRequestId, ExactSubject, FactoryClaim, FactoryDigest,
-  FactoryError, FactoryKey, FactoryRun, FactoryRunId, FactoryStageKind, FactoryStageTarget, MacroCallId, MacroCallKind,
-  StageAttemptId, StageAttemptNumber,
+  BudgetLimit, BudgetUsage, ContextManifest, ContextManifestId, DecisionSignalPurpose, DecisionSignalRequestId,
+  ExactSubject, FactoryClaim, FactoryDigest, FactoryError, FactoryKey, FactoryRun, FactoryRunId, FactoryStageKind,
+  FactoryStageTarget, FactoryTaskSubject, MacroCallId, MacroCallKind, StageAttemptId, StageAttemptNumber,
 };
 use octacity_server_domain::Timestamp;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 /// Fenced worker ownership attached to immutable Factory execution records.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -278,47 +278,112 @@ impl StageAttemptCompletion {
 }
 
 /// One bounded node in a Stage Attempt's durable macro-call DAG.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MacroCall {
   id: MacroCallId,
   stage_attempt_id: StageAttemptId,
   run_id: FactoryRunId,
-  subject: ExactSubject,
+  subject: FactoryTaskSubject,
   kind: MacroCallKind,
+  context_manifest_id: ContextManifestId,
   context_digest: FactoryDigest,
   budget: BudgetLimit,
   parent_id: Option<MacroCallId>,
+  stage_dependencies: Vec<StageAttemptId>,
+  call_dependencies: Vec<MacroCallId>,
+  depth: u16,
+}
+
+/// Maximum number of declared stage or call dependencies for one macro call.
+pub const MAX_MACRO_CALL_DEPENDENCIES: usize = 64;
+/// Maximum depth of the durable macro-call DAG.
+pub const MAX_MACRO_CALL_DEPTH: u16 = 32;
+
+/// Deterministic program-owned declaration used to create one macro-call node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MacroCallDeclaration {
+  id: MacroCallId,
+  subject: FactoryTaskSubject,
+  kind: MacroCallKind,
+  budget: BudgetLimit,
+  stage_dependencies: Vec<StageAttemptId>,
+  call_dependencies: Vec<MacroCallId>,
+  depth: u16,
+}
+
+impl MacroCallDeclaration {
+  /// Canonicalizes the declared DAG edges before durable stage binding.
+  pub fn new(
+    id: MacroCallId,
+    subject: FactoryTaskSubject,
+    kind: MacroCallKind,
+    budget: BudgetLimit,
+    mut stage_dependencies: Vec<StageAttemptId>,
+    mut call_dependencies: Vec<MacroCallId>,
+    depth: u16,
+  ) -> Result<Self, FactoryError> {
+    stage_dependencies.sort_unstable();
+    stage_dependencies.dedup();
+    call_dependencies.sort_unstable();
+    call_dependencies.dedup();
+    validate_macro_call_shape(id, None, &stage_dependencies, &call_dependencies, depth)?;
+    Ok(Self {
+      id,
+      subject,
+      kind,
+      budget,
+      stage_dependencies,
+      call_dependencies,
+      depth,
+    })
+  }
 }
 
 impl MacroCall {
   /// Constructs a call and validates its optional parent belongs to the same stage and subject.
   pub fn new(
-    id: MacroCallId,
+    declaration: MacroCallDeclaration,
     stage: &StageAttempt,
-    kind: MacroCallKind,
-    context_digest: FactoryDigest,
-    budget: BudgetLimit,
+    context: &ContextManifest,
     parent: Option<&Self>,
   ) -> Result<Self, FactoryError> {
+    validate_macro_call_shape(
+      declaration.id,
+      parent.map(|value| value.id),
+      &declaration.stage_dependencies,
+      &declaration.call_dependencies,
+      declaration.depth,
+    )?;
+    if declaration.subject.exact() != &stage.subject || context.subject() != &declaration.subject {
+      return Err(FactoryError::InvalidReference {
+        relationship: "macro call context",
+      });
+    }
     if parent.is_some_and(|parent| {
-      parent.id == id
+      parent.id == declaration.id
         || parent.stage_attempt_id != stage.id
         || parent.run_id != stage.run_id
-        || parent.subject != stage.subject
+        || parent.subject != declaration.subject
+        || !declaration.call_dependencies.contains(&parent.id)
+        || parent.depth >= declaration.depth
     }) {
       return Err(FactoryError::InvalidReference {
         relationship: "macro call parent",
       });
     }
     Ok(Self {
-      id,
+      id: declaration.id,
       stage_attempt_id: stage.id,
       run_id: stage.run_id,
-      subject: stage.subject.clone(),
-      kind,
-      context_digest,
-      budget,
+      subject: declaration.subject,
+      kind: declaration.kind,
+      context_manifest_id: context.id(),
+      context_digest: context.digest()?,
+      budget: declaration.budget,
       parent_id: parent.map(|value| value.id),
+      stage_dependencies: declaration.stage_dependencies,
+      call_dependencies: declaration.call_dependencies,
+      depth: declaration.depth,
     })
   }
 
@@ -342,7 +407,7 @@ impl MacroCall {
 
   /// Returns the exact immutable subject.
   #[must_use]
-  pub const fn subject(&self) -> &ExactSubject {
+  pub const fn subject(&self) -> &FactoryTaskSubject {
     &self.subject
   }
 
@@ -350,6 +415,12 @@ impl MacroCall {
   #[must_use]
   pub const fn kind(&self) -> MacroCallKind {
     self.kind
+  }
+
+  /// Returns the immutable Context Manifest identity.
+  #[must_use]
+  pub const fn context_manifest_id(&self) -> ContextManifestId {
+    self.context_manifest_id
   }
 
   /// Returns the exact Context Manifest digest.
@@ -369,6 +440,97 @@ impl MacroCall {
   pub const fn parent_id(&self) -> Option<MacroCallId> {
     self.parent_id
   }
+
+  /// Returns declared predecessor Stage Attempts in canonical order.
+  #[must_use]
+  pub fn stage_dependencies(&self) -> &[StageAttemptId] {
+    &self.stage_dependencies
+  }
+
+  /// Returns declared predecessor calls in canonical order.
+  #[must_use]
+  pub fn call_dependencies(&self) -> &[MacroCallId] {
+    &self.call_dependencies
+  }
+
+  /// Returns this node's bounded one-based DAG depth.
+  #[must_use]
+  pub const fn depth(&self) -> u16 {
+    self.depth
+  }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MacroCallWire {
+  id: MacroCallId,
+  stage_attempt_id: StageAttemptId,
+  run_id: FactoryRunId,
+  subject: FactoryTaskSubject,
+  kind: MacroCallKind,
+  context_manifest_id: ContextManifestId,
+  context_digest: FactoryDigest,
+  budget: BudgetLimit,
+  parent_id: Option<MacroCallId>,
+  stage_dependencies: Vec<StageAttemptId>,
+  call_dependencies: Vec<MacroCallId>,
+  depth: u16,
+}
+
+impl<'de> Deserialize<'de> for MacroCall {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    let wire = MacroCallWire::deserialize(deserializer)?;
+    validate_macro_call_shape(
+      wire.id,
+      wire.parent_id,
+      &wire.stage_dependencies,
+      &wire.call_dependencies,
+      wire.depth,
+    )
+    .map_err(D::Error::custom)?;
+    Ok(Self {
+      id: wire.id,
+      stage_attempt_id: wire.stage_attempt_id,
+      run_id: wire.run_id,
+      subject: wire.subject,
+      kind: wire.kind,
+      context_manifest_id: wire.context_manifest_id,
+      context_digest: wire.context_digest,
+      budget: wire.budget,
+      parent_id: wire.parent_id,
+      stage_dependencies: wire.stage_dependencies,
+      call_dependencies: wire.call_dependencies,
+      depth: wire.depth,
+    })
+  }
+}
+
+fn validate_macro_call_shape(
+  id: MacroCallId,
+  parent_id: Option<MacroCallId>,
+  stage_dependencies: &[StageAttemptId],
+  call_dependencies: &[MacroCallId],
+  depth: u16,
+) -> Result<(), FactoryError> {
+  let stage_dependencies_are_canonical = stage_dependencies.windows(2).all(|values| values[0] < values[1]);
+  let call_dependencies_are_canonical = call_dependencies.windows(2).all(|values| values[0] < values[1]);
+  if stage_dependencies.len() > MAX_MACRO_CALL_DEPENDENCIES
+    || call_dependencies.len() > MAX_MACRO_CALL_DEPENDENCIES
+    || !stage_dependencies_are_canonical
+    || !call_dependencies_are_canonical
+    || call_dependencies.contains(&id)
+    || parent_id.is_some_and(|parent| !call_dependencies.contains(&parent))
+    || depth == 0
+    || depth > MAX_MACRO_CALL_DEPTH
+  {
+    return Err(FactoryError::InvalidReference {
+      relationship: "macro call dependencies",
+    });
+  }
+  Ok(())
 }
 
 /// Provider-neutral request for one bounded, non-authoritative Decision Signal.
@@ -460,15 +622,19 @@ mod tests {
   use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId};
 
   use crate::{
-    ExternalWorkIdentity, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
-    FactoryMetadata, FactoryRunId, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
-    WorkPriority,
+    ContextManifestEntry, ContextSourceKind, ExternalWorkIdentity, FactoryArtifactReference, FactoryConfigurationId,
+    FactoryConfigurationRef, FactoryConfigurationVersion, FactoryContextReference, FactoryMetadata, FactoryRunId,
+    FactorySafeText, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
   };
 
   use super::*;
 
   fn digest(byte: u8) -> FactoryDigest {
     FactoryDigest::from_bytes([byte; 32])
+  }
+
+  fn artifact(byte: u8) -> FactoryArtifactReference {
+    FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).expect("fixture artifact")
   }
 
   fn stage() -> StageAttempt {
@@ -488,7 +654,7 @@ mod tests {
       configuration,
       ExternalWorkIdentity::new("source/1").expect("fixture identity"),
       subject,
-      WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).expect("fixture artifacts"),
+      WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("fixture artifacts"),
       WorkClassification::new(
         WorkPriority::new(0).expect("fixture priority"),
         RiskClass::Low,
@@ -516,29 +682,103 @@ mod tests {
     )
   }
 
+  fn context(stage: &StageAttempt, byte: u8) -> ContextManifest {
+    let subject = FactoryTaskSubject::Exact(stage.subject().clone());
+    ContextManifest::new(
+      ContextManifestId::generate(),
+      subject.clone(),
+      digest(byte),
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Task,
+          FactoryKey::new("task").unwrap(),
+          subject,
+          FactoryContextReference::Artifact(
+            FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).unwrap(),
+          ),
+          digest(byte),
+          1,
+          FactorySafeText::new("required task").unwrap(),
+          digest(byte),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap()
+  }
+
   #[test]
   fn macro_call_rejects_a_parent_from_another_stage() {
     let first_stage = stage();
+    let first_context = context(&first_stage, 3);
     let parent = MacroCall::new(
-      MacroCallId::generate(),
+      MacroCallDeclaration::new(
+        MacroCallId::generate(),
+        first_context.subject().clone(),
+        MacroCallKind::Implement,
+        first_stage.budget(),
+        vec![],
+        vec![],
+        1,
+      )
+      .unwrap(),
       &first_stage,
-      MacroCallKind::Implement,
-      digest(3),
-      first_stage.budget(),
+      &first_context,
       None,
     )
     .expect("fixture parent");
+    let second_stage = stage();
+    let second_context = context(&second_stage, 4);
     assert!(matches!(
       MacroCall::new(
-        MacroCallId::generate(),
-        &stage(),
-        MacroCallKind::Summarize,
-        digest(4),
-        first_stage.budget(),
+        MacroCallDeclaration::new(
+          MacroCallId::generate(),
+          second_context.subject().clone(),
+          MacroCallKind::Summarize,
+          first_stage.budget(),
+          vec![],
+          vec![parent.id()],
+          2,
+        )
+        .unwrap(),
+        &second_stage,
+        &second_context,
         Some(&parent),
       ),
       Err(FactoryError::InvalidReference { .. })
     ));
+  }
+
+  #[test]
+  fn persisted_macro_call_rejects_unknown_fields_and_invalid_graph_shape() {
+    let stage = stage();
+    let context = context(&stage, 5);
+    let call = MacroCall::new(
+      MacroCallDeclaration::new(
+        MacroCallId::generate(),
+        context.subject().clone(),
+        MacroCallKind::Implement,
+        stage.budget(),
+        vec![],
+        vec![],
+        1,
+      )
+      .unwrap(),
+      &stage,
+      &context,
+      None,
+    )
+    .unwrap();
+    let mut unknown = serde_json::to_value(&call).unwrap();
+    unknown
+      .as_object_mut()
+      .unwrap()
+      .insert("transcript".into(), "hidden".into());
+    assert!(serde_json::from_value::<MacroCall>(unknown).is_err());
+
+    let mut invalid_depth = serde_json::to_value(&call).unwrap();
+    invalid_depth.as_object_mut().unwrap().insert("depth".into(), 0.into());
+    assert!(serde_json::from_value::<MacroCall>(invalid_depth).is_err());
   }
 
   #[test]

@@ -190,28 +190,28 @@ pub(crate) async fn admit(
   crate::factory_run::insert_artifact_reference(
     &mut transaction,
     request.run.id(),
-    request.work.artifacts().task(),
+    request.work.artifacts().task().artifact_id(),
     octacity_server_store::FactoryArtifactRole::Task,
-    None,
+    Some(request.work.artifacts().task().content_digest().as_bytes()),
     request.admitted_at,
   )
   .await?;
   crate::factory_run::insert_artifact_reference(
     &mut transaction,
     request.run.id(),
-    request.work.artifacts().acceptance(),
+    request.work.artifacts().acceptance().artifact_id(),
     octacity_server_store::FactoryArtifactRole::Acceptance,
-    None,
+    Some(request.work.artifacts().acceptance().content_digest().as_bytes()),
     request.admitted_at,
   )
   .await?;
-  for artifact_id in request.work.artifacts().specifications() {
+  for artifact in request.work.artifacts().specifications() {
     crate::factory_run::insert_artifact_reference(
       &mut transaction,
       request.run.id(),
-      *artifact_id,
+      artifact.artifact_id(),
       octacity_server_store::FactoryArtifactRole::Specification,
-      None,
+      Some(artifact.content_digest().as_bytes()),
       request.admitted_at,
     )
     .await?;

@@ -13,9 +13,9 @@ use octacity_server_factory::{
   DecisionId, DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryIntent,
   DeterministicGate, DeterministicGateOutcome, EvaluationBranch, EvaluationBranchState, EvaluationPlan,
   EvaluationPlanId, EvaluationProgress, EvaluationState, EvidenceItem, EvidenceManifest, EvidenceManifestId,
-  FactoryDigest, FactoryLifecycleProgress, FactoryOutputPermissions, FactoryPermissionDraft, FactoryPermissionSet,
-  FactoryResourceLimits, FactoryRun, FactoryRunState, FactoryRunVersion, FactoryStageProgress, FactoryStageTarget,
-  FindingSeverity, IndeterminatePolicy, LocalPermissionCeiling, evaluate_decision,
+  FactoryArtifactReference, FactoryDigest, FactoryLifecycleProgress, FactoryOutputPermissions, FactoryPermissionDraft,
+  FactoryPermissionSet, FactoryResourceLimits, FactoryRun, FactoryRunState, FactoryRunVersion, FactoryStageProgress,
+  FactoryStageTarget, FindingSeverity, IndeterminatePolicy, LocalPermissionCeiling, evaluate_decision,
 };
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
@@ -286,7 +286,10 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
 
     reconcile(&worker, &shutdown).await;
     let evidence_outbox = claim_outbox(&store, "evidence.construct").await;
-    let evidence_item = EvidenceItem::new(key("tests"), ArtifactId::generate(), digest(2));
+    let evidence_item = EvidenceItem::new(
+      key("tests"),
+      FactoryArtifactReference::new(ArtifactId::generate(), digest(2), 1).unwrap(),
+    );
     let evidence = EvidenceManifest::new(
       EvidenceManifestId::generate(),
       &candidate,
@@ -448,8 +451,8 @@ async fn run_build(
     .pop()
     .unwrap();
   let observation = bridge.observe(&claimed).await.unwrap();
-  assert_eq!(observation.state, BuildState::Succeeded);
-  assert_eq!(observation.disposition, Some(MutationDisposition::Applied));
+  assert_eq!(observation.state(), BuildState::Succeeded);
+  assert_eq!(observation.disposition(), Some(MutationDisposition::Applied));
 }
 
 async fn claim_outbox(

@@ -11,6 +11,8 @@ pub const MAX_EXTERNAL_WORK_IDENTITY_BYTES: usize = 256;
 pub const MAX_FACTORY_KEY_BYTES: usize = 128;
 /// Maximum UTF-8 bytes in one human-readable Factory summary or reason.
 pub const MAX_FACTORY_TEXT_BYTES: usize = 4 * 1024;
+/// Maximum UTF-8 bytes in durable model-authored text admitted to a task contract.
+pub const MAX_FACTORY_SAFE_TEXT_BYTES: usize = 2 * 1024;
 /// Maximum number of entries in one bounded metadata map.
 pub const MAX_FACTORY_METADATA_ENTRIES: usize = 32;
 /// Maximum UTF-8 bytes in one metadata key.
@@ -67,6 +69,18 @@ impl FactoryDigest {
       hash_field(&mut hasher, field);
     }
     Self(hasher.finalize().into())
+  }
+
+  /// Computes the ordinary SHA-256 content identity of exact immutable bytes.
+  #[must_use]
+  pub fn content_sha256(bytes: &[u8]) -> Self {
+    Self(Sha256::digest(bytes).into())
+  }
+
+  /// Computes the ordinary BLAKE3 content identity of exact immutable bytes.
+  #[must_use]
+  pub fn content_blake3(bytes: &[u8]) -> Self {
+    Self(*blake3::hash(bytes).as_bytes())
   }
 }
 
@@ -270,6 +284,63 @@ bounded_text!(
   "Bounded visible Factory summary or reason that excludes control characters."
 );
 
+/// Bounded durable model-authored text with conservative credential-shape rejection.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FactorySafeText(String);
+
+impl FactorySafeText {
+  /// Constructs bounded text that contains no recognized credential-shaped marker.
+  pub fn new(value: impl Into<String>) -> Result<Self, FactoryError> {
+    let value = value.into();
+    validate_text(&value, MAX_FACTORY_SAFE_TEXT_BYTES, FactoryTextKind::SafeText)?;
+    if contains_sensitive_material(&value) {
+      return Err(FactoryError::InvalidText {
+        kind: FactoryTextKind::SafeText,
+        reason: TextRejection::Sensitive,
+      });
+    }
+    Ok(Self(value))
+  }
+
+  /// Borrows the validated text.
+  #[must_use]
+  pub fn as_str(&self) -> &str {
+    &self.0
+  }
+}
+
+impl fmt::Display for FactorySafeText {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    formatter.write_str(&self.0)
+  }
+}
+
+impl FromStr for FactorySafeText {
+  type Err = FactoryError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    Self::new(value)
+  }
+}
+
+impl Serialize for FactorySafeText {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    serializer.serialize_str(&self.0)
+  }
+}
+
+impl<'de> Deserialize<'de> for FactorySafeText {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    String::deserialize(deserializer).and_then(|value| Self::new(value).map_err(D::Error::custom))
+  }
+}
+
 /// Provider-neutral stable key using `[a-z0-9][a-z0-9._-]*`.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FactoryKey(String);
@@ -422,6 +493,27 @@ fn sensitive_key(key: &str) -> bool {
     key,
     "authorization" | "credential" | "password" | "private_key" | "secret" | "signature" | "token"
   ) || key.contains("presigned")
+}
+
+fn contains_sensitive_material(value: &str) -> bool {
+  let lowercase = value.to_ascii_lowercase();
+  [
+    "-----begin ",
+    "authorization:",
+    "aws_secret_access_key",
+    "bearer ",
+    "github_pat_",
+    "ghp_",
+    "password=",
+    "password\":",
+    "private_key=",
+    "secret=",
+    "sk-proj-",
+    "token=",
+    "x-amz-signature",
+  ]
+  .iter()
+  .any(|marker| lowercase.contains(marker))
 }
 
 #[cfg(test)]

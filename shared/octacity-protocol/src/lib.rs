@@ -729,6 +729,8 @@ impl JobSpecV3 {
     validate_factory_execution(
       &self.runtime,
       &self.outputs,
+      &self.execution,
+      self.factory.as_ref(),
       &self.permissions,
       &self.required_enforcement,
     )

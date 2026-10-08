@@ -1,5 +1,7 @@
 use std::{collections::BTreeSet, net::IpAddr, str::FromStr};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
+
 use crate::{
   FactoryDigest, FactoryError, FactoryKey, FactoryText, ImmutableReference, MAX_FACTORY_ELAPSED_MILLIS,
   MAX_FACTORY_OUTPUT_BYTES, MountMode, PermissionCategory,
@@ -408,6 +410,243 @@ pub struct FactoryPermissionSet {
   workload_identity_profiles: BTreeSet<FactoryKey>,
   resources: FactoryResourceLimits,
   outputs: FactoryOutputPermissions,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PermissionSetWire {
+  plugins: Vec<ImmutableReference>,
+  executables: Vec<ImmutableReference>,
+  tools: Vec<ImmutableReference>,
+  commands: Vec<CommandPermissionWire>,
+  max_descendants: u32,
+  mounts: Vec<MountPermissionWire>,
+  network_hosts: Vec<String>,
+  secret_profiles: Vec<FactoryKey>,
+  workload_identity_profiles: Vec<FactoryKey>,
+  resources: ResourceLimitsWire,
+  outputs: OutputPermissionsWire,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CommandPermissionWire {
+  executable: ImmutableReference,
+  arguments: Vec<CommandArgumentPatternWire>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", deny_unknown_fields)]
+enum CommandArgumentPatternWire {
+  Exact { value: FactoryText },
+  Any,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MountPermissionWire {
+  root: String,
+  mode: MountMode,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceLimitsWire {
+  cpu_millis: u32,
+  memory_bytes: u64,
+  disk_bytes: u64,
+  process_count: u32,
+  elapsed_millis: u64,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct OutputPermissionsWire {
+  kinds: Vec<FactoryKey>,
+  max_artifact_count: u32,
+  max_artifact_bytes: u64,
+  max_report_count: u32,
+  max_report_bytes: u64,
+}
+
+impl Serialize for FactoryPermissionSet {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    PermissionSetWire::from(self).serialize(serializer)
+  }
+}
+
+impl<'de> Deserialize<'de> for FactoryPermissionSet {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    PermissionSetWire::deserialize(deserializer)?
+      .try_into()
+      .map_err(D::Error::custom)
+  }
+}
+
+impl From<&FactoryPermissionSet> for PermissionSetWire {
+  fn from(value: &FactoryPermissionSet) -> Self {
+    Self {
+      plugins: value.plugins.iter().cloned().collect(),
+      executables: value.executables.iter().cloned().collect(),
+      tools: value.tools.iter().cloned().collect(),
+      commands: value.commands.iter().map(CommandPermissionWire::from).collect(),
+      max_descendants: value.max_descendants,
+      mounts: value.mounts.iter().map(MountPermissionWire::from).collect(),
+      network_hosts: value
+        .network_hosts
+        .iter()
+        .map(|host| host.as_str().to_owned())
+        .collect(),
+      secret_profiles: value.secret_profiles.iter().cloned().collect(),
+      workload_identity_profiles: value.workload_identity_profiles.iter().cloned().collect(),
+      resources: ResourceLimitsWire::from(value.resources),
+      outputs: OutputPermissionsWire::from(&value.outputs),
+    }
+  }
+}
+
+impl TryFrom<PermissionSetWire> for FactoryPermissionSet {
+  type Error = FactoryError;
+
+  fn try_from(value: PermissionSetWire) -> Result<Self, Self::Error> {
+    let commands = value
+      .commands
+      .into_iter()
+      .map(CommandPermission::try_from)
+      .collect::<Result<Vec<_>, _>>()?;
+    let mounts = value
+      .mounts
+      .into_iter()
+      .map(MountPermission::try_from)
+      .collect::<Result<Vec<_>, _>>()?;
+    let network_hosts = value
+      .network_hosts
+      .into_iter()
+      .map(NetworkHost::new)
+      .collect::<Result<Vec<_>, _>>()?;
+    FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      plugins: value.plugins,
+      executables: value.executables,
+      tools: value.tools,
+      commands,
+      max_descendants: value.max_descendants,
+      mounts,
+      network_hosts,
+      secret_profiles: value.secret_profiles,
+      workload_identity_profiles: value.workload_identity_profiles,
+      resources: value.resources.try_into()?,
+      outputs: value.outputs.try_into()?,
+    })
+  }
+}
+
+impl From<&CommandPermission> for CommandPermissionWire {
+  fn from(value: &CommandPermission) -> Self {
+    Self {
+      executable: value.executable.clone(),
+      arguments: value
+        .arguments
+        .iter()
+        .map(|argument| match argument {
+          CommandArgumentPattern::Exact(text) => CommandArgumentPatternWire::Exact { value: text.clone() },
+          CommandArgumentPattern::Any => CommandArgumentPatternWire::Any,
+        })
+        .collect(),
+    }
+  }
+}
+
+impl TryFrom<CommandPermissionWire> for CommandPermission {
+  type Error = FactoryError;
+
+  fn try_from(value: CommandPermissionWire) -> Result<Self, Self::Error> {
+    CommandPermission::try_new(
+      value.executable,
+      value
+        .arguments
+        .into_iter()
+        .map(|argument| match argument {
+          CommandArgumentPatternWire::Exact { value } => CommandArgumentPattern::Exact(value),
+          CommandArgumentPatternWire::Any => CommandArgumentPattern::Any,
+        })
+        .collect(),
+    )
+  }
+}
+
+impl From<&MountPermission> for MountPermissionWire {
+  fn from(value: &MountPermission) -> Self {
+    Self {
+      root: value.root.as_str().to_owned(),
+      mode: value.mode,
+    }
+  }
+}
+
+impl TryFrom<MountPermissionWire> for MountPermission {
+  type Error = FactoryError;
+
+  fn try_from(value: MountPermissionWire) -> Result<Self, Self::Error> {
+    Ok(Self::new(FactoryPath::new(value.root)?, value.mode))
+  }
+}
+
+impl From<FactoryResourceLimits> for ResourceLimitsWire {
+  fn from(value: FactoryResourceLimits) -> Self {
+    Self {
+      cpu_millis: value.cpu_millis,
+      memory_bytes: value.memory_bytes,
+      disk_bytes: value.disk_bytes,
+      process_count: value.process_count,
+      elapsed_millis: value.elapsed_millis,
+    }
+  }
+}
+
+impl TryFrom<ResourceLimitsWire> for FactoryResourceLimits {
+  type Error = FactoryError;
+
+  fn try_from(value: ResourceLimitsWire) -> Result<Self, Self::Error> {
+    Self::new(
+      value.cpu_millis,
+      value.memory_bytes,
+      value.disk_bytes,
+      value.process_count,
+      value.elapsed_millis,
+    )
+  }
+}
+
+impl From<&FactoryOutputPermissions> for OutputPermissionsWire {
+  fn from(value: &FactoryOutputPermissions) -> Self {
+    Self {
+      kinds: value.kinds.iter().cloned().collect(),
+      max_artifact_count: value.max_artifact_count,
+      max_artifact_bytes: value.max_artifact_bytes,
+      max_report_count: value.max_report_count,
+      max_report_bytes: value.max_report_bytes,
+    }
+  }
+}
+
+impl TryFrom<OutputPermissionsWire> for FactoryOutputPermissions {
+  type Error = FactoryError;
+
+  fn try_from(value: OutputPermissionsWire) -> Result<Self, Self::Error> {
+    Self::try_new(
+      value.kinds,
+      value.max_artifact_count,
+      value.max_artifact_bytes,
+      value.max_report_count,
+      value.max_report_bytes,
+    )
+  }
 }
 
 impl FactoryPermissionSet {

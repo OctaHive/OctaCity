@@ -13,6 +13,14 @@ pub enum FactoryEntityKind {
   StageAttempt,
   /// One bounded macro reasoning call.
   MacroCall,
+  /// One immutable versioned Factory Task Envelope.
+  TaskEnvelope,
+  /// One immutable completed-stage handoff.
+  StageHandoff,
+  /// One immutable ordered call-context manifest.
+  ContextManifest,
+  /// One immutable revision-bound repository retrieval receipt.
+  RetrievalReceipt,
   /// One Decision Signal request.
   DecisionSignalRequest,
   /// Immutable Decision Signal result receipt.
@@ -44,6 +52,8 @@ pub enum FactoryTextKind {
   Key,
   /// Human-readable summary or reason.
   Text,
+  /// Durable model-authored text that must not contain credential-shaped material.
+  SafeText,
   /// Metadata key.
   MetadataKey,
   /// Metadata value.
@@ -266,6 +276,12 @@ pub enum FactoryError {
   #[error("invalid Decision Signal field: {field}")]
   InvalidDecisionSignal {
     /// Stable field name safe to expose in diagnostics.
+    field: &'static str,
+  },
+  /// A versioned Task Envelope, result, handoff, or context record is invalid.
+  #[error("invalid Factory task contract field: {field}")]
+  InvalidTaskContract {
+    /// Stable field or relationship name safe to expose in diagnostics.
     field: &'static str,
   },
 }

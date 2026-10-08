@@ -276,9 +276,23 @@ async fn delete_metadata_page(
      DELETE FROM factory_changesets WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_decision_signal_requests WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_decision_signal_requests WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_call_completions WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
+     DELETE FROM factory_call_completions WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT relation.ctid FROM factory_call_dependencies AS relation \
+       JOIN factory_call_nodes AS parent ON parent.id = relation.call_id \
+       WHERE parent.run_id = $1 ORDER BY relation.ctid LIMIT $2) \
+     DELETE FROM factory_call_dependencies AS relation USING selected WHERE relation.ctid = selected.ctid",
+    "WITH selected AS (SELECT relation.ctid FROM factory_call_stage_dependencies AS relation \
+       JOIN factory_call_nodes AS parent ON parent.id = relation.call_id \
+       WHERE parent.run_id = $1 ORDER BY relation.ctid LIMIT $2) \
+     DELETE FROM factory_call_stage_dependencies AS relation USING selected WHERE relation.ctid = selected.ctid",
     "WITH selected AS (SELECT node.ctid FROM factory_call_nodes AS node \
        WHERE node.run_id = $1 AND NOT EXISTS (SELECT 1 FROM factory_call_nodes AS child WHERE child.parent_call_id = node.id) \
        ORDER BY node.ctid LIMIT $2) DELETE FROM factory_call_nodes AS node USING selected WHERE node.ctid = selected.ctid",
+    "WITH selected AS (SELECT ctid FROM factory_context_manifests WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
+     DELETE FROM factory_context_manifests WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_stage_handoffs WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
+     DELETE FROM factory_stage_handoffs WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_reporting_attempts WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_reporting_attempts WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_outbox_records WHERE run_id = $1 ORDER BY ctid LIMIT $2) \

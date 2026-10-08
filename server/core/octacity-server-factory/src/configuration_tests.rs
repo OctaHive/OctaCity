@@ -5,11 +5,12 @@ use octacity_server_domain::{
 use crate::{
   BudgetLimit, BuildConfigurationRef, DecisionSignalChoices, DecisionSignalFallback, DecisionSignalMode,
   DecisionSignalProfileDraft, DecisionSignalPurpose, DecisionSignalRouteSet, DeliveryPolicyDraft,
-  EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity, FactoryChoiceKind, FactoryConfiguration,
-  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
-  FactoryConfigurationVersion, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata, FactoryReferenceChoice,
-  FactoryRun, FactoryRunId, FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference,
-  ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
+  EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind,
+  FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
+  FactoryConfigurationId, FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryError,
+  FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryRun, FactoryRunId, FactoryStageDraft, FactoryStageKind,
+  FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope,
+  WorkEnvelopeId, WorkPriority,
 };
 
 struct Fixture {
@@ -39,6 +40,10 @@ fn key(value: &str) -> FactoryKey {
 
 fn digest(value: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([value; 32])
+}
+
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).expect("fixture artifact")
 }
 
 fn exact(identity: &str, version: &str, digest_byte: u8) -> ImmutableReference {
@@ -152,6 +157,7 @@ fn valid_fixture() -> Fixture {
     wip_limits: FactoryWipLimits::new(8, 16).expect("fixture WIP limits are valid"),
     hard_budget: hard_budget(),
     permission_ceiling: key("permissions-default"),
+    credential_profiles: credential_profiles(),
     decision_signals: vec![DecisionSignalProfileDraft {
       purpose: DecisionSignalPurpose::Routing,
       provider: key("signal-provider-default"),
@@ -188,6 +194,16 @@ fn valid_fixture() -> Fixture {
     choices,
     draft,
   }
+}
+
+fn credential_profiles() -> FactoryCredentialProfiles {
+  FactoryCredentialProfiles::new(
+    key("model-coding"),
+    key("model-evaluation"),
+    key("source-read"),
+    key("delivery-write"),
+  )
+  .unwrap()
 }
 
 fn publish(fixture: &Fixture) -> FactoryConfiguration {
@@ -439,7 +455,7 @@ fn replacement_does_not_mutate_the_configuration_bound_to_an_admitted_run() {
       RepositoryId::generate(),
       ImmutableRevision::new("0123456789abcdef").expect("revision is valid"),
     ),
-    WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).expect("work artifacts are distinct"),
+    WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("work artifacts are distinct"),
     WorkClassification::new(
       WorkPriority::new(10).expect("priority is valid"),
       RiskClass::Medium,

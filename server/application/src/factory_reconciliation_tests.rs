@@ -13,10 +13,11 @@ use async_trait::async_trait;
 use octacity_server_domain::{ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ProjectId, RepositoryId};
 use octacity_server_factory::{
   BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, ExternalWorkIdentity,
-  FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices,
-  FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey,
-  FactoryMetadata, FactoryReferenceChoice, FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference,
-  ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
+  FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries,
+  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryStageDraft,
+  FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts,
+  WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 use octacity_server_store::{
   AuditActor, AuditActorKind, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns,
@@ -31,6 +32,10 @@ use octacity_server_store::{
 
 pub(super) fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).expect("fixture key is valid")
+}
+
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).unwrap()
 }
 
 fn digest(value: u8) -> FactoryDigest {
@@ -140,6 +145,7 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
       wip_limits: FactoryWipLimits::new(10, 10).expect("fixture WIP is valid"),
       hard_budget: budget,
       permission_ceiling: key("permissions"),
+      credential_profiles: credential_profiles(),
       decision_signals: Vec::new(),
       evaluation: EvaluationPolicyDraft {
         criterion_packs: vec![key("criteria")],
@@ -160,6 +166,16 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
     &choices,
   )
   .expect("fixture configuration is valid")
+}
+
+fn credential_profiles() -> FactoryCredentialProfiles {
+  FactoryCredentialProfiles::new(
+    key("model-coding"),
+    key("model-evaluation"),
+    key("source-read"),
+    key("delivery-write"),
+  )
+  .unwrap()
 }
 
 pub(super) fn seeded_store(run_count: usize) -> Arc<InMemoryFactoryConfigurationStore> {
@@ -193,8 +209,7 @@ pub(super) fn seeded_store(run_count: usize) -> Arc<InMemoryFactoryConfiguration
         repository_id,
         octacity_server_domain::ImmutableRevision::new("exact-revision").expect("fixture revision is valid"),
       ),
-      WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), Vec::new())
-        .expect("fixture artifacts are valid"),
+      WorkArtifacts::new(artifact(90), artifact(91), Vec::new()).expect("fixture artifacts are valid"),
       WorkClassification::new(
         WorkPriority::new(10).expect("fixture priority is valid"),
         RiskClass::Medium,

@@ -347,6 +347,13 @@ async fn maps_verified_host_paths_into_the_guest() {
   ));
 }
 
+#[cfg_attr(
+  windows,
+  allow(
+    clippy::permissions_set_readonly_false,
+    reason = "the guarded call restores a Windows file attribute and is not compiled on Unix"
+  )
+)]
 #[tokio::test]
 async fn projects_only_the_bounded_factory_roots() {
   let temporary = tempfile::tempdir().unwrap();

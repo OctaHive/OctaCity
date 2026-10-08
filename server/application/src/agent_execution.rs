@@ -208,9 +208,8 @@ where
           IdempotencyKey::new(input.request.completion_id).map_err(|_| AgentExecutionError::InvalidRequest)?;
         let kind = match input.request.status {
           JobCompletionStatus::Succeeded => JobCompletionKind::Succeeded,
-          JobCompletionStatus::Failed | JobCompletionStatus::TimedOut => {
-            JobCompletionKind::Failed(JobFailureClass::Execution)
-          }
+          JobCompletionStatus::Failed => JobCompletionKind::Failed(JobFailureClass::Execution),
+          JobCompletionStatus::TimedOut => JobCompletionKind::TimedOut,
           JobCompletionStatus::InfrastructureFailed => JobCompletionKind::Failed(JobFailureClass::Infrastructure),
           JobCompletionStatus::Cancelled => JobCompletionKind::Cancelled,
         };
@@ -614,7 +613,7 @@ mod tests {
   }
 
   #[test]
-  fn completion_maps_the_typed_failure_class() {
+  fn completion_preserves_the_typed_timeout_cause() {
     let registrations = Arc::new(RegistrationStub {
       operations: Mutex::new(Vec::new()),
     });
@@ -625,10 +624,7 @@ mod tests {
 
     let completions = store.completions.lock().unwrap();
     assert_eq!(completions.len(), 1);
-    assert_eq!(
-      completions[0].kind,
-      JobCompletionKind::Failed(JobFailureClass::Execution)
-    );
+    assert_eq!(completions[0].kind, JobCompletionKind::TimedOut);
     assert_eq!(completions[0].final_sequence.unwrap().get(), 1);
     assert_eq!(
       completions[0]

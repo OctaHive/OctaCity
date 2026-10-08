@@ -24,8 +24,8 @@ use octacity_execution_native::{LinuxNativeConfig, NativeBackend};
 use octacity_execution_oci::{OciBackend, OciEngine};
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_job::{
-  ExecuteJobRequest, ExecutionBackendRoute, JobExecutor, JobExecutorConfig, ProtectedInputStager,
-  ProtectedInputStagerConfig,
+  ExecuteJobRequest, ExecutionBackendRoute, FactoryPreflightError, JobError, JobExecutor, JobExecutorConfig,
+  ProtectedInputStager, ProtectedInputStagerConfig,
 };
 use octacity_protocol::{
   AGENT_PROTOCOL_VERSION, ArtifactTransferCapability, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2,
@@ -453,6 +453,12 @@ async fn run_oci_v2_contract(contract: OciV2Contract) {
   )
   .await;
   if let Some((factory_spec, factory_body, protected_origin, protected_server)) = factory_setup {
+    exercise_factory_negative_contracts(
+      &executor,
+      &factory_spec,
+      protected_transfer(&factory_body, &protected_origin),
+    )
+    .await;
     exercise_factory_contract(
       &executor,
       factory_spec,
@@ -883,6 +889,7 @@ fn oci_v3_specification(ordinary: &JobSpecV2, runner: &RunnerInstallation, octaf
     execution: ManagedOctaExecutionV3 {
       octafile_input: protected_input.artifact_id.clone(),
       tasks: vec!["contract".to_owned()],
+      credential_profile: None,
       tool_control: None,
     },
     runtime: ordinary.runtime.clone(),
@@ -998,6 +1005,7 @@ fn protected_transfer(body: &[u8], origin: &str) -> ProtectedInputTransferV3 {
 }
 
 async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, protected_input: ProtectedInputTransferV3) {
+  let resource_limits = spec.permissions.resources;
   let (sender, mut receiver) = mpsc::channel(128);
   let completion = executor
     .execute(
@@ -1019,6 +1027,12 @@ async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, prot
   }
   assert!(saw_event, "Factory runner must emit at least one event");
   assert_eq!(completion.runner().status, RunStatus::Succeeded);
+  assert!(
+    completion.runner().results.is_empty(),
+    "Factory output authority is empty"
+  );
+  assert!(completion.runner().final_usage.memory_peak_bytes <= resource_limits.memory_bytes);
+  assert!(completion.runner().final_usage.disk_peak_bytes <= resource_limits.disk_bytes);
   let job_root = completion.workspace().parent().unwrap().to_owned();
   assert!(completion.workspace().join("factory-source").is_file());
   assert!(job_root.join("scratch/factory-scratch").is_file());
@@ -1027,6 +1041,77 @@ async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, prot
   assert!(!job_root.join("escape").exists());
   completion.cleanup().await.unwrap();
   assert!(!job_root.exists());
+}
+
+async fn exercise_factory_negative_contracts(
+  executor: &JobExecutor,
+  baseline: &JobSpecV3,
+  protected_input: ProtectedInputTransferV3,
+) {
+  let cases = [
+    factory_negative_case(baseline, "descendants", FactoryPreflightError::Descendants, |spec| {
+      spec.permissions.max_descendants += 1;
+    }),
+    factory_negative_case(baseline, "mount", FactoryPreflightError::Mount, |spec| {
+      spec.permissions.mounts.push(FactoryMountPermissionV3 {
+        root: "/workspace/escape".to_owned(),
+        mode: FactoryMountModeV3::ReadWrite,
+      });
+    }),
+    factory_negative_case(baseline, "network", FactoryPreflightError::Network, |spec| {
+      spec.permissions.network_hosts.push("outside-policy.invalid".to_owned());
+    }),
+    factory_negative_case(baseline, "resources", FactoryPreflightError::Resources, |spec| {
+      spec.permissions.resources.memory_bytes += 1;
+    }),
+    factory_negative_case(baseline, "secret", FactoryPreflightError::SecretProfile, |spec| {
+      spec.execution.credential_profile = Some("undeclared-model-profile".to_owned());
+      spec.permissions.secret_profiles = vec!["undeclared-model-profile".to_owned()];
+    }),
+    factory_negative_case(baseline, "outputs", FactoryPreflightError::Outputs, |spec| {
+      spec.permissions.outputs = FactoryOutputPermissionsV3 {
+        kinds: vec!["unexpected-output".to_owned()],
+        max_artifact_count: 1,
+        max_artifact_bytes: 1,
+        max_report_count: 0,
+        max_report_bytes: 0,
+      };
+    }),
+  ];
+
+  for (spec, expected) in cases {
+    let (sender, _receiver) = mpsc::channel(1);
+    let failure = executor
+      .execute(
+        ExecuteJobRequest {
+          spec: spec.into(),
+          source_credentials: BTreeMap::new(),
+          cache_grant: None,
+          protected_inputs: vec![protected_input.clone()],
+        },
+        CancellationToken::new(),
+        &sender,
+      )
+      .await
+      .expect_err("broader Factory authority must fail before real-backend spawn");
+    assert!(
+      matches!(failure.error(), JobError::FactoryPreflight(actual) if *actual == expected),
+      "unexpected negative Factory backend result: {failure:?}"
+    );
+    failure.cleanup().await.unwrap();
+  }
+}
+
+fn factory_negative_case(
+  baseline: &JobSpecV3,
+  name: &str,
+  expected: FactoryPreflightError,
+  mutate: impl FnOnce(&mut JobSpecV3),
+) -> (JobSpecV3, FactoryPreflightError) {
+  let mut spec = baseline.clone();
+  spec.job_id = format!("{}-{name}", spec.job_id);
+  mutate(&mut spec);
+  (spec, expected)
 }
 
 fn cancellation_spec(mut spec: VerifiedJobSpec) -> VerifiedJobSpec {

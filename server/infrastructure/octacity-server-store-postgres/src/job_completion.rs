@@ -537,6 +537,7 @@ const fn completion_kind(kind: JobCompletionKind) -> &'static str {
   match kind {
     JobCompletionKind::Succeeded => "succeeded",
     JobCompletionKind::Failed(_) => "failed",
+    JobCompletionKind::TimedOut => "timed_out",
     JobCompletionKind::Cancelled => "cancelled",
   }
 }
@@ -545,6 +546,7 @@ const fn failure_class(kind: JobCompletionKind) -> Option<&'static str> {
   match kind {
     JobCompletionKind::Failed(JobFailureClass::Execution) => Some("execution"),
     JobCompletionKind::Failed(JobFailureClass::Infrastructure) => Some("infrastructure"),
+    JobCompletionKind::TimedOut => Some("execution"),
     JobCompletionKind::Succeeded | JobCompletionKind::Cancelled => None,
   }
 }

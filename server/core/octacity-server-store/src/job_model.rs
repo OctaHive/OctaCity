@@ -488,6 +488,8 @@ pub enum JobCompletionKind {
   Succeeded,
   /// The Job completed with a classified execution failure.
   Failed(JobFailureClass),
+  /// The signed execution deadline elapsed.
+  TimedOut,
   /// The Job reached terminal cancellation.
   Cancelled,
 }
@@ -498,6 +500,7 @@ impl JobCompletionKind {
   pub const fn failure_class(self) -> Option<JobFailureClass> {
     match self {
       Self::Failed(class) => Some(class),
+      Self::TimedOut => Some(JobFailureClass::Execution),
       Self::Succeeded | Self::Cancelled => None,
     }
   }
@@ -509,7 +512,7 @@ pub fn complete_job_state(current: JobState, kind: JobCompletionKind) -> Result<
   let running = start_job_execution(current)?;
   let event = match kind {
     JobCompletionKind::Succeeded => JobEvent::Succeed,
-    JobCompletionKind::Failed(_) => JobEvent::Fail,
+    JobCompletionKind::Failed(_) | JobCompletionKind::TimedOut => JobEvent::Fail,
     JobCompletionKind::Cancelled => JobEvent::Cancel,
   };
   running.transition(event).map_err(|_| StoreError::Conflict {

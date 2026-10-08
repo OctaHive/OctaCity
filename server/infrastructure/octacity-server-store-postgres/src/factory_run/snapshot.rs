@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use octacity_server_factory::{BudgetUsage, FactoryRunId, FactoryRunVersion};
+use octacity_server_factory::{BudgetUsage, FactoryRunId, FactoryRunVersion, MacroCall};
 use octacity_server_store::{
   FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunSnapshot, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, StoreError,
 };
@@ -109,7 +109,10 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
     lifecycle_checkpoints,
     stage_attempts: history.stage_attempts,
     stage_attempt_completions: history.stage_attempt_completions,
+    stage_handoffs: history.stage_handoffs,
+    context_manifests: history.context_manifests,
     macro_calls: history.macro_calls,
+    macro_call_completions: history.macro_call_completions,
     signal_requests: history.signal_requests,
     signal_receipts: history.signal_receipts,
     linked_builds: history.linked_builds,
@@ -140,7 +143,10 @@ pub(super) async fn snapshot_record_counts(
        (SELECT COUNT(*) FROM factory_lifecycle_checkpoints WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_stage_attempts WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_stage_attempt_completions WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_stage_handoffs WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_context_manifests WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_call_nodes WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_call_completions WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_decision_signal_requests WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_decision_signal_receipts WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_build_links WHERE run_id = $1) + \
@@ -181,6 +187,21 @@ fn validate_history(
     .iter()
     .map(|record| record.id())
     .collect::<HashSet<_>>();
+  let call_records = history
+    .macro_calls
+    .iter()
+    .map(|record| (record.id(), record))
+    .collect::<HashMap<_, _>>();
+  let handoffs = history
+    .stage_handoffs
+    .iter()
+    .map(|record| (record.stage_attempt_id(), record))
+    .collect::<HashMap<_, _>>();
+  let manifests = history
+    .context_manifests
+    .iter()
+    .map(|record| (record.id(), record))
+    .collect::<HashMap<_, _>>();
   let requests = history
     .signal_requests
     .iter()
@@ -221,10 +242,42 @@ fn validate_history(
       .stage_attempt_completions
       .iter()
       .any(|record| record.run_id() != run_id || !stages.contains(&record.stage_attempt_id()))
+    || history.stage_handoffs.iter().any(|record| {
+      history
+        .stage_attempts
+        .iter()
+        .find(|stage| stage.id() == record.stage_attempt_id())
+        .is_none_or(|stage| record.subject().exact() != stage.subject())
+    })
     || history.macro_calls.iter().any(|record| {
       record.run_id() != run_id
         || !stages.contains(&record.stage_attempt_id())
         || record.parent_id().is_some_and(|id| !calls.contains(&id))
+        || record.stage_dependencies().iter().any(|id| !handoffs.contains_key(id))
+        || record.call_dependencies().iter().any(|id| !calls.contains(id))
+        || record.depth()
+          != record
+            .call_dependencies()
+            .iter()
+            .filter_map(|id| history.macro_calls.iter().find(|call| call.id() == *id))
+            .map(MacroCall::depth)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
+        || manifests.get(&record.context_manifest_id()).is_none_or(|manifest| {
+          manifest.subject() != record.subject() || manifest.digest().ok() != Some(record.context_digest())
+        })
+    })
+    || history.macro_call_completions.iter().any(|completion| {
+      call_records.get(&completion.call_id()).is_none_or(|call| {
+        completion.subject() != call.subject()
+          || !history
+            .stage_attempts
+            .iter()
+            .find(|stage| stage.id() == call.stage_attempt_id())
+            .is_some_and(|stage| completion.task_envelope_digest() == stage.input_digest())
+          || !completion.usage_is_valid_for(call.budget())
+      })
     })
     || history
       .signal_requests

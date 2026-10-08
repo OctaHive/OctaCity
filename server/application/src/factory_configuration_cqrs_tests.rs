@@ -9,8 +9,8 @@ use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, Pr
 use octacity_server_factory::{
   BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, FactoryChoiceKind,
   FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
-  FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryReferenceChoice, FactoryStageDraft, FactoryStageKind,
-  FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
+  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryReferenceChoice,
+  FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
 };
 use octacity_server_store::{
   IdempotencyKey,
@@ -93,6 +93,7 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
     wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
     hard_budget: budget(10),
     permission_ceiling: key("permissions"),
+    credential_profiles: credential_profiles(),
     decision_signals: Vec::new(),
     evaluation: EvaluationPolicyDraft {
       criterion_packs: vec![key("criteria")],
@@ -111,6 +112,16 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
     enabled: true,
   };
   Fixture { choices, draft }
+}
+
+fn credential_profiles() -> FactoryCredentialProfiles {
+  FactoryCredentialProfiles::new(
+    key("model-coding"),
+    key("model-evaluation"),
+    key("source-read"),
+    key("delivery-write"),
+  )
+  .unwrap()
 }
 
 fn context() -> ManagementRequestContext {

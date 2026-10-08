@@ -78,6 +78,8 @@ pub struct JobTerminalRecord {
   pub state: JobState,
   /// Typed execution or infrastructure failure for failed execution.
   pub failure_class: Option<JobFailureClass>,
+  /// True only when the signed execution deadline caused failure.
+  pub timed_out: bool,
   /// Authoritative completion or propagation time.
   pub completed_at: Timestamp,
 }

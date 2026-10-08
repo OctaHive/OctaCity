@@ -104,6 +104,10 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # Cache namespace syntax follows Octa's public protocol while HMAC protects
     # the server-private credential derivation boundary.
     "octacity-server-cache": frozenset({"blake3", "hmac", "octa-cache-protocol", "zstd"}),
+    # Factory validates the BLAKE3 prompt identity emitted by the pinned Codex
+    # plugin. The algorithm stays behind FactoryDigest rather than leaking an
+    # implementation dependency into the application layer.
+    "octacity-server-factory": frozenset({"blake3"}),
     "octacity-server-job": frozenset({"base64", "ed25519-dalek"}),
     "octacity-server-secrets": frozenset({"hmac"}),
     "octacity-server-trigger": frozenset({"chrono", "chrono-tz", "cron"}),

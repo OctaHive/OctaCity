@@ -184,19 +184,107 @@ pub struct FactoryBuildDispatchOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryBuildObservation {
   /// Ordinary Build observed through the existing read API.
-  pub build_id: BuildId,
+  build_id: BuildId,
   /// Current ordinary Build state.
-  pub state: BuildState,
+  state: BuildState,
   /// Latest immutable Attempt.
-  pub attempt_id: AttemptId,
+  attempt_id: AttemptId,
   /// Complete Job DAG of that Attempt.
-  pub job_ids: Vec<JobId>,
+  job_ids: Vec<JobId>,
   /// Published logical outputs with exact immutable content provenance.
-  pub outputs: Vec<ArtifactIdentity>,
+  outputs: Vec<ArtifactIdentity>,
   /// Whether every failed Job was classified as an infrastructure failure.
-  pub infrastructure_retry_eligible: bool,
+  infrastructure_retry_eligible: bool,
+  /// Whether at least one failed Job reached its signed execution deadline.
+  timed_out: bool,
   /// Whether a new terminal Factory checkpoint was committed.
-  pub disposition: Option<MutationDisposition>,
+  disposition: Option<MutationDisposition>,
+}
+
+impl FactoryBuildObservation {
+  /// Returns the observed ordinary Build.
+  #[must_use]
+  pub const fn build_id(&self) -> BuildId {
+    self.build_id
+  }
+
+  /// Returns the authoritative Build state.
+  #[must_use]
+  pub const fn state(&self) -> BuildState {
+    self.state
+  }
+
+  /// Returns the observed latest Attempt.
+  #[must_use]
+  pub const fn attempt_id(&self) -> AttemptId {
+    self.attempt_id
+  }
+
+  /// Returns the complete Job DAG identities.
+  #[must_use]
+  pub fn job_ids(&self) -> &[JobId] {
+    &self.job_ids
+  }
+
+  /// Returns exact published output identities.
+  #[must_use]
+  pub fn outputs(&self) -> &[ArtifactIdentity] {
+    &self.outputs
+  }
+
+  /// Returns whether every failed Job had an infrastructure failure.
+  #[must_use]
+  pub const fn infrastructure_retry_eligible(&self) -> bool {
+    self.infrastructure_retry_eligible
+  }
+
+  /// Returns whether a signed execution deadline caused failure.
+  #[must_use]
+  pub const fn timed_out(&self) -> bool {
+    self.timed_out
+  }
+
+  /// Returns the terminal checkpoint mutation disposition, when terminal.
+  #[must_use]
+  pub const fn disposition(&self) -> Option<MutationDisposition> {
+    self.disposition
+  }
+
+  #[cfg(test)]
+  pub(super) fn fixture(
+    build_id: BuildId,
+    state: BuildState,
+    attempt_id: AttemptId,
+    job_ids: Vec<JobId>,
+    outputs: Vec<ArtifactIdentity>,
+  ) -> Self {
+    Self {
+      build_id,
+      state,
+      attempt_id,
+      job_ids,
+      outputs,
+      infrastructure_retry_eligible: false,
+      timed_out: false,
+      disposition: None,
+    }
+  }
+
+  #[cfg(test)]
+  pub(super) fn set_terminal_cause(&mut self, timed_out: bool, infrastructure_retry_eligible: bool) {
+    self.timed_out = timed_out;
+    self.infrastructure_retry_eligible = infrastructure_retry_eligible;
+  }
+
+  #[cfg(test)]
+  pub(super) fn set_state(&mut self, state: BuildState) {
+    self.state = state;
+  }
+
+  #[cfg(test)]
+  pub(super) fn outputs_mut(&mut self) -> &mut Vec<ArtifactIdentity> {
+    &mut self.outputs
+  }
 }
 
 /// Failure while dispatching or observing one Factory-owned ordinary Build.
@@ -390,6 +478,11 @@ where
     let attempt = self.builds.latest_attempt(build_id).await?;
     let job_ids: Vec<JobId> = attempt.jobs.iter().map(|job| job.id()).collect();
     let infrastructure_retry_eligible = build.state == BuildState::Failed && infrastructure_retry_eligible(&attempt);
+    let timed_out = build.state == BuildState::Failed
+      && attempt
+        .jobs
+        .iter()
+        .any(|job| job.terminal.is_some_and(|terminal| terminal.timed_out));
     let (outputs, disposition) = if build.state.is_terminal() {
       if progress_reflects_state(
         &current_checkpoint(&snapshot)?.progress,
@@ -436,6 +529,7 @@ where
       job_ids,
       outputs,
       infrastructure_retry_eligible,
+      timed_out,
       disposition,
     })
   }

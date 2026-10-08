@@ -587,6 +587,7 @@ fn factory_spec() -> JobSpecV3 {
     execution: ManagedOctaExecutionV3 {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
+      credential_profile: None,
       tool_control: None,
     },
     runtime: current.runtime,

@@ -3,13 +3,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use async_trait::async_trait;
 use octacity_server_domain::{BuildId, EntityKind};
 use octacity_server_factory::{
-  Assessment, AssessmentId, ChangeSet, ChangeSetId, Decision, DecisionId, DecisionSignalReceipt,
-  DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId, DeliveryAttempt, DeliveryAttemptId,
-  DeliveryIntent, Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvidenceManifest, EvidenceManifestId,
-  FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryEscalationDisposition, FactoryKey, FactoryLifecycleProgress,
-  FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion, FactoryStageProgress, FactoryWipUsage, MacroCall,
-  MacroCallId, ReportingAttempt, ReportingAttemptId, StageAttempt, StageAttemptCompletion, StageAttemptId,
-  WorkEnvelope,
+  Assessment, AssessmentId, ChangeSet, ChangeSetId, ContextManifest, ContextManifestId, Decision, DecisionId,
+  DecisionSignalReceipt, DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId, DeliveryAttempt,
+  DeliveryAttemptId, DeliveryIntent, Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvidenceManifest,
+  EvidenceManifestId, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryEscalationDisposition, FactoryKey,
+  FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion, FactoryStageProgress,
+  FactoryWipUsage, MacroCall, MacroCallCompletion, MacroCallId, ReportingAttempt, ReportingAttemptId, StageAttempt,
+  StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId, WorkEnvelope,
 };
 
 use crate::{
@@ -42,7 +42,10 @@ pub(super) struct StoredFactoryRun {
   lifecycle_checkpoints: BTreeMap<FactoryDigest, FactoryLifecycleCheckpoint>,
   stage_attempts: BTreeMap<StageAttemptId, StageAttempt>,
   stage_attempt_completions: BTreeMap<FactoryDigest, StageAttemptCompletion>,
+  stage_handoffs: BTreeMap<StageHandoffId, StageHandoff>,
+  context_manifests: BTreeMap<ContextManifestId, ContextManifest>,
   macro_calls: BTreeMap<MacroCallId, MacroCall>,
+  macro_call_completions: BTreeMap<MacroCallId, MacroCallCompletion>,
   signal_requests: BTreeMap<DecisionSignalRequestId, DecisionSignalRequest>,
   signal_receipts: BTreeMap<DecisionSignalReceiptId, DecisionSignalReceipt>,
   linked_builds: BTreeMap<BuildId, crate::FactoryBuildLink>,
@@ -167,7 +170,10 @@ impl StoredFactoryRun {
       lifecycle_checkpoints: BTreeMap::from([(lifecycle_checkpoint.id, lifecycle_checkpoint)]),
       stage_attempts: BTreeMap::new(),
       stage_attempt_completions: BTreeMap::new(),
+      stage_handoffs: BTreeMap::new(),
+      context_manifests: BTreeMap::new(),
       macro_calls: BTreeMap::new(),
+      macro_call_completions: BTreeMap::new(),
       signal_requests: BTreeMap::new(),
       signal_receipts: BTreeMap::new(),
       linked_builds: BTreeMap::new(),
@@ -206,7 +212,10 @@ impl StoredFactoryRun {
       lifecycle_checkpoints: values(&self.lifecycle_checkpoints),
       stage_attempts: values(&self.stage_attempts),
       stage_attempt_completions: values(&self.stage_attempt_completions),
+      stage_handoffs: values(&self.stage_handoffs),
+      context_manifests: values(&self.context_manifests),
       macro_calls: values(&self.macro_calls),
+      macro_call_completions: values(&self.macro_call_completions),
       signal_requests: values(&self.signal_requests),
       signal_receipts: values(&self.signal_receipts),
       linked_builds: values(&self.linked_builds),
@@ -347,12 +356,51 @@ impl StoredFactoryRun {
           .copied()
           .eq(1..=u64::try_from(attempt_numbers.len()).unwrap_or(u64::MAX)),
     )?;
+    require(
+      self.stage_handoffs.values().all(|handoff| {
+        self
+          .stage_attempts
+          .get(&handoff.stage_attempt_id())
+          .is_some_and(|stage| handoff.subject().exact() == stage.subject())
+      }) && self
+        .stage_handoffs
+        .values()
+        .map(StageHandoff::stage_attempt_id)
+        .collect::<BTreeSet<_>>()
+        .len()
+        == self.stage_handoffs.len(),
+    )?;
     for call in self.macro_calls.values() {
       let stage = self.stage_attempts.get(&call.stage_attempt_id());
+      let manifest = self.context_manifests.get(&call.context_manifest_id());
+      let expected_depth = call
+        .call_dependencies()
+        .iter()
+        .filter_map(|id| self.macro_calls.get(id))
+        .map(MacroCall::depth)
+        .max()
+        .unwrap_or(0)
+        .checked_add(1);
       require(
         call.run_id() == run_id
-          && call.subject() == subject
+          && call.subject().exact() == subject
           && stage.is_some_and(|stage| stage.id() == call.stage_attempt_id())
+          && manifest.is_some_and(|manifest| {
+            manifest.subject() == call.subject() && manifest.digest().ok() == Some(call.context_digest())
+          })
+          && call.stage_dependencies().iter().all(|id| {
+            self
+              .stage_handoffs
+              .values()
+              .any(|handoff| handoff.stage_attempt_id() == *id)
+          })
+          && call.call_dependencies().iter().all(|id| {
+            self
+              .macro_calls
+              .get(id)
+              .is_some_and(|dependency| dependency.depth() < call.depth())
+          })
+          && expected_depth == Some(call.depth())
           && call.parent_id().is_none_or(|parent| {
             self
               .macro_calls
@@ -361,6 +409,16 @@ impl StoredFactoryRun {
           }),
       )?;
     }
+    require(self.macro_call_completions.values().all(|completion| {
+      self.macro_calls.get(&completion.call_id()).is_some_and(|call| {
+        completion.subject() == call.subject()
+          && self
+            .stage_attempts
+            .get(&call.stage_attempt_id())
+            .is_some_and(|stage| completion.task_envelope_digest() == stage.input_digest())
+          && completion.usage_is_valid_for(call.budget())
+      })
+    }))?;
     for request in self.signal_requests.values() {
       require(
         request.run_id() == run_id
@@ -554,7 +612,10 @@ impl StoredFactoryRun {
       + self.lifecycle_checkpoints.len()
       + self.stage_attempts.len()
       + self.stage_attempt_completions.len()
+      + self.stage_handoffs.len()
+      + self.context_manifests.len()
       + self.macro_calls.len()
+      + self.macro_call_completions.len()
       + self.signal_requests.len()
       + self.signal_receipts.len()
       + self.linked_builds.len()
@@ -585,10 +646,25 @@ fn diagnostic_records(snapshot: FactoryRunSnapshot, kind: FactoryRunDiagnosticKi
       .into_iter()
       .map(|value| FactoryRunDiagnosticRecord::StageAttemptCompletion(Box::new(value)))
       .collect(),
+    FactoryRunDiagnosticKind::StageHandoff => snapshot
+      .stage_handoffs
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::StageHandoff(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::ContextManifest => snapshot
+      .context_manifests
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::ContextManifest(Box::new(value)))
+      .collect(),
     FactoryRunDiagnosticKind::MacroCall => snapshot
       .macro_calls
       .into_iter()
       .map(|value| FactoryRunDiagnosticRecord::MacroCall(Box::new(value)))
+      .collect(),
+    FactoryRunDiagnosticKind::MacroCallCompletion => snapshot
+      .macro_call_completions
+      .into_iter()
+      .map(|value| FactoryRunDiagnosticRecord::MacroCallCompletion(Box::new(value)))
       .collect(),
     FactoryRunDiagnosticKind::SignalRequest => snapshot
       .signal_requests
@@ -1383,6 +1459,10 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
       claim,
       stage_attempts: &stored.stage_attempts,
       stage_completions: &stored.stage_attempt_completions,
+      stage_handoffs: &stored.stage_handoffs,
+      context_manifests: &stored.context_manifests,
+      macro_calls: &stored.macro_calls,
+      macro_call_completions: &stored.macro_call_completions,
       record_count: stored.record_count(),
     },
     request,
@@ -1396,8 +1476,17 @@ fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppen
   for record in &append.stage_attempt_completions {
     append_unique(&mut stored.stage_attempt_completions, record.id(), record.clone())?;
   }
+  for record in &append.stage_handoffs {
+    append_unique(&mut stored.stage_handoffs, record.id(), record.clone())?;
+  }
+  for record in &append.context_manifests {
+    append_unique(&mut stored.context_manifests, record.id(), record.clone())?;
+  }
   for record in &append.macro_calls {
     append_unique(&mut stored.macro_calls, record.id(), record.clone())?;
+  }
+  for record in &append.macro_call_completions {
+    append_unique(&mut stored.macro_call_completions, record.call_id(), record.clone())?;
   }
   for record in &append.signal_requests {
     append_unique(&mut stored.signal_requests, record.id(), record.clone())?;
@@ -1591,12 +1680,15 @@ mod tests {
     ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, ProjectId, RepositoryId,
   };
   use octacity_server_factory::{
-    AssessmentOutcome, BudgetLimit, BudgetUsage, BuildConfigurationRef, CandidateSubject, DecisionEngineInput,
-    DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryAttemptNumber,
-    DeliveryState, DeterministicGate, DeterministicGateOutcome, EvidenceItem, ExternalWorkIdentity, FactoryClaim,
-    FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryMetadata,
-    FactoryRunState, FindingSeverity, IndeterminatePolicy, MacroCallKind, ReportingAttemptNumber, ReportingState,
-    RiskClass, StageAttemptNumber, WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority, evaluate_decision,
+    AssessmentOutcome, BoundedSummary, BudgetLimit, BudgetUsage, BuildConfigurationRef, CandidateSubject,
+    ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind, DecisionEngineInput, DecisionOutcome,
+    DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryAttemptNumber, DeliveryState,
+    DeterministicGate, DeterministicGateOutcome, EvidenceItem, ExternalWorkIdentity, FactoryArtifactReference,
+    FactoryClaim, FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
+    FactoryContextReference, FactoryMetadata, FactoryRunState, FactorySafeText, FactoryTaskSubject, FindingSeverity,
+    IndeterminatePolicy, MacroCallDeclaration, MacroCallKind, ReportingAttemptNumber, ReportingState, RiskClass,
+    StageAttemptNumber, StageHandoffOutcome, WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority,
+    evaluate_decision,
   };
 
   use crate::test_support::{id, run_ready, time};
@@ -1621,6 +1713,10 @@ mod tests {
     FactoryDigest::from_bytes([byte; 32])
   }
 
+  fn artifact(identity: u64, digest_byte: u8) -> FactoryArtifactReference {
+    FactoryArtifactReference::new(id::<ArtifactId>(identity), digest(digest_byte), 1).unwrap()
+  }
+
   fn fixture() -> Fixture {
     let project_id = id::<ProjectId>(1);
     let subject = octacity_server_factory::ExactSubject::new(
@@ -1639,7 +1735,7 @@ mod tests {
       configuration,
       ExternalWorkIdentity::new("manual/work-1").unwrap(),
       subject,
-      WorkArtifacts::new(id::<ArtifactId>(5), id::<ArtifactId>(6), Vec::new()).unwrap(),
+      WorkArtifacts::new(artifact(5, 5), artifact(6, 6), Vec::new()).unwrap(),
       WorkClassification::new(
         WorkPriority::new(10).unwrap(),
         RiskClass::Medium,
@@ -1707,12 +1803,71 @@ mod tests {
         FactoryClaim::new(FactoryClaimFence::new(digest(10)), time(10), time(100)).unwrap(),
       ),
     );
+    let call_subject = FactoryTaskSubject::Exact(stage.subject().clone());
+    let context = ContextManifest::new(
+      id::<ContextManifestId>(19),
+      call_subject.clone(),
+      digest(19),
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Task,
+          key("task"),
+          call_subject.clone(),
+          FactoryContextReference::Artifact(
+            FactoryArtifactReference::new(id::<ArtifactId>(19), digest(19), 1).unwrap(),
+          ),
+          digest(19),
+          1,
+          FactorySafeText::new("required task").unwrap(),
+          digest(19),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap();
+    let handoff = StageHandoff::new(
+      octacity_server_factory::StageHandoffDeclaration {
+        id: id::<StageHandoffId>(18),
+        stage_attempt_id: stage.id(),
+        subject: call_subject.clone(),
+        outcome: StageHandoffOutcome::Succeeded,
+      },
+      octacity_server_factory::StageHandoffContent {
+        summary: BoundedSummary::new(
+          call_subject.clone(),
+          FactorySafeText::new("stage result").unwrap(),
+          digest(18),
+        ),
+        decisions: vec![],
+        assumptions: vec![],
+        unresolved_items: vec![],
+        changed_components: vec![],
+        validation_observations: vec![],
+        prior_findings: vec![],
+      },
+      octacity_server_factory::StageHandoffReferences {
+        artifacts: vec![],
+        changeset_id: None,
+        evidence_manifest_id: None,
+        result_digest: digest(18),
+        policy_digest: digest(19),
+        provenance_digest: digest(20),
+      },
+    )
+    .unwrap();
     let call = MacroCall::new(
-      id::<MacroCallId>(21),
+      MacroCallDeclaration::new(
+        id::<MacroCallId>(21),
+        call_subject,
+        MacroCallKind::Implement,
+        budget(),
+        vec![],
+        vec![],
+        1,
+      )
+      .unwrap(),
       &stage,
-      MacroCallKind::Implement,
-      digest(21),
-      budget(),
+      &context,
       None,
     )
     .unwrap();
@@ -1754,7 +1909,7 @@ mod tests {
       id::<EvidenceManifestId>(26),
       &candidate,
       candidate_subject.clone(),
-      vec![EvidenceItem::new(key("tests"), id::<ArtifactId>(27), digest(27))],
+      vec![EvidenceItem::new(key("tests"), artifact(27, 27))],
     )
     .unwrap();
     let plan = EvaluationPlan::new(
@@ -1838,6 +1993,8 @@ mod tests {
     FullHistory {
       append: FactoryRunHistoryAppend {
         stage_attempts: vec![stage],
+        stage_handoffs: vec![handoff],
+        context_manifests: vec![context],
         macro_calls: vec![call],
         linked_builds: vec![build],
         candidates: vec![candidate],
@@ -2288,6 +2445,8 @@ mod tests {
         assert_eq!(snapshot.budgets.len(), 2);
         assert_eq!(snapshot.lifecycle_checkpoints.len(), 2);
         assert_eq!(snapshot.stage_attempts.len(), 1);
+        assert_eq!(snapshot.stage_handoffs.len(), 1);
+        assert_eq!(snapshot.context_manifests.len(), 1);
         assert_eq!(snapshot.macro_calls.len(), 1);
         assert_eq!(snapshot.linked_builds.len(), 1);
         assert_eq!(snapshot.candidates.len(), 1);

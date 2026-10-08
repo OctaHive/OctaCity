@@ -3,11 +3,12 @@ use std::num::NonZeroU16;
 use octacity_server_artifacts::ArtifactIdentity;
 use octacity_server_domain::{AttemptId, AttemptVersion, BuildId, BuildVersion, ImmutableRevision, JobId, Timestamp};
 use octacity_server_factory::{
-  Assessment, BudgetUsage, BuildConfigurationRef, ChangeSet, ChangeSetId, Decision, DecisionId, DecisionSignalProgress,
-  DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation, EvaluationPlan, EvidenceManifest,
-  FactoryClaim, FactoryClaimFence, FactoryConfigurationRef, FactoryDigest, FactoryKey, FactoryLifecycleProgress,
-  FactoryRun, FactoryRunId, FactoryRunVersion, FactoryStageKind, FactoryStageTarget, FactoryWipUsage, MacroCall,
-  ReportingAttempt, StageAttempt, StageAttemptCompletion, StageAttemptNumber, WorkEnvelope,
+  Assessment, BudgetUsage, BuildConfigurationRef, ChangeSet, ChangeSetId, ContextManifest, Decision, DecisionId,
+  DecisionSignalProgress, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation, EvaluationPlan,
+  EvidenceManifest, FactoryClaim, FactoryClaimFence, FactoryConfigurationRef, FactoryDigest, FactoryKey,
+  FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunVersion, FactoryStageKind, FactoryStageTarget,
+  FactoryWipUsage, MacroCall, MacroCallCompletion, ReportingAttempt, StageAttempt, StageAttemptCompletion,
+  StageAttemptNumber, StageHandoff, WorkEnvelope,
 };
 use octacity_server_orchestrator::BuildState;
 use serde::{Deserialize, Serialize};
@@ -786,8 +787,14 @@ pub struct FactoryRunHistoryAppend {
   pub stage_attempts: Vec<StageAttempt>,
   /// Newly observed terminal Stage Attempt results and consumed budgets.
   pub stage_attempt_completions: Vec<StageAttemptCompletion>,
+  /// Newly published immutable Stage Handoffs.
+  pub stage_handoffs: Vec<StageHandoff>,
+  /// Newly frozen canonical Context Manifests.
+  pub context_manifests: Vec<ContextManifest>,
   /// Newly created macro-call DAG nodes.
   pub macro_calls: Vec<MacroCall>,
+  /// Newly accepted terminal macro-call observations.
+  pub macro_call_completions: Vec<MacroCallCompletion>,
   /// Newly created non-authoritative Decision Signal requests.
   pub signal_requests: Vec<DecisionSignalRequest>,
   /// Newly accepted immutable Decision Signal receipts.
@@ -820,7 +827,10 @@ impl FactoryRunHistoryAppend {
   pub fn record_count(&self) -> usize {
     self.stage_attempts.len()
       + self.stage_attempt_completions.len()
+      + self.stage_handoffs.len()
+      + self.context_manifests.len()
       + self.macro_calls.len()
+      + self.macro_call_completions.len()
       + self.signal_requests.len()
       + self.signal_receipts.len()
       + self.linked_builds.len()
@@ -888,8 +898,14 @@ pub struct FactoryRunSnapshot {
   pub stage_attempts: Vec<StageAttempt>,
   /// Append-only terminal Stage Attempt observations.
   pub stage_attempt_completions: Vec<StageAttemptCompletion>,
+  /// Append-only immutable Stage Handoffs.
+  pub stage_handoffs: Vec<StageHandoff>,
+  /// Append-only frozen Context Manifests.
+  pub context_manifests: Vec<ContextManifest>,
   /// Append-only macro-call DAG nodes.
   pub macro_calls: Vec<MacroCall>,
+  /// Append-only terminal macro-call observations.
+  pub macro_call_completions: Vec<MacroCallCompletion>,
   /// Append-only Decision Signal requests.
   pub signal_requests: Vec<DecisionSignalRequest>,
   /// Append-only Decision Signal receipts.
@@ -931,8 +947,14 @@ pub enum FactoryRunDiagnosticKind {
   StageAttempt,
   /// Terminal stage-attempt completions.
   StageAttemptCompletion,
+  /// Stage handoffs.
+  StageHandoff,
+  /// Context manifests.
+  ContextManifest,
   /// Macro-call DAG nodes.
   MacroCall,
+  /// Terminal macro-call observations.
+  MacroCallCompletion,
   /// Decision Signal requests.
   SignalRequest,
   /// Decision Signal receipts.
@@ -966,8 +988,14 @@ pub enum FactoryRunDiagnosticRecord {
   StageAttempt(Box<StageAttempt>),
   /// Terminal stage completion.
   StageAttemptCompletion(Box<StageAttemptCompletion>),
+  /// Stage handoff.
+  StageHandoff(Box<StageHandoff>),
+  /// Context manifest.
+  ContextManifest(Box<ContextManifest>),
   /// Macro-call node.
   MacroCall(Box<MacroCall>),
+  /// Terminal macro-call observation.
+  MacroCallCompletion(Box<MacroCallCompletion>),
   /// Decision Signal request.
   SignalRequest(Box<DecisionSignalRequest>),
   /// Decision Signal receipt.
@@ -1001,7 +1029,10 @@ impl FactoryRunDiagnosticRecord {
     let value = match self {
       Self::StageAttempt(value) => value.id().to_string(),
       Self::StageAttemptCompletion(value) => value.id().to_string(),
+      Self::StageHandoff(value) => value.id().to_string(),
+      Self::ContextManifest(value) => value.id().to_string(),
       Self::MacroCall(value) => value.id().to_string(),
+      Self::MacroCallCompletion(value) => value.call_id().to_string(),
       Self::SignalRequest(value) => value.id().to_string(),
       Self::SignalReceipt(value) => value.id().to_string(),
       Self::BuildLink(value) => value.build_id.to_string(),

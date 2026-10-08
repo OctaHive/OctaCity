@@ -11,6 +11,9 @@ mod budget;
 mod configuration;
 #[cfg(test)]
 mod configuration_tests;
+mod credential;
+#[cfg(test)]
+mod credential_tests;
 mod decision_engine;
 #[cfg(test)]
 mod decision_engine_tests;
@@ -30,6 +33,9 @@ mod permission;
 #[cfg(test)]
 mod permission_tests;
 mod subject;
+mod task_contract;
+#[cfg(test)]
+mod task_contract_tests;
 mod value;
 
 pub use budget::{
@@ -43,6 +49,9 @@ pub use configuration::{
   FactoryStageDefinition, FactoryStageDraft, FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND,
   MAX_FACTORY_ACTIVE_RUNS, MAX_FACTORY_ACTIVE_STAGES, MAX_FACTORY_REWORK_CYCLES, MAX_FACTORY_STAGES, ReworkPolicy,
   ReworkPolicyDraft,
+};
+pub use credential::{
+  AuthorizedFactoryCredentialProfile, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryCredentialPurpose,
 };
 pub use decision_engine::{
   DecisionEngineInput, DecisionPolicy, DecisionPolicyDefinition, DeterministicGate, evaluate_decision,
@@ -70,13 +79,13 @@ pub use evaluation::{
   MAX_EVIDENCE_ITEMS,
 };
 pub use execution::{
-  DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership, MacroCall, StageAttempt, StageAttemptCompletion,
-  StageAttemptOutcome,
+  DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership, MAX_MACRO_CALL_DEPENDENCIES,
+  MAX_MACRO_CALL_DEPTH, MacroCall, MacroCallDeclaration, StageAttempt, StageAttemptCompletion, StageAttemptOutcome,
 };
 pub use identity::{
-  AssessmentId, ChangeSetId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId, DeliveryAttemptId,
-  EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId, MacroCallId,
-  ReportingAttemptId, StageAttemptId, WorkEnvelopeId,
+  AssessmentId, ChangeSetId, ContextManifestId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId,
+  DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId,
+  MacroCallId, ReportingAttemptId, RetrievalReceiptId, StageAttemptId, StageHandoffId, TaskEnvelopeId, WorkEnvelopeId,
 };
 pub use lifecycle::{
   DeliveryAttempt, Escalation, FactoryConfigurationRef, FactoryRun, MAX_WORK_SPECIFICATION_REFERENCES,
@@ -97,10 +106,22 @@ pub use permission::{
   MAX_PERMISSION_PATH_BYTES, MountPermission, NetworkHost, resolve_factory_permissions,
 };
 pub use subject::{CandidateSubject, ExactSubject};
+pub use task_contract::{
+  BoundedSummary, ContextManifest, ContextManifestEntry, ContextSourceKind, EvaluationResult, EvaluationResultFinding,
+  FACTORY_TASK_CONTRACT_VERSION, FactoryArtifactReference, FactoryContextReference, FactoryProducedDeliverable,
+  FactoryRepositoryFragmentReference, FactoryRepositoryPath, FactoryRepositoryRange, FactoryTaskControlDigests,
+  FactoryTaskDeclaration, FactoryTaskDefinition, FactoryTaskDeliverable, FactoryTaskDigests, FactoryTaskEnvelope,
+  FactoryTaskMode, FactoryTaskResultSchema, FactoryTaskSubject, FactoryTaskToolchain, ImplementationOutcome,
+  ImplementationResult, MAX_CONTEXT_ENTRY_BYTES, MAX_CONTEXT_MANIFEST_BYTES, MAX_CONTEXT_MANIFEST_ENTRIES,
+  MAX_FACTORY_REPOSITORY_PATH_BYTES, MAX_RETRIEVAL_FRAGMENTS, MAX_STAGE_HANDOFF_ITEMS, MAX_TASK_ARTIFACTS,
+  MAX_TASK_DELIVERABLES, MAX_TASK_EVALUATION_FINDINGS, MAX_TASK_PRIOR_FINDINGS, MacroCallCompletion,
+  MacroCallCompletionOutputs, MacroCallTerminal, RETRIEVAL_RECEIPT_VERSION, RepositoryFragment, RetrievalReceipt,
+  StageHandoff, StageHandoffContent, StageHandoffDeclaration, StageHandoffOutcome, StageHandoffReferences,
+};
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
-  FactoryKey, FactoryMetadata, FactoryRunVersion, FactoryText, MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES,
-  MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
-  MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, ReportingAttemptNumber,
-  StageAttemptNumber, WorkPriority,
+  FactoryKey, FactoryMetadata, FactoryRunVersion, FactorySafeText, FactoryText, MAX_EXTERNAL_WORK_IDENTITY_BYTES,
+  MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
+  MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES, MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY,
+  ReportingAttemptNumber, StageAttemptNumber, WorkPriority,
 };

@@ -844,9 +844,9 @@ fn managed_runner_spec(intent: &factory_preflight::ManagedFactoryExecution) -> R
     concurrency: None,
     parallel: false,
     failfast: true,
-    // Task 6.3 resolves a selected logical profile to scoped material. A
-    // permission alone never selects or exposes a secret.
-    secrets_profile: None,
+    // The signed managed execution selects at most one stage-scoped logical
+    // profile; the permission allowlist alone never selects a secret.
+    secrets_profile: intent.execution.credential_profile.clone(),
   })
 }
 

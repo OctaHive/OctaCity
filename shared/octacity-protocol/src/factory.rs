@@ -182,6 +182,9 @@ pub struct ManagedOctaExecutionV3 {
   pub octafile_input: String,
   /// Exact non-empty Octa task names, in execution order.
   pub tasks: Vec<String>,
+  /// Single logical secret profile selected for a credentialed trusted stage.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub credential_profile: Option<String>,
   /// Optional protected tool-control contract for tasks that may invoke tools.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub tool_control: Option<FactoryToolControlV3>,
@@ -224,6 +227,9 @@ impl ManagedOctaExecutionV3 {
       if !seen.insert(task) {
         return Err("managed task names must not contain duplicates".to_owned());
       }
+    }
+    if let Some(profile) = &self.credential_profile {
+      bounded_key("execution.credential_profile", profile)?;
     }
     if let Some(control) = &self.tool_control {
       bounded_key("execution.tool_control.plugin", &control.plugin)?;
@@ -563,6 +569,8 @@ impl FactoryEnforcementCapabilityV3 {
 pub(crate) fn validate_factory_execution(
   runtime: &RuntimeSpecV2,
   outputs: &OutputLimits,
+  execution: &ManagedOctaExecutionV3,
+  factory: Option<&FactoryCausalityV3>,
   permissions: &FactoryPermissionSetV3,
   required: &[FactoryEnforcementCapabilityV3],
 ) -> Result<(), String> {
@@ -572,6 +580,11 @@ pub(crate) fn validate_factory_execution(
   if required != FactoryEnforcementCapabilityV3::ALL {
     return Err("JobSpec v3 requires the complete ordered enforcement vocabulary".to_owned());
   }
+  let source_mode = if factory.is_some_and(|factory| factory.stage_kind == FactoryStageKindV3::Evaluation) {
+    FactoryMountModeV3::ReadOnly
+  } else {
+    FactoryMountModeV3::ReadWrite
+  };
   let required_mounts = [
     FactoryMountPermissionV3 {
       root: PROTECTED_INPUT_ROOT.to_owned(),
@@ -587,7 +600,7 @@ pub(crate) fn validate_factory_execution(
     },
     FactoryMountPermissionV3 {
       root: FACTORY_SOURCE_ROOT.to_owned(),
-      mode: FactoryMountModeV3::ReadWrite,
+      mode: source_mode,
     },
   ];
   if permissions.mounts.as_slice() != required_mounts.as_slice() {
@@ -617,6 +630,13 @@ pub(crate) fn validate_factory_execution(
     .is_some_and(|profile| !permissions.workload_identity_profiles.contains(profile))
   {
     return Err("runtime workload identity is absent from Factory permissions".to_owned());
+  }
+  match &execution.credential_profile {
+    Some(profile) if permissions.secret_profiles.as_slice() == [profile.as_str()] => {}
+    None if permissions.secret_profiles.is_empty() => {}
+    Some(_) | None => {
+      return Err("managed execution must select exactly its stage-scoped Factory credential profile".to_owned());
+    }
   }
   let permitted = &permissions.outputs;
   if permitted.max_artifact_count > outputs.artifact_count

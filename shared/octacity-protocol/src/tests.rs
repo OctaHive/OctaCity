@@ -139,6 +139,7 @@ fn v3_spec() -> JobSpecV3 {
     execution: ManagedOctaExecutionV3 {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
+      credential_profile: Some("model-coding".to_owned()),
       tool_control: None,
     },
     runtime: RuntimeSpecV2 {
@@ -423,6 +424,22 @@ fn v3_rejects_unsafe_inputs_incomplete_enforcement_and_host_fallback() {
     mode: FactoryMountModeV3::ReadWrite,
   });
   assert!(value.validate(&binding(&spec())).is_err());
+
+  let mut value = v3_spec();
+  value.execution.credential_profile = Some("delivery-write".to_owned());
+  assert!(value.validate(&binding(&spec())).is_err());
+
+  let mut value = v3_spec();
+  value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Evaluation;
+  assert!(value.validate(&binding(&spec())).is_err());
+  value
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == "/workspace/source")
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadOnly;
+  assert!(value.validate(&binding(&spec())).is_ok());
 }
 
 #[test]

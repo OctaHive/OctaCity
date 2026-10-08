@@ -200,6 +200,11 @@ fn every_permission_category_only_narrows_across_all_four_layers() {
   assert_eq!(effective.outputs().max_report_count(), 2);
   assert_eq!(effective.outputs().max_report_bytes(), 200);
   assert!(!project.is_no_broader_than(&effective));
+
+  let encoded = serde_json::to_vec(&effective).expect("permissions serialize");
+  let decoded: FactoryPermissionSet = serde_json::from_slice(&encoded).expect("permissions deserialize");
+  assert_eq!(decoded, effective);
+  assert_eq!(decoded.digest(), effective.digest());
 }
 
 #[test]

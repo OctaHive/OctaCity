@@ -4537,6 +4537,7 @@ dependencies = [
 name = "octacity-server-factory"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "octacity-server-domain",
  "serde",
  "serde_json",

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  Assessment, ChangeSet, Decision, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation,
-  EvaluationPlan, EvidenceManifest, FactoryDigest, FactoryRunId, MacroCall, ReportingAttempt, StageAttempt,
-  StageAttemptCompletion,
+  Assessment, ChangeSet, ContextManifest, Decision, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt,
+  Escalation, EvaluationPlan, EvidenceManifest, FactoryContextReference, FactoryDigest, FactoryRunId, MacroCall,
+  MacroCallCompletion, ReportingAttempt, StageAttempt, StageAttemptCompletion, StageHandoff,
 };
 use octacity_server_store::{FactoryBuildLink, FactoryBuildObservationRecord, FactoryRunHistoryAppend, StoreError};
 use serde::Serialize;
@@ -42,8 +42,25 @@ pub(crate) async fn append_history(
   for record in &append.stage_attempt_completions {
     insert_stage_completion(transaction, recorded_at, record).await?;
   }
-  for record in &append.macro_calls {
+  for record in &append.stage_handoffs {
+    insert_stage_handoff(transaction, run_id, recorded_at, record).await?;
+  }
+  for record in &append.context_manifests {
+    let stage_attempt_id = append
+      .macro_calls
+      .iter()
+      .find(|call| call.context_manifest_id() == record.id())
+      .map(MacroCall::stage_attempt_id)
+      .ok_or(StoreError::Unavailable)?;
+    insert_context_manifest(transaction, run_id, stage_attempt_id, recorded_at, record).await?;
+  }
+  let mut calls = append.macro_calls.iter().collect::<Vec<_>>();
+  calls.sort_by_key(|record| (record.depth(), record.id()));
+  for record in calls {
     insert_call(transaction, recorded_at, record).await?;
+  }
+  for record in &append.macro_call_completions {
+    insert_call_completion(transaction, run_id, recorded_at, record).await?;
   }
   for record in &append.signal_requests {
     insert_signal_request(transaction, recorded_at, record).await?;
@@ -112,15 +129,202 @@ async fn insert_stage_completion(
   Ok(())
 }
 
+async fn insert_stage_handoff(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  recorded_at: Timestamp,
+  record: &StageHandoff,
+) -> Result<(), StoreError> {
+  let digest = FactoryDigest::content_sha256(&record.canonical_bytes().map_err(|_| StoreError::Unavailable)?);
+  let inserted = sqlx::query(
+    "INSERT INTO factory_stage_handoffs (id, run_id, stage_attempt_id, content_digest, handoff, created_at) \
+     SELECT $1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0) \
+     FROM factory_stage_attempts WHERE id = $3 AND run_id = $2",
+  )
+  .bind(record.id().as_uuid())
+  .bind(run_id.as_uuid())
+  .bind(record.stage_attempt_id().as_uuid())
+  .bind(digest.as_bytes().as_slice())
+  .bind(Json(record))
+  .bind(recorded_at.unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  if inserted.rows_affected() != 1 {
+    return Err(StoreError::Unavailable);
+  }
+  for artifact in record.artifacts() {
+    insert_shared_artifact_reference(
+      tx,
+      run_id,
+      artifact.artifact_id(),
+      octacity_server_store::FactoryArtifactRole::StageHandoff,
+      artifact.content_digest(),
+      recorded_at,
+    )
+    .await?;
+  }
+  Ok(())
+}
+
+async fn insert_context_manifest(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  stage_attempt_id: octacity_server_factory::StageAttemptId,
+  recorded_at: Timestamp,
+  record: &ContextManifest,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO factory_context_manifests \
+     (id, run_id, stage_attempt_id, content_digest, policy_digest, manifest, created_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0))",
+  )
+  .bind(record.id().as_uuid())
+  .bind(run_id.as_uuid())
+  .bind(stage_attempt_id.as_uuid())
+  .bind(
+    record
+      .digest()
+      .map_err(|_| StoreError::Unavailable)?
+      .as_bytes()
+      .as_slice(),
+  )
+  .bind(record.construction_policy_digest().as_bytes().as_slice())
+  .bind(Json(record))
+  .bind(recorded_at.unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  for entry in record.entries() {
+    let artifact = match entry.source() {
+      FactoryContextReference::Artifact(artifact) => Some(artifact),
+      FactoryContextReference::RepositoryFragment(fragment) => Some(fragment.artifact()),
+      FactoryContextReference::RepositoryRange(_) => None,
+    };
+    if let Some(artifact) = artifact {
+      insert_shared_artifact_reference(
+        tx,
+        run_id,
+        artifact.artifact_id(),
+        octacity_server_store::FactoryArtifactRole::CallContext,
+        artifact.content_digest(),
+        recorded_at,
+      )
+      .await?;
+    }
+  }
+  Ok(())
+}
+
+/// Retains a shared immutable input once per Run and semantic role.
+///
+/// Multiple handoffs or calls may legitimately select the same bytes at
+/// different times. The first reference owns `created_at`; later references
+/// must prove the exact same digest without rewriting that retention fact.
+async fn insert_shared_artifact_reference(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  artifact_id: octacity_server_domain::ArtifactId,
+  role: octacity_server_store::FactoryArtifactRole,
+  digest: FactoryDigest,
+  recorded_at: Timestamp,
+) -> Result<(), StoreError> {
+  let result = sqlx::query(
+    "INSERT INTO factory_artifact_references \
+       (run_id, artifact_id, role, expected_sha256, created_at) \
+     VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0)) \
+     ON CONFLICT (run_id, artifact_id, role) DO UPDATE SET artifact_id = EXCLUDED.artifact_id \
+     WHERE factory_artifact_references.expected_sha256 = EXCLUDED.expected_sha256 \
+       AND factory_artifact_references.released_at IS NULL",
+  )
+  .bind(run_id.as_uuid())
+  .bind(artifact_id.as_uuid())
+  .bind(role.as_str())
+  .bind(digest.as_bytes().as_slice())
+  .bind(recorded_at.unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  if result.rows_affected() == 1 {
+    Ok(())
+  } else {
+    Err(StoreError::Conflict {
+      entity: octacity_server_domain::EntityKind::Artifact,
+    })
+  }
+}
+
 async fn insert_call(
   tx: &mut Transaction<'_, Postgres>,
   recorded_at: Timestamp,
   record: &MacroCall,
 ) -> Result<(), StoreError> {
-  sqlx::query("INSERT INTO factory_call_nodes (id, run_id, stage_attempt_id, parent_call_id, call_kind, context_digest, call_node, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::double precision / 1000.0))")
+  sqlx::query("INSERT INTO factory_call_nodes (id, run_id, stage_attempt_id, parent_call_id, call_kind, context_manifest_id, context_digest, depth, call_node, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, to_timestamp($10::double precision / 1000.0))")
     .bind(record.id().as_uuid()).bind(record.run_id().as_uuid()).bind(record.stage_attempt_id().as_uuid())
-    .bind(record.parent_id().map(|id| id.as_uuid())).bind(record.kind().as_str()).bind(record.context_digest().as_bytes().as_slice())
+    .bind(record.parent_id().map(|id| id.as_uuid())).bind(record.kind().as_str()).bind(record.context_manifest_id().as_uuid())
+    .bind(record.context_digest().as_bytes().as_slice()).bind(i16::try_from(record.depth()).map_err(|_| StoreError::Unavailable)?)
     .bind(Json(record)).bind(recorded_at.unix_millis()).execute(&mut **tx).await.map_err(unavailable)?;
+  for dependency in record.stage_dependencies() {
+    sqlx::query("INSERT INTO factory_call_stage_dependencies (run_id, call_id, stage_attempt_id) VALUES ($1, $2, $3)")
+      .bind(record.run_id().as_uuid())
+      .bind(record.id().as_uuid())
+      .bind(dependency.as_uuid())
+      .execute(&mut **tx)
+      .await
+      .map_err(unavailable)?;
+  }
+  for dependency in record.call_dependencies() {
+    sqlx::query("INSERT INTO factory_call_dependencies (run_id, call_id, dependency_call_id) VALUES ($1, $2, $3)")
+      .bind(record.run_id().as_uuid())
+      .bind(record.id().as_uuid())
+      .bind(dependency.as_uuid())
+      .execute(&mut **tx)
+      .await
+      .map_err(unavailable)?;
+  }
+  Ok(())
+}
+
+async fn insert_call_completion(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  recorded_at: Timestamp,
+  record: &MacroCallCompletion,
+) -> Result<(), StoreError> {
+  let digest = record.digest().map_err(|_| StoreError::Unavailable)?;
+  sqlx::query(
+    "INSERT INTO factory_call_completions \
+     (call_id, run_id, terminal, content_digest, completion, completed_at) \
+     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+  )
+  .bind(record.call_id().as_uuid())
+  .bind(run_id.as_uuid())
+  .bind(record.terminal().as_str())
+  .bind(digest.as_bytes().as_slice())
+  .bind(Json(record))
+  .bind(record.completed_at().unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  for artifact in [
+    record.result(),
+    record.summary_artifact(),
+    record.trace(),
+    record.provenance(),
+  ]
+  .into_iter()
+  .flatten()
+  {
+    insert_shared_artifact_reference(
+      tx,
+      run_id,
+      artifact.artifact_id(),
+      octacity_server_store::FactoryArtifactRole::CallOutput,
+      artifact.content_digest(),
+      recorded_at,
+    )
+    .await?;
+  }
   Ok(())
 }
 
@@ -355,9 +559,27 @@ pub(crate) async fn history_rows(
       run_id,
     )
     .await?,
+    stage_handoffs: json_rows(
+      tx,
+      "SELECT handoff FROM factory_stage_handoffs WHERE run_id = $1 ORDER BY id",
+      run_id,
+    )
+    .await?,
+    context_manifests: json_rows(
+      tx,
+      "SELECT manifest FROM factory_context_manifests WHERE run_id = $1 ORDER BY id",
+      run_id,
+    )
+    .await?,
     macro_calls: json_rows(
       tx,
       "SELECT call_node FROM factory_call_nodes WHERE run_id = $1 ORDER BY id",
+      run_id,
+    )
+    .await?,
+    macro_call_completions: json_rows(
+      tx,
+      "SELECT completion FROM factory_call_completions WHERE run_id = $1 ORDER BY call_id",
       run_id,
     )
     .await?,
@@ -465,6 +687,57 @@ pub(super) async fn stage_history(
   .map(|record: StageAttemptCompletion| (record.id(), record))
   .collect();
   Ok((attempts, completions))
+}
+
+pub(super) async fn call_context_history(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+) -> Result<
+  (
+    BTreeMap<octacity_server_factory::StageHandoffId, StageHandoff>,
+    BTreeMap<octacity_server_factory::ContextManifestId, ContextManifest>,
+    BTreeMap<octacity_server_factory::MacroCallId, MacroCall>,
+    BTreeMap<octacity_server_factory::MacroCallId, MacroCallCompletion>,
+  ),
+  StoreError,
+> {
+  let handoffs = json_rows(
+    tx,
+    "SELECT handoff FROM factory_stage_handoffs WHERE run_id = $1 ORDER BY id",
+    run_id,
+  )
+  .await?
+  .into_iter()
+  .map(|record: StageHandoff| (record.id(), record))
+  .collect();
+  let manifests = json_rows(
+    tx,
+    "SELECT manifest FROM factory_context_manifests WHERE run_id = $1 ORDER BY id",
+    run_id,
+  )
+  .await?
+  .into_iter()
+  .map(|record: ContextManifest| (record.id(), record))
+  .collect();
+  let calls = json_rows(
+    tx,
+    "SELECT call_node FROM factory_call_nodes WHERE run_id = $1 ORDER BY id",
+    run_id,
+  )
+  .await?
+  .into_iter()
+  .map(|record: MacroCall| (record.id(), record))
+  .collect();
+  let completions = json_rows(
+    tx,
+    "SELECT completion FROM factory_call_completions WHERE run_id = $1 ORDER BY call_id",
+    run_id,
+  )
+  .await?
+  .into_iter()
+  .map(|record: MacroCallCompletion| (record.call_id(), record))
+  .collect();
+  Ok((handoffs, manifests, calls, completions))
 }
 
 async fn json_rows<T: for<'de> serde::Deserialize<'de> + Send + Unpin + 'static>(

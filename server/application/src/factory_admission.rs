@@ -207,10 +207,10 @@ fn admission_intent_digest(command: &AdmitManualFactoryWorkCommand) -> FactoryDi
       fields.push(revision.as_str().as_bytes().to_vec());
     }
   }
-  fields.push(command.artifacts.task().to_string().into_bytes());
-  fields.push(command.artifacts.acceptance().to_string().into_bytes());
+  append_artifact_identity(&mut fields, command.artifacts.task());
+  append_artifact_identity(&mut fields, command.artifacts.acceptance());
   for specification in command.artifacts.specifications() {
-    fields.push(specification.to_string().into_bytes());
+    append_artifact_identity(&mut fields, specification);
   }
   fields.push(command.classification.priority().get().to_string().into_bytes());
   fields.push(command.classification.risk().as_str().as_bytes().to_vec());
@@ -220,6 +220,12 @@ fn admission_intent_digest(command: &AdmitManualFactoryWorkCommand) -> FactoryDi
   }
   let fields = fields.iter().map(Vec::as_slice).collect::<Vec<_>>();
   FactoryDigest::sha256("octacity.factory.manual-admission.v1", &fields)
+}
+
+fn append_artifact_identity(fields: &mut Vec<Vec<u8>>, artifact: &octacity_server_factory::FactoryArtifactReference) {
+  fields.push(artifact.artifact_id().to_string().into_bytes());
+  fields.push(artifact.content_digest().as_bytes().to_vec());
+  fields.push(artifact.encoded_size().to_be_bytes().to_vec());
 }
 
 fn map_revision_error(error: RevisionResolutionError) -> ApplicationError {

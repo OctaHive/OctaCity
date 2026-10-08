@@ -20,10 +20,10 @@ use octacity_server_factory::{
   DecisionSignalQuestion, DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain, DecisionSignalQuestionKind,
   DecisionSignalReceipt, DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId,
   DecisionSignalRouteSet, DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity,
-  FactoryClaim, FactoryClaimFence, FactoryClaimOwnership, FactoryConfigurationId, FactoryConfigurationRef,
-  FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryMetadata, FactoryRun, FactoryRunId, FactoryText,
-  ImmutableReference, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, ToolRiskChoiceMapping,
-  WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
+  FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryClaimOwnership, FactoryConfigurationId,
+  FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryMetadata, FactoryRun,
+  FactoryRunId, FactoryText, ImmutableReference, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber,
+  ToolRiskChoiceMapping, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 
 use super::factory_decision_signal::{
@@ -440,7 +440,7 @@ fn stage() -> StageAttempt {
     configuration,
     ExternalWorkIdentity::new("source/1").unwrap(),
     subject,
-    WorkArtifacts::new(ArtifactId::generate(), ArtifactId::generate(), vec![]).unwrap(),
+    WorkArtifacts::new(artifact(90), artifact(91), vec![]).unwrap(),
     WorkClassification::new(
       WorkPriority::new(0).unwrap(),
       RiskClass::Low,
@@ -478,6 +478,10 @@ fn key(value: &str) -> FactoryKey {
 
 fn digest(value: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([value; 32])
+}
+
+fn artifact(value: u8) -> FactoryArtifactReference {
+  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 1).unwrap()
 }
 
 fn exact(identity: &str, version: &str, value: u8) -> ImmutableReference {

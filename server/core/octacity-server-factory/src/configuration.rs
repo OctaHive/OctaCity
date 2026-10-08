@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   BudgetLimit, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose, DecisionSignalRouteSet,
-  FactoryChoiceKind, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest,
-  FactoryError, FactoryKey, FactoryStageKind, MAX_CRITERION_PACKS, MAX_EVALUATORS,
+  FactoryChoiceKind, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
+  FactoryCredentialProfiles, FactoryDigest, FactoryError, FactoryKey, FactoryStageKind, MAX_CRITERION_PACKS,
+  MAX_EVALUATORS,
 };
 
 /// Maximum number of aliases accepted in one configuration choice category.
@@ -538,6 +539,8 @@ pub struct FactoryConfigurationDraft {
   pub hard_budget: BudgetLimit,
   /// Alias of the deny-by-default permission ceiling selected for later intersection.
   pub permission_ceiling: FactoryKey,
+  /// Distinct logical credentials scoped to trusted Factory consumers.
+  pub credential_profiles: FactoryCredentialProfiles,
   /// Optional purpose-specific Decision Signal profiles.
   pub decision_signals: Vec<DecisionSignalProfileDraft>,
   /// Criterion packs, evaluators, quorum, and evaluation budget.
@@ -560,6 +563,7 @@ pub struct FactoryConfiguration {
   wip_limits: FactoryWipLimits,
   hard_budget: BudgetLimit,
   permission_ceiling: ImmutableReference,
+  credential_profiles: FactoryCredentialProfiles,
   decision_signals: Vec<DecisionSignalProfile>,
   evaluation: EvaluationPolicy,
   rework: ReworkPolicy,
@@ -596,6 +600,7 @@ impl FactoryConfiguration {
       wip_limits: draft.wip_limits,
       hard_budget: draft.hard_budget,
       permission_ceiling,
+      credential_profiles: draft.credential_profiles,
       decision_signals,
       evaluation,
       rework,
@@ -661,6 +666,12 @@ impl FactoryConfiguration {
   #[must_use]
   pub const fn permission_ceiling(&self) -> &ImmutableReference {
     &self.permission_ceiling
+  }
+
+  /// Returns the immutable stage-scoped logical credential profiles.
+  #[must_use]
+  pub const fn credential_profiles(&self) -> &FactoryCredentialProfiles {
+    &self.credential_profiles
   }
 
   /// Returns all configured Decision Signal profiles.
