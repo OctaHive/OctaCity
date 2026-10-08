@@ -195,7 +195,10 @@ def download(source: dict[str, Any], destination: Path, *, attempts: int = 5) ->
                     f"checksum mismatch for {label}: expected {expected}, received {actual}"
                 )
             return
-        except (OSError, URLError, SourceArchiveError) as error:
+        except SourceArchiveError:
+            destination.unlink(missing_ok=True)
+            raise
+        except OSError as error:
             destination.unlink(missing_ok=True)
             if attempt == attempts:
                 raise SourceArchiveError(

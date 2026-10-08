@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import io
 import json
@@ -12,7 +13,7 @@ import tarfile
 import tempfile
 import unittest
 from unittest import mock
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -143,6 +144,54 @@ class PinnedMinioBuildTests(unittest.TestCase):
                 with self.assertRaisesRegex(BUILDER.BuildError, "exceeds 4 bytes"):
                     BUILDER.download(source, destination, attempts=1)
             self.assertFalse(destination.exists())
+
+    def test_checksum_mismatch_fails_without_retry(self):
+        source = dict(self.document["sources"]["minio"])
+
+        def mismatched_response(*_args, **_kwargs):
+            response = io.BytesIO(b"not-the-pinned-archive")
+            response.headers = {}
+            return response
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "source.tar.gz"
+            with (
+                mock.patch.object(
+                    ARCHIVES, "urlopen", side_effect=mismatched_response
+                ) as request,
+                mock.patch.object(ARCHIVES.time, "sleep") as sleep,
+                self.assertRaisesRegex(
+                    ARCHIVES.SourceArchiveError, "checksum mismatch"
+                ),
+            ):
+                ARCHIVES.download(source, destination)
+
+            request.assert_called_once()
+            sleep.assert_not_called()
+            self.assertFalse(destination.exists())
+
+    def test_download_retries_a_transient_network_failure(self):
+        payload = b"pinned-archive"
+        source = dict(self.document["sources"]["minio"])
+        source["sha256"] = hashlib.sha256(payload).hexdigest()
+        response = io.BytesIO(payload)
+        response.headers = {}
+
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "source.tar.gz"
+            with (
+                mock.patch.object(
+                    ARCHIVES,
+                    "urlopen",
+                    side_effect=[URLError("temporary failure"), response],
+                ) as request,
+                mock.patch.object(ARCHIVES.time, "sleep") as sleep,
+            ):
+                ARCHIVES.download(source, destination)
+
+            self.assertEqual(request.call_count, 2)
+            sleep.assert_called_once_with(1)
+            self.assertEqual(destination.read_bytes(), payload)
 
     def test_source_extraction_enforces_expanded_and_member_limits(self):
         source = dict(self.document["sources"]["minio"])
