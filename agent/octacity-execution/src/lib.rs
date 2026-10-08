@@ -779,8 +779,18 @@ mod tests {
     let scratch = job_root.join("scratch");
     let output = job_root.join("output");
     let protected = job_root.join("protected");
+    let writable_protected = job_root.join("writable-protected");
     let data_dir = scratch.join(".octacity");
-    for directory in [&work_root, &job_root, &source, &scratch, &output, &protected, &data_dir] {
+    for directory in [
+      &work_root,
+      &job_root,
+      &source,
+      &scratch,
+      &output,
+      &protected,
+      &writable_protected,
+      &data_dir,
+    ] {
       std::fs::create_dir(directory).unwrap();
     }
     let mut protected_permissions = std::fs::metadata(&protected).unwrap().permissions();
@@ -825,16 +835,10 @@ mod tests {
     });
     assert!(request.validate().is_err());
 
-    let mut writable_permissions = std::fs::metadata(&protected).unwrap().permissions();
-    #[cfg(unix)]
-    {
-      use std::os::unix::fs::PermissionsExt as _;
-      writable_permissions.set_mode(writable_permissions.mode() | 0o200);
-    }
-    #[cfg(windows)]
-    writable_permissions.set_readonly(false);
-    std::fs::set_permissions(&protected, writable_permissions).unwrap();
-    request.factory = Some(layout);
+    request.factory = Some(FactoryExecutionLayout {
+      protected_inputs: writable_protected.canonicalize().unwrap(),
+      ..layout
+    });
     assert!(request.validate().is_err());
   }
 
