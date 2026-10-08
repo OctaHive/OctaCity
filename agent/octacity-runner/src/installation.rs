@@ -28,6 +28,8 @@ const MAX_CAPABILITIES_BYTES: usize = 1024 * 1024;
 const MAX_COMPATIBILITY_BYTES: u64 = 1024 * 1024;
 const MAX_PLUGIN_LOCK_BYTES: u64 = 1024 * 1024;
 const CODEX_COMPATIBILITY_FILE: &str = "codex-compatibility.json";
+const CODEX_TOOL_AUTHORIZATION_CAPABILITY: &str = "codex.blocking-pre-tool-authorization.v1";
+const CODEX_TOOL_AUTHORIZER_ENVIRONMENT: &str = "OCTA_CODEX_TOOL_AUTHORIZER";
 const RUNNER_CAPABILITIES_FILE: &str = "octa-runner-capabilities.json";
 const MAX_EXECUTABLE_HEADER_BYTES: usize = 4096;
 
@@ -127,6 +129,7 @@ struct ExternalExecutableCompatibility {
   format_version: u16,
   plugin: CompatiblePlugin,
   executable: CompatibleExecutable,
+  tool_authorization: CompatibleToolAuthorization,
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,6 +139,7 @@ struct CompatiblePlugin {
   version: String,
   protocol: u16,
   manifest: String,
+  capabilities: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +148,15 @@ struct CompatibleExecutable {
   product: String,
   supported_versions: Vec<String>,
   selection_environment: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompatibleToolAuthorization {
+  mode: String,
+  capability: String,
+  selection_environment: String,
+  hook_event: String,
 }
 
 struct ExternalExecutableRequirement {
@@ -551,13 +564,19 @@ fn load_external_executable_requirements(
   )
   .map_err(|error| RunnerInstallationError::CompatibilityJson(Box::new(error)))?;
   let installed = codex.ok_or_else(|| invalid("Codex compatibility metadata has no installed Codex plugin"))?;
-  if document.format_version != 1
+  if document.format_version != 2
     || document.plugin.name != "codex"
     || document.plugin.version != installed.version
     || document.plugin.protocol != installed.protocol
     || document.plugin.manifest != "plugins/codex.plugin.yml"
+    || document.plugin.capabilities != installed.capabilities
+    || document.plugin.capabilities != [CODEX_TOOL_AUTHORIZATION_CAPABILITY]
     || document.executable.product != "codex-cli"
     || document.executable.selection_environment != "OCTA_CODEX_EXECUTABLE"
+    || document.tool_authorization.mode != "blocking_pre_tool_use"
+    || document.tool_authorization.capability != CODEX_TOOL_AUTHORIZATION_CAPABILITY
+    || document.tool_authorization.selection_environment != CODEX_TOOL_AUTHORIZER_ENVIRONMENT
+    || document.tool_authorization.hook_event != "PreToolUse"
   {
     return Err(invalid(
       "Codex compatibility metadata differs from the installed plugin",

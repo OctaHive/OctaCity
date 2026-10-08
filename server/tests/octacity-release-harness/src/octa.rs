@@ -16,6 +16,8 @@ use crate::{
 };
 
 const MAX_METADATA_BYTES: u64 = 1024 * 1024;
+const CODEX_TOOL_AUTHORIZATION_CAPABILITY: &str = "codex.blocking-pre-tool-authorization.v1";
+const CODEX_TOOL_AUTHORIZER_ENVIRONMENT: &str = "OCTA_CODEX_TOOL_AUTHORIZER";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -33,6 +35,7 @@ struct CodexCompatibility {
   format_version: u16,
   plugin: CodexPluginCompatibility,
   executable: CodexExecutableCompatibility,
+  tool_authorization: CodexToolAuthorizationCompatibility,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -42,6 +45,7 @@ struct CodexPluginCompatibility {
   version: String,
   protocol: u16,
   manifest: String,
+  capabilities: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -50,6 +54,15 @@ struct CodexExecutableCompatibility {
   product: String,
   supported_versions: Vec<String>,
   selection_environment: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct CodexToolAuthorizationCompatibility {
+  mode: String,
+  capability: String,
+  selection_environment: String,
+  hook_event: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -264,17 +277,24 @@ fn verify_plugins(
 impl CodexCompatibility {
   fn validate(&self, capabilities: &RunnerCapabilities, plugins: &VerifiedPlugins) -> Result<(), HarnessError> {
     let expected = Self {
-      format_version: 1,
+      format_version: 2,
       plugin: CodexPluginCompatibility {
         name: "codex".to_owned(),
         version: capabilities.octa_version.clone(),
         protocol: 2,
         manifest: "plugins/codex.plugin.yml".to_owned(),
+        capabilities: vec![CODEX_TOOL_AUTHORIZATION_CAPABILITY.to_owned()],
       },
       executable: CodexExecutableCompatibility {
         product: "codex-cli".to_owned(),
         supported_versions: vec!["0.161.0".to_owned()],
         selection_environment: "OCTA_CODEX_EXECUTABLE".to_owned(),
+      },
+      tool_authorization: CodexToolAuthorizationCompatibility {
+        mode: "blocking_pre_tool_use".to_owned(),
+        capability: CODEX_TOOL_AUTHORIZATION_CAPABILITY.to_owned(),
+        selection_environment: CODEX_TOOL_AUTHORIZER_ENVIRONMENT.to_owned(),
+        hook_event: "PreToolUse".to_owned(),
       },
     };
     if self != &expected {
@@ -287,7 +307,7 @@ impl CodexCompatibility {
     if plugin.version != self.plugin.version
       || plugin.protocol != self.plugin.protocol
       || plugin.manifest != Path::new(&self.plugin.manifest)
-      || plugin.capabilities != ["codex.blocking-pre-tool-authorization.v1"]
+      || plugin.capabilities != self.plugin.capabilities
     {
       return Err(invalid("Octa Codex compatibility metadata differs from Octa.lock"));
     }

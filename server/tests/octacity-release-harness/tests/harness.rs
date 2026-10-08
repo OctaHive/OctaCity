@@ -33,7 +33,7 @@ fn installs_only_verified_released_bundles() {
   assert!(installed.agent_binary.starts_with(&installed.agent_root));
   assert!(installed.octa_runner.starts_with(&installed.octa_root));
   assert_eq!(installed.octa_platform, "linux-x86_64");
-  assert_eq!(installed.octa_version, "0.5.0");
+  assert_eq!(installed.octa_version, "0.5.1");
   assert_ne!(installed.server_root, bundles.server);
   assert_ne!(installed.agent_root, bundles.agent);
   assert_ne!(installed.octa_root, bundles.octa);
@@ -209,7 +209,7 @@ fn rejects_codex_plugin_lock_drift_even_with_fresh_checksums() {
   let lock_path = bundles.octa.join("Octa.lock");
   let lock = fs::read_to_string(&lock_path)
     .unwrap()
-    .replace("version: \"0.5.0\"", "version: \"0.5.1\"");
+    .replace("version: \"0.5.1\"", "version: \"0.5.2\"");
   fs::write(lock_path, lock).unwrap();
   write_checksums(&bundles.octa);
 
@@ -299,7 +299,7 @@ fn derives_and_verifies_server_policy_from_the_agent_assets() {
 
   assert_eq!(document["source"]["provider"], "git");
   assert_eq!(document["source"]["plugin_version"], "0.1.0");
-  assert_eq!(document["octa"]["version"], "0.5.0");
+  assert_eq!(document["octa"]["version"], "0.5.1");
   assert_eq!(document["octa"]["runner_protocol"], 3);
   assert_eq!(document["octa"]["event_schema"], 4);
   assert_eq!(document["octa"]["plugin_protocol"], 2);
@@ -344,7 +344,7 @@ fn derives_policy_for_a_macos_agent_with_a_linux_arm64_octa_guest() {
   )
   .unwrap();
 
-  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.5.0");
+  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.5.1");
 }
 
 #[test]
@@ -568,7 +568,7 @@ fn fixture(root: &Path) -> ReleaseBundles {
   fs::write(
     octa.join("Octa.lock"),
     format!(
-      "version: 1\nplugins:\n  codex:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {}\n    capabilities: [codex.blocking-pre-tool-authorization.v1]\n    source: codex.plugin.yml\n  shell:\n    version: \"0.5.0\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_shell\n    sha256: {}\n    capabilities: [shell]\n    source: shell.plugin.yml\n",
+      "version: 1\nplugins:\n  codex:\n    version: \"0.5.1\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_codex\n    sha256: {}\n    capabilities: [codex.blocking-pre-tool-authorization.v1]\n    source: codex.plugin.yml\n  shell:\n    version: \"0.5.1\"\n    protocol: 2\n    platforms: [linux-x86_64]\n    entrypoint: octa_plugin_shell\n    sha256: {}\n    capabilities: [shell]\n    source: shell.plugin.yml\n",
       sha256(&codex_plugin),
       sha256(&octa_plugin)
     ),
@@ -577,17 +577,24 @@ fn fixture(root: &Path) -> ReleaseBundles {
   write_json(
     &octa.join("codex-compatibility.json"),
     &json!({
-      "format_version": 1,
+      "format_version": 2,
       "plugin": {
         "name": "codex",
-        "version": "0.5.0",
+        "version": "0.5.1",
         "protocol": 2,
-        "manifest": "plugins/codex.plugin.yml"
+        "manifest": "plugins/codex.plugin.yml",
+        "capabilities": ["codex.blocking-pre-tool-authorization.v1"]
       },
       "executable": {
         "product": "codex-cli",
         "supported_versions": ["0.161.0"],
         "selection_environment": "OCTA_CODEX_EXECUTABLE"
+      },
+      "tool_authorization": {
+        "mode": "blocking_pre_tool_use",
+        "capability": "codex.blocking-pre-tool-authorization.v1",
+        "selection_environment": "OCTA_CODEX_TOOL_AUTHORIZER",
+        "hook_event": "PreToolUse"
       }
     }),
   );
@@ -595,7 +602,7 @@ fn fixture(root: &Path) -> ReleaseBundles {
     &octa.join("octa-runner-capabilities.json"),
     &json!({
       "type": "capabilities",
-      "octa_version": "0.5.0",
+      "octa_version": "0.5.1",
       "runner_protocols": [3],
       "event_schemas": [4],
       "plugin_protocols": [2],

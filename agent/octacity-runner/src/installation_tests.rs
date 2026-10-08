@@ -49,17 +49,24 @@ fn codex_release() -> (PrivateDirectoryFixture, RunnerInstallation, PathBuf) {
   fs::write(
     release.path().join(CODEX_COMPATIBILITY_FILE),
     serde_json::to_vec_pretty(&serde_json::json!({
-      "format_version": 1,
+      "format_version": 2,
       "plugin": {
         "name": "codex",
         "version": "0.5.1",
         "protocol": 2,
-        "manifest": "plugins/codex.plugin.yml"
+        "manifest": "plugins/codex.plugin.yml",
+        "capabilities": ["codex.blocking-pre-tool-authorization.v1"]
       },
       "executable": {
         "product": "codex-cli",
         "supported_versions": ["0.161.0"],
         "selection_environment": "OCTA_CODEX_EXECUTABLE"
+      },
+      "tool_authorization": {
+        "mode": "blocking_pre_tool_use",
+        "capability": "codex.blocking-pre-tool-authorization.v1",
+        "selection_environment": "OCTA_CODEX_TOOL_AUTHORIZER",
+        "hook_event": "PreToolUse"
       }
     }))
     .unwrap(),
@@ -216,7 +223,7 @@ fn rejects_compatibility_metadata_drift_after_release_inventory() {
   let (release, installation, _executable) = codex_release();
   fs::write(
     release.path().join(CODEX_COMPATIBILITY_FILE),
-    r#"{"format_version":1,"plugin":{"name":"codex","version":"0.5.1","protocol":1,"manifest":"plugins/codex.plugin.yml"},"executable":{"product":"codex-cli","supported_versions":["0.161.0"],"selection_environment":"OCTA_CODEX_EXECUTABLE"}}"#,
+    r#"{"format_version":2,"plugin":{"name":"codex","version":"0.5.1","protocol":1,"manifest":"plugins/codex.plugin.yml","capabilities":["codex.blocking-pre-tool-authorization.v1"]},"executable":{"product":"codex-cli","supported_versions":["0.161.0"],"selection_environment":"OCTA_CODEX_EXECUTABLE"},"tool_authorization":{"mode":"blocking_pre_tool_use","capability":"codex.blocking-pre-tool-authorization.v1","selection_environment":"OCTA_CODEX_TOOL_AUTHORIZER","hook_event":"PreToolUse"}}"#,
   )
   .unwrap();
 

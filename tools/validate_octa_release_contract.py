@@ -22,6 +22,8 @@ EXPECTED_CONTRACT = {
     "provenance": "github-build-provenance",
 }
 SUPPORTED_CODEX_CLI_VERSIONS = ["0.161.0"]
+CODEX_TOOL_AUTHORIZATION_CAPABILITY = "codex.blocking-pre-tool-authorization.v1"
+CODEX_TOOL_AUTHORIZER_ENVIRONMENT = "OCTA_CODEX_TOOL_AUTHORIZER"
 MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 
 
@@ -29,17 +31,24 @@ def expected_codex_compatibility(octa_version: str) -> dict[str, object]:
     """Return the exact Codex identity supported by this OctaCity release line."""
 
     return {
-        "format_version": 1,
+        "format_version": 2,
         "plugin": {
             "name": "codex",
             "version": octa_version,
             "protocol": 2,
             "manifest": "plugins/codex.plugin.yml",
+            "capabilities": [CODEX_TOOL_AUTHORIZATION_CAPABILITY],
         },
         "executable": {
             "product": "codex-cli",
             "supported_versions": SUPPORTED_CODEX_CLI_VERSIONS,
             "selection_environment": "OCTA_CODEX_EXECUTABLE",
+        },
+        "tool_authorization": {
+            "mode": "blocking_pre_tool_use",
+            "capability": CODEX_TOOL_AUTHORIZATION_CAPABILITY,
+            "selection_environment": CODEX_TOOL_AUTHORIZER_ENVIRONMENT,
+            "hook_event": "PreToolUse",
         },
     }
 

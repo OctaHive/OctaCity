@@ -149,17 +149,26 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         (self.installation / "octa/codex-compatibility.json").write_text(
             json.dumps(
                 {
-                    "format_version": 1,
+                    "format_version": 2,
                     "plugin": {
                         "name": "codex",
                         "version": "0.5.1",
                         "protocol": 2,
                         "manifest": "plugins/codex.plugin.yml",
+                        "capabilities": [
+                            "codex.blocking-pre-tool-authorization.v1"
+                        ],
                     },
                     "executable": {
                         "product": "codex-cli",
                         "supported_versions": ["0.161.0"],
                         "selection_environment": "OCTA_CODEX_EXECUTABLE",
+                    },
+                    "tool_authorization": {
+                        "mode": "blocking_pre_tool_use",
+                        "capability": "codex.blocking-pre-tool-authorization.v1",
+                        "selection_environment": "OCTA_CODEX_TOOL_AUTHORIZER",
+                        "hook_event": "PreToolUse",
                     },
                 }
             ),
