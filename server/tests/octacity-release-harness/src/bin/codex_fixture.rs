@@ -9,7 +9,7 @@ use std::{
   path::Path,
   process::{Command, Stdio},
   thread,
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 const MODE_ENV: &str = "OCTA_CODEX_FIXTURE_MODE";
@@ -19,6 +19,8 @@ const UNMAPPED_ENV: &str = "OCTA_CODEX_FIXTURE_UNMAPPED";
 const EXPECTED_PUBLIC: &str = "release-public-canary";
 const EXPECTED_SECRET: &str = "release-secret-canary-must-not-appear";
 const OVERSIZED_EVENT_BYTES: usize = 1024 * 1024 + 1;
+const DESCENDANT_STARTUP_DELAY: Duration = Duration::from_secs(2);
+const DESCENDANT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn main() {
   let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
@@ -27,6 +29,9 @@ fn main() {
     .is_some_and(|argument| argument == "--fixture-descendant")
   {
     let heartbeat = arguments.get(1).expect("fixture descendant requires a heartbeat path");
+    // Keep the release contract deterministic while exercising startup that
+    // is slower than an unloaded local process spawn.
+    thread::sleep(DESCENDANT_STARTUP_DELAY);
     run_heartbeat(Path::new(heartbeat));
   }
   if arguments == ["--version"] {
@@ -81,13 +86,7 @@ fn emit_overflow(secret: &str) {
   std::fs::create_dir_all(ready.parent().expect("ready marker must have a parent"))
     .expect("fixture control directory must be writable");
   spawn_descendant(ready);
-  for _ in 0..200 {
-    if ready.exists() {
-      break;
-    }
-    thread::sleep(Duration::from_millis(5));
-  }
-  assert!(ready.exists(), "overflow fixture descendant did not become ready");
+  wait_for_descendant(ready, "overflow");
   emit_event(r#"{"type":"turn.started"}"#);
   emit_event(
     &serde_json::json!({
@@ -115,14 +114,20 @@ fn run_cancellation_fixture() -> ! {
   std::fs::create_dir_all(ready.parent().expect("ready marker must have a parent"))
     .expect("fixture control directory must be writable");
   spawn_descendant(ready);
-  for _ in 0..200 {
-    if ready.exists() {
-      emit_event(r#"{"type":"turn.started"}"#);
-      run_heartbeat(Path::new(".octa/codex-fixture-parent-heartbeat"));
-    }
-    thread::sleep(Duration::from_millis(5));
+  wait_for_descendant(ready, "cancellation");
+  emit_event(r#"{"type":"turn.started"}"#);
+  run_heartbeat(Path::new(".octa/codex-fixture-parent-heartbeat"));
+}
+
+fn wait_for_descendant(ready: &Path, scenario: &str) {
+  let deadline = Instant::now() + DESCENDANT_READY_TIMEOUT;
+  while !ready.exists() {
+    assert!(
+      Instant::now() < deadline,
+      "{scenario} fixture descendant did not become ready"
+    );
+    thread::sleep(Duration::from_millis(10));
   }
-  panic!("fixture descendant did not become ready");
 }
 
 fn run_heartbeat(path: &Path) -> ! {

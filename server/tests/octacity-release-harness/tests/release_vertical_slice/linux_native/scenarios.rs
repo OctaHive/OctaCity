@@ -102,9 +102,14 @@ pub(super) async fn run_and_cancel(input: CancellationInput<'_>, agent: &mut Chi
       }
       break;
     }
+    let job_state = job["state"].as_str().unwrap_or("unknown");
+    assert!(
+      !matches!(job_state, "succeeded" | "failed" | "cancelled" | "skipped"),
+      "Build reached terminal Job state {job_state} before cancellation readiness: started={started}, sampled={sampled}, fixture_ready={fixture_ready}"
+    );
     assert!(
       Instant::now() < deadline,
-      "cancelled Build never started with resource accounting and its required process marker"
+      "cancelled Build never became ready for cancellation: job_state={job_state}, started={started}, sampled={sampled}, fixture_ready={fixture_ready}"
     );
     sleep(Duration::from_millis(250)).await;
   }
