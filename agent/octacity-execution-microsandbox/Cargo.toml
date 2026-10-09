@@ -12,6 +12,7 @@ async-trait.workspace = true
 microsandbox.workspace = true
 octacity-execution = { path = "../octacity-execution" }
 octacity-execution-oci = { path = "../octacity-execution-oci" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 sha2.workspace = true
 hex.workspace = true
 tokio.workspace = true

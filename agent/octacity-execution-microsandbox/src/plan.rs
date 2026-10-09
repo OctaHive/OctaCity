@@ -3,6 +3,9 @@
 use super::*;
 use octacity_execution::{FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT};
 
+const FACTORY_WORKSPACE_ANCHOR_DIRECTORY: &str = ".microsandbox-workspace";
+const FACTORY_WORKSPACE_ANCHOR_CHILDREN: [&str; 3] = ["output", "scratch", "source"];
+
 pub(super) fn canonical_runtime_file(name: &str, path: &Path) -> Result<PathBuf, ExecutionError> {
   if !path.is_absolute() || !path.is_file() {
     return Err(invalid(format!("{name} must be an existing absolute regular file")));
@@ -31,6 +34,8 @@ pub(super) struct SandboxPlan {
   pub(super) read_only_mounts: Vec<SandboxReadOnlyMount>,
   /// Fixed job-private mount point visible inside the guest.
   pub(super) guest_job_root: String,
+  /// Empty host hierarchy that provides mount points below a read-only Factory root.
+  pub(super) workspace_anchor: Option<PathBuf>,
   /// Workspace path below the guest job root.
   pub(super) guest_workspace: String,
   /// Fixed read-only Octa release mount point inside the guest.
@@ -194,10 +199,9 @@ impl SandboxPlan {
           "job-private credentials must use a dedicated directory outside workspace",
         ));
       }
-      masked_job_directories.push(guest_path(&guest_job_root, &job_root, directory)?);
-    }
-    if let Some(factory) = &request.factory {
-      masked_job_directories.push(guest_path(&guest_job_root, &job_root, &factory.protected_inputs)?);
+      if request.factory.is_none() {
+        masked_job_directories.push(guest_path(&guest_job_root, &job_root, directory)?);
+      }
     }
     masked_job_directories.sort();
     masked_job_directories.dedup();
@@ -242,6 +246,11 @@ impl SandboxPlan {
         quota_mib: remaining_quota_mib,
       }],
     };
+    let workspace_anchor = request
+      .factory
+      .as_ref()
+      .map(|_| prepare_factory_workspace_anchor(&job_root))
+      .transpose()?;
     Ok(Self {
       name: sandbox_name(agent_id, &request.execution_id),
       image: reference.clone(),
@@ -252,6 +261,7 @@ impl SandboxPlan {
       writable_mounts,
       read_only_mounts,
       guest_job_root: guest_job_root.clone(),
+      workspace_anchor,
       guest_executable: guest_path(&guest_release, &runner.release_root, &runner.executable)?,
       guest_data_dir: match &request.factory {
         Some(factory) => guest_path_buf(FACTORY_SCRATCH_ROOT, &factory.scratch, &request.data_dir)?,
@@ -269,6 +279,58 @@ impl SandboxPlan {
       guest_release,
     })
   }
+}
+
+fn prepare_factory_workspace_anchor(job_root: &Path) -> Result<PathBuf, ExecutionError> {
+  let anchor = job_root.join(FACTORY_WORKSPACE_ANCHOR_DIRECTORY);
+  ensure_private_directory(&anchor)?;
+  for child in FACTORY_WORKSPACE_ANCHOR_CHILDREN {
+    ensure_private_directory(&anchor.join(child))?;
+  }
+
+  let mut actual = fs::read_dir(&anchor)
+    .map_err(|error| backend(format!("read Factory workspace anchor '{}': {error}", anchor.display())))?
+    .map(|entry| {
+      entry
+        .map(|entry| entry.file_name())
+        .map_err(|error| backend(format!("read Factory workspace anchor entry: {error}")))
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+  actual.sort();
+  if actual != FACTORY_WORKSPACE_ANCHOR_CHILDREN {
+    return Err(invalid("Factory workspace anchor contains an unexpected entry"));
+  }
+  anchor
+    .canonicalize()
+    .map_err(|error| backend(format!("canonicalize Factory workspace anchor: {error}")))
+}
+
+fn ensure_private_directory(path: &Path) -> Result<(), ExecutionError> {
+  match octacity_private_fs::create_private_directory(path) {
+    Ok(()) => {}
+    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+    Err(error) => {
+      return Err(backend(format!(
+        "create private Microsandbox directory '{}': {error}",
+        path.display()
+      )));
+    }
+  }
+  let metadata = fs::symlink_metadata(path).map_err(|error| {
+    backend(format!(
+      "inspect private Microsandbox directory '{}': {error}",
+      path.display()
+    ))
+  })?;
+  if !metadata.is_dir() || metadata.file_type().is_symlink() {
+    return Err(invalid("Microsandbox workspace anchor contains a non-directory"));
+  }
+  octacity_private_fs::validate_private_access(path).map_err(|error| {
+    backend(format!(
+      "validate private Microsandbox directory '{}': {error}",
+      path.display()
+    ))
+  })
 }
 
 fn partition_quota(total: u32, partitions: usize, index: usize) -> u32 {

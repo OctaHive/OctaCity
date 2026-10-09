@@ -4092,6 +4092,7 @@ dependencies = [
  "microsandbox",
  "octacity-execution",
  "octacity-execution-oci",
+ "octacity-private-fs",
  "sha2 0.11.0",
  "tempfile",
  "tokio",

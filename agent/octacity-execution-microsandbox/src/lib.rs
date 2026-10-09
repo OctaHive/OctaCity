@@ -245,9 +245,12 @@ impl OciEngine for MicrosandboxEngine {
           .volume(&plan.guest_release, |mount| {
             mount.bind(&runner.release_root).readonly().nosuid().nodev()
           });
-        if plan.protected_inputs.is_some() {
+        if let Some(workspace_anchor) = &plan.workspace_anchor {
+          // Microsandbox applies parent mounts before nested mounts. The
+          // read-only anchor supplies only their empty destination directories,
+          // keeping the rest of the job root outside the guest.
           builder = builder.volume(&plan.guest_job_root, |mount| {
-            mount.tmpfs().size(1_u32).readonly().noexec().nosuid().nodev()
+            mount.bind(workspace_anchor).readonly().noexec().nosuid().nodev()
           });
         }
         for writable in &plan.writable_mounts {

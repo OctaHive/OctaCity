@@ -320,6 +320,7 @@ async fn maps_verified_host_paths_into_the_guest() {
   assert_eq!(plan.guest_plugins_dir, Path::new("/opt/octacity/octa/plugins"));
   assert_eq!(plan.host_job_root, job_root);
   assert_eq!(plan.guest_job_root, "/work");
+  assert!(plan.workspace_anchor.is_none());
   assert_eq!(plan.guest_workspace, "/work/workspace");
   assert_eq!(plan.guest_data_dir, Path::new("/work/workspace/.octacity"));
   assert_eq!(plan.root_tmpfs_mib, 256);
@@ -389,7 +390,17 @@ async fn projects_only_the_bounded_factory_roots() {
   let plan = SandboxPlan::build("agent-1", &runner(&release), &request)
     .await
     .unwrap();
+  let workspace_anchor = job_root.join(".microsandbox-workspace");
+  assert!(workspace_anchor.is_dir());
+  let mut anchor_entries = fs::read_dir(&workspace_anchor)
+    .unwrap()
+    .map(|entry| entry.unwrap().file_name())
+    .collect::<Vec<_>>();
+  anchor_entries.sort();
+  assert_eq!(anchor_entries, ["output", "scratch", "source"]);
+  assert!(!workspace_anchor.join("protected").exists());
   assert_eq!(plan.guest_workspace, FACTORY_SOURCE_ROOT);
+  assert_eq!(plan.workspace_anchor, Some(workspace_anchor));
   assert_eq!(plan.guest_data_dir, Path::new(FACTORY_SCRATCH_ROOT).join(".octacity"));
   assert_eq!(plan.protected_inputs, Some(protected.clone()));
   assert_eq!(plan.process_limit, Some(3));
@@ -406,7 +417,7 @@ async fn projects_only_the_bounded_factory_roots() {
     1024
   );
   assert!(plan.read_only_mounts.is_empty());
-  assert!(plan.masked_job_directories.contains(&"/workspace/protected".to_owned()));
+  assert!(plan.masked_job_directories.is_empty());
 
   request.factory.as_mut().unwrap().source_read_only = true;
   let read_only_plan = SandboxPlan::build("agent-1", &runner(&release), &request)
@@ -421,6 +432,12 @@ async fn projects_only_the_bounded_factory_roots() {
   assert_eq!(read_only_plan.read_only_mounts.len(), 1);
   assert_eq!(read_only_plan.read_only_mounts[0].host, source);
   assert_eq!(read_only_plan.read_only_mounts[0].guest, FACTORY_SOURCE_ROOT);
+
+  fs::write(job_root.join(".microsandbox-workspace/unexpected"), []).unwrap();
+  assert!(matches!(
+    SandboxPlan::build("agent-1", &runner(&release), &request).await,
+    Err(ExecutionError::Invalid(message)) if message.contains("unexpected entry")
+  ));
 
   let mut permissions = fs::metadata(&protected).unwrap().permissions();
   #[cfg(unix)]
