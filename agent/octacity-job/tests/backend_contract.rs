@@ -1052,10 +1052,12 @@ fn assert_no_factory_output_declarations(results: &[serde_json::Value]) {
       .expect("Factory runner result must contain an array of tasks");
     for task in tasks {
       for field in ["artifacts", "reports"] {
-        let declarations = task
-          .get(field)
-          .and_then(serde_json::Value::as_array)
-          .unwrap_or_else(|| panic!("Factory runner task must contain an array of {field}"));
+        let Some(value) = task.get(field) else {
+          continue;
+        };
+        let declarations = value
+          .as_array()
+          .unwrap_or_else(|| panic!("Factory runner task {field} must be an array when present"));
         assert!(
           declarations.is_empty(),
           "Factory output authority is empty but the runner declared {field}"
@@ -1073,6 +1075,34 @@ fn empty_factory_output_authority_allows_structured_task_results() {
       "task_id": 1,
       "conclusion": { "status": "succeeded" },
       "artifacts": [],
+      "reports": []
+    }]
+  })];
+
+  assert_no_factory_output_declarations(&results);
+}
+
+#[test]
+fn empty_factory_output_authority_allows_omitted_empty_declarations() {
+  let results = [serde_json::json!({
+    "run_id": 1,
+    "tasks": [{
+      "task_id": 1,
+      "conclusion": { "status": "succeeded" }
+    }]
+  })];
+
+  assert_no_factory_output_declarations(&results);
+}
+
+#[test]
+#[should_panic(expected = "Factory runner task artifacts must be an array when present")]
+fn empty_factory_output_authority_rejects_invalid_declaration_shapes() {
+  let results = [serde_json::json!({
+    "run_id": 1,
+    "tasks": [{
+      "task_id": 1,
+      "artifacts": null,
       "reports": []
     }]
   })];
