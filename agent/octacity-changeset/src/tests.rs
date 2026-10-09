@@ -30,7 +30,7 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
   git_run_with_identity(&git, &origin, &["commit", "--quiet", "-m", "base"]);
   let workspace = root.path().join("workspace");
   assert!(
-    Command::new(&git)
+    git_command(&git)
       .args(["clone", "--quiet", "--depth=1", "--no-local"])
       .arg(&origin)
       .arg(&workspace)
@@ -606,7 +606,7 @@ fn git_executable() -> PathBuf {
 
 fn git_run(git: &Path, workspace: &Path, arguments: &[&str]) {
   assert!(
-    Command::new(git)
+    git_command(git)
       .args(arguments)
       .current_dir(workspace)
       .status()
@@ -617,7 +617,7 @@ fn git_run(git: &Path, workspace: &Path, arguments: &[&str]) {
 
 fn git_run_with_identity(git: &Path, workspace: &Path, arguments: &[&str]) {
   assert!(
-    Command::new(git)
+    git_command(git)
       .args(arguments)
       .current_dir(workspace)
       .env("GIT_AUTHOR_NAME", "Fixture")
@@ -631,13 +631,25 @@ fn git_run_with_identity(git: &Path, workspace: &Path, arguments: &[&str]) {
 }
 
 fn git_output(git: &Path, workspace: &Path, arguments: &[&str]) -> String {
-  let output = Command::new(git)
+  let output = git_command(git)
     .args(arguments)
     .current_dir(workspace)
     .output()
     .unwrap();
   assert!(output.status.success());
   String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn git_command(git: &Path) -> Command {
+  let mut command = Command::new(git);
+  command
+    .env_clear()
+    .env("GIT_CONFIG_NOSYSTEM", "1")
+    .env("GIT_CONFIG_GLOBAL", super::null_device())
+    .env("GIT_TERMINAL_PROMPT", "0")
+    .arg("-c")
+    .arg("core.autocrlf=false");
+  command
 }
 
 fn digest(path: &Path) -> String {
