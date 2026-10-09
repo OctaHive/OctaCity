@@ -307,6 +307,26 @@ async fn delete_metadata_page(
      DELETE FROM factory_build_links WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_stage_attempts WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_stage_attempts WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_node_attempt_completions WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
+     DELETE FROM factory_node_attempt_completions WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT node.ctid FROM factory_node_attempts AS node \
+       WHERE node.run_id = $1 \
+         AND NOT EXISTS (SELECT 1 FROM factory_stage_attempts AS stage WHERE stage.id = node.id) \
+         AND NOT EXISTS (SELECT 1 FROM factory_flow_runs AS child WHERE child.parent_node_attempt_id = node.id) \
+       ORDER BY node.ctid LIMIT $2) \
+     DELETE FROM factory_node_attempts AS node USING selected WHERE node.ctid = selected.ctid",
+    "WITH selected AS (SELECT cycle.ctid FROM factory_workflow_cycles AS cycle \
+       WHERE cycle.factory_run_id = $1 \
+         AND NOT EXISTS (SELECT 1 FROM factory_node_attempts AS node WHERE node.workflow_cycle_id = cycle.id) \
+       ORDER BY cycle.ctid LIMIT $2) \
+     DELETE FROM factory_workflow_cycles AS cycle USING selected WHERE cycle.ctid = selected.ctid",
+    "WITH selected AS (SELECT flow.ctid FROM factory_flow_runs AS flow \
+       WHERE flow.factory_run_id = $1 \
+         AND NOT EXISTS (SELECT 1 FROM factory_node_attempts AS node WHERE node.flow_run_id = flow.id) \
+         AND NOT EXISTS (SELECT 1 FROM factory_workflow_cycles AS cycle WHERE cycle.flow_run_id = flow.id) \
+         AND NOT EXISTS (SELECT 1 FROM factory_flow_runs AS child WHERE child.parent_flow_run_id = flow.id) \
+       ORDER BY flow.ctid LIMIT $2) \
+     DELETE FROM factory_flow_runs AS flow USING selected WHERE flow.ctid = selected.ctid",
     "WITH selected AS (SELECT ctid FROM factory_run_budgets WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_run_budgets WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_lifecycle_checkpoints WHERE run_id = $1 ORDER BY ctid LIMIT $2) \

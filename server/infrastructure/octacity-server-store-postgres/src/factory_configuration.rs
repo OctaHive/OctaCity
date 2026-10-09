@@ -1,5 +1,7 @@
 use octacity_server_domain::{EntityKind, ProjectId, Timestamp};
-use octacity_server_factory::{FactoryConfiguration, FactoryConfigurationId, FactoryConfigurationVersion};
+use octacity_server_factory::{
+  FactoryConfiguration, FactoryConfigurationId, FactoryConfigurationVersion, PinnedFlowDefinitionClosure,
+};
 use octacity_server_store::{
   CreateFactoryConfiguration, FactoryConfigurationMutationIntent, FactoryConfigurationMutationOutcome,
   ManagementMutation, MutationAuditContext, MutationDisposition, PublishedFactoryConfiguration,
@@ -275,6 +277,50 @@ async fn insert_version(
   .execute(&mut **transaction)
   .await
   .map_err(|error| classify(error, EntityKind::FactoryConfiguration))?;
+  let closure =
+    PinnedFlowDefinitionClosure::from_stage_projection(configuration).map_err(|_| StoreError::Unavailable)?;
+  for (ordinal, definition) in closure.definitions().iter().enumerate() {
+    let reference = definition.reference();
+    sqlx::query(
+      "INSERT INTO factory_flow_definition_versions (id, version, definition_digest, definition) \
+       VALUES ($1, $2, $3, $4) ON CONFLICT (id, version) DO NOTHING",
+    )
+    .bind(reference.id().as_uuid())
+    .bind(i64::try_from(reference.version().get()).map_err(|_| StoreError::Unavailable)?)
+    .bind(reference.digest().as_bytes().as_slice())
+    .bind(Json(definition))
+    .execute(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+    let persisted_digest: Vec<u8> = sqlx::query_scalar(
+      "SELECT definition_digest FROM factory_flow_definition_versions WHERE id = $1 AND version = $2",
+    )
+    .bind(reference.id().as_uuid())
+    .bind(i64::try_from(reference.version().get()).map_err(|_| StoreError::Unavailable)?)
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+    if persisted_digest.as_slice() != reference.digest().as_bytes() {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::FactoryConfiguration,
+      });
+    }
+    sqlx::query(
+      "INSERT INTO factory_configuration_flow_definitions \
+         (factory_configuration_id, factory_configuration_version, flow_definition_id, \
+          flow_definition_version, ordinal, is_root) \
+       VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind(configuration.reference().id().as_uuid())
+    .bind(version_number(configuration.reference().version())?)
+    .bind(reference.id().as_uuid())
+    .bind(i64::try_from(reference.version().get()).map_err(|_| StoreError::Unavailable)?)
+    .bind(i16::try_from(ordinal).map_err(|_| StoreError::Unavailable)?)
+    .bind(reference == closure.root())
+    .execute(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  }
   Ok(())
 }
 

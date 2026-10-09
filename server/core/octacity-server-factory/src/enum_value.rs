@@ -160,6 +160,22 @@ factory_enum!(
   }
 );
 factory_enum!(
+  FlowNodeKind,
+  FactoryEnumKind::FlowNode,
+  "Closed provider-neutral kind of one immutable Factory Flow node.",
+  {
+    BuildCommand => "build_command",
+    Reasoning => "reasoning",
+    DecisionSignal => "decision_signal",
+    DeterministicGate => "deterministic_gate",
+    FanOut => "fan_out",
+    Join => "join",
+    HumanGate => "human_gate",
+    TrustedAction => "trusted_action",
+    SubflowCall => "subflow_call",
+  }
+);
+factory_enum!(
   MacroCallKind,
   FactoryEnumKind::Call,
   "Purpose of one bounded reasoning call within a Stage Attempt.",
@@ -303,6 +319,7 @@ mod tests {
     let errors = [
       "future".parse::<FactoryRunState>().expect_err("unknown run state"),
       "future".parse::<FactoryStageKind>().expect_err("unknown stage"),
+      "future".parse::<FlowNodeKind>().expect_err("unknown Flow node"),
       "future".parse::<MacroCallKind>().expect_err("unknown call"),
       "future".parse::<RiskClass>().expect_err("unknown risk"),
       "future"

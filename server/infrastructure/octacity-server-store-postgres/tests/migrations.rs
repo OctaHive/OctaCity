@@ -17,7 +17,7 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 33] = [
+const FACTORY_TABLES: [&str; 39] = [
   "factory_assessments",
   "factory_audit_links",
   "factory_build_link_jobs",
@@ -29,6 +29,7 @@ const FACTORY_TABLES: [&str; 33] = [
   "factory_call_stage_dependencies",
   "factory_changesets",
   "factory_configuration_versions",
+  "factory_configuration_flow_definitions",
   "factory_configurations",
   "factory_context_manifests",
   "factory_decision_signal_receipts",
@@ -39,7 +40,11 @@ const FACTORY_TABLES: [&str; 33] = [
   "factory_escalations",
   "factory_evaluation_plans",
   "factory_evidence_manifests",
+  "factory_flow_definition_versions",
+  "factory_flow_runs",
   "factory_lifecycle_checkpoints",
+  "factory_node_attempts",
+  "factory_node_attempt_completions",
   "factory_outbox_records",
   "factory_reporting_attempts",
   "factory_run_budgets",
@@ -51,6 +56,7 @@ const FACTORY_TABLES: [&str; 33] = [
   "factory_stage_attempts",
   "factory_stage_handoffs",
   "factory_work_envelopes",
+  "factory_workflow_cycles",
 ];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
@@ -408,6 +414,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_call_stage_dependencies",
     "factory_changesets",
     "factory_configuration_versions",
+    "factory_configuration_flow_definitions",
     "factory_configurations",
     "factory_context_manifests",
     "factory_decision_signal_receipts",
@@ -418,7 +425,11 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_escalations",
     "factory_evaluation_plans",
     "factory_evidence_manifests",
+    "factory_flow_definition_versions",
+    "factory_flow_runs",
     "factory_lifecycle_checkpoints",
+    "factory_node_attempts",
+    "factory_node_attempt_completions",
     "factory_outbox_records",
     "factory_reporting_attempts",
     "factory_retention_work",
@@ -431,6 +442,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_stage_attempts",
     "factory_stage_handoffs",
     "factory_work_envelopes",
+    "factory_workflow_cycles",
     "cache_actions",
     "cache_blobs",
     "idempotency_records",
@@ -841,8 +853,8 @@ async fn verify_factory_constraint_enforcement(pool: &sqlx::PgPool) -> Result<()
   let foreign_key = sqlx::query(
     "INSERT INTO factory_runs \
        (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
-        state, version, subject_digest, admitted_at, updated_at) \
-     VALUES ($1, $2, $3, $4, 1, 'admitted', 1, $5, now(), now())",
+        state, version, subject_digest, flow_admission_limits, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, 1, 'admitted', 1, $5, '{}'::jsonb, now(), now())",
   )
   .bind(uuid::Uuid::new_v4())
   .bind(project_id)

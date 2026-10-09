@@ -1,0 +1,177 @@
+{
+  "format_version": 1,
+  "semantics": {
+    "edge_orientation": "predecessor_to_successor",
+    "identity_order": "ascending_utf8_bytes",
+    "topological_tie_break": "smallest_ready_identity",
+    "depth_unit": "edge_count",
+    "facts_require_well_formed_structure": true
+  },
+  "cases": [
+    {
+      "name": "canonical_diamond",
+      "covers": [
+        "canonical_order",
+        "edge_orientation",
+        "identity",
+        "measurements",
+        "reachability",
+        "strongly_connected_components",
+        "topological_order"
+      ],
+      "nodes": ["delta", "beta", "alpha", "gamma"],
+      "edges": [
+        { "from": "gamma", "to": "delta" },
+        { "from": "alpha", "to": "gamma" },
+        { "from": "beta", "to": "delta" },
+        { "from": "alpha", "to": "beta" }
+      ],
+      "roots": ["alpha"],
+      "expected": {
+        "status": "valid",
+        "canonical_nodes": ["alpha", "beta", "delta", "gamma"],
+        "canonical_edges": [
+          { "from": "alpha", "to": "beta" },
+          { "from": "alpha", "to": "gamma" },
+          { "from": "beta", "to": "delta" },
+          { "from": "gamma", "to": "delta" }
+        ],
+        "reachable": ["alpha", "beta", "delta", "gamma"],
+        "components": [["alpha"], ["beta"], ["delta"], ["gamma"]],
+        "cyclic_components": [],
+        "topological_order": ["alpha", "beta", "gamma", "delta"],
+        "measurements": {
+          "node_count": 4,
+          "edge_count": 4,
+          "max_depth": 2,
+          "max_fan_out": 2
+        }
+      }
+    },
+    {
+      "name": "disconnected_reachability",
+      "covers": ["reachability", "topological_order"],
+      "nodes": ["root", "orphan", "leaf"],
+      "edges": [{ "from": "root", "to": "leaf" }],
+      "roots": ["root"],
+      "expected": {
+        "status": "valid",
+        "canonical_nodes": ["leaf", "orphan", "root"],
+        "canonical_edges": [{ "from": "root", "to": "leaf" }],
+        "reachable": ["leaf", "root"],
+        "components": [["leaf"], ["orphan"], ["root"]],
+        "cyclic_components": [],
+        "topological_order": ["orphan", "root", "leaf"],
+        "measurements": {
+          "node_count": 3,
+          "edge_count": 1,
+          "max_depth": 1,
+          "max_fan_out": 1
+        }
+      }
+    },
+    {
+      "name": "cycle_with_tail",
+      "covers": ["cycle", "reachability", "strongly_connected_components"],
+      "nodes": ["delta", "alpha", "gamma", "beta"],
+      "edges": [
+        { "from": "gamma", "to": "delta" },
+        { "from": "beta", "to": "gamma" },
+        { "from": "beta", "to": "alpha" },
+        { "from": "alpha", "to": "beta" }
+      ],
+      "roots": ["alpha"],
+      "expected": {
+        "status": "valid",
+        "canonical_nodes": ["alpha", "beta", "delta", "gamma"],
+        "canonical_edges": [
+          { "from": "alpha", "to": "beta" },
+          { "from": "beta", "to": "alpha" },
+          { "from": "beta", "to": "gamma" },
+          { "from": "gamma", "to": "delta" }
+        ],
+        "reachable": ["alpha", "beta", "delta", "gamma"],
+        "components": [["alpha", "beta"], ["delta"], ["gamma"]],
+        "cyclic_components": [["alpha", "beta"]],
+        "topological_order": null,
+        "measurements": {
+          "node_count": 4,
+          "edge_count": 4,
+          "max_depth": null,
+          "max_fan_out": 2
+        }
+      }
+    },
+    {
+      "name": "self_loop",
+      "covers": ["cycle", "self_loop", "strongly_connected_components"],
+      "nodes": ["loop"],
+      "edges": [{ "from": "loop", "to": "loop" }],
+      "roots": ["loop"],
+      "expected": {
+        "status": "valid",
+        "canonical_nodes": ["loop"],
+        "canonical_edges": [{ "from": "loop", "to": "loop" }],
+        "reachable": ["loop"],
+        "components": [["loop"]],
+        "cyclic_components": [["loop"]],
+        "topological_order": null,
+        "measurements": {
+          "node_count": 1,
+          "edge_count": 1,
+          "max_depth": null,
+          "max_fan_out": 1
+        }
+      }
+    },
+    {
+      "name": "duplicate_node",
+      "covers": ["duplicate_node"],
+      "nodes": ["alpha", "alpha"],
+      "edges": [],
+      "roots": ["alpha"],
+      "expected": {
+        "status": "invalid",
+        "issues": [{ "kind": "duplicate_node", "node": "alpha" }]
+      }
+    },
+    {
+      "name": "duplicate_edge",
+      "covers": ["duplicate_edge"],
+      "nodes": ["alpha", "beta"],
+      "edges": [
+        { "from": "alpha", "to": "beta" },
+        { "from": "alpha", "to": "beta" }
+      ],
+      "roots": ["alpha"],
+      "expected": {
+        "status": "invalid",
+        "issues": [
+          { "kind": "duplicate_edge", "from": "alpha", "to": "beta" }
+        ]
+      }
+    },
+    {
+      "name": "missing_predecessor",
+      "covers": ["missing_reference"],
+      "nodes": ["beta"],
+      "edges": [{ "from": "alpha", "to": "beta" }],
+      "roots": ["beta"],
+      "expected": {
+        "status": "invalid",
+        "issues": [{ "kind": "missing_node", "node": "alpha" }]
+      }
+    },
+    {
+      "name": "missing_successor",
+      "covers": ["missing_reference"],
+      "nodes": ["alpha"],
+      "edges": [{ "from": "alpha", "to": "beta" }],
+      "roots": ["alpha"],
+      "expected": {
+        "status": "invalid",
+        "issues": [{ "kind": "missing_node", "node": "beta" }]
+      }
+    }
+  ]
+}

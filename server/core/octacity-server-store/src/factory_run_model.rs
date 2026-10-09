@@ -3,12 +3,13 @@ use std::num::NonZeroU16;
 use octacity_server_artifacts::ArtifactIdentity;
 use octacity_server_domain::{AttemptId, AttemptVersion, BuildId, BuildVersion, ImmutableRevision, JobId, Timestamp};
 use octacity_server_factory::{
-  Assessment, BudgetUsage, BuildConfigurationRef, ChangeSet, ChangeSetId, ContextManifest, Decision, DecisionId,
-  DecisionSignalProgress, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation, EvaluationPlan,
-  EvidenceManifest, FactoryClaim, FactoryClaimFence, FactoryConfigurationRef, FactoryDigest, FactoryKey,
-  FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunVersion, FactoryStageKind, FactoryStageTarget,
-  FactoryWipUsage, MacroCall, MacroCallCompletion, ReportingAttempt, StageAttempt, StageAttemptCompletion,
-  StageAttemptNumber, StageHandoff, WorkEnvelope,
+  AdmittedFlow, Assessment, BudgetUsage, BuildConfigurationRef, ChangeSet, ChangeSetId, ContextManifest, Decision,
+  DecisionId, DecisionSignalProgress, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation,
+  EvaluationPlan, EvidenceManifest, FactoryClaim, FactoryClaimFence, FactoryConfigurationRef, FactoryDigest,
+  FactoryKey, FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunVersion, FactoryStageKind,
+  FactoryStageTarget, FactoryWipUsage, FlowRun, MacroCall, MacroCallCompletion, NodeAttempt, NodeAttemptCompletion,
+  ReportingAttempt, StageAttempt, StageAttemptCompletion, StageAttemptNumber, StageHandoff, WorkEnvelope,
+  WorkflowCycle,
 };
 use octacity_server_orchestrator::BuildState;
 use serde::{Deserialize, Serialize};
@@ -782,7 +783,28 @@ pub struct SettleFactoryOutbox {
 
 /// Bounded immutable rows appended by one code-owned Factory transition.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FactoryFlowHistory {
+  /// Root and nested Flow Runs in append-only creation order.
+  pub runs: Vec<FlowRun>,
+  /// Append-only workflow cycles.
+  pub cycles: Vec<WorkflowCycle>,
+  /// Append-only generic Node Attempts.
+  pub attempts: Vec<NodeAttempt>,
+  /// Append-only typed generic Node Attempt results.
+  pub completions: Vec<NodeAttemptCompletion>,
+}
+
+impl FactoryFlowHistory {
+  fn record_count(&self) -> usize {
+    self.runs.len() + self.cycles.len() + self.attempts.len() + self.completions.len()
+  }
+}
+
+/// Bounded immutable rows appended by one code-owned Factory transition.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FactoryRunHistoryAppend {
+  /// Generic Flow runtime rows kept behind one cohesive boundary.
+  pub flow: FactoryFlowHistory,
   /// Newly created Stage Attempts.
   pub stage_attempts: Vec<StageAttempt>,
   /// Newly observed terminal Stage Attempt results and consumed budgets.
@@ -825,7 +847,8 @@ impl FactoryRunHistoryAppend {
   /// Returns the total number of immutable domain rows in this append.
   #[must_use]
   pub fn record_count(&self) -> usize {
-    self.stage_attempts.len()
+    self.flow.record_count()
+      + self.stage_attempts.len()
       + self.stage_attempt_completions.len()
       + self.stage_handoffs.len()
       + self.context_manifests.len()
@@ -886,6 +909,10 @@ pub struct FactoryRunSnapshot {
   pub work: WorkEnvelope,
   /// Current Run state and optimistic aggregate version.
   pub run: FactoryRun,
+  /// Immutable admitted definition closure and initial root Flow records.
+  pub admitted_flow: AdmittedFlow,
+  /// Complete generic Flow runtime history.
+  pub flow: FactoryFlowHistory,
   /// Current claim, when a reconciler owns the Run.
   pub current_claim: Option<FactoryRunClaimRecord>,
   /// Append-only ownership history.

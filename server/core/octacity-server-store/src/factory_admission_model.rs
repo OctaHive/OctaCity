@@ -1,7 +1,7 @@
 use octacity_server_domain::{ProjectId, RepositoryId, RepositoryVersion, Timestamp};
 use octacity_server_factory::{
-  ExternalWorkIdentity, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryRun,
-  FactoryRunState, FactoryRunVersion, WorkEnvelope,
+  AdmittedFlow, ExternalWorkIdentity, FactoryConfiguration, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryDigest, FactoryKey, FactoryRun, FactoryRunState, FactoryRunVersion, WorkEnvelope,
 };
 use serde::{Deserialize, Serialize};
 
@@ -67,6 +67,8 @@ pub struct AdmitFactoryWork {
   pub work: WorkEnvelope,
   /// Initial admitted Factory Run projection.
   pub run: FactoryRun,
+  /// Exact Flow Definition closure and initial root execution records.
+  pub flow: AdmittedFlow,
   /// Authoritative admission time.
   pub admitted_at: Timestamp,
 }
@@ -89,8 +91,28 @@ impl AdmitFactoryWork {
       && self.run.version() == FactoryRunVersion::INITIAL
       && self.run.configuration() == self.work.configuration()
       && self.run.work_id() == self.work.id()
-      && self.run.subject() == self.work.subject();
+      && self.run.subject() == self.work.subject()
+      && self.flow.root_run().factory_run_id() == self.run.id()
+      && self.flow.root_run().definition() == self.flow.closure().root()
+      && self.flow.initial_cycle().flow_run_id() == self.flow.root_run().id();
     valid.then_some(()).ok_or_else(|| {
+      StoreError::invalid(
+        StoreOperation::AdmitFactoryWork,
+        StoreInputError::InvalidFactoryAdmission,
+      )
+    })
+  }
+
+  /// Verifies that the admitted closure is exactly the one selected by the
+  /// immutable configuration version, rather than a caller-supplied variant.
+  pub fn validate_configuration(&self, configuration: &FactoryConfiguration) -> Result<(), StoreError> {
+    let expected = AdmittedFlow::from_stage_projection(configuration, &self.run).map_err(|_| {
+      StoreError::invalid(
+        StoreOperation::AdmitFactoryWork,
+        StoreInputError::InvalidFactoryAdmission,
+      )
+    })?;
+    (self.flow == expected).then_some(()).ok_or_else(|| {
       StoreError::invalid(
         StoreOperation::AdmitFactoryWork,
         StoreInputError::InvalidFactoryAdmission,
@@ -107,6 +129,8 @@ pub struct PublishedFactoryAdmission {
   pub work: WorkEnvelope,
   /// Initial durable Factory Run projection.
   pub run: FactoryRun,
+  /// Exact immutable Flow admission pinned with the Run.
+  pub flow: AdmittedFlow,
   /// Authoritative admission time.
   pub admitted_at: Timestamp,
 }

@@ -288,11 +288,14 @@ pub(super) fn seeded_store(run_count: usize) -> Arc<InMemoryFactoryConfiguration
     )
     .expect("fixture Work Envelope is valid");
     let run = octacity_server_factory::FactoryRun::admitted(octacity_server_factory::FactoryRunId::generate(), &work);
+    let flow = octacity_server_factory::AdmittedFlow::from_stage_projection(&configuration, &run)
+      .expect("fixture Flow projection is valid");
     store
       .seed_factory_run(
         PublishedFactoryAdmission {
           work,
           run,
+          flow,
           admitted_at: time(1),
         },
         digest(u8::try_from(ordinal + 30).expect("fixture ordinal is bounded")),

@@ -243,10 +243,20 @@ async fn link_factory_build_and_hold(
 async fn link_factory_build(pool: &sqlx::PgPool, fixture: &octacity_server_store::testing::StoreContractFixture) {
   let stage_id = uuid(3_000);
   sqlx::query(
-    "INSERT INTO factory_stage_attempts \
-       (id, run_id, attempt_number, stage_kind, target_digest, input_digest, stage_attempt, created_at) \
-     VALUES ($1, $2, 1, 'implementation', decode(repeat('31', 32), 'hex'), \
+    "INSERT INTO factory_node_attempts \
+       (id, run_id, flow_run_id, workflow_cycle_id, node_key, attempt_number, node_kind, input_digest, node_attempt, created_at) \
+     VALUES ($1, $2, $2, $2, 'implementation', 1, 'build_command', \
        decode(repeat('32', 32), 'hex'), '{}', to_timestamp(0))",
+  )
+  .bind(stage_id)
+  .bind(run_id(3).as_uuid())
+  .execute(pool)
+  .await
+  .unwrap();
+  sqlx::query(
+    "INSERT INTO factory_stage_attempts \
+       (id, run_id, stage_kind, target_digest, stage_attempt) \
+     VALUES ($1, $2, 'implementation', decode(repeat('31', 32), 'hex'), '{}')",
   )
   .bind(stage_id)
   .bind(run_id(3).as_uuid())
@@ -321,6 +331,19 @@ async fn seed_factory_runs(pool: &sqlx::PgPool) {
     )
     .await
     .unwrap();
+  transaction
+    .execute(
+      "INSERT INTO factory_flow_definition_versions \
+         (id, version, definition_digest, definition) \
+       VALUES ('00000000-0000-0000-0000-000000000104', 1, decode(repeat('01', 32), 'hex'), '{}'); \
+       INSERT INTO factory_configuration_flow_definitions \
+         (factory_configuration_id, factory_configuration_version, flow_definition_id, \
+          flow_definition_version, ordinal, is_root) \
+       VALUES ('00000000-0000-0000-0000-000000000104', 1, \
+               '00000000-0000-0000-0000-000000000104', 1, 0, true)",
+    )
+    .await
+    .unwrap();
 
   for (ordinal, state) in [(1_u8, "implementing"), (2, "escalated"), (3, "completed")] {
     let work_id = uuid(200 + u128::from(ordinal));
@@ -347,15 +370,33 @@ async fn seed_factory_runs(pool: &sqlx::PgPool) {
     sqlx::query(
       "INSERT INTO factory_runs \
          (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
-          state, version, subject_digest, admitted_at, updated_at) \
+          state, version, subject_digest, flow_admission_limits, admitted_at, updated_at) \
        VALUES ($1, '00000000-0000-0000-0000-000000000101', $2, \
-         '00000000-0000-0000-0000-000000000104', 1, $3, 1, decode(repeat($4, 32), 'hex'), \
+         '00000000-0000-0000-0000-000000000104', 1, $3, 1, decode(repeat($4, 32), 'hex'), '{}'::jsonb, \
          to_timestamp(0), to_timestamp(0))",
     )
     .bind(run_id)
     .bind(work_id)
     .bind(state)
     .bind(format!("{:02x}", ordinal + 16))
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    sqlx::query(
+      "INSERT INTO factory_flow_runs \
+         (id, factory_run_id, flow_definition_id, flow_definition_version, created_at) \
+       VALUES ($1, $1, '00000000-0000-0000-0000-000000000104', 1, to_timestamp(0))",
+    )
+    .bind(run_id)
+    .execute(&mut *transaction)
+    .await
+    .unwrap();
+    sqlx::query(
+      "INSERT INTO factory_workflow_cycles \
+         (id, factory_run_id, flow_run_id, cycle_number, created_at) \
+       VALUES ($1, $1, $1, 1, to_timestamp(0))",
+    )
+    .bind(run_id)
     .execute(&mut *transaction)
     .await
     .unwrap();

@@ -480,6 +480,17 @@ fn admission(
   )
   .unwrap();
   let run = FactoryRun::admitted(run_id(run), &work);
+  let projection_fixture = fixture(project_id);
+  let configuration = FactoryConfiguration::publish(
+    configuration_id,
+    FactoryConfigurationVersion::INITIAL,
+    project_id,
+    digest(20),
+    projection_fixture.draft,
+    &projection_fixture.choices,
+  )
+  .unwrap();
+  let flow = octacity_server_factory::AdmittedFlow::from_stage_projection(&configuration, &run).unwrap();
   AdmitFactoryWork {
     probe: FactoryAdmissionProbe {
       source_scope: FactoryWorkSourceScope {
@@ -493,6 +504,7 @@ fn admission(
     repository_version: repository.version,
     work,
     run,
+    flow,
     admitted_at: time(admitted_at),
   }
 }
@@ -593,8 +605,8 @@ async fn seed_plan_rows(pool: &sqlx::PgPool, project_id: ProjectId, repository_i
   sqlx::query(
     "INSERT INTO factory_runs \
        (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, state, \
-        version, subject_digest, admitted_at, updated_at) \
-     VALUES ($1, $2, $3, $4, 1, 'admitted', 1, $5, to_timestamp(2), to_timestamp(2))",
+        version, subject_digest, flow_admission_limits, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, 1, 'admitted', 1, $5, '{}'::jsonb, to_timestamp(2), to_timestamp(2))",
   )
   .bind(run_id(501).as_uuid())
   .bind(project_id.as_uuid())
@@ -697,9 +709,9 @@ mod run_contract {
     BoundedSummary, BudgetUsage, CandidateSubject, ChangeSet, ChangeSetId, ContextManifest, ContextManifestEntry,
     ContextManifestId, ContextSourceKind, DecisionSignalProgress, FactoryArtifactReference, FactoryClaim,
     FactoryClaimFence, FactoryContextReference, FactoryLifecycleProgress, FactoryRunState, FactoryRunVersion,
-    FactorySafeText, FactoryStageProgress, FactoryStageTarget, FactoryTaskSubject, MacroCall, MacroCallDeclaration,
-    MacroCallId, MacroCallKind, StageAttempt, StageAttemptId, StageAttemptNumber, StageHandoff, StageHandoffId,
-    StageHandoffOutcome,
+    FactorySafeText, FactoryStageProgress, FactoryStageTarget, FactoryTaskSubject, FlowInterpreter, MacroCall,
+    MacroCallDeclaration, MacroCallId, MacroCallKind, NodeAttemptCompletion, NodeAttemptCompletionInput, StageAttempt,
+    StageAttemptId, StageAttemptNumber, StageHandoff, StageHandoffId, StageHandoffOutcome,
   };
   use octacity_server_store::{
     AuditActorKind, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRuns, CommitFactoryRunTransition,
@@ -926,7 +938,7 @@ mod run_contract {
       FactoryStageTarget::Implementation,
       BudgetLimit::new(2, 100, 100, 100, 100).unwrap(),
       digest(80),
-      ownership,
+      ownership.clone(),
     );
     let call_subject = FactoryTaskSubject::Exact(stage.subject().clone());
     let context_artifact_id = ArtifactId::generate();
@@ -1055,6 +1067,33 @@ mod run_contract {
     request.current.macro_call_id = Some(child_call.id());
     request.current.build_id = Some(build.build_id);
     request.current.candidate_id = Some(candidate.id());
+    let node = setup.admission.flow.project_stage(stage.clone()).unwrap();
+    let root_definition = setup
+      .admission
+      .flow
+      .closure()
+      .definition(setup.admission.flow.root_run().definition())
+      .unwrap();
+    let accepted = root_definition
+      .node(node.node_key())
+      .unwrap()
+      .outcome(&key("succeeded"))
+      .unwrap();
+    let node_completion = NodeAttemptCompletion::new(
+      &node,
+      root_definition,
+      NodeAttemptCompletionInput {
+        outcome: key("succeeded"),
+        output_schema: accepted.schema().clone(),
+        output_digest: digest(92),
+        ownership,
+        usage: BudgetUsage::default(),
+        observed_at: time(20),
+      },
+    )
+    .unwrap();
+    request.append.flow.attempts.push(node.clone());
+    request.append.flow.completions.push(node_completion.clone());
     request.append.stage_attempts.push(stage.clone());
     request.append.stage_handoffs.push(handoff.clone());
     request.append.context_manifests.push(child_context.clone());
@@ -1067,6 +1106,26 @@ mod run_contract {
 
     let restarted = PostgresStore::new(setup.database.pool.clone());
     let snapshot = restarted.factory_run_snapshot(setup.admission.run.id()).await.unwrap();
+    let validated = snapshot.admitted_flow.validated().unwrap();
+    let directives = FlowInterpreter::new(&validated)
+      .advance(
+        snapshot.admitted_flow.root_run(),
+        snapshot.admitted_flow.initial_cycle(),
+        &node,
+        &node_completion,
+        &snapshot.flow.attempts,
+        &snapshot.flow.completions,
+      )
+      .unwrap();
+    assert!(!directives.is_empty(), "restart must resume from durable Flow facts");
+    assert_eq!(snapshot.admitted_flow, setup.admission.flow);
+    assert_eq!(snapshot.flow.runs, vec![snapshot.admitted_flow.root_run().clone()]);
+    assert_eq!(
+      snapshot.flow.cycles,
+      vec![snapshot.admitted_flow.initial_cycle().clone()]
+    );
+    assert_eq!(snapshot.flow.attempts, vec![node]);
+    assert_eq!(snapshot.flow.completions, vec![node_completion]);
     assert_eq!(snapshot.stage_attempts, vec![stage.clone()]);
     assert_eq!(snapshot.stage_handoffs, vec![handoff.clone()]);
     assert_eq!(snapshot.context_manifests.len(), 2);

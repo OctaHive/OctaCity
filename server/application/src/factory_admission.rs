@@ -154,6 +154,8 @@ where
     )
     .map_err(|_| ApplicationError::invalid())?;
     let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+    let flow = octacity_server_factory::AdmittedFlow::from_stage_projection(configuration, &run)
+      .map_err(|_| ApplicationError::invalid())?;
     self
       .store
       .admit_factory_work(audited_mutation(
@@ -163,6 +165,7 @@ where
           repository_version: command.repository_version,
           work,
           run,
+          flow,
           admitted_at: command.admitted_at,
         },
       )?)

@@ -9,6 +9,14 @@ pub enum FactoryEntityKind {
   WorkEnvelope,
   /// Durable Factory Run.
   FactoryRun,
+  /// Stable immutable Flow Definition.
+  FlowDefinition,
+  /// Root or nested Flow Run.
+  FlowRun,
+  /// Append-only Flow node attempt.
+  NodeAttempt,
+  /// Append-only workflow cycle.
+  WorkflowCycle,
   /// Append-only Stage Attempt.
   StageAttempt,
   /// One bounded macro reasoning call.
@@ -84,6 +92,8 @@ pub enum TextRejection {
 pub enum FactoryEnumKind {
   /// Factory stage kind.
   Stage,
+  /// Closed Factory Flow node kind.
+  FlowNode,
   /// Factory Run state.
   RunState,
   /// Macro call kind.

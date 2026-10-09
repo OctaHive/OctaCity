@@ -454,6 +454,7 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
         crate::StoreInputError::InvalidFactoryAdmission,
       ));
     }
+    request.validate_configuration(&configuration.configuration)?;
     let active_runs = state
       .factory_runs
       .values()
@@ -467,6 +468,7 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
     let outcome = PublishedFactoryAdmission {
       work: request.work,
       run: request.run,
+      flow: request.flow,
       admitted_at: request.admitted_at,
     };
     if state.factory_runs.contains_key(&outcome.run.id()) {

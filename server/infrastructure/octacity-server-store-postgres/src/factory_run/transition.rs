@@ -48,6 +48,18 @@ async fn validate_transition(
     .ok_or(StoreError::Unavailable)?;
   let (record_count, _) = super::snapshot::snapshot_record_counts(transaction, request.run_id).await?;
   let (stage_attempts, stage_completions) = super::history::stage_history(transaction, request.run_id).await?;
+  let (node_attempts, node_completions) = super::history::node_history(transaction, request.run_id).await?;
+  let admitted_flow = super::snapshot::read_admitted_flow(transaction, locked).await?;
+  let flow_run_records = super::snapshot::read_flow_runs(transaction, request.run_id, &admitted_flow).await?;
+  let workflow_cycles = super::snapshot::read_workflow_cycles(transaction, request.run_id, &flow_run_records)
+    .await?
+    .into_iter()
+    .map(|record| (record.id(), record))
+    .collect();
+  let flow_runs = flow_run_records
+    .into_iter()
+    .map(|record| (record.id(), record))
+    .collect();
   let (stage_handoffs, context_manifests, macro_calls, macro_call_completions) =
     super::history::call_context_history(transaction, request.run_id).await?;
   validate_factory_transition(
@@ -57,7 +69,12 @@ async fn validate_transition(
       lifecycle: &locked.lifecycle,
       current: &locked.current,
       claim: &claim,
+      admitted_flow: &admitted_flow,
       stage_attempts: &stage_attempts,
+      node_attempts: &node_attempts,
+      node_completions: &node_completions,
+      flow_runs: &flow_runs,
+      workflow_cycles: &workflow_cycles,
       stage_completions: &stage_completions,
       stage_handoffs: &stage_handoffs,
       context_manifests: &context_manifests,

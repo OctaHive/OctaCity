@@ -2,8 +2,8 @@ use std::str::FromStr as _;
 
 use octacity_server_domain::{EntityKind, RepositoryVersion, Timestamp};
 use octacity_server_factory::{
-  BudgetUsage, DecisionSignalProgress, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun,
-  FactoryRunState, FactoryRunVersion, WorkEnvelope,
+  AdmittedFlow, BudgetUsage, DecisionSignalProgress, FactoryConfiguration, FactoryDigest, FactoryKey,
+  FactoryLifecycleProgress, FactoryRun, FactoryRunState, FactoryRunVersion, WorkEnvelope,
 };
 use octacity_server_store::{
   AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionMutationOutcome, FactoryAdmissionProbe, FactoryAuditFact,
@@ -34,6 +34,7 @@ struct AdmissionFingerprint<'a> {
 #[derive(FromRow)]
 struct AdmissionRow {
   envelope: Json<WorkEnvelope>,
+  configuration: Json<FactoryConfiguration>,
   intent_digest: Vec<u8>,
   run_id: uuid::Uuid,
   state: String,
@@ -64,10 +65,14 @@ pub(crate) async fn replay(
   }
 
   let row = sqlx::query_as::<_, AdmissionRow>(
-    "SELECT work.envelope, work.intent_digest, run.id AS run_id, run.state, run.version, \
+    "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
+            run.id AS run_id, run.state, run.version, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
      FROM factory_work_envelopes AS work \
      JOIN factory_runs AS run ON run.work_envelope_id = work.id \
+     JOIN factory_configuration_versions AS configuration \
+       ON configuration.factory_configuration_id = run.factory_configuration_id \
+      AND configuration.version = run.factory_configuration_version \
      WHERE work.source_kind = $1 AND work.security_scope_digest = $2 AND work.external_identity = $3",
   )
   .bind(probe.source_scope.source.as_str())
@@ -121,6 +126,7 @@ pub(crate) async fn admit(
     MutationStart::Replay(outcome) => return replay_outcome(outcome),
   };
   let configuration = lock_configuration(&mut transaction, &request).await?;
+  request.validate_configuration(&configuration)?;
   require_repository(&mut transaction, &request).await?;
   let active: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM factory_runs \
@@ -170,9 +176,9 @@ pub(crate) async fn admit(
   sqlx::query(
     "INSERT INTO factory_runs \
        (id, project_id, work_envelope_id, factory_configuration_id, factory_configuration_version, \
-        state, version, subject_digest, admitted_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-             to_timestamp($9::double precision / 1000.0), to_timestamp($9::double precision / 1000.0))",
+        state, version, subject_digest, flow_admission_limits, admitted_at, updated_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
+             to_timestamp($10::double precision / 1000.0), to_timestamp($10::double precision / 1000.0))",
   )
   .bind(request.run.id().as_uuid())
   .bind(request.work.subject().project_id().as_uuid())
@@ -182,10 +188,12 @@ pub(crate) async fn admit(
   .bind(request.run.state().as_str())
   .bind(version_number(request.run.version().get())?)
   .bind(subject_digest.as_bytes().as_slice())
+  .bind(Json(request.flow.limits()))
   .bind(request.admitted_at.unix_millis())
   .execute(&mut *transaction)
   .await
   .map_err(|error| classify(error, EntityKind::FactoryRun))?;
+  insert_admitted_flow(&mut transaction, &request).await?;
 
   crate::factory_run::insert_artifact_reference(
     &mut transaction,
@@ -239,6 +247,7 @@ pub(crate) async fn admit(
   let admission = PublishedFactoryAdmission {
     work: request.work,
     run: request.run,
+    flow: request.flow,
     admitted_at: request.admitted_at,
   };
   let outcome = FactoryAdmissionMutationOutcome {
@@ -266,6 +275,51 @@ pub(crate) async fn admit(
   )
   .await?;
   Ok(outcome)
+}
+
+async fn insert_admitted_flow(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &AdmitFactoryWork,
+) -> Result<(), StoreError> {
+  let root = request.flow.root_run();
+  let definition = root.definition();
+  let cycle = request.flow.initial_cycle();
+  let inserted = sqlx::query(
+    "INSERT INTO factory_flow_runs \
+       (id, factory_run_id, flow_definition_id, flow_definition_version, \
+        parent_flow_run_id, parent_node_attempt_id, created_at) \
+     SELECT $1, $2, $3, $4, NULL, NULL, to_timestamp($5::double precision / 1000.0) \
+     FROM factory_configuration_flow_definitions \
+     WHERE factory_configuration_id = $6 AND factory_configuration_version = $7 \
+       AND flow_definition_id = $3 AND flow_definition_version = $4 AND is_root",
+  )
+  .bind(root.id().as_uuid())
+  .bind(request.run.id().as_uuid())
+  .bind(definition.id().as_uuid())
+  .bind(version_number(definition.version().get())?)
+  .bind(request.admitted_at.unix_millis())
+  .bind(request.run.configuration().id().as_uuid())
+  .bind(version_number(request.run.configuration().version().get())?)
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  if inserted.rows_affected() != 1 {
+    return Err(StoreError::Unavailable);
+  }
+  sqlx::query(
+    "INSERT INTO factory_workflow_cycles \
+       (id, factory_run_id, flow_run_id, cycle_number, predecessor_id, created_at) \
+     VALUES ($1, $2, $3, $4, NULL, to_timestamp($5::double precision / 1000.0))",
+  )
+  .bind(cycle.id().as_uuid())
+  .bind(request.run.id().as_uuid())
+  .bind(root.id().as_uuid())
+  .bind(version_number(cycle.number().get())?)
+  .bind(request.admitted_at.unix_millis())
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
 }
 
 fn mutation_identity(
@@ -492,6 +546,7 @@ async fn insert_audit_link(
 
 fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, StoreError> {
   let work = row.envelope.0;
+  let configuration = row.configuration.0;
   let state = FactoryRunState::from_str(&row.state).map_err(|_| StoreError::Unavailable)?;
   let version = FactoryRunVersion::new(positive(row.version)?).map_err(|_| StoreError::Unavailable)?;
   let run = FactoryRun::restore(
@@ -503,9 +558,11 @@ fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, Stor
     version,
   )
   .map_err(|_| StoreError::Unavailable)?;
+  let flow = AdmittedFlow::from_stage_projection(&configuration, &run).map_err(|_| StoreError::Unavailable)?;
   Ok(PublishedFactoryAdmission {
     work,
     run,
+    flow,
     admitted_at: timestamp(row.admitted_at_millis)?,
   })
 }

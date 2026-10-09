@@ -33,6 +33,40 @@ ALTER TABLE factory_configurations
   REFERENCES factory_configuration_versions(factory_configuration_id, version)
   DEFERRABLE INITIALLY DEFERRED;
 
+CREATE TABLE factory_flow_definition_versions (
+  id UUID NOT NULL,
+  version BIGINT NOT NULL,
+  definition_digest BYTEA NOT NULL,
+  definition JSONB NOT NULL,
+  PRIMARY KEY (id, version),
+  CONSTRAINT factory_flow_definition_versions_positive_version CHECK (version > 0),
+  CONSTRAINT factory_flow_definition_versions_digest_shape CHECK (octet_length(definition_digest) = 32),
+  CONSTRAINT factory_flow_definition_versions_document_shape CHECK (
+    jsonb_typeof(definition) = 'object' AND octet_length(definition::text) BETWEEN 2 AND 1048576
+  )
+);
+
+CREATE TABLE factory_configuration_flow_definitions (
+  factory_configuration_id UUID NOT NULL,
+  factory_configuration_version BIGINT NOT NULL,
+  flow_definition_id UUID NOT NULL,
+  flow_definition_version BIGINT NOT NULL,
+  ordinal SMALLINT NOT NULL,
+  is_root BOOLEAN NOT NULL,
+  PRIMARY KEY (factory_configuration_id, factory_configuration_version, flow_definition_id, flow_definition_version),
+  FOREIGN KEY (factory_configuration_id, factory_configuration_version)
+    REFERENCES factory_configuration_versions(factory_configuration_id, version),
+  FOREIGN KEY (flow_definition_id, flow_definition_version)
+    REFERENCES factory_flow_definition_versions(id, version),
+  CONSTRAINT factory_configuration_flow_definitions_ordinal_shape CHECK (ordinal BETWEEN 0 AND 63),
+  CONSTRAINT factory_configuration_flow_definitions_ordinal_key
+    UNIQUE (factory_configuration_id, factory_configuration_version, ordinal)
+);
+
+CREATE UNIQUE INDEX factory_configuration_flow_definitions_root_idx
+  ON factory_configuration_flow_definitions (factory_configuration_id, factory_configuration_version)
+  WHERE is_root;
+
 CREATE TABLE factory_work_envelopes (
   id UUID PRIMARY KEY,
   project_id UUID NOT NULL REFERENCES projects(id),
@@ -84,6 +118,7 @@ CREATE TABLE factory_runs (
   state TEXT NOT NULL,
   version BIGINT NOT NULL,
   subject_digest BYTEA NOT NULL,
+  flow_admission_limits JSONB NOT NULL,
   admitted_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   FOREIGN KEY (factory_configuration_id, factory_configuration_version)
@@ -96,6 +131,10 @@ CREATE TABLE factory_runs (
   ),
   CONSTRAINT factory_runs_positive_version CHECK (version > 0),
   CONSTRAINT factory_runs_subject_digest_shape CHECK (octet_length(subject_digest) = 32),
+  CONSTRAINT factory_runs_flow_admission_limits_shape CHECK (
+    jsonb_typeof(flow_admission_limits) = 'object'
+    AND octet_length(flow_admission_limits::text) BETWEEN 2 AND 65536
+  ),
   CONSTRAINT factory_runs_timestamp_order CHECK (updated_at >= admitted_at)
 );
 
@@ -113,6 +152,45 @@ CREATE TABLE factory_run_claims (
   CONSTRAINT factory_run_claims_fence_shape CHECK (octet_length(fence) = 32),
   CONSTRAINT factory_run_claims_expiry_order CHECK (expires_at > claimed_at),
   CONSTRAINT factory_run_claims_fence_key UNIQUE (run_id, fence)
+);
+
+CREATE TABLE factory_flow_runs (
+  id UUID PRIMARY KEY,
+  factory_run_id UUID NOT NULL REFERENCES factory_runs(id),
+  flow_definition_id UUID NOT NULL,
+  flow_definition_version BIGINT NOT NULL,
+  parent_flow_run_id UUID,
+  parent_node_attempt_id UUID,
+  created_at TIMESTAMPTZ NOT NULL,
+  FOREIGN KEY (flow_definition_id, flow_definition_version)
+    REFERENCES factory_flow_definition_versions(id, version),
+  CONSTRAINT factory_flow_runs_root_parent_shape CHECK (
+    (parent_flow_run_id IS NULL AND parent_node_attempt_id IS NULL)
+    OR (parent_flow_run_id IS NOT NULL AND parent_node_attempt_id IS NOT NULL)
+  ),
+  CONSTRAINT factory_flow_runs_id_run_unique UNIQUE (id, factory_run_id),
+  CONSTRAINT factory_flow_runs_parent_run_fk
+    FOREIGN KEY (parent_flow_run_id, factory_run_id) REFERENCES factory_flow_runs(id, factory_run_id)
+);
+
+CREATE UNIQUE INDEX factory_flow_runs_one_root_idx
+  ON factory_flow_runs (factory_run_id)
+  WHERE parent_flow_run_id IS NULL;
+
+CREATE TABLE factory_workflow_cycles (
+  id UUID PRIMARY KEY,
+  factory_run_id UUID NOT NULL REFERENCES factory_runs(id),
+  flow_run_id UUID NOT NULL REFERENCES factory_flow_runs(id),
+  cycle_number BIGINT NOT NULL,
+  predecessor_id UUID,
+  created_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT factory_workflow_cycles_positive_number CHECK (cycle_number > 0),
+  CONSTRAINT factory_workflow_cycles_flow_run_key UNIQUE (flow_run_id, cycle_number),
+  CONSTRAINT factory_workflow_cycles_id_run_unique UNIQUE (id, factory_run_id),
+  CONSTRAINT factory_workflow_cycles_predecessor_run_fk
+    FOREIGN KEY (predecessor_id, factory_run_id) REFERENCES factory_workflow_cycles(id, factory_run_id),
+  CONSTRAINT factory_workflow_cycles_flow_run_fk
+    FOREIGN KEY (flow_run_id, factory_run_id) REFERENCES factory_flow_runs(id, factory_run_id)
 );
 
 CREATE TABLE factory_run_budgets (
@@ -144,25 +222,78 @@ CREATE TABLE factory_lifecycle_checkpoints (
   CONSTRAINT factory_lifecycle_checkpoints_version_key UNIQUE (run_id, run_version)
 );
 
-CREATE TABLE factory_stage_attempts (
+CREATE TABLE factory_node_attempts (
   id UUID PRIMARY KEY,
   run_id UUID NOT NULL REFERENCES factory_runs(id),
+  flow_run_id UUID NOT NULL REFERENCES factory_flow_runs(id),
+  workflow_cycle_id UUID NOT NULL REFERENCES factory_workflow_cycles(id),
+  node_key TEXT NOT NULL,
   attempt_number BIGINT NOT NULL,
+  node_kind TEXT NOT NULL,
+  input_digest BYTEA NOT NULL,
+  node_attempt JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT factory_node_attempts_positive_number CHECK (attempt_number > 0),
+  CONSTRAINT factory_node_attempts_key_shape CHECK (
+    octet_length(node_key) BETWEEN 1 AND 128 AND node_key ~ '^[a-z0-9][a-z0-9._-]*$'
+  ),
+  CONSTRAINT factory_node_attempts_kind_known CHECK (
+    node_kind IN ('build_command', 'reasoning', 'decision_signal', 'deterministic_gate', 'fan_out', 'join',
+                  'human_gate', 'trusted_action', 'subflow_call')
+  ),
+  CONSTRAINT factory_node_attempts_input_digest_shape CHECK (octet_length(input_digest) = 32),
+  CONSTRAINT factory_node_attempts_document_shape CHECK (
+    jsonb_typeof(node_attempt) = 'object' AND octet_length(node_attempt::text) BETWEEN 2 AND 262144
+  ),
+  CONSTRAINT factory_node_attempts_number_key UNIQUE (flow_run_id, workflow_cycle_id, node_key, attempt_number),
+  CONSTRAINT factory_node_attempts_id_run_unique UNIQUE (id, run_id),
+  CONSTRAINT factory_node_attempts_flow_run_fk
+    FOREIGN KEY (flow_run_id, run_id) REFERENCES factory_flow_runs(id, factory_run_id),
+  CONSTRAINT factory_node_attempts_cycle_run_fk
+    FOREIGN KEY (workflow_cycle_id, run_id) REFERENCES factory_workflow_cycles(id, factory_run_id)
+);
+
+ALTER TABLE factory_flow_runs
+  ADD CONSTRAINT factory_flow_runs_parent_node_fk
+  FOREIGN KEY (parent_node_attempt_id, factory_run_id) REFERENCES factory_node_attempts(id, run_id);
+
+CREATE TABLE factory_node_attempt_completions (
+  id BYTEA PRIMARY KEY,
+  node_attempt_id UUID NOT NULL UNIQUE REFERENCES factory_node_attempts(id),
+  run_id UUID NOT NULL REFERENCES factory_runs(id),
+  outcome TEXT NOT NULL,
+  output_schema_digest BYTEA NOT NULL,
+  output_digest BYTEA NOT NULL,
+  completion JSONB NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT factory_node_attempt_completions_id_shape CHECK (octet_length(id) = 32),
+  CONSTRAINT factory_node_attempt_completions_outcome_shape CHECK (
+    octet_length(outcome) BETWEEN 1 AND 128 AND outcome ~ '^[a-z0-9][a-z0-9._-]*$'
+  ),
+  CONSTRAINT factory_node_attempt_completions_schema_digest_shape CHECK (octet_length(output_schema_digest) = 32),
+  CONSTRAINT factory_node_attempt_completions_output_digest_shape CHECK (octet_length(output_digest) = 32),
+  CONSTRAINT factory_node_attempt_completions_document_shape CHECK (
+    jsonb_typeof(completion) = 'object' AND octet_length(completion::text) BETWEEN 2 AND 262144
+  ),
+  CONSTRAINT factory_node_attempt_completions_attempt_run_fk
+    FOREIGN KEY (node_attempt_id, run_id) REFERENCES factory_node_attempts(id, run_id)
+);
+
+CREATE TABLE factory_stage_attempts (
+  id UUID PRIMARY KEY REFERENCES factory_node_attempts(id),
+  run_id UUID NOT NULL REFERENCES factory_runs(id),
   stage_kind TEXT NOT NULL,
   target_digest BYTEA NOT NULL,
-  input_digest BYTEA NOT NULL,
   stage_attempt JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_stage_attempts_positive_number CHECK (attempt_number > 0),
   CONSTRAINT factory_stage_attempts_kind_shape CHECK (
     octet_length(stage_kind) BETWEEN 1 AND 128 AND stage_kind ~ '^[a-z0-9][a-z0-9._-]*$'
   ),
   CONSTRAINT factory_stage_attempts_target_digest_shape CHECK (octet_length(target_digest) = 32),
-  CONSTRAINT factory_stage_attempts_input_digest_shape CHECK (octet_length(input_digest) = 32),
   CONSTRAINT factory_stage_attempts_document_shape CHECK (
     jsonb_typeof(stage_attempt) = 'object' AND octet_length(stage_attempt::text) BETWEEN 2 AND 262144
   ),
-  CONSTRAINT factory_stage_attempts_number_key UNIQUE (run_id, attempt_number)
+  CONSTRAINT factory_stage_attempts_id_run_fk
+    FOREIGN KEY (id, run_id) REFERENCES factory_node_attempts(id, run_id)
 );
 
 CREATE TABLE factory_stage_attempt_completions (

@@ -29,6 +29,15 @@ mod evidence;
 #[cfg(test)]
 mod evidence_tests;
 mod execution;
+mod flow;
+mod flow_graph;
+#[cfg(test)]
+mod flow_graph_tests;
+#[cfg(test)]
+mod flow_interpreter_tests;
+mod graph;
+#[cfg(test)]
+mod graph_tests;
 mod identity;
 mod lifecycle;
 mod lifecycle_decision;
@@ -80,7 +89,7 @@ pub use decision_signal::{
 pub use enum_value::{
   AssessmentOutcome, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
   DecisionSignalState, DeliveryState, DeterministicGateOutcome, FactoryRunState, FactoryStageKind, FindingSeverity,
-  IndeterminatePolicy, MacroCallKind, MountMode, PermissionCategory, ReportingState, RiskClass,
+  FlowNodeKind, IndeterminatePolicy, MacroCallKind, MountMode, PermissionCategory, ReportingState, RiskClass,
 };
 pub use error::{FactoryChoiceKind, FactoryEntityKind, FactoryEnumKind, FactoryError, FactoryTextKind, TextRejection};
 pub use evaluation::{Decision, DecisionReason, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS};
@@ -95,10 +104,22 @@ pub use execution::{
   DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership, MAX_MACRO_CALL_DEPENDENCIES,
   MAX_MACRO_CALL_DEPTH, MacroCall, MacroCallDeclaration, StageAttempt, StageAttemptCompletion, StageAttemptOutcome,
 };
+pub use flow::{
+  AdmittedFlow, FlowAdmissionLimits, FlowContextProjection, FlowDataProjection, FlowDefinition, FlowDefinitionInput,
+  FlowDefinitionRef, FlowDirective, FlowDirectiveInputs, FlowExecutionPolicy, FlowInterpreter, FlowNodeDefinition,
+  FlowNodeDefinitionInput, FlowOutcomeDefinition, FlowOutcomeKind, FlowRun, FlowRunParent, FlowRuntimeHistory,
+  FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, MAX_FLOW_CONTEXT_SELECTIONS,
+  MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES,
+  MAX_FLOW_FAN_OUT, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT, NodeAttempt, NodeAttemptCompletion,
+  NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity, PinnedFlowDefinitionClosure,
+  ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
+};
+pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
   AssessmentId, ChangeSetId, ContextManifestId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId,
   DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId,
-  MacroCallId, ReportingAttemptId, RetrievalReceiptId, StageAttemptId, StageHandoffId, TaskEnvelopeId, WorkEnvelopeId,
+  FlowDefinitionId, FlowRunId, MacroCallId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, StageAttemptId,
+  StageHandoffId, TaskEnvelopeId, WorkEnvelopeId, WorkflowCycleId,
 };
 pub use lifecycle::{
   DeliveryAttempt, Escalation, FactoryConfigurationRef, FactoryRun, MAX_WORK_SPECIFICATION_REFERENCES,
@@ -137,8 +158,9 @@ pub use task_contract::{
 };
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
-  FactoryKey, FactoryMetadata, FactoryRunVersion, FactorySafeText, FactoryText, MAX_EXTERNAL_WORK_IDENTITY_BYTES,
-  MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
-  MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES, MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY,
-  ReportingAttemptNumber, StageAttemptNumber, WorkPriority,
+  FactoryKey, FactoryMetadata, FactoryRunVersion, FactorySafeText, FactoryText, FlowDefinitionVersion,
+  MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES,
+  MAX_FACTORY_METADATA_KEY_BYTES, MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES,
+  MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, StageAttemptNumber,
+  WorkPriority, WorkflowCycleNumber,
 };

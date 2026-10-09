@@ -152,6 +152,67 @@ class ArchitecturePolicyTests(unittest.TestCase):
             ["ARCH018_FACTORY_CORE_COUPLING"],
         )
 
+    def test_factory_graph_module_rejects_runtime_and_product_coupling(self):
+        invalid_sources = {
+            "crate domain dependency": "use crate::FactoryKey;\n",
+            "external runtime dependency": "use tokio::task::JoinHandle;\n",
+            "plugin dependency": "use octa_plugin::Plugin;\n",
+            "asynchronous scheduling": "async fn schedule() {}\n",
+            "process implementation": "struct GraphCommand;\n",
+            "persistence implementation": "struct GraphStore;\n",
+            "permission and budget policy": "struct GraphPermissionBudget;\n",
+            "provider type": "struct GraphProviderResult;\n",
+            "product domain type": "struct GraphFlowNode;\n",
+            "product wire type": "struct GraphRestRequest;\n",
+            "serialization representation": "#[derive(Serialize)]\nstruct Facts;\n",
+        }
+        for label, source in invalid_sources.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary_directory:
+                package_root = Path(temporary_directory) / "server/core/octacity-server-factory"
+                (package_root / "src").mkdir(parents=True)
+                (package_root / "src/lib.rs").write_text(
+                    "mod graph;\npub struct FactoryCore;\n", encoding="utf-8"
+                )
+                (package_root / "src/graph.rs").write_text(source, encoding="utf-8")
+                package = package_fixture(
+                    ARCHITECTURE.FACTORY_CORE_PACKAGE,
+                    package_root / "Cargo.toml",
+                )
+
+                violations = ARCHITECTURE.check_factory_core_sources(
+                    ARCHITECTURE.Graph(packages=(package,), edges=())
+                )
+
+                self.assertTrue(violations)
+                self.assertEqual(
+                    {violation.code for violation in violations},
+                    {"ARCH018_FACTORY_CORE_COUPLING"},
+                )
+
+    def test_factory_graph_module_must_remain_private(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            package_root = Path(temporary_directory) / "server/core/octacity-server-factory"
+            (package_root / "src").mkdir(parents=True)
+            (package_root / "src/lib.rs").write_text(
+                "pub mod graph;\npub struct FactoryCore;\n", encoding="utf-8"
+            )
+            (package_root / "src/graph.rs").write_text(
+                "pub(crate) struct Facts;\n", encoding="utf-8"
+            )
+            package = package_fixture(
+                ARCHITECTURE.FACTORY_CORE_PACKAGE,
+                package_root / "Cargo.toml",
+            )
+
+            violations = ARCHITECTURE.check_factory_core_sources(
+                ARCHITECTURE.Graph(packages=(package,), edges=())
+            )
+
+            self.assertEqual(
+                [violation.code for violation in violations],
+                ["ARCH018_FACTORY_CORE_COUPLING"],
+            )
+
     def test_build_and_job_lifecycle_cores_cannot_depend_on_factory(self):
         def package(name: str) -> ARCHITECTURE.Package:
             return package_fixture(

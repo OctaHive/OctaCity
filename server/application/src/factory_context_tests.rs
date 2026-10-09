@@ -1,17 +1,20 @@
 use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId, Timestamp};
 use octacity_server_factory::{
-  BoundedSummary, BudgetLimit, ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind,
-  ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryClaimOwnership,
-  FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryContextReference, FactoryDigest,
-  FactoryKey, FactoryMetadata, FactoryRepositoryPath, FactoryRepositoryRange, FactoryRun, FactoryRunId,
-  FactorySafeText, FactoryStageTarget, FactoryTaskSubject, ImmutableReference, MAX_CONTEXT_ENTRY_BYTES,
-  MAX_MACRO_CALL_DEPTH, MacroCall, MacroCallCompletion, MacroCallDeclaration, MacroCallId, MacroCallKind,
+  AdmittedFlow, BoundedSummary, BudgetLimit, ContextManifest, ContextManifestEntry, ContextManifestId,
+  ContextSourceKind, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryClaim, FactoryClaimFence,
+  FactoryClaimOwnership, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
+  FactoryContextReference, FactoryDigest, FactoryKey, FactoryMetadata, FactoryRepositoryPath, FactoryRepositoryRange,
+  FactoryRun, FactoryRunId, FactorySafeText, FactoryStageTarget, FactoryTaskSubject, FlowDefinition, FlowDefinitionId,
+  FlowDefinitionInput, FlowDefinitionVersion, FlowExecutionPolicy, FlowNodeDefinition, FlowNodeDefinitionInput,
+  FlowNodeKind, FlowOutcomeDefinition, FlowOutcomeKind, FlowRun, FlowRunId, FlowTerminalDefinition, FlowTransition,
+  FlowTransitionTarget, ImmutableReference, MAX_CONTEXT_ENTRY_BYTES, MAX_MACRO_CALL_DEPTH, MacroCall,
+  MacroCallCompletion, MacroCallDeclaration, MacroCallId, MacroCallKind, NodeAttempt, PinnedFlowDefinitionClosure,
   RepositoryFragment, RetrievalReceipt, RetrievalReceiptId, RiskClass, StageAttempt, StageAttemptId,
   StageAttemptNumber, StageHandoff, StageHandoffContent, StageHandoffDeclaration, StageHandoffId, StageHandoffOutcome,
   StageHandoffReferences, TaskEnvelopeId, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
-  WorkPriority,
+  WorkPriority, WorkflowCycle,
 };
-use octacity_server_store::{FactoryRunCurrentProjection, FactoryRunSnapshot};
+use octacity_server_store::{FactoryFlowHistory, FactoryRunCurrentProjection, FactoryRunSnapshot};
 use uuid::Uuid;
 
 use crate::{FactoryContextError, FactoryContextSelection, PrepareFactoryCallContext, prepare_factory_call_context};
@@ -45,6 +48,8 @@ fixture_id!(
   FactoryConfigurationId,
   WorkEnvelopeId,
   FactoryRunId,
+  FlowDefinitionId,
+  FlowRunId,
   StageAttemptId,
   StageHandoffId,
   ContextManifestId,
@@ -116,9 +121,70 @@ fn fixture() -> Fixture {
     ),
   );
   let subject = FactoryTaskSubject::Exact(exact);
+  let result_schema = ImmutableReference::new(
+    FactoryKey::new("result").unwrap(),
+    FactoryKey::new("v1").unwrap(),
+    digest(12),
+  );
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: id::<FlowDefinitionId>(3),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: None,
+    entry: FactoryKey::new("implement").unwrap(),
+    nodes: vec![
+      FlowNodeDefinition::new(FlowNodeDefinitionInput {
+        key: FactoryKey::new("implement").unwrap(),
+        kind: FlowNodeKind::BuildCommand,
+        input_schema: None,
+        outcomes: vec![FlowOutcomeDefinition::new(
+          FactoryKey::new("succeeded").unwrap(),
+          FlowOutcomeKind::Success,
+          result_schema.clone(),
+        )],
+        budget: budget(),
+        permissions: octacity_server_factory::FactoryPermissionSet::deny_all(),
+        required: true,
+        subflow: None,
+      })
+      .unwrap(),
+    ],
+    transitions: vec![FlowTransition::new(
+      FactoryKey::new("implement").unwrap(),
+      FactoryKey::new("succeeded").unwrap(),
+      FlowTransitionTarget::Terminal(FactoryKey::new("succeeded").unwrap()),
+    )],
+    terminals: vec![FlowTerminalDefinition::new(
+      FactoryKey::new("succeeded").unwrap(),
+      result_schema,
+    )],
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: FlowExecutionPolicy::new(budget(), octacity_server_factory::FactoryPermissionSet::deny_all(), 1)
+      .unwrap(),
+  })
+  .unwrap();
+  let closure = PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap();
+  let flow_run = FlowRun::root(&run, closure.root()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow_run).unwrap();
+  let node = NodeAttempt::from_stage(stage.clone(), &flow_run, &cycle, FactoryKey::new("implement").unwrap()).unwrap();
+  let root = closure.definition(closure.root()).unwrap();
+  let limits = octacity_server_factory::FlowAdmissionLimits::product_defaults(
+    root.execution().max_active_nodes(),
+    root.execution().budget(),
+    root.execution().permissions().clone(),
+  )
+  .unwrap();
+  let admitted_flow = AdmittedFlow::new(closure, limits, flow_run.clone(), cycle.clone()).unwrap();
   let snapshot = FactoryRunSnapshot {
     work,
     run,
+    admitted_flow,
+    flow: FactoryFlowHistory {
+      runs: vec![flow_run],
+      cycles: vec![cycle],
+      attempts: vec![node],
+      completions: vec![],
+    },
     current_claim: None,
     claims: vec![],
     budgets: vec![],

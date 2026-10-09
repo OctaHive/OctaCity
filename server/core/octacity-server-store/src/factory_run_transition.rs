@@ -1,9 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use octacity_server_factory::{
-  BudgetUsage, ContextManifest, ContextManifestId, FactoryDigest, FactoryRun, MacroCall, MacroCallCompletion,
-  MacroCallId, StageAttempt, StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId,
-  validate_lifecycle_progress, validate_lifecycle_transition,
+  AdmittedFlow, BudgetUsage, ContextManifest, ContextManifestId, FactoryDigest, FactoryRun, FlowRun, FlowRunId,
+  FlowRuntimeHistory, MacroCall, MacroCallCompletion, MacroCallId, NodeAttempt, NodeAttemptCompletion, NodeAttemptId,
+  StageAttempt, StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId, WorkflowCycle, WorkflowCycleId,
+  validate_flow_runtime_history, validate_lifecycle_progress, validate_lifecycle_transition,
 };
 
 use crate::{
@@ -27,8 +28,18 @@ pub struct FactoryTransitionBaseline<'a> {
   pub current: &'a FactoryRunCurrentProjection,
   /// Current fenced ownership row.
   pub claim: &'a FactoryRunClaimRecord,
+  /// Exact immutable Flow closure admitted with the Run.
+  pub admitted_flow: &'a AdmittedFlow,
   /// Existing Stage Attempts keyed by immutable identity.
   pub stage_attempts: &'a BTreeMap<StageAttemptId, StageAttempt>,
+  /// Existing generic Node Attempts keyed by immutable identity.
+  pub node_attempts: &'a BTreeMap<NodeAttemptId, NodeAttempt>,
+  /// Existing generic Node Attempt completions keyed by attempt identity.
+  pub node_completions: &'a BTreeMap<NodeAttemptId, NodeAttemptCompletion>,
+  /// Existing Flow Runs keyed by immutable identity.
+  pub flow_runs: &'a BTreeMap<FlowRunId, FlowRun>,
+  /// Existing Workflow Cycles keyed by immutable identity.
+  pub workflow_cycles: &'a BTreeMap<WorkflowCycleId, WorkflowCycle>,
   /// Existing Stage completions keyed by immutable identity.
   pub stage_completions: &'a BTreeMap<FactoryDigest, StageAttemptCompletion>,
   /// Existing Stage Handoffs keyed by immutable identity.
@@ -117,6 +128,70 @@ pub fn validate_factory_transition(
       && stage.number().get() == expected_attempt_number;
     expected_attempt_number = expected_attempt_number.saturating_add(1);
     valid
+  });
+  let flow_runs = baseline
+    .flow_runs
+    .values()
+    .cloned()
+    .chain(request.append.flow.runs.iter().cloned())
+    .collect::<Vec<_>>();
+  let workflow_cycles = baseline
+    .workflow_cycles
+    .values()
+    .cloned()
+    .chain(request.append.flow.cycles.iter().cloned())
+    .collect::<Vec<_>>();
+  let node_attempts = baseline
+    .node_attempts
+    .values()
+    .cloned()
+    .chain(request.append.flow.attempts.iter().cloned())
+    .collect::<Vec<_>>();
+  let node_completions = baseline
+    .node_completions
+    .values()
+    .cloned()
+    .chain(request.append.flow.completions.iter().cloned())
+    .collect::<Vec<_>>();
+  let flow_runtime_is_valid = validate_flow_runtime_history(
+    baseline.admitted_flow,
+    FlowRuntimeHistory {
+      flow_runs: &flow_runs,
+      cycles: &workflow_cycles,
+      attempts: &node_attempts,
+      completions: &node_completions,
+    },
+  )
+  .is_ok();
+  let appended_nodes_have_current_owner = request.append.flow.attempts.iter().all(|attempt| {
+    attempt.owner() == &request.owner
+      && attempt.claim() == baseline.claim.claim
+      && attempt.deadline() <= baseline.claim.claim.expires_at()
+  });
+  let appended_node_completions_have_current_owner = request.append.flow.completions.iter().all(|completion| {
+    completion.owner() == &request.owner
+      && completion.claim() == baseline.claim.claim
+      && completion
+        .claim()
+        .verify_fence(request.fence, completion.observed_at())
+        .is_ok()
+  });
+  let stage_projection_is_complete = request.append.stage_attempts.iter().all(|stage| {
+    request
+      .append
+      .flow
+      .attempts
+      .iter()
+      .any(|node| baseline.admitted_flow.matches_stage_projection(stage, node))
+  }) && request.append.flow.attempts.iter().all(|node| {
+    node.stage_projection_id().is_none_or(|stage_id| {
+      request
+        .append
+        .stage_attempts
+        .iter()
+        .find(|stage| stage.id() == stage_id)
+        .is_some_and(|stage| baseline.admitted_flow.matches_stage_projection(stage, node))
+    })
   });
   let completed_stage_ids = baseline
     .stage_completions
@@ -208,6 +283,10 @@ pub fn validate_factory_transition(
     )
     .is_err()
     || !appended_attempts_are_valid
+    || !flow_runtime_is_valid
+    || !appended_nodes_have_current_owner
+    || !appended_node_completions_have_current_owner
+    || !stage_projection_is_complete
     || !appended_completions_are_valid
     || !call_context_is_valid
     || request.current.lifecycle_checkpoint_id != request.lifecycle_checkpoint.id

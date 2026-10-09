@@ -271,6 +271,51 @@ FACTORY_CORE_SOURCE_RULES = (
         ),
     ),
 )
+FACTORY_GRAPH_SOURCE_RULES = (
+    (
+        "crate domain dependency",
+        re.compile(r"(?m)^\s*use\s+(?:crate|super)::"),
+    ),
+    (
+        "external runtime dependency",
+        re.compile(r"(?m)^\s*use\s+(?!(?:std|core|alloc)::)[A-Za-z_][A-Za-z0-9_]*::"),
+    ),
+    (
+        "asynchronous scheduling",
+        re.compile(r"\basync\s+fn\b|\b(?:Future|JoinHandle)\b"),
+    ),
+    (
+        "process or persistence implementation",
+        re.compile(
+            r"\bstd::(?:fs|net|process)\b|"
+            r"\b[A-Za-z0-9_]*(?:File|Socket|Store|Repository|Artifact|Row)[A-Za-z0-9_]*\b"
+        ),
+    ),
+    (
+        "plugin, command, permission, or budget type",
+        re.compile(
+            r"\b[A-Za-z0-9_]*(?:Plugin|Command|Permission|Budget)[A-Za-z0-9_]*\b"
+        ),
+    ),
+    (
+        "provider type",
+        re.compile(
+            r"\b[A-Za-z0-9_]*(?:Provider|Codex|JEV|Jev|OpenAI|OpenAi|GitHub|GitLab)"
+            r"[A-Za-z0-9_]*\b"
+        ),
+    ),
+    (
+        "product domain or wire type",
+        re.compile(
+            r"\b[A-Za-z0-9_]*(?:Factory|Flow|Build|Job|Http|Rest|Dto|Request|Response)"
+            r"[A-Za-z0-9_]*\b"
+        ),
+    ),
+    (
+        "serialization representation",
+        re.compile(r"\b(?:Serialize|Deserialize)\b|\bserde(?:::|_)"),
+    ),
+)
 FACTORY_DUPLICATE_LIFECYCLE_TYPE = re.compile(
     r"\b(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|type|trait)\s+"
     r"(?:Attempt|AttemptState|Build|BuildState|Job|JobState|Lease|LeaseState|Pipeline|PipelineVersion)\b"
@@ -796,6 +841,25 @@ def check_factory_core_sources(graph: Graph) -> list[Violation]:
                 Violation(
                     "ARCH020_FACTORY_MODULE_SHAPE",
                     f"{FACTORY_CORE_PACKAGE} duplicates the existing Build/Job lifecycle: {relative_path}",
+                )
+            )
+        if relative_path == Path("src/graph.rs"):
+            for representation, pattern in FACTORY_GRAPH_SOURCE_RULES:
+                if pattern.search(source):
+                    violations.append(
+                        Violation(
+                            "ARCH018_FACTORY_CORE_COUPLING",
+                            f"{FACTORY_CORE_PACKAGE} graph module contains "
+                            f"{representation}: {relative_path}",
+                        )
+                    )
+        if relative_path == Path("src/lib.rs") and re.search(
+            r"(?m)^\s*pub(?:\([^)]*\))?\s+mod\s+graph\s*;", source
+        ):
+            violations.append(
+                Violation(
+                    "ARCH018_FACTORY_CORE_COUPLING",
+                    f"{FACTORY_CORE_PACKAGE} exposes its private graph module: {relative_path}",
                 )
             )
 

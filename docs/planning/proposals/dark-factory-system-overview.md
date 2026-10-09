@@ -899,19 +899,21 @@ Factory decision из логов.
 - Decision Signal/JEV foundation и tool authorization broker;
 - Task Envelope, Context Manifest и Stage Handoff contracts;
 - trusted ChangeSet capture, acceptance и exact rematerialization.
+- внутренний bounded structural graph module Factory, его доменный адаптер и
+  provider-neutral conformance corpus без зависимости от Octa graph code.
 
 Следующие крупные возможности:
 
-1. Общий bounded structural graph kernel для Octa и Factory validators без
-   объединения executors.
-2. Immutable nested Flow Definitions и durable interpreter.
-3. Triage Result, phase-ready pools и manual source-agnostic journey.
-4. Research, requirements и correction cycles.
-5. Protected test-first development и context-absence contracts.
-6. Independent evaluation и configurable verification plans.
-7. GitHub Work Source/Reporter и Delivery adapters.
-8. Factory REST и Operator Console workbench.
-9. Released-product pilot, shadow JEV calibration и opt-in unattended mode.
+1. Immutable nested Flow Definitions и durable interpreter поверх внутреннего
+   structural module; выделение общего kernel отложено до появления как минимум
+   двух доказанных потребителей стабильного интерфейса.
+2. Triage Result, phase-ready pools и manual source-agnostic journey.
+3. Research, requirements и correction cycles.
+4. Protected test-first development и context-absence contracts.
+5. Independent evaluation и configurable verification plans.
+6. GitHub Work Source/Reporter и Delivery adapters.
+7. Factory REST и Operator Console workbench.
+8. Released-product pilot, shadow JEV calibration и opt-in unattended mode.
 
 ## 20. Архитектурные инварианты
 

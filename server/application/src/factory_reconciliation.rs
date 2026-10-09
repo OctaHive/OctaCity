@@ -8,7 +8,7 @@ use octacity_server_factory::{
 };
 use octacity_server_store::{
   AuditActorKind, ClaimFactoryRuns, ClaimedFactoryRun, CommitFactoryRunTransition, FactoryAuditFact,
-  FactoryBudgetRecord, FactoryConfigurationStore, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
+  FactoryBudgetRecord, FactoryConfigurationStore, FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
   FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore, MAX_FACTORY_RECONCILIATION_BATCH_SIZE, StoreError,
 };
 use std::{
@@ -616,6 +616,10 @@ pub(super) fn transition_for_action(
     input_digest,
     FactoryClaimOwnership::new(claimed.record.owner.clone(), claimed.record.claim),
   );
+  let node = snapshot
+    .admitted_flow
+    .project_stage(stage.clone())
+    .map_err(FactoryReconciliationError::Decision)?;
   let (state, progress) = match target {
     FactoryStageTarget::Implementation => (
       FactoryRunState::Implementing,
@@ -655,6 +659,10 @@ pub(super) fn transition_for_action(
     progress,
     next_usage,
     FactoryRunHistoryAppend {
+      flow: FactoryFlowHistory {
+        attempts: vec![node],
+        ..FactoryFlowHistory::default()
+      },
       stage_attempts: vec![stage],
       ..FactoryRunHistoryAppend::default()
     },

@@ -2,11 +2,14 @@ use std::collections::BTreeMap;
 
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  Assessment, ChangeSet, ContextManifest, Decision, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt,
-  Escalation, EvaluationPlan, EvidenceManifest, FactoryContextReference, FactoryDigest, FactoryRunId, MacroCall,
-  MacroCallCompletion, ReportingAttempt, StageAttempt, StageAttemptCompletion, StageHandoff,
+  AdmittedFlow, Assessment, ChangeSet, ContextManifest, Decision, DecisionSignalReceipt, DecisionSignalRequest,
+  DeliveryAttempt, Escalation, EvaluationPlan, EvidenceManifest, FactoryContextReference, FactoryDigest, FactoryRunId,
+  FlowRun, MacroCall, MacroCallCompletion, NodeAttempt, NodeAttemptCompletion, NodeAttemptId, ReportingAttempt,
+  StageAttempt, StageAttemptCompletion, StageHandoff, WorkflowCycle,
 };
-use octacity_server_store::{FactoryBuildLink, FactoryBuildObservationRecord, FactoryRunHistoryAppend, StoreError};
+use octacity_server_store::{
+  FactoryBuildLink, FactoryBuildObservationRecord, FactoryFlowHistory, FactoryRunHistoryAppend, StoreError,
+};
 use serde::Serialize;
 use sqlx::{Postgres, Transaction, types::Json};
 
@@ -18,7 +21,13 @@ pub(crate) async fn append_history(
   recorded_at: Timestamp,
   append: &FactoryRunHistoryAppend,
 ) -> Result<(), StoreError> {
-  if append.stage_attempts.iter().any(|record| record.run_id() != run_id)
+  if append.flow.runs.iter().any(|record| record.factory_run_id() != run_id)
+    || append
+      .flow
+      .attempts
+      .iter()
+      .any(|record| record.factory_run_id() != run_id)
+    || append.stage_attempts.iter().any(|record| record.run_id() != run_id)
     || append
       .stage_attempt_completions
       .iter()
@@ -36,8 +45,20 @@ pub(crate) async fn append_history(
       source: octacity_server_store::StoreInputError::InvalidFactoryRunTransition,
     });
   }
+  for record in &append.flow.runs {
+    insert_flow_run(transaction, recorded_at, record).await?;
+  }
+  for record in &append.flow.cycles {
+    insert_workflow_cycle(transaction, run_id, recorded_at, record).await?;
+  }
+  for record in &append.flow.attempts {
+    insert_node_attempt(transaction, recorded_at, record).await?;
+  }
+  for record in &append.flow.completions {
+    insert_node_completion(transaction, run_id, record).await?;
+  }
   for record in &append.stage_attempts {
-    insert_stage_attempt(transaction, recorded_at, record).await?;
+    insert_stage_attempt(transaction, record).await?;
   }
   for record in &append.stage_attempt_completions {
     insert_stage_completion(transaction, recorded_at, record).await?;
@@ -101,19 +122,115 @@ pub(crate) async fn append_history(
   Ok(())
 }
 
-async fn insert_stage_attempt(
+async fn insert_flow_run(
   tx: &mut Transaction<'_, Postgres>,
   recorded_at: Timestamp,
-  record: &StageAttempt,
+  record: &FlowRun,
 ) -> Result<(), StoreError> {
+  let parent = record.parent().ok_or(StoreError::Unavailable)?;
+  let definition = record.definition();
+  sqlx::query(
+    "INSERT INTO factory_flow_runs \
+       (id, factory_run_id, flow_definition_id, flow_definition_version, \
+        parent_flow_run_id, parent_node_attempt_id, created_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0))",
+  )
+  .bind(record.id().as_uuid())
+  .bind(record.factory_run_id().as_uuid())
+  .bind(definition.id().as_uuid())
+  .bind(number(definition.version().get())?)
+  .bind(parent.flow_run_id().as_uuid())
+  .bind(parent.node_attempt_id().as_uuid())
+  .bind(recorded_at.unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+async fn insert_workflow_cycle(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  recorded_at: Timestamp,
+  record: &WorkflowCycle,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO factory_workflow_cycles \
+       (id, factory_run_id, flow_run_id, cycle_number, predecessor_id, created_at) \
+     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+  )
+  .bind(record.id().as_uuid())
+  .bind(run_id.as_uuid())
+  .bind(record.flow_run_id().as_uuid())
+  .bind(number(record.number().get())?)
+  .bind(record.predecessor().map(|id| id.as_uuid()))
+  .bind(recorded_at.unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+async fn insert_node_attempt(
+  tx: &mut Transaction<'_, Postgres>,
+  recorded_at: Timestamp,
+  record: &NodeAttempt,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO factory_node_attempts \
+     (id, run_id, flow_run_id, workflow_cycle_id, node_key, attempt_number, node_kind, input_digest, node_attempt, created_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
+             to_timestamp($10::double precision / 1000.0))",
+  )
+  .bind(record.id().as_uuid())
+  .bind(record.factory_run_id().as_uuid())
+  .bind(record.flow_run_id().as_uuid())
+  .bind(record.workflow_cycle_id().as_uuid())
+  .bind(record.node_key().as_str())
+  .bind(number(record.number().get())?)
+  .bind(record.node_kind().as_str())
+  .bind(record.input_digest().as_bytes().as_slice())
+  .bind(Json(record))
+  .bind(recorded_at.unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+
+async fn insert_stage_attempt(tx: &mut Transaction<'_, Postgres>, record: &StageAttempt) -> Result<(), StoreError> {
   let target_digest = FactoryDigest::sha256(
     "octacity.factory.stage-target.v1",
     &[record.target().canonical_key().as_bytes()],
   );
-  sqlx::query("INSERT INTO factory_stage_attempts (id, run_id, attempt_number, stage_kind, target_digest, input_digest, stage_attempt, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::double precision / 1000.0))")
-    .bind(record.id().as_uuid()).bind(record.run_id().as_uuid()).bind(number(record.number().get())?)
-    .bind(record.kind().as_str()).bind(target_digest.as_bytes().as_slice()).bind(record.input_digest().as_bytes().as_slice())
-    .bind(Json(record)).bind(recorded_at.unix_millis()).execute(&mut **tx).await.map_err(unavailable)?;
+  sqlx::query("INSERT INTO factory_stage_attempts (id, run_id, stage_kind, target_digest, stage_attempt) VALUES ($1, $2, $3, $4, $5)")
+    .bind(record.id().as_uuid()).bind(record.run_id().as_uuid())
+    .bind(record.kind().as_str()).bind(target_digest.as_bytes().as_slice())
+    .bind(Json(record)).execute(&mut **tx).await.map_err(unavailable)?;
+  Ok(())
+}
+
+async fn insert_node_completion(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  record: &NodeAttemptCompletion,
+) -> Result<(), StoreError> {
+  sqlx::query(
+    "INSERT INTO factory_node_attempt_completions \
+     (id, node_attempt_id, run_id, outcome, output_schema_digest, output_digest, completion, completed_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::double precision / 1000.0))",
+  )
+  .bind(record.id().as_bytes().as_slice())
+  .bind(record.node_attempt_id().as_uuid())
+  .bind(run_id.as_uuid())
+  .bind(record.outcome().as_str())
+  .bind(record.output_schema().digest().as_bytes().as_slice())
+  .bind(record.output_digest().as_bytes().as_slice())
+  .bind(Json(record))
+  .bind(record.observed_at().unix_millis())
+  .execute(&mut **tx)
+  .await
+  .map_err(unavailable)?;
   Ok(())
 }
 
@@ -545,14 +662,32 @@ async fn insert_reporting(
 pub(crate) async fn history_rows(
   tx: &mut Transaction<'_, Postgres>,
   run_id: FactoryRunId,
+  admitted_flow: &AdmittedFlow,
+  flow_runs: &[FlowRun],
+  cycles: &[WorkflowCycle],
 ) -> Result<FactoryRunHistoryAppend, StoreError> {
+  let stage_attempts = json_rows(
+    tx,
+    "SELECT stage.stage_attempt FROM factory_stage_attempts AS stage \
+     JOIN factory_node_attempts AS node ON node.id = stage.id \
+     WHERE stage.run_id = $1 ORDER BY node.attempt_number",
+    run_id,
+  )
+  .await?;
+  let node_attempts = node_attempt_rows(tx, run_id, admitted_flow, flow_runs, cycles, &stage_attempts).await?;
   Ok(FactoryRunHistoryAppend {
-    stage_attempts: json_rows(
-      tx,
-      "SELECT stage_attempt FROM factory_stage_attempts WHERE run_id = $1 ORDER BY id",
-      run_id,
-    )
-    .await?,
+    flow: FactoryFlowHistory {
+      runs: Vec::new(),
+      cycles: Vec::new(),
+      attempts: node_attempts,
+      completions: json_rows(
+        tx,
+        "SELECT completion FROM factory_node_attempt_completions WHERE run_id = $1 ORDER BY completed_at, id",
+        run_id,
+      )
+      .await?,
+    },
+    stage_attempts,
     stage_attempt_completions: json_rows(
       tx,
       "SELECT completion FROM factory_stage_attempt_completions WHERE run_id = $1 ORDER BY id",
@@ -658,6 +793,51 @@ pub(crate) async fn history_rows(
   })
 }
 
+async fn node_attempt_rows(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+  _admitted_flow: &AdmittedFlow,
+  _flow_runs: &[FlowRun],
+  _cycles: &[WorkflowCycle],
+  _stages: &[StageAttempt],
+) -> Result<Vec<NodeAttempt>, StoreError> {
+  let rows = sqlx::query_as::<
+    _,
+    (
+      uuid::Uuid,
+      uuid::Uuid,
+      uuid::Uuid,
+      String,
+      i64,
+      String,
+      Vec<u8>,
+      Json<NodeAttempt>,
+    ),
+  >(
+    "SELECT id, flow_run_id, workflow_cycle_id, node_key, attempt_number, node_kind, input_digest, node_attempt \
+     FROM factory_node_attempts WHERE run_id = $1 ORDER BY created_at, id",
+  )
+  .bind(run_id.as_uuid())
+  .fetch_all(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  rows
+    .into_iter()
+    .map(
+      |(id, flow_run_id, cycle_id, node_key, number, kind, input_digest, Json(node))| {
+        let matches = node.id().as_uuid() == id
+          && node.flow_run_id().as_uuid() == flow_run_id
+          && node.workflow_cycle_id().as_uuid() == cycle_id
+          && node.node_key().as_str() == node_key
+          && i64::try_from(node.number().get()).ok() == Some(number)
+          && node.node_kind().as_str() == kind
+          && node.input_digest().as_bytes().as_slice() == input_digest;
+        matches.then_some(node).ok_or(StoreError::Unavailable)
+      },
+    )
+    .collect()
+}
+
 pub(super) async fn stage_history(
   tx: &mut Transaction<'_, Postgres>,
   run_id: FactoryRunId,
@@ -670,7 +850,9 @@ pub(super) async fn stage_history(
 > {
   let attempts = json_rows(
     tx,
-    "SELECT stage_attempt FROM factory_stage_attempts WHERE run_id = $1 ORDER BY attempt_number",
+    "SELECT stage.stage_attempt FROM factory_stage_attempts AS stage \
+     JOIN factory_node_attempts AS node ON node.id = stage.id \
+     WHERE stage.run_id = $1 ORDER BY node.attempt_number",
     run_id,
   )
   .await?
@@ -685,6 +867,37 @@ pub(super) async fn stage_history(
   .await?
   .into_iter()
   .map(|record: StageAttemptCompletion| (record.id(), record))
+  .collect();
+  Ok((attempts, completions))
+}
+
+pub(super) async fn node_history(
+  tx: &mut Transaction<'_, Postgres>,
+  run_id: FactoryRunId,
+) -> Result<
+  (
+    BTreeMap<NodeAttemptId, NodeAttempt>,
+    BTreeMap<NodeAttemptId, NodeAttemptCompletion>,
+  ),
+  StoreError,
+> {
+  let attempts = json_rows(
+    tx,
+    "SELECT node_attempt FROM factory_node_attempts WHERE run_id = $1 ORDER BY created_at, id",
+    run_id,
+  )
+  .await?
+  .into_iter()
+  .map(|record: NodeAttempt| (record.id(), record))
+  .collect();
+  let completions = json_rows(
+    tx,
+    "SELECT completion FROM factory_node_attempt_completions WHERE run_id = $1 ORDER BY completed_at, id",
+    run_id,
+  )
+  .await?
+  .into_iter()
+  .map(|record: NodeAttemptCompletion| (record.node_attempt_id(), record))
   .collect();
   Ok((attempts, completions))
 }

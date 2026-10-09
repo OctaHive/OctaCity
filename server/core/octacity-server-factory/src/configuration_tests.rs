@@ -1,16 +1,18 @@
 use octacity_server_domain::{
-  ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, ProjectId, RepositoryId,
+  ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, ProjectId, RepositoryId, Timestamp,
 };
 
 use crate::{
-  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DecisionSignalChoices, DecisionSignalFallback,
+  AdmittedFlow, BudgetLimit, BuildConfigurationRef, DecisionOutcome, DecisionSignalChoices, DecisionSignalFallback,
   DecisionSignalMode, DecisionSignalProfileDraft, DecisionSignalPurpose, DecisionSignalRouteSet, DeliveryPolicyDraft,
-  EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind,
-  FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
-  FactoryConfigurationId, FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryError,
-  FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryRun, FactoryRunId, FactoryStageDraft, FactoryStageKind,
-  FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope,
-  WorkEnvelopeId, WorkPriority,
+  EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind, FactoryClaim,
+  FactoryClaimFence, FactoryClaimOwnership, FactoryConfiguration, FactoryConfigurationChoiceEntries,
+  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryCredentialProfiles, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata, FactoryPermissionSet,
+  FactoryReferenceChoice, FactoryRun, FactoryRunId, FactoryStageDraft, FactoryStageKind, FactoryStageTarget,
+  FactoryWipLimits, FlowAdmissionLimits, FlowNodeKind, ImmutableReference, NodeAttempt, NodeAttemptId,
+  NodeAttemptInput, NodeAttemptNumber, NodeExecutionIdentity, ReworkPolicyDraft, RiskClass, StageAttempt,
+  StageAttemptId, StageAttemptNumber, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 
 struct Fixture {
@@ -219,6 +221,27 @@ fn publish(fixture: &Fixture) -> FactoryConfiguration {
   .expect("fixture configuration is valid")
 }
 
+fn admitted_run(fixture: &Fixture, configuration: &FactoryConfiguration) -> FactoryRun {
+  let work = WorkEnvelope::new(
+    WorkEnvelopeId::generate(),
+    configuration.reference().clone(),
+    ExternalWorkIdentity::new("tracker:flow-1").expect("external identity"),
+    ExactSubject::new(
+      fixture.project_id,
+      RepositoryId::generate(),
+      ImmutableRevision::new("0123456789abcdef").expect("revision"),
+    ),
+    WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("work artifacts"),
+    WorkClassification::new(
+      WorkPriority::new(10).expect("priority"),
+      RiskClass::Medium,
+      FactoryMetadata::default(),
+    ),
+  )
+  .expect("work");
+  FactoryRun::admitted(FactoryRunId::generate(), &work)
+}
+
 #[test]
 fn publication_resolves_every_alias_to_an_exact_identity() {
   let fixture = valid_fixture();
@@ -249,6 +272,140 @@ fn publication_resolves_every_alias_to_an_exact_identity() {
   assert_eq!(configuration.delivery().adapter().digest(), digest(9));
   assert_eq!(configuration.delivery().policy().digest(), digest(10));
   assert!(configuration.is_enabled());
+}
+
+#[test]
+fn fixed_stage_configuration_projects_to_one_pinned_closed_flow() {
+  let fixture = valid_fixture();
+  let configuration = publish(&fixture);
+  let run = admitted_run(&fixture, &configuration);
+  let admitted = AdmittedFlow::from_stage_projection(&configuration, &run).expect("Flow projection");
+  let definition = &admitted.closure().definitions()[0];
+
+  assert_eq!(admitted.closure().definitions().len(), 1);
+  assert_eq!(definition.reference(), admitted.closure().root());
+  assert_eq!(definition.entry().as_str(), "implement");
+  assert_eq!(definition.nodes().len(), 4);
+  assert!(
+    definition
+      .nodes()
+      .iter()
+      .all(|node| node.kind() == FlowNodeKind::BuildCommand)
+  );
+  assert_eq!(admitted.root_run().factory_run_id(), run.id());
+  assert_eq!(admitted.initial_cycle().flow_run_id(), admitted.root_run().id());
+}
+
+#[test]
+fn admitted_flow_round_trip_retains_the_exact_configured_limits() {
+  let fixture = valid_fixture();
+  let configuration = publish(&fixture);
+  let run = admitted_run(&fixture, &configuration);
+  let projected = AdmittedFlow::from_stage_projection(&configuration, &run).unwrap();
+  let root = projected.closure().definition(projected.closure().root()).unwrap();
+  let expanded_nodes = projected.validated().unwrap().expanded_nodes();
+  let exact = FlowAdmissionLimits::new(
+    1,
+    expanded_nodes,
+    4,
+    4,
+    root.execution().max_active_nodes(),
+    root.execution().budget(),
+    FactoryPermissionSet::deny_all(),
+  )
+  .unwrap();
+  let admitted = AdmittedFlow::new(
+    projected.closure().clone(),
+    exact.clone(),
+    projected.root_run().clone(),
+    projected.initial_cycle().clone(),
+  )
+  .unwrap();
+  let restored: AdmittedFlow = serde_json::from_slice(&serde_json::to_vec(&admitted).unwrap()).unwrap();
+
+  assert_eq!(restored.limits(), &exact);
+  assert_eq!(restored.validated().unwrap().limits(), &exact);
+}
+
+#[test]
+fn flow_closure_accepts_only_the_closed_primitive_set_and_exact_subflow_versions() {
+  let fixture = valid_fixture();
+  let configuration = publish(&fixture);
+  let run = admitted_run(&fixture, &configuration);
+  let admitted = AdmittedFlow::from_stage_projection(&configuration, &run).expect("Flow projection");
+  let root = &admitted.closure().definitions()[0];
+  let flow_run = admitted.root_run();
+  let cycle = admitted.initial_cycle();
+  let node = root.node(root.entry()).expect("entry node");
+  let ownership = FactoryClaimOwnership::new(
+    key("worker"),
+    FactoryClaim::new(
+      FactoryClaimFence::new(digest(40)),
+      Timestamp::from_unix_millis(1).unwrap(),
+      Timestamp::from_unix_millis(100).unwrap(),
+    )
+    .unwrap(),
+  );
+  let attempt = NodeAttempt::new(
+    flow_run,
+    cycle,
+    root,
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: node.key().clone(),
+      node_kind: node.kind(),
+      number: NodeAttemptNumber::INITIAL,
+      input_digest: digest(42),
+      budget: node.budget(),
+      deadline: Timestamp::from_unix_millis(99).unwrap(),
+      execution: NodeExecutionIdentity::External(exact("build-executor", "v1", 43)),
+      ownership,
+    },
+  )
+  .expect("generic Node Attempt");
+
+  assert_eq!(admitted.closure().definitions().len(), 1);
+  assert_eq!(attempt.node_kind(), FlowNodeKind::BuildCommand);
+  assert_eq!(attempt.stage_projection_id(), None);
+}
+
+#[test]
+fn stage_attempt_projection_preserves_identity_number_and_complete_history() {
+  let fixture = valid_fixture();
+  let configuration = publish(&fixture);
+  let run = admitted_run(&fixture, &configuration);
+  let admitted = AdmittedFlow::from_stage_projection(&configuration, &run).expect("Flow projection");
+  let id = StageAttemptId::generate();
+  let stage = StageAttempt::new(
+    id,
+    &run,
+    StageAttemptNumber::new(7).expect("attempt number"),
+    FactoryStageTarget::Implementation,
+    nested_budget(),
+    digest(33),
+    FactoryClaimOwnership::new(
+      key("reconciler"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(digest(34)),
+        Timestamp::from_unix_millis(100).expect("timestamp"),
+        Timestamp::from_unix_millis(200).expect("timestamp"),
+      )
+      .expect("claim"),
+    ),
+  );
+  let node = NodeAttempt::from_stage(
+    stage.clone(),
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    key("implement"),
+  )
+  .expect("Node Attempt projection");
+
+  assert_eq!(node.id().as_uuid(), id.as_uuid());
+  assert_eq!(node.number().get(), stage.number().get());
+  assert_eq!(node.stage_projection_id(), Some(stage.id()));
+  assert_eq!(node.input_digest(), stage.input_digest());
+  assert_eq!(node.factory_run_id(), stage.run_id());
 }
 
 #[test]

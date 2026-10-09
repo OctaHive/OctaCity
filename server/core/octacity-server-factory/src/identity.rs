@@ -87,6 +87,26 @@ factory_id!(
   "Opaque identity of one durable Factory Run."
 );
 factory_id!(
+  FlowDefinitionId,
+  FactoryEntityKind::FlowDefinition,
+  "Stable identity shared by immutable Flow Definition versions."
+);
+factory_id!(
+  FlowRunId,
+  FactoryEntityKind::FlowRun,
+  "Opaque identity of one root or nested Flow Run."
+);
+factory_id!(
+  NodeAttemptId,
+  FactoryEntityKind::NodeAttempt,
+  "Opaque identity of one append-only Flow node attempt."
+);
+factory_id!(
+  WorkflowCycleId,
+  FactoryEntityKind::WorkflowCycle,
+  "Opaque identity of one append-only workflow cycle."
+);
+factory_id!(
   StageAttemptId,
   FactoryEntityKind::StageAttempt,
   "Opaque identity of one append-only Factory Stage Attempt."

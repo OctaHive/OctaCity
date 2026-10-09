@@ -8,17 +8,19 @@ use octacity_server_factory::{
   DeliveryAttemptId, DeliveryIntent, Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvaluationState,
   EvidenceManifest, EvidenceManifestId, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryEscalationDisposition,
   FactoryKey, FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion,
-  FactoryStageProgress, FactoryWipUsage, MacroCall, MacroCallCompletion, MacroCallId, ReportingAttempt,
-  ReportingAttemptId, StageAttempt, StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId, WorkEnvelope,
+  FactoryStageProgress, FactoryWipUsage, FlowRun, FlowRunId, FlowRuntimeHistory, MacroCall, MacroCallCompletion,
+  MacroCallId, NodeAttempt, NodeAttemptCompletion, NodeAttemptId, ReportingAttempt, ReportingAttemptId, StageAttempt,
+  StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId, WorkEnvelope, WorkflowCycle, WorkflowCycleId,
+  validate_flow_runtime_history,
 };
 
 use crate::{
   ApplyFactoryRunControl, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns,
   ClaimedFactoryOutbox, ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome,
-  FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
-  FactoryRunClaimRecord, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlStore,
-  FactoryRunCurrentProjection, FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord,
-  FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore, ListFactoryRunDiagnostics,
+  FactoryAuditFact, FactoryBudgetRecord, FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
+  FactoryOutboxSettlement, FactoryRunClaimRecord, FactoryRunControlIntent, FactoryRunControlOutcome,
+  FactoryRunControlStore, FactoryRunCurrentProjection, FactoryRunDiagnosticKind, FactoryRunDiagnosticPage,
+  FactoryRunDiagnosticRecord, FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore, ListFactoryRunDiagnostics,
   MAX_FACTORY_RUN_SNAPSHOT_RECORDS, ManagementMutation, MutationAuditContext, MutationDisposition,
   PublishedFactoryAdmission, SettleFactoryOutbox, StoreError, StoreInputError, StoreOperation,
 };
@@ -35,6 +37,11 @@ pub(super) struct StoredFactoryRunControl {
 pub(super) struct StoredFactoryRun {
   work: WorkEnvelope,
   run: FactoryRun,
+  admitted_flow: octacity_server_factory::AdmittedFlow,
+  flow_runs: BTreeMap<FlowRunId, FlowRun>,
+  workflow_cycles: BTreeMap<WorkflowCycleId, WorkflowCycle>,
+  node_attempts: BTreeMap<NodeAttemptId, NodeAttempt>,
+  node_attempt_completions: BTreeMap<NodeAttemptId, NodeAttemptCompletion>,
   admitted_at: octacity_server_domain::Timestamp,
   current_claim_id: Option<FactoryDigest>,
   claims: BTreeMap<FactoryDigest, FactoryRunClaimRecord>,
@@ -163,6 +170,14 @@ impl StoredFactoryRun {
     Ok(Self {
       work: admission.work.clone(),
       run: admission.run.clone(),
+      admitted_flow: admission.flow.clone(),
+      flow_runs: BTreeMap::from([(admission.flow.root_run().id(), admission.flow.root_run().clone())]),
+      workflow_cycles: BTreeMap::from([(
+        admission.flow.initial_cycle().id(),
+        admission.flow.initial_cycle().clone(),
+      )]),
+      node_attempts: BTreeMap::new(),
+      node_attempt_completions: BTreeMap::new(),
       admitted_at: admission.admitted_at,
       current_claim_id: None,
       claims: BTreeMap::new(),
@@ -203,6 +218,13 @@ impl StoredFactoryRun {
     Ok(FactoryRunSnapshot {
       work: self.work.clone(),
       run: self.run.clone(),
+      admitted_flow: self.admitted_flow.clone(),
+      flow: FactoryFlowHistory {
+        runs: values(&self.flow_runs),
+        cycles: values(&self.workflow_cycles),
+        attempts: values(&self.node_attempts),
+        completions: values(&self.node_attempt_completions),
+      },
       current_claim: self
         .current_claim_id
         .map(|id| self.claims.get(&id).cloned().ok_or(StoreError::Unavailable))
@@ -258,6 +280,9 @@ impl StoredFactoryRun {
     if self.run.work_id() != self.work.id()
       || self.run.configuration() != self.work.configuration()
       || subject != self.work.subject()
+      || self.admitted_flow.root_run().factory_run_id() != run_id
+      || self.admitted_flow.root_run().definition() != self.admitted_flow.closure().root()
+      || self.admitted_flow.initial_cycle().flow_run_id() != self.admitted_flow.root_run().id()
       || self.current_claim_id.is_some_and(|id| !self.claims.contains_key(&id))
       || !self
         .budgets
@@ -310,6 +335,20 @@ impl StoredFactoryRun {
     {
       return Err(invalid_transition(StoreOperation::ReadFactoryRunSnapshot));
     }
+    let flow_runs = values(&self.flow_runs);
+    let cycles = values(&self.workflow_cycles);
+    let attempts = values(&self.node_attempts);
+    let completions = values(&self.node_attempt_completions);
+    validate_flow_runtime_history(
+      &self.admitted_flow,
+      FlowRuntimeHistory {
+        flow_runs: &flow_runs,
+        cycles: &cycles,
+        attempts: &attempts,
+        completions: &completions,
+      },
+    )
+    .map_err(|_| invalid_transition(StoreOperation::ReadFactoryRunSnapshot))?;
     for stage in self.stage_attempts.values() {
       require(
         stage.run_id() == run_id
@@ -320,6 +359,21 @@ impl StoredFactoryRun {
             .any(|claim| claim.owner == *stage.owner() && claim.claim == stage.claim()),
       )?;
     }
+    require(
+      self.stage_attempts.values().all(|stage| {
+        self
+          .node_attempts
+          .values()
+          .any(|node| self.admitted_flow.matches_stage_projection(stage, node))
+      }) && self.node_attempts.values().all(|node| {
+        node.stage_projection_id().is_none_or(|stage_id| {
+          self
+            .stage_attempts
+            .get(&stage_id)
+            .is_some_and(|stage| self.admitted_flow.matches_stage_projection(stage, node))
+        })
+      }),
+    )?;
     for completion in self.stage_attempt_completions.values() {
       let stage = self.stage_attempts.get(&completion.stage_attempt_id());
       require(
@@ -637,6 +691,10 @@ impl StoredFactoryRun {
     self.claims.len()
       + self.budgets.len()
       + self.lifecycle_checkpoints.len()
+      + self.flow_runs.len()
+      + self.workflow_cycles.len()
+      + self.node_attempts.len()
+      + self.node_attempt_completions.len()
       + self.stage_attempts.len()
       + self.stage_attempt_completions.len()
       + self.stage_handoffs.len()
@@ -1487,7 +1545,12 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
       lifecycle: current_checkpoint,
       current: &stored.current,
       claim,
+      admitted_flow: &stored.admitted_flow,
       stage_attempts: &stored.stage_attempts,
+      node_attempts: &stored.node_attempts,
+      node_completions: &stored.node_attempt_completions,
+      flow_runs: &stored.flow_runs,
+      workflow_cycles: &stored.workflow_cycles,
       stage_completions: &stored.stage_attempt_completions,
       stage_handoffs: &stored.stage_handoffs,
       context_manifests: &stored.context_manifests,
@@ -1500,6 +1563,22 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
 }
 
 fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppend) -> Result<(), StoreError> {
+  for record in &append.flow.runs {
+    append_unique(&mut stored.flow_runs, record.id(), record.clone())?;
+  }
+  for record in &append.flow.cycles {
+    append_unique(&mut stored.workflow_cycles, record.id(), record.clone())?;
+  }
+  for record in &append.flow.attempts {
+    append_unique(&mut stored.node_attempts, record.id(), record.clone())?;
+  }
+  for record in &append.flow.completions {
+    append_unique(
+      &mut stored.node_attempt_completions,
+      record.node_attempt_id(),
+      record.clone(),
+    )?;
+  }
   for record in &append.stage_attempts {
     append_unique(&mut stored.stage_attempts, record.id(), record.clone())?;
   }
@@ -1713,18 +1792,20 @@ mod tests {
     ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, ProjectId, RepositoryId,
   };
   use octacity_server_factory::{
-    AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, BudgetUsage, BuildConfigurationRef,
+    AdmittedFlow, AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, BudgetUsage, BuildConfigurationRef,
     CandidateSubject, ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind, CriterionPack,
     DecisionEngineInput, DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion,
-    DeliveryAttemptNumber, DeliveryState, DeterministicGateOutcome, EvaluationBranchResult, EvaluationBranchState,
-    EvaluationPlanDefinition, EvaluationPolicy, EvaluationProgress, EvidenceItem, EvidenceItemInput,
-    EvidenceOutputKind, EvidenceProducer, EvidenceRequirement, ExternalWorkIdentity, FactoryArtifactReference,
-    FactoryClaim, FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
-    FactoryContextReference, FactoryMetadata, FactoryRunState, FactorySafeText, FactoryTaskSubject, FindingSeverity,
-    ImmutableReference, IndeterminatePolicy, MacroCallDeclaration, MacroCallKind, ReportingAttemptNumber,
-    ReportingState, ReviewBranch, ReviewEvaluatorCapability, ReviewPlanPreparation, ReviewPurpose, RiskClass,
-    StageAttemptNumber, StageHandoffOutcome, WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority,
-    evaluate_decision, prepare_evaluation_plan,
+    DeliveryAttemptNumber, DeliveryPolicyDraft, DeliveryState, DeterministicGateOutcome, EvaluationBranchResult,
+    EvaluationBranchState, EvaluationPlanDefinition, EvaluationPolicy, EvaluationPolicyDraft, EvaluationProgress,
+    EvidenceItem, EvidenceItemInput, EvidenceOutputKind, EvidenceProducer, EvidenceRequirement, ExternalWorkIdentity,
+    FactoryArtifactReference, FactoryChoiceKind, FactoryClaim, FactoryClaimFence, FactoryConfiguration,
+    FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
+    FactoryConfigurationVersion, FactoryContextReference, FactoryCredentialProfiles, FactoryMetadata,
+    FactoryReferenceChoice, FactoryRunState, FactorySafeText, FactoryStageDraft, FactoryStageKind, FactoryTaskSubject,
+    FactoryWipLimits, FindingSeverity, ImmutableReference, IndeterminatePolicy, MacroCallDeclaration, MacroCallKind,
+    NodeAttemptCompletionInput, ReportingAttemptNumber, ReportingState, ReviewBranch, ReviewEvaluatorCapability,
+    ReviewPlanPreparation, ReviewPurpose, ReworkPolicyDraft, RiskClass, StageAttemptNumber, StageHandoffOutcome,
+    WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority, evaluate_decision, prepare_evaluation_plan,
   };
 
   use crate::test_support::{id, run_ready, time};
@@ -1757,6 +1838,107 @@ mod tests {
     ImmutableReference::new(key(identity), key("v1"), digest(byte))
   }
 
+  fn projected_configuration(project_id: ProjectId, configuration_id: FactoryConfigurationId) -> FactoryConfiguration {
+    let build = BuildConfigurationRef::new(
+      id::<BuildConfigurationId>(90),
+      BuildConfigurationVersion::INITIAL,
+      project_id,
+      digest(90),
+    );
+    let exact = |identity, byte| ImmutableReference::new(key(identity), key("v1"), digest(byte));
+    let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+      references: vec![
+        FactoryReferenceChoice {
+          kind: FactoryChoiceKind::AdmissionPolicy,
+          alias: key("admission"),
+          reference: exact("manual.medium", 91),
+        },
+        FactoryReferenceChoice {
+          kind: FactoryChoiceKind::PermissionCeiling,
+          alias: key("permissions"),
+          reference: exact("restricted", 92),
+        },
+        FactoryReferenceChoice {
+          kind: FactoryChoiceKind::CriterionPack,
+          alias: key("criteria"),
+          reference: exact("quality", 93),
+        },
+        FactoryReferenceChoice {
+          kind: FactoryChoiceKind::Evaluator,
+          alias: key("evaluator"),
+          reference: exact("review", 94),
+        },
+        FactoryReferenceChoice {
+          kind: FactoryChoiceKind::DeliveryAdapter,
+          alias: key("delivery-adapter"),
+          reference: exact("github", 95),
+        },
+        FactoryReferenceChoice {
+          kind: FactoryChoiceKind::DeliveryPolicy,
+          alias: key("delivery-policy"),
+          reference: exact("human-review", 96),
+        },
+      ],
+      build_configurations: vec![(key("build"), build)],
+    })
+    .unwrap();
+    let stage = |name, kind| FactoryStageDraft {
+      key: key(name),
+      kind,
+      build_configuration: key("build"),
+      budget: budget(),
+    };
+    FactoryConfiguration::publish(
+      configuration_id,
+      FactoryConfigurationVersion::INITIAL,
+      project_id,
+      digest(97),
+      FactoryConfigurationDraft {
+        admission_policy: key("admission"),
+        stages: vec![
+          stage("implement", FactoryStageKind::Implementation),
+          stage("validate", FactoryStageKind::Validation),
+          stage("evaluate", FactoryStageKind::Evaluation),
+        ],
+        wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
+        hard_budget: budget(),
+        permission_ceiling: key("permissions"),
+        credential_profiles: FactoryCredentialProfiles::new(
+          key("model-coding"),
+          key("model-evaluation"),
+          key("source-read"),
+          key("delivery-write"),
+        )
+        .unwrap(),
+        decision_signals: Vec::new(),
+        evaluation: EvaluationPolicyDraft {
+          criterion_packs: vec![key("criteria")],
+          evaluators: vec![key("evaluator")],
+          required_quorum: 1,
+          budget: budget(),
+        },
+        rework: ReworkPolicyDraft {
+          max_cycles: 0,
+          stage: None,
+          exhausted_outcome: DecisionOutcome::Escalate,
+        },
+        delivery: DeliveryPolicyDraft {
+          adapter: key("delivery-adapter"),
+          policy: key("delivery-policy"),
+        },
+        enabled: true,
+      },
+      &choices,
+    )
+    .unwrap()
+  }
+
+  fn admitted_flow(run: &FactoryRun) -> AdmittedFlow {
+    let configuration = projected_configuration(run.subject().project_id(), run.configuration().id());
+    assert_eq!(configuration.reference(), run.configuration());
+    AdmittedFlow::from_stage_projection(&configuration, run).unwrap()
+  }
+
   fn fixture() -> Fixture {
     let project_id = id::<ProjectId>(1);
     let subject = octacity_server_factory::ExactSubject::new(
@@ -1764,15 +1946,10 @@ mod tests {
       id::<RepositoryId>(2),
       ImmutableRevision::new("base-revision").unwrap(),
     );
-    let configuration = FactoryConfigurationRef::new(
-      id::<FactoryConfigurationId>(3),
-      FactoryConfigurationVersion::INITIAL,
-      project_id,
-      digest(1),
-    );
+    let configuration = projected_configuration(project_id, id::<FactoryConfigurationId>(3));
     let work = WorkEnvelope::new(
       id::<WorkEnvelopeId>(4),
-      configuration,
+      configuration.reference().clone(),
       ExternalWorkIdentity::new("manual/work-1").unwrap(),
       subject,
       WorkArtifacts::new(artifact(5, 5), artifact(6, 6), Vec::new()).unwrap(),
@@ -1787,6 +1964,7 @@ mod tests {
     let admission = PublishedFactoryAdmission {
       work: work.clone(),
       run: run.clone(),
+      flow: admitted_flow(&run),
       admitted_at: time(1),
     };
     let audit = MutationAuditContext::try_new(
@@ -1911,6 +2089,31 @@ mod tests {
         FactoryClaim::new(FactoryClaimFence::new(digest(10)), time(10), time(100)).unwrap(),
       ),
     );
+    let flow = admitted_flow(run);
+    let node = flow.project_stage(stage.clone()).unwrap();
+    let definition = flow.closure().definition(flow.root_run().definition()).unwrap();
+    let output_schema = definition
+      .node(node.node_key())
+      .and_then(|node| node.outcome(&key("succeeded")))
+      .unwrap()
+      .schema()
+      .clone();
+    let node_completion = NodeAttemptCompletion::new(
+      &node,
+      definition,
+      NodeAttemptCompletionInput {
+        outcome: key("succeeded"),
+        output_schema,
+        output_digest: digest(17),
+        ownership: octacity_server_factory::FactoryClaimOwnership::new(
+          key("worker.one"),
+          FactoryClaim::new(FactoryClaimFence::new(digest(10)), time(10), time(100)).unwrap(),
+        ),
+        usage: BudgetUsage::default(),
+        observed_at: time(20),
+      },
+    )
+    .unwrap();
     let call_subject = FactoryTaskSubject::Exact(stage.subject().clone());
     let context = ContextManifest::new(
       id::<ContextManifestId>(19),
@@ -2166,6 +2369,11 @@ mod tests {
     };
     FullHistory {
       append: FactoryRunHistoryAppend {
+        flow: FactoryFlowHistory {
+          attempts: vec![node],
+          completions: vec![node_completion],
+          ..FactoryFlowHistory::default()
+        },
         stage_attempts: vec![stage],
         stage_handoffs: vec![handoff],
         context_manifests: vec![context],
@@ -2506,6 +2714,7 @@ mod tests {
           &PublishedFactoryAdmission {
             work: fixture.work.clone(),
             run: second_run.clone(),
+            flow: admitted_flow(&second_run),
             admitted_at: time(1),
           },
           digest(62),
@@ -2619,6 +2828,7 @@ mod tests {
         assert_eq!(snapshot.budgets.len(), 2);
         assert_eq!(snapshot.lifecycle_checkpoints.len(), 2);
         assert_eq!(snapshot.stage_attempts.len(), 1);
+        assert_eq!(snapshot.flow.completions.len(), 1);
         assert_eq!(snapshot.stage_handoffs.len(), 1);
         assert_eq!(snapshot.context_manifests.len(), 1);
         assert_eq!(snapshot.macro_calls.len(), 1);
