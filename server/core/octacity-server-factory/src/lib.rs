@@ -24,6 +24,7 @@ mod decision_signal_tests;
 mod enum_value;
 mod error;
 mod evaluation;
+mod evaluation_progress;
 mod evidence;
 #[cfg(test)]
 mod evidence_tests;
@@ -73,8 +74,8 @@ pub use decision_signal::{
   DecisionSignalProviderLimits, DecisionSignalProviderObservation, DecisionSignalProviderRequest,
   DecisionSignalProviderResult, DecisionSignalQuestion, DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain,
   DecisionSignalQuestionKind, DecisionSignalReceipt, DecisionSignalRouteSet, DecisionSignalScoreDomain,
-  DecisionSignalThreshold, MAX_DECISION_SIGNAL_CHOICES, MAX_DECISION_SIGNAL_QUESTIONS, ToolRiskChoiceMapping,
-  consume_routing_signal, consume_tool_risk_signal,
+  DecisionSignalThreshold, MAX_DECISION_SIGNAL_CHOICES, MAX_DECISION_SIGNAL_QUESTIONS, MAX_DECISION_SIGNAL_RECEIPTS,
+  ToolRiskChoiceMapping, consume_routing_signal, consume_tool_risk_signal,
 };
 pub use enum_value::{
   AssessmentOutcome, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
@@ -83,6 +84,9 @@ pub use enum_value::{
 };
 pub use error::{FactoryChoiceKind, FactoryEntityKind, FactoryEnumKind, FactoryError, FactoryTextKind, TextRejection};
 pub use evaluation::{Decision, DecisionReason, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS};
+pub use evaluation_progress::{
+  EvaluationBranch, EvaluationBranchResult, EvaluationBranchState, EvaluationProgress, EvaluationState,
+};
 pub use evidence::{
   ChangeSet, EvidenceItem, EvidenceItemInput, EvidenceManifest, EvidenceOutputKind, EvidenceProducer,
   EvidenceRequirement, MAX_EVIDENCE_ITEMS,
@@ -101,11 +105,11 @@ pub use lifecycle::{
   ReportingAttempt, WorkArtifacts, WorkClassification, WorkEnvelope,
 };
 pub use lifecycle_decision::{
-  DecisionSignalProgress, DeliveryIntent, DeliveryProgress, EvaluationBranch, EvaluationBranchState,
-  EvaluationProgress, EvaluationState, FactoryClaim, FactoryClaimFence, FactoryDecisionGuard,
-  FactoryEscalationDisposition, FactoryEscalationReason, FactoryLifecycleProgress, FactoryLifecycleSnapshot,
-  FactoryNextAction, FactoryStageProgress, FactoryStageTarget, FactoryWaitReason, FactoryWipUsage, ReportingProgress,
-  decide_next_action, validate_lifecycle_progress, validate_lifecycle_transition,
+  DecisionSignalProgress, DeliveryIntent, DeliveryProgress, FactoryClaim, FactoryClaimFence, FactoryDecisionGuard,
+  FactoryDecisionResources, FactoryEscalationDisposition, FactoryEscalationReason, FactoryLifecycleProgress,
+  FactoryLifecycleSnapshot, FactoryNextAction, FactoryReworkStatus, FactoryStageProgress, FactoryStageTarget,
+  FactoryWaitReason, FactoryWipUsage, ReportingProgress, decide_next_action, validate_lifecycle_progress,
+  validate_lifecycle_transition,
 };
 pub use permission::{
   CommandArgumentPattern, CommandPermission, FactoryOutputPermissions, FactoryPath, FactoryPermissionDraft,

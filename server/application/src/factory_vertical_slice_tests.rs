@@ -17,16 +17,17 @@ use octacity_server_domain::{
   TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_factory::{
-  Assessment, AssessmentId, AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, CriterionPack,
-  DecisionEngineInput, DecisionId, DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion,
-  DeliveryIntent, DeterministicGateOutcome, EvaluationBranch, EvaluationBranchState, EvaluationPlanDefinition,
-  EvaluationPlanId, EvaluationPolicy, EvaluationProgress, EvaluationState, EvidenceItem, EvidenceItemInput,
-  EvidenceManifest, EvidenceManifestId, EvidenceOutputKind, EvidenceProducer, EvidenceRequirement,
-  FactoryArtifactReference, FactoryDigest, FactoryLifecycleProgress, FactoryOutputPermissions, FactoryPermissionDraft,
-  FactoryPermissionSet, FactoryResourceLimits, FactoryRun, FactoryRunState, FactoryRunVersion, FactorySafeText,
-  FactoryStageProgress, FactoryStageTarget, FactoryTaskSubject, FindingSeverity, ImmutableReference,
-  IndeterminatePolicy, LocalPermissionCeiling, ReviewBranch, ReviewEvaluatorCapability, ReviewPlanPreparation,
-  ReviewPurpose, evaluate_decision, prepare_evaluation_plan,
+  Assessment, AssessmentId, AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, ContextManifest,
+  ContextManifestEntry, ContextManifestId, ContextSourceKind, CriterionPack, DecisionId, DecisionOutcome,
+  DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryIntent, DeterministicGateOutcome,
+  EvaluationBranchResult, EvaluationPlanDefinition, EvaluationPlanId, EvaluationPolicy, EvaluationProgress,
+  EvaluationState, EvidenceItem, EvidenceItemInput, EvidenceManifest, EvidenceManifestId, EvidenceOutputKind,
+  EvidenceProducer, EvidenceRequirement, FactoryArtifactReference, FactoryContextReference, FactoryDigest,
+  FactoryLifecycleProgress, FactoryOutputPermissions, FactoryPermissionDraft, FactoryPermissionSet,
+  FactoryResourceLimits, FactoryRun, FactoryRunState, FactoryRunVersion, FactorySafeText, FactoryStageProgress,
+  FactoryStageTarget, FactoryTaskSubject, FindingSeverity, ImmutableReference, IndeterminatePolicy,
+  LocalPermissionCeiling, MacroCall, MacroCallDeclaration, MacroCallId, MacroCallKind, ReviewBranch,
+  ReviewEvaluatorCapability, ReviewPlanPreparation, ReviewPurpose, prepare_evaluation_plan,
 };
 use octacity_server_job::JobFailureClass;
 use octacity_server_job::JobRequirements;
@@ -45,7 +46,8 @@ use crate::factory_build_bridge::FactoryBuildClock;
 use crate::{
   CreateFactoryBuild, FactoryAdmissionHandlers, FactoryBuildAcceptance, FactoryBuildBridge, FactoryBuildOutputSource,
   FactoryBuildPolicyLayers, FactoryBuildPolicyRequest, FactoryBuildPolicySource, FactoryBuildPolicySourceError,
-  FactoryReconciliationShutdown, MutationDisposition, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+  FactoryEvaluationDecision, FactoryReconciliationShutdown, MutationDisposition, OrdinaryBuildApplication,
+  OrdinaryBuildApplicationError,
   factory_admission_tests::{RecordingResolver, admit, command, repository, seeded_store, time},
   factory_reconciliation_tests::{key, reconciler, run_to_completion},
 };
@@ -884,15 +886,7 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
       ReviewPlanPreparation::Ready(plan) => *plan,
       ReviewPlanPreparation::Escalate(reason) => panic!("fixture review plan escalated: {reason:?}"),
     };
-    let branches = EvaluationProgress::try_new(
-      vec![EvaluationBranch::new(
-        key("review"),
-        true,
-        EvaluationBranchState::Pending,
-      )],
-      1,
-    )
-    .unwrap();
+    let branches = EvaluationProgress::from_plan(&plan).unwrap();
     commit_worker_result(
       &store,
       plan_outbox,
@@ -911,7 +905,18 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
     run_build(&store, &bridge).await;
 
     reconcile(&worker, &shutdown).await;
-    let decision_outbox = claim_outbox(&store, "decision.compute").await;
+    let result_outbox = claim_outbox(&store, "evaluation.result").await;
+    let evaluation_snapshot = store.factory_run_snapshot(admitted.factory_run_id).await.unwrap();
+    let stage = evaluation_snapshot
+      .stage_attempts
+      .iter()
+      .find(|stage| Some(stage.id()) == evaluation_snapshot.current.stage_attempt_id)
+      .unwrap();
+    let FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(pending_result)) =
+      &current_checkpoint(&evaluation_snapshot).progress
+    else {
+      panic!("evaluation result must be pending");
+    };
     let assessment = Assessment::new(
       AssessmentId::generate(),
       &plan,
@@ -932,6 +937,64 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
       },
     )
     .unwrap();
+    let call_subject = FactoryTaskSubject::Candidate(plan.subject().clone());
+    let context = ContextManifest::new(
+      ContextManifestId::generate(),
+      call_subject.clone(),
+      digest(32),
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Evidence,
+          key("evaluation-evidence"),
+          call_subject.clone(),
+          FactoryContextReference::Artifact(
+            FactoryArtifactReference::new(ArtifactId::generate(), digest(33), 1).unwrap(),
+          ),
+          digest(33),
+          1,
+          FactorySafeText::new("required evaluation evidence").unwrap(),
+          digest(34),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap();
+    let call = MacroCall::new(
+      MacroCallDeclaration::new(
+        MacroCallId::generate(),
+        call_subject,
+        MacroCallKind::Evaluate,
+        budget,
+        vec![],
+        vec![],
+        1,
+      )
+      .unwrap(),
+      stage,
+      &context,
+      None,
+    )
+    .unwrap();
+    let completed_progress = pending_result
+      .record_result(EvaluationBranchResult::new(&plan, stage, &call, &assessment).unwrap())
+      .unwrap();
+    commit_worker_result(
+      &store,
+      result_outbox,
+      FactoryRunState::Evaluating,
+      FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(completed_progress.clone())),
+      FactoryRunHistoryAppend {
+        context_manifests: vec![context],
+        macro_calls: vec![call],
+        assessments: vec![assessment.clone()],
+        ..FactoryRunHistoryAppend::default()
+      },
+      |_| {},
+    )
+    .await;
+
+    reconcile(&worker, &shutdown).await;
+    let decision_outbox = claim_outbox(&store, "decision.compute").await;
     let policy = DecisionPolicy::try_new(
       DecisionPolicyVersion::INITIAL,
       DecisionPolicyDefinition {
@@ -945,26 +1008,25 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
     )
     .unwrap();
     let assessments = [assessment.clone()];
-    let decision = evaluate_decision(
+    let evaluation = FactoryEvaluationDecision::from_completed_join(
       DecisionId::generate(),
-      DecisionEngineInput::new(&evidence, &plan, &policy, &assessments),
+      &evidence,
+      &plan,
+      &policy,
+      &completed_progress,
+      &assessments,
+      &[],
     )
     .unwrap();
+    let decision = evaluation.decision().clone();
     assert_eq!(decision.outcome(), DecisionOutcome::Accept);
+    let (decision_progress, decision_append) = evaluation.into_parts();
     commit_worker_result(
       &store,
       decision_outbox,
       FactoryRunState::Evaluating,
-      FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
-        outcome: decision.outcome(),
-        completed_rework_cycles: 0,
-        max_rework_cycles: 0,
-      }),
-      FactoryRunHistoryAppend {
-        assessments: vec![assessment],
-        decisions: vec![decision.clone()],
-        ..FactoryRunHistoryAppend::default()
-      },
+      decision_progress,
+      decision_append,
       |current| current.decision_id = Some(decision.id()),
     )
     .await;

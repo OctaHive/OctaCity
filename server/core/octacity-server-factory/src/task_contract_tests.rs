@@ -93,6 +93,23 @@ fn envelope_with_permissions(
   mode: FactoryTaskMode,
   permissions: FactoryPermissionSet,
 ) -> Result<FactoryTaskEnvelope, FactoryError> {
+  let deliverables = match mode {
+    FactoryTaskMode::Evaluate => Vec::new(),
+    FactoryTaskMode::Implement | FactoryTaskMode::Rework => vec![FactoryTaskDeliverable::new(
+      key("result"),
+      FactoryRepositoryPath::new("outputs/result.json").expect("fixture path"),
+      true,
+    )],
+  };
+  envelope_with_deliverables(subject, mode, permissions, deliverables)
+}
+
+fn envelope_with_deliverables(
+  subject: FactoryTaskSubject,
+  mode: FactoryTaskMode,
+  permissions: FactoryPermissionSet,
+  deliverables: Vec<FactoryTaskDeliverable>,
+) -> Result<FactoryTaskEnvelope, FactoryError> {
   let task = artifact(1);
   let context = manifest(
     subject.clone(),
@@ -101,14 +118,6 @@ fn envelope_with_permissions(
   let result_schema = match mode {
     FactoryTaskMode::Evaluate => FactoryTaskResultSchema::EvaluationV1,
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryTaskResultSchema::ImplementationV1,
-  };
-  let deliverables = match mode {
-    FactoryTaskMode::Evaluate => Vec::new(),
-    FactoryTaskMode::Implement | FactoryTaskMode::Rework => vec![FactoryTaskDeliverable::new(
-      key("result"),
-      FactoryRepositoryPath::new("outputs/result.json").expect("fixture path"),
-      true,
-    )],
   };
   FactoryTaskEnvelope::new(
     FactoryTaskDeclaration {
@@ -139,6 +148,88 @@ fn envelope_with_permissions(
       provenance: digest(9),
     },
   )
+}
+
+#[test]
+fn model_results_cannot_smuggle_control_or_apply_self_modification() {
+  let exact = exact_subject();
+  let policy_deliverable = FactoryTaskDeliverable::new(
+    key("factory-policy-candidate"),
+    FactoryRepositoryPath::new("factory/policy.toml").expect("fixture policy path"),
+    true,
+  );
+  let envelope = envelope_with_deliverables(
+    exact.clone(),
+    FactoryTaskMode::Implement,
+    FactoryPermissionSet::deny_all(),
+    vec![policy_deliverable.clone()],
+  )
+  .expect("fixture envelope");
+  let envelope_digest = envelope.digest().expect("fixture envelope digest");
+  let policy_digest = envelope.digests().policy;
+  let candidate = candidate_subject(&exact);
+  let result = ImplementationResult::new(
+    &envelope,
+    ImplementationOutcome::Succeeded,
+    Some(candidate.clone()),
+    BoundedSummary::new(
+      FactoryTaskSubject::Candidate(candidate.clone()),
+      text("Factory policy change proposed for separate review"),
+      digest(81),
+    ),
+    vec![FactoryProducedDeliverable::new(
+      policy_deliverable.clone(),
+      artifact(82),
+    )],
+    digest(83),
+  )
+  .expect("policy edit remains an ordinary implementation result");
+
+  assert_eq!(result.subject(), &FactoryTaskSubject::Candidate(candidate));
+  assert_eq!(result.deliverables()[0].declaration(), &policy_deliverable);
+  assert_eq!(result.task_envelope_digest(), envelope_digest);
+  assert_eq!(envelope.digests().policy, policy_digest);
+
+  let encoded = serde_json::to_value(&result).expect("serialize result");
+  let mut fields = encoded
+    .as_object()
+    .expect("result object")
+    .keys()
+    .map(String::as_str)
+    .collect::<Vec<_>>();
+  fields.sort_unstable();
+  assert_eq!(
+    fields,
+    [
+      "deliverable_digest",
+      "deliverables",
+      "outcome",
+      "provenance_digest",
+      "schema_version",
+      "subject",
+      "summary",
+      "task_envelope_digest",
+      "task_envelope_id",
+    ]
+  );
+
+  for forbidden_field in [
+    "permissions",
+    "evidence",
+    "next_route",
+    "configuration_override",
+    "apply_to_current_run",
+  ] {
+    let mut value = encoded.clone();
+    value
+      .as_object_mut()
+      .expect("result object")
+      .insert(forbidden_field.to_owned(), serde_json::json!({ "requested": true }));
+    assert!(
+      serde_json::from_value::<ImplementationResult>(value).is_err(),
+      "model result unexpectedly accepted {forbidden_field} authority"
+    );
+  }
 }
 
 #[test]

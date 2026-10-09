@@ -1,11 +1,10 @@
-use std::collections::HashSet;
-
 use octacity_server_domain::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  BudgetLimit, BudgetResource, BudgetUsage, DecisionOutcome, DecisionSignalPurpose, FactoryDigest, FactoryError,
-  FactoryKey, FactoryRunState, FactoryStageKind, FactoryWipLimits, MAX_EVALUATORS,
+  BudgetLimit, BudgetResource, BudgetUsage, DecisionOutcome, DecisionSignalPurpose, EvaluationBranchState,
+  EvaluationProgress, EvaluationState, FactoryDigest, FactoryError, FactoryKey, FactoryRunState, FactoryStageKind,
+  FactoryWipLimits,
 };
 
 const ALL_BUDGET_RESOURCES: [BudgetResource; 5] = [
@@ -139,10 +138,70 @@ pub struct FactoryDecisionGuard {
   claim: FactoryClaim,
   presented_fence: FactoryClaimFence,
   observed_at: Timestamp,
+  resources: FactoryDecisionResources,
+  rework: FactoryReworkStatus,
+}
+
+/// Authoritative budget and WIP facts used by one lifecycle decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FactoryDecisionResources {
   budget_limit: BudgetLimit,
   budget_usage: BudgetUsage,
   wip_limits: FactoryWipLimits,
   wip_usage: FactoryWipUsage,
+}
+
+impl FactoryDecisionResources {
+  /// Groups the immutable limits with their authoritative current usage.
+  #[must_use]
+  pub const fn new(
+    budget_limit: BudgetLimit,
+    budget_usage: BudgetUsage,
+    wip_limits: FactoryWipLimits,
+    wip_usage: FactoryWipUsage,
+  ) -> Self {
+    Self {
+      budget_limit,
+      budget_usage,
+      wip_limits,
+      wip_usage,
+    }
+  }
+
+  fn validate(self) -> Result<(), FactoryError> {
+    self.budget_usage.validate(self.budget_limit)?;
+    self.wip_usage.validate(self.wip_limits)
+  }
+}
+
+/// Authoritative rework counters derived from immutable configuration and history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FactoryReworkStatus {
+  completed_cycles: u16,
+  max_cycles: u16,
+  exhausted_outcome: DecisionOutcome,
+}
+
+impl FactoryReworkStatus {
+  /// Captures trusted rework authority after counting successful historical cycles.
+  pub const fn new(
+    completed_cycles: u16,
+    max_cycles: u16,
+    exhausted_outcome: DecisionOutcome,
+  ) -> Result<Self, FactoryError> {
+    if completed_cycles > max_cycles
+      || !matches!(exhausted_outcome, DecisionOutcome::Escalate | DecisionOutcome::Reject)
+    {
+      return Err(FactoryError::InvalidLifecycle {
+        state: FactoryRunState::Evaluating,
+      });
+    }
+    Ok(Self {
+      completed_cycles,
+      max_cycles,
+      exhausted_outcome,
+    })
+  }
 }
 
 impl FactoryDecisionGuard {
@@ -152,26 +211,21 @@ impl FactoryDecisionGuard {
     claim: FactoryClaim,
     presented_fence: FactoryClaimFence,
     observed_at: Timestamp,
-    budget_limit: BudgetLimit,
-    budget_usage: BudgetUsage,
-    wip_limits: FactoryWipLimits,
-    wip_usage: FactoryWipUsage,
+    resources: FactoryDecisionResources,
+    rework: FactoryReworkStatus,
   ) -> Self {
     Self {
       claim,
       presented_fence,
       observed_at,
-      budget_limit,
-      budget_usage,
-      wip_limits,
-      wip_usage,
+      resources,
+      rework,
     }
   }
 
   fn validate(self) -> Result<(), FactoryError> {
     self.claim.verify_fence(self.presented_fence, self.observed_at)?;
-    self.budget_usage.validate(self.budget_limit)?;
-    self.wip_usage.validate(self.wip_limits)
+    self.resources.validate()
   }
 }
 
@@ -250,182 +304,6 @@ pub enum FactoryStageProgress {
   CandidateCaptured,
   /// Trusted projection accepted exact deterministic evidence.
   EvidenceConstructed,
-}
-
-/// Persisted progress for one evaluator branch.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum EvaluationBranchState {
-  /// The expected branch has no Stage Attempt yet.
-  Pending,
-  /// The branch Stage Attempt exists but has no linked Build.
-  AttemptCreated,
-  /// The linked evaluation Build is non-terminal.
-  BuildActive,
-  /// A schema-valid Assessment was accepted.
-  Succeeded,
-  /// A provider-independent failure may create another bounded attempt.
-  RetryableFailure,
-  /// An operator authorized exactly one bounded retry of this branch.
-  RetryRequested,
-  /// The branch exhausted its failure policy.
-  Failed,
-  /// A required planned branch is absent from persisted execution facts.
-  Missing,
-  /// The branch Build was cancelled.
-  Cancelled,
-}
-
-/// One expected evaluator branch and its authoritative progress.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct EvaluationBranch {
-  key: FactoryKey,
-  required: bool,
-  state: EvaluationBranchState,
-}
-
-impl EvaluationBranch {
-  /// Constructs one planned evaluator branch.
-  #[must_use]
-  pub const fn new(key: FactoryKey, required: bool, state: EvaluationBranchState) -> Self {
-    Self { key, required, state }
-  }
-
-  /// Returns the stable evaluator branch key.
-  #[must_use]
-  pub const fn key(&self) -> &FactoryKey {
-    &self.key
-  }
-
-  /// Returns the current authoritative branch progress.
-  #[must_use]
-  pub const fn state(&self) -> EvaluationBranchState {
-    self.state
-  }
-
-  fn with_state(&self, state: EvaluationBranchState) -> Self {
-    Self {
-      key: self.key.clone(),
-      required: self.required,
-      state,
-    }
-  }
-}
-
-/// Canonically ordered evaluator branches and their deterministic quorum.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct EvaluationProgress {
-  branches: Vec<EvaluationBranch>,
-  required_quorum: u16,
-}
-
-impl EvaluationProgress {
-  /// Constructs a non-empty, bounded branch set with unique identities.
-  pub fn try_new(mut branches: Vec<EvaluationBranch>, required_quorum: u16) -> Result<Self, FactoryError> {
-    if branches.is_empty()
-      || branches.len() > MAX_EVALUATORS
-      || required_quorum == 0
-      || usize::from(required_quorum) > branches.len()
-      || branches.iter().map(|branch| &branch.key).collect::<HashSet<_>>().len() != branches.len()
-    {
-      return Err(FactoryError::InvalidLifecycle {
-        state: FactoryRunState::Evaluating,
-      });
-    }
-    branches.sort_by(|left, right| left.key.cmp(&right.key));
-    Ok(Self {
-      branches,
-      required_quorum,
-    })
-  }
-
-  /// Advances exactly one evaluator branch through an allowed immediate transition.
-  pub fn advance_branch(&self, key: &FactoryKey, next_state: EvaluationBranchState) -> Result<Self, FactoryError> {
-    let Some(current) = self.branches.iter().find(|branch| &branch.key == key) else {
-      return Err(invalid_lifecycle(FactoryRunState::Evaluating));
-    };
-    if !valid_evaluation_branch_transition(current.state, next_state) {
-      return Err(invalid_lifecycle(FactoryRunState::Evaluating));
-    }
-    let branches = self
-      .branches
-      .iter()
-      .map(|branch| {
-        if &branch.key == key {
-          branch.with_state(next_state)
-        } else {
-          branch.clone()
-        }
-      })
-      .collect();
-    Ok(Self {
-      branches,
-      required_quorum: self.required_quorum,
-    })
-  }
-
-  /// Returns evaluator branches in canonical key order.
-  #[must_use]
-  pub fn branches(&self) -> &[EvaluationBranch] {
-    &self.branches
-  }
-
-  fn is_immediate_successor(&self, next: &Self) -> bool {
-    if self.required_quorum != next.required_quorum || self.branches.len() != next.branches.len() {
-      return false;
-    }
-    let mut changed = 0_u8;
-    self.branches.iter().zip(&next.branches).all(|(previous, next)| {
-      if previous.key != next.key || previous.required != next.required {
-        return false;
-      }
-      if previous.state == next.state {
-        return true;
-      }
-      changed = changed.saturating_add(1);
-      changed == 1 && valid_evaluation_branch_transition(previous.state, next.state)
-    }) && changed == 1
-  }
-}
-
-const fn valid_evaluation_branch_transition(previous: EvaluationBranchState, next: EvaluationBranchState) -> bool {
-  matches!(
-    (previous, next),
-    (
-      EvaluationBranchState::Pending | EvaluationBranchState::RetryRequested,
-      EvaluationBranchState::AttemptCreated
-    ) | (
-      EvaluationBranchState::RetryableFailure,
-      EvaluationBranchState::RetryRequested
-    ) | (
-      EvaluationBranchState::AttemptCreated,
-      EvaluationBranchState::BuildActive
-    ) | (
-      EvaluationBranchState::BuildActive,
-      EvaluationBranchState::Succeeded
-        | EvaluationBranchState::RetryableFailure
-        | EvaluationBranchState::Failed
-        | EvaluationBranchState::Missing
-        | EvaluationBranchState::Cancelled
-    )
-  )
-}
-
-/// Persisted evaluation planning, fan-out, join, and Decision progress.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum EvaluationState {
-  /// Exact evidence exists but no immutable Evaluation Plan has been recorded.
-  PlanRequired,
-  /// The immutable plan's expected branches are being joined.
-  Branches(EvaluationProgress),
-  /// The pure Decision Engine recorded one authoritative typed outcome.
-  DecisionRecorded {
-    /// Typed deterministic outcome.
-    outcome: DecisionOutcome,
-    /// Rework cycles already consumed before this Decision.
-    completed_rework_cycles: u16,
-    /// Immutable maximum rework cycles.
-    max_rework_cycles: u16,
-  },
 }
 
 /// Human delivery intent recorded before any write-capable adapter runs.
@@ -536,11 +414,11 @@ impl FactoryLifecycleProgress {
         ..
       } => 1,
       Self::Evaluating(EvaluationState::Branches(progress)) => progress
-        .branches
+        .branches()
         .iter()
         .filter(|branch| {
           matches!(
-            branch.state,
+            branch.state(),
             EvaluationBranchState::AttemptCreated | EvaluationBranchState::BuildActive
           )
         })
@@ -655,6 +533,8 @@ pub enum FactoryNextAction {
   ConstructEvidence,
   /// Persist an immutable Evaluation Plan.
   PlanEvaluations,
+  /// Validate and record one completed evaluator Build result.
+  CollectEvaluationResult(FactoryKey),
   /// Run the pure Decision Engine after the deterministic join.
   Decide,
   /// Start one configured bounded rework cycle.
@@ -689,6 +569,7 @@ impl FactoryNextAction {
       Self::CaptureCandidate => "candidate.capture".to_owned(),
       Self::ConstructEvidence => "evidence.construct".to_owned(),
       Self::PlanEvaluations => "evaluation.plan".to_owned(),
+      Self::CollectEvaluationResult(branch) => format!("evaluation.result:{branch}"),
       Self::Decide => "decision.compute".to_owned(),
       Self::RequestRework => "rework.request".to_owned(),
       Self::Escalate(reason) => format!("escalate:{}", escalation_reason_key(reason)),
@@ -712,6 +593,7 @@ impl FactoryNextAction {
       Self::CaptureCandidate => Some("candidate.capture"),
       Self::ConstructEvidence => Some("evidence.construct"),
       Self::PlanEvaluations => Some("evaluation.plan"),
+      Self::CollectEvaluationResult(_) => Some("evaluation.result"),
       Self::Decide => Some("decision.compute"),
       Self::Cancel => Some("run.cancel"),
       Self::RequestDelivery => Some("delivery.request"),
@@ -785,7 +667,7 @@ pub fn decide_next_action(snapshot: &FactoryLifecycleSnapshot) -> Result<Factory
   let action = match &snapshot.progress {
     FactoryLifecycleProgress::Admitted => FactoryNextAction::CreateStageAttempt(FactoryStageTarget::Implementation),
     FactoryLifecycleProgress::Stage { target, progress } => decide_stage(target, *progress, snapshot.state)?,
-    FactoryLifecycleProgress::Evaluating(progress) => decide_evaluation(progress)?,
+    FactoryLifecycleProgress::Evaluating(progress) => decide_evaluation(progress, snapshot.guard.rework)?,
     FactoryLifecycleProgress::ReadyForDelivery(intent) => match intent {
       DeliveryIntent::AwaitingApproval => FactoryNextAction::Wait(FactoryWaitReason::DeliveryApproval),
       DeliveryIntent::Requested => FactoryNextAction::RequestDelivery,
@@ -800,55 +682,56 @@ pub fn decide_next_action(snapshot: &FactoryLifecycleSnapshot) -> Result<Factory
   guard_action(snapshot, action)
 }
 
-fn decide_evaluation(progress: &EvaluationState) -> Result<FactoryNextAction, FactoryError> {
+fn decide_evaluation(
+  progress: &EvaluationState,
+  rework: FactoryReworkStatus,
+) -> Result<FactoryNextAction, FactoryError> {
   match progress {
     EvaluationState::PlanRequired => Ok(FactoryNextAction::PlanEvaluations),
     EvaluationState::Branches(progress) => decide_evaluation_branches(progress),
-    EvaluationState::DecisionRecorded {
-      outcome,
-      completed_rework_cycles,
-      max_rework_cycles,
-    } => {
-      if completed_rework_cycles > max_rework_cycles {
-        return Err(invalid_lifecycle(FactoryRunState::Evaluating));
-      }
-      Ok(match outcome {
-        DecisionOutcome::Accept => FactoryNextAction::PrepareDelivery,
-        DecisionOutcome::Rework if completed_rework_cycles < max_rework_cycles => FactoryNextAction::RequestRework,
-        DecisionOutcome::Rework => FactoryNextAction::Escalate(FactoryEscalationReason::ReworkExhausted),
-        DecisionOutcome::Reject => FactoryNextAction::Reject,
-        DecisionOutcome::Escalate => FactoryNextAction::Escalate(FactoryEscalationReason::Decision),
-        DecisionOutcome::Cancel => FactoryNextAction::Cancel,
-      })
-    }
+    EvaluationState::DecisionRecorded { outcome, .. } => Ok(match outcome {
+      DecisionOutcome::Accept => FactoryNextAction::PrepareDelivery,
+      DecisionOutcome::Rework if rework.completed_cycles < rework.max_cycles => FactoryNextAction::RequestRework,
+      DecisionOutcome::Rework if rework.exhausted_outcome == DecisionOutcome::Reject => FactoryNextAction::Reject,
+      DecisionOutcome::Rework => FactoryNextAction::Escalate(FactoryEscalationReason::ReworkExhausted),
+      DecisionOutcome::Reject => FactoryNextAction::Reject,
+      DecisionOutcome::Escalate => FactoryNextAction::Escalate(FactoryEscalationReason::Decision),
+      DecisionOutcome::Cancel => FactoryNextAction::Cancel,
+    }),
   }
 }
 
 fn decide_evaluation_branches(progress: &EvaluationProgress) -> Result<FactoryNextAction, FactoryError> {
-  if let Some(branch) = progress.branches.iter().find(|branch| {
-    branch.required
+  if let Some(branch) = progress.branches().iter().find(|branch| {
+    branch.is_required()
       && matches!(
-        branch.state,
-        EvaluationBranchState::Missing | EvaluationBranchState::Failed | EvaluationBranchState::Cancelled
+        branch.state(),
+        EvaluationBranchState::Missing
+          | EvaluationBranchState::Failed
+          | EvaluationBranchState::Exhausted
+          | EvaluationBranchState::Cancelled
       )
   }) {
     return Ok(FactoryNextAction::Escalate(
-      FactoryEscalationReason::RequiredEvaluationFailed(branch.key.clone()),
+      FactoryEscalationReason::RequiredEvaluationFailed(branch.key().clone()),
     ));
   }
 
-  for branch in &progress.branches {
-    let target = FactoryStageTarget::Evaluation(branch.key.clone());
-    let action = match branch.state {
+  for branch in progress.branches() {
+    let target = FactoryStageTarget::Evaluation(branch.key().clone());
+    let action = match branch.state() {
       EvaluationBranchState::Pending => Some(FactoryNextAction::CreateStageAttempt(target)),
       EvaluationBranchState::AttemptCreated => Some(FactoryNextAction::CreateBuild(target)),
       EvaluationBranchState::RetryableFailure => {
         Some(FactoryNextAction::Wait(FactoryWaitReason::RetryApproval(target)))
       }
       EvaluationBranchState::RetryRequested => Some(FactoryNextAction::RetryStage(target)),
+      EvaluationBranchState::ResultPending => Some(FactoryNextAction::CollectEvaluationResult(branch.key().clone())),
       EvaluationBranchState::BuildActive
-      | EvaluationBranchState::Succeeded
+      | EvaluationBranchState::Completed
       | EvaluationBranchState::Failed
+      | EvaluationBranchState::Substituted
+      | EvaluationBranchState::Exhausted
       | EvaluationBranchState::Missing
       | EvaluationBranchState::Cancelled => None,
     };
@@ -857,20 +740,26 @@ fn decide_evaluation_branches(progress: &EvaluationProgress) -> Result<FactoryNe
     }
   }
 
-  if progress
-    .branches
-    .iter()
-    .any(|branch| branch.state == EvaluationBranchState::BuildActive)
-  {
+  if progress.branches().iter().any(|branch| {
+    matches!(
+      branch.state(),
+      EvaluationBranchState::BuildActive | EvaluationBranchState::ResultPending
+    )
+  }) {
     return Ok(FactoryNextAction::Wait(FactoryWaitReason::EvaluationJoin));
   }
 
   let succeeded = progress
-    .branches
+    .branches()
     .iter()
-    .filter(|branch| branch.state == EvaluationBranchState::Succeeded)
+    .filter(|branch| {
+      matches!(
+        branch.state(),
+        EvaluationBranchState::Completed | EvaluationBranchState::Substituted
+      )
+    })
     .count();
-  if succeeded >= usize::from(progress.required_quorum) {
+  if succeeded >= usize::from(progress.required_quorum()) {
     Ok(FactoryNextAction::Decide)
   } else {
     Ok(FactoryNextAction::Escalate(FactoryEscalationReason::EvaluationQuorum))
@@ -1021,15 +910,10 @@ pub fn validate_lifecycle_transition(
       }
       (
         FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(previous)),
-        FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
-          completed_rework_cycles,
-          max_rework_cycles,
-          ..
-        }),
+        FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded { .. }),
       ) => {
         previous_state == FactoryRunState::Evaluating
           && next_state == FactoryRunState::Evaluating
-          && completed_rework_cycles <= max_rework_cycles
           && matches!(decide_evaluation_branches(previous), Ok(FactoryNextAction::Decide))
       }
       (
@@ -1122,8 +1006,9 @@ fn guard_action(
   for resource in required_budget_resources(&action) {
     if snapshot
       .guard
+      .resources
       .budget_usage
-      .is_exhausted(snapshot.guard.budget_limit, *resource)
+      .is_exhausted(snapshot.guard.resources.budget_limit, *resource)
     {
       return Ok(FactoryNextAction::Escalate(FactoryEscalationReason::BudgetExhausted(
         *resource,
@@ -1135,8 +1020,9 @@ fn guard_action(
     FactoryNextAction::CreateStageAttempt(_) | FactoryNextAction::RetryStage(_) | FactoryNextAction::RequestRework
   ) && !snapshot
     .guard
+    .resources
     .wip_usage
-    .stage_capacity_available(snapshot.guard.wip_limits)
+    .stage_capacity_available(snapshot.guard.resources.wip_limits)
   {
     return Ok(FactoryNextAction::Wait(FactoryWaitReason::StageCapacity));
   }
@@ -1155,6 +1041,7 @@ fn required_budget_resources(action: &FactoryNextAction) -> &'static [BudgetReso
     FactoryNextAction::Wait(_)
     | FactoryNextAction::ConsumeDecisionSignal
     | FactoryNextAction::PlanEvaluations
+    | FactoryNextAction::CollectEvaluationResult(_)
     | FactoryNextAction::Decide
     | FactoryNextAction::Escalate(_)
     | FactoryNextAction::Reject

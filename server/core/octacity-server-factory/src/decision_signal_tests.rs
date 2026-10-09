@@ -126,6 +126,16 @@ fn profile(
   fallback: DecisionSignalFallback,
   choice_values: &[&str],
 ) -> DecisionSignalProfile {
+  profile_with_budget(purpose, mode, fallback, choice_values, budget())
+}
+
+fn profile_with_budget(
+  purpose: DecisionSignalPurpose,
+  mode: DecisionSignalMode,
+  fallback: DecisionSignalFallback,
+  choice_values: &[&str],
+  budget: BudgetLimit,
+) -> DecisionSignalProfile {
   DecisionSignalProfile::from_resolved(DecisionSignalProfileDefinition {
     purpose,
     provider: exact("provider", "v1", 3),
@@ -135,7 +145,7 @@ fn profile(
     policy: exact("policy", "v4", 6),
     mode,
     fallback,
-    budget: budget(),
+    budget,
     routes: (purpose == DecisionSignalPurpose::Routing)
       .then(|| DecisionSignalRouteSet::new(key("current-state"), choices(choice_values))),
   })
@@ -150,7 +160,33 @@ fn provider_request(
   minimum_margin: u32,
 ) -> DecisionSignalProviderRequest {
   let stage = stage();
-  let profile = profile(purpose, mode, fallback, choice_values);
+  provider_request_for_stage(
+    &stage,
+    purpose,
+    mode,
+    fallback,
+    choice_values,
+    budget(),
+    minimum_probability,
+    minimum_margin,
+  )
+}
+
+#[expect(
+  clippy::too_many_arguments,
+  reason = "test fixture exposes every signal-policy dimension"
+)]
+pub(crate) fn provider_request_for_stage(
+  stage: &StageAttempt,
+  purpose: DecisionSignalPurpose,
+  mode: DecisionSignalMode,
+  fallback: DecisionSignalFallback,
+  choice_values: &[&str],
+  request_budget: BudgetLimit,
+  minimum_probability: u32,
+  minimum_margin: u32,
+) -> DecisionSignalProviderRequest {
+  let profile = profile_with_budget(purpose, mode, fallback, choice_values, request_budget);
   let input = provider_input(purpose, choice_values);
   let semantics = exact("semantics", "v3", 7);
   let capability = DecisionSignalProviderCapability::new(
@@ -163,12 +199,12 @@ fn provider_request(
     vec![DecisionSignalInputMedia::CanonicalJson],
     vec![DecisionSignalQuestionKind::FiniteChoice],
     DecisionSignalProviderLimits::new(1_024, 4, MAX_DECISION_SIGNAL_CHOICES as u16).expect("fixture limits"),
-    budget(),
+    request_budget,
   )
   .expect("fixture capability");
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    stage,
     purpose,
     DecisionSignalDigests::new(input.digest(), profile.policy().digest()),
     profile.budget(),
@@ -197,6 +233,7 @@ fn result(
   probability: u32,
   runner_up: u32,
 ) -> DecisionSignalProviderResult {
+  let budget = request.request().budget();
   DecisionSignalProviderResult::new(
     request.id(),
     request.provider().clone(),
@@ -212,17 +249,17 @@ fn result(
       },
     )],
     BudgetUsage {
-      attempts: 1,
-      elapsed_millis: 5,
-      tokens: 10,
-      cost_micro_units: 2,
-      output_bytes: 20,
+      attempts: budget.max_attempts().min(1),
+      elapsed_millis: budget.max_elapsed_millis().min(5),
+      tokens: budget.max_tokens().min(10),
+      cost_micro_units: budget.max_cost_micro_units().min(2),
+      output_bytes: budget.max_output_bytes().min(20),
     },
   )
   .expect("fixture result")
 }
 
-fn observation(
+pub(crate) fn observation(
   request: &DecisionSignalProviderRequest,
   selected_choice: &str,
   probability: u32,
@@ -927,4 +964,64 @@ fn receipt_replay_reuses_recorded_disposition_and_rejects_request_drift() {
     receipt.replay(&drifted),
     Err(FactoryError::InvalidReference { .. })
   ));
+}
+
+#[test]
+fn restored_provider_request_revalidates_every_canonical_digest() {
+  let request = provider_request(
+    DecisionSignalPurpose::Routing,
+    DecisionSignalMode::Advisory,
+    DecisionSignalFallback::Escalate,
+    &["baseline", "fast"],
+    600_000,
+    100_000,
+  );
+  request.validate_integrity().expect("fresh request is integral");
+
+  for field in ["digest", "policy"] {
+    let mut encoded = serde_json::to_value(&request).expect("serialize request");
+    encoded[field] = serde_json::to_value(exact("tampered", "v1", 250)).expect("serialize tampered reference");
+    if field == "digest" {
+      encoded[field] = serde_json::to_value(digest(250)).expect("serialize tampered digest");
+    }
+    let restored: DecisionSignalProviderRequest =
+      serde_json::from_value(encoded).expect("request remains structurally valid");
+    assert_eq!(
+      restored.validate_integrity(),
+      Err(FactoryError::InvalidDecisionSignal {
+        field: "provider request integrity",
+      })
+    );
+  }
+}
+
+#[test]
+fn restored_receipt_revalidates_its_result_and_canonical_digest() {
+  let request = provider_request(
+    DecisionSignalPurpose::Routing,
+    DecisionSignalMode::Advisory,
+    DecisionSignalFallback::Escalate,
+    &["baseline", "fast"],
+    600_000,
+    100_000,
+  );
+  let receipt = consume_routing_signal(
+    DecisionSignalReceiptId::generate(),
+    &request,
+    observation(&request, "fast", 900_000, 100_000),
+    key("baseline"),
+  )
+  .expect("receipt");
+  receipt.validate_integrity().expect("fresh receipt is integral");
+
+  let mut encoded = serde_json::to_value(receipt).expect("serialize receipt");
+  encoded["receipt_digest"] = serde_json::to_value(digest(251)).expect("serialize tampered digest");
+  let restored: crate::DecisionSignalReceipt =
+    serde_json::from_value(encoded).expect("receipt remains structurally valid");
+  assert_eq!(
+    restored.validate_integrity(),
+    Err(FactoryError::InvalidDecisionSignal {
+      field: "receipt integrity",
+    })
+  );
 }

@@ -106,11 +106,22 @@ impl CriterionPack {
 }
 
 /// One independently evaluated branch in a review plan.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ReviewBranch {
   key: FactoryKey,
   evaluator: ImmutableReference,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  substitutes: Vec<ImmutableReference>,
+  required: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewBranchWire {
+  key: FactoryKey,
+  evaluator: ImmutableReference,
+  #[serde(default)]
+  substitutes: Vec<ImmutableReference>,
   required: bool,
 }
 
@@ -121,8 +132,42 @@ impl ReviewBranch {
     Self {
       key,
       evaluator,
+      substitutes: Vec::new(),
       required,
     }
+  }
+
+  /// Constructs a branch with an explicit canonical substitute evaluator set.
+  pub fn with_substitutes(
+    key: FactoryKey,
+    evaluator: ImmutableReference,
+    mut substitutes: Vec<ImmutableReference>,
+    required: bool,
+  ) -> Result<Self, FactoryError> {
+    substitutes.sort();
+    if substitutes.is_empty()
+      || substitutes.windows(2).any(|pair| pair[0] == pair[1])
+      || substitutes.contains(&evaluator)
+      || substitutes
+        .iter()
+        .map(ImmutableReference::identity)
+        .collect::<HashSet<_>>()
+        .len()
+        != substitutes.len()
+      || substitutes
+        .iter()
+        .any(|substitute| substitute.identity() == evaluator.identity())
+    {
+      return Err(FactoryError::InvalidReference {
+        relationship: "review branch substitutes",
+      });
+    }
+    Ok(Self {
+      key,
+      evaluator,
+      substitutes,
+      required,
+    })
   }
 
   /// Returns the stable branch key.
@@ -137,10 +182,36 @@ impl ReviewBranch {
     &self.evaluator
   }
 
+  /// Returns explicitly declared safe substitute evaluators in canonical order.
+  #[must_use]
+  pub fn substitutes(&self) -> &[ImmutableReference] {
+    &self.substitutes
+  }
+
+  /// Reports whether this branch permits the exact primary or substitute evaluator.
+  #[must_use]
+  pub fn allows_evaluator(&self, evaluator: &ImmutableReference) -> bool {
+    &self.evaluator == evaluator || self.substitutes.contains(evaluator)
+  }
+
   /// Reports whether the branch must be available and complete.
   #[must_use]
   pub const fn is_required(&self) -> bool {
     self.required
+  }
+}
+
+impl<'de> Deserialize<'de> for ReviewBranch {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    let wire = ReviewBranchWire::deserialize(deserializer)?;
+    if wire.substitutes.is_empty() {
+      Ok(Self::new(wire.key, wire.evaluator, wire.required))
+    } else {
+      Self::with_substitutes(wire.key, wire.evaluator, wire.substitutes, wire.required).map_err(D::Error::custom)
+    }
   }
 }
 
@@ -333,16 +404,19 @@ impl EvaluationPlan {
   /// Reports whether an exact evaluator is selected by the plan.
   #[must_use]
   pub fn has_evaluator(&self, evaluator: &ImmutableReference) -> bool {
-    self.branches.iter().any(|branch| branch.evaluator() == evaluator)
+    self.branches.iter().any(|branch| branch.allows_evaluator(evaluator))
   }
 
   /// Reports whether an evaluator logical identity is selected by the plan.
   #[must_use]
   pub fn has_evaluator_identity(&self, evaluator: &FactoryKey) -> bool {
-    self
-      .branches
-      .iter()
-      .any(|branch| branch.evaluator().identity() == evaluator)
+    self.branches.iter().any(|branch| {
+      branch.evaluator().identity() == evaluator
+        || branch
+          .substitutes()
+          .iter()
+          .any(|substitute| substitute.identity() == evaluator)
+    })
   }
 
   /// Returns the bounded number of selected evaluator branches.
@@ -438,10 +512,14 @@ pub fn prepare_evaluation_plan(
     .branches
     .iter()
     .filter(|branch| {
-      capabilities.iter().any(|capability| {
-        capability.evaluator() == branch.evaluator()
-          && capability.supports(definition.purpose, &definition.data_handling, definition.budget)
-      })
+      std::iter::once(branch.evaluator())
+        .chain(branch.substitutes())
+        .any(|evaluator| {
+          capabilities.iter().any(|capability| {
+            capability.evaluator() == evaluator
+              && capability.supports(definition.purpose, &definition.data_handling, definition.budget)
+          })
+        })
     })
     .map(ReviewBranch::key)
     .collect::<HashSet<_>>();
@@ -527,11 +605,7 @@ fn validate_plan_shape(plan: &EvaluationPlanWire) -> Result<(), FactoryError> {
     "criterion pack identities",
   )?;
   validate_unique_by(plan.branches.iter().map(ReviewBranch::key), "review branches")?;
-  validate_unique_by(plan.branches.iter().map(ReviewBranch::evaluator), "review evaluators")?;
-  validate_unique_by(
-    plan.branches.iter().map(|branch| branch.evaluator().identity()),
-    "review evaluator identities",
-  )
+  validate_branch_evaluators(&plan.branches)
 }
 
 fn validate_definition(
@@ -578,14 +652,7 @@ fn validate_definition(
     "criterion pack identities",
   )?;
   validate_unique_by(definition.branches.iter().map(ReviewBranch::key), "review branches")?;
-  validate_unique_by(
-    definition.branches.iter().map(ReviewBranch::evaluator),
-    "review evaluators",
-  )?;
-  validate_unique_by(
-    definition.branches.iter().map(|branch| branch.evaluator().identity()),
-    "review evaluator identities",
-  )?;
+  validate_branch_evaluators(&definition.branches)?;
 
   let mut selected_packs = definition
     .criterion_packs
@@ -598,7 +665,7 @@ fn validate_definition(
   let mut selected_evaluators = definition
     .branches
     .iter()
-    .map(ReviewBranch::evaluator)
+    .flat_map(|branch| std::iter::once(branch.evaluator()).chain(branch.substitutes()))
     .collect::<Vec<_>>();
   selected_evaluators.sort();
   let mut configured_evaluators = policy.evaluators().iter().collect::<Vec<_>>();
@@ -609,6 +676,22 @@ fn validate_definition(
     });
   }
   Ok(())
+}
+
+fn validate_branch_evaluators(branches: &[ReviewBranch]) -> Result<(), FactoryError> {
+  validate_unique_by(
+    branches
+      .iter()
+      .flat_map(|branch| std::iter::once(branch.evaluator()).chain(branch.substitutes())),
+    "review evaluators",
+  )?;
+  validate_unique_by(
+    branches.iter().flat_map(|branch| {
+      std::iter::once(branch.evaluator().identity())
+        .chain(branch.substitutes().iter().map(ImmutableReference::identity))
+    }),
+    "review evaluator identities",
+  )
 }
 
 fn canonicalize_unique<T: Ord>(values: &mut [T], collection: &'static str) -> Result<(), FactoryError> {

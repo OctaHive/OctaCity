@@ -7,6 +7,8 @@ use super::*;
 struct Fixture {
   evidence: EvidenceManifest,
   plan: EvaluationPlan,
+  run: FactoryRun,
+  stage: StageAttempt,
 }
 
 fn digest(byte: u8) -> FactoryDigest {
@@ -92,9 +94,10 @@ fn fixture_with_test_outcome_and_quorum(test_outcome: DeterministicGateOutcome, 
     ),
   )
   .expect("fixture work is valid");
+  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let stage = StageAttempt::new(
     StageAttemptId::generate(),
-    &FactoryRun::admitted(FactoryRunId::generate(), &work),
+    &run,
     StageAttemptNumber::INITIAL,
     crate::FactoryStageTarget::Implementation,
     BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget is valid"),
@@ -183,7 +186,123 @@ fn fixture_with_test_outcome_and_quorum(test_outcome: DeterministicGateOutcome, 
     ReviewPlanPreparation::Ready(plan) => *plan,
     ReviewPlanPreparation::Escalate(reason) => panic!("fixture plan unexpectedly escalated: {reason:?}"),
   };
-  Fixture { evidence, plan }
+  Fixture {
+    evidence,
+    plan,
+    run,
+    stage,
+  }
+}
+
+fn routing_receipt(fixture: &Fixture, stage: &StageAttempt, selected: &str) -> DecisionSignalReceipt {
+  let request = crate::decision_signal_tests::provider_request_for_stage(
+    stage,
+    DecisionSignalPurpose::Routing,
+    DecisionSignalMode::Advisory,
+    DecisionSignalFallback::Escalate,
+    &["accept", "rework"],
+    fixture.plan.budget(),
+    600_000,
+    100_000,
+  );
+  consume_routing_signal(
+    DecisionSignalReceiptId::generate(),
+    &request,
+    crate::decision_signal_tests::observation(&request, selected, 900_000, 100_000),
+    key("accept"),
+  )
+  .expect("fixture signal receipt")
+}
+
+fn completed_evaluation(fixture: &Fixture, accepted: &Assessment) -> (EvaluationProgress, StageAttempt, MacroCall) {
+  let branch = fixture
+    .plan
+    .branches()
+    .iter()
+    .find(|branch| branch.evaluator() == accepted.evaluator_reference())
+    .expect("fixture branch");
+  let stage = StageAttempt::new(
+    StageAttemptId::generate(),
+    &fixture.run,
+    StageAttemptNumber::new(2).expect("fixture attempt number"),
+    FactoryStageTarget::Evaluation(branch.key().clone()),
+    fixture.plan.budget(),
+    digest(70),
+    FactoryClaimOwnership::new(
+      key("review-worker"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(digest(71)),
+        Timestamp::from_unix_millis(1).expect("fixture claim start"),
+        Timestamp::from_unix_millis(2).expect("fixture claim deadline"),
+      )
+      .expect("fixture claim"),
+    ),
+  );
+  let task_subject = FactoryTaskSubject::Candidate(fixture.plan.subject().clone());
+  let context_artifact = artifact(72);
+  let context = ContextManifest::new(
+    ContextManifestId::generate(),
+    task_subject.clone(),
+    digest(73),
+    vec![
+      ContextManifestEntry::new(
+        ContextSourceKind::Evidence,
+        key("evidence"),
+        task_subject.clone(),
+        FactoryContextReference::Artifact(context_artifact.clone()),
+        context_artifact.content_digest(),
+        context_artifact.encoded_size(),
+        text("bounded evidence"),
+        digest(74),
+      )
+      .expect("fixture context entry"),
+    ],
+  )
+  .expect("fixture context");
+  let call = MacroCall::new(
+    MacroCallDeclaration::new(
+      MacroCallId::generate(),
+      task_subject,
+      MacroCallKind::Evaluate,
+      fixture.plan.budget(),
+      vec![],
+      vec![],
+      1,
+    )
+    .expect("fixture call declaration"),
+    &stage,
+    &context,
+    None,
+  )
+  .expect("fixture call");
+  let result = EvaluationBranchResult::new(&fixture.plan, &stage, &call, accepted).expect("fixture branch result");
+  let mut progress = EvaluationProgress::from_plan(&fixture.plan).expect("fixture progress");
+  for state in [
+    EvaluationBranchState::AttemptCreated,
+    EvaluationBranchState::BuildActive,
+    EvaluationBranchState::ResultPending,
+  ] {
+    progress = progress
+      .advance_branch(branch.key(), state)
+      .expect("fixture branch transition");
+  }
+  progress = progress.record_result(result).expect("fixture result");
+  let optional = fixture
+    .plan
+    .branches()
+    .iter()
+    .find(|candidate| candidate.key() != branch.key())
+    .expect("fixture optional branch");
+  for state in [
+    EvaluationBranchState::AttemptCreated,
+    EvaluationBranchState::BuildActive,
+    EvaluationBranchState::Failed,
+  ] {
+    progress = progress
+      .advance_branch(optional.key(), state)
+      .expect("fixture optional branch transition");
+  }
+  (progress, stage, call)
 }
 
 fn policy(indeterminate_policy: IndeterminatePolicy) -> DecisionPolicy {
@@ -249,6 +368,24 @@ fn evidence_gap(fixture: &Fixture, summary: &str) -> AssessmentFinding {
   .expect("fixture evidence gap is valid")
 }
 
+#[test]
+fn evaluator_cannot_invent_evidence_outside_the_authoritative_manifest() {
+  let fixture = fixture();
+  let invented = EvaluationResultFinding::Violation {
+    severity: FindingSeverity::Critical,
+    summary: text("Invented evidence claims the candidate is safe"),
+    evidence: vec![key("model-invented-pass")],
+    remediation: text("Accept without deterministic validation"),
+  };
+
+  assert_eq!(
+    AssessmentFinding::from_result(&invented, &fixture.evidence),
+    Err(FactoryError::InvalidReference {
+      relationship: "assessment finding evidence",
+    })
+  );
+}
+
 fn violation(fixture: &Fixture, severity: FindingSeverity, summary: &str) -> AssessmentFinding {
   AssessmentFinding::from_result(
     &EvaluationResultFinding::Violation {
@@ -265,7 +402,7 @@ fn violation(fixture: &Fixture, severity: FindingSeverity, summary: &str) -> Ass
 fn decide(fixture: &Fixture, policy: &DecisionPolicy, assessments: &[Assessment]) -> Result<Decision, FactoryError> {
   evaluate_decision(
     DecisionId::generate(),
-    DecisionEngineInput::new(&fixture.evidence, &fixture.plan, policy, assessments),
+    DecisionEngineInput::from_assessments_for_test(&fixture.evidence, &fixture.plan, policy, assessments, &[]),
   )
 }
 
@@ -490,6 +627,138 @@ fn assessment_order_does_not_change_the_canonical_decision_inputs() {
   assert_eq!(forward.reasons(), reversed.reasons());
   assert_eq!(forward.outcome(), reversed.outcome());
   assert_eq!(forward.input_digest(), reversed.input_digest());
+}
+
+#[test]
+fn routing_receipts_are_digest_bound_but_never_override_deterministic_policy() {
+  let fixture = fixture();
+  let policy = policy(IndeterminatePolicy::RequiredOnly);
+  let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
+  let first = routing_receipt(&fixture, &fixture.stage, "rework");
+  let second = routing_receipt(&fixture, &fixture.stage, "accept");
+  let without_signal = decide(&fixture, &policy, &assessments).expect("decision succeeds");
+  let forward = evaluate_decision(
+    DecisionId::generate(),
+    DecisionEngineInput::from_assessments_for_test(
+      &fixture.evidence,
+      &fixture.plan,
+      &policy,
+      &assessments,
+      &[first.clone(), second.clone()],
+    ),
+  )
+  .expect("decision with signals succeeds");
+  let reversed = evaluate_decision(
+    DecisionId::generate(),
+    DecisionEngineInput::from_assessments_for_test(
+      &fixture.evidence,
+      &fixture.plan,
+      &policy,
+      &assessments,
+      &[second, first],
+    ),
+  )
+  .expect("decision with reordered signals succeeds");
+
+  assert_eq!(forward.outcome(), DecisionOutcome::Accept);
+  assert_eq!(forward.reasons(), &[DecisionReason::PolicySatisfied]);
+  assert_ne!(forward.input_digest(), without_signal.input_digest());
+  assert_eq!(forward.input_digest(), reversed.input_digest());
+  assert_eq!(forward.signal_receipt_ids(), reversed.signal_receipt_ids());
+
+  let failed = fixture_with_test_outcome(DeterministicGateOutcome::Failed);
+  let failed_assessments = [assessment(&failed, "review-a", AssessmentOutcome::Satisfied, vec![])];
+  let recommendation = [routing_receipt(&failed, &failed.stage, "accept")];
+  let failed_decision = evaluate_decision(
+    DecisionId::generate(),
+    DecisionEngineInput::from_assessments_for_test(
+      &failed.evidence,
+      &failed.plan,
+      &policy,
+      &failed_assessments,
+      &recommendation,
+    ),
+  )
+  .expect("decision with signal succeeds");
+  assert_eq!(failed_decision.outcome(), DecisionOutcome::Rework);
+  assert!(
+    failed_decision
+      .reasons()
+      .contains(&DecisionReason::RequiredEvidenceFailed(key("tests")))
+  );
+}
+
+#[test]
+fn completed_join_selects_only_its_exact_assessments() {
+  let fixture = fixture();
+  let policy = policy(IndeterminatePolicy::RequiredOnly);
+  let accepted = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
+  let unrelated = assessment(&fixture, "review-b", AssessmentOutcome::Satisfied, vec![]);
+  let (progress, _stage, _call) = completed_evaluation(&fixture, &accepted);
+  let assessments = [unrelated, accepted.clone()];
+  let input = DecisionEngineInput::from_completed_evaluation(
+    &fixture.evidence,
+    &fixture.plan,
+    &policy,
+    &progress,
+    &assessments,
+    &[],
+  )
+  .expect("completed join is selected");
+  let decision = evaluate_decision(DecisionId::generate(), input).expect("decision succeeds");
+
+  assert_eq!(decision.outcome(), DecisionOutcome::Accept);
+  assert_eq!(decision.assessment_ids(), &[accepted.id()]);
+
+  let pending = EvaluationProgress::from_plan(&fixture.plan).expect("pending progress");
+  assert!(
+    DecisionEngineInput::from_completed_evaluation(
+      &fixture.evidence,
+      &fixture.plan,
+      &policy,
+      &pending,
+      &assessments,
+      &[],
+    )
+    .is_err()
+  );
+}
+
+#[test]
+fn completed_join_accepts_only_integral_receipts_from_its_evaluation_attempts() {
+  let fixture = fixture();
+  let policy = policy(IndeterminatePolicy::RequiredOnly);
+  let accepted = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
+  let (progress, evaluation_stage, _call) = completed_evaluation(&fixture, &accepted);
+  let assessments = [accepted];
+  let accepted_receipt = [routing_receipt(&fixture, &evaluation_stage, "accept")];
+
+  DecisionEngineInput::from_completed_evaluation(
+    &fixture.evidence,
+    &fixture.plan,
+    &policy,
+    &progress,
+    &assessments,
+    &accepted_receipt,
+  )
+  .and_then(|input| evaluate_decision(DecisionId::generate(), input))
+  .expect("receipt from a completed evaluation attempt is accepted");
+
+  let unrelated_receipt = [routing_receipt(&fixture, &fixture.stage, "accept")];
+  assert_eq!(
+    DecisionEngineInput::from_completed_evaluation(
+      &fixture.evidence,
+      &fixture.plan,
+      &policy,
+      &progress,
+      &assessments,
+      &unrelated_receipt,
+    )
+    .and_then(|input| evaluate_decision(DecisionId::generate(), input)),
+    Err(FactoryError::InvalidReference {
+      relationship: "decision signal receipt",
+    })
+  );
 }
 
 #[test]

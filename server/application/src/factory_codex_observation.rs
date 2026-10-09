@@ -24,8 +24,8 @@ mod records;
 mod validation;
 
 pub use evaluation::{
-  FactoryCodexEvaluationObservation, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
-  observe_codex_evaluation,
+  FactoryCodexEvaluationCompletion, FactoryCodexEvaluationObservation, FactoryCodexReviewerBinding,
+  FactoryCodexTerminalObservation, observe_codex_evaluation,
 };
 
 use evidence::artifact_reference;

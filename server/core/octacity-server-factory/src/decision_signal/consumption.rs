@@ -243,8 +243,38 @@ impl DecisionSignalReceipt {
     self.receipt_digest
   }
 
+  /// Revalidates the complete restored receipt and its embedded provider request.
+  pub fn validate_integrity(&self) -> Result<(), FactoryError> {
+    self.request.validate_integrity()?;
+    let result_is_valid = match &self.result {
+      Some(result) => {
+        self.state == DecisionSignalState::Completed
+          && self.usage == result.usage()
+          && result.is_valid_for(&self.request)
+      }
+      None => self.state != DecisionSignalState::Completed,
+    };
+    if !result_is_valid
+      || self.receipt_digest
+        != digest_receipt(
+          self.id,
+          &self.request,
+          self.state,
+          self.usage,
+          &self.result,
+          &self.consumption,
+        )
+    {
+      return Err(FactoryError::InvalidDecisionSignal {
+        field: "receipt integrity",
+      });
+    }
+    Ok(())
+  }
+
   /// Replays the recorded disposition only when every immutable request input still agrees.
   pub fn replay(&self, request: &DecisionSignalProviderRequest) -> Result<&DecisionSignalConsumption, FactoryError> {
+    self.validate_integrity()?;
     if self.request != *request {
       return Err(FactoryError::InvalidReference {
         relationship: "Decision Signal receipt replay",

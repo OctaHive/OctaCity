@@ -1015,9 +1015,19 @@ fn advance_progress(
       let FactoryStageTarget::Evaluation(key) = target else {
         return Err(FactoryBuildBridgeError::InvalidSnapshot);
       };
+      let branch = branches
+        .branches()
+        .iter()
+        .find(|branch| branch.key() == key)
+        .ok_or(FactoryBuildBridgeError::InvalidSnapshot)?;
+      let next = if observed.branch == EvaluationBranchState::Completed && branch.is_plan_bound() {
+        EvaluationBranchState::ResultPending
+      } else {
+        observed.branch
+      };
       Ok(FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(
         branches
-          .advance_branch(key, observed.branch)
+          .advance_branch(key, next)
           .map_err(|_| FactoryBuildBridgeError::InvalidSnapshot)?,
       )))
     }
@@ -1043,7 +1053,7 @@ const fn observed_build_state(state: BuildState, infrastructure_retry_eligible: 
     },
     (BuildState::Succeeded, _) => ObservedBuildState {
       stage: FactoryStageProgress::BuildSucceeded,
-      branch: EvaluationBranchState::Succeeded,
+      branch: EvaluationBranchState::Completed,
     },
     (BuildState::Failed, true) => ObservedBuildState {
       stage: FactoryStageProgress::RetryableFailure,
@@ -1076,10 +1086,17 @@ fn progress_reflects_state(
       let FactoryStageTarget::Evaluation(key) = target else {
         return false;
       };
-      branches
-        .branches()
-        .iter()
-        .any(|branch| branch.key() == key && branch.state() == observed.branch)
+      branches.branches().iter().any(|branch| {
+        branch.key() == key
+          && (branch.state() == observed.branch
+            || (state == BuildState::Succeeded
+              && matches!(
+                branch.state(),
+                EvaluationBranchState::ResultPending
+                  | EvaluationBranchState::Completed
+                  | EvaluationBranchState::Substituted
+              )))
+      })
     }
     _ => false,
   }

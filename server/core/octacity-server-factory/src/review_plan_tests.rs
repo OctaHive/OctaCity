@@ -26,6 +26,7 @@ fn budget(elapsed: u64) -> BudgetLimit {
 
 struct Fixture {
   project_id: ProjectId,
+  run: FactoryRun,
   evidence: EvidenceManifest,
   policy: EvaluationPolicy,
   packs: Vec<CriterionPack>,
@@ -170,6 +171,7 @@ fn fixture() -> Fixture {
   ];
   Fixture {
     project_id,
+    run,
     evidence,
     policy,
     packs: vec![second_pack, first_pack],
@@ -304,6 +306,39 @@ fn unavailable_required_capability_escalates_before_a_plan_exists() {
 }
 
 #[test]
+fn required_branch_accepts_only_an_explicit_compatible_substitute() {
+  let fixture = fixture();
+  let primary = reference("primary-reviewer", "v1", 51);
+  let substitute = reference("substitute-reviewer", "v1", 52);
+  let mut definition = fixture.definition();
+  definition.branches = vec![
+    ReviewBranch::with_substitutes(key("review"), primary.clone(), vec![substitute.clone()], true)
+      .expect("fixture substitute policy"),
+  ];
+  let policy = EvaluationPolicy::try_new(
+    fixture.packs.iter().map(|pack| pack.reference().clone()).collect(),
+    vec![primary, substitute.clone()],
+    1,
+    budget(1_000),
+  )
+  .expect("fixture policy");
+  let capabilities = vec![
+    ReviewEvaluatorCapability::try_new(
+      substitute,
+      vec![ReviewPurpose::Implementation],
+      vec![fixture.data_handling.clone()],
+      budget(1_000),
+    )
+    .expect("fixture substitute capability"),
+  ];
+
+  assert!(matches!(
+    prepare_evaluation_plan(definition, &fixture.evidence, &policy, &capabilities),
+    Ok(ReviewPlanPreparation::Ready(_))
+  ));
+}
+
+#[test]
 fn incompatible_purpose_data_handling_and_budget_fail_closed() {
   let fixture = fixture();
   let first = fixture.branches[1].evaluator().clone();
@@ -389,4 +424,253 @@ fn persisted_review_records_reapply_constructor_invariants() {
   let mut invalid_pack = serde_json::to_value(&fixture.packs[0]).expect("serialize criterion pack");
   invalid_pack["reference"]["digest"] = serde_json::json!(digest(99));
   assert!(serde_json::from_value::<CriterionPack>(invalid_pack).is_err());
+}
+
+fn accepted_branch_result(
+  run: &FactoryRun,
+  plan: &EvaluationPlan,
+  branch: &str,
+  evaluator: ImmutableReference,
+  byte: u8,
+) -> (EvaluationBranchResult, StageAttempt, MacroCall, Assessment) {
+  let stage = StageAttempt::new(
+    StageAttemptId::generate(),
+    run,
+    StageAttemptNumber::new(u64::from(byte)).expect("fixture attempt number"),
+    FactoryStageTarget::Evaluation(key(branch)),
+    plan.budget(),
+    digest(byte),
+    FactoryClaimOwnership::new(
+      key("review-worker"),
+      FactoryClaim::new(FactoryClaimFence::new(digest(byte)), time(1), time(2)).expect("fixture claim"),
+    ),
+  );
+  let subject = FactoryTaskSubject::Candidate(plan.subject().clone());
+  let evidence = artifact(byte.saturating_add(2));
+  let context = ContextManifest::new(
+    ContextManifestId::generate(),
+    subject.clone(),
+    digest(byte.saturating_add(1)),
+    vec![
+      ContextManifestEntry::new(
+        ContextSourceKind::Evidence,
+        key("evidence"),
+        subject.clone(),
+        FactoryContextReference::Artifact(evidence.clone()),
+        evidence.content_digest(),
+        evidence.encoded_size(),
+        FactorySafeText::new("bounded evidence").expect("fixture label"),
+        digest(byte.saturating_add(4)),
+      )
+      .expect("fixture context entry"),
+    ],
+  )
+  .expect("fixture context");
+  let call = MacroCall::new(
+    MacroCallDeclaration::new(
+      MacroCallId::generate(),
+      subject.clone(),
+      MacroCallKind::Evaluate,
+      plan.budget(),
+      vec![],
+      vec![],
+      1,
+    )
+    .expect("fixture call declaration"),
+    &stage,
+    &context,
+    None,
+  )
+  .expect("fixture evaluator call");
+  let assessment = Assessment::new(
+    AssessmentId::generate(),
+    plan,
+    AssessmentInput {
+      subject: plan.subject().clone(),
+      evaluator,
+      outcome: AssessmentOutcome::Satisfied,
+      summary: BoundedSummary::new(
+        subject,
+        FactorySafeText::new("review satisfied").expect("fixture summary"),
+        digest(byte.saturating_add(5)),
+      ),
+      findings: vec![],
+      model: reference("model", &format!("v{byte}"), byte.saturating_add(6)),
+      prompt_digest: digest(byte.saturating_add(7)),
+      result: artifact(byte.saturating_add(8)),
+      provenance: artifact(byte.saturating_add(9)),
+    },
+  )
+  .expect("fixture assessment");
+  (
+    EvaluationBranchResult::new(plan, &stage, &call, &assessment).expect("fixture branch result"),
+    stage,
+    call,
+    assessment,
+  )
+}
+
+fn advance_to(progress: EvaluationProgress, branch: &str, states: &[EvaluationBranchState]) -> EvaluationProgress {
+  states.iter().fold(progress, |progress, state| {
+    progress
+      .advance_branch(&key(branch), *state)
+      .expect("fixture branch transition")
+  })
+}
+
+#[test]
+fn bounded_fan_out_restores_exact_branch_results_without_redispatch_or_early_join() {
+  let fixture = fixture();
+  let names = ["active", "completed", "exhausted", "failed", "retryable", "substituted"];
+  let primaries = names
+    .iter()
+    .enumerate()
+    .map(|(index, name)| reference(name, "v1", 60 + u8::try_from(index).expect("bounded index")))
+    .collect::<Vec<_>>();
+  let substitute = reference("substitute-reviewer", "v1", 70);
+  let branches = names
+    .iter()
+    .enumerate()
+    .map(|(index, name)| {
+      if *name == "substituted" {
+        ReviewBranch::with_substitutes(key(name), primaries[index].clone(), vec![substitute.clone()], false)
+          .expect("fixture substitute")
+      } else {
+        ReviewBranch::new(key(name), primaries[index].clone(), *name == "exhausted")
+      }
+    })
+    .collect::<Vec<_>>();
+  let evaluators = primaries
+    .iter()
+    .cloned()
+    .chain(std::iter::once(substitute.clone()))
+    .collect::<Vec<_>>();
+  let policy = EvaluationPolicy::try_new(
+    fixture.packs.iter().map(|pack| pack.reference().clone()).collect(),
+    evaluators.clone(),
+    2,
+    budget(1_000),
+  )
+  .expect("fixture policy");
+  let capabilities = evaluators
+    .iter()
+    .cloned()
+    .map(|evaluator| {
+      ReviewEvaluatorCapability::try_new(
+        evaluator,
+        vec![ReviewPurpose::Implementation],
+        vec![fixture.data_handling.clone()],
+        budget(1_000),
+      )
+      .expect("fixture capability")
+    })
+    .collect::<Vec<_>>();
+  let mut definition = fixture.definition();
+  definition.branches = branches;
+  let plan =
+    planned(prepare_evaluation_plan(definition, &fixture.evidence, &policy, &capabilities).expect("review plan"));
+
+  let mut progress = EvaluationProgress::from_plan(&plan).expect("fan-out");
+  progress = advance_to(
+    progress,
+    "active",
+    &[
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+    ],
+  );
+  progress = advance_to(
+    progress,
+    "completed",
+    &[
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::ResultPending,
+    ],
+  );
+  let (completed, completed_stage, completed_call, completed_assessment) =
+    accepted_branch_result(&fixture.run, &plan, "completed", primaries[1].clone(), 80);
+  progress = progress.record_result(completed.clone()).expect("completed result");
+  assert!(
+    progress.record_result(completed).is_err(),
+    "a restored call result is immutable"
+  );
+
+  progress = advance_to(
+    progress,
+    "exhausted",
+    &[
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::RetryableFailure,
+    ],
+  );
+  progress = progress.exhaust_branch(&key("exhausted")).expect("exhaust branch");
+  progress = advance_to(
+    progress,
+    "failed",
+    &[
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::Failed,
+    ],
+  );
+  progress = advance_to(
+    progress,
+    "retryable",
+    &[
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::RetryableFailure,
+    ],
+  );
+  progress = advance_to(
+    progress,
+    "substituted",
+    &[
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::ResultPending,
+    ],
+  );
+  let (substituted, substituted_stage, substituted_call, substituted_assessment) =
+    accepted_branch_result(&fixture.run, &plan, "substituted", substitute, 100);
+  progress = progress.record_result(substituted).expect("substituted result");
+
+  let restored: EvaluationProgress =
+    serde_json::from_slice(&serde_json::to_vec(&progress).expect("serialize fan-out")).expect("restore fan-out");
+  assert_eq!(restored, progress);
+  let calls = [completed_call, substituted_call];
+  let stages = [completed_stage, substituted_stage];
+  let assessments = [completed_assessment, substituted_assessment];
+  restored
+    .validate_bindings(&plan, stages.iter(), calls.iter(), assessments.iter())
+    .expect("restored exact bindings");
+  assert!(
+    restored
+      .validate_bindings(&plan, stages.iter(), std::iter::empty(), assessments.iter())
+      .is_err(),
+    "a result cannot survive without its exact durable calls"
+  );
+  assert_eq!(
+    restored
+      .branches()
+      .iter()
+      .map(EvaluationBranch::state)
+      .collect::<Vec<_>>(),
+    vec![
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::Completed,
+      EvaluationBranchState::Exhausted,
+      EvaluationBranchState::Failed,
+      EvaluationBranchState::RetryableFailure,
+      EvaluationBranchState::Substituted,
+    ]
+  );
+  let completed = restored.branches()[1].result().expect("completed result");
+  let substituted = restored.branches()[5].result().expect("substituted result");
+  assert!(!completed.is_substituted());
+  assert!(substituted.is_substituted());
+  assert_ne!(completed.context_manifest_id(), substituted.context_manifest_id());
+  assert_ne!(completed.call_id(), substituted.call_id());
 }

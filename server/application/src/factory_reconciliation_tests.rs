@@ -7,16 +7,17 @@ use std::{
   task::{Context, Poll, Waker},
 };
 
-use crate::factory_reconciliation::FactoryReconciliationClock;
+use crate::factory_reconciliation::{FactoryReconciliationClock, transition_for_action};
 use crate::{FactoryReconciler, FactoryReconciliationError, FactoryReconciliationShutdown};
 use async_trait::async_trait;
 use octacity_server_domain::{ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ProjectId, RepositoryId};
 use octacity_server_factory::{
-  BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, ExternalWorkIdentity,
-  FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries,
-  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
-  FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryStageDraft,
-  FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts,
+  BudgetLimit, BudgetUsage, BuildConfigurationRef, DecisionOutcome, DeliveryPolicyDraft, EvaluationPolicyDraft,
+  ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration,
+  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
+  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata,
+  FactoryNextAction, FactoryReferenceChoice, FactoryStageDraft, FactoryStageKind, FactoryStageTarget, FactoryWipLimits,
+  ImmutableReference, ReworkPolicyDraft, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, WorkArtifacts,
   WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 use octacity_server_store::{
@@ -141,6 +142,7 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
         stage("implement", FactoryStageKind::Implementation),
         stage("validate", FactoryStageKind::Validation),
         stage("evaluate", FactoryStageKind::Evaluation),
+        stage("rework", FactoryStageKind::Rework),
       ],
       wip_limits: FactoryWipLimits::new(10, 10).expect("fixture WIP is valid"),
       hard_budget: budget,
@@ -154,8 +156,9 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
         budget,
       },
       rework: ReworkPolicyDraft {
-        max_cycles: 0,
-        stage: None,
+        max_cycles: 1,
+        stage: Some(key("rework")),
+        exhausted_outcome: DecisionOutcome::Escalate,
       },
       delivery: DeliveryPolicyDraft {
         adapter: key("delivery-adapter"),
@@ -166,6 +169,73 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
     &choices,
   )
   .expect("fixture configuration is valid")
+}
+
+#[test]
+fn rework_transition_appends_a_new_attempt_without_replacing_prior_attempts() {
+  run_to_completion(async {
+    let store = seeded_store(1);
+    let claimed = store
+      .claim_factory_runs(ClaimFactoryRuns::new(key("worker.rework"), time(10), time(20), 1).unwrap())
+      .await
+      .unwrap()
+      .pop()
+      .expect("fixture run is claimed");
+    let mut snapshot = store.factory_run_snapshot(claimed.run_id).await.unwrap();
+    let configuration = store
+      .factory_configuration_version(
+        snapshot.run.configuration().id(),
+        snapshot.run.configuration().version(),
+      )
+      .await
+      .unwrap()
+      .configuration;
+    let prior = StageAttempt::new(
+      StageAttemptId::generate(),
+      &snapshot.run,
+      StageAttemptNumber::INITIAL,
+      FactoryStageTarget::Implementation,
+      configuration.stages()[0].budget(),
+      digest(60),
+      octacity_server_factory::FactoryClaimOwnership::new(claimed.record.owner.clone(), claimed.record.claim),
+    );
+    snapshot.stage_attempts.push(prior.clone());
+
+    let (_, ready, _, request_append, request_stage) = transition_for_action(
+      &snapshot,
+      &configuration,
+      &claimed,
+      &FactoryNextAction::RequestRework,
+      digest(61),
+      BudgetUsage::default(),
+    )
+    .expect("rework is requested");
+    assert!(request_append.stage_attempts.is_empty());
+    assert_eq!(request_stage, None);
+    assert_eq!(
+      ready,
+      octacity_server_factory::FactoryLifecycleProgress::Stage {
+        target: FactoryStageTarget::Rework,
+        progress: octacity_server_factory::FactoryStageProgress::Ready,
+      }
+    );
+
+    let (_, _, _, append, stage_id) = transition_for_action(
+      &snapshot,
+      &configuration,
+      &claimed,
+      &FactoryNextAction::CreateStageAttempt(FactoryStageTarget::Rework),
+      digest(62),
+      BudgetUsage::default(),
+    )
+    .expect("new rework attempt is created");
+    let rework = append.stage_attempts.first().expect("one rework attempt");
+    assert_eq!(append.stage_attempts.len(), 1);
+    assert_eq!(rework.target(), &FactoryStageTarget::Rework);
+    assert_eq!(rework.number(), StageAttemptNumber::new(2).unwrap());
+    assert_eq!(stage_id, Some(rework.id()));
+    assert_eq!(snapshot.stage_attempts, vec![prior]);
+  });
 }
 
 fn credential_profiles() -> FactoryCredentialProfiles {

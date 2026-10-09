@@ -24,10 +24,13 @@ fn guard_with(
     FactoryClaim::new(fence(1), timestamp(100), timestamp(200)).expect("fixture claim is valid"),
     presented_fence,
     observed_at,
-    budget(),
-    usage,
-    FactoryWipLimits::new(3, 3).expect("fixture WIP limits are valid"),
-    wip_usage,
+    FactoryDecisionResources::new(
+      budget(),
+      usage,
+      FactoryWipLimits::new(3, 3).expect("fixture WIP limits are valid"),
+      wip_usage,
+    ),
+    FactoryReworkStatus::new(0, 1, DecisionOutcome::Escalate).expect("fixture rework status is valid"),
   )
 }
 
@@ -46,6 +49,30 @@ fn snapshot(
   signal: DecisionSignalProgress,
 ) -> FactoryLifecycleSnapshot {
   FactoryLifecycleSnapshot::new(state, progress, signal, guard(), false)
+}
+
+fn snapshot_with_rework(
+  state: FactoryRunState,
+  progress: FactoryLifecycleProgress,
+  completed_cycles: u16,
+  max_cycles: u16,
+  exhausted_outcome: DecisionOutcome,
+) -> FactoryLifecycleSnapshot {
+  let rework =
+    FactoryReworkStatus::new(completed_cycles, max_cycles, exhausted_outcome).expect("fixture rework status is valid");
+  let guard = FactoryDecisionGuard::new(
+    FactoryClaim::new(fence(1), timestamp(100), timestamp(200)).expect("fixture claim is valid"),
+    fence(1),
+    timestamp(150),
+    FactoryDecisionResources::new(
+      budget(),
+      BudgetUsage::default(),
+      FactoryWipLimits::new(3, 3).expect("fixture WIP limits are valid"),
+      FactoryWipUsage::new(1, 0),
+    ),
+    rework,
+  );
+  FactoryLifecycleSnapshot::new(state, progress, DecisionSignalProgress::Disabled, guard, false)
 }
 
 fn key(value: &str) -> FactoryKey {
@@ -379,7 +406,7 @@ fn evaluation_fans_out_in_canonical_order_and_waits_for_the_join() {
   let active = EvaluationProgress::try_new(
     vec![
       EvaluationBranch::new(key("architecture"), true, EvaluationBranchState::BuildActive),
-      EvaluationBranch::new(key("security"), true, EvaluationBranchState::Succeeded),
+      EvaluationBranch::new(key("security"), true, EvaluationBranchState::Completed),
     ],
     2,
   )
@@ -392,6 +419,74 @@ fn evaluation_fans_out_in_canonical_order_and_waits_for_the_join() {
   assert_eq!(
     decide_next_action(&join),
     Ok(FactoryNextAction::Wait(FactoryWaitReason::EvaluationJoin))
+  );
+}
+
+#[test]
+fn evaluation_collects_pending_typed_results_before_waiting_on_active_branches() {
+  let progress = EvaluationProgress::try_new(
+    vec![
+      EvaluationBranch::new(key("architecture"), true, EvaluationBranchState::ResultPending),
+      EvaluationBranch::new(key("security"), true, EvaluationBranchState::BuildActive),
+    ],
+    2,
+  )
+  .expect("fixture evaluation is valid");
+  let restored: EvaluationProgress =
+    serde_json::from_slice(&serde_json::to_vec(&progress).expect("serialize progress")).expect("restore progress");
+
+  assert_eq!(
+    decide_next_action(&snapshot(
+      FactoryRunState::Evaluating,
+      FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(restored)),
+      DecisionSignalProgress::Disabled,
+    )),
+    Ok(FactoryNextAction::CollectEvaluationResult(key("architecture")))
+  );
+}
+
+#[test]
+fn legacy_succeeded_branch_state_restores_as_completed() {
+  let restored: EvaluationBranchState = serde_json::from_str("\"Succeeded\"").expect("legacy state");
+  assert_eq!(restored, EvaluationBranchState::Completed);
+}
+
+#[test]
+fn required_exhaustion_fails_closed_while_substituted_results_count_toward_quorum() {
+  let exhausted = EvaluationProgress::try_new(
+    vec![
+      EvaluationBranch::new(key("architecture"), false, EvaluationBranchState::Substituted),
+      EvaluationBranch::new(key("security"), true, EvaluationBranchState::Exhausted),
+    ],
+    1,
+  )
+  .expect("fixture evaluation is valid");
+  assert_eq!(
+    decide_next_action(&snapshot(
+      FactoryRunState::Evaluating,
+      FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(exhausted)),
+      DecisionSignalProgress::Disabled,
+    )),
+    Ok(FactoryNextAction::Escalate(
+      FactoryEscalationReason::RequiredEvaluationFailed(key("security")),
+    ))
+  );
+
+  let joined = EvaluationProgress::try_new(
+    vec![
+      EvaluationBranch::new(key("architecture"), false, EvaluationBranchState::Substituted),
+      EvaluationBranch::new(key("security"), false, EvaluationBranchState::Completed),
+    ],
+    2,
+  )
+  .expect("fixture evaluation is valid");
+  assert_eq!(
+    decide_next_action(&snapshot(
+      FactoryRunState::Evaluating,
+      FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(joined)),
+      DecisionSignalProgress::Disabled,
+    )),
+    Ok(FactoryNextAction::Decide)
   );
 }
 
@@ -420,7 +515,7 @@ fn evaluation_branch_progression_is_single_step_and_monotonic() {
   );
   assert!(
     pending
-      .advance_branch(&key("architecture"), EvaluationBranchState::Succeeded)
+      .advance_branch(&key("architecture"), EvaluationBranchState::Completed)
       .is_err(),
     "a pending branch cannot skip attempt creation and Build execution"
   );
@@ -455,14 +550,14 @@ fn evaluation_join_requires_quorum_before_decision() {
   let cases = [
     (
       vec![
-        EvaluationBranch::new(key("architecture"), true, EvaluationBranchState::Succeeded),
-        EvaluationBranch::new(key("security"), false, EvaluationBranchState::Succeeded),
+        EvaluationBranch::new(key("architecture"), true, EvaluationBranchState::Completed),
+        EvaluationBranch::new(key("security"), false, EvaluationBranchState::Completed),
       ],
       FactoryNextAction::Decide,
     ),
     (
       vec![
-        EvaluationBranch::new(key("architecture"), false, EvaluationBranchState::Succeeded),
+        EvaluationBranch::new(key("architecture"), false, EvaluationBranchState::Completed),
         EvaluationBranch::new(key("security"), false, EvaluationBranchState::Failed),
       ],
       FactoryNextAction::Escalate(FactoryEscalationReason::EvaluationQuorum),
@@ -488,7 +583,7 @@ fn only_a_completed_evaluation_join_may_record_a_decision() {
     vec![EvaluationBranch::new(
       key("architecture"),
       true,
-      EvaluationBranchState::Succeeded,
+      EvaluationBranchState::Completed,
     )],
     1,
   )
@@ -503,9 +598,8 @@ fn only_a_completed_evaluation_join_may_record_a_decision() {
   )
   .expect("fixture evaluation is valid");
   let decision = FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
+    decision_id: DecisionId::generate(),
     outcome: DecisionOutcome::Accept,
-    completed_rework_cycles: 0,
-    max_rework_cycles: 0,
   });
 
   assert!(
@@ -532,37 +626,88 @@ fn only_a_completed_evaluation_join_may_record_a_decision() {
 #[test]
 fn recorded_decisions_cover_delivery_rework_and_terminal_dispositions() {
   let cases = [
-    (DecisionOutcome::Accept, 0, 1, FactoryNextAction::PrepareDelivery),
-    (DecisionOutcome::Rework, 0, 1, FactoryNextAction::RequestRework),
+    (
+      DecisionOutcome::Accept,
+      0,
+      1,
+      DecisionOutcome::Escalate,
+      FactoryNextAction::PrepareDelivery,
+    ),
+    (
+      DecisionOutcome::Rework,
+      0,
+      1,
+      DecisionOutcome::Escalate,
+      FactoryNextAction::RequestRework,
+    ),
     (
       DecisionOutcome::Rework,
       1,
       1,
+      DecisionOutcome::Escalate,
       FactoryNextAction::Escalate(FactoryEscalationReason::ReworkExhausted),
     ),
-    (DecisionOutcome::Reject, 0, 1, FactoryNextAction::Reject),
+    (
+      DecisionOutcome::Rework,
+      1,
+      1,
+      DecisionOutcome::Reject,
+      FactoryNextAction::Reject,
+    ),
+    (
+      DecisionOutcome::Reject,
+      0,
+      1,
+      DecisionOutcome::Escalate,
+      FactoryNextAction::Reject,
+    ),
     (
       DecisionOutcome::Escalate,
       0,
       1,
+      DecisionOutcome::Escalate,
       FactoryNextAction::Escalate(FactoryEscalationReason::Decision),
     ),
-    (DecisionOutcome::Cancel, 0, 1, FactoryNextAction::Cancel),
+    (
+      DecisionOutcome::Cancel,
+      0,
+      1,
+      DecisionOutcome::Escalate,
+      FactoryNextAction::Cancel,
+    ),
   ];
 
-  for (outcome, completed_rework_cycles, max_rework_cycles, expected) in cases {
-    assert_eq!(
-      decide_next_action(&snapshot(
-        FactoryRunState::Evaluating,
-        FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
-          outcome,
-          completed_rework_cycles,
-          max_rework_cycles,
-        }),
-        DecisionSignalProgress::Disabled,
-      )),
-      Ok(expected)
+  for (outcome, completed_rework_cycles, max_rework_cycles, exhausted_outcome, expected) in cases {
+    let snapshot = snapshot_with_rework(
+      FactoryRunState::Evaluating,
+      FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
+        decision_id: DecisionId::generate(),
+        outcome,
+      }),
+      completed_rework_cycles,
+      max_rework_cycles,
+      exhausted_outcome,
     );
+    let actual = decide_next_action(&snapshot);
+    assert_eq!(actual, Ok(expected));
+    if outcome == DecisionOutcome::Rework && completed_rework_cycles >= max_rework_cycles {
+      assert!(
+        actual.expect("exhausted disposition").dispatch_key().is_none(),
+        "rework exhaustion must not dispatch another model call"
+      );
+    }
+  }
+}
+
+#[test]
+fn rework_authority_rejects_impossible_history_and_non_terminal_exhaustion_policy() {
+  assert!(FactoryReworkStatus::new(2, 1, DecisionOutcome::Escalate).is_err());
+  for outcome in [
+    DecisionOutcome::Accept,
+    DecisionOutcome::Rework,
+    DecisionOutcome::Cancel,
+  ] {
+    assert!(FactoryReworkStatus::new(0, 1, outcome).is_err());
   }
 }
 

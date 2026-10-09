@@ -7,7 +7,7 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, ProjectId, Timestamp};
 use octacity_server_factory::{
-  BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, FactoryChoiceKind,
+  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DeliveryPolicyDraft, EvaluationPolicyDraft, FactoryChoiceKind,
   FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
   FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryReferenceChoice,
   FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
@@ -104,6 +104,7 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
     rework: ReworkPolicyDraft {
       max_cycles: 0,
       stage: None,
+      exhausted_outcome: DecisionOutcome::Escalate,
     },
     delivery: DeliveryPolicyDraft {
       adapter: key("delivery-adapter"),

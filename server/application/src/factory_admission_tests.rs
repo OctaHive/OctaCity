@@ -11,12 +11,12 @@ use octacity_server_domain::{
   RepositoryLocator, RepositoryName, RepositoryVersion, SourceReference, Timestamp,
 };
 use octacity_server_factory::{
-  BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, ExternalWorkIdentity,
-  FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration, FactoryConfigurationChoiceEntries,
-  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
-  FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata, FactoryReferenceChoice, FactoryStageDraft,
-  FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts,
-  WorkClassification, WorkPriority,
+  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DeliveryPolicyDraft, EvaluationPolicyDraft,
+  ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration,
+  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
+  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata,
+  FactoryReferenceChoice, FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
+  RiskClass, WorkArtifacts, WorkClassification, WorkPriority,
 };
 use octacity_server_store::{
   FactoryRunStore, IdempotencyKey, PublishedFactoryConfiguration, PublishedRepository, RepositoryDefinition,
@@ -125,6 +125,7 @@ pub(super) fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -
       rework: ReworkPolicyDraft {
         max_cycles: 0,
         stage: None,
+        exhausted_outcome: DecisionOutcome::Escalate,
       },
       delivery: DeliveryPolicyDraft {
         adapter: key("delivery-adapter"),

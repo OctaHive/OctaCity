@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::{
   Assessment, AssessmentOutcome, Decision, DecisionId, DecisionOutcome, DecisionPolicyVersion, DecisionReason,
-  DeterministicGateOutcome, EvaluationPlan, EvidenceItem, EvidenceManifest, FactoryDigest, FactoryError, FactoryKey,
-  FindingSeverity, IndeterminatePolicy, MAX_CRITERION_PACKS, MAX_DECISION_ASSESSMENTS, MAX_EVALUATORS,
+  DecisionSignalPurpose, DecisionSignalReceipt, DeterministicGateOutcome, EvaluationPlan, EvaluationProgress,
+  EvidenceItem, EvidenceManifest, FactoryDigest, FactoryError, FactoryKey, FindingSeverity, IndeterminatePolicy,
+  MAX_CRITERION_PACKS, MAX_DECISION_ASSESSMENTS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_EVALUATORS,
   evaluation::DecisionBindings,
 };
 
@@ -82,29 +83,67 @@ impl DecisionPolicy {
 }
 
 /// Complete immutable inputs to one deterministic Decision evaluation.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct DecisionEngineInput<'a> {
   evidence: &'a EvidenceManifest,
   plan: &'a EvaluationPlan,
   policy: &'a DecisionPolicy,
-  assessments: &'a [Assessment],
+  assessments: Vec<&'a Assessment>,
+  signal_receipts: Vec<&'a DecisionSignalReceipt>,
+  signal_stage_attempt_ids: HashSet<crate::StageAttemptId>,
 }
 
 impl<'a> DecisionEngineInput<'a> {
-  /// Captures exact evidence, assessments, and policy for canonical evaluation.
-  #[must_use]
-  pub const fn new(
+  #[cfg(test)]
+  pub(crate) fn from_assessments_for_test(
     evidence: &'a EvidenceManifest,
     plan: &'a EvaluationPlan,
     policy: &'a DecisionPolicy,
     assessments: &'a [Assessment],
+    signal_receipts: &'a [DecisionSignalReceipt],
   ) -> Self {
     Self {
       evidence,
       plan,
       policy,
-      assessments,
+      assessments: assessments.iter().collect(),
+      signal_receipts: signal_receipts.iter().collect(),
+      signal_stage_attempt_ids: signal_receipts
+        .iter()
+        .map(|receipt| receipt.request().request().stage_attempt_id())
+        .collect(),
     }
+  }
+
+  /// Selects only Assessments accepted by the immutable completed branch join.
+  pub fn from_completed_evaluation(
+    evidence: &'a EvidenceManifest,
+    plan: &'a EvaluationPlan,
+    policy: &'a DecisionPolicy,
+    progress: &EvaluationProgress,
+    assessments: &'a [Assessment],
+    signal_receipts: &'a [DecisionSignalReceipt],
+  ) -> Result<Self, FactoryError> {
+    let (accepted, signal_stage_attempt_ids) = progress.decision_bindings(plan)?;
+    let mut selected = Vec::with_capacity(accepted.len());
+    for id in accepted {
+      let assessment =
+        assessments
+          .iter()
+          .find(|assessment| assessment.id() == id)
+          .ok_or(FactoryError::InvalidReference {
+            relationship: "evaluation decision assessment",
+          })?;
+      selected.push(assessment);
+    }
+    Ok(Self {
+      evidence,
+      plan,
+      policy,
+      assessments: selected,
+      signal_receipts: signal_receipts.iter().collect(),
+      signal_stage_attempt_ids,
+    })
   }
 }
 
@@ -121,7 +160,7 @@ pub fn evaluate_decision(id: DecisionId, input: DecisionEngineInput<'_>) -> Resu
   let assessments = input
     .assessments
     .iter()
-    .map(|assessment| (assessment.evaluator(), assessment))
+    .map(|assessment| (assessment.evaluator(), *assessment))
     .collect::<BTreeMap<_, _>>();
   let mut reasons = evaluate_required_evidence(input.policy, &gates);
   reasons.extend(evaluate_assessments(input.policy, &assessments));
@@ -141,11 +180,18 @@ pub fn evaluate_decision(id: DecisionId, input: DecisionEngineInput<'_>) -> Resu
     .values()
     .map(|assessment| (*assessment).clone())
     .collect::<Vec<_>>();
+  let mut ordered_receipts = input
+    .signal_receipts
+    .iter()
+    .map(|receipt| (*receipt).clone())
+    .collect::<Vec<_>>();
+  ordered_receipts.sort_by_key(DecisionSignalReceipt::id);
   Decision::from_engine(
     id,
     input.plan,
     outcome,
     &ordered_assessments,
+    &ordered_receipts,
     reasons,
     DecisionBindings {
       input_digest,
@@ -190,9 +236,20 @@ fn digest_decision_input(input: &DecisionEngineInput<'_>) -> Result<FactoryDiges
     .map(encode_evidence_item)
     .collect::<Vec<_>>();
   let plan_digest = input.plan.digest()?.as_bytes();
-  let mut assessments = input.assessments.iter().map(encode_assessment).collect::<Vec<_>>();
+  let mut assessments = input
+    .assessments
+    .iter()
+    .map(|assessment| encode_assessment(assessment))
+    .collect::<Vec<_>>();
   assessments.sort();
   owned_fields.extend(assessments);
+  let mut receipts = input
+    .signal_receipts
+    .iter()
+    .map(|receipt| encode_signal_receipt(receipt))
+    .collect::<Vec<_>>();
+  receipts.sort();
+  owned_fields.extend(receipts);
   let mut fields = vec![
     evidence_id.as_bytes().as_slice(),
     plan_id.as_bytes().as_slice(),
@@ -201,7 +258,7 @@ fn digest_decision_input(input: &DecisionEngineInput<'_>) -> Result<FactoryDiges
     plan_digest.as_slice(),
   ];
   fields.extend(owned_fields.iter().map(Vec::as_slice));
-  Ok(FactoryDigest::sha256("octacity.decision-engine.input.v2", &fields))
+  Ok(FactoryDigest::sha256("octacity.decision-engine.input.v3", &fields))
 }
 
 fn encode_evidence_item(item: &EvidenceItem) -> Vec<u8> {
@@ -238,6 +295,12 @@ fn encode_assessment(assessment: &Assessment) -> Vec<u8> {
   serde_json::to_vec(assessment).expect("validated Assessment serializes")
 }
 
+fn encode_signal_receipt(receipt: &DecisionSignalReceipt) -> Vec<u8> {
+  let mut value = receipt.id().as_uuid().as_bytes().to_vec();
+  value.extend_from_slice(&receipt.receipt_digest().as_bytes());
+  value
+}
+
 fn validate_input(input: &DecisionEngineInput<'_>) -> Result<(), FactoryError> {
   if input.plan.evidence_id() != input.evidence.id() || input.plan.subject() != input.evidence.subject() {
     return Err(FactoryError::InconsistentSubject);
@@ -259,13 +322,50 @@ fn validate_input(input: &DecisionEngineInput<'_>) -> Result<(), FactoryError> {
       collection: "decision assessments",
     });
   }
-  validate_assessments(input.plan, input.evidence, input.assessments)
+  if input.signal_receipts.len() > MAX_DECISION_SIGNAL_RECEIPTS {
+    return Err(FactoryError::CollectionLimitExceeded {
+      collection: "decision signal receipts",
+    });
+  }
+  validate_assessments(input.plan, input.evidence, &input.assessments)?;
+  validate_signal_receipts(input.plan, &input.signal_receipts, &input.signal_stage_attempt_ids)
+}
+
+fn validate_signal_receipts(
+  plan: &EvaluationPlan,
+  receipts: &[&DecisionSignalReceipt],
+  allowed_stages: &HashSet<crate::StageAttemptId>,
+) -> Result<(), FactoryError> {
+  let invalid_binding = receipts.iter().any(|receipt| {
+    receipt.subject() != plan.subject().exact()
+      || receipt.request().request().purpose() != DecisionSignalPurpose::Routing
+      || !allowed_stages.contains(&receipt.request().request().stage_attempt_id())
+      || receipt.validate_integrity().is_err()
+  });
+  let duplicate_ids = receipts
+    .iter()
+    .map(|receipt| receipt.id())
+    .collect::<HashSet<_>>()
+    .len()
+    != receipts.len();
+  let duplicate_requests = receipts
+    .iter()
+    .map(|receipt| receipt.request_id())
+    .collect::<HashSet<_>>()
+    .len()
+    != receipts.len();
+  if invalid_binding || duplicate_ids || duplicate_requests {
+    return Err(FactoryError::InvalidReference {
+      relationship: "decision signal receipt",
+    });
+  }
+  Ok(())
 }
 
 fn validate_assessments(
   plan: &EvaluationPlan,
   evidence: &EvidenceManifest,
-  assessments: &[Assessment],
+  assessments: &[&Assessment],
 ) -> Result<(), FactoryError> {
   if assessments
     .iter()
@@ -273,10 +373,15 @@ fn validate_assessments(
   {
     return Err(FactoryError::InconsistentSubject);
   }
-  if assessments.iter().map(Assessment::id).collect::<HashSet<_>>().len() != assessments.len()
+  if assessments
+    .iter()
+    .map(|assessment| assessment.id())
+    .collect::<HashSet<_>>()
+    .len()
+    != assessments.len()
     || assessments
       .iter()
-      .map(Assessment::evaluator)
+      .map(|assessment| assessment.evaluator())
       .collect::<HashSet<_>>()
       .len()
       != assessments.len()

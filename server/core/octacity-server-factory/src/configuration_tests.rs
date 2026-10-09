@@ -3,8 +3,8 @@ use octacity_server_domain::{
 };
 
 use crate::{
-  BudgetLimit, BuildConfigurationRef, DecisionSignalChoices, DecisionSignalFallback, DecisionSignalMode,
-  DecisionSignalProfileDraft, DecisionSignalPurpose, DecisionSignalRouteSet, DeliveryPolicyDraft,
+  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DecisionSignalChoices, DecisionSignalFallback,
+  DecisionSignalMode, DecisionSignalProfileDraft, DecisionSignalPurpose, DecisionSignalRouteSet, DeliveryPolicyDraft,
   EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind,
   FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
   FactoryConfigurationId, FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryError,
@@ -182,6 +182,7 @@ fn valid_fixture() -> Fixture {
     rework: ReworkPolicyDraft {
       max_cycles: 2,
       stage: Some(key("rework")),
+      exhausted_outcome: DecisionOutcome::Escalate,
     },
     delivery: DeliveryPolicyDraft {
       adapter: key("delivery-adapter-default"),
@@ -416,6 +417,22 @@ fn signal_evaluation_and_rework_policies_reject_ambiguous_or_unsafe_values() {
       &fixture.choices,
     ),
     Err(FactoryError::InvalidConfiguration { field: "rework stage" })
+  );
+
+  let mut fixture = valid_fixture();
+  fixture.draft.rework.exhausted_outcome = DecisionOutcome::Accept;
+  assert_eq!(
+    FactoryConfiguration::publish(
+      FactoryConfigurationId::generate(),
+      FactoryConfigurationVersion::INITIAL,
+      fixture.project_id,
+      digest(11),
+      fixture.draft,
+      &fixture.choices,
+    ),
+    Err(FactoryError::InvalidConfiguration {
+      field: "rework exhausted outcome",
+    })
   );
 }
 

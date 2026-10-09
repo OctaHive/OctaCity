@@ -4,10 +4,10 @@ use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, Pr
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  BudgetLimit, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose, DecisionSignalRouteSet,
-  FactoryChoiceKind, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
-  FactoryCredentialProfiles, FactoryDigest, FactoryError, FactoryKey, FactoryStageKind, MAX_CRITERION_PACKS,
-  MAX_EVALUATORS,
+  BudgetLimit, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
+  DecisionSignalRouteSet, FactoryChoiceKind, FactoryConfigurationId, FactoryConfigurationRef,
+  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryError, FactoryKey, FactoryStageKind,
+  MAX_CRITERION_PACKS, MAX_EVALUATORS,
 };
 
 /// Maximum number of aliases accepted in one configuration choice category.
@@ -495,6 +495,8 @@ pub struct ReworkPolicyDraft {
   pub max_cycles: u16,
   /// Stage key used for rework when cycles are enabled.
   pub stage: Option<FactoryKey>,
+  /// Terminal code-owned disposition when another cycle is forbidden.
+  pub exhausted_outcome: DecisionOutcome,
 }
 
 /// Immutable bounded rework policy.
@@ -503,6 +505,7 @@ pub struct ReworkPolicyDraft {
 pub struct ReworkPolicy {
   max_cycles: u16,
   stage: Option<FactoryKey>,
+  exhausted_outcome: DecisionOutcome,
 }
 
 impl ReworkPolicy {
@@ -516,6 +519,12 @@ impl ReworkPolicy {
   #[must_use]
   pub const fn stage(&self) -> Option<&FactoryKey> {
     self.stage.as_ref()
+  }
+
+  /// Returns the terminal disposition applied without another model call.
+  #[must_use]
+  pub const fn exhausted_outcome(&self) -> DecisionOutcome {
+    self.exhausted_outcome
   }
 }
 
@@ -865,10 +874,19 @@ fn resolve_rework(draft: &ReworkPolicyDraft, stages: &[FactoryStageDefinition]) 
   if draft.max_cycles > MAX_FACTORY_REWORK_CYCLES {
     return Err(FactoryError::InvalidConfiguration { field: "rework cycles" });
   }
+  if !matches!(
+    draft.exhausted_outcome,
+    DecisionOutcome::Escalate | DecisionOutcome::Reject
+  ) {
+    return Err(FactoryError::InvalidConfiguration {
+      field: "rework exhausted outcome",
+    });
+  }
   match (draft.max_cycles, draft.stage.as_ref()) {
     (0, None) => Ok(ReworkPolicy {
       max_cycles: 0,
       stage: None,
+      exhausted_outcome: draft.exhausted_outcome,
     }),
     (1.., Some(stage_key))
       if stages
@@ -878,6 +896,7 @@ fn resolve_rework(draft: &ReworkPolicyDraft, stages: &[FactoryStageDefinition]) 
       Ok(ReworkPolicy {
         max_cycles: draft.max_cycles,
         stage: Some(stage_key.clone()),
+        exhausted_outcome: draft.exhausted_outcome,
       })
     }
     _ => Err(FactoryError::InvalidConfiguration { field: "rework stage" }),

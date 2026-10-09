@@ -412,6 +412,19 @@ impl DecisionSignalProviderRequest {
   pub const fn digest(&self) -> FactoryDigest {
     self.digest
   }
+
+  /// Revalidates canonical request, input, and policy digests after restoration.
+  pub fn validate_integrity(&self) -> Result<(), FactoryError> {
+    if self.request.input_digest() != self.input.digest()
+      || self.request.policy_digest() != self.policy.digest()
+      || self.digest != digest_provider_request(self)
+    {
+      return Err(FactoryError::InvalidDecisionSignal {
+        field: "provider request integrity",
+      });
+    }
+    Ok(())
+  }
 }
 
 fn routing_input_matches_profile(

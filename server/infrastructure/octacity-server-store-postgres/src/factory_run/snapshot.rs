@@ -1,8 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use octacity_server_factory::{BudgetUsage, FactoryRunId, FactoryRunVersion, MacroCall};
+use octacity_server_factory::{
+  BudgetUsage, EvaluationState, FactoryLifecycleProgress, FactoryRunId, FactoryRunVersion, MacroCall,
+};
 use octacity_server_store::{
-  FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunSnapshot, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, StoreError,
+  FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunHistoryAppend, FactoryRunSnapshot,
+  MAX_FACTORY_RUN_SNAPSHOT_RECORDS, StoreError,
 };
 use sqlx::{PgPool, types::Json};
 
@@ -99,6 +102,7 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
     .transpose()?;
   let history = history_rows(&mut transaction, run_id).await?;
   validate_history(run_id, &history)?;
+  validate_evaluation_progress(&locked.lifecycle, &locked.current, &history)?;
   transaction.commit().await.map_err(unavailable)?;
   Ok(FactoryRunSnapshot {
     work: locked.work,
@@ -130,6 +134,31 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
     outbox,
     current: locked.current,
   })
+}
+
+fn validate_evaluation_progress(
+  lifecycle: &FactoryLifecycleCheckpoint,
+  current: &octacity_server_store::FactoryRunCurrentProjection,
+  history: &FactoryRunHistoryAppend,
+) -> Result<(), StoreError> {
+  let FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(progress)) = &lifecycle.progress else {
+    return Ok(());
+  };
+  if !progress.is_plan_bound() {
+    return Ok(());
+  }
+  let plan = current
+    .evaluation_plan_id
+    .and_then(|id| history.evaluation_plans.iter().find(|plan| plan.id() == id))
+    .ok_or(StoreError::Unavailable)?;
+  progress
+    .validate_bindings(
+      plan,
+      history.stage_attempts.iter(),
+      history.macro_calls.iter(),
+      history.assessments.iter(),
+    )
+    .map_err(|_| StoreError::Unavailable)
 }
 
 pub(super) async fn snapshot_record_counts(
@@ -207,6 +236,11 @@ fn validate_history(
     .iter()
     .map(|record| record.id())
     .collect::<HashSet<_>>();
+  let receipts = history
+    .signal_receipts
+    .iter()
+    .map(|record| (record.id(), record))
+    .collect::<HashMap<_, _>>();
   let builds = history
     .linked_builds
     .iter()
@@ -317,12 +351,16 @@ fn validate_history(
       })
     })
     || history.decisions.iter().any(|record| {
-      !plans.contains_key(&record.plan_id())
-        || record.assessment_ids().iter().any(|id| {
-          assessments
-            .get(id)
-            .is_none_or(|assessment| assessment.plan_id() != record.plan_id())
-        })
+      plans.get(&record.plan_id()).is_none_or(|plan| {
+        record
+          .validate_bindings(
+            plan,
+            history.stage_attempts.iter(),
+            assessments.values().copied(),
+            receipts.values().copied(),
+          )
+          .is_err()
+      })
     })
     || history
       .escalations

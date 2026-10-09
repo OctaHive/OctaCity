@@ -5,11 +5,11 @@ use octacity_server_domain::{BuildId, EntityKind};
 use octacity_server_factory::{
   Assessment, AssessmentId, ChangeSet, ChangeSetId, ContextManifest, ContextManifestId, Decision, DecisionId,
   DecisionSignalReceipt, DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId, DeliveryAttempt,
-  DeliveryAttemptId, DeliveryIntent, Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvidenceManifest,
-  EvidenceManifestId, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryEscalationDisposition, FactoryKey,
-  FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion, FactoryStageProgress,
-  FactoryWipUsage, MacroCall, MacroCallCompletion, MacroCallId, ReportingAttempt, ReportingAttemptId, StageAttempt,
-  StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId, WorkEnvelope,
+  DeliveryAttemptId, DeliveryIntent, Escalation, EscalationId, EvaluationPlan, EvaluationPlanId, EvaluationState,
+  EvidenceManifest, EvidenceManifestId, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryEscalationDisposition,
+  FactoryKey, FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion,
+  FactoryStageProgress, FactoryWipUsage, MacroCall, MacroCallCompletion, MacroCallId, ReportingAttempt,
+  ReportingAttemptId, StageAttempt, StageAttemptCompletion, StageAttemptId, StageHandoff, StageHandoffId, WorkEnvelope,
 };
 
 use crate::{
@@ -539,14 +539,15 @@ impl StoredFactoryRun {
     for decision in self.decisions.values() {
       require(
         decision.subject().exact() == subject
-          && self
-            .evaluation_plans
-            .get(&decision.plan_id())
-            .is_some_and(|plan| plan.subject() == decision.subject())
-          && decision.assessment_ids().iter().all(|id| {
-            self.assessments.get(id).is_some_and(|assessment| {
-              assessment.plan_id() == decision.plan_id() && assessment.subject() == decision.subject()
-            })
+          && self.evaluation_plans.get(&decision.plan_id()).is_some_and(|plan| {
+            decision
+              .validate_bindings(
+                plan,
+                self.stage_attempts.values(),
+                self.assessments.values(),
+                self.signal_receipts.values(),
+              )
+              .is_ok()
           }),
       )?;
     }
@@ -604,6 +605,30 @@ impl StoredFactoryRun {
         .values()
         .all(|record| record.run_id == run_id && record.is_canonical()),
     )?;
+    if let Some((progress, plan_id)) = self
+      .lifecycle_checkpoints
+      .get(&self.current.lifecycle_checkpoint_id)
+      .and_then(|checkpoint| match &checkpoint.progress {
+        FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(progress)) => {
+          self.current.evaluation_plan_id.map(|plan_id| (progress, plan_id))
+        }
+        _ => None,
+      })
+    {
+      require(
+        !progress.is_plan_bound()
+          || self.evaluation_plans.get(&plan_id).is_some_and(|plan| {
+            progress
+              .validate_bindings(
+                plan,
+                self.stage_attempts.values(),
+                self.macro_calls.values(),
+                self.assessments.values(),
+              )
+              .is_ok()
+          }),
+      )?;
+    }
     validate_outbox(self)?;
     validate_projection(self)
   }
@@ -1539,12 +1564,15 @@ fn validate_projection(stored: &StoredFactoryRun) -> Result<(), StoreError> {
     .get(&current.lifecycle_checkpoint_id)
     .is_some_and(|checkpoint| match &checkpoint.progress {
       octacity_server_factory::FactoryLifecycleProgress::Evaluating(
-        octacity_server_factory::EvaluationState::DecisionRecorded { outcome, .. },
-      ) => current.decision_id.is_some_and(|id| {
-        stored.decisions.get(&id).is_some_and(|decision| {
-          decision.outcome() == *outcome && Some(decision.plan_id()) == current.evaluation_plan_id
-        })
-      }),
+        octacity_server_factory::EvaluationState::DecisionRecorded {
+          decision_id, outcome, ..
+        },
+      ) => {
+        current.decision_id == Some(*decision_id)
+          && stored.decisions.get(decision_id).is_some_and(|decision| {
+            decision.outcome() == *outcome && Some(decision.plan_id()) == current.evaluation_plan_id
+          })
+      }
       _ => true,
     });
   require(
@@ -1688,14 +1716,15 @@ mod tests {
     AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, BudgetUsage, BuildConfigurationRef,
     CandidateSubject, ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind, CriterionPack,
     DecisionEngineInput, DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion,
-    DeliveryAttemptNumber, DeliveryState, DeterministicGateOutcome, EvaluationPlanDefinition, EvaluationPolicy,
-    EvidenceItem, EvidenceItemInput, EvidenceOutputKind, EvidenceProducer, EvidenceRequirement, ExternalWorkIdentity,
-    FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef,
-    FactoryConfigurationVersion, FactoryContextReference, FactoryMetadata, FactoryRunState, FactorySafeText,
-    FactoryTaskSubject, FindingSeverity, ImmutableReference, IndeterminatePolicy, MacroCallDeclaration, MacroCallKind,
-    ReportingAttemptNumber, ReportingState, ReviewBranch, ReviewEvaluatorCapability, ReviewPlanPreparation,
-    ReviewPurpose, RiskClass, StageAttemptNumber, StageHandoffOutcome, WorkArtifacts, WorkClassification,
-    WorkEnvelopeId, WorkPriority, evaluate_decision, prepare_evaluation_plan,
+    DeliveryAttemptNumber, DeliveryState, DeterministicGateOutcome, EvaluationBranchResult, EvaluationBranchState,
+    EvaluationPlanDefinition, EvaluationPolicy, EvaluationProgress, EvidenceItem, EvidenceItemInput,
+    EvidenceOutputKind, EvidenceProducer, EvidenceRequirement, ExternalWorkIdentity, FactoryArtifactReference,
+    FactoryClaim, FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
+    FactoryContextReference, FactoryMetadata, FactoryRunState, FactorySafeText, FactoryTaskSubject, FindingSeverity,
+    ImmutableReference, IndeterminatePolicy, MacroCallDeclaration, MacroCallKind, ReportingAttemptNumber,
+    ReportingState, ReviewBranch, ReviewEvaluatorCapability, ReviewPlanPreparation, ReviewPurpose, RiskClass,
+    StageAttemptNumber, StageHandoffOutcome, WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority,
+    evaluate_decision, prepare_evaluation_plan,
   };
 
   use crate::test_support::{id, run_ready, time};
@@ -1799,6 +1828,74 @@ mod tests {
 
   fn budget() -> BudgetLimit {
     BudgetLimit::new(10, 10_000, 10_000, 10_000, 10_000).unwrap()
+  }
+
+  fn completed_evaluation_input(
+    run: &FactoryRun,
+    plan: &octacity_server_factory::EvaluationPlan,
+    assessment: &Assessment,
+    review_budget: BudgetLimit,
+  ) -> EvaluationProgress {
+    let stage = StageAttempt::new(
+      id::<StageAttemptId>(37),
+      run,
+      StageAttemptNumber::new(2).unwrap(),
+      octacity_server_factory::FactoryStageTarget::Evaluation(key("reviewer")),
+      review_budget,
+      digest(37),
+      octacity_server_factory::FactoryClaimOwnership::new(
+        key("worker.one"),
+        FactoryClaim::new(FactoryClaimFence::new(digest(10)), time(10), time(100)).unwrap(),
+      ),
+    );
+    let subject = FactoryTaskSubject::Candidate(plan.subject().clone());
+    let context = ContextManifest::new(
+      id::<ContextManifestId>(37),
+      subject.clone(),
+      digest(38),
+      vec![
+        ContextManifestEntry::new(
+          ContextSourceKind::Evidence,
+          key("evaluation-evidence"),
+          subject.clone(),
+          FactoryContextReference::Artifact(artifact(38, 38)),
+          digest(38),
+          1,
+          FactorySafeText::new("required evaluation evidence").unwrap(),
+          digest(38),
+        )
+        .unwrap(),
+      ],
+    )
+    .unwrap();
+    let call = MacroCall::new(
+      MacroCallDeclaration::new(
+        id::<MacroCallId>(37),
+        subject,
+        MacroCallKind::Evaluate,
+        review_budget,
+        vec![],
+        vec![],
+        1,
+      )
+      .unwrap(),
+      &stage,
+      &context,
+      None,
+    )
+    .unwrap();
+    let mut progress = EvaluationProgress::from_plan(plan).unwrap();
+    for state in [
+      EvaluationBranchState::AttemptCreated,
+      EvaluationBranchState::BuildActive,
+      EvaluationBranchState::ResultPending,
+    ] {
+      progress = progress.advance_branch(&key("reviewer"), state).unwrap();
+    }
+    progress = progress
+      .record_result(EvaluationBranchResult::new(plan, &stage, &call, assessment).unwrap())
+      .unwrap();
+    progress
   }
 
   fn full_history(run: &FactoryRun) -> FullHistory {
@@ -2015,9 +2112,18 @@ mod tests {
     )
     .unwrap();
     let assessments = [assessment.clone()];
+    let evaluation_progress = completed_evaluation_input(run, &plan, &assessment, review_budget);
     let decision = evaluate_decision(
       id::<DecisionId>(30),
-      DecisionEngineInput::new(&evidence, &plan, &policy, &assessments),
+      DecisionEngineInput::from_completed_evaluation(
+        &evidence,
+        &plan,
+        &policy,
+        &evaluation_progress,
+        &assessments,
+        &[],
+      )
+      .unwrap(),
     )
     .unwrap();
     let escalation = Escalation::new(

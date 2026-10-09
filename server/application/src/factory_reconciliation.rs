@@ -1,9 +1,10 @@
 use octacity_server_domain::{EntityKind, Timestamp};
 use octacity_server_factory::{
   BudgetUsage, DeliveryIntent, Escalation, EscalationId, EvaluationBranchState, EvaluationState, FactoryClaimOwnership,
-  FactoryDecisionGuard, FactoryDigest, FactoryError, FactoryKey, FactoryLifecycleProgress, FactoryLifecycleSnapshot,
-  FactoryNextAction, FactoryRun, FactoryRunState, FactoryRunVersion, FactoryStageProgress, FactoryStageTarget,
-  FactoryText, ReportingProgress, StageAttempt, StageAttemptId, StageAttemptNumber, decide_next_action,
+  FactoryDecisionGuard, FactoryDecisionResources, FactoryDigest, FactoryError, FactoryKey, FactoryLifecycleProgress,
+  FactoryLifecycleSnapshot, FactoryNextAction, FactoryReworkStatus, FactoryRun, FactoryRunState, FactoryRunVersion,
+  FactoryStageProgress, FactoryStageTarget, FactoryText, ReportingProgress, StageAttempt, StageAttemptId,
+  StageAttemptNumber, StageAttemptOutcome, decide_next_action,
 };
 use octacity_server_store::{
   AuditActorKind, ClaimFactoryRuns, ClaimedFactoryRun, CommitFactoryRunTransition, FactoryAuditFact,
@@ -295,10 +296,13 @@ where
     claimed.record.claim,
     claimed.record.claim.fence(),
     decision_at,
-    configuration.configuration.hard_budget(),
-    budget.usage,
-    configuration.configuration.wip_limits(),
-    claimed.wip_usage,
+    FactoryDecisionResources::new(
+      configuration.configuration.hard_budget(),
+      budget.usage,
+      configuration.configuration.wip_limits(),
+      claimed.wip_usage,
+    ),
+    rework_status(&snapshot, &configuration.configuration)?,
   );
   let decision = decide_next_action(&FactoryLifecycleSnapshot::new(
     snapshot.run.state(),
@@ -427,7 +431,30 @@ where
   Ok(ReconcileOne::Committed)
 }
 
-fn transition_for_action(
+fn rework_status(
+  snapshot: &FactoryRunSnapshot,
+  configuration: &octacity_server_factory::FactoryConfiguration,
+) -> Result<FactoryReworkStatus, FactoryReconciliationError> {
+  let completed = snapshot
+    .stage_attempt_completions
+    .iter()
+    .filter(|completion| completion.outcome() == StageAttemptOutcome::Succeeded)
+    .filter(|completion| {
+      snapshot.stage_attempts.iter().any(|stage| {
+        stage.id() == completion.stage_attempt_id() && matches!(stage.target(), FactoryStageTarget::Rework)
+      })
+    })
+    .count();
+  let completed = u16::try_from(completed).map_err(|_| FactoryReconciliationError::InvalidSnapshot)?;
+  FactoryReworkStatus::new(
+    completed,
+    configuration.rework().max_cycles(),
+    configuration.rework().exhausted_outcome(),
+  )
+  .map_err(FactoryReconciliationError::Decision)
+}
+
+pub(super) fn transition_for_action(
   snapshot: &FactoryRunSnapshot,
   configuration: &octacity_server_factory::FactoryConfiguration,
   claimed: &ClaimedFactoryRun,
@@ -546,6 +573,7 @@ fn transition_for_action(
     | FactoryNextAction::CaptureCandidate
     | FactoryNextAction::ConstructEvidence
     | FactoryNextAction::PlanEvaluations
+    | FactoryNextAction::CollectEvaluationResult(_)
     | FactoryNextAction::Decide
     | FactoryNextAction::RequestDelivery
     | FactoryNextAction::Report => {
