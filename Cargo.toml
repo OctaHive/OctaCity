@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "agent/octacity-agent",
   "agent/octacity-cache-session",
+  "agent/octacity-changeset",
   "agent/octacity-config",
   "agent/octacity-coordinator",
   "agent/octacity-execution",

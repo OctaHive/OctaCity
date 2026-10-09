@@ -5,6 +5,9 @@ mod execution_v2;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use async_trait::async_trait;
+use octacity_changeset::{
+  CaptureError, CaptureRequest, CapturedChangeSet, CapturedFile, ChangeSetCapturer, ChangeSetManifest,
+};
 use octacity_execution::{
   ExecutionArchitecture, ExecutionError, ExecutionExit, ExecutionIo, ExecutionOs, ExecutionPaths, ExecutionPlatform,
   ExecutionReader, ExecutionTarget, ExecutionWriter, OciIsolation as ExecutionOciIsolation, ResourceUsage,
@@ -12,13 +15,15 @@ use octacity_execution::{
 };
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_protocol::{
-  AGENT_PROTOCOL_VERSION, ArtifactTransferCapability, BeginCacheSessionResponse, CachePolicy, EXECUTION_CONTRACT_V2,
-  EXECUTION_CONTRACT_V3, ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId,
-  ExecutionSpec, ExecutionTargetV2, FactoryEnforcementCapabilityV3, FactoryMountModeV3, FactoryMountPermissionV3,
-  FactoryOutputPermissionsV3, FactoryPermissionSetV3, FactoryResourceLimitsV3, JobBinding, JobSpecV1, JobSpecV2,
-  JobSpecV3, ManagedOctaExecutionV3, NetworkPolicy, OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits,
-  PlatformArchitecture, PlatformOs, PlatformSpec, ProtectedInputManifestV3, ProtectedInputTransferV3, ProtectedInputV3,
-  RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, guarantees_for,
+  AGENT_PROTOCOL_VERSION, ArtifactTransferCapability, BeginCacheSessionResponse, CachePolicy, ChangeSetBinaryPolicyV3,
+  ChangeSetCapturePolicyV3, ChangeSetCaptureV3, ChangeSetSecretPatternV3, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3,
+  ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, ExecutionSpec, ExecutionTargetV2,
+  FactoryCausalityV3, FactoryEnforcementCapabilityV3, FactoryImmutableReferenceV3, FactoryMountModeV3,
+  FactoryMountPermissionV3, FactoryOutputPermissionsV3, FactoryPermissionSetV3, FactoryResourceLimitsV3,
+  FactoryStageKindV3, JobBinding, JobSpecV1, JobSpecV2, JobSpecV3, ManagedOctaExecutionV3, NetworkPolicy,
+  OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec,
+  ProtectedInputManifestV3, ProtectedInputTransferV3, ProtectedInputV3, RuntimeSpec, RuntimeSpecV2, RuntimeTarget,
+  SourceSpec, guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerCapabilities};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};

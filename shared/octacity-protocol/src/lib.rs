@@ -724,7 +724,7 @@ impl JobSpecV3 {
     self.permissions.validate()?;
     validate_factory_toolchain(&self.octa, &self.execution, &self.permissions)?;
     if let Some(factory) = &self.factory {
-      factory.validate()?;
+      factory.validate(&self.protected_inputs)?;
     }
     validate_factory_execution(
       &self.runtime,

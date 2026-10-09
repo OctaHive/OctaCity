@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 octacity-cache-session = { path = "../octacity-cache-session" }
+octacity-changeset = { path = "../octacity-changeset" }
 clap.workspace = true
 octacity-config = { path = "../octacity-config" }
 octacity-coordinator = { path = "../octacity-coordinator" }

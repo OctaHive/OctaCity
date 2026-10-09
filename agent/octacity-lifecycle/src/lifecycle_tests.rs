@@ -1,6 +1,6 @@
 use std::sync::{
   Mutex as StdMutex,
-  atomic::{AtomicBool, Ordering},
+  atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use async_trait::async_trait;
@@ -66,7 +66,9 @@ struct BlockingOutputPublisher {
 
 struct FailingOutputPublisher;
 
-struct FailingUploadPublisher;
+struct PartialUploadPublisher {
+  uploaded_components: AtomicUsize,
+}
 
 struct FencedOutputPublisher;
 
@@ -86,7 +88,7 @@ impl OutputPublisher for FailingOutputPublisher {
 }
 
 #[async_trait]
-impl OutputPublisher for FailingUploadPublisher {
+impl OutputPublisher for PartialUploadPublisher {
   async fn freeze(
     &self,
     _request: FreezeOutputs<'_>,
@@ -96,6 +98,7 @@ impl OutputPublisher for FailingUploadPublisher {
   }
 
   async fn publish(&self, _request: PublishOutputs<'_>, _cancellation: CancellationToken) -> Result<(), OutputError> {
+    self.uploaded_components.store(1, Ordering::SeqCst);
     Err(OutputError::Upload("fixture exhausted retries".to_owned()))
   }
 }

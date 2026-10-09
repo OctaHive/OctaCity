@@ -197,7 +197,7 @@ async fn panicked_cache_job_cleans_orphans_then_revokes_the_server_session() {
 }
 
 #[tokio::test]
-async fn invalid_output_completes_as_infrastructure_failure_without_entering_uploading() {
+async fn unpublished_invalid_output_is_discarded_and_its_workspace_is_cleaned() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
@@ -232,13 +232,16 @@ async fn invalid_output_completes_as_infrastructure_failure_without_entering_upl
 }
 
 #[tokio::test]
-async fn upload_failure_completes_as_infrastructure_failure_after_uploading() {
+async fn partial_upload_discards_results_and_cleans_the_disposable_workspace() {
   let state_root = tempfile::tempdir().unwrap();
   let work_root = tempfile::tempdir().unwrap();
   let coordinator = Arc::new(LifecycleCoordinator::default());
+  let outputs = Arc::new(PartialUploadPublisher {
+    uploaded_components: AtomicUsize::new(0),
+  });
   let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
     coordinator.clone(),
-    Arc::new(FailingUploadPublisher),
+    outputs.clone(),
     state_root.path(),
     work_root.path(),
     false,
@@ -247,8 +250,12 @@ async fn upload_failure_completes_as_infrastructure_failure_after_uploading() {
   let outcome = lifecycle.run(lease, snapshot, CancellationToken::new()).await.unwrap();
 
   assert_eq!(outcome.status, JobCompletionStatus::InfrastructureFailed);
+  assert_eq!(outputs.uploaded_components.load(Ordering::SeqCst), 1);
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
-  assert_eq!(coordinator.completions.lock().unwrap().len(), 1);
+  let completions = coordinator.completions.lock().unwrap();
+  assert_eq!(completions.len(), 1);
+  assert!(completions[0].results.is_empty());
+  drop(completions);
   assert_eq!(
     lifecycle_states(&coordinator.events.lock().unwrap()),
     [

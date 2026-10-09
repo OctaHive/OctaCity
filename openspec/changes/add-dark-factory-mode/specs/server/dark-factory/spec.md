@@ -16,7 +16,7 @@ OctaCity SHALL continue to accept and execute ordinary CI/CD Triggers and Builds
 - **THEN** other Projects and ordinary Build commands remain independent of that configuration and its provider availability
 
 ### Requirement: Versioned Factory Configuration
-The server SHALL store Factory Configurations as immutable versions owned by one Project. A version SHALL bind admission rules, stage definitions, Build Configuration selections, budgets, WIP limits, permission policy, optional Decision Signal profiles and rollout policies, criterion packs, evaluator policy, rework limits, delivery policy, and enabled state. A Factory Run SHALL retain the exact version accepted at admission and SHALL NOT observe later replacements.
+The server SHALL store Factory Configurations as immutable versions owned by one Project. A version SHALL bind admission rules, the exact root Flow Definition and its reachable version closure, Build Configuration selections, budgets, WIP limits, permission policy, optional Decision Signal profiles and rollout policies, criterion packs, evaluator policy, rework limits, delivery policy, and enabled state. A Factory Run SHALL retain the exact version accepted at admission and SHALL NOT observe later replacements.
 
 #### Scenario: Factory Configuration is replaced
 - **WHEN** an operator publishes a valid replacement using the current-version precondition
@@ -25,6 +25,33 @@ The server SHALL store Factory Configurations as immutable versions owned by one
 #### Scenario: Configuration references an unavailable capability
 - **WHEN** a proposed configuration requires a plugin, execution guarantee, permission control, evaluator, or delivery capability that cannot be selected under Project policy
 - **THEN** the server rejects the version before it can admit Work
+
+### Requirement: Immutable nested Flow Definitions use bounded typed primitives
+The server SHALL represent factory behavior as immutable versioned Flow Definitions composed from a closed set of node kinds. Executable nodes SHALL be limited to ordinary Build or command execution, a schema-bounded reasoning call, and a provider-neutral Decision Signal call. Orchestration nodes SHALL be limited to deterministic gates, bounded fan-out and join, human gates, trusted actions, and calls to exact nested Flow Definition versions. A definition SHALL declare its entry node, typed inputs and outcomes, transitions, failure routes, budgets, permission profiles, Context projections, terminal outcomes, and exact subflow references.
+
+Definition validation SHALL reject unknown or provider-created node kinds or edges, incompatible schemas, unreachable required nodes, missing terminal outcomes, cycles without explicit bounded repeat semantics, recursive subflow closures, and any graph whose maximum depth, node count, fan-out, repeat count, budget, or WIP cannot be proven within configured bounds. A running Flow Run SHALL use the admitted immutable definition closure and SHALL NOT discover newer subflow versions.
+
+Provider-neutral graph structure and algorithms SHALL come from one exact-versioned deterministic pure kernel shared with Octa task planning. The kernel SHALL be limited to canonical node and edge structure, structural validation, traversal, reachability, component and cycle facts, topological ordering of acyclic projections, and bounded structural measurements. Octa and OctaCity SHALL retain separate adapters and executors: the kernel SHALL NOT own plugins, commands, Builds, Flow node kinds, schemas, context or data authority, permissions, budgets, retries, persistence, fencing, side effects, or transition decisions. Octa SHALL reject cyclic task DAGs, while the Factory adapter MAY accept only cycles whose explicit bounded-repeat semantics satisfy Factory policy and SHALL record their realized execution as append-only attempts and cycles.
+
+#### Scenario: Nested Flow Definition is replaced
+- **WHEN** an operator publishes a replacement for a subflow used by an admitted Factory Run
+- **THEN** the admitted run continues with its pinned subflow version while later runs may use the replacement
+
+#### Scenario: Provider proposes an undeclared transition
+- **WHEN** a reasoning or Decision Signal result names a node or edge absent from the current Flow Definition
+- **THEN** the result cannot change control state and deterministic policy rejects or escalates the node attempt
+
+#### Scenario: Flow graph cannot prove bounded execution
+- **WHEN** a proposed definition contains recursive nesting, unbounded repetition, or fan-out without a hard maximum
+- **THEN** the server rejects the definition before it can become selectable by a Factory Configuration
+
+#### Scenario: Shared structural validation preserves separate runtime authority
+- **WHEN** equivalent malformed node and edge structure is validated through the Octa and Factory adapters
+- **THEN** both adapters receive the same deterministic structural facts while applying their own domain validation, and neither runtime invokes the other runtime or imports its execution state
+
+#### Scenario: Server resumes a Flow after process loss
+- **WHEN** an active Flow Run is reclaimed after the server process loses all memory
+- **THEN** the server resumes only from its authoritative persisted Flow, attempt, fence, and outbox state and does not depend on an Octa executor instance or graph scheduler state
 
 ### Requirement: Provider-neutral Work admission
 The server SHALL accept bounded Work Submissions through versioned Work Source adapters and normalize accepted input into an immutable Work Envelope containing a scoped source identity, repository subject, base reference, task artifact, acceptance criteria, specification references, priority, risk, and bounded provider metadata. Admission SHALL authenticate the source where required, resolve an allowed repository reference to an exact immutable base revision, apply Project visibility and Factory policy, and durably deduplicate one Factory Run per scoped Work identity.
@@ -37,8 +64,21 @@ The server SHALL accept bounded Work Submissions through versioned Work Source a
 - **WHEN** an accepted submission names a mutable reference that cannot be resolved under the selected Repository policy
 - **THEN** no Factory Run is admitted for ambiguous source state and the failure is reported without executing repository code
 
+### Requirement: Typed triage and deterministic phase-ready pools
+A Factory Configuration MAY select a nested triage flow whose nodes produce typed duplicate, Project-fit, category, severity, size, risk, and dependency observations. The triage flow SHALL reduce its bounded evidence into one immutable Triage Result with exact provenance. Deterministic policy SHALL map that result to only declared outcomes such as rejection, escalation, requirements work, or direct development; a model SHALL NOT commit the disposition itself.
+
+The server SHALL expose durable phase-ready pools derived from authoritative Flow Run state. Selection from a pool SHALL be deterministic under configured severity, Project priority, age, dependency readiness, required capability, WIP, and budget rules and SHALL preserve the selected policy and input digests.
+
+#### Scenario: Small Work bypasses requirements authoring
+- **WHEN** the triage result classifies admitted Work within the configured direct-development bounds
+- **THEN** deterministic routing places it in the development-ready pool without creating a requirements-authoring node attempt
+
+#### Scenario: Several items are ready for the same bounded capacity
+- **WHEN** multiple Flow Runs satisfy a phase-ready pool and capacity admits fewer than all of them
+- **THEN** the server selects them in the configured deterministic order and records the selection evidence
+
 ### Requirement: Durable code-owned Factory lifecycle
-The server SHALL drive Factory Runs through explicit persisted state machines for admission, implementation, validation, evaluation, rework, readiness for delivery, delivery, escalation, rejection, cancellation, and completion. Program code SHALL own every loop, branch, join, retry, timeout, budget check, and stop condition. A model result SHALL be treated only as a schema-validated typed value and SHALL NOT directly select, skip, or complete a Factory transition.
+The server SHALL drive Factory Runs by interpreting their pinned Flow Definition closure into explicit persisted Flow Runs and Node Attempts. Program code SHALL own every node creation, nested-flow call and return, loop, branch, join, retry, timeout, budget check, and stop condition. A model result SHALL be treated only as a schema-validated typed value and SHALL NOT create a node, follow an undeclared edge, skip a required gate, or directly complete a Factory transition.
 
 #### Scenario: Harness claims success before validation
 - **WHEN** an implementation harness reports a completed result but required validation has not run
@@ -62,7 +102,7 @@ Every completed or terminal request SHALL produce an immutable Decision Signal R
 - **THEN** deterministic policy applies the configured fail-closed denial or escalation and does not substitute another model implicitly
 
 ### Requirement: Decision Signals can select only declared Factory routes
-A routing Decision Signal SHALL receive only the finite outgoing route choices declared for the current state by the immutable Factory Configuration. Deterministic routing policy SHALL combine the recorded signal with authoritative lifecycle state, budgets, required gates, and configured thresholds to follow one declared edge, use a declared fallback, or escalate. A provider result SHALL NOT name or create an undeclared stage, skip a required validation, evaluation, delivery, or human-review gate, change a hard budget, or directly commit a Factory transition.
+A routing Decision Signal SHALL receive only the finite outgoing route choices declared for the current node by the immutable Flow Definition. Deterministic routing policy SHALL combine the recorded signal with authoritative lifecycle state, budgets, required gates, and configured thresholds to follow one declared edge, use a declared fallback, or escalate. A provider result SHALL NOT name or create an undeclared node, skip a required validation, evaluation, delivery, promotion, or human-review gate, change a hard budget, or directly commit a Factory transition.
 
 #### Scenario: Routing provider returns an undeclared answer
 - **WHEN** an adapter returns a route absent from the request's finite choice set
@@ -76,22 +116,22 @@ A routing Decision Signal SHALL receive only the finite outgoing route choices d
 - **WHEN** a Decision Signal profile is configured as `shadow`
 - **THEN** the server records comparison evidence while the deterministic baseline selects the route and the signal cannot alter execution
 
-### Requirement: Append-only Stage Attempts and fenced ownership
-Every Factory Stage SHALL have monotonically numbered append-only Stage Attempts with immutable input digests, selected Build identities, owner, deadline, fence, terminal observation, and consumed budget. A retry or rework SHALL create a new Stage Attempt and SHALL NOT rewrite prior history. Only the current fenced owner SHALL publish a transition or consume the next stage budget.
+### Requirement: Append-only Flow and Node Attempts with fenced ownership
+Every Flow Run node SHALL have monotonically numbered append-only Node Attempts with immutable input digests, selected Build or provider identities, owner, deadline, fence, terminal observation, and consumed budget. A retry, bounded repeat, requirements correction, or implementation rework SHALL create a new attempt or append-only Workflow Cycle and SHALL NOT rewrite prior history. Only the current fenced owner SHALL publish a transition or consume the next node budget.
 
 #### Scenario: Stale reconciler completes after takeover
-- **WHEN** an old owner submits a Stage Attempt completion after another server replica has acquired a newer fence
+- **WHEN** an old owner submits a Node Attempt completion after another server replica has acquired a newer fence
 - **THEN** the store rejects the stale completion and preserves the current Factory Run state
 
-#### Scenario: Stage retry is permitted
+#### Scenario: Node retry is permitted
 - **WHEN** a retryable infrastructure failure occurs within the recorded attempt and budget limits
-- **THEN** the reconciler creates a new Stage Attempt with the same immutable subject and preserves the failed attempt
+- **THEN** the reconciler creates a new Node Attempt with the same immutable subject and preserves the failed attempt
 
-### Requirement: Factory stages execute as ordinary Builds
-An implementation, validation, evaluation, or rework Stage Attempt SHALL create or select ordinary immutable Builds through the existing Build application. The Factory Run SHALL record exact Build, Attempt, Job, source revision, configuration version, effective policy, output, and terminal-observation references. Factory coordination SHALL observe authoritative Build state and SHALL NOT duplicate Job DAG orchestration, placement, lease, cancellation, retry, event, or output truth.
+### Requirement: Build-backed flow nodes execute as ordinary Builds
+A command, implementation, validation, evaluation, or rework Node Attempt SHALL create or select ordinary immutable Builds through the existing Build application. The Factory Run SHALL record exact Build, Attempt, Job, source revision, configuration version, effective policy, output, and terminal-observation references. Factory coordination SHALL observe authoritative Build state and SHALL NOT duplicate Job DAG orchestration, placement, lease, cancellation, retry, event, or output truth.
 
-#### Scenario: Implementation stage starts
-- **WHEN** the reconciler admits an implementation Stage Attempt
+#### Scenario: Implementation node starts
+- **WHEN** the reconciler admits an implementation Node Attempt
 - **THEN** it creates one causally linked ordinary Build whose immutable input contains the exact base revision and narrowed Factory execution intent
 
 #### Scenario: Build is cancelled outside the factory view
@@ -99,7 +139,7 @@ An implementation, validation, evaluation, or rework Stage Attempt SHALL create 
 - **THEN** the Factory reconciler observes the authoritative terminal state and applies the configured stage failure policy without inventing a second Build state
 
 ### Requirement: Immutable Factory Task Envelope and Codex execution
-Each coding or evaluation Build SHALL receive an immutable versioned Factory Task Envelope containing subject identities, exact revision, mode, task and specification artifact references, Context Manifest identity and digest, prior typed findings, permissions, budgets, expected result schema, deliverables, and policy, prompt, plugin, executable, model, and input digests. The first implementation SHALL execute Codex through the official pinned Octa `codex` task and generic runner protocol; OctaCity server and Agent protocols SHALL NOT contain Codex-specific request, event, or result types.
+Each reasoning or Build-backed node SHALL receive an immutable versioned Factory Task Envelope containing Flow Definition, Flow Run, node, attempt, and subject identities, exact revision, mode, task and specification artifact references, Context Manifest identity and digest, prior typed findings, permissions, budgets, expected result schema, deliverables, and policy, prompt, plugin, executable, model, and input digests. The first reasoning implementation SHALL execute Codex through the official pinned Octa `codex` task and generic runner protocol; OctaCity server and Agent protocols SHALL NOT contain Codex-specific request, event, or result types.
 
 #### Scenario: Codex implementation is dispatched
 - **WHEN** a valid Task Envelope selects the pinned Codex implementation capability
@@ -121,15 +161,41 @@ The effective Factory Permission Set SHALL be the intersection of the immutable 
 - **THEN** placement or pre-spawn admission rejects the Job instead of running it on Host or omitting the restriction
 
 ### Requirement: Trusted immutable ChangeSet capture
-After a writable implementation or rework Build, a trusted capture boundary SHALL compare the owned workspace to the exact base revision, validate resolved paths, symlinks, changed-path policy, file count, byte bounds, forbidden content, and provenance, and produce an immutable ChangeSet with exact base and candidate identities, content digest, changed-path summary, Stage Attempt identity, and artifact references. Harness output SHALL NOT be accepted as the authoritative ChangeSet identity.
+After a writable requirements, implementation, or rework Build, a trusted capture boundary SHALL compare the owned workspace to the exact predecessor revision, validate resolved paths, symlinks, changed-path policy, file count, byte bounds, forbidden content, and provenance, and produce an immutable ChangeSet with exact predecessor and candidate identities, content digest, changed-path summary, Node Attempt identity, candidate purpose, and artifact references. Harness output SHALL NOT be accepted as the authoritative ChangeSet identity.
 
 #### Scenario: Valid implementation changes files
 - **WHEN** a successful implementation Build leaves allowed bounded changes in its owned workspace
-- **THEN** trusted capture creates one immutable candidate and subsequent stages address that exact candidate digest and revision
+- **THEN** trusted capture creates one immutable candidate and subsequent nodes address that exact candidate digest and revision
 
 #### Scenario: Change escapes the owned workspace
 - **WHEN** capture observes traversal, an unsafe symlink, a forbidden path, excessive output, or secret material
 - **THEN** capture rejects the candidate, publishes no accepted ChangeSet, and records a typed security failure
+
+### Requirement: Requirements cycles preserve exact candidate lineage
+A requirements flow SHALL support a deterministic direct-development branch for bounded small Work and, for larger Work, separate requirements-authoring and independent requirements-review nodes. Accepted requirements SHALL be captured as an exact immutable ChangeSet, linked to the admitted Work and original base, and SHALL be the only specification candidate that can make a Flow Run ready for implementation.
+
+An implementation, review, or verification node MAY return a typed Requirements Defect referencing exact contradictory, incomplete, or infeasible requirements evidence. Deterministic policy SHALL start a new append-only Workflow Cycle at the declared requirements node, retain all prior attempts and candidates, and mark descendants of the superseded requirements candidate ineligible to authorize later delivery or deployment. A new cycle SHALL traverse its declared review and acceptance gates again.
+
+#### Scenario: Requirements author and reviewer are isolated
+- **WHEN** the independent requirements-review node is dispatched
+- **THEN** its Context Manifest contains the candidate specification and declared acceptance evidence but excludes the author's hidden transcript and undeclared context
+
+#### Scenario: Implementation finds a specification defect
+- **WHEN** implementation returns a valid Requirements Defect for the exact active specification candidate
+- **THEN** the server appends a new requirements cycle and no downstream result from the superseded candidate may satisfy a later gate
+
+### Requirement: Protected test-first development
+A test-authoring node SHALL be able to produce an immutable protected test bundle before implementation. The implementation node MAY have a control dependency on successful test authoring, but its Context Manifest, mounts, Artifact grants, prompts, and Stage Handoffs SHALL exclude protected test source, assertions, expected outputs, and author transcript. A validation node SHALL materialize the exact implementation candidate and exact protected test bundle in a trusted environment and publish reproducible typed evidence.
+
+Deterministic policy or a separately scoped reasoning node MAY classify failed validation as an implementation defect, requirements defect, test defect, or indeterminate only from declared bounded evidence. That classification SHALL route through declared edges and SHALL NOT reveal protected test content to an implementation retry unless policy explicitly publishes a bounded remediation summary.
+
+#### Scenario: Implementation attempts to obtain hidden tests
+- **WHEN** the implementation node requests or scans for an Artifact or path outside its declared Context and mount grants
+- **THEN** access is denied and the attempt cannot widen its own authority despite being sequenced after test authoring
+
+#### Scenario: Candidate is checked against the protected bundle
+- **WHEN** implementation produces a candidate eligible for validation
+- **THEN** validation combines that exact candidate with the exact protected test bundle and records both identities in the Evidence Manifest
 
 ### Requirement: Exact deterministic evidence
 Validation Builds SHALL run against a freshly materialized exact candidate and publish an immutable Evidence Manifest containing typed report and artifact references, digests, producer identities, candidate identity, freshness, and completeness. Compiler, lint, test, coverage, security, dependency, specification, and other deterministic outcomes SHALL reach the Decision Engine as authoritative evidence rather than through an LLM summary.
@@ -147,21 +213,34 @@ The server SHALL create an immutable Evaluation Plan that binds the exact candid
 
 #### Scenario: Evaluators run in parallel
 - **WHEN** independent criterion branches are ready
-- **THEN** they execute as sibling Stage Attempts with scoped inputs and the program joins only their typed terminal results
+- **THEN** they execute as sibling Node Attempts with scoped inputs and the program joins only their typed terminal results
 
 #### Scenario: Evaluator asks for missing evidence
 - **WHEN** an evaluator cannot judge a required criterion from the supplied manifest
 - **THEN** it returns `indeterminate` with bounded typed evidence requirements and cannot invoke arbitrary tools or mutate the candidate
 
-### Requirement: Durable Stage Handoffs and reproducible Context Manifests
-Every completed model-backed Stage Attempt SHALL publish an immutable versioned Stage Handoff containing a bounded typed outcome, summary, candidate-affecting decisions and assumptions, unresolved items, changed-component references, validation observations, prior findings, and exact Artifact, ChangeSet, Evidence, policy, and provenance references needed by declared successor stages. A Stage Handoff SHALL exclude credentials, hidden chain-of-thought, unbounded transcripts, and undeclared sibling state.
+### Requirement: Independent verification is a scoped nested flow
+A Factory Configuration MAY select an immutable Verification Plan implemented as a nested Flow Definition containing bounded deterministic or reasoning nodes for acceptance, end-to-end, performance, UI, security, staged-environment, deployment, and post-deployment checks. Each node SHALL declare its exact candidate or deployable subject, source visibility, Context and data projections, environment access, credential profile, budget, evidence schema, and required outcome. Deterministic failures SHALL remain authoritative and SHALL NOT be hidden by a reasoning summary.
 
-Before dispatching a reasoning call, the server SHALL construct and persist one immutable Context Manifest with a canonical stable order and digest. Every entry SHALL carry a source kind, logical identity, exact revision or subject binding, bounded Artifact or repository-range reference, content digest, encoded size, inclusion reason, and provenance. Construction SHALL use only declared stage and call dependencies, required exact inputs, selected typed child results or bounded summaries, and policy-authorized context. The same immutable inputs and construction policy SHALL produce identical manifest bytes, and retry or replay SHALL use the recorded manifest rather than repeat discovery.
+A verification node configured for black-box operation SHALL receive no repository source, implementation transcript, protected test bundle, or undeclared credential. Verification results SHALL authorize only declared deterministic routes and SHALL remain bound to their exact candidate, environment, plan, and policy identities.
+
+#### Scenario: Black-box verifier checks a staged candidate
+- **WHEN** a Verification Plan declares only endpoint, public-contract, environment, and selected evidence inputs for one node
+- **THEN** the node runs without source or implementation context and its result remains bound to the exact staged candidate
+
+#### Scenario: Required deterministic verification fails
+- **WHEN** an end-to-end, performance, UI, security, or post-deployment gate records a required failure
+- **THEN** the Flow Run follows its declared failure route and no reasoning Assessment can convert that evidence into a pass
+
+### Requirement: Durable Stage Handoffs and reproducible Context Manifests
+Every completed model-backed Node Attempt SHALL publish an immutable versioned Stage Handoff containing a bounded typed outcome, summary, candidate-affecting decisions and assumptions, unresolved items, changed-component references, validation observations, prior findings, and exact Artifact, ChangeSet, Evidence, policy, and provenance references needed by declared successor nodes. A Stage Handoff SHALL exclude credentials, hidden chain-of-thought, unbounded transcripts, protected tests, and undeclared sibling state.
+
+Before dispatching a reasoning call, the server SHALL construct and persist one immutable Context Manifest with a canonical stable order and digest. Every entry SHALL carry a source kind, logical identity, exact revision or subject binding, bounded Artifact or repository-range reference, content digest, encoded size, inclusion reason, and provenance. Control dependencies SHALL determine readiness only and SHALL NOT grant context or data authority. Construction SHALL use only explicit context and data projections, required exact inputs, selected typed child results or bounded summaries, and policy-authorized context. The same immutable inputs and construction policy SHALL produce identical manifest bytes, and retry or replay SHALL use the recorded manifest rather than repeat discovery.
 
 A future Repository Knowledge subsystem MAY contribute bounded repository fragments only when each result is bound to the exact visible repository revision and accompanied by a Retrieval Receipt identifying the immutable index and embedding identities, normalized query, retrieval policy, stable ranking, ranges, and content digests. Retrieval SHALL remain non-authoritative: it SHALL NOT replace required Stage Handoffs or deterministic evidence, grant permissions, select a lifecycle transition, cross Project visibility, or become an unrecorded input. Mutable retrieval results SHALL NOT change an already dispatched or replayed call. The complete accumulated transcript SHALL NOT be authoritative lifecycle state or an implicit input to every later call.
 
-#### Scenario: Successor stage consumes an explicit handoff
-- **WHEN** validation or rework follows a completed implementation Stage Attempt
+#### Scenario: Successor node consumes an explicit handoff
+- **WHEN** validation or rework follows a completed implementation Node Attempt
 - **THEN** its Context Manifest contains the required typed Stage Handoff and exact candidate references without requiring access to the prior provider session or full transcript
 
 #### Scenario: Identical context is reconstructed after restart
@@ -171,6 +250,10 @@ A future Repository Knowledge subsystem MAY contribute bounded repository fragme
 #### Scenario: A sibling reasoning branch starts
 - **WHEN** one evaluation branch starts after another branch has completed
 - **THEN** its Context Manifest contains only the declared parent context and explicitly selected typed result or bounded summary, not that branch's full hidden transcript or undeclared state
+
+#### Scenario: A node is ordered after another without receiving its data
+- **WHEN** a Flow Definition declares a control edge but no context or data projection between two nodes
+- **THEN** the successor waits for the predecessor outcome while receiving none of its inputs, Artifacts, transcript, mounts, or hidden results
 
 #### Scenario: Model session is lost
 - **WHEN** an Agent and its provider session disappear after a completed call
@@ -195,8 +278,10 @@ The Decision Engine SHALL apply a versioned policy to exact deterministic eviden
 - **WHEN** another rework would exceed any recorded hard budget
 - **THEN** the Factory Run escalates or rejects according to policy without dispatching another model call
 
-### Requirement: Human-controlled idempotent delivery
-The initial Delivery stage SHALL use a protocol-separated trusted adapter to observe or idempotently publish only the exact accepted candidate, create or update one pull request or equivalent review target, and record its external identity and result. Coding and evaluator Jobs SHALL NOT receive a forge write credential. Automatic merge SHALL remain disabled in the initial release; a human-controlled external review and merge SHALL remain authoritative.
+### Requirement: Policy-governed idempotent delivery and promotion
+Delivery and promotion nodes SHALL use protocol-separated trusted adapters to observe or idempotently act on only the exact accepted candidate and recorded policy. A delivery adapter MAY create or update one pull request or equivalent review target. A deployment trusted action SHALL invoke and observe the existing CI/CD Pipeline or Build path and SHALL NOT create a separate deployment executor. Coding, evaluator, verification, reasoning, and Decision Signal Jobs SHALL NOT receive forge-write or production credentials.
+
+An immutable Factory Configuration SHALL declare every required human gate, deterministic gate, environment progression, and promotion condition. A model SHALL NOT merge or deploy directly. Bounded post-deployment verification MAY contribute typed evidence to the Flow Run, while long-running production monitoring SHALL remain an external system that may submit new Work through the source-neutral admission boundary.
 
 #### Scenario: Delivery response is lost
 - **WHEN** the adapter may have created a pull request but the response is lost
@@ -205,6 +290,14 @@ The initial Delivery stage SHALL use a protocol-separated trusted adapter to obs
 #### Scenario: Candidate no longer matches the accepted decision
 - **WHEN** delivery observes a candidate, ancestry, or policy digest different from the accepted Decision
 - **THEN** it rejects publication and the Factory Run cannot claim delivery success
+
+#### Scenario: Accepted candidate is promoted through existing CI/CD
+- **WHEN** all declared delivery, human, and environment gates are satisfied for an exact candidate
+- **THEN** the trusted action submits or observes an ordinary deployment Build and records its exact identity and terminal evidence
+
+#### Scenario: Black-box verification is isolated from implementation
+- **WHEN** a verification subflow evaluates the deployed candidate without source authority
+- **THEN** its nodes receive only declared endpoint, contract, environment, and evidence inputs and cannot access implementation transcripts or protected credentials
 
 ### Requirement: Source reporting is a non-authoritative projection
 The server MAY publish bounded status and result projections through a versioned Work Reporter adapter, but reporter failure or external status SHALL NOT authorize or reconstruct a Factory transition. Delivery and reporting SHALL use independent credentials and idempotency identities.

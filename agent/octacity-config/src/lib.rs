@@ -60,6 +60,9 @@ pub struct AgentConfig {
   /// per-Job selector, so configured tools require a dedicated Agent profile.
   #[serde(default)]
   pub tool_executables: BTreeMap<String, ToolExecutableConfig>,
+  /// Optional operator-selected provider for trusted ChangeSet capture.
+  #[serde(default)]
+  pub change_set_capture: Option<ChangeSetCaptureConfig>,
   /// Workload identity profile names mapped to restricted rotating token files.
   #[serde(default)]
   pub workload_identity_profiles: BTreeMap<String, PathBuf>,
@@ -184,6 +187,44 @@ pub struct ToolExecutableConfig {
   pub platform: String,
   /// Lowercase SHA-256 digest of the executable bytes.
   pub sha256: String,
+}
+
+/// Operator-selected implementation of provider-neutral ChangeSet capture.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeSetCaptureConfig {
+  /// Concrete provider used behind the Agent capture boundary.
+  pub provider: ChangeSetCaptureProvider,
+  /// Immutable executable selected and verified by the operator.
+  pub executable: ToolExecutableConfig,
+}
+
+/// Supported trusted ChangeSet capture providers.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeSetCaptureProvider {
+  /// Git plumbing capture producing an immutable bundle and manifest.
+  Git,
+}
+
+fn validate_operator_tool(
+  name: &str,
+  executable: &mut ToolExecutableConfig,
+  writable_roots: &[&Path],
+  executable_paths: &mut BTreeSet<PathBuf>,
+  duplicate_error: &str,
+) -> Result<(), ConfigError> {
+  validate_trimmed_value(&format!("{name} version"), &executable.version)?;
+  validate_octa_platform(&format!("{name} platform"), &executable.platform)?;
+  validate_sha256(&format!("{name} sha256"), &executable.sha256)?;
+  executable.path = canonical_operator_executable(name, &executable.path)?;
+  if !executable_paths.insert(executable.path.clone()) {
+    return invalid(duplicate_error);
+  }
+  if writable_roots.iter().any(|root| executable.path.starts_with(root)) {
+    return invalid(format!("{name} must be outside agent-owned writable roots"));
+  }
+  Ok(())
 }
 
 /// Operator-owned task-result cache policy shared by all jobs on this agent.
@@ -579,21 +620,29 @@ impl AgentConfig {
     self.cache.root = roots[4].1.clone();
 
     let mut executable_paths = BTreeSet::new();
+    let writable_roots = [
+      self.work_root.as_path(),
+      self.state_root.as_path(),
+      self.cache.root.as_path(),
+    ];
     for (product, executable) in &mut self.tool_executables {
       validate_logical_name("tool executable product", product)?;
-      validate_trimmed_value("tool executable version", &executable.version)?;
-      validate_octa_platform("tool executable platform", &executable.platform)?;
-      validate_sha256("tool executable sha256", &executable.sha256)?;
-      executable.path = canonical_operator_executable("tool executable", &executable.path)?;
-      if !executable_paths.insert(executable.path.clone()) {
-        return invalid("tool executables must use distinct canonical paths");
-      }
-      if executable.path.starts_with(&self.work_root)
-        || executable.path.starts_with(&self.state_root)
-        || executable.path.starts_with(&self.cache.root)
-      {
-        return invalid("tool executables must be outside agent-owned writable roots");
-      }
+      validate_operator_tool(
+        "tool executable",
+        executable,
+        &writable_roots,
+        &mut executable_paths,
+        "tool executables must use distinct canonical paths",
+      )?;
+    }
+    if let Some(capture) = &mut self.change_set_capture {
+      validate_operator_tool(
+        "ChangeSet capture executable",
+        &mut capture.executable,
+        &writable_roots,
+        &mut executable_paths,
+        "ChangeSet capture and tool executables must use distinct canonical paths",
+      )?;
     }
 
     validate_private_directory_permissions("cache.root", &self.cache.root)?;

@@ -255,6 +255,11 @@ impl OciEngine for MicrosandboxEngine {
             mount.bind(&writable.host).quota(writable.quota_mib).nosuid().nodev()
           });
         }
+        for readonly in &plan.read_only_mounts {
+          builder = builder.volume(&readonly.guest, |mount| {
+            mount.bind(&readonly.host).readonly().nosuid().nodev()
+          });
+        }
         if let Some(identity) = &plan.workload_identity {
           builder = builder.volume(WORKLOAD_IDENTITY_PATH, |mount| {
             mount.bind(identity).readonly().nosuid().nodev()

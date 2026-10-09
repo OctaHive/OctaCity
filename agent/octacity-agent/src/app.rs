@@ -396,6 +396,7 @@ mod tests {
       octa_release_root: state.path().join("octa"),
       source_plugins_dir: state.path().join("sources"),
       tool_executables: Default::default(),
+      change_set_capture: None,
       workload_identity_profiles: Default::default(),
       cache: octacity_config::CacheConfig {
         root: state.path().join("cache"),

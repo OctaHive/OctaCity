@@ -129,6 +129,70 @@ separation, and managed Octa execution. A future vocabulary extension requires
 a new execution-contract revision; unknown values never imply best-effort
 fallback.
 
+## Trusted ChangeSet capture policy
+
+A writable implementation or rework stage may carry one signed
+`factory.change_set_capture` instruction. The instruction fixes the canonical
+author and committer identity, Stage Attempt time, optional patch ceiling, and
+the complete capture policy. Evaluation and other read-only stages reject this
+instruction. An Agent without an operator-verified `change_set_capture`
+tool rejects it before source materialization.
+
+The policy contains canonical repository-relative allowed prefixes and
+forbidden control-path prefixes, positive changed-path, per-file, and aggregate
+byte ceilings, an explicit empty-change disposition, an explicit binary
+disposition, and a canonical non-empty selection from the stable built-in
+secret-detector vocabulary. `.` denotes the repository root; absolute,
+traversing, empty-segment, platform-specific, control-character, duplicate,
+and out-of-order paths are invalid. Arbitrary regular expressions are not part
+of the signed protocol because their semantics and resource costs would not be
+portable or deterministic.
+
+After a successful runner and before workspace cleanup, the trusted Agent
+re-resolves the owned Git root and requires it to be the exact workspace. It
+creates a candidate whose sole parent is the checked-out predecessor: the
+original exact base for implementation, or the accepted candidate reconstructed
+before a rework stage. Its bundle nevertheless contains the complete candidate
+lineage needed above the original exact base. Capture parses Git's no-rename raw
+diff and permits only deletion, regular-file, executable-file, and symbolic-link
+modes. Submodules and other modes fail closed. Every
+materialized changed object must retain trusted ownership; symlink targets must
+remain lexically inside the repository, and Windows reparse points are
+rejected. File sizes and contents are read from the candidate Git objects, not
+trusted from mutable harness output. Selected secret detectors apply to the
+exact candidate blobs, while binary blobs require an explicit `allow` policy
+and remain subject to the same size ceilings.
+
+Only after all checks pass may capture create the temporary ref, bundle,
+optional patch, and manifest. Policy failures use stable typed diagnostics that
+do not echo paths or candidate contents. A rejected capture therefore supplies
+no authoritative candidate identity and publishes no accepted ChangeSet;
+server-side acceptance and Artifact publication are separate later boundaries.
+
+The trusted lifecycle publishes the exact regular files through the generic
+bounded output protocol using the reserved names `change-set.bundle`,
+`change-set-manifest.json`, and, when enabled, `change-set.patch`. They consume
+the signed Artifact count and byte limits. Runner declarations cannot replace
+one of these names. The coordinator independently verifies and publishes the
+bytes before terminal completion, while Factory coordination accepts a
+candidate only from the current successful linked Build when its published
+Artifact identities, canonical manifest, component digests, exact base, Stage
+Attempt, and current Factory/outbox fences all agree. Exact lost-response replay
+returns the same candidate; stale or mismatched evidence cannot append one.
+
+Every validation, evaluation, and rework Job carries one strict
+`factory.change_set_materialization` instruction plus exactly identified bundle
+and manifest protected inputs. The source plugin still materializes the
+original exact base. Before runner start, the Agent verifies canonical manifest
+bytes, component sizes and digests, capture-tool identity, bundle prerequisites,
+the candidate's direct parent, and ancestry back to that original base. It then
+imports only the bundle's reserved capture ref with ambient Git configuration
+and hooks disabled, checks out the exact candidate, removes the temporary ref,
+and requires a clean worktree. No external branch or remote ref is consulted as
+candidate authority. Evaluation receives this reconstructed source through a
+read-only backend mount; validation and bounded rework receive only the mount
+authority declared by their signed permission set.
+
 ## Placement and capacity diagnostics
 
 Registration inventory exposes `factory_executions` separately from ordinary

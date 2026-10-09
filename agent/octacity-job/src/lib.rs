@@ -40,16 +40,20 @@ use std::{
 };
 
 use octacity_cache_session::{CacheSessionContext, CacheSessionError, CacheSessionManager, PreparedCacheSession};
+use octacity_changeset::{
+  CaptureError, CaptureRequest, CapturedChangeSet, ChangeSetCapturer, ChangeSetMaterializer, MaterializationError,
+  MaterializationRequest,
+};
 use octacity_execution::{ExecutionBackend, ExecutionError, FactoryExecutionLayout, NetworkAccess, StartExecution};
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
   BeginCacheSessionResponse, ExecutionCacheIdentityV2, ExecutionEvidenceV2, ExecutionMode, ExecutionProviderId,
-  ExecutionSpec, FactoryPermissionSetV3, NetworkPolicy, OutputLimits, ProtectedInputTransferV3, RuntimeMode,
-  VerifiedJobSpec,
+  ExecutionSpec, FACTORY_SOURCE_ROOT, FactoryMountModeV3, FactoryPermissionSetV3, NetworkPolicy, OutputLimits,
+  ProtectedInputTransferV3, RuntimeMode, VerifiedJobSpec,
 };
 use octacity_runner::{
-  RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions, RunnerStreamItem,
-  RunnerSupervisionError, RunnerSupervisionPolicy, VerifiedExternalExecutable, supervise,
+  RunStatus, RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions,
+  RunnerStreamItem, RunnerSupervisionError, RunnerSupervisionPolicy, VerifiedExternalExecutable, supervise,
 };
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
 use sha2::{Digest as _, Sha256};
@@ -81,6 +85,7 @@ pub struct JobCompletion {
   workspace: PathBuf,
   job_root: Option<PathBuf>,
   execution: Option<ExecutionEvidenceV2>,
+  change_set: Option<CapturedChangeSet>,
 }
 
 /// Failed execution plus any workspace that must be cleaned by the caller.
@@ -182,6 +187,12 @@ impl JobCompletion {
   #[must_use]
   pub const fn execution(&self) -> Option<&ExecutionEvidenceV2> {
     self.execution.as_ref()
+  }
+
+  /// Trusted ChangeSet captured after a successful writable Factory runner.
+  #[must_use]
+  pub const fn change_set(&self) -> Option<&CapturedChangeSet> {
+    self.change_set.as_ref()
   }
 
   /// Permanently removes all filesystem state retained for this job.
@@ -288,6 +299,12 @@ pub enum JobError {
   /// Protected Factory inputs could not be staged or revalidated safely.
   #[error("protected Factory inputs failed: {0}")]
   ProtectedInputs(#[source] ProtectedInputError),
+  /// Trusted post-run candidate capture failed.
+  #[error("trusted ChangeSet capture failed: {0}")]
+  ChangeSetCapture(#[source] CaptureError),
+  /// Trusted pre-run candidate reconstruction failed.
+  #[error("trusted ChangeSet materialization failed: {0}")]
+  ChangeSetMaterialization(#[source] MaterializationError),
   /// Execution failed and protected-input cleanup also failed.
   #[error("job failed ({operation}) and protected-input cleanup also failed: {cleanup}")]
   OperationAndProtectedInputCleanup {
@@ -344,6 +361,8 @@ pub struct JobExecutor {
   external_executables: BTreeMap<String, VerifiedExternalExecutable>,
   factory_permissions: Option<FactoryPermissionSetV3>,
   protected_input_stager: Option<ProtectedInputStager>,
+  change_set_capturer: Option<Arc<dyn ChangeSetCapturer>>,
+  change_set_materializer: Option<Arc<dyn ChangeSetMaterializer>>,
 }
 
 impl JobExecutor {
@@ -411,6 +430,8 @@ impl JobExecutor {
       external_executables: config.external_executables,
       factory_permissions: config.factory_permissions,
       protected_input_stager: None,
+      change_set_capturer: None,
+      change_set_materializer: None,
     })
   }
 
@@ -423,6 +444,18 @@ impl JobExecutor {
   /// Enables lease-scoped protected-input transfers for admitted Factory jobs.
   pub fn with_protected_input_stager(mut self, stager: ProtectedInputStager) -> Self {
     self.protected_input_stager = Some(stager);
+    self
+  }
+
+  /// Enables trusted post-run ChangeSet capture for signed writable stages.
+  pub fn with_change_set_capturer(mut self, capturer: Arc<dyn ChangeSetCapturer>) -> Self {
+    self.change_set_capturer = Some(capturer);
+    self
+  }
+
+  /// Enables trusted pre-run reconstruction of accepted ChangeSets.
+  pub fn with_change_set_materializer(mut self, materializer: Arc<dyn ChangeSetMaterializer>) -> Self {
+    self.change_set_materializer = Some(materializer);
     self
   }
 
@@ -499,6 +532,7 @@ impl JobExecutor {
     }
 
     let managed = spec.execution.managed().cloned();
+    self.validate_change_set_support(managed.as_ref())?;
     let external_executables = if let Some(intent) = managed.as_ref() {
       let ExecutableRuntime::Current(runtime) = &spec.runtime else {
         return Err(JobError::FactoryPreflight(FactoryPreflightError::BackendCapability).into());
@@ -575,6 +609,17 @@ impl JobExecutor {
         .await
         .map_err(|error| JobError::Source(Box::new(error)))?;
 
+      self
+        .materialize_change_set(
+          managed.as_ref(),
+          staged.as_ref(),
+          &source.revision,
+          &workspace,
+          scratch.as_deref(),
+          &cancellation,
+        )
+        .await?;
+
       if cancellation.is_cancelled() {
         return Err(JobError::Cancelled);
       }
@@ -643,6 +688,11 @@ impl JobExecutor {
             Some(FactoryExecutionLayout {
               protected_inputs,
               source: workspace.clone(),
+              source_read_only: intent
+                .permissions
+                .mounts
+                .iter()
+                .any(|mount| mount.root == FACTORY_SOURCE_ROOT && mount.mode == FactoryMountModeV3::ReadOnly),
               scratch: scratch.clone(),
               output: output.clone(),
               process_limit,
@@ -692,7 +742,7 @@ impl JobExecutor {
             cancellation_grace: self.cancellation_grace,
             external_executables,
           },
-          cancellation,
+          cancellation.clone(),
           events,
           &self.runner_supervision,
         )
@@ -703,19 +753,31 @@ impl JobExecutor {
       let operation = finish_identity(operation, identity).await;
       let runner = finish_cache_session(operation, cache).await?;
 
+      let change_set = self
+        .capture_change_set(
+          managed.as_ref(),
+          &source.revision,
+          &runner,
+          &workspace,
+          &job_root,
+          &cancellation,
+        )
+        .await?;
+
       info!(job_id = %spec.job_id, attempt = spec.attempt, status = ?runner.status, "finished job");
-      Ok((source, runner, workspace))
+      Ok((source, runner, workspace, change_set))
     }
     .await;
     let result = finish_protected_inputs(result, staged);
     match result {
-      Ok((source, runner, workspace)) => Ok(JobCompletion {
+      Ok((source, runner, workspace, change_set)) => Ok(JobCompletion {
         source,
         runner,
         output_limits: spec.outputs,
         workspace,
         job_root: Some(job_root),
         execution: selected.evidence,
+        change_set,
       }),
       Err(operation) => Err(JobFailure::with_workspace(operation, job_root)),
     }
@@ -826,6 +888,104 @@ impl JobExecutor {
         })
       }
     }
+  }
+
+  fn validate_change_set_support(
+    &self,
+    managed: Option<&factory_preflight::ManagedFactoryExecution>,
+  ) -> Result<(), JobFailure> {
+    let factory = managed.and_then(|intent| intent.factory.as_ref());
+    if factory.is_some_and(|factory| factory.change_set_capture.is_some()) && self.change_set_capturer.is_none() {
+      return Err(JobError::FactoryPreflight(FactoryPreflightError::ChangeSetCaptureUnavailable).into());
+    }
+    if factory.is_some_and(|factory| factory.change_set_materialization.is_some())
+      && self.change_set_materializer.is_none()
+    {
+      return Err(JobError::FactoryPreflight(FactoryPreflightError::ChangeSetMaterializationUnavailable).into());
+    }
+    Ok(())
+  }
+
+  async fn materialize_change_set(
+    &self,
+    managed: Option<&factory_preflight::ManagedFactoryExecution>,
+    staged: Option<&StagedProtectedInputs>,
+    source_revision: &str,
+    workspace: &Path,
+    scratch: Option<&Path>,
+    cancellation: &CancellationToken,
+  ) -> Result<(), JobError> {
+    let Some(materialization) = managed
+      .and_then(|intent| intent.factory.as_ref())
+      .and_then(|factory| factory.change_set_materialization.as_ref())
+    else {
+      return Ok(());
+    };
+    let staged =
+      staged.ok_or_else(|| JobError::Invalid("ChangeSet materialization requires protected inputs".to_owned()))?;
+    let request = MaterializationRequest {
+      workspace: workspace.to_owned(),
+      bundle: staged
+        .path_for_input(&materialization.bundle_input)
+        .map_err(JobError::ProtectedInputs)?,
+      manifest: staged
+        .path_for_input(&materialization.manifest_input)
+        .map_err(JobError::ProtectedInputs)?,
+      expected_base_revision: source_revision.to_owned(),
+      expected_candidate_revision: materialization.candidate_revision.clone(),
+      scratch: scratch
+        .ok_or_else(|| JobError::Invalid("ChangeSet materialization requires scratch".to_owned()))?
+        .to_owned(),
+    };
+    self
+      .change_set_materializer
+      .as_ref()
+      .ok_or_else(|| JobError::Invalid("ChangeSet materialization is not configured".to_owned()))?
+      .materialize(request, cancellation.clone())
+      .await
+      .map_err(JobError::ChangeSetMaterialization)?;
+    Ok(())
+  }
+
+  async fn capture_change_set(
+    &self,
+    managed: Option<&factory_preflight::ManagedFactoryExecution>,
+    source_revision: &str,
+    runner: &RunnerCompletion,
+    workspace: &Path,
+    job_root: &Path,
+    cancellation: &CancellationToken,
+  ) -> Result<Option<CapturedChangeSet>, JobError> {
+    let Some((factory, capture)) = managed
+      .and_then(|intent| intent.factory.as_ref())
+      .and_then(|factory| factory.change_set_capture.as_ref().map(|capture| (factory, capture)))
+    else {
+      return Ok(None);
+    };
+    if runner.status != RunStatus::Succeeded {
+      return Ok(None);
+    }
+    let destination = job_root.join("change-set");
+    create_private_directory(&destination)?;
+    let request = CaptureRequest {
+      workspace: workspace.to_owned(),
+      destination,
+      base_revision: factory
+        .change_set_materialization
+        .as_ref()
+        .map_or_else(|| source_revision.to_owned(), |value| value.candidate_revision.clone()),
+      bundle_base_revision: source_revision.to_owned(),
+      stage_attempt_id: factory.stage_attempt_id.clone(),
+      instruction: capture.clone(),
+    };
+    self
+      .change_set_capturer
+      .as_ref()
+      .ok_or_else(|| JobError::Invalid("signed ChangeSet capture requires a configured trusted capturer".to_owned()))?
+      .capture(request, cancellation.clone())
+      .await
+      .map(Some)
+      .map_err(JobError::ChangeSetCapture)
   }
 }
 

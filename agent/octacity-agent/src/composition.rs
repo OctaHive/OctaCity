@@ -10,9 +10,10 @@
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 use octacity_cache_session::{CacheSessionManager, CacheSessionManagerConfig};
+use octacity_changeset::{GitCaptureTool, GitChangeSetCapturer, GitChangeSetMaterializer};
 use octacity_config::{
-  AgentConfig, IsolationProviderConfig, OciEngineConfig, ValidatedConfig, ValidatedRuntimeConfig,
-  VirtualizationProviderConfig,
+  AgentConfig, ChangeSetCaptureProvider, IsolationProviderConfig, OciEngineConfig, ValidatedConfig,
+  ValidatedRuntimeConfig, VirtualizationProviderConfig,
 };
 use octacity_coordinator::{
   CacheSessionCoordinator, CoordinatorClient, HttpCoordinatorClient, HttpCoordinatorConfig, OutputUploadCoordinator,
@@ -34,7 +35,8 @@ use octacity_output::{OutputPublisher, PresignedOutputPublisher, PresignedOutput
 use octacity_protocol::{
   AgentInventory, BackendHealth, BackendHealthStatus, EXECUTION_CONTRACT_V3, ExecutionCapabilityV2,
   ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, FactoryEnforcementCapabilityV3,
-  FactoryExecutionCapabilityV3, PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeMode, guarantees_for,
+  FactoryExecutionCapabilityV3, FactoryImmutableReferenceV3, PlatformArchitecture, PlatformOs, RuntimeCapability,
+  RuntimeMode, guarantees_for,
 };
 use octacity_runner::{
   ConfiguredExternalExecutable, RunnerInstallation, RunnerSupervisionPolicy, VerifiedExternalExecutable,
@@ -524,6 +526,24 @@ async fn build_executor(
   )?
   .with_execution_backends(assembly.routes)?
   .with_cache(cache.clone());
+  let executor = if let Some(capture) = &validated.config.change_set_capture {
+    let git = &capture.executable;
+    let tool = GitCaptureTool {
+      executable: git.path.clone(),
+      identity: FactoryImmutableReferenceV3 {
+        identity: "git".to_owned(),
+        version: git.version.clone(),
+        sha256: git.sha256.clone(),
+      },
+    };
+    match capture.provider {
+      ChangeSetCaptureProvider::Git => executor
+        .with_change_set_capturer(Arc::new(GitChangeSetCapturer::new(tool.clone())?))
+        .with_change_set_materializer(Arc::new(GitChangeSetMaterializer::new(tool)?)),
+    }
+  } else {
+    executor
+  };
   let executor = if validated.config.factory_permissions.is_some() {
     executor.with_protected_input_stager(ProtectedInputStager::new(ProtectedInputStagerConfig {
       allowed_origins: validated.config.allowed_upload_origins.clone(),

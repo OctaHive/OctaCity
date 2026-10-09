@@ -1027,10 +1027,7 @@ async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, prot
   }
   assert!(saw_event, "Factory runner must emit at least one event");
   assert_eq!(completion.runner().status, RunStatus::Succeeded);
-  assert!(
-    completion.runner().results.is_empty(),
-    "Factory output authority is empty"
-  );
+  assert_no_factory_output_declarations(&completion.runner().results);
   assert!(completion.runner().final_usage.memory_peak_bytes <= resource_limits.memory_bytes);
   assert!(completion.runner().final_usage.disk_peak_bytes <= resource_limits.disk_bytes);
   let job_root = completion.workspace().parent().unwrap().to_owned();
@@ -1041,6 +1038,61 @@ async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, prot
   assert!(!job_root.join("escape").exists());
   completion.cleanup().await.unwrap();
   assert!(!job_root.exists());
+}
+
+fn assert_no_factory_output_declarations(results: &[serde_json::Value]) {
+  assert!(
+    !results.is_empty(),
+    "successful Factory execution must retain its task result"
+  );
+  for result in results {
+    let tasks = result
+      .get("tasks")
+      .and_then(serde_json::Value::as_array)
+      .expect("Factory runner result must contain an array of tasks");
+    for task in tasks {
+      for field in ["artifacts", "reports"] {
+        let declarations = task
+          .get(field)
+          .and_then(serde_json::Value::as_array)
+          .unwrap_or_else(|| panic!("Factory runner task must contain an array of {field}"));
+        assert!(
+          declarations.is_empty(),
+          "Factory output authority is empty but the runner declared {field}"
+        );
+      }
+    }
+  }
+}
+
+#[test]
+fn empty_factory_output_authority_allows_structured_task_results() {
+  let results = [serde_json::json!({
+    "run_id": 1,
+    "tasks": [{
+      "task_id": 1,
+      "conclusion": { "status": "succeeded" },
+      "artifacts": [],
+      "reports": []
+    }]
+  })];
+
+  assert_no_factory_output_declarations(&results);
+}
+
+#[test]
+#[should_panic(expected = "Factory output authority is empty but the runner declared artifacts")]
+fn empty_factory_output_authority_rejects_artifact_declarations() {
+  let results = [serde_json::json!({
+    "run_id": 1,
+    "tasks": [{
+      "task_id": 1,
+      "artifacts": [{ "name": "unauthorized", "path": "factory-output" }],
+      "reports": []
+    }]
+  })];
+
+  assert_no_factory_output_declarations(&results);
 }
 
 async fn exercise_factory_negative_contracts(

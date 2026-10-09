@@ -169,6 +169,7 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
       FreezeOutputs {
         workspace: &workspace,
         results: &results,
+        trusted_files: &[],
         limits: &OutputLimits {
           artifact_count: 1,
           artifact_bytes: 1024,
@@ -198,6 +199,99 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
   assert_eq!(*received.lock().unwrap(), vec![b"immutable-output".to_vec(); 2]);
   assert_eq!(coordinator.begun.lock().unwrap().len(), 1);
   assert_eq!(coordinator.completed.lock().unwrap().len(), 1);
+  assert!(!staging.exists());
+}
+
+#[tokio::test]
+async fn partial_real_upload_publishes_no_second_identity_and_removes_staging() {
+  let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let address = listener.local_addr().unwrap();
+  let received = Arc::new(Mutex::new(Vec::new()));
+  let server_received = received.clone();
+  let server = tokio::spawn(async move {
+    for status in ["200 OK", "500 Internal Server Error"] {
+      let (mut stream, _) = listener.accept().await.unwrap();
+      let (_, body) = read_request(&mut stream).await;
+      server_received.lock().unwrap().push(body);
+      stream
+        .write_all(format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes())
+        .await
+        .unwrap();
+    }
+  });
+  let coordinator = Arc::new(UploadCoordinator {
+    put_url: format!("http://{address}/object"),
+    expires_at: unix_now() + 60,
+    begun: Mutex::new(Vec::new()),
+    completed: Mutex::new(Vec::new()),
+  });
+  let publisher = publisher(
+    coordinator.clone(),
+    format!("http://{address}"),
+    RetryPolicy {
+      max_attempts: 1,
+      initial_delay: Duration::from_millis(1),
+      max_delay: Duration::from_millis(1),
+    },
+  );
+  let temporary = tempfile::tempdir().unwrap();
+  let workspace = temporary.path().join("workspace");
+  tokio::fs::create_dir(&workspace).await.unwrap();
+  tokio::fs::write(workspace.join("first.bin"), b"first-output")
+    .await
+    .unwrap();
+  tokio::fs::write(workspace.join("second.bin"), b"second-output")
+    .await
+    .unwrap();
+  let staging = temporary.path().join("staging");
+  let results = [serde_json::json!({
+    "run_id": 17,
+    "tasks": [{
+      "task_id": 23,
+      "artifacts": [
+        {"name": "first", "path": "first.bin"},
+        {"name": "second", "path": "second.bin"}
+      ]
+    }]
+  })];
+  let cancellation = CancellationToken::new();
+  let frozen = publisher
+    .freeze(
+      FreezeOutputs {
+        workspace: &workspace,
+        results: &results,
+        trusted_files: &[],
+        limits: &OutputLimits {
+          artifact_count: 2,
+          artifact_bytes: 1024,
+          report_count: 0,
+          report_bytes: 0,
+          single_output_bytes: 1024,
+        },
+        staging_root: &staging,
+      },
+      cancellation.clone(),
+    )
+    .await
+    .unwrap();
+
+  let error = publisher
+    .publish(
+      PublishOutputs {
+        registration: &registration(),
+        lease: &lease(),
+        frozen,
+      },
+      cancellation,
+    )
+    .await
+    .unwrap_err();
+  server.await.unwrap();
+
+  assert!(matches!(error, OutputError::Upload(_)));
+  assert_eq!(coordinator.begun.lock().unwrap().len(), 2);
+  assert_eq!(coordinator.completed.lock().unwrap().len(), 1);
+  assert_eq!(received.lock().unwrap().len(), 2);
   assert!(!staging.exists());
 }
 
@@ -298,6 +392,7 @@ async fn publish_fixture(publisher: &PresignedOutputPublisher) -> Result<(), Out
       FreezeOutputs {
         workspace: &workspace,
         results: &results,
+        trusted_files: &[],
         limits: &OutputLimits {
           artifact_count: 1,
           artifact_bytes: 1024,

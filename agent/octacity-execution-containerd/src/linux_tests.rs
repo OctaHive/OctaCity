@@ -208,7 +208,7 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   fs::create_dir(&cache).unwrap();
   fs::write(&cache_token, "cache-secret").unwrap();
   fs::write(&cache_ca, "fixture-ca").unwrap();
-  let request = StartExecution {
+  let mut request = StartExecution {
     execution_id: "job-1".to_owned(),
     workspace_root: workspace.clone(),
     workspace: workspace.clone(),
@@ -312,6 +312,21 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
       readonly
     );
   }
+  request.factory.as_mut().unwrap().source_read_only = true;
+  let readonly_spec = oci_spec(&fixture.config, &runner, &request, &paths, &[], "factory-job").unwrap();
+  let source_mount = readonly_spec["mounts"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|mount| mount["destination"] == FACTORY_SOURCE_ROOT)
+    .unwrap();
+  assert!(
+    source_mount["options"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|value| value == "ro")
+  );
 }
 
 #[test]
@@ -352,6 +367,7 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
     factory: Some(FactoryExecutionLayout {
       protected_inputs: protected.clone(),
       source: source.clone(),
+      source_read_only: false,
       scratch: scratch.clone(),
       output: output.clone(),
       process_limit: 3,

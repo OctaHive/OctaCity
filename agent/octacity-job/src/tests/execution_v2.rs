@@ -295,6 +295,7 @@ async fn stages_and_projects_an_admitted_factory_job() {
   spec.protected_inputs.inputs[0].sha256 = hex::encode(sha2::Sha256::digest(octafile));
   spec.protected_inputs.inputs[0].media_type = "application/yaml".to_owned();
   spec.octa.runner_sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
+  spec.factory = Some(capture_causality());
   let mut executor = factory_executor(
     work_root.path(),
     source_calls.clone(),
@@ -309,7 +310,13 @@ async fn stages_and_projects_an_admitted_factory_job() {
     download_timeout: Duration::from_secs(2),
   })
   .unwrap();
-  let executor = executor.with_protected_input_stager(stager);
+  let captured = Arc::new(AtomicBool::new(false));
+  let executor = executor
+    .with_protected_input_stager(stager)
+    .with_change_set_capturer(Arc::new(FakeChangeSetCapturer {
+      called: captured.clone(),
+      starts: starts.clone(),
+    }));
   let mut protected_inputs = transfers(&spec.protected_inputs);
   protected_inputs[0].capability.url = format!("{origin}/managed-octafile");
   protected_inputs[0].capability.expires_at_unix_ms = SystemTime::now()
@@ -336,8 +343,186 @@ async fn stages_and_projects_an_admitted_factory_job() {
 
   assert_eq!(source_calls.load(Ordering::SeqCst), 1);
   assert_eq!(starts.load(Ordering::SeqCst), 1);
+  assert!(captured.load(Ordering::SeqCst));
+  assert_eq!(
+    completion.change_set().unwrap().manifest.stage_attempt_id,
+    "00000000-0000-0000-0000-000000000003"
+  );
   assert!(!completion.workspace().parent().unwrap().join("protected").exists());
   completion.cleanup().await.unwrap();
+}
+
+#[tokio::test]
+async fn rejects_requested_change_set_capture_before_source_when_unconfigured() {
+  let work_root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let mut spec = factory_spec();
+  spec.factory = Some(capture_causality());
+  let mut executor = factory_executor(
+    work_root.path(),
+    source_calls.clone(),
+    starts.clone(),
+    &spec,
+    FactoryEnforcementCapabilityV3::ALL,
+  );
+  executor.factory_permissions = Some(spec.permissions.clone());
+  let (events, _receiver) = mpsc::channel(1);
+
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        protected_inputs: transfers(&spec.protected_inputs),
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+
+  assert!(matches!(
+    failure.error(),
+    JobError::FactoryPreflight(FactoryPreflightError::ChangeSetCaptureUnavailable)
+  ));
+  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(starts.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rejects_requested_change_set_materialization_before_source_when_unconfigured() {
+  let work_root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let mut spec = factory_spec();
+  let bundle_input = "accepted-change-set-bundle".to_owned();
+  let manifest_input = "accepted-change-set-manifest".to_owned();
+  spec.protected_inputs.inputs.extend([
+    ProtectedInputV3 {
+      artifact_id: bundle_input.clone(),
+      size_bytes: 512,
+      sha256: DIGEST.to_owned(),
+      media_type: octacity_protocol::CHANGE_SET_BUNDLE_MEDIA_TYPE.to_owned(),
+      destination: octacity_protocol::CHANGE_SET_BUNDLE_INPUT.to_owned(),
+    },
+    ProtectedInputV3 {
+      artifact_id: manifest_input.clone(),
+      size_bytes: 512,
+      sha256: DIGEST.to_owned(),
+      media_type: octacity_protocol::CHANGE_SET_MANIFEST_MEDIA_TYPE.to_owned(),
+      destination: octacity_protocol::CHANGE_SET_MANIFEST_INPUT.to_owned(),
+    },
+  ]);
+  spec
+    .protected_inputs
+    .inputs
+    .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+  spec
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadOnly;
+  let mut causality = capture_causality();
+  causality.stage_kind = FactoryStageKindV3::Evaluation;
+  causality.change_set_capture = None;
+  causality.change_set_materialization = Some(octacity_protocol::ChangeSetMaterializationV3 {
+    bundle_input,
+    manifest_input,
+    candidate_revision: "abcdef0123456789abcdef0123456789abcdef01".to_owned(),
+  });
+  spec.factory = Some(causality);
+  spec
+    .validate(&JobBinding {
+      job_id: &spec.job_id,
+      attempt: spec.attempt,
+      now: spec.issued_at,
+    })
+    .unwrap();
+  let mut executor = factory_executor(
+    work_root.path(),
+    source_calls.clone(),
+    starts.clone(),
+    &spec,
+    FactoryEnforcementCapabilityV3::ALL,
+  );
+  executor.factory_permissions = Some(spec.permissions.clone());
+  let (events, _receiver) = mpsc::channel(1);
+
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        protected_inputs: transfers(&spec.protected_inputs),
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+
+  assert!(matches!(
+    failure.error(),
+    JobError::FactoryPreflight(FactoryPreflightError::ChangeSetMaterializationUnavailable)
+  ));
+  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(starts.load(Ordering::SeqCst), 0);
+}
+
+struct FakeChangeSetCapturer {
+  called: Arc<AtomicBool>,
+  starts: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ChangeSetCapturer for FakeChangeSetCapturer {
+  async fn capture(
+    &self,
+    request: CaptureRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<CapturedChangeSet, CaptureError> {
+    assert_eq!(
+      self.starts.load(Ordering::SeqCst),
+      1,
+      "capture must run after the runner"
+    );
+    assert!(request.workspace.join("Octafile.yml").is_file());
+    assert!(request.destination.is_dir());
+    fs::write(request.destination.join("change-set.bundle"), b"bundle").unwrap();
+    self.called.store(true, Ordering::SeqCst);
+    let bundle = CapturedFile {
+      name: "change-set.bundle".to_owned(),
+      size_bytes: 6,
+      sha256: DIGEST.to_owned(),
+    };
+    Ok(CapturedChangeSet {
+      root: request.destination,
+      manifest: ChangeSetManifest {
+        format_version: 1,
+        base_revision: request.base_revision,
+        candidate_revision: DIGEST.to_owned(),
+        stage_attempt_id: request.stage_attempt_id,
+        capture_tool: FactoryImmutableReferenceV3 {
+          identity: "git".to_owned(),
+          version: "2.0.0".to_owned(),
+          sha256: DIGEST.to_owned(),
+        },
+        changed_paths: Vec::new(),
+        bundle,
+        patch: None,
+      },
+      manifest_file: CapturedFile {
+        name: "change-set-manifest.json".to_owned(),
+        size_bytes: 1,
+        sha256: DIGEST.to_owned(),
+      },
+    })
+  }
 }
 
 fn install_revalidatable_runner(executor: &mut JobExecutor, work_root: &Path) {
@@ -606,6 +791,36 @@ fn factory_spec() -> JobSpecV3 {
     })
     .unwrap();
   spec
+}
+
+fn capture_causality() -> FactoryCausalityV3 {
+  FactoryCausalityV3 {
+    factory_run_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+    factory_configuration_id: "00000000-0000-0000-0000-000000000002".to_owned(),
+    factory_configuration_version: 1,
+    stage_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+    stage_kind: FactoryStageKindV3::Implementation,
+    task_envelope_digest: DIGEST.to_owned(),
+    subject_digest: DIGEST.to_owned(),
+    change_set_capture: Some(ChangeSetCaptureV3 {
+      author_name: "OctaCity Factory".to_owned(),
+      author_email: "factory@octacity.invalid".to_owned(),
+      committed_at: 1_767_225_600,
+      patch_max_bytes: Some(1024),
+      policy: ChangeSetCapturePolicyV3 {
+        allowed_path_prefixes: vec![".".to_owned()],
+        forbidden_control_paths: vec![".github/workflows".to_owned()],
+        max_changed_paths: 64,
+        max_file_bytes: 1024 * 1024,
+        max_total_bytes: 4 * 1024 * 1024,
+        allow_empty: false,
+        binary_policy: ChangeSetBinaryPolicyV3::Reject,
+        forbidden_secret_patterns: ChangeSetSecretPatternV3::ALL.to_vec(),
+      },
+    }),
+    change_set_materialization: None,
+    parent: None,
+  }
 }
 
 fn transfers(manifest: &ProtectedInputManifestV3) -> Vec<ProtectedInputTransferV3> {

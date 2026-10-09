@@ -46,6 +46,7 @@ impl Fixture {
       octa_release_root: directory("octa"),
       source_plugins_dir: directory("sources"),
       tool_executables: BTreeMap::new(),
+      change_set_capture: None,
       workload_identity_profiles: BTreeMap::new(),
       cache: CacheConfig {
         root: directory("cache"),
@@ -156,6 +157,32 @@ fn validates_operator_installed_tool_executable_identity() {
 
   let validated = fixture.config.validate().unwrap();
   assert_eq!(validated.config.tool_executables["codex-cli"].path, executable);
+}
+
+#[test]
+fn validates_provider_selected_change_set_capture_identity() {
+  let mut fixture = Fixture::new();
+  let executable = fixture._temp.path().join(if cfg!(windows) { "git.exe" } else { "git" });
+  File::create(&executable).unwrap().write_all(b"git fixture").unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
+  }
+  fixture.config.change_set_capture = Some(ChangeSetCaptureConfig {
+    provider: ChangeSetCaptureProvider::Git,
+    executable: ToolExecutableConfig {
+      path: executable.clone(),
+      version: "2.51.0".to_owned(),
+      platform: "linux-x86_64".to_owned(),
+      sha256: "b".repeat(64),
+    },
+  });
+
+  let validated = fixture.config.validate().unwrap();
+  let capture = validated.config.change_set_capture.unwrap();
+  assert_eq!(capture.provider, ChangeSetCaptureProvider::Git);
+  assert_eq!(capture.executable.path, executable);
 }
 
 #[test]

@@ -27,6 +27,8 @@ pub(super) struct SandboxPlan {
   pub(super) host_job_root: PathBuf,
   /// Writable host roots projected into the guest with non-overlapping quotas.
   pub(super) writable_mounts: Vec<SandboxWritableMount>,
+  /// Immutable host roots projected into the guest.
+  pub(super) read_only_mounts: Vec<SandboxReadOnlyMount>,
   /// Fixed job-private mount point visible inside the guest.
   pub(super) guest_job_root: String,
   /// Workspace path below the guest job root.
@@ -64,6 +66,15 @@ pub(super) struct SandboxWritableMount {
   pub(super) guest: String,
   /// Additional MiB this mount may allocate.
   pub(super) quota_mib: u32,
+}
+
+/// One immutable Microsandbox bind selected by signed mount policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SandboxReadOnlyMount {
+  /// Canonical host directory.
+  pub(super) host: PathBuf,
+  /// Fixed guest directory.
+  pub(super) guest: String,
 }
 
 /// Persistent cache projection with a Microsandbox-enforced byte boundary.
@@ -190,13 +201,25 @@ impl SandboxPlan {
     }
     masked_job_directories.sort();
     masked_job_directories.dedup();
+    let read_only_mounts = request
+      .factory
+      .as_ref()
+      .filter(|factory| factory.source_read_only)
+      .map(|factory| SandboxReadOnlyMount {
+        host: factory.source.clone(),
+        guest: FACTORY_SOURCE_ROOT.to_owned(),
+      })
+      .into_iter()
+      .collect();
     let writable_mounts = match &request.factory {
       Some(factory) => {
-        let roots = [
-          (FACTORY_SOURCE_ROOT, &factory.source),
+        let mut roots = vec![
           (FACTORY_SCRATCH_ROOT, &factory.scratch),
           (FACTORY_OUTPUT_ROOT, &factory.output),
         ];
+        if !factory.source_read_only {
+          roots.insert(0, (FACTORY_SOURCE_ROOT, &factory.source));
+        }
         if remaining_quota_mib < u32::try_from(roots.len()).expect("Factory writable-root count fits u32") {
           return Err(unavailable(
             "Microsandbox Factory execution requires at least one writable MiB per projected root",
@@ -227,6 +250,7 @@ impl SandboxPlan {
       root_tmpfs_mib,
       host_job_root: job_root.clone(),
       writable_mounts,
+      read_only_mounts,
       guest_job_root: guest_job_root.clone(),
       guest_executable: guest_path(&guest_release, &runner.release_root, &runner.executable)?,
       guest_data_dir: match &request.factory {

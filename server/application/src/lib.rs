@@ -41,6 +41,7 @@ mod factory_admission_tests;
 mod factory_build_bridge;
 #[cfg(test)]
 mod factory_build_bridge_tests;
+mod factory_changeset;
 mod factory_codex;
 mod factory_codex_contract;
 mod factory_codex_observation;
@@ -202,8 +203,11 @@ pub use factory_admission::{AdmitManualFactoryWorkCommand, FactoryAdmissionHandl
 pub use factory_build_bridge::{
   CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildBridge, FactoryBuildBridgeError, FactoryBuildCausality,
   FactoryBuildDispatchOutcome, FactoryBuildObservation, FactoryBuildOutputSource, FactoryBuildPolicyLayers,
-  FactoryBuildPolicyRequest, FactoryBuildPolicySource, FactoryBuildPolicySourceError, OrdinaryBuildApplication,
-  OrdinaryBuildApplicationError,
+  FactoryBuildPolicyRequest, FactoryBuildPolicySource, FactoryBuildPolicySourceError, FactoryCandidateMaterialization,
+  OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+};
+pub use factory_changeset::{
+  FactoryChangeSetAcceptance, FactoryChangeSetError, VerifiedFactoryArtifact, accept_factory_change_set,
 };
 pub use factory_codex::{
   CodexCompilationError, CompiledCodexTask, FactoryProtectedDocument, FactoryProtectedDocumentKind,

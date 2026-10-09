@@ -3,8 +3,8 @@ mod support;
 use std::collections::BTreeSet;
 
 use octacity_server_domain::{
-  ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, IntegrationId, ProjectId,
-  RepositoryId, RepositoryLocator, RepositoryName, RepositoryVersion, SourceReference, Timestamp,
+  ArtifactId, AttemptId, BuildConfigurationId, BuildConfigurationVersion, BuildId, ImmutableRevision, IntegrationId,
+  JobId, ProjectId, RepositoryId, RepositoryLocator, RepositoryName, RepositoryVersion, SourceReference, Timestamp,
 };
 use octacity_server_factory::{
   BudgetLimit, BuildConfigurationRef, DeliveryPolicyDraft, EvaluationPolicyDraft, ExactSubject, ExternalWorkIdentity,
@@ -692,18 +692,19 @@ fn work_id(value: u128) -> WorkEnvelopeId {
 
 mod run_contract {
   use octacity_server_factory::{
-    BoundedSummary, BudgetUsage, ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind,
-    DecisionSignalProgress, FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryContextReference,
-    FactoryLifecycleProgress, FactoryRunState, FactoryRunVersion, FactorySafeText, FactoryStageProgress,
-    FactoryStageTarget, FactoryTaskSubject, MacroCall, MacroCallDeclaration, MacroCallId, MacroCallKind, StageAttempt,
-    StageAttemptId, StageAttemptNumber, StageHandoff, StageHandoffId, StageHandoffOutcome,
+    BoundedSummary, BudgetUsage, CandidateSubject, ChangeSet, ChangeSetId, ContextManifest, ContextManifestEntry,
+    ContextManifestId, ContextSourceKind, DecisionSignalProgress, FactoryArtifactReference, FactoryClaim,
+    FactoryClaimFence, FactoryContextReference, FactoryLifecycleProgress, FactoryRunState, FactoryRunVersion,
+    FactorySafeText, FactoryStageProgress, FactoryStageTarget, FactoryTaskSubject, MacroCall, MacroCallDeclaration,
+    MacroCallId, MacroCallKind, StageAttempt, StageAttemptId, StageAttemptNumber, StageHandoff, StageHandoffId,
+    StageHandoffOutcome,
   };
   use octacity_server_store::{
     AuditActorKind, ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRuns, CommitFactoryRunTransition,
-    FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
-    FactoryRunClaimRecord, FactoryRunDiagnosticKind, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend,
-    FactoryRunStore as _, ListFactoryRunDiagnostics, MutationDisposition, SettleFactoryOutbox, StoreError,
-    testing::management_mutation_with_request,
+    FactoryAuditFact, FactoryBudgetRecord, FactoryBuildLink, FactoryBuildLinkInput, FactoryLifecycleCheckpoint,
+    FactoryOutboxRecord, FactoryOutboxSettlement, FactoryRunClaimRecord, FactoryRunDiagnosticKind,
+    FactoryRunDiagnosticRecord, FactoryRunHistoryAppend, FactoryRunStore as _, ListFactoryRunDiagnostics,
+    MutationDisposition, SettleFactoryOutbox, StoreError, testing::management_mutation_with_request,
   };
 
   use super::*;
@@ -1028,6 +1029,39 @@ mod run_contract {
       Some(&call),
     )
     .unwrap();
+    let build = FactoryBuildLink::new(
+      &stage,
+      FactoryBuildLinkInput {
+        build_id: BuildId::generate(),
+        attempt_id: AttemptId::generate(),
+        job_ids: vec![JobId::generate()],
+        factory_configuration: setup.admission.run.configuration().clone(),
+        target: FactoryStageTarget::Implementation,
+        build_configuration: BuildConfigurationRef::new(
+          BuildConfigurationId::generate(),
+          BuildConfigurationVersion::INITIAL,
+          setup.admission.run.subject().project_id(),
+          digest(87),
+        ),
+        task_envelope_digest: digest(88),
+        exact_revision: setup.admission.run.subject().base_revision().clone(),
+        parent: None,
+        effective_policy_digest: digest(89),
+        input_digest: digest(90),
+      },
+    );
+    let candidate = ChangeSet::new(
+      ChangeSetId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
+      &stage,
+      CandidateSubject::new(
+        setup.admission.run.subject().clone(),
+        ImmutableRevision::new("candidate-revision").unwrap(),
+        digest(91),
+      ),
+      ArtifactId::generate(),
+      ArtifactId::generate(),
+    )
+    .unwrap();
     let mut request = transition(
       &setup.admission,
       &transition_claim.record,
@@ -1037,19 +1071,20 @@ mod run_contract {
     );
     request.current.stage_attempt_id = Some(stage.id());
     request.current.macro_call_id = Some(child_call.id());
+    request.current.build_id = Some(build.build_id);
+    request.current.candidate_id = Some(candidate.id());
     request.append.stage_attempts.push(stage.clone());
     request.append.stage_handoffs.push(handoff.clone());
     request.append.context_manifests.push(child_context.clone());
     request.append.context_manifests.push(context.clone());
     request.append.macro_calls.push(child_call.clone());
     request.append.macro_calls.push(call.clone());
+    request.append.linked_builds.push(build.clone());
+    request.append.candidates.push(candidate.clone());
     setup.postgres.commit_factory_run_transition(request).await.unwrap();
 
-    let snapshot = setup
-      .postgres
-      .factory_run_snapshot(setup.admission.run.id())
-      .await
-      .unwrap();
+    let restarted = PostgresStore::new(setup.database.pool.clone());
+    let snapshot = restarted.factory_run_snapshot(setup.admission.run.id()).await.unwrap();
     assert_eq!(snapshot.stage_attempts, vec![stage.clone()]);
     assert_eq!(snapshot.stage_handoffs, vec![handoff.clone()]);
     assert_eq!(snapshot.context_manifests.len(), 2);
@@ -1058,6 +1093,8 @@ mod run_contract {
     assert_eq!(snapshot.macro_calls.len(), 2);
     assert!(snapshot.macro_calls.contains(&call));
     assert!(snapshot.macro_calls.contains(&child_call));
+    assert_eq!(snapshot.linked_builds, vec![build]);
+    assert_eq!(snapshot.candidates, vec![candidate]);
     let retained_context_artifacts = sqlx::query_scalar::<_, i64>(
       "SELECT COUNT(*) FROM factory_artifact_references \
        WHERE run_id = $1 AND ((artifact_id = $2 AND role = 'call_context') \

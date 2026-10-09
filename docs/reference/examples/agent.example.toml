@@ -14,6 +14,15 @@ source_plugins_dir = "/opt/octacity/current/source-plugins"
 # version = "0.161.0"
 # platform = "linux-x86_64"
 # sha256 = "replace-with-the-lowercase-sha256-of-the-installed-executable"
+# Optional trusted Git used after successful writable Factory stages. It is
+# verified independently and never exposed to the coding harness.
+# [change_set_capture]
+# provider = "git"
+# [change_set_capture.executable]
+# path = "/usr/bin/git"
+# version = "2.47.0"
+# platform = "linux-x86_64"
+# sha256 = "replace-with-the-lowercase-sha256-of-the-installed-executable"
 # Logical names are selected by signed jobs; values are operator-owned files
 # refreshed by an OIDC, SPIFFE, or platform identity service.
 workload_identity_profiles = { ci = "/run/octacity-identities/ci.jwt" }

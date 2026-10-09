@@ -255,6 +255,21 @@ impl StagedProtectedInputs {
     Ok(&self.root)
   }
 
+  /// Resolves one signed logical Artifact to its sealed host path.
+  ///
+  /// The complete tree is revalidated first, so trusted preprocessing cannot
+  /// consume bytes that differ from those later projected to the runner.
+  pub fn path_for_input(&self, artifact_id: &str) -> Result<PathBuf, ProtectedInputError> {
+    self.revalidate()?;
+    let input = self
+      .manifest
+      .inputs
+      .iter()
+      .find(|input| input.artifact_id == artifact_id)
+      .ok_or(ProtectedInputError::Manifest)?;
+    Ok(self.root.join(protected_relative_path(&input.destination)?))
+  }
+
   /// Removes the protected tree, including portable read-only attributes.
   pub fn cleanup(self) -> Result<(), ProtectedInputError> {
     cleanup_private_tree(&self.root).map_err(|_| ProtectedInputError::Cleanup)

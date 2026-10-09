@@ -25,7 +25,7 @@ use octacity_coordinator::{
 };
 use octacity_protocol::{
   BeginOutputUploadRequest, COORDINATOR_PROTOCOL_VERSION, CompleteOutputUploadRequest, LeaseAssignment, LeaseFence,
-  OutputLimits,
+  OutputLimits, OutputUploadMetadata,
 };
 use reqwest::{
   StatusCode, Url,
@@ -43,12 +43,43 @@ use uuid::Uuid;
 
 use prepare::PreparedOutput;
 
+/// One Agent-owned regular file injected into the generic bounded output flow.
+///
+/// This is intentionally not a ChangeSet-specific API. Trusted lifecycle
+/// components may use it only after producing exact immutable metadata; the
+/// publisher snapshots and re-verifies those bytes before upload.
+#[derive(Clone, Debug)]
+pub struct TrustedFileOutput {
+  path: PathBuf,
+  metadata: OutputUploadMetadata,
+}
+
+impl TrustedFileOutput {
+  /// Creates one trusted file declaration with its exact logical metadata.
+  pub fn new(path: PathBuf, metadata: OutputUploadMetadata) -> Result<Self, OutputError> {
+    metadata
+      .validate()
+      .map_err(|error| OutputError::Invalid(error.to_string()))?;
+    Ok(Self { path, metadata })
+  }
+
+  fn path(&self) -> &Path {
+    &self.path
+  }
+
+  fn metadata(&self) -> &OutputUploadMetadata {
+    &self.metadata
+  }
+}
+
 /// Mutable workspace inputs consumed only by the output-freezing phase.
 pub struct FreezeOutputs<'a> {
   /// Frozen host workspace retained by `octacity-job`.
   pub workspace: &'a Path,
   /// Opaque runner results containing task-level declarations.
   pub results: &'a [serde_json::Value],
+  /// Agent-owned exact files produced by trusted post-run lifecycle hooks.
+  pub trusted_files: &'a [TrustedFileOutput],
   /// Signed count and aggregate-byte limits.
   pub limits: &'a OutputLimits,
   /// Agent-owned directory for immutable upload snapshots.
@@ -333,6 +364,7 @@ impl OutputPublisher for PresignedOutputPublisher {
     let outputs = match prepare::prepare(
       request.workspace,
       request.results,
+      request.trusted_files,
       request.limits,
       request.staging_root,
       self.max_archive_entries,

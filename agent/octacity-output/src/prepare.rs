@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-  OutputError,
+  OutputError, TrustedFileOutput,
   snapshot::{check_cancel, snapshot_directory, snapshot_file},
 };
 
@@ -109,6 +109,7 @@ impl Declaration {
 pub(super) async fn prepare(
   workspace: &Path,
   results: &[serde_json::Value],
+  trusted_files: &[TrustedFileOutput],
   limits: &OutputLimits,
   staging_root: &Path,
   max_archive_entries: usize,
@@ -116,12 +117,14 @@ pub(super) async fn prepare(
 ) -> Result<Vec<PreparedOutput>, OutputError> {
   let workspace = workspace.to_owned();
   let results = results.to_vec();
+  let trusted_files = trusted_files.to_vec();
   let limits = limits.clone();
   let staging_root = staging_root.to_owned();
   tokio::task::spawn_blocking(move || {
     prepare_blocking(
       &workspace,
       &results,
+      &trusted_files,
       &limits,
       &staging_root,
       max_archive_entries,
@@ -135,13 +138,14 @@ pub(super) async fn prepare(
 fn prepare_blocking(
   workspace: &Path,
   results: &[serde_json::Value],
+  trusted_files: &[TrustedFileOutput],
   limits: &OutputLimits,
   staging_root: &Path,
   max_archive_entries: usize,
   cancellation: &CancellationToken,
 ) -> Result<Vec<PreparedOutput>, OutputError> {
   let declarations = declarations(results)?;
-  if declarations.is_empty() {
+  if declarations.is_empty() && trusted_files.is_empty() {
     return Ok(Vec::new());
   }
   check_cancel(cancellation)?;
@@ -154,18 +158,39 @@ fn prepare_blocking(
   let artifact_count = declarations
     .iter()
     .filter(|value| value.kind() == OutputKind::Artifact)
-    .count();
+    .count()
+    + trusted_files
+      .iter()
+      .filter(|value| value.metadata().kind == OutputKind::Artifact)
+      .count();
   let report_count = declarations
     .iter()
     .filter(|value| value.kind() == OutputKind::Report)
-    .count();
+    .count()
+    + trusted_files
+      .iter()
+      .filter(|value| value.metadata().kind == OutputKind::Report)
+      .count();
   if artifact_count > limits.artifact_count as usize || report_count > limits.report_count as usize {
     return Err(OutputError::Invalid(
       "runner declarations exceed signed output count limits".to_owned(),
     ));
   }
   let mut identities = BTreeSet::new();
+  let mut trusted_names = BTreeSet::new();
+  for trusted in trusted_files {
+    if !trusted_names.insert(trusted.metadata().name.as_str()) {
+      return Err(OutputError::Invalid(
+        "trusted lifecycle declares a duplicate output name".to_owned(),
+      ));
+    }
+  }
   for declaration in &declarations {
+    if trusted_names.contains(declaration.name()) {
+      return Err(OutputError::Invalid(
+        "runner output uses a name reserved by the trusted lifecycle".to_owned(),
+      ));
+    }
     if !identities.insert((
       declaration.run_id,
       declaration.task_id,
@@ -183,7 +208,7 @@ fn prepare_blocking(
   }
   create_private_staging(staging_root)?;
 
-  let mut prepared = Vec::with_capacity(declarations.len());
+  let mut prepared = Vec::with_capacity(declarations.len() + trusted_files.len());
   let mut artifact_bytes = 0_u64;
   let mut report_bytes = 0_u64;
   for (index, declaration) in declarations.into_iter().enumerate() {
@@ -275,6 +300,44 @@ fn prepare_blocking(
       .validate()
       .map_err(|error| OutputError::Invalid(error.to_string()))?;
     prepared.push(upload);
+  }
+  let trusted_offset = prepared.len();
+  for (offset, trusted) in trusted_files.iter().enumerate() {
+    check_cancel(cancellation)?;
+    let source = trusted.path();
+    #[cfg(windows)]
+    reject_windows_reparse_point(source)?;
+    let source_metadata = fs::symlink_metadata(source).map_err(|error| io("inspect trusted output", source, error))?;
+    if !source_metadata.is_file() || source_metadata.file_type().is_symlink() {
+      return Err(OutputError::Invalid("trusted output is not a regular file".to_owned()));
+    }
+    let expected = trusted.metadata();
+    let total = match expected.kind {
+      OutputKind::Artifact => &mut artifact_bytes,
+      OutputKind::Report => &mut report_bytes,
+    };
+    let limit = match expected.kind {
+      OutputKind::Artifact => limits.artifact_bytes,
+      OutputKind::Report => limits.report_bytes,
+    };
+    let remaining = limit
+      .checked_sub(*total)
+      .ok_or_else(|| OutputError::Invalid("staged outputs exceed signed aggregate byte limits".to_owned()))?;
+    let maximum_output_bytes = remaining.min(limits.single_output_bytes);
+    let staged = staging_root.join(format!("{:08}.blob", trusted_offset + offset));
+    let (size_bytes, sha256) = snapshot_file(source, &staged, maximum_output_bytes, cancellation)?;
+    if size_bytes != expected.size_bytes || sha256 != expected.sha256 {
+      return Err(OutputError::Invalid(
+        "trusted output bytes do not match their immutable metadata".to_owned(),
+      ));
+    }
+    *total = total
+      .checked_add(size_bytes)
+      .ok_or_else(|| OutputError::Invalid("output byte count overflowed".to_owned()))?;
+    prepared.push(PreparedOutput {
+      path: staged,
+      metadata: expected.clone(),
+    });
   }
   Ok(prepared)
 }
@@ -380,6 +443,7 @@ mod tests {
     let first = prepare(
       &workspace,
       &[result()],
+      &[],
       &limits(),
       &temporary.path().join("first"),
       32,
@@ -390,6 +454,7 @@ mod tests {
     let second = prepare(
       &workspace,
       &[result()],
+      &[],
       &limits(),
       &temporary.path().join("second"),
       32,
@@ -431,6 +496,7 @@ mod tests {
     let outputs = prepare(
       &workspace,
       &[result],
+      &[],
       &limits(),
       &temporary.path().join("staging"),
       8,
@@ -441,6 +507,76 @@ mod tests {
 
     assert_eq!(outputs[0].metadata.size_bytes, 0);
     assert_eq!(outputs[0].metadata.sha256, hex::encode(Sha256::digest([])));
+  }
+
+  #[tokio::test]
+  async fn snapshots_trusted_files_and_rejects_runner_name_spoofing() {
+    let temporary = tempfile::tempdir().unwrap();
+    let workspace = temporary.path().join("workspace");
+    fs::create_dir(&workspace).unwrap();
+    let source = temporary.path().join("trusted.bundle");
+    fs::write(&source, b"trusted-bytes").unwrap();
+    let digest = hex::encode(Sha256::digest(b"trusted-bytes"));
+    let trusted = TrustedFileOutput::new(
+      source,
+      OutputUploadMetadata {
+        run_id: u64::MAX,
+        task_id: u64::MAX,
+        kind: OutputKind::Artifact,
+        name: "change-set.bundle".to_owned(),
+        content_type: Some("application/octet-stream".to_owned()),
+        report_format: None,
+        transport_content_type: "application/octet-stream".to_owned(),
+        size_bytes: 13,
+        sha256: digest,
+      },
+    )
+    .unwrap();
+    let prepared = prepare(
+      &workspace,
+      &[],
+      std::slice::from_ref(&trusted),
+      &limits(),
+      &temporary.path().join("trusted-staging"),
+      8,
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(prepared.len(), 1);
+    assert_eq!(prepared[0].metadata, trusted.metadata);
+    assert_eq!(fs::read(prepared[0].path()).unwrap(), b"trusted-bytes");
+
+    let spoof = serde_json::json!({
+      "run_id": 1,
+      "tasks": [{"task_id": 1, "artifacts": [{"name": "change-set.bundle", "path": "fake"}]}]
+    });
+    assert!(matches!(
+      prepare(
+        &workspace,
+        &[spoof],
+        std::slice::from_ref(&trusted),
+        &limits(),
+        &temporary.path().join("spoof-staging"),
+        8,
+        CancellationToken::new(),
+      )
+      .await,
+      Err(OutputError::Invalid(message)) if message.contains("reserved")
+    ));
+    assert!(matches!(
+      prepare(
+        &workspace,
+        &[],
+        &[trusted.clone(), trusted],
+        &limits(),
+        &temporary.path().join("duplicate-trusted-staging"),
+        8,
+        CancellationToken::new(),
+      )
+      .await,
+      Err(OutputError::Invalid(message)) if message.contains("duplicate")
+    ));
   }
 
   #[cfg(unix)]
@@ -461,6 +597,7 @@ mod tests {
       prepare(
         &workspace,
         &[result],
+        &[],
         &limits(),
         &temporary.path().join("staging"),
         8,
@@ -486,6 +623,7 @@ mod tests {
       prepare(
         &workspace,
         &[traversal],
+        &[],
         &limits(),
         &temporary.path().join("traversal"),
         8,
@@ -508,6 +646,7 @@ mod tests {
     let error = prepare(
       &workspace,
       &[duplicate],
+      &[],
       &limits(),
       &temporary.path().join("duplicate"),
       8,
@@ -528,6 +667,7 @@ mod tests {
       prepare(
         &workspace,
         &[artifact],
+        &[],
         &no_artifacts,
         &temporary.path().join("count"),
         8,
@@ -545,6 +685,7 @@ mod tests {
       prepare(
         &workspace,
         std::slice::from_ref(&directory),
+        &[],
         &limits(),
         &temporary.path().join("entries"),
         1,
@@ -560,6 +701,7 @@ mod tests {
       prepare(
         &workspace,
         &[directory],
+        &[],
         &one_byte,
         &temporary.path().join("bytes"),
         8,
@@ -588,6 +730,7 @@ mod tests {
       prepare(
         &workspace,
         &[artifact],
+        &[],
         &limits(),
         &temporary.path().join("staging"),
         8,
@@ -625,6 +768,7 @@ mod tests {
       prepare(
         &workspace,
         &[artifact],
+        &[],
         &limits(),
         &temporary.path().join("staging"),
         8,
@@ -652,6 +796,7 @@ mod tests {
     let prepared = prepare(
       &workspace,
       std::slice::from_ref(&artifact),
+      &[],
       &limits(),
       &temporary.path().join("safe-staging"),
       8,
@@ -675,6 +820,7 @@ mod tests {
     let error = prepare(
       &workspace,
       &[artifact],
+      &[],
       &limits(),
       &temporary.path().join("invalid-staging"),
       8,

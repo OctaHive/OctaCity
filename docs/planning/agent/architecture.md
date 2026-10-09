@@ -209,6 +209,7 @@ octacity/
 |- Cargo.toml
 |- agent/
 |  |- octacity-agent/       # agent CLI and composition root
+|  |- octacity-changeset/   # provider-neutral capture/materialization ports and Git adapter
 |  |- octacity-config/      # configuration parsing and intrinsic validation
 |  |- octacity-coordinator/ # bounded coordinator transport and lease client
 |  |- octacity-execution/   # backend-neutral execution ports and DTOs
@@ -457,6 +458,57 @@ earlier server and UI feedback, but those schemas do not replace plugin-side
 validation. The agent verifies the operator-installed manifest and binary
 digest and invokes only the fixed entrypoint resolved from that manifest.
 
+## Trusted ChangeSet capture boundary
+
+A successful writable Factory runner does not define its own candidate
+identity. Before workspace cleanup, the Agent may invoke an operator-verified
+Git executable through the optional ChangeSet capture component. The component
+uses a private index, disables hooks and ambient Git configuration, fixes
+author, committer, timestamp, and parent from signed intent, and creates a
+single canonical candidate commit outside the harness contract.
+
+Capture fails closed unless the resolved repository root is the owned source
+workspace and the candidate has the checked-out predecessor as its sole parent.
+That predecessor is the original exact base for implementation or the accepted
+candidate reconstructed before rework. Every produced bundle is self-contained
+above the original exact base, so one accepted bundle can reconstruct the latest
+candidate without an external branch. The
+signed policy is the complete authority for allowed path prefixes, immutable
+control paths, changed-path/file/aggregate bounds, empty changes, binary
+handling, and the stable built-in secret detectors. Candidate modes are limited
+to deletion, regular file, executable file, and repository-local symbolic
+link; submodules, Windows reparse points, traversal, escaping links, and
+untrusted ownership are rejected. Size and content checks read the candidate
+Git blobs rather than trusting runner output.
+
+Only a fully validated candidate can produce the bundle, changed-path/mode
+manifest, and optional bounded patch consumed by later publication. Typed
+capture failures do not include source content or paths and cannot fall back to
+harness-provided identity. The lifecycle injects these regular files into the
+same immutable snapshot, signed output-budget, fenced upload, and independent
+Artifact verification path used by runner-declared outputs. Reserved logical
+names and producer identity cannot be supplied by the runner when a trusted
+capture exists. Job completion starts only after every component is published.
+
+Server-side ChangeSet acceptance remains a separate trust boundary. It reads
+only the current successful Factory Build observation, requires the exact
+reserved bundle/manifest/optional-patch set from one Job and Lease, rechecks
+canonical manifest bytes and every size/digest, and compares the base and Stage
+Attempt to the current linked Build. Candidate append and projection advance
+share the current Factory fence; an exact replay settles the same outbox
+operation without creating another candidate.
+
+Later validation, evaluation, and rework Builds deliberately source the
+original exact revision, not a candidate ref that may exist only inside an
+Artifact. Their protected inputs identify the accepted bundle and canonical
+manifest by size, digest, media type, and fixed destination. Before the runner
+starts, the Agent disables Git hooks and ambient configuration, verifies bundle
+prerequisites and the complete candidate ancestry, imports the reserved bundle
+ref, checks out the exact candidate commit, and removes its temporary ref. The
+result must be a clean worktree. Backend projection derives source mutability
+from the signed mount permission, so evaluation sees the candidate read-only
+while bounded rework may receive a writable source.
+
 ## Agent configuration
 
 Use one explicit TOML configuration file. Command-line flags select the file
@@ -476,6 +528,7 @@ state_root
 octa_release_root
 source_plugins_dir
 tool_executables
+change_set_capture (optional provider plus executable)
 workload_identity_profiles
 cache.root
 cache.capacity.max_bytes
@@ -769,7 +822,7 @@ risk is unacceptable; startup removes only recognized stale workspaces.
 The OCI guest layout is fixed:
 
 ```text
-/workspace             materialized source tree, read-write
+/workspace             materialized source tree, signed read-only/read-write mode
 /opt/octacity/octa      runner and plugins, read-only
 /workspace/.octacity    per-job execution state under the same disk quota
 /run/octa-identity      short-lived workload identity, read-only

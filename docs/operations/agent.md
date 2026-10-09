@@ -40,6 +40,44 @@ Projects, and do not install ambient model credentials for that service
 identity. Signed per-Job selection belongs to the Factory Permission Set in
 JobSpec v3; the existing protocol is not reinterpreted.
 
+Writable Factory implementation and rework stages may additionally request a
+trusted ChangeSet capture. Configure `change_set_capture` with the provider and
+exact executable path, version, platform, and SHA-256. The Agent revalidates it
+and invokes it outside the harness only after a successful runner; omitting it
+rejects signed capture intent before source materialization while ordinary
+CI/CD and Factory stages without capture remain available.
+
+The signed capture instruction is the authority for allowed and forbidden
+repository-relative paths, changed-file count, per-file and aggregate bytes,
+empty changes, binary content, and the stable built-in secret detectors. The
+Agent re-resolves the owned repository root and requires the candidate to have
+the checked-out predecessor as its sole parent. Implementation starts from the
+original exact base; rework starts from the previously accepted candidate,
+while its new bundle remains self-contained above the original exact base. The
+Agent rejects submodules and escaping symlinks and reads sizes and bytes from
+the candidate Git objects. Repository hooks and
+configuration cannot widen this policy. A violation is reported as a typed
+secret-safe capture failure and produces no bundle or manifest eligible for
+publication.
+
+Successful capture components use the ordinary bounded Artifact publisher.
+The signed Artifact count, aggregate-byte, and single-output ceilings must
+therefore include the required bundle and manifest plus the optional patch.
+The Agent snapshots and hashes the capture files again, publishes them under
+reserved logical names, and does not report successful Job completion until
+the coordinator has independently verified every upload. Exact retries reuse
+the existing fenced upload identities; they do not allocate another logical
+candidate.
+
+The same configured Git tool reconstructs accepted candidates for validation,
+evaluation, and rework. These Jobs fetch the original exact base through the
+source plugin and receive the accepted bundle and manifest as verified protected
+inputs. The Agent imports the reserved bundle ref with hooks and ambient Git
+configuration disabled, checks exact ancestry and a clean checkout, and never
+uses a remote branch as candidate authority. Evaluation source is projected
+read-only by both supported isolated backends; rework mutability is explicit in
+the signed Factory mount policy.
+
 ## Install and enroll
 
 Create a dedicated `octacity` service account with no interactive login. Keep

@@ -156,7 +156,7 @@ pub(super) fn oci_spec(
       .expect("the static OCI specification always contains a mounts array");
     mounts.retain(|mount| mount["destination"] != GUEST_WORKSPACE);
     for (destination, source, readonly) in [
-      (FACTORY_SOURCE_ROOT, &factory.source, false),
+      (FACTORY_SOURCE_ROOT, &factory.source, factory.source_read_only),
       (FACTORY_SCRATCH_ROOT, &factory.scratch, false),
       (FACTORY_OUTPUT_ROOT, &factory.output, false),
       (FACTORY_PROTECTED_INPUT_ROOT, &factory.protected_inputs, true),

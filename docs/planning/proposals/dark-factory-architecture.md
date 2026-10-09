@@ -2,7 +2,7 @@
 
 - Статус: целевая архитектура и снимок реализации
 - Создано: 2026-09-27
-- Актуализировано: 2026-10-07
+- Актуализировано: 2026-10-09
 - Область: OctaCity, Octa, coding harnesses, evaluation и delivery
 
 ## 1. Резюме
@@ -20,9 +20,10 @@ CI/CD mode
 
 Dark Factory mode
   Work Source -> Factory Run
-    -> Implementation Build
-    -> Validation / Evaluation Builds
-    -> Delivery
+    -> pinned nested Flow Definition
+    -> Node Attempts: Build | reasoning | Decision Signal
+    -> deterministic gates / joins / human gates / trusted actions
+    -> Delivery / promotion through ordinary CI/CD
 ```
 
 Octa в обоих режимах остаётся детерминированным execution engine. Codex, Claude
@@ -35,17 +36,12 @@ application lifecycles и могут развиваться, включатьс�
 Work Source
   -> Work Envelope
   -> Factory Run
-  -> immutable Task Envelope
-  -> disposable sandbox/worktree
-  -> octa-runner
-  -> coding plugin
-  -> Codex/Claude harness
-  -> ChangeSet
-  -> deterministic validation
-  -> independent evaluation
-  -> optional typed Decision Signal (routing/tool risk)
-  -> Accept / Rework / Escalate
-  -> trusted delivery adapter
+  -> immutable root Flow Definition + pinned subflow closure
+  -> triage / requirements / development / verification subflows
+  -> immutable Task Envelopes and Context Manifests per node
+  -> ordinary Builds, bounded reasoning calls and Decision Signals
+  -> exact candidate lineage + deterministic evidence
+  -> policy-governed delivery and promotion through existing CI/CD
 ```
 
 Workers и worktrees stateless и disposable. Durable state хранится в OctaCity,
@@ -54,6 +50,8 @@ Factory Run на другом Agent.
 
 Фабрика не должна быть привязана к GitHub, OpenSpec, Codex, Claude, одному
 набору judges, конкретному Git forge или одному sandbox backend.
+Описанный ниже ticket-to-production lifecycle является первой конфигурацией,
+а не зашитым в domain единственным flow.
 
 ## 2. Цели и не-цели
 
@@ -73,6 +71,12 @@ Factory Run на другом Agent.
     assessment, не передавая им authority.
 11. Поддерживать bounded retries, budgets, WIP limits и human escalation.
 12. Переживать restart, lease expiry, повтор событий и потерю Agent.
+13. Собирать множество immutable вложенных flow из небольшого закрытого набора
+    исполнимых и orchestration-примитивов без изменения Factory core.
+14. Отделять control dependencies от context/data authority, чтобы порядок
+    выполнения не раскрывал predecessor inputs, protected tests или transcript.
+15. Использовать один механизм для triage, требований, test-first разработки,
+    независимой проверки, delivery и policy-governed production promotion.
 
 ### Не-цели первого релиза
 
@@ -90,6 +94,10 @@ Factory Run на другом Agent.
   decision-model provider;
 - разрешение decision-модели расширять whitelist, создавать произвольный route
   или пропускать обязательный gate.
+- unrestricted workflow scripting, provider-authored graph edges и unbounded
+  recursion/repeat/fan-out;
+- обязательный внешний GitHub/GitLab ticket connector в первом manual-intake
+  slice: polling/webhooks подключаются позднее через Work Source seam.
 
 ## 3. Текущий фундамент и граница реализации
 
@@ -128,13 +136,13 @@ opt-in `codex` task к обычным Pipelines; он не включает Dark
 | --- | --- | --- |
 | Build execution substrate | Реализовано | Exact revision, immutable configuration snapshots, signed JobSpec, placement, fenced lifecycle и generic result publication работают end-to-end |
 | Isolation и resource policy | Реализовано для квалифицированных backends | v2 target фиксирует mode, platform и required guarantees; containerd, Microsandbox, Apple VF и Native имеют отдельные contracts без fallback на более слабый mode |
-| Network, secret и identity restrictions | Частично реализовано | JobSpec v3 и preflight содержат factory-level tool/command/path/mount vocabulary, но полная release qualification secrets/outputs и per-action Codex bounded control ещё не завершены |
-| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, blocking `PreToolUse` hook, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.1`; production Agent-local helper/IPC и exact-action adapter ещё не подключены |
-| Source intake | Реализован in-memory foundation | Provider-neutral Work Envelope, manual Factory admission, exact replay и Project/configuration visibility реализованы; PostgreSQL, REST и внешние Work Source adapters ещё впереди |
-| Factory Controller | Реализован core/in-memory foundation | Factory Run, exact Stage Attempt target, budgets, WIP, fenced reconciliation, operator retry authorization, ordinary-Build links и terminal provenance работают в pure core и deterministic in-memory store; production persistence/composition ещё не подключены |
-| ChangeSet capture | Не реализовано | Agent публикует generic outputs, но trusted base/candidate capture и immutable ChangeSet contract отсутствуют |
+| Network, secret и identity restrictions | Реализован Factory foundation | JobSpec v3, permission intersection, placement, Agent/backend enforcement, protected tool-action gate и fenced Codex authorization broker имеют positive/negative contracts; полная generic-flow qualification остаётся частью released pilot |
+| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, blocking `PreToolUse` hook, Agent broker, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.1` |
+| Source intake | Реализован manual foundation | Provider-neutral Work Envelope, manual admission, exact replay, PostgreSQL authority и Project/configuration visibility реализованы; REST и внешние polling/webhook Work Source adapters ещё впереди |
+| Factory Controller | Реализован fixed-stage core и persistence foundation | Factory Run, Stage Attempts, budgets, WIP, fenced reconciliation, operator retry authorization, ordinary-Build links и terminal provenance работают в pure core, in-memory и PostgreSQL paths; переход к immutable nested Flow Definitions ещё не выполнен |
+| ChangeSet capture | Реализованы capture, acceptance и exact rematerialization | Agent создаёт hook-free commit/bundle/manifest, server принимает только verified generic outputs, а поздние Builds воспроизводят candidate от исходного base без внешней ветки; crash/retry completion ещё не завершён |
 | Evaluation Plane | Частично реализовано | Provider-neutral ChangeSet, Evidence Manifest, Evaluation Plan, Assessment и deterministic Decision Engine реализованы в core; trusted output projection, evaluators и durable production flow ещё не подключены |
-| Decision Signal Plane | Реализован foundation, не включён runtime | Provider-neutral typed request/result/receipt, exact replay, deadlines/budgets, rollout/fallback policy, registry, fake conformance и bounded JEV adapter реализованы; PostgreSQL storage, configuration loading, readiness и composition-root wiring остаются задачей production integration |
+| Decision Signal Plane | Реализован foundation | Provider-neutral typed request/result/receipt, exact replay, deadlines/budgets, rollout/fallback policy, persistence, registry, fake conformance, bounded JEV adapter и tool-risk exchange реализованы; generic-flow runtime wiring и calibration rollout ещё впереди |
 | Delivery | Не реализовано | VCS reads и revision resolution существуют; write-capable branch/PR/merge adapter отсутствует |
 | Factory operator UX | Не реализовано | Console управляет Projects, Builds, Agents и audit, но не показывает Factory Runs, evaluation rounds или delivery decisions |
 
@@ -172,6 +180,22 @@ Factory Controller, Octa task DAG и Decision Engine образуют прогр
 control flow. Harness может свободно рассуждать и пользоваться разрешёнными
 tools внутри bounded call, но не может пропустить обязательную validation stage,
 самостоятельно объявить Factory Run доставленным или изменить policy переходов.
+
+Программный control flow не означает один hard-coded pipeline. Operator
+публикует immutable versioned Flow Definition из закрытого набора примитивов:
+обычный Build/command, reasoning call, Decision Signal, deterministic gate,
+bounded fan-out/join, human gate, trusted action и exact nested subflow call.
+Interpreter создаёт Node Attempts только по declared edges и проверяет общие
+limits глубины, node count, repeat, fan-out, WIP и budget. Так ticket triage,
+requirements, development и verification могут меняться как конфигурация, не
+разрастаясь в `FactoryStageKind` и новые ветви domain-кода.
+
+Control dependency и context/data dependency являются разными рёбрами. Узел
+может ждать predecessor, но не получать его prompt, inputs, outputs, mounts или
+Artifacts. Это позволяет скрыть написанные заранее tests от coding node,
+изолировать requirements author от reviewer и запускать black-box verifier без
+source authority. Отсутствие context обеспечивается Context Manifest, Artifact
+grants и mounts, а не обещанием в prompt.
 
 Длительная работа представляется durable DAG вызовов и стадий. Каждый reasoning
 call получает immutable Context Manifest с необходимым ancestor context,
@@ -240,12 +264,13 @@ factory меняет код между стадиями, поэтому весь
 один Build или существующий DAG Orchestrator.
 
 ```text
-Factory Run
-  -> Implementation Build at commit A
-  -> Validation/Evaluation Builds at commit B
-  -> Rework Build at commit B
-  -> Validation/Evaluation Builds at commit C
-  -> Delivery at commit C
+Factory Run at pinned root Flow Definition
+  -> Triage subflow
+  -> optional Requirements subflow -> specification candidate S
+  -> Test-authoring node (protected bundle T)
+  -> Implementation Build at S (T absent from context)
+  -> Validation/Review/Verification subflows at candidate C
+  -> trusted Delivery/Promotion through ordinary CI/CD
 ```
 
 Orchestrator продолжает двигать Jobs внутри Attempt. Factory Controller
@@ -318,15 +343,29 @@ risk и specification artifact references.
 
 **Work Reporter** — опциональный outbound adapter для статусов и результатов.
 
-**Factory Configuration** — versioned admission, stages, budgets, connector
-selectors, evaluation и delivery policy.
+**Factory Configuration** — versioned admission policy, exact root Flow
+Definition, budgets, connector selectors, evaluation, delivery и promotion
+policy.
 
 **Factory Run** — durable lifecycle одной принятой работы.
 
-**Factory Stage** — implementation, validation, evaluation, rework или delivery.
-Это не Octa task и не OctaCity Job.
+**Flow Definition** — immutable versioned typed graph с entry, outcomes,
+declared transitions, failure routes, budgets, permissions, Context projections
+и exact nested subflow versions. Admitted run закрепляет всю reachable closure.
 
-**Stage Attempt** — одна bounded попытка стадии; retry не переписывает историю.
+**Flow Run** — durable invocation одного Flow Definition внутри Factory Run;
+nested subflow создаёт child Flow Run с exact parent node identity.
+
+**Flow Node** — один узел закрытого набора: ordinary Build/command, reasoning,
+Decision Signal, deterministic gate, bounded fan-out/join, human gate, trusted
+action или exact subflow call.
+
+**Node Attempt** — одна bounded fenced попытка Flow Node; retry не переписывает
+историю.
+
+**Workflow Cycle** — append-only цикл требований или реализации, связывающий
+exact predecessor/candidate lineage. Возврат к требованиям создаёт новый cycle,
+а не переписывает прошлое.
 
 **Stage Handoff** — immutable schema-validated межэтапный результат с outcome,
 bounded summary, влияющими на candidate решениями и assumptions, unresolved
@@ -354,6 +393,16 @@ Envelope и call node.
 **Call DAG** — durable структура function/reasoning calls. Active call видит
 scoped ancestor context, а завершённая child branch возвращает typed result и
 summary; полный trace остаётся evidence, а не общим model context.
+
+**Control edge** — зависимость готовности: successor ждёт outcome predecessor,
+но не получает его данные автоматически.
+
+**Context/data projection** — отдельное явное право включить bounded typed
+result, Artifact, repository range, mount или summary в successor input.
+
+**Phase-ready pool** — durable projection Flow Runs, готовых к triage,
+requirements, development, verification или promotion; выбор определяется
+детерминированной severity/priority/age/dependency/WIP/budget policy.
 
 **Decision Signal Provider** — взаимозаменяемый adapter узкой decision-модели,
 который принимает bounded canonical state и versioned typed questions и
@@ -385,7 +434,8 @@ Handoff, Evidence Manifest, policy или Decision Engine.
 revision, index/embedding identities, normalized query, retrieval policy,
 stable ranking и ranges/digests возвращённых fragments.
 
-**ChangeSet** — immutable base/candidate relationship, commit или bundle/patch,
+**ChangeSet** — immutable predecessor/candidate relationship, purpose
+(requirements, tests, implementation или repair), commit либо bundle/patch,
 changed paths, digest и provenance.
 
 **Evidence Producer** — task, создающий факты: JUnit, coverage, SARIF, SBOM,
@@ -472,7 +522,7 @@ Durable state:
 | Место | Durable role |
 | --- | --- |
 | Git / ChangeSet Store | код и immutable revisions |
-| PostgreSQL OctaCity | Factory Run, stages, attempts, leases, budgets, policies, Stage Handoffs, Context Manifest metadata/digests, decisions |
+| PostgreSQL OctaCity | Factory Configuration, Flow Definitions/Runs, Node Attempts, Workflow Cycles, leases, budgets, candidate lineage, Stage Handoffs, Context Manifest metadata/digests, decisions |
 | Artifact Store | task/spec bodies, Context Manifest payloads, handoffs, logs, reports, evidence, assessments, transcripts, ChangeSets |
 | Repository Knowledge | revision-bound non-authoritative indexes и immutable Retrieval Receipts; не lifecycle truth |
 | Work Source | внешний identity и best-effort status projection |
@@ -483,29 +533,102 @@ commit, Stage Handoffs, Context Manifest и Task Envelope digests,
 policy/connector versions, artifact references и current fenced Lease. Session
 resume допустим только как оптимизация.
 
-## 8. Factory lifecycle
+## 8. Программируемый nested-flow lifecycle
+
+Factory lifecycle не является одним конечным автоматом со стадиями
+`implementation/validation/evaluation`. Factory Configuration закрепляет root
+Flow Definition и immutable closure всех referenced subflows. Interpreter
+материализует durable Flow Runs и Node Attempts; definition после admission не
+может измениться под выполняющимся run.
 
 ```text
-Submitted
-  -> Admitted
-  -> Claimed
-  -> Implementing
-  -> Validating
-  -> Evaluating
-       -> Reworking -> Validating
-       -> ReadyForDelivery
-       -> Escalated
-       -> Rejected
-  -> Delivering
-  -> Delivered
-
-Любое нетерминальное состояние -> Cancelled
-Infrastructure failure -> bounded retry or Escalated
+Factory Run
+  root Flow Run
+    triage subflow
+      duplicate? -> project fit? -> classify severity/size/risk
+      -> reject | escalate | requirements-ready | development-ready
+    optional requirements subflow
+      author -> independent review -> human/deterministic gate
+    development subflow
+      protected tests -> isolated implementation -> validation -> code review
+    verification subflow
+      e2e + performance + UI + security + staged deployment
+    delivery/promotion subflow
+      review target -> human/policy gates -> existing CI/CD deployment
+      -> bounded post-deployment verification
 ```
 
+Это пример versioned configuration, а не перечень обязательных domain stages.
+Другой Project может заменить, вложить, убрать или переставить optional nodes,
+если graph проходит schema, reachability, cycle и resource validation.
+
+Исполнимый набор намеренно закрыт:
+
+1. ordinary Build/command node;
+2. reasoning node через pinned Octa plugin, сначала Codex;
+3. Decision Signal node через JEV или другой совместимый provider;
+4. deterministic gate;
+5. bounded fan-out/join;
+6. human gate;
+7. trusted side-effect action;
+8. exact nested subflow call.
+
+Definition не содержит unrestricted script и не позволяет provider создать
+новый edge. Loop выражается bounded repeat с явным максимумом. Recursive
+subflow closure, unbounded fan-out/depth/node count/budget/WIP и graph без
+terminal outcome отклоняются до publication.
+
 Каждый переход основан на persisted observation. Таймер только будит
-reconciler. Attempts append-only. Lease fencing исключает двух владельцев.
-Delivery разрешён только для exact accepted candidate commit.
+reconciler. Attempts и Workflow Cycles append-only. Lease fencing исключает
+двух владельцев. Requirements Defect создаёт новый requirements cycle и делает
+downstream evidence старого specification candidate непригодным для promotion.
+Delivery и deployment разрешены только для exact accepted lineage.
+
+### 8.1 Triage и phase-ready pools
+
+Triage является обычным nested flow: duplicate search, соответствие целям
+Project, category, severity, size, risk и dependencies могут быть отдельными
+deterministic, reasoning или Decision Signal nodes. Их typed outputs сводятся
+в immutable Triage Result; только policy переводит Work в reject, escalation,
+requirements-ready или development-ready.
+
+Ready-state хранится как authoritative projection. Scheduler выбирает работу
+детерминированно по severity, Project priority, age, dependency readiness,
+capability, WIP и budget. Внешний label может отображать это состояние, но не
+является его источником.
+
+### 8.2 Requirements и append-only correction
+
+Small Work может по policy миновать authoring. Large Work проходит отдельные
+author и reviewer calls; reviewer не получает author transcript. Принятая
+спецификация фиксируется exact ChangeSet и только после gates становится
+implementation-ready.
+
+Если implementation или verification возвращает typed Requirements Defect,
+run начинает новый requirements cycle с bounded defect evidence. Спецификация
+исправляется и проходит review заново; предыдущие code/test/review results
+сохраняются для audit, но не могут авторизовать новый cycle.
+
+### 8.3 Protected test-first development
+
+Test-authoring node создаёт immutable protected test bundle. Coding node имеет
+control dependency на его завершение, но не context/data edge: bundle, source,
+assertions, expected outputs и transcript отсутствуют в его Task Envelope,
+mounts и Artifact grants. Trusted validation node получает exact candidate и
+exact test bundle и публикует Evidence Manifest. Это предотвращает подгонку
+implementation под известные hidden tests и доказывает полезность разделения
+control и context graphs.
+
+### 8.4 Independent verification и production promotion
+
+Verification flow может включать e2e, performance, UI, security, staging и
+bounded post-deployment checks. Каждый node получает собственную source
+visibility, credentials и environment authority; black-box verifier может не
+видеть ни source, ни implementation transcript. Trusted action вызывает уже
+существующий CI/CD Pipeline/Build для deployment. Reasoning и Decision Signal
+nodes не получают forge-write или production credentials. Долгий production
+monitoring остаётся внешней системой и при проблеме создаёт новое Work, которое
+проходит обычный admission.
 
 ## 9. Coding execution через Octa plugin
 
@@ -583,11 +706,12 @@ Envelope, локальной Agent policy и реально обеспечива
 
 ### 9.3 Межэтапная память и Repository Knowledge
 
-Завершённая model-backed Stage Attempt публикует Stage Handoff. Следующий call
+Завершённая model-backed Node Attempt публикует Stage Handoff. Следующий call
 не восстанавливает состояние по transcript или mutable provider session:
 Factory Controller канонически собирает Context Manifest только из declared
-stage/call dependencies, обязательных exact artifacts/evidence и явно выбранных
-typed child results или bounded summaries. Stable ordering, content digests,
+context/data projections, обязательных exact artifacts/evidence и явно выбранных
+typed child results или bounded summaries. Control edge определяет только
+готовность и сам по себе не передаёт данные. Stable ordering, content digests,
 размеры, inclusion reasons и provenance делают manifest воспроизводимым; retry
 использует сохранённый manifest, а не повторяет discovery.
 
@@ -622,10 +746,11 @@ Receipt являются совместимой точкой будущей ин
 
 Сегодня применимая основа уже включает allowlist Octa task/plugin identities,
 execution target и required guarantees, resource bounds, restricted network
-hosts, logical secret/workload-identity profiles и output limits. Полный
-factory-level contract для tool identities, command arguments, filesystem
-read/write roots, mounts и descendant processes ещё не реализован; без него
-unattended factory не считается готовой.
+hosts, logical secret/workload-identity profiles и output limits. Factory-level
+contract для tool identities, command arguments, filesystem read/write roots,
+mounts, descendants и outputs реализован вместе с blocking Codex authorization
+broker. Перед unattended enablement его ещё требуется квалифицировать в полном
+nested-flow released pilot, включая context-absence contracts.
 
 Coding result содержит status, changed-path summary, summary, usage,
 diagnostics, trace и provider provenance. Изменения остаются в sandbox до
@@ -645,13 +770,16 @@ commit, plugin/harness/model/image/prompt digests и ChangeSet digest.
 3. Исключает secrets и запрещённые paths.
 4. Вычисляет diff и content digest.
 5. Создаёт candidate commit или git bundle/patch.
-6. Связывает ChangeSet с base commit и Stage Attempt.
+6. Связывает ChangeSet с exact predecessor, candidate purpose, Node Attempt и
+   Workflow Cycle.
 7. Загружает artifacts/reports.
 8. Уничтожает worktree.
 
 Coding harness не получает постоянный forge write credential. Delivery Adapter
-проверяет accepted candidate, ancestry, gates и policy; затем публикует branch,
-создаёт/обновляет PR и выполняет merge только для явно разрешённого risk class.
+проверяет accepted candidate, ancestry, gates и policy; затем публикует branch и
+создаёт/обновляет PR. Merge и deployment являются отдельными trusted actions,
+разрешёнными только immutable policy/human gates; deployment переиспользует
+существующий CI/CD Pipeline/Build и не выдаёт production credential модели.
 
 Read-only VCS и write-capable delivery protocols следует разделить.
 
@@ -774,25 +902,39 @@ Required failure или indeterminate ведёт к Escalate, а не pass. High
 1. Work Source доставляет Work Submission.
 2. Adapter проверяет transport/authenticity и создаёт reference.
 3. WorkResolver создаёт Work Envelope.
-4. Admission создаёт ровно один Factory Run.
-5. Source ref разрешается в exact immutable base revision.
-6. Если route имеет разрешённый probabilistic seam, Factory Controller создаёт
-   Decision Signal Request и deterministic policy потребляет frozen receipt.
-7. Factory Controller создаёт Implementation Stage Attempt по declared edge.
-8. Agent создаёт disposable sandbox/worktree и запускает octa-runner.
-9. Octa запускает coding plugin; каждый tool action проходит permission gate и,
-   только для in-envelope ambiguity, optional Tool Risk Assessment.
-10. Harness изменяет workspace в пределах неизменённой разрешённой операции.
-11. Trusted capture создаёт ChangeSet/candidate commit.
-12. Implementation worktree уничтожается.
-13. Validation Jobs создают свежие worktrees exact candidate commit.
-14. Octa запускает tests/scanners/evidence producers.
-15. Evaluation Planner фиксирует immutable Evaluation Plan.
-16. Evaluator Jobs параллельно работают в read-only worktrees.
-17. Decision Engine создаёт Accept, Rework или Escalate.
-18. Accept вызывает trusted Delivery Adapter; Rework создаёт новый worktree.
-19. Work Reporter best-effort публикует status/result projection.
-20. Retention policy очищает disposable и просроченные artifacts.
+4. Admission разрешает exact immutable base revision, создаёт ровно один
+   Factory Run и закрепляет root Flow Definition со всей subflow closure.
+5. Interpreter создаёт triage Flow Run. Команды, Codex calls и optional JEV
+   signals возвращают typed observations; deterministic policy выбирает только
+   declared outcome и phase-ready pool.
+6. Small Work может перейти прямо к development. Large Work проходит isolated
+   requirements authoring и independent review; accepted spec становится exact
+   candidate lineage.
+7. Test-authoring Node Attempt создаёт protected bundle. Implementation ждёт
+   его по control edge, но не получает bundle или transcript в context.
+8. Agent создаёт disposable sandbox/worktree и запускает ordinary Build через
+   octa-runner; каждый tool action проходит permission gate и optional bounded
+   Tool Risk Assessment.
+9. Trusted capture создаёт exact candidate ChangeSet и уничтожает worktree.
+10. Validation materializes exact candidate вместе с exact protected tests и
+    публикует deterministic Evidence Manifest.
+11. Independent code review и verification subflows выполняют declared
+    fan-out/join с отдельными Context Manifests и authority.
+12. Requirements Defect создаёт новый append-only requirements cycle; code или
+    test defect следует своему declared bounded rework edge.
+13. Decision Engine применяет exact evidence, Assessments и gates. Model result
+    не становится transition.
+14. Trusted Delivery Adapter публикует exact accepted spec/code candidate и
+    создаёт review target с observe-before-retry.
+15. После human/policy gates trusted promotion action запускает существующий
+    deployment Pipeline/Build; bounded post-deployment checks возвращают typed
+    evidence.
+16. Work Reporter best-effort публикует status projection, а retention policy
+    очищает disposable и просроченные artifacts.
+
+Пункты 5–15 описывают один целевой flow. Их состав и вложенность могут меняться
+immutable configuration, но node kinds, authority boundaries, exact lineage,
+budgets и deterministic transition ownership остаются неизменными.
 
 ## 13. Целевое module ownership и текущая реализация
 
@@ -804,10 +946,10 @@ Scheduler, Agent protocol или management API.
 
 | Module | Owns | Explicitly does not own |
 | --- | --- | --- |
-| `octacity-server-factory` | Реализованные Factory Run, stages, attempts, budgets, evaluation и Decision Signal contracts | Job placement, harness execution, provider SDKs |
+| `octacity-server-factory` | Factory Configuration, immutable Flow Definition/Run, Node Attempt, Workflow Cycle, typed transitions, budgets, candidate lineage, evaluation и Decision Signal contracts | Job placement, harness execution, provider SDKs, unrestricted workflow scripting |
 | `octacity-server-work` | Work Envelope, admission, deduplication | Provider payloads, tracker SDKs |
 | `octacity-server-evaluation` | Evaluation Round, Plan, Assessment, Decision | Model calls, scanners, repo execution |
-| `octacity-server-delivery` | Delivery policy and commands | Forge SDKs, repo execution |
+| `octacity-server-delivery` | Delivery/promotion policy and trusted-action commands | Forge/deployment SDKs, repo execution, model decisions |
 
 `DecisionSignalProvider` начинается как узкий application port рядом с Factory
 use cases, а canonical request/result/receipt принадлежат deep factory core.
@@ -897,14 +1039,17 @@ profile; backend sockets и host devices никогда не передаютс�
 - `disabled`, `unrestricted` или `restricted` network policy с
   `allowed_hosts`;
 - заранее объявленные secret и workload-identity profiles;
-- отказ от запуска без перехода на более слабый backend.
+- отказ от запуска без перехода на более слабый backend;
+- typed Factory Permission Set для tools, commands/arguments, descendants,
+  read/write roots, mounts, hosts, identities, resources и outputs;
+- signed managed JobSpec v3, protected inputs и backend capability matching;
+- blocking Codex tool proposal, fenced Agent broker, server-side Decision
+  Signal exchange и повторная Agent/backend проверка неизменённого действия.
 
-Пока не реализован единый Factory Permission Set, который описывает и проверяет
-идентичность каждого доступного модели tool, допустимые команды и arguments,
-read/write paths, mounts и descendants. Внутренний sandbox Codex полезен как
-defense in depth, но внешней security boundary остаётся OctaCity execution
-backend. Unattended mode разрешается только после закрытия этого gap и
-контрактных negative tests для каждой категории permission.
+Внутренний sandbox Codex полезен как defense in depth, но внешней security
+boundary остаётся OctaCity execution backend. Unattended mode включается только
+после generic nested-flow и released-pilot negative contracts для каждой
+используемой категории permission и context isolation.
 
 Опциональный Tool Risk Assessment не заполняет этот gap и не считается
 enforcement boundary. Порядок неизменяем:
@@ -922,7 +1067,7 @@ normalize proposal
 
 - Worker loss: lease expiry fences owner; другой Agent materializes exact state.
 - Duplicate intake: scoped dedup identity возвращает существующий Factory Run.
-- Stale completion: принимается только current lease/stage/subject digest.
+- Stale completion: принимается только current lease/node/cycle/subject digest.
 - Connector outage: bounded retry; exhaustion required connector -> Escalate.
 - Decision Signal lost response: observe/reuse stable request receipt; не
   re-query другой model; невозможность доказать результат -> Deny/Escalate.
@@ -985,22 +1130,23 @@ target добавляет Delivery Adapter. Factory Controller не изменя
 ```text
 manual REST/CLI Work Submission
   -> Work Envelope
-  -> Factory Run
-  -> Codex through octa_plugin_codex
-  -> trusted ChangeSet capture
-  -> Octa fmt/lint/test
-  -> spec + architecture + security + test-quality evaluation
+  -> Factory Run at pinned nested Flow Definition
+  -> triage and phase-ready pool
+  -> optional requirements author + independent reviewer
+  -> protected tests -> isolated Codex implementation
+  -> trusted ChangeSet capture and deterministic validation
+  -> independent code/acceptance/security verification
   -> JEV routing/tool-risk shadow receipts (без влияния на execution)
-  -> at most one rework
-  -> PR creation
-  -> human merge
+  -> bounded requirements/code/test correction cycles
+  -> PR creation -> human/policy gate
+  -> deployment through existing CI/CD -> bounded post-deploy checks
 ```
 
-Пилот использует один реальный Work Source и один реальный Codex plugin;
-source, evaluator и delivery ports проверяются также fake adapters в
-deterministic tests. Второй реальный Work Source и Claude не являются условием
-минимального pilot: они входят в Phase C и служат доказательством, что ранее
-выбранные seams действительно provider-neutral.
+Пилот использует manual REST/CLI admission через реальный provider-neutral Work
+Source seam и один реальный Codex plugin; source, evaluator и delivery ports
+проверяются также fake adapters в deterministic tests. Реальный polling/webhook
+adapter для GitHub/GitLab и Claude не являются условием минимального pilot: они
+входят в Phase E и позднее доказывают provider-neutral выбранных seams.
 
 ## 18. Этапы развития
 
@@ -1012,42 +1158,47 @@ management REST, Operator Console и release/local-stand contracts. Официа
 Codex task/plugin входит в закреплённый Octa `v0.5.1`, а OctaCity проверяет его
 release metadata, plugin lock, blocking-hook capability и совместимость CLI.
 
-### Phase A: factory contracts — следующий этап
+### Phase A: factory contracts — частично выполнено
 
-Утвердить glossary; Work/Task Envelope; Factory Run/Stage Attempt; ChangeSet; Evidence Manifest;
+Утвердить glossary; Work/Task Envelope; Factory Run/Node Attempt; ChangeSet; Evidence Manifest;
 Assessment/Decision schemas; typed permission vocabulary; effective-permission
 intersection; backend capability/admission matrix; plugin provenance; threat
 model; provider-neutral Decision Signal request/receipt и rollout policy; ADR о
 разделении Factory Run и Build. Обычный CI/CD path остаётся
 неизменным и проходит regression contracts без factory configuration.
 
-### Phase B: manual factory to PR
+### Phase B: composable flow runtime и manual factory
 
-Manual intake, durable Factory Controller, `octa_plugin_codex`, trusted
-ChangeSet capture, deterministic validation, один evaluator connector, trusted
-PR delivery и human merge. Все loops, retries, joins и stop conditions
-реализуются программно; model calls возвращают typed results. JEV adapter
-работает в shadow mode и накапливает отдельные routing/tool-risk calibration
-corpora без изменения baseline flow.
+Immutable nested Flow Definitions, durable interpreter, separate control/context
+edges, triage, phase-ready pools, manual intake, `octa_plugin_codex`, trusted
+ChangeSet capture и deterministic validation. Все loops, retries, joins и stop
+conditions исполняются программно; model calls возвращают typed results. JEV
+работает в shadow mode без изменения baseline flow.
 
-### Phase C: pluggability
+### Phase C: requirements и protected test-first development
+
+Conditional requirements, isolated author/reviewer, exact specification
+ChangeSet, append-only Requirements Defect cycles, protected test authoring,
+test-hidden implementation, independent code review и bounded rework.
+
+### Phase D: verification, delivery и promotion
+
+E2E/performance/UI/security/staged verification, trusted PR delivery, human and
+policy gates, deployment через existing CI/CD и bounded post-deployment checks.
+
+### Phase E: pluggability и unattended backlog
 
 Claude plugin/adapter, второй Work Source, Work Reporter, multiple Criterion
 Packs, connector registry, второй Decision Signal adapter (например OpenAI
-Decisions API после публикации стабильного contract) и bounded rework. Только
-здесь по двум production harnesses принимается решение о shared coding
-interface или сохранении независимых provider plugins.
-
-### Phase D: unattended backlog
-
-Polling/webhooks, durable claiming, WIP limits, reconciliation, circuit
-breakers и multi-instance tests.
+Decisions API после публикации стабильного contract), polling/webhooks, durable
+claiming, circuit breakers и multi-instance tests. Только здесь по двум
+production harnesses принимается решение о shared coding interface.
 
 На этом этапе доказанные Decision Signal profiles могут независимо перейти из
 shadow в advisory и затем в bounded control. Promotion привязан к exact
 provider/model/policy и откатывается без изменения Factory graph.
 
-### Phase E: policy-based auto-merge
+### Phase F: policy-based auto-merge
 
 Risk classification, independent/quorum reviewers, calibration corpus, holdout
 tests, low-risk allowlist, rollback/escalation policy и audited enablement.
@@ -1093,6 +1244,21 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
     question/policy/input digests и receipt; retry не подменяет модель.
 28. Shadow, advisory и bounded control продвигаются отдельно для каждой purpose
     и exact provider/model только по versioned calibration evidence.
+29. Описанный ticket lifecycle является Flow Definition, а не hard-coded
+    Factory domain state machine.
+30. Flow graph состоит только из закрытого набора typed primitives; provider не
+    создаёт node, edge, loop или authority.
+31. Admitted Factory Run закрепляет root definition и exact reachable subflow
+    closure; replacement действует только на новые runs.
+32. Control dependency не передаёт context, Artifact, mount или credential.
+33. Protected tests отсутствуют у implementation не по prompt, а по Context
+    Manifest, Artifact grants и mount policy.
+34. Requirements correction создаёт новый append-only Workflow Cycle; evidence
+    superseded lineage не авторизует delivery или deployment.
+35. Production promotion выполняет trusted action через существующий CI/CD, а
+    reasoning и Decision Signal nodes не получают production credentials.
+36. Long-running production monitoring остаётся внешним Work Source и не
+    переписывает завершённый Factory Run.
 
 ## 20. Решения для отдельных ADR
 
@@ -1119,6 +1285,14 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
     semantics.
 16. Purpose-specific calibration corpus, promotion/demotion policy и drift
     limits для routing и tool-risk.
+17. Canonical Flow Definition schema, closed node set, graph validation и exact
+    nested-version closure.
+18. Separate control/context/data edge representation и absence proofs для
+    protected tests и independent agents.
+19. Candidate lineage и append-only requirements/test/implementation correction
+    cycles.
+20. Trusted deployment action через existing CI/CD и граница bounded
+    post-deployment verification.
 
 ## 21. Критерии подтверждения архитектуры
 
@@ -1145,7 +1319,7 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
    logic; общий plugin/library seam извлекается только если он подтверждён обеими
    реализациями.
 3. Agent погибает после coding, другой продолжает без hidden local state.
-4. Completion старого lease или Stage Attempt после takeover отклоняется.
+4. Completion старого lease или Node Attempt после takeover отклоняется.
 5. Architecture/security используют один evaluator interface и разные packs.
 6. Тесты failed, LLM сказал pass, но Decision Engine создаёт Rework.
 7. Required evaluator недоступен — система Escalates.
@@ -1159,7 +1333,7 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
     allowlist отклоняется до spawn или соответствующего защищённого действия.
 14. Реальный backend contract одновременно доказывает разрешённые и запрещённые
     tool, filesystem, network и secret операции.
-15. Обязательные validation/evaluation stages, bounded retries, joins и stop
+15. Обязательные validation/evaluation nodes, bounded retries, joins и stop
     conditions выполняются кодом даже при противоречащем LLM result.
 16. Parallel reasoning calls получают scoped ancestor context, возвращают typed
     values и не используют общий бесконечно растущий transcript как state.
@@ -1174,16 +1348,30 @@ tests, low-risk allowlist, rollback/escalation policy и audited enablement.
     не вызывая другую model для того же logical decision.
 21. Shadow JEV результаты доступны в audit/diagnostics, но не меняют baseline;
     bounded control требует отдельного audited promotion exact model/policy.
+22. Один и тот же Factory core исполняет разные валидные nested Flow Definitions
+    без добавления новых hard-coded lifecycle branches.
+23. Recursive/unbounded flow, provider-created edge и graph без terminal outcome
+    отклоняются до admission.
+24. Coding node, следующий после hidden-test authoring, не может прочитать test
+    source, assertions, transcript или Artifact; validation воспроизводимо
+    соединяет exact candidate и protected bundle.
+25. Requirements Defect создаёт новый cycle и делает downstream evidence
+    прежнего specification candidate непригодным для promotion.
+26. Black-box verifier выполняется без source/implementation context, если это
+    объявлено его projections, а deployment идёт через ordinary CI/CD Build.
 
 ## 22. Итог
 
 OctaCity остаётся CI/CD-платформой и получает Dark Factory как независимый
-opt-in coordination-слой над обычными Builds, а не как замену существующего
-режима и не как расширение Octa до backlog orchestrator. Octa исполняет DAG и
-plugins, OctaCity владеет durable lifecycle, coding harnesses меняют одноразовые
-worktrees, Evaluation Plane независимо оценивает exact candidate, а доверенный
-Delivery Adapter публикует принятый результат. Детерминированный код владеет
-control flow; LLM используется как bounded reasoning/generation/evaluation call.
+opt-in interpreter immutable nested flows над обычными Builds, а не как замену
+существующего режима и не как расширение Octa до backlog orchestrator. Octa
+исполняет DAG и plugins, OctaCity владеет durable Flow Runs, Node Attempts,
+Workflow Cycles и exact candidate lineage. Coding harnesses меняют одноразовые
+worktrees, независимые nodes оценивают exact candidate, а trusted actions
+публикуют и продвигают результат через существующий CI/CD. Детерминированный код
+владеет control flow; LLM используется как bounded reasoning/generation/review
+call. Control graph отдельно от context/data graph, поэтому разные этапы могут
+быть как явно связанными handoff, так и доказуемо изолированными.
 Decision-модели подключаются через replaceable Decision Signal Provider: JEV
 первым, будущий Decisions API отдельным adapter. Они дают typed probabilistic
 signal для заранее ограниченного routing или tool-risk, но никогда не получают
@@ -1195,6 +1383,7 @@ signal для заранее ограниченного routing или tool-risk
 новый decision model  -> Decision Signal Provider adapter
 новый аспект качества -> Criterion Pack / Evidence Producer
 новый target delivery -> Delivery Adapter
+новый lifecycle       -> immutable Flow Definition from bounded primitives
 ```
 
 Так система сохраняет stateless execution, не связывается с GitHub, OpenSpec,

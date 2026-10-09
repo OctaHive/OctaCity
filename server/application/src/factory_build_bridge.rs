@@ -4,6 +4,10 @@ use std::{
 };
 
 use async_trait::async_trait;
+use octacity_protocol::{
+  CHANGE_SET_BUNDLE_INPUT, CHANGE_SET_BUNDLE_MEDIA_TYPE, CHANGE_SET_MANIFEST_INPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE,
+  ChangeSetMaterializationV3, ProtectedInputV3,
+};
 use octacity_server_artifacts::ArtifactIdentity;
 use octacity_server_domain::{AttemptId, BuildId, ImmutableRevision, JobId, ProjectId, RepositoryId, Timestamp};
 use octacity_server_factory::{
@@ -90,8 +94,56 @@ pub struct FactoryBuildCausality {
   pub target: FactoryStageTarget,
   /// Exact predecessor that made this Build eligible.
   pub parent: Option<FactoryBuildParent>,
+  /// Accepted candidate bytes required by every non-initial stage.
+  pub candidate: Option<FactoryCandidateMaterialization>,
   /// Digest of the immutable Task Envelope input.
   pub task_envelope_digest: FactoryDigest,
+}
+
+/// Exact accepted ChangeSet inputs supplied to a later ordinary Build.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryCandidateMaterialization {
+  /// Accepted immutable ChangeSet identity.
+  pub change_set_id: octacity_server_factory::ChangeSetId,
+  /// Original exact repository revision materialized by the source plugin.
+  pub base_revision: ImmutableRevision,
+  /// Exact candidate commit reconstructed from the bundle.
+  pub candidate_revision: ImmutableRevision,
+  /// Verified generic output containing the Git bundle.
+  pub bundle: ArtifactIdentity,
+  /// Verified generic output containing the capture manifest.
+  pub manifest: ArtifactIdentity,
+}
+
+impl FactoryCandidateMaterialization {
+  /// Produces the strict wire instruction and protected inputs used by JobSpec v3.
+  pub fn wire_inputs(&self) -> (ChangeSetMaterializationV3, Vec<ProtectedInputV3>) {
+    let bundle_input = self.bundle.artifact_id.to_string();
+    let manifest_input = self.manifest.artifact_id.to_string();
+    let instruction = ChangeSetMaterializationV3 {
+      bundle_input: bundle_input.clone(),
+      manifest_input: manifest_input.clone(),
+      candidate_revision: self.candidate_revision.as_str().to_owned(),
+    };
+    let mut inputs = vec![
+      ProtectedInputV3 {
+        artifact_id: bundle_input,
+        size_bytes: self.bundle.size_bytes,
+        sha256: self.bundle.digest.to_string(),
+        media_type: CHANGE_SET_BUNDLE_MEDIA_TYPE.to_owned(),
+        destination: CHANGE_SET_BUNDLE_INPUT.to_owned(),
+      },
+      ProtectedInputV3 {
+        artifact_id: manifest_input,
+        size_bytes: self.manifest.size_bytes,
+        sha256: self.manifest.digest.to_string(),
+        media_type: CHANGE_SET_MANIFEST_MEDIA_TYPE.to_owned(),
+        destination: CHANGE_SET_MANIFEST_INPUT.to_owned(),
+      },
+    ];
+    inputs.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+    (instruction, inputs)
+  }
 }
 
 /// Idempotent request to the existing ordinary Build application.
@@ -380,7 +432,7 @@ where
       .iter()
       .find(|definition| definition.kind() == context.stage.kind())
       .ok_or(FactoryBuildBridgeError::InvalidSnapshot)?;
-    let (immutable_revision, parent) = build_subject(&snapshot, &context.target)?;
+    let (immutable_revision, parent, candidate) = build_subject(&snapshot, &context.target)?;
     let layers = self
       .policies
       .policy_layers(FactoryBuildPolicyRequest {
@@ -408,6 +460,7 @@ where
         stage_attempt_id: context.stage.id(),
         target: context.target.clone(),
         parent,
+        candidate,
         task_envelope_digest: context.stage.input_digest(),
       },
     };
@@ -627,7 +680,14 @@ impl<'a> DispatchContext<'a> {
 fn build_subject(
   snapshot: &FactoryRunSnapshot,
   target: &FactoryStageTarget,
-) -> Result<(ImmutableRevision, Option<FactoryBuildParent>), FactoryBuildBridgeError> {
+) -> Result<
+  (
+    ImmutableRevision,
+    Option<FactoryBuildParent>,
+    Option<FactoryCandidateMaterialization>,
+  ),
+  FactoryBuildBridgeError,
+> {
   let candidate = (!matches!(target, FactoryStageTarget::Implementation))
     .then(|| current_candidate(snapshot))
     .transpose()?;
@@ -648,12 +708,16 @@ fn build_subject(
   } else {
     None
   };
-  selected_build_subject(
+  let selected = selected_build_subject(
     target,
     snapshot.run.subject().base_revision().clone(),
     candidate.map(|record| (record.id(), record.subject().candidate_revision().clone())),
     decision,
-  )
+  )?;
+  let materialization = candidate
+    .map(|candidate| candidate_materialization(snapshot, candidate))
+    .transpose()?;
+  Ok((selected.0, selected.1, materialization))
 }
 
 /// Selects the exact ordinary-Build revision and bounded Factory predecessor.
@@ -666,12 +730,44 @@ pub(super) fn selected_build_subject(
   match target {
     FactoryStageTarget::Implementation => Ok((base_revision, None)),
     FactoryStageTarget::Validation | FactoryStageTarget::Evaluation(_) => candidate
-      .map(|(id, revision)| (revision, Some(FactoryBuildParent::ChangeSet(id))))
+      .map(|(id, _)| (base_revision, Some(FactoryBuildParent::ChangeSet(id))))
       .ok_or(FactoryBuildBridgeError::InvalidSnapshot),
     FactoryStageTarget::Rework => decision
-      .map(|(id, revision)| (revision, Some(FactoryBuildParent::Decision(id))))
+      .map(|(id, _)| (base_revision, Some(FactoryBuildParent::Decision(id))))
       .ok_or(FactoryBuildBridgeError::InvalidSnapshot),
   }
+}
+
+fn candidate_materialization(
+  snapshot: &FactoryRunSnapshot,
+  candidate: &octacity_server_factory::ChangeSet,
+) -> Result<FactoryCandidateMaterialization, FactoryBuildBridgeError> {
+  let bundle = candidate_artifact(snapshot, candidate.bundle_artifact(), CHANGE_SET_BUNDLE_MEDIA_TYPE)?;
+  let manifest = candidate_artifact(snapshot, candidate.manifest_artifact(), CHANGE_SET_MANIFEST_MEDIA_TYPE)?;
+  Ok(FactoryCandidateMaterialization {
+    change_set_id: candidate.id(),
+    base_revision: candidate.subject().exact().base_revision().clone(),
+    candidate_revision: candidate.subject().candidate_revision().clone(),
+    bundle,
+    manifest,
+  })
+}
+
+fn candidate_artifact(
+  snapshot: &FactoryRunSnapshot,
+  artifact_id: octacity_server_domain::ArtifactId,
+  media_type: &str,
+) -> Result<ArtifactIdentity, FactoryBuildBridgeError> {
+  let mut matches = snapshot
+    .build_observations
+    .iter()
+    .flat_map(|observation| &observation.outputs)
+    .filter(|identity| identity.artifact_id == artifact_id);
+  let identity = matches.next().ok_or(FactoryBuildBridgeError::InvalidSnapshot)?;
+  if matches.next().is_some() || identity.media_type.as_str() != media_type {
+    return Err(FactoryBuildBridgeError::InvalidSnapshot);
+  }
+  Ok(identity.clone())
 }
 
 fn current_candidate(
@@ -694,6 +790,23 @@ fn build_input_digest(request: &CreateFactoryBuild) -> FactoryDigest {
     Some(FactoryBuildParent::Decision(id)) => id.as_uuid(),
     None => uuid::Uuid::nil(),
   };
+  let candidate_revision = request
+    .causality
+    .candidate
+    .as_ref()
+    .map_or(&[][..], |candidate| candidate.candidate_revision.as_str().as_bytes());
+  let bundle_digest = request
+    .causality
+    .candidate
+    .as_ref()
+    .map(|candidate| candidate.bundle.digest.as_bytes().to_vec())
+    .unwrap_or_default();
+  let manifest_digest = request
+    .causality
+    .candidate
+    .as_ref()
+    .map(|candidate| candidate.manifest.digest.as_bytes().to_vec())
+    .unwrap_or_default();
   FactoryDigest::sha256(
     "octacity.factory.build-input.v1",
     &[
@@ -708,6 +821,9 @@ fn build_input_digest(request: &CreateFactoryBuild) -> FactoryDigest {
       request.causality.stage_attempt_id.as_uuid().as_bytes(),
       request.causality.target.canonical_key().as_bytes(),
       parent.as_bytes(),
+      candidate_revision,
+      &bundle_digest,
+      &manifest_digest,
       &request.causality.task_envelope_digest.as_bytes(),
     ],
   )

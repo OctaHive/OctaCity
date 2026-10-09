@@ -158,6 +158,8 @@ fn v3_spec() -> JobSpecV3 {
       stage_kind: FactoryStageKindV3::Implementation,
       task_envelope_digest: DIGEST.to_owned(),
       subject_digest: DIGEST.to_owned(),
+      change_set_capture: None,
+      change_set_materialization: None,
       parent: None,
     }),
     protected_inputs: ProtectedInputManifestV3 {
@@ -231,6 +233,136 @@ fn v3_spec() -> JobSpecV3 {
     },
     required_enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
   }
+}
+
+#[test]
+fn v3_change_set_capture_is_bounded_and_limited_to_writable_stages() {
+  let mut value = v3_spec();
+  value.factory.as_mut().unwrap().change_set_capture = Some(ChangeSetCaptureV3 {
+    author_name: "OctaCity Factory".to_owned(),
+    author_email: "factory@octacity.invalid".to_owned(),
+    committed_at: 1_767_225_600,
+    patch_max_bytes: Some(1024),
+    policy: ChangeSetCapturePolicyV3 {
+      allowed_path_prefixes: vec![".".to_owned()],
+      forbidden_control_paths: vec![".github/workflows".to_owned()],
+      max_changed_paths: 64,
+      max_file_bytes: 1024 * 1024,
+      max_total_bytes: 4 * 1024 * 1024,
+      allow_empty: false,
+      binary_policy: ChangeSetBinaryPolicyV3::Reject,
+      forbidden_secret_patterns: ChangeSetSecretPatternV3::ALL.to_vec(),
+    },
+  });
+  value.validate(&v3_binding(&value)).unwrap();
+
+  value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Evaluation;
+  assert!(value.validate(&v3_binding(&value)).is_err());
+  value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Implementation;
+  value
+    .factory
+    .as_mut()
+    .unwrap()
+    .change_set_capture
+    .as_mut()
+    .unwrap()
+    .patch_max_bytes = Some(0);
+  assert!(value.validate(&v3_binding(&value)).is_err());
+  value
+    .factory
+    .as_mut()
+    .unwrap()
+    .change_set_capture
+    .as_mut()
+    .unwrap()
+    .patch_max_bytes = Some(1024);
+  value
+    .factory
+    .as_mut()
+    .unwrap()
+    .change_set_capture
+    .as_mut()
+    .unwrap()
+    .policy
+    .allowed_path_prefixes = vec!["src".to_owned(), "src".to_owned()];
+  assert!(value.validate(&v3_binding(&value)).is_err());
+}
+
+#[test]
+fn captured_change_set_manifest_is_bounded_canonical_and_portable() {
+  let manifest = CapturedChangeSetManifestV1 {
+    format_version: 1,
+    base_revision: "base-revision".to_owned(),
+    candidate_revision: "candidate-revision".to_owned(),
+    stage_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+    capture_tool: FactoryImmutableReferenceV3 {
+      identity: "git".to_owned(),
+      version: "2.0.0".to_owned(),
+      sha256: DIGEST.to_owned(),
+    },
+    changed_paths: vec![CapturedChangeSetPathV1 {
+      status: "M".to_owned(),
+      path: "src/main.rs".to_owned(),
+      old_mode: "100644".to_owned(),
+      new_mode: "100644".to_owned(),
+    }],
+    bundle: CapturedChangeSetFileV1 {
+      name: CHANGE_SET_BUNDLE_OUTPUT.to_owned(),
+      size_bytes: 512,
+      sha256: DIGEST.to_owned(),
+    },
+    patch: None,
+  };
+  let mut bytes = serde_json::to_vec(&manifest).unwrap();
+  bytes.push(b'\n');
+  assert_eq!(CapturedChangeSetManifestV1::decode_canonical(&bytes).unwrap(), manifest);
+
+  let mut noncanonical = bytes.clone();
+  noncanonical.push(b'\n');
+  assert!(CapturedChangeSetManifestV1::decode_canonical(&noncanonical).is_err());
+  assert!(CapturedChangeSetManifestV1::decode_canonical(&vec![0; MAX_CHANGE_SET_MANIFEST_BYTES as usize + 1]).is_err());
+
+  let mut invalid = manifest;
+  invalid.changed_paths[0].path = "../escape".to_owned();
+  assert!(invalid.validate().is_err());
+}
+
+fn v3_binding(spec: &JobSpecV3) -> JobBinding<'_> {
+  JobBinding {
+    job_id: &spec.job_id,
+    attempt: spec.attempt,
+    now: spec.issued_at,
+  }
+}
+
+fn enable_change_set_materialization(spec: &mut JobSpecV3) {
+  let bundle_input = "accepted-change-set-bundle".to_owned();
+  let manifest_input = "accepted-change-set-manifest".to_owned();
+  spec.protected_inputs.inputs.extend([
+    ProtectedInputV3 {
+      artifact_id: bundle_input.clone(),
+      size_bytes: 512,
+      sha256: DIGEST.to_owned(),
+      media_type: CHANGE_SET_BUNDLE_MEDIA_TYPE.to_owned(),
+      destination: CHANGE_SET_BUNDLE_INPUT.to_owned(),
+    },
+    ProtectedInputV3 {
+      artifact_id: manifest_input.clone(),
+      size_bytes: 512,
+      sha256: DIGEST.to_owned(),
+      media_type: CHANGE_SET_MANIFEST_MEDIA_TYPE.to_owned(),
+      destination: CHANGE_SET_MANIFEST_INPUT.to_owned(),
+    },
+  ]);
+  spec
+    .protected_inputs
+    .inputs
+    .sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+  spec.factory.as_mut().unwrap().change_set_materialization = Some(ChangeSetMaterializationV3 {
+    bundle_input,
+    manifest_input,
+    candidate_revision: "abcdef0123456789abcdef0123456789abcdef01".to_owned(),
+  });
 }
 
 fn binding(spec: &JobSpecV1) -> JobBinding<'_> {
@@ -432,6 +564,7 @@ fn v3_rejects_unsafe_inputs_incomplete_enforcement_and_host_fallback() {
   let mut value = v3_spec();
   value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Evaluation;
   assert!(value.validate(&binding(&spec())).is_err());
+  enable_change_set_materialization(&mut value);
   value
     .permissions
     .mounts

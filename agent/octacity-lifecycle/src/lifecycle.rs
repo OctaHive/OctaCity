@@ -15,11 +15,13 @@ use octacity_coordinator::{
 };
 use octacity_execution::ResourceUsage;
 use octacity_job::{ExecuteJobRequest, JobCompletion, JobError, JobExecutor, JobFailure};
-use octacity_output::{FreezeOutputs, OutputError, OutputPublisher, PublishOutputs};
+use octacity_output::{FreezeOutputs, OutputError, OutputPublisher, PublishOutputs, TrustedFileOutput};
 use octacity_protocol::{
-  ActiveJob, AgentLifecycleEvent, AttemptEventKind, BeginCacheSessionRequest, COORDINATOR_PROTOCOL_VERSION,
-  CompleteLeaseRequest, ExecutionEvidenceV2, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState,
-  LeaseAssignment, LeaseFence, ResourceUsageSnapshot, RevokeCacheSessionRequest, RunnerEventPayload,
+  ActiveJob, AgentLifecycleEvent, AttemptEventKind, BeginCacheSessionRequest, CHANGE_SET_BUNDLE_MEDIA_TYPE,
+  CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_CAPTURE_PRODUCER_ID, CHANGE_SET_MANIFEST_MEDIA_TYPE, CHANGE_SET_MANIFEST_OUTPUT,
+  CHANGE_SET_PATCH_MEDIA_TYPE, CHANGE_SET_PATCH_OUTPUT, COORDINATOR_PROTOCOL_VERSION, CompleteLeaseRequest,
+  ExecutionEvidenceV2, HostCapacity, HostSnapshot, JobCompletionStatus, JobLifecycleState, LeaseAssignment, LeaseFence,
+  OutputKind, OutputUploadMetadata, ResourceUsageSnapshot, RevokeCacheSessionRequest, RunnerEventPayload,
 };
 use octacity_runner::{RunStatus, RunnerStreamItem};
 use sha2::{Digest as _, Sha256};
@@ -195,27 +197,40 @@ impl FinishingAttempt<'_> {
     if self.active.error.is_none() {
       let staging_root = self.attempt_root.join("outputs");
       let cancellation = CancellationToken::new();
-      let freeze = self.lifecycle.outputs.freeze(
-        FreezeOutputs {
-          workspace: completion.workspace(),
-          results: &results,
-          limits: completion.output_limits(),
-          staging_root: &staging_root,
-        },
-        cancellation.clone(),
-      );
-      frozen = accept_output_result(
-        run_output_while_owned(
-          freeze,
-          cancellation,
-          &mut self.active.monitor,
-          &mut self.active.lease_outcome,
-        )
-        .await,
-        &mut status,
-        &mut results,
-        &mut self.active.error,
-      );
+      match trusted_change_set_outputs(&completion) {
+        Ok(trusted_files) => {
+          let freeze = self.lifecycle.outputs.freeze(
+            FreezeOutputs {
+              workspace: completion.workspace(),
+              results: &results,
+              trusted_files: &trusted_files,
+              limits: completion.output_limits(),
+              staging_root: &staging_root,
+            },
+            cancellation.clone(),
+          );
+          frozen = accept_output_result(
+            run_output_while_owned(
+              freeze,
+              cancellation,
+              &mut self.active.monitor,
+              &mut self.active.lease_outcome,
+            )
+            .await,
+            &mut status,
+            &mut results,
+            &mut self.active.error,
+          );
+        }
+        Err(error) => {
+          accept_output_result::<()>(
+            Err(JobLifecycleError::Output(error)),
+            &mut status,
+            &mut results,
+            &mut self.active.error,
+          );
+        }
+      }
     }
     if self.active.error.is_none()
       && frozen.is_some()
@@ -289,6 +304,71 @@ impl FinishingAttempt<'_> {
     };
     (status, None, None, Vec::new(), cleanup)
   }
+}
+
+fn trusted_change_set_outputs(completion: &JobCompletion) -> Result<Vec<TrustedFileOutput>, OutputError> {
+  let Some(captured) = completion.change_set() else {
+    return Ok(Vec::new());
+  };
+  if captured.manifest.bundle.name != CHANGE_SET_BUNDLE_OUTPUT
+    || captured.manifest_file.name != CHANGE_SET_MANIFEST_OUTPUT
+    || captured
+      .manifest
+      .patch
+      .as_ref()
+      .is_some_and(|patch| patch.name != CHANGE_SET_PATCH_OUTPUT)
+  {
+    return Err(OutputError::Invalid(
+      "trusted ChangeSet capture returned unexpected output names".to_owned(),
+    ));
+  }
+  let mut files = vec![trusted_change_set_file(
+    captured.root.join(&captured.manifest.bundle.name),
+    &captured.manifest.bundle.name,
+    CHANGE_SET_BUNDLE_MEDIA_TYPE,
+    captured.manifest.bundle.size_bytes,
+    &captured.manifest.bundle.sha256,
+  )?];
+  files.push(trusted_change_set_file(
+    captured.root.join(&captured.manifest_file.name),
+    &captured.manifest_file.name,
+    CHANGE_SET_MANIFEST_MEDIA_TYPE,
+    captured.manifest_file.size_bytes,
+    &captured.manifest_file.sha256,
+  )?);
+  if let Some(patch) = &captured.manifest.patch {
+    files.push(trusted_change_set_file(
+      captured.root.join(&patch.name),
+      &patch.name,
+      CHANGE_SET_PATCH_MEDIA_TYPE,
+      patch.size_bytes,
+      &patch.sha256,
+    )?);
+  }
+  Ok(files)
+}
+
+fn trusted_change_set_file(
+  path: PathBuf,
+  name: &str,
+  content_type: &str,
+  size_bytes: u64,
+  sha256: &str,
+) -> Result<TrustedFileOutput, OutputError> {
+  TrustedFileOutput::new(
+    path,
+    OutputUploadMetadata {
+      run_id: CHANGE_SET_CAPTURE_PRODUCER_ID,
+      task_id: CHANGE_SET_CAPTURE_PRODUCER_ID,
+      kind: OutputKind::Artifact,
+      name: name.to_owned(),
+      content_type: Some(content_type.to_owned()),
+      report_format: None,
+      transport_content_type: "application/octet-stream".to_owned(),
+      size_bytes,
+      sha256: sha256.to_owned(),
+    },
+  )
 }
 
 /// Durable-delivery and heartbeat policy for one leased attempt.

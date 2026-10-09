@@ -261,8 +261,10 @@ pub enum NetworkAccess {
 pub struct FactoryExecutionLayout {
   /// Immutable host directory projected at [`FACTORY_PROTECTED_INPUT_ROOT`].
   pub protected_inputs: PathBuf,
-  /// Writable source directory projected at [`FACTORY_SOURCE_ROOT`].
+  /// Exact source directory projected at [`FACTORY_SOURCE_ROOT`].
   pub source: PathBuf,
+  /// Whether the source projection must reject every write.
+  pub source_read_only: bool,
   /// Writable disposable state projected at [`FACTORY_SCRATCH_ROOT`].
   pub scratch: PathBuf,
   /// Writable declared-output root projected at [`FACTORY_OUTPUT_ROOT`].
@@ -799,6 +801,7 @@ mod tests {
     let layout = FactoryExecutionLayout {
       protected_inputs: protected.canonicalize().unwrap(),
       source: source.canonicalize().unwrap(),
+      source_read_only: false,
       scratch: scratch.canonicalize().unwrap(),
       output: output.canonicalize().unwrap(),
       process_limit: 4,

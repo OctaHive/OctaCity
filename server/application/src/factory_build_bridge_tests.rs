@@ -96,25 +96,25 @@ fn every_factory_build_stage_selects_the_exact_revision_and_parent() {
     assert_eq!(
       selected_build_subject(&target, base.clone(), Some((change_set, candidate.clone())), None,).unwrap(),
       (
-        candidate.clone(),
+        base.clone(),
         Some(octacity_server_store::FactoryBuildParent::ChangeSet(change_set))
       )
     );
   }
   assert_eq!(
     selected_build_subject(&FactoryStageTarget::Implementation, base.clone(), None, None).unwrap(),
-    (base, None)
+    (base.clone(), None)
   );
   assert_eq!(
     selected_build_subject(
       &FactoryStageTarget::Rework,
-      octacity_server_domain::ImmutableRevision::new("unused-base").unwrap(),
+      base.clone(),
       Some((change_set, candidate.clone())),
       Some((decision, candidate.clone())),
     )
     .unwrap(),
     (
-      candidate,
+      base,
       Some(octacity_server_store::FactoryBuildParent::Decision(decision))
     )
   );

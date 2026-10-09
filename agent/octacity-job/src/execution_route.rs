@@ -155,6 +155,7 @@ impl From<JobSpecV3> for ExecutableJobSpec {
       octa: spec.octa,
       execution: ExecutableExecution::Managed(Box::new(ManagedFactoryExecution {
         execution: spec.execution,
+        factory: spec.factory,
         protected_inputs: spec.protected_inputs,
         permissions: spec.permissions,
         required_enforcement: spec.required_enforcement,

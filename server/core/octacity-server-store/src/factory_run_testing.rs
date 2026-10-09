@@ -445,14 +445,14 @@ impl StoredFactoryRun {
           octacity_server_factory::FactoryStageTarget::Validation
           | octacity_server_factory::FactoryStageTarget::Evaluation(_),
           Some(crate::FactoryBuildParent::ChangeSet(id)),
-        ) => self
-          .candidates
-          .get(&id)
-          .is_some_and(|candidate| candidate.subject().candidate_revision() == &link.exact_revision),
-        (octacity_server_factory::FactoryStageTarget::Rework, Some(crate::FactoryBuildParent::Decision(id))) => self
-          .decisions
-          .get(&id)
-          .is_some_and(|decision| decision.subject().candidate_revision() == &link.exact_revision),
+        ) => self.candidates.get(&id).is_some_and(|candidate| {
+          candidate.subject().exact() == subject && link.exact_revision == *subject.base_revision()
+        }),
+        (octacity_server_factory::FactoryStageTarget::Rework, Some(crate::FactoryBuildParent::Decision(id))) => {
+          self.decisions.get(&id).is_some_and(|decision| {
+            decision.subject().exact() == subject && link.exact_revision == *subject.base_revision()
+          })
+        }
         _ => false,
       };
       require(
@@ -1111,7 +1111,10 @@ fn apply_control(
         .stage_attempts
         .get(stage_attempt_id)
         .ok_or_else(invalid_control)?;
-      if current_checkpoint.cancellation_requested || stored.current.stage_attempt_id != Some(*stage_attempt_id) {
+      if current_checkpoint.cancellation_requested
+        || stored.current.stage_attempt_id != Some(*stage_attempt_id)
+        || current_budget.usage.attempts >= stage.budget().max_attempts()
+      {
         return Err(invalid_control());
       }
       let next_progress = request_retry(&current_checkpoint.progress, stage.target())?;

@@ -3,9 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use octacity_protocol::{
-  FactoryCommandArgumentV3, FactoryCommandPermissionV3, FactoryEnforcementCapabilityV3, FactoryImmutableReferenceV3,
-  FactoryMountModeV3, FactoryMountPermissionV3, FactoryPermissionSetV3, ManagedOctaExecutionV3, NetworkPolicy,
-  OutputLimits, PROTECTED_INPUT_ROOT, ProtectedInputManifestV3, ProtectedInputTransferV3, RuntimeSpecV2,
+  FactoryCausalityV3, FactoryCommandArgumentV3, FactoryCommandPermissionV3, FactoryEnforcementCapabilityV3,
+  FactoryImmutableReferenceV3, FactoryMountModeV3, FactoryMountPermissionV3, FactoryPermissionSetV3,
+  ManagedOctaExecutionV3, NetworkPolicy, OutputLimits, PROTECTED_INPUT_ROOT, ProtectedInputManifestV3,
+  ProtectedInputTransferV3, RuntimeSpecV2,
 };
 use octacity_runner::{RunnerInstallation, VerifiedExternalExecutable};
 use thiserror::Error;
@@ -14,6 +15,7 @@ use thiserror::Error;
 #[derive(Clone, Debug)]
 pub(super) struct ManagedFactoryExecution {
   pub(super) execution: ManagedOctaExecutionV3,
+  pub(super) factory: Option<FactoryCausalityV3>,
   pub(super) protected_inputs: ProtectedInputManifestV3,
   pub(super) permissions: FactoryPermissionSetV3,
   pub(super) required_enforcement: Vec<FactoryEnforcementCapabilityV3>,
@@ -76,6 +78,12 @@ pub enum FactoryPreflightError {
   /// A local executable or plugin changed after Agent inventory.
   #[error("verified Factory toolchain changed on disk")]
   ToolchainDrift,
+  /// Signed writable capture was requested without a trusted local component.
+  #[error("trusted ChangeSet capture is not configured")]
+  ChangeSetCaptureUnavailable,
+  /// Signed candidate reconstruction was requested without a trusted local component.
+  #[error("trusted ChangeSet materialization is not configured")]
+  ChangeSetMaterializationUnavailable,
 }
 
 /// Complete immutable inputs to one v3 Agent admission decision.

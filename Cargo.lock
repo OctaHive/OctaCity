@@ -3872,6 +3872,7 @@ dependencies = [
  "async-trait",
  "clap",
  "octacity-cache-session",
+ "octacity-changeset",
  "octacity-config",
  "octacity-coordinator",
  "octacity-execution",
@@ -3960,6 +3961,24 @@ dependencies = [
  "tokio-util",
  "url",
  "zeroize",
+]
+
+[[package]]
+name = "octacity-changeset"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "hex",
+ "octacity-private-fs",
+ "octacity-protocol",
+ "processkit",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -4143,6 +4162,7 @@ dependencies = [
  "async-trait",
  "hex",
  "octacity-cache-session",
+ "octacity-changeset",
  "octacity-execution",
  "octacity-execution-apple-vf",
  "octacity-execution-containerd",

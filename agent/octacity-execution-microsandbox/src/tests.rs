@@ -380,6 +380,7 @@ async fn projects_only_the_bounded_factory_roots() {
   request.factory = Some(FactoryExecutionLayout {
     protected_inputs: protected.clone(),
     source: source.clone(),
+    source_read_only: false,
     scratch: scratch.clone(),
     output: output.clone(),
     process_limit: 3,
@@ -404,7 +405,22 @@ async fn projects_only_the_bounded_factory_roots() {
     plan.writable_mounts.iter().map(|mount| mount.quota_mib).sum::<u32>(),
     1024
   );
+  assert!(plan.read_only_mounts.is_empty());
   assert!(plan.masked_job_directories.contains(&"/workspace/protected".to_owned()));
+
+  request.factory.as_mut().unwrap().source_read_only = true;
+  let read_only_plan = SandboxPlan::build("agent-1", &runner(&release), &request)
+    .await
+    .unwrap();
+  assert!(
+    read_only_plan
+      .writable_mounts
+      .iter()
+      .all(|mount| mount.guest != FACTORY_SOURCE_ROOT)
+  );
+  assert_eq!(read_only_plan.read_only_mounts.len(), 1);
+  assert_eq!(read_only_plan.read_only_mounts[0].host, source);
+  assert_eq!(read_only_plan.read_only_mounts[0].guest, FACTORY_SOURCE_ROOT);
 
   let mut permissions = fs::metadata(&protected).unwrap().permissions();
   #[cfg(unix)]

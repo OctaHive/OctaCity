@@ -16,6 +16,40 @@ pub const MAX_PROTECTED_INPUT_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_FACTORY_PATH_BYTES: usize = 1024;
 /// Maximum UTF-8 bytes in one bounded logical identity.
 pub const MAX_FACTORY_WIRE_IDENTITY_BYTES: usize = 256;
+/// Maximum UTF-8 bytes in one canonical ChangeSet author field.
+pub const MAX_CHANGE_SET_AUTHOR_BYTES: usize = 256;
+/// Maximum optional textual patch bytes carried by one captured ChangeSet.
+pub const MAX_CHANGE_SET_PATCH_BYTES: u64 = 4 * 1024 * 1024;
+/// Maximum changed paths authorized by one ChangeSet capture instruction.
+pub const MAX_CHANGE_SET_CHANGED_PATHS: u32 = 4_096;
+/// Maximum bytes in one changed regular file or symbolic-link target.
+pub const MAX_CHANGE_SET_FILE_BYTES: u64 = 4 * 1024 * 1024;
+/// Maximum aggregate bytes across changed candidate entries.
+pub const MAX_CHANGE_SET_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+/// Maximum canonical JSON bytes in one captured ChangeSet manifest.
+pub const MAX_CHANGE_SET_MANIFEST_BYTES: u64 =
+  (MAX_CHANGE_SET_CHANGED_PATHS as u64 * (MAX_FACTORY_PATH_BYTES as u64 + 128)) + (16 * 1024);
+/// Maximum raw Git path-index bytes for every bounded changed path.
+pub const MAX_CHANGE_SET_PATH_INDEX_BYTES: u64 =
+  (MAX_CHANGE_SET_CHANGED_PATHS as u64 * (MAX_FACTORY_PATH_BYTES as u64 + 128)) + 1024;
+/// Reserved logical Artifact name for the exact candidate Git bundle.
+pub const CHANGE_SET_BUNDLE_OUTPUT: &str = "change-set.bundle";
+/// Reserved logical Artifact name for the canonical capture manifest.
+pub const CHANGE_SET_MANIFEST_OUTPUT: &str = "change-set-manifest.json";
+/// Reserved logical Artifact name for optional bounded operator evidence.
+pub const CHANGE_SET_PATCH_OUTPUT: &str = "change-set.patch";
+/// Logical media type of a trusted ChangeSet bundle.
+pub const CHANGE_SET_BUNDLE_MEDIA_TYPE: &str = "application/vnd.octacity.changeset-git-bundle.v1";
+/// Logical media type of a trusted ChangeSet manifest.
+pub const CHANGE_SET_MANIFEST_MEDIA_TYPE: &str = "application/vnd.octacity.changeset-manifest.v1+json";
+/// Logical media type of an optional textual ChangeSet patch.
+pub const CHANGE_SET_PATCH_MEDIA_TYPE: &str = "text/x-diff";
+/// Reserved protected-input destination for an accepted candidate bundle.
+pub const CHANGE_SET_BUNDLE_INPUT: &str = "/octacity/protected/change-set.bundle";
+/// Reserved protected-input destination for an accepted capture manifest.
+pub const CHANGE_SET_MANIFEST_INPUT: &str = "/octacity/protected/change-set-manifest.json";
+/// Reserved producer identity used only by the trusted Agent capture boundary.
+pub const CHANGE_SET_CAPTURE_PRODUCER_ID: u64 = u64::MAX;
 /// Maximum exact arguments in one command permission.
 pub const MAX_FACTORY_COMMAND_ARGUMENTS: usize = 64;
 /// Maximum combined UTF-8 bytes in one command argument pattern.
@@ -31,6 +65,144 @@ pub const BLOCKING_TOOL_AUTHORIZATION_CAPABILITY: &str = "codex.blocking-pre-too
 pub const FACTORY_SCRATCH_ROOT: &str = "/workspace/scratch";
 /// Reserved writable root for declared Factory outputs.
 pub const FACTORY_OUTPUT_ROOT: &str = "/workspace/output";
+
+/// Exact immutable file metadata recorded by trusted ChangeSet capture.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedChangeSetFileV1 {
+  /// Portable file name relative to the private capture directory.
+  pub name: String,
+  /// Exact byte length.
+  pub size_bytes: u64,
+  /// Lowercase SHA-256 of the exact bytes.
+  pub sha256: String,
+}
+
+/// One canonically ordered path transition in a captured candidate.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedChangeSetPathV1 {
+  /// Git plumbing status such as `A`, `D`, or `M`.
+  pub status: String,
+  /// Portable repository-relative path.
+  pub path: String,
+  /// Six-digit mode in the exact base tree.
+  pub old_mode: String,
+  /// Six-digit mode in the candidate tree.
+  pub new_mode: String,
+}
+
+/// Canonical manifest produced outside the coding harness by trusted capture.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedChangeSetManifestV1 {
+  /// Manifest schema version; currently `1`.
+  pub format_version: u16,
+  /// Exact checked-out predecessor used as the candidate's direct parent.
+  pub base_revision: String,
+  /// Canonical candidate commit created by trusted capture.
+  pub candidate_revision: String,
+  /// Immutable Factory Stage Attempt identity.
+  pub stage_attempt_id: String,
+  /// Verified local capture-tool identity.
+  pub capture_tool: FactoryImmutableReferenceV3,
+  /// Canonically ordered changed paths and modes.
+  pub changed_paths: Vec<CapturedChangeSetPathV1>,
+  /// Required candidate bundle metadata.
+  pub bundle: CapturedChangeSetFileV1,
+  /// Optional bounded textual patch metadata.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub patch: Option<CapturedChangeSetFileV1>,
+}
+
+impl CapturedChangeSetManifestV1 {
+  /// Decodes one bounded canonical manifest and validates its structural contract.
+  pub fn decode_canonical(bytes: &[u8]) -> Result<Self, String> {
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_CHANGE_SET_MANIFEST_BYTES {
+      return Err("ChangeSet manifest exceeds its byte bound".to_owned());
+    }
+    let manifest: Self =
+      serde_json::from_slice(bytes).map_err(|_| "ChangeSet manifest is not valid JSON".to_owned())?;
+    manifest.validate()?;
+    let mut canonical =
+      serde_json::to_vec(&manifest).map_err(|_| "ChangeSet manifest is not serializable".to_owned())?;
+    canonical.push(b'\n');
+    if canonical != bytes {
+      return Err("ChangeSet manifest is not canonical".to_owned());
+    }
+    Ok(manifest)
+  }
+
+  /// Validates provider-owned identities, file metadata, and canonical path order.
+  pub fn validate(&self) -> Result<(), String> {
+    if self.format_version != 1 {
+      return Err("unsupported ChangeSet manifest version".to_owned());
+    }
+    validate_bounded_identity("base revision", &self.base_revision)?;
+    validate_bounded_identity("candidate revision", &self.candidate_revision)?;
+    validate_bounded_identity("stage attempt identity", &self.stage_attempt_id)?;
+    self.capture_tool.validate_identity()?;
+    self.bundle.validate(CHANGE_SET_BUNDLE_OUTPUT, None)?;
+    if let Some(patch) = &self.patch {
+      patch.validate(CHANGE_SET_PATCH_OUTPUT, Some(MAX_CHANGE_SET_PATCH_BYTES))?;
+    }
+    if self.changed_paths.len() > MAX_CHANGE_SET_CHANGED_PATHS as usize
+      || !self.changed_paths.windows(2).all(|pair| pair[0].path < pair[1].path)
+    {
+      return Err("ChangeSet paths are not uniquely ordered within their bound".to_owned());
+    }
+    for path in &self.changed_paths {
+      path.validate()?;
+    }
+    Ok(())
+  }
+}
+
+impl CapturedChangeSetFileV1 {
+  fn validate(&self, expected_name: &str, maximum_size: Option<u64>) -> Result<(), String> {
+    if self.name != expected_name
+      || self.sha256.len() != 64
+      || !self
+        .sha256
+        .bytes()
+        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+      || maximum_size.is_some_and(|maximum| self.size_bytes > maximum)
+    {
+      return Err("ChangeSet file metadata is invalid".to_owned());
+    }
+    Ok(())
+  }
+}
+
+impl CapturedChangeSetPathV1 {
+  /// Validates one portable changed-path transition.
+  pub fn validate(&self) -> Result<(), String> {
+    if !matches!(self.status.as_str(), "A" | "D" | "M" | "T")
+      || !matches!(self.old_mode.as_str(), "000000" | "100644" | "100755" | "120000")
+      || !matches!(self.new_mode.as_str(), "000000" | "100644" | "100755" | "120000")
+      || self.path.is_empty()
+      || self.path.len() > MAX_FACTORY_PATH_BYTES
+      || self.path.starts_with('/')
+      || self.path.ends_with('/')
+      || self.path.contains(['\\', ':', '\0'])
+      || self.path.chars().any(char::is_control)
+      || self
+        .path
+        .split('/')
+        .any(|component| component.is_empty() || matches!(component, "." | ".."))
+    {
+      return Err("ChangeSet path transition is invalid".to_owned());
+    }
+    Ok(())
+  }
+}
+
+fn validate_bounded_identity(name: &str, value: &str) -> Result<(), String> {
+  if value.is_empty() || value.len() > MAX_FACTORY_WIRE_IDENTITY_BYTES || value.chars().any(char::is_control) {
+    return Err(format!("ChangeSet {name} is invalid"));
+  }
+  Ok(())
+}
 
 /// Program-owned Factory stage represented as causal metadata only.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -86,13 +258,19 @@ pub struct FactoryCausalityV3 {
   pub task_envelope_digest: String,
   /// Digest of the exact subject revision and repository identity.
   pub subject_digest: String,
+  /// Trusted capture instruction for a writable implementation or rework.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub change_set_capture: Option<ChangeSetCaptureV3>,
+  /// Exact accepted candidate reconstructed before a later stage starts.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub change_set_materialization: Option<ChangeSetMaterializationV3>,
   /// Optional causal predecessor.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub parent: Option<FactoryCausalReferenceV3>,
 }
 
 impl FactoryCausalityV3 {
-  pub(crate) fn validate(&self) -> Result<(), String> {
+  pub(crate) fn validate(&self, inputs: &ProtectedInputManifestV3) -> Result<(), String> {
     for (name, value) in [
       ("factory.factory_run_id", self.factory_run_id.as_str()),
       (
@@ -108,12 +286,267 @@ impl FactoryCausalityV3 {
     }
     digest("factory.task_envelope_digest", &self.task_envelope_digest)?;
     digest("factory.subject_digest", &self.subject_digest)?;
+    if let Some(capture) = &self.change_set_capture {
+      capture.validate()?;
+      if !matches!(
+        self.stage_kind,
+        FactoryStageKindV3::Implementation | FactoryStageKindV3::Rework
+      ) {
+        return Err("ChangeSet capture is valid only for writable Factory stages".to_owned());
+      }
+    }
+    match (&self.change_set_materialization, self.stage_kind) {
+      (None, FactoryStageKindV3::Implementation) => {}
+      (
+        Some(materialization),
+        FactoryStageKindV3::Validation | FactoryStageKindV3::Evaluation | FactoryStageKindV3::Rework,
+      ) => {
+        materialization.validate(inputs)?;
+      }
+      (Some(_), FactoryStageKindV3::Implementation) => {
+        return Err("ChangeSet materialization is valid only for later Factory stages".to_owned());
+      }
+      (None, FactoryStageKindV3::Validation | FactoryStageKindV3::Evaluation | FactoryStageKindV3::Rework) => {
+        return Err("later Factory stages require exact ChangeSet materialization".to_owned());
+      }
+    }
     if let Some(parent) = &self.parent {
       bounded_identity("factory.parent.id", &parent.id)?;
       digest("factory.parent.digest", &parent.digest)?;
     }
     Ok(())
   }
+}
+
+/// Exact protected inputs used to reconstruct one accepted candidate.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeSetMaterializationV3 {
+  /// Logical protected input containing the accepted Git bundle.
+  pub bundle_input: String,
+  /// Logical protected input containing the canonical capture manifest.
+  pub manifest_input: String,
+  /// Exact accepted candidate commit expected after reconstruction.
+  pub candidate_revision: String,
+}
+
+impl ChangeSetMaterializationV3 {
+  fn validate(&self, inputs: &ProtectedInputManifestV3) -> Result<(), String> {
+    bounded_identity("factory.change_set_materialization.bundle_input", &self.bundle_input)?;
+    bounded_identity(
+      "factory.change_set_materialization.manifest_input",
+      &self.manifest_input,
+    )?;
+    if self.bundle_input == self.manifest_input {
+      return Err("ChangeSet materialization inputs must be distinct".to_owned());
+    }
+    if !(40..=64).contains(&self.candidate_revision.len())
+      || !self
+        .candidate_revision
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+      return Err("ChangeSet candidate revision must be a lowercase Git object identity".to_owned());
+    }
+    let bundle = inputs
+      .inputs
+      .iter()
+      .find(|input| input.artifact_id == self.bundle_input)
+      .ok_or_else(|| "ChangeSet bundle is absent from protected inputs".to_owned())?;
+    let manifest = inputs
+      .inputs
+      .iter()
+      .find(|input| input.artifact_id == self.manifest_input)
+      .ok_or_else(|| "ChangeSet manifest is absent from protected inputs".to_owned())?;
+    if bundle.media_type != CHANGE_SET_BUNDLE_MEDIA_TYPE
+      || bundle.destination != CHANGE_SET_BUNDLE_INPUT
+      || manifest.media_type != CHANGE_SET_MANIFEST_MEDIA_TYPE
+      || manifest.destination != CHANGE_SET_MANIFEST_INPUT
+    {
+      return Err("ChangeSet protected inputs use an invalid type or destination".to_owned());
+    }
+    Ok(())
+  }
+}
+
+/// Server-selected deterministic Git commit identity for trusted ChangeSet capture.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeSetCaptureV3 {
+  /// Canonical author and committer display name.
+  pub author_name: String,
+  /// Canonical author and committer email address.
+  pub author_email: String,
+  /// Unix second derived from the immutable Stage Attempt creation claim.
+  pub committed_at: u64,
+  /// Optional bounded textual patch. The bundle and manifest are always required.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub patch_max_bytes: Option<u64>,
+  /// Immutable changed-path, content, and size policy enforced by the Agent.
+  pub policy: ChangeSetCapturePolicyV3,
+}
+
+/// Handling of binary blobs during trusted ChangeSet capture.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeSetBinaryPolicyV3 {
+  /// Reject every changed blob detected as binary.
+  Reject,
+  /// Permit binary blobs within the same per-file and aggregate byte bounds.
+  Allow,
+}
+
+/// Built-in secret detector selected by immutable capture policy.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeSetSecretPatternV3 {
+  /// PEM private-key material.
+  PemPrivateKey,
+  /// AWS access-key identifiers.
+  AwsAccessKeyId,
+  /// GitHub personal, OAuth, user, server, refresh, or fine-grained tokens.
+  GitHubToken,
+  /// OpenAI project and legacy API keys.
+  OpenAiApiKey,
+}
+
+/// Signed fail-closed policy for one trusted ChangeSet capture.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeSetCapturePolicyV3 {
+  /// Canonically ordered repository-relative prefixes permitted to change.
+  /// The single value `.` selects the complete repository tree.
+  pub allowed_path_prefixes: Vec<String>,
+  /// Canonically ordered repository control paths that remain immutable.
+  pub forbidden_control_paths: Vec<String>,
+  /// Positive maximum number of changed paths.
+  pub max_changed_paths: u32,
+  /// Positive maximum bytes in one changed candidate entry.
+  pub max_file_bytes: u64,
+  /// Positive maximum aggregate bytes across changed candidate entries.
+  pub max_total_bytes: u64,
+  /// Whether an unchanged workspace may produce a candidate commit.
+  pub allow_empty: bool,
+  /// Explicit handling of binary changed blobs.
+  pub binary_policy: ChangeSetBinaryPolicyV3,
+  /// Canonically ordered built-in secret detectors that fail capture closed.
+  pub forbidden_secret_patterns: Vec<ChangeSetSecretPatternV3>,
+}
+
+impl ChangeSetCaptureV3 {
+  /// Validates the bounded canonical commit instruction independently of Git.
+  pub fn validate(&self) -> Result<(), String> {
+    bounded_capture_author("factory.change_set_capture.author_name", &self.author_name)?;
+    bounded_capture_author("factory.change_set_capture.author_email", &self.author_email)?;
+    if !self.author_email.contains('@') {
+      return Err("ChangeSet capture author email must contain '@'".to_owned());
+    }
+    if self.committed_at == 0 {
+      return Err("ChangeSet capture time must be greater than zero".to_owned());
+    }
+    if self
+      .patch_max_bytes
+      .is_some_and(|bytes| bytes == 0 || bytes > MAX_CHANGE_SET_PATCH_BYTES)
+    {
+      return Err(format!(
+        "ChangeSet patch byte bound must be between 1 and {MAX_CHANGE_SET_PATCH_BYTES}"
+      ));
+    }
+    self.policy.validate()?;
+    Ok(())
+  }
+}
+
+impl ChangeSetCapturePolicyV3 {
+  fn validate(&self) -> Result<(), String> {
+    if self.allowed_path_prefixes.is_empty() || self.allowed_path_prefixes.len() > MAX_FACTORY_PERMISSION_ENTRIES {
+      return Err("ChangeSet allowed path prefix count is outside protocol bounds".to_owned());
+    }
+    strictly_ordered(
+      "factory.change_set_capture.policy.allowed_path_prefixes",
+      &self.allowed_path_prefixes,
+      |value| value,
+    )?;
+    strictly_ordered(
+      "factory.change_set_capture.policy.forbidden_control_paths",
+      &self.forbidden_control_paths,
+      |value| value,
+    )?;
+    if self.forbidden_control_paths.len() > MAX_FACTORY_PERMISSION_ENTRIES {
+      return Err("ChangeSet forbidden control path count is outside protocol bounds".to_owned());
+    }
+    for path in self.allowed_path_prefixes.iter().chain(&self.forbidden_control_paths) {
+      portable_repository_path_prefix(path)?;
+    }
+    if self.max_changed_paths == 0 || self.max_changed_paths > MAX_CHANGE_SET_CHANGED_PATHS {
+      return Err(format!(
+        "ChangeSet changed path bound must be between 1 and {MAX_CHANGE_SET_CHANGED_PATHS}"
+      ));
+    }
+    if self.max_file_bytes == 0 || self.max_file_bytes > MAX_CHANGE_SET_FILE_BYTES {
+      return Err(format!(
+        "ChangeSet file byte bound must be between 1 and {MAX_CHANGE_SET_FILE_BYTES}"
+      ));
+    }
+    if self.max_total_bytes < self.max_file_bytes || self.max_total_bytes > MAX_CHANGE_SET_TOTAL_BYTES {
+      return Err(format!(
+        "ChangeSet total byte bound must be between max_file_bytes and {MAX_CHANGE_SET_TOTAL_BYTES}"
+      ));
+    }
+    if self.forbidden_secret_patterns.is_empty()
+      || self.forbidden_secret_patterns.len() > ChangeSetSecretPatternV3::ALL.len()
+    {
+      return Err("ChangeSet secret pattern selection is outside protocol bounds".to_owned());
+    }
+    strictly_ordered(
+      "factory.change_set_capture.policy.forbidden_secret_patterns",
+      &self.forbidden_secret_patterns,
+      |value| value,
+    )?;
+    Ok(())
+  }
+}
+
+impl ChangeSetSecretPatternV3 {
+  /// Complete stable detector vocabulary for the v3 capture contract.
+  pub const ALL: [Self; 4] = [
+    Self::PemPrivateKey,
+    Self::AwsAccessKeyId,
+    Self::GitHubToken,
+    Self::OpenAiApiKey,
+  ];
+}
+
+fn portable_repository_path_prefix(value: &str) -> Result<(), String> {
+  if value == "." {
+    return Ok(());
+  }
+  if value.is_empty()
+    || value.len() > MAX_FACTORY_PATH_BYTES
+    || value.starts_with('/')
+    || value.ends_with('/')
+    || value.contains(['\\', ':', '\0'])
+    || value.chars().any(char::is_control)
+    || value
+      .split('/')
+      .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+  {
+    Err("ChangeSet path prefix must be a canonical repository-relative portable path".to_owned())
+  } else {
+    Ok(())
+  }
+}
+
+fn bounded_capture_author(name: &str, value: &str) -> Result<(), String> {
+  if value.is_empty()
+    || value.len() > MAX_CHANGE_SET_AUTHOR_BYTES
+    || value.chars().any(|character| character.is_control())
+  {
+    return Err(format!(
+      "{name} must contain 1 to {MAX_CHANGE_SET_AUTHOR_BYTES} bytes without control characters"
+    ));
+  }
+  Ok(())
 }
 
 /// One immutable logical Artifact expected under the protected input root.
@@ -254,6 +687,11 @@ pub struct FactoryImmutableReferenceV3 {
 }
 
 impl FactoryImmutableReferenceV3 {
+  /// Validates the bounded logical identity, exact version, and SHA-256 digest.
+  pub fn validate_identity(&self) -> Result<(), String> {
+    self.validate("immutable reference")
+  }
+
   pub(crate) fn validate(&self, name: &str) -> Result<(), String> {
     bounded_key(name, &self.identity)?;
     bounded_identity(name, &self.version)?;
