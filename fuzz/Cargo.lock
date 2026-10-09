@@ -379,6 +379,7 @@ dependencies = [
  "async-trait",
  "libc",
  "octa-cache-protocol",
+ "octacity-protocol",
  "thiserror",
  "tokio",
  "tokio-util",
