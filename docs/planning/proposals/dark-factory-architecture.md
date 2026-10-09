@@ -5,6 +5,10 @@
 - Актуализировано: 2026-10-09
 - Область: OctaCity, Octa, coding harnesses, evaluation и delivery
 
+Верхнеуровневая карта системы, двухуровневой модели Factory Flow / Octa Task
+DAG, подсистем, connectors и полного ticket lifecycle находится в документе
+[OctaCity Dark Factory: обзор системы](./dark-factory-system-overview.md).
+
 ## 1. Резюме
 
 OctaCity остаётся самостоятельной CI/CD-платформой и дополнительно получает

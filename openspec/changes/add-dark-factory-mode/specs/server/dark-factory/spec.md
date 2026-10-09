@@ -65,17 +65,48 @@ The server SHALL accept bounded Work Submissions through versioned Work Source a
 - **THEN** no Factory Run is admitted for ambiguous source state and the failure is reported without executing repository code
 
 ### Requirement: Typed triage and deterministic phase-ready pools
-A Factory Configuration MAY select a nested triage flow whose nodes produce typed duplicate, Project-fit, category, severity, size, risk, and dependency observations. The triage flow SHALL reduce its bounded evidence into one immutable Triage Result with exact provenance. Deterministic policy SHALL map that result to only declared outcomes such as rejection, escalation, requirements work, or direct development; a model SHALL NOT commit the disposition itself.
+A Factory Configuration SHALL be able to select a two-phase nested triage flow. The eligibility phase SHALL produce an immutable Eligibility Result from typed duplicate candidates and Project-fit observations with exact provenance. Deterministic policy SHALL map that result only to declared rejection, escalation, or classification outcomes. The classification phase SHALL produce one immutable Triage Result containing `defect` or `feature_request` Work kind, component, severity, size, risk, dependencies, preliminary defect reproducibility, and a recommended route from the finite outcomes declared by the Flow Definition.
+
+Declared route outcomes SHALL be able to include research, requirements, protected test authoring, development, verification-only, already-fixed resolution, escalation, and rejection. Deterministic policy SHALL validate the recommendation against Work kind, risk, accepted evidence, budgets, and the pinned configuration before committing a route. A reasoning or Decision Signal result SHALL NOT commit eligibility, resolution, pool membership, or routing itself.
 
 The server SHALL expose durable phase-ready pools derived from authoritative Flow Run state. Selection from a pool SHALL be deterministic under configured severity, Project priority, age, dependency readiness, required capability, WIP, and budget rules and SHALL preserve the selected policy and input digests.
 
-#### Scenario: Small Work bypasses requirements authoring
-- **WHEN** the triage result classifies admitted Work within the configured direct-development bounds
-- **THEN** deterministic routing places it in the development-ready pool without creating a requirements-authoring node attempt
+#### Scenario: Duplicate is rejected before classification
+- **WHEN** the eligibility phase identifies an accepted duplicate candidate under the configured duplicate policy
+- **THEN** deterministic policy records the duplicate resolution and does not dispatch classification or later development work
+
+#### Scenario: Eligible defect needs deeper reproduction
+- **WHEN** classification accepts a defect whose preliminary reproducibility is inconclusive and whose declared route is research
+- **THEN** the server places the Work in the research-ready pool with the exact Eligibility Result and Triage Result provenance
+
+#### Scenario: Existing change already satisfies the ticket
+- **WHEN** classification evidence satisfies the configured `already_fixed` outcome
+- **THEN** deterministic policy records that typed resolution without dispatching requirements or implementation
+
+#### Scenario: Small Work bypasses specification authoring
+- **WHEN** the triage result classifies admitted Work within the configured specification-bypass bounds
+- **THEN** deterministic routing proceeds to Accepted Work Contract creation without creating a requirements-authoring node attempt or skipping later declared gates
 
 #### Scenario: Several items are ready for the same bounded capacity
 - **WHEN** multiple Flow Runs satisfy a phase-ready pool and capacity admits fewer than all of them
 - **THEN** the server selects them in the configured deterministic order and records the selection evidence
+
+### Requirement: Defect and feature research are isolated typed subflows
+A Factory Configuration SHALL be able to route an accepted Triage Result into an immutable Research Flow with its own Context projections, model or command profile, budgets, permissions, attempts, and typed outcomes. A defect research branch SHALL bind the exact subject, symptoms, environment contract, and prior observations and SHALL produce deterministic reproduction evidence plus one declared outcome such as `reproduced`, `intermittent`, `environment_specific`, `cannot_reproduce`, or `needs_human_input`. A feature research branch SHALL produce a bounded proposal Artifact containing source references, assumptions, alternatives, and unresolved questions.
+
+Research output SHALL remain a non-authoritative Stage Handoff. Deterministic policy SHALL map it only to declared requirements, protected test-authoring, verification, escalation, rejection, or terminal-resolution routes. Research prose SHALL NOT make Work implementation-ready, replace required reproduction evidence, widen authority, or create an undeclared transition. Mutable external and repository discovery included in research SHALL be frozen into the Context Manifest and applicable Retrieval Receipts.
+
+#### Scenario: Stronger defect research reproduces the failure
+- **WHEN** a defect research node using its pinned model and budget publishes valid reproduction evidence for the exact subject
+- **THEN** deterministic policy records the typed `reproduced` outcome and follows only the declared successor route
+
+#### Scenario: Defect cannot be reproduced within bounds
+- **WHEN** every declared reproduction attempt is exhausted without sufficient evidence
+- **THEN** deterministic policy records `cannot_reproduce` or escalates according to the pinned policy and does not silently continue to implementation
+
+#### Scenario: Feature research produces a proposal
+- **WHEN** a feature research node completes with a schema-valid proposal, sources, assumptions, and unresolved questions
+- **THEN** the proposal is retained as an exact bounded Artifact and cannot authorize implementation until the declared requirements or acceptance gates complete
 
 ### Requirement: Durable code-owned Factory lifecycle
 The server SHALL drive Factory Runs by interpreting their pinned Flow Definition closure into explicit persisted Flow Runs and Node Attempts. Program code SHALL own every node creation, nested-flow call and return, loop, branch, join, retry, timeout, budget check, and stop condition. A model result SHALL be treated only as a schema-validated typed value and SHALL NOT create a node, follow an undeclared edge, skip a required gate, or directly complete a Factory transition.
@@ -172,7 +203,9 @@ After a writable requirements, implementation, or rework Build, a trusted captur
 - **THEN** capture rejects the candidate, publishes no accepted ChangeSet, and records a typed security failure
 
 ### Requirement: Requirements cycles preserve exact candidate lineage
-A requirements flow SHALL support a deterministic direct-development branch for bounded small Work and, for larger Work, separate requirements-authoring and independent requirements-review nodes. Accepted requirements SHALL be captured as an exact immutable ChangeSet, linked to the admitted Work and original base, and SHALL be the only specification candidate that can make a Flow Run ready for implementation.
+A requirements flow SHALL support a deterministic specification-bypass branch for bounded small Work and, for larger Work, separate requirements-authoring and independent requirements-review nodes. Before bypassing specification authoring, the server SHALL freeze an Accepted Work Contract containing the immutable Work Envelope, accepted Eligibility and Triage Results, acceptance criteria, exact base, required Research Handoffs, policy digest, and provenance. The Accepted Work Contract SHALL feed the same declared protected test-authoring, implementation, review, and verification gates as an accepted specification unless the pinned Flow Definition explicitly omits one.
+
+For larger feature Work, requirements authoring SHALL create a new specification or change with acceptance criteria and declared design, performance, security, UI, compatibility, and operational requirements as applicable. For a defect, requirements authoring SHALL identify or amend the violated specification and SHALL record regression acceptance criteria. Accepted requirements SHALL be captured as an exact immutable ChangeSet, linked to the admitted Work and original base, and SHALL be the only specification candidate that can make the applicable Flow Run ready for implementation.
 
 An implementation, review, or verification node MAY return a typed Requirements Defect referencing exact contradictory, incomplete, or infeasible requirements evidence. Deterministic policy SHALL start a new append-only Workflow Cycle at the declared requirements node, retain all prior attempts and candidates, and mark descendants of the superseded requirements candidate ineligible to authorize later delivery or deployment. A new cycle SHALL traverse its declared review and acceptance gates again.
 
@@ -180,12 +213,20 @@ An implementation, review, or verification node MAY return a typed Requirements 
 - **WHEN** the independent requirements-review node is dispatched
 - **THEN** its Context Manifest contains the candidate specification and declared acceptance evidence but excludes the author's hidden transcript and undeclared context
 
+#### Scenario: Small Work bypasses specification authoring but not test-first gates
+- **WHEN** deterministic policy accepts Work within the configured specification-bypass bounds
+- **THEN** the server freezes one Accepted Work Contract and routes it to the declared protected test-authoring or later gates without treating model prose as requirements
+
+#### Scenario: Defect requirements preserve regression intent
+- **WHEN** a defect requires a specification correction
+- **THEN** the accepted requirements ChangeSet identifies the violated contract and regression acceptance criteria before implementation becomes ready
+
 #### Scenario: Implementation finds a specification defect
 - **WHEN** implementation returns a valid Requirements Defect for the exact active specification candidate
 - **THEN** the server appends a new requirements cycle and no downstream result from the superseded candidate may satisfy a later gate
 
 ### Requirement: Protected test-first development
-A test-authoring node SHALL be able to produce an immutable protected test bundle before implementation. The implementation node MAY have a control dependency on successful test authoring, but its Context Manifest, mounts, Artifact grants, prompts, and Stage Handoffs SHALL exclude protected test source, assertions, expected outputs, and author transcript. A validation node SHALL materialize the exact implementation candidate and exact protected test bundle in a trusted environment and publish reproducible typed evidence.
+A test-authoring node SHALL be able to consume an accepted specification candidate or Accepted Work Contract and produce an immutable protected test bundle before implementation. Its immutable plan SHALL declare which integration, end-to-end, performance, UI or visual, security or negative, migration, compatibility, and Project-specific acceptance checks are required. The implementation node MAY have a control dependency on successful test authoring, but its Context Manifest, mounts, Artifact grants, prompts, and Stage Handoffs SHALL exclude protected test source, assertions, expected outputs, and author transcript. A validation node SHALL materialize the exact implementation candidate and exact protected test bundle in a trusted environment and publish reproducible typed evidence.
 
 Deterministic policy or a separately scoped reasoning node MAY classify failed validation as an implementation defect, requirements defect, test defect, or indeterminate only from declared bounded evidence. That classification SHALL route through declared edges and SHALL NOT reveal protected test content to an implementation retry unless policy explicitly publishes a bounded remediation summary.
 
@@ -196,6 +237,21 @@ Deterministic policy or a separately scoped reasoning node MAY classify failed v
 #### Scenario: Candidate is checked against the protected bundle
 - **WHEN** implementation produces a candidate eligible for validation
 - **THEN** validation combines that exact candidate with the exact protected test bundle and records both identities in the Evidence Manifest
+
+#### Scenario: Test plan requires several verification classes
+- **WHEN** the pinned test-authoring plan requires integration, performance, and UI acceptance coverage
+- **THEN** the protected bundle records each required class and provenance and validation cannot report completeness while any required class is absent
+
+### Requirement: Implementation deliverables are explicit and policy-bound
+An implementation node SHALL receive an immutable deliverable contract derived from the accepted specification or Accepted Work Contract. The contract SHALL declare permitted production-code changes and required developer-visible unit tests, documentation, and build or deployment script updates when applicable. It SHALL NOT disclose protected test source or assertions. Trusted ChangeSet capture and deterministic validation SHALL verify required deliverable presence and allowed paths before the candidate can enter independent review.
+
+#### Scenario: Implementation omits a required deliverable
+- **WHEN** the accepted contract requires a documentation or build-script update and the captured candidate omits it
+- **THEN** deterministic validation records the missing deliverable and the candidate cannot become accepted despite a successful model result
+
+#### Scenario: Unit tests remain visible to ordinary developers
+- **WHEN** an implementation contract requires developer-visible unit tests
+- **THEN** those tests are captured with the implementation candidate while the separate protected acceptance bundle remains unavailable to the implementation call
 
 ### Requirement: Exact deterministic evidence
 Validation Builds SHALL run against a freshly materialized exact candidate and publish an immutable Evidence Manifest containing typed report and artifact references, digests, producer identities, candidate identity, freshness, and completeness. Compiler, lint, test, coverage, security, dependency, specification, and other deterministic outcomes SHALL reach the Decision Engine as authoritative evidence rather than through an LLM summary.
@@ -281,7 +337,7 @@ The Decision Engine SHALL apply a versioned policy to exact deterministic eviden
 ### Requirement: Policy-governed idempotent delivery and promotion
 Delivery and promotion nodes SHALL use protocol-separated trusted adapters to observe or idempotently act on only the exact accepted candidate and recorded policy. A delivery adapter MAY create or update one pull request or equivalent review target. A deployment trusted action SHALL invoke and observe the existing CI/CD Pipeline or Build path and SHALL NOT create a separate deployment executor. Coding, evaluator, verification, reasoning, and Decision Signal Jobs SHALL NOT receive forge-write or production credentials.
 
-An immutable Factory Configuration SHALL declare every required human gate, deterministic gate, environment progression, and promotion condition. A model SHALL NOT merge or deploy directly. Bounded post-deployment verification MAY contribute typed evidence to the Flow Run, while long-running production monitoring SHALL remain an external system that may submit new Work through the source-neutral admission boundary.
+An immutable Factory Configuration SHALL declare every required human gate, deterministic gate, environment progression, and Promotion Plan. A Promotion Plan SHALL bind the exact candidate, environments, rollout strategy, allocation or cohort parameters where applicable, observation windows, evidence requirements, budgets, success and rollback criteria, and finite outcomes. Declared strategies SHALL be able to include stage-only, stage plus human approval, stage plus deterministic evidence, canary, A/B, progressive rollout, and immediate production for an explicitly allowed low-risk class. A model or Decision Signal SHALL NOT merge or deploy directly and SHALL only recommend a route from the declared finite outcomes. Bounded post-deployment verification MAY contribute typed evidence to the Flow Run, while long-running production monitoring SHALL remain an external system that may submit new Work through the source-neutral admission boundary.
 
 #### Scenario: Delivery response is lost
 - **WHEN** the adapter may have created a pull request but the response is lost
@@ -294,6 +350,14 @@ An immutable Factory Configuration SHALL declare every required human gate, dete
 #### Scenario: Accepted candidate is promoted through existing CI/CD
 - **WHEN** all declared delivery, human, and environment gates are satisfied for an exact candidate
 - **THEN** the trusted action submits or observes an ordinary deployment Build and records its exact identity and terminal evidence
+
+#### Scenario: Canary observation fails
+- **WHEN** a canary Promotion Plan records a required health or performance failure during its immutable observation window
+- **THEN** deterministic policy follows the declared rollback or escalation outcome and cannot promote full production from a model recommendation
+
+#### Scenario: A/B continuation uses a bounded signal
+- **WHEN** an A/B Promotion Plan permits a Decision Signal to recommend one declared continuation outcome from recorded experiment evidence
+- **THEN** the signal receipt is retained as a non-authoritative input and deterministic or human policy commits the continuation, rollback, or escalation decision
 
 #### Scenario: Black-box verification is isolated from implementation
 - **WHEN** a verification subflow evaluates the deployed candidate without source authority
