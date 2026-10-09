@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use octacity_protocol::{FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT, PROTECTED_INPUT_ROOT};
 use octacity_server_factory::{
-  FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryTaskEnvelope,
-  FactoryTaskMode, FactoryTaskResultSchema, ImmutableReference, MountMode,
+  EvaluationPlan, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryTaskEnvelope,
+  FactoryTaskMode, FactoryTaskResultSchema, ImmutableReference, MAX_ASSESSMENT_EVIDENCE_REFERENCES,
+  MAX_ASSESSMENT_FINDINGS, MacroCall, MacroCallKind, MountMode,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -171,14 +173,20 @@ pub enum CodexCompilationError {
   #[error("Factory Task Envelope must select exactly one model credential profile")]
   CredentialProfile,
   /// Evaluation authority permits mutation of the exact candidate source.
-  #[error("Factory evaluation must mount the candidate source read-only")]
+  #[error("Factory task workspace mounts do not match the selected mode")]
   CandidateWriteAccess,
+  /// Evaluation authority includes an undeclared tool capability.
+  #[error("Factory evaluation cannot invoke arbitrary evidence tools")]
+  EvaluationToolAccess,
   /// A declared output cannot be represented by the pinned Codex task safely.
   #[error("Factory Task Envelope contains an unsupported Codex deliverable")]
   UnsupportedDeliverable,
   /// Canonical protected input bytes could not be encoded.
   #[error("Factory Codex protected input serialization failed")]
   Serialization,
+  /// Reviewer plan, call node, and Task Envelope do not describe one invocation.
+  #[error("Factory Codex reviewer bindings are inconsistent")]
+  ReviewerBindings,
 }
 
 /// Computes the raw SHA-256 digest frozen into a Task Envelope for a rendered prompt.
@@ -288,6 +296,36 @@ pub fn compile_codex_task(
   })
 }
 
+/// Compiles one plan-selected independent reviewer through the ordinary Codex task path.
+///
+/// This preflight binds the immutable review plan and evaluator branch to one
+/// durable call node and its distinct evaluation Task Envelope before protected
+/// inputs or the evaluation credential can reach an ordinary Factory Build.
+pub fn compile_codex_reviewer(
+  plan: &EvaluationPlan,
+  evaluator: &ImmutableReference,
+  call: &MacroCall,
+  envelope: &FactoryTaskEnvelope,
+  rendered_prompt: &str,
+  credential_profiles: &FactoryCredentialProfiles,
+) -> Result<CompiledCodexTask, CodexCompilationError> {
+  let subject_matches = envelope.subject().candidate() == Some(plan.subject()) && call.subject() == envelope.subject();
+  let call_matches = call.kind() == MacroCallKind::Evaluate
+    && call.stage_attempt_id() == envelope.stage_attempt_id()
+    && call.context_manifest_id() == envelope.context_manifest_id()
+    && call.context_digest() == envelope.context_manifest_digest()
+    && call.budget() == envelope.budget();
+  if envelope.mode() != FactoryTaskMode::Evaluate
+    || !plan.has_evaluator(evaluator)
+    || !subject_matches
+    || !call_matches
+    || !envelope.budget().fits_within(plan.budget())
+  {
+    return Err(CodexCompilationError::ReviewerBindings);
+  }
+  compile_codex_task(envelope, rendered_prompt, credential_profiles)
+}
+
 fn validate_prompt(envelope: &FactoryTaskEnvelope, prompt: &str) -> Result<(), CodexCompilationError> {
   if prompt.trim().is_empty() || prompt.len() > MAX_CODEX_PROMPT_BYTES || prompt.contains('\0') {
     return Err(CodexCompilationError::InvalidPrompt);
@@ -331,6 +369,9 @@ fn validate_authority(
     .authorize(envelope.stage_attempt_id(), consumer, selected_profile)
     .map_err(|_| CodexCompilationError::CredentialProfile)?;
   validate_source_mount(envelope)?;
+  if envelope.mode() == FactoryTaskMode::Evaluate && envelope.permissions().tools().next().is_some() {
+    return Err(CodexCompilationError::EvaluationToolAccess);
+  }
 
   let deliverables = envelope.deliverables();
   if deliverables.iter().any(|deliverable| !deliverable.required())
@@ -361,7 +402,7 @@ fn validate_authority(
   let artifact_count = u32::try_from(deliverables.len())
     .map_err(|_| CodexCompilationError::UnsupportedDeliverable)?
     .saturating_add(2);
-  if !required.is_subset(&allowed)
+  if required != allowed
     || outputs.max_artifact_count() < artifact_count
     || outputs.max_report_count() < 1
     || outputs.max_artifact_bytes() == 0
@@ -377,12 +418,28 @@ fn validate_source_mount(envelope: &FactoryTaskEnvelope) -> Result<(), CodexComp
     FactoryTaskMode::Evaluate => MountMode::ReadOnly,
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => MountMode::ReadWrite,
   };
-  let source_mounts = envelope
-    .permissions()
-    .mounts()
-    .filter(|mount| mount.root().as_str() == "/workspace/source")
+  let mounts = envelope.permissions().mounts().collect::<Vec<_>>();
+  let source_mounts = mounts
+    .iter()
+    .filter(|mount| mount.root().as_str() == FACTORY_SOURCE_ROOT)
     .collect::<Vec<_>>();
-  if source_mounts.len() != 1 || source_mounts[0].mode() != required_mode {
+  let valid_evaluation_workspace = envelope.mode() != FactoryTaskMode::Evaluate
+    || (mounts.len() == 4
+      && [
+        (PROTECTED_INPUT_ROOT, MountMode::ReadOnly),
+        (FACTORY_OUTPUT_ROOT, MountMode::ReadWrite),
+        (FACTORY_SCRATCH_ROOT, MountMode::ReadWrite),
+        (FACTORY_SOURCE_ROOT, MountMode::ReadOnly),
+      ]
+      .into_iter()
+      .all(|(root, mode)| {
+        mounts
+          .iter()
+          .filter(|mount| mount.root().as_str() == root && mount.mode() == mode)
+          .count()
+          == 1
+      }));
+  if source_mounts.len() != 1 || source_mounts[0].mode() != required_mode || !valid_evaluation_workspace {
     return Err(CodexCompilationError::CandidateWriteAccess);
   }
   Ok(())
@@ -496,6 +553,20 @@ fn codex_deliverables(envelope: &FactoryTaskEnvelope) -> Vec<CodexDeliverable<'_
 fn result_schema(schema: FactoryTaskResultSchema) -> Value {
   let bounded_text = || json!({ "type": "string", "minLength": 1, "maxLength": 2048 });
   let bounded_texts = || json!({ "type": "array", "maxItems": 128, "items": bounded_text() });
+  let evidence_keys = || {
+    json!({
+      "type": "array",
+      "minItems": 1,
+      "maxItems": MAX_ASSESSMENT_EVIDENCE_REFERENCES,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      }
+    })
+  };
   match schema {
     FactoryTaskResultSchema::ImplementationV1 => json!({
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -509,7 +580,7 @@ fn result_schema(schema: FactoryTaskResultSchema) -> Value {
         "unresolved_items": bounded_texts(),
         "changed_components": {
           "type": "array",
-          "maxItems": 128,
+          "maxItems": MAX_ASSESSMENT_FINDINGS,
           "items": { "type": "string", "minLength": 1, "maxLength": 1024 }
         },
         "validation_observations": bounded_texts()
@@ -537,18 +608,22 @@ fn result_schema(schema: FactoryTaskResultSchema) -> Value {
                 "properties": {
                   "kind": { "const": "violation" },
                   "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-                  "summary": bounded_text()
+                  "summary": bounded_text(),
+                  "evidence": evidence_keys(),
+                  "remediation": bounded_text()
                 },
-                "required": ["kind", "severity", "summary"]
+                "required": ["kind", "severity", "summary", "evidence", "remediation"]
               },
               {
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
                   "kind": { "const": "evidence_gap" },
-                  "summary": bounded_text()
+                  "summary": bounded_text(),
+                  "evidence": evidence_keys(),
+                  "remediation": bounded_text()
                 },
-                "required": ["kind", "summary"]
+                "required": ["kind", "summary", "evidence", "remediation"]
               }
             ]
           }

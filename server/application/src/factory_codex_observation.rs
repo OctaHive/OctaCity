@@ -14,22 +14,23 @@ use octacity_server_factory::{
   MacroCallCompletion, MacroCallCompletionOutputs, MacroCallTerminal, StageHandoff, StageHandoffContent,
   StageHandoffDeclaration, StageHandoffId, StageHandoffOutcome, StageHandoffReferences,
 };
-use octacity_server_orchestrator::BuildState;
 use octacity_server_store::FactoryRunHistoryAppend;
 
-use crate::{
-  FactoryBuildObservation,
-  factory_codex_contract::{CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT, CODEX_RUN_TRACE, CODEX_STAGE_SUMMARY},
-};
+use crate::{FactoryBuildObservation, factory_codex_contract::CODEX_STAGE_SUMMARY};
 
+mod evaluation;
 mod evidence;
 mod records;
+mod validation;
 
-use evidence::{
-  artifact_reference, document_map, output_map, record_output_types, valid_provenance,
-  valid_provider_unavailable_events, valid_runner_events, valid_trace,
+pub use evaluation::{
+  FactoryCodexEvaluationObservation, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
+  observe_codex_evaluation,
 };
-use records::{CodexProvenanceRecord, CodexResultRecord, implementation_report};
+
+use evidence::artifact_reference;
+use records::implementation_report;
+use validation::validate_codex_run;
 
 /// Stable semantic outcome recorded by the pinned Codex plugin.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -286,117 +287,27 @@ pub fn observe_codex_implementation(
   runner_events: &[RunnerEventPayload],
   documents: &[FactoryCodexOutputDocument],
 ) -> FactoryCodexImplementationObservation {
-  let Some(output_bytes) = build
-    .outputs()
-    .iter()
-    .try_fold(0_u64, |total, output| total.checked_add(output.size_bytes))
-  else {
-    return failed(FactoryCodexObservationStatus::OutputOverflow, BudgetUsage::default());
-  };
-  let base_usage = BudgetUsage {
-    attempts: 1,
+  let validated = match validate_codex_run::<records::ImplementationReportWire>(
+    envelope,
+    FactoryTaskMode::Implement,
+    build,
     elapsed_millis,
-    output_bytes,
-    ..BudgetUsage::default()
-  };
-  if envelope.mode() != FactoryTaskMode::Implement || !build.state().is_terminal() {
-    return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage);
-  }
-  match build.state() {
-    BuildState::Cancelled => return failed(FactoryCodexObservationStatus::Cancelled, base_usage),
-    BuildState::Failed if build.timed_out() => {
-      return failed(FactoryCodexObservationStatus::TimedOut, base_usage);
-    }
-    BuildState::Failed if valid_provider_unavailable_events(runner_events) => {
-      return failed(FactoryCodexObservationStatus::ProviderUnavailable, base_usage);
-    }
-    BuildState::Failed if build.infrastructure_retry_eligible() => {
-      return failed(FactoryCodexObservationStatus::InfrastructureFailed, base_usage);
-    }
-    BuildState::Failed => return failed(FactoryCodexObservationStatus::ExecutionFailed, base_usage),
-    BuildState::Succeeded => {}
-    BuildState::Queued | BuildState::Running => {
-      return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage);
-    }
-  }
-  if base_usage.output_bytes > envelope.budget().max_output_bytes() {
-    return failed(FactoryCodexObservationStatus::OutputOverflow, base_usage);
-  }
-  if !valid_runner_events(runner_events) {
-    return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage);
-  }
-  let outputs = match output_map(build.outputs()) {
-    Some(outputs) => outputs,
-    None => return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage),
-  };
-  let required = envelope.deliverables().iter().map(|item| item.kind().as_str()).chain([
-    CODEX_RUN_TRACE,
-    CODEX_RUN_PROVENANCE,
-    CODEX_RUN_RESULT,
-  ]);
-  if required.into_iter().any(|name| !outputs.contains_key(name)) {
-    return failed(FactoryCodexObservationStatus::MissingDeliverable, base_usage);
-  }
-  let documents = match document_map(documents, &outputs) {
-    Some(documents) => documents,
-    None => return failed(FactoryCodexObservationStatus::IntegrityFailure, base_usage),
-  };
-  let Some(result_document) = documents.get(CODEX_RUN_RESULT) else {
-    return failed(FactoryCodexObservationStatus::MissingDeliverable, base_usage);
-  };
-  let Some(trace_document) = documents.get(CODEX_RUN_TRACE) else {
-    return failed(FactoryCodexObservationStatus::MissingDeliverable, base_usage);
-  };
-  let Some(provenance_document) = documents.get(CODEX_RUN_PROVENANCE) else {
-    return failed(FactoryCodexObservationStatus::MissingDeliverable, base_usage);
-  };
-  if !record_output_types(result_document, trace_document, provenance_document) {
-    return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage);
-  }
-  let result: CodexResultRecord = match serde_json::from_slice(&result_document.bytes) {
+    runner_events,
+    documents,
+  ) {
     Ok(value) => value,
-    Err(error) if error.is_syntax() || error.is_eof() => {
-      return failed(FactoryCodexObservationStatus::InvalidJson, base_usage);
-    }
-    Err(_) => return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage),
+    Err(failure) => return failed(failure.status, failure.usage),
   };
-  let provenance: CodexProvenanceRecord = match serde_json::from_slice(&provenance_document.bytes) {
-    Ok(value) => value,
-    Err(error) if error.is_syntax() || error.is_eof() => {
-      return failed(FactoryCodexObservationStatus::InvalidJson, base_usage);
-    }
-    Err(_) => return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage),
-  };
-  if !valid_provenance(envelope, &result, &provenance) || !valid_trace(&trace_document.bytes) {
-    return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage);
-  }
-  let report = match implementation_report(result.outcome.into(), result.structured_result) {
+  let report = match implementation_report(validated.harness_outcome, validated.structured_result) {
     Some(value) => value,
-    None => return failed(FactoryCodexObservationStatus::InvalidSchema, base_usage),
+    None => return failed(FactoryCodexObservationStatus::InvalidSchema, validated.usage),
   };
-  let tokens = match result
-    .usage
-    .get("input_tokens")
-    .copied()
-    .unwrap_or(0)
-    .checked_add(result.usage.get("output_tokens").copied().unwrap_or(0))
-  {
-    Some(value) => value,
-    None => return failed(FactoryCodexObservationStatus::BudgetExceeded, base_usage),
-  };
-  let usage = BudgetUsage {
-    tokens,
-    cost_micro_units: result.usage.get("cost_micro_units").copied().unwrap_or(0),
-    ..base_usage
-  };
-  if usage.validate(envelope.budget()).is_err() {
-    return failed(FactoryCodexObservationStatus::BudgetExceeded, usage);
-  }
+  let usage = validated.usage;
   let deliverables = envelope
     .deliverables()
     .iter()
     .filter_map(|declaration| {
-      outputs.get(declaration.kind().as_str()).and_then(|identity| {
+      validated.outputs.get(declaration.kind().as_str()).and_then(|identity| {
         artifact_reference(identity).map(|artifact| FactoryProducedDeliverable::new(declaration.clone(), artifact))
       })
     })
@@ -404,14 +315,9 @@ pub fn observe_codex_implementation(
   if deliverables.len() != envelope.deliverables().len() {
     return failed(FactoryCodexObservationStatus::IntegrityFailure, usage);
   }
-  let result_reference = artifact_reference(&result_document.identity);
-  let trace_reference = artifact_reference(&trace_document.identity);
-  let provenance_reference = artifact_reference(&provenance_document.identity);
-  let (Some(result_reference), Some(trace_reference), Some(provenance_reference)) =
-    (result_reference, trace_reference, provenance_reference)
-  else {
-    return failed(FactoryCodexObservationStatus::IntegrityFailure, usage);
-  };
+  let result_reference = validated.result;
+  let trace_reference = validated.trace;
+  let provenance_reference = validated.provenance;
   let provenance_digest = provenance_reference.content_digest();
   let summary = BoundedSummary::new(envelope.subject().clone(), report.summary.clone(), provenance_digest);
   let Ok(summary_bytes) = summary.canonical_bytes() else {

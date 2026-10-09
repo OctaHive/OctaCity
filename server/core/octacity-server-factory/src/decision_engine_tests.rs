@@ -1,4 +1,6 @@
-use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId};
+use octacity_server_domain::{
+  ArtifactId, AttemptId, BuildId, ImmutableRevision, JobId, ProjectId, RepositoryId, Timestamp,
+};
 
 use super::*;
 
@@ -19,11 +21,53 @@ fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).expect("fixture key is valid")
 }
 
-fn text(value: &str) -> FactoryText {
-  FactoryText::new(value).expect("fixture text is valid")
+fn text(value: &str) -> FactorySafeText {
+  FactorySafeText::new(value).expect("fixture text is valid")
+}
+
+fn reference(identity: &str, byte: u8) -> ImmutableReference {
+  ImmutableReference::new(key(identity), key("v1"), digest(byte))
+}
+
+fn evidence_requirement(kind: &str, byte: u8) -> EvidenceRequirement {
+  EvidenceRequirement::new(
+    key(kind),
+    EvidenceOutputKind::Report,
+    reference(&format!("{kind}-schema"), byte),
+    reference("validator", 20),
+    reference("validation-plugin", 21),
+  )
+}
+
+fn evidence_item(subject: CandidateSubject, kind: &str, byte: u8, outcome: DeterministicGateOutcome) -> EvidenceItem {
+  EvidenceItem::new(EvidenceItemInput {
+    subject,
+    kind: key(kind),
+    output_kind: EvidenceOutputKind::Report,
+    artifact: artifact(byte),
+    schema: reference(&format!("{kind}-schema"), byte),
+    producer: EvidenceProducer::new(
+      BuildId::generate(),
+      AttemptId::generate(),
+      JobId::generate(),
+      reference("validator", 20),
+      reference("validation-plugin", 21),
+    ),
+    outcome,
+    published_at: Timestamp::from_unix_millis(3).expect("fixture publication time"),
+    fresh_until: Timestamp::from_unix_millis(5).expect("fixture freshness deadline"),
+  })
 }
 
 fn fixture() -> Fixture {
+  fixture_with_test_outcome(DeterministicGateOutcome::Passed)
+}
+
+fn fixture_with_test_outcome(test_outcome: DeterministicGateOutcome) -> Fixture {
+  fixture_with_test_outcome_and_quorum(test_outcome, 1)
+}
+
+fn fixture_with_test_outcome_and_quorum(test_outcome: DeterministicGateOutcome, quorum: u16) -> Fixture {
   let exact = ExactSubject::new(
     ProjectId::generate(),
     RepositoryId::generate(),
@@ -82,20 +126,63 @@ fn fixture() -> Fixture {
     EvidenceManifestId::generate(),
     &changeset,
     candidate.clone(),
+    Timestamp::from_unix_millis(4).expect("fixture construction time"),
+    vec![evidence_requirement("tests", 4), evidence_requirement("security", 5)],
     vec![
-      EvidenceItem::new(key("tests"), artifact(4)),
-      EvidenceItem::new(key("security"), artifact(5)),
+      evidence_item(candidate.clone(), "tests", 4, test_outcome),
+      evidence_item(candidate.clone(), "security", 5, DeterministicGateOutcome::Passed),
     ],
   )
   .expect("fixture evidence is valid");
-  let plan = EvaluationPlan::new(
-    EvaluationPlanId::generate(),
-    &evidence,
-    candidate,
-    vec![key("quality")],
-    vec![key("review-a"), key("review-b")],
+  let budget = BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture evaluation budget is valid");
+  let pack = CriterionPack::new(
+    evidence.subject().exact().project_id(),
+    reference("quality", 30),
+    reference("criterion-schema", 33),
+    artifact(30),
   )
-  .expect("fixture plan is valid");
+  .expect("fixture criterion pack is valid");
+  let first = reference("review-a", 31);
+  let second = reference("review-b", 32);
+  let data_handling = reference("restricted-source", 34);
+  let evaluation_policy = EvaluationPolicy::try_new(
+    vec![pack.reference().clone()],
+    vec![first.clone(), second.clone()],
+    quorum,
+    budget,
+  )
+  .expect("fixture evaluation policy is valid");
+  let definition = EvaluationPlanDefinition {
+    id: EvaluationPlanId::generate(),
+    purpose: ReviewPurpose::Implementation,
+    subject: candidate,
+    criterion_packs: vec![pack],
+    branches: vec![
+      ReviewBranch::new(key("review-a"), first.clone(), true),
+      ReviewBranch::new(key("review-b"), second.clone(), false),
+    ],
+    budget,
+    created_at: Timestamp::from_unix_millis(4).expect("fixture plan creation time"),
+    deadline: Timestamp::from_unix_millis(5).expect("fixture plan deadline"),
+    data_handling: data_handling.clone(),
+  };
+  let capabilities = [
+    ReviewEvaluatorCapability::try_new(
+      first,
+      vec![ReviewPurpose::Implementation],
+      vec![data_handling.clone()],
+      budget,
+    )
+    .expect("fixture evaluator capability is valid"),
+    ReviewEvaluatorCapability::try_new(second, vec![ReviewPurpose::Implementation], vec![data_handling], budget)
+      .expect("fixture evaluator capability is valid"),
+  ];
+  let plan = match prepare_evaluation_plan(definition, &evidence, &evaluation_policy, &capabilities)
+    .expect("fixture plan preparation succeeds")
+  {
+    ReviewPlanPreparation::Ready(plan) => *plan,
+    ReviewPlanPreparation::Escalate(reason) => panic!("fixture plan unexpectedly escalated: {reason:?}"),
+  };
   Fixture { evidence, plan }
 }
 
@@ -114,36 +201,71 @@ fn policy(indeterminate_policy: IndeterminatePolicy) -> DecisionPolicy {
   .expect("fixture policy is valid")
 }
 
-fn gate(kind: &str, evidence_digest: FactoryDigest, outcome: DeterministicGateOutcome) -> DeterministicGate {
-  DeterministicGate::new(key(kind), evidence_digest, outcome)
-}
-
 fn assessment(
   fixture: &Fixture,
   evaluator: &str,
   outcome: AssessmentOutcome,
   findings: Vec<AssessmentFinding>,
 ) -> Assessment {
+  let evaluator = fixture
+    .plan
+    .branches()
+    .iter()
+    .find(|branch| branch.evaluator().identity() == &key(evaluator))
+    .expect("fixture evaluator is selected")
+    .evaluator()
+    .clone();
   Assessment::new(
     AssessmentId::generate(),
     &fixture.plan,
-    fixture.plan.subject().clone(),
-    key(evaluator),
-    outcome,
-    findings,
+    AssessmentInput {
+      subject: fixture.plan.subject().clone(),
+      evaluator,
+      outcome,
+      summary: BoundedSummary::new(
+        FactoryTaskSubject::Candidate(fixture.plan.subject().clone()),
+        text("Independent review completed"),
+        digest(50),
+      ),
+      findings,
+      model: reference("review-model", 51),
+      prompt_digest: digest(52),
+      result: artifact(53),
+      provenance: artifact(54),
+    },
   )
   .expect("fixture assessment is valid")
 }
 
-fn decide(
-  fixture: &Fixture,
-  policy: &DecisionPolicy,
-  gates: &[DeterministicGate],
-  assessments: &[Assessment],
-) -> Result<Decision, FactoryError> {
+fn evidence_gap(fixture: &Fixture, summary: &str) -> AssessmentFinding {
+  AssessmentFinding::from_result(
+    &EvaluationResultFinding::EvidenceGap {
+      summary: text(summary),
+      evidence: vec![key("tests")],
+      remediation: text("Publish stronger deterministic evidence"),
+    },
+    &fixture.evidence,
+  )
+  .expect("fixture evidence gap is valid")
+}
+
+fn violation(fixture: &Fixture, severity: FindingSeverity, summary: &str) -> AssessmentFinding {
+  AssessmentFinding::from_result(
+    &EvaluationResultFinding::Violation {
+      severity,
+      summary: text(summary),
+      evidence: vec![key("tests")],
+      remediation: text("Correct the candidate and run validation again"),
+    },
+    &fixture.evidence,
+  )
+  .expect("fixture violation is valid")
+}
+
+fn decide(fixture: &Fixture, policy: &DecisionPolicy, assessments: &[Assessment]) -> Result<Decision, FactoryError> {
   evaluate_decision(
     DecisionId::generate(),
-    DecisionEngineInput::new(&fixture.evidence, &fixture.plan, policy, gates, assessments),
+    DecisionEngineInput::new(&fixture.evidence, &fixture.plan, policy, assessments),
   )
 }
 
@@ -151,10 +273,9 @@ fn decide(
 fn accepts_only_when_every_mandatory_policy_rule_is_satisfied() {
   let fixture = fixture();
   let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
   let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
 
-  let decision = decide(&fixture, &policy, &gates, &assessments).expect("decision succeeds");
+  let decision = decide(&fixture, &policy, &assessments).expect("decision succeeds");
 
   assert_eq!(decision.outcome(), DecisionOutcome::Accept);
   assert_eq!(decision.reasons(), &[DecisionReason::PolicySatisfied]);
@@ -166,28 +287,42 @@ fn accepts_only_when_every_mandatory_policy_rule_is_satisfied() {
 
 #[test]
 fn failed_or_missing_required_evidence_cannot_be_overridden_by_satisfied_assessments() {
-  let fixture = fixture();
-  let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
-  let cases = [
-    (
-      vec![gate("tests", digest(4), DeterministicGateOutcome::Failed)],
-      DecisionReason::RequiredEvidenceFailed(key("tests")),
-    ),
-    (vec![], DecisionReason::RequiredEvidenceMissing(key("tests"))),
-  ];
+  let failed = fixture_with_test_outcome(DeterministicGateOutcome::Failed);
+  let failed_assessments = [assessment(&failed, "review-a", AssessmentOutcome::Satisfied, vec![])];
+  let decision =
+    decide(&failed, &policy(IndeterminatePolicy::RequiredOnly), &failed_assessments).expect("decision succeeds");
+  assert_eq!(decision.outcome(), DecisionOutcome::Rework);
+  assert!(
+    decision
+      .reasons()
+      .contains(&DecisionReason::RequiredEvidenceFailed(key("tests")))
+  );
 
-  for (gates, reason) in cases {
-    let decision = decide(&fixture, &policy, &gates, &assessments).expect("decision succeeds");
-    assert_eq!(decision.outcome(), DecisionOutcome::Rework);
-    assert!(decision.reasons().contains(&reason));
-  }
+  let fixture = fixture();
+  let missing_policy = DecisionPolicy::try_new(
+    DecisionPolicyVersion::INITIAL,
+    DecisionPolicyDefinition {
+      required_evidence: vec![key("missing")],
+      required_evaluators: vec![key("review-a")],
+      quorum: 1,
+      severity_threshold: FindingSeverity::High,
+      indeterminate_policy: IndeterminatePolicy::RequiredOnly,
+      failure_outcome: DecisionOutcome::Rework,
+    },
+  )
+  .expect("fixture policy is valid");
+  let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
+  let decision = decide(&fixture, &missing_policy, &assessments).expect("decision succeeds");
+  assert!(
+    decision
+      .reasons()
+      .contains(&DecisionReason::RequiredEvidenceMissing(key("missing")))
+  );
 }
 
 #[test]
 fn policy_selects_each_declared_non_accepting_outcome() {
-  let fixture = fixture();
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Failed)];
+  let fixture = fixture_with_test_outcome(DeterministicGateOutcome::Failed);
   let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
 
   for expected in [
@@ -209,7 +344,7 @@ fn policy_selects_each_declared_non_accepting_outcome() {
     )
     .expect("fixture policy is valid");
 
-    let decision = decide(&fixture, &policy, &gates, &assessments).expect("decision succeeds");
+    let decision = decide(&fixture, &policy, &assessments).expect("decision succeeds");
     assert_eq!(decision.outcome(), expected);
     assert_ne!(decision.input_digest(), FactoryDigest::from_bytes([0; 32]));
     assert_eq!(decision.policy_digest(), policy.digest());
@@ -218,19 +353,16 @@ fn policy_selects_each_declared_non_accepting_outcome() {
 
 #[test]
 fn required_indeterminate_evidence_and_assessments_never_accept() {
-  let fixture = fixture();
+  let fixture = fixture_with_test_outcome(DeterministicGateOutcome::Indeterminate);
   let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Indeterminate)];
   let assessments = [assessment(
     &fixture,
     "review-a",
     AssessmentOutcome::Indeterminate,
-    vec![AssessmentFinding::EvidenceGap {
-      summary: text("Required source evidence is unavailable"),
-    }],
+    vec![evidence_gap(&fixture, "Required source evidence is unavailable")],
   )];
 
-  let decision = decide(&fixture, &policy, &gates, &assessments).expect("decision succeeds");
+  let decision = decide(&fixture, &policy, &assessments).expect("decision succeeds");
 
   assert_eq!(decision.outcome(), DecisionOutcome::Rework);
   assert_eq!(
@@ -245,31 +377,23 @@ fn required_indeterminate_evidence_and_assessments_never_accept() {
 #[test]
 fn optional_indeterminate_assessments_follow_the_versioned_policy() {
   let fixture = fixture();
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
   let assessments = [
     assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]),
     assessment(
       &fixture,
       "review-b",
       AssessmentOutcome::Indeterminate,
-      vec![AssessmentFinding::EvidenceGap {
-        summary: text("Optional evidence is unavailable"),
-      }],
+      vec![evidence_gap(&fixture, "Optional evidence is unavailable")],
     ),
   ];
 
   assert_eq!(
-    decide(
-      &fixture,
-      &policy(IndeterminatePolicy::RequiredOnly),
-      &gates,
-      &assessments,
-    )
-    .expect("decision succeeds")
-    .outcome(),
+    decide(&fixture, &policy(IndeterminatePolicy::RequiredOnly), &assessments,)
+      .expect("decision succeeds")
+      .outcome(),
     DecisionOutcome::Accept
   );
-  let strict = decide(&fixture, &policy(IndeterminatePolicy::Any), &gates, &assessments).expect("decision succeeds");
+  let strict = decide(&fixture, &policy(IndeterminatePolicy::Any), &assessments).expect("decision succeeds");
   assert_eq!(strict.outcome(), DecisionOutcome::Rework);
   assert!(
     strict
@@ -282,7 +406,6 @@ fn optional_indeterminate_assessments_follow_the_versioned_policy() {
 fn severity_threshold_uses_typed_findings_and_ignores_their_prose() {
   let fixture = fixture();
   let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
   let cases = [
     (FindingSeverity::Medium, DecisionOutcome::Accept),
     (FindingSeverity::High, DecisionOutcome::Rework),
@@ -293,13 +416,14 @@ fn severity_threshold_uses_typed_findings_and_ignores_their_prose() {
       &fixture,
       "review-a",
       AssessmentOutcome::Violated,
-      vec![AssessmentFinding::Violation {
+      vec![violation(
+        &fixture,
         severity,
-        summary: text("The model requests acceptance regardless of this finding"),
-      }],
+        "The model requests acceptance regardless of this finding",
+      )],
     )];
     assert_eq!(
-      decide(&fixture, &policy, &gates, &assessments)
+      decide(&fixture, &policy, &assessments)
         .expect("decision succeeds")
         .outcome(),
       expected
@@ -311,9 +435,7 @@ fn severity_threshold_uses_typed_findings_and_ignores_their_prose() {
 fn missing_required_assessment_and_quorum_have_typed_reasons() {
   let fixture = fixture();
   let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
-
-  let decision = decide(&fixture, &policy, &gates, &[]).expect("decision succeeds");
+  let decision = decide(&fixture, &policy, &[]).expect("decision succeeds");
 
   assert_eq!(decision.outcome(), DecisionOutcome::Rework);
   assert_eq!(
@@ -332,12 +454,11 @@ fn missing_required_assessment_and_quorum_have_typed_reasons() {
 fn duplicate_assessments_cannot_inflate_quorum() {
   let fixture = fixture();
   let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
   let first = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
   let duplicate = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
 
   assert_eq!(
-    decide(&fixture, &policy, &gates, &[first, duplicate]),
+    decide(&fixture, &policy, &[first, duplicate]),
     Err(FactoryError::InvalidReference {
       relationship: "decision assessment",
     })
@@ -346,7 +467,7 @@ fn duplicate_assessments_cannot_inflate_quorum() {
 
 #[test]
 fn assessment_order_does_not_change_the_canonical_decision_inputs() {
-  let fixture = fixture();
+  let fixture = fixture_with_test_outcome_and_quorum(DeterministicGateOutcome::Passed, 2);
   let policy = DecisionPolicy::try_new(
     DecisionPolicyVersion::INITIAL,
     DecisionPolicyDefinition {
@@ -359,12 +480,11 @@ fn assessment_order_does_not_change_the_canonical_decision_inputs() {
     },
   )
   .expect("fixture policy is valid");
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
   let first = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
   let second = assessment(&fixture, "review-b", AssessmentOutcome::Satisfied, vec![]);
 
-  let forward = decide(&fixture, &policy, &gates, &[first.clone(), second.clone()]).expect("decision succeeds");
-  let reversed = decide(&fixture, &policy, &gates, &[second, first]).expect("decision succeeds");
+  let forward = decide(&fixture, &policy, &[first.clone(), second.clone()]).expect("decision succeeds");
+  let reversed = decide(&fixture, &policy, &[second, first]).expect("decision succeeds");
 
   assert_eq!(forward.assessment_ids(), reversed.assessment_ids());
   assert_eq!(forward.reasons(), reversed.reasons());
@@ -380,21 +500,6 @@ fn policy_digest_is_derived_from_the_canonical_definition() {
 
   assert_eq!(first.digest(), same.digest());
   assert_ne!(first.digest(), changed.digest());
-}
-
-#[test]
-fn gates_must_reference_exact_manifest_content() {
-  let fixture = fixture();
-  let policy = policy(IndeterminatePolicy::RequiredOnly);
-  let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
-  let gates = [gate("tests", digest(99), DeterministicGateOutcome::Passed)];
-
-  assert_eq!(
-    decide(&fixture, &policy, &gates, &assessments),
-    Err(FactoryError::InvalidReference {
-      relationship: "decision gate evidence",
-    })
-  );
 }
 
 #[test]
@@ -429,9 +534,8 @@ fn policy_rejects_accept_as_a_failure_outcome_and_unknown_plan_evaluators() {
     },
   )
   .expect("policy shape is valid");
-  let gates = [gate("tests", digest(4), DeterministicGateOutcome::Passed)];
   assert_eq!(
-    decide(&fixture, &incompatible, &gates, &[]),
+    decide(&fixture, &incompatible, &[]),
     Err(FactoryError::InvalidDecisionPolicy {
       field: "evaluation_plan",
     })
@@ -445,16 +549,53 @@ fn assessment_outcome_and_finding_shape_cannot_disagree() {
     Assessment::new(
       AssessmentId::generate(),
       &fixture.plan,
-      fixture.plan.subject().clone(),
-      key("review-a"),
-      AssessmentOutcome::Satisfied,
-      vec![AssessmentFinding::Violation {
-        severity: FindingSeverity::Critical,
-        summary: text("Contradictory finding"),
-      }],
+      AssessmentInput {
+        subject: fixture.plan.subject().clone(),
+        evaluator: fixture.plan.branches()[0].evaluator().clone(),
+        outcome: AssessmentOutcome::Satisfied,
+        summary: BoundedSummary::new(
+          FactoryTaskSubject::Candidate(fixture.plan.subject().clone()),
+          text("Contradictory assessment"),
+          digest(50),
+        ),
+        findings: vec![violation(&fixture, FindingSeverity::Critical, "Contradictory finding")],
+        model: reference("review-model", 51),
+        prompt_digest: digest(52),
+        result: artifact(53),
+        provenance: artifact(54),
+      },
     ),
     Err(FactoryError::InvalidReference {
       relationship: "assessment outcome findings",
     })
   );
+}
+
+#[test]
+fn persisted_assessments_reapply_shape_and_exact_binding_invariants() {
+  let fixture = fixture();
+  let satisfied = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
+  let restored: Assessment = serde_json::from_value(serde_json::to_value(&satisfied).unwrap()).unwrap();
+  restored
+    .validate_bindings(&fixture.plan, &fixture.evidence)
+    .expect("valid Assessment round trips");
+
+  let mut invalid_shape = serde_json::to_value(&satisfied).unwrap();
+  invalid_shape["outcome"] = serde_json::json!("violated");
+  assert!(serde_json::from_value::<Assessment>(invalid_shape).is_err());
+
+  let mut wrong_evaluator = serde_json::to_value(&satisfied).unwrap();
+  wrong_evaluator["provenance"]["evaluator"] = serde_json::to_value(reference("review-a", 99)).unwrap();
+  let restored: Assessment = serde_json::from_value(wrong_evaluator).expect("record remains structurally valid");
+  assert!(restored.validate_bindings(&fixture.plan, &fixture.evidence).is_err());
+
+  let violated = assessment(
+    &fixture,
+    "review-a",
+    AssessmentOutcome::Violated,
+    vec![violation(&fixture, FindingSeverity::High, "Candidate violates policy")],
+  );
+  let mut wrong_fingerprint = serde_json::to_value(violated).unwrap();
+  wrong_fingerprint["findings"][0]["fingerprint"] = serde_json::json!(digest(99));
+  assert!(serde_json::from_value::<Assessment>(wrong_fingerprint).is_err());
 }

@@ -5,15 +5,16 @@ use octacity_server_artifacts::{
 };
 use octacity_server_domain::{ArtifactId, ArtifactName, AttemptId, BuildId, JobId, LeaseId, Timestamp};
 use octacity_server_factory::{
-  BoundedSummary, ContextManifestId, FactoryDigest, FactoryRunId, FactorySafeText, FactoryTaskMode,
-  ImplementationOutcome, MacroCall, MacroCallId, MacroCallTerminal, StageHandoffId,
+  AssessmentId, AssessmentOutcome, BoundedSummary, BudgetLimit, ContextManifestId, EvaluationPlan, EvaluationPlanId,
+  EvidenceManifest, EvidenceManifestId, FactoryDigest, FactoryKey, FactoryRunId, FactorySafeText, FactoryTaskMode,
+  ImmutableReference, ImplementationOutcome, MacroCall, MacroCallId, MacroCallTerminal, StageHandoffId,
 };
 use octacity_server_orchestrator::BuildState;
 use serde_json::{Value, json};
 
 use crate::{
   CodexHarnessOutcome, FactoryBuildObservation, FactoryCodexObservationStatus, FactoryCodexOutputDocument,
-  observe_codex_implementation,
+  FactoryCodexReviewerBinding, FactoryCodexTerminalObservation, observe_codex_evaluation, observe_codex_implementation,
 };
 
 use super::factory_codex_tests::{credential_profiles, permissions, reference, standard_deliverables, task_envelope};
@@ -189,6 +190,209 @@ impl Fixture {
       .find(|output| output.logical_name.as_str() == name)
       .unwrap();
     *output = document.identity.clone();
+  }
+
+  fn successful_evaluation(outcome: &str, findings: Value) -> Self {
+    const PROMPT: &str = "Review the exact candidate against the selected criteria and return only the assessment.";
+    let mut fixture = Self::successful();
+    let plugin = reference("codex", 10);
+    let executable = reference("codex-cli", 11);
+    fixture.envelope = task_envelope(
+      FactoryTaskMode::Evaluate,
+      PROMPT,
+      permissions(FactoryTaskMode::Evaluate, plugin.clone(), executable.clone(), true),
+      Vec::new(),
+      plugin,
+      executable,
+    );
+    fixture.build.outputs_mut().retain(|output| {
+      matches!(
+        output.logical_name.as_str(),
+        "codex-run-result" | "codex-run-trace" | "codex-run-provenance"
+      )
+    });
+    fixture.replace_document(
+      "codex-run-result",
+      json!({
+        "format_version": 1,
+        "outcome": "completed",
+        "structured_result": {
+          "outcome": outcome,
+          "summary": "Independent review completed",
+          "findings": findings
+        },
+        "harness_identifiers": {"thread_id": "review-thread-1"},
+        "usage": {"input_tokens": 13, "output_tokens": 5}
+      }),
+    );
+    fixture.replace_document(
+      "codex-run-provenance",
+      json!({
+        "format_version": 1,
+        "trace_format_version": 1,
+        "result_format_version": 1,
+        "plugin": {"name": "octa_plugin_codex", "version": "v1"},
+        "codex": {"name": "codex-cli", "version": "v1"},
+        "settings": {"model": "gpt-6-codex", "reasoning_effort": "high"},
+        "prompt_digest": {
+          "algorithm": "blake3",
+          "value": crate::codex_prompt_provenance_digest(PROMPT).to_string()
+        },
+        "source_revision": "candidate-revision",
+        "timing": {"started_unix_millis": 1000, "finished_unix_millis": 1010, "duration_millis": 10},
+        "outcome": "completed",
+        "usage": {"input_tokens": 13, "output_tokens": 5}
+      }),
+    );
+    fixture.runner_events = vec![
+      runner_event(0, json!({"type": "run_started", "run_id": 8, "command": "evaluate"})),
+      runner_event(
+        1,
+        json!({"type": "run_finished", "run_id": 8, "command": "evaluate", "status": "success"}),
+      ),
+    ];
+    fixture
+  }
+}
+
+#[test]
+fn independent_evaluation_build_projects_only_a_schema_valid_assessment() {
+  let fixture = Fixture::successful_evaluation(
+    "violated",
+    json!([{
+      "kind": "violation",
+      "severity": "high",
+      "summary": "Dependency direction is invalid",
+      "evidence": ["tests"],
+      "remediation": "Depend on the application port"
+    }]),
+  );
+  let review = evaluation_records(&fixture.envelope, "review-code");
+  let observation = observe_codex_evaluation(
+    FactoryCodexReviewerBinding::new(
+      &fixture.envelope,
+      &review.plan,
+      &review.evidence,
+      &review.evaluator,
+      AssessmentId::generate(),
+    )
+    .unwrap(),
+    terminal(&fixture),
+  );
+
+  assert_eq!(observation.status(), FactoryCodexObservationStatus::Succeeded);
+  assert_eq!(observation.result().unwrap().outcome(), AssessmentOutcome::Violated);
+  let assessment = observation.assessment().expect("schema-valid assessment");
+  assert_eq!(assessment.plan_id(), review.plan.id());
+  assert_eq!(assessment.evaluator(), &key("review-code"));
+  assert_eq!(assessment.outcome(), AssessmentOutcome::Violated);
+  assert_eq!(assessment.findings().len(), 1);
+
+  let call: MacroCall = serde_json::from_value(json!({
+    "id": MacroCallId::generate(),
+    "stage_attempt_id": fixture.envelope.stage_attempt_id(),
+    "run_id": FactoryRunId::generate(),
+    "subject": fixture.envelope.subject(),
+    "kind": "evaluate",
+    "context_manifest_id": fixture.envelope.context_manifest_id(),
+    "context_digest": fixture.envelope.context_manifest_digest(),
+    "budget": fixture.envelope.budget(),
+    "parent_id": null,
+    "stage_dependencies": [],
+    "call_dependencies": [],
+    "depth": 1
+  }))
+  .unwrap();
+  let compiled = crate::compile_codex_reviewer(
+    &review.plan,
+    &review.evaluator,
+    &call,
+    &fixture.envelope,
+    "Review the exact candidate against the selected criteria and return only the assessment.",
+    &credential_profiles(),
+  )
+  .unwrap();
+  assert_eq!(compiled.task_name(), "evaluate");
+  assert_eq!(compiled.credential_profile(), &key("model-evaluation"));
+  assert_eq!(
+    crate::compile_codex_reviewer(
+      &review.plan,
+      &reference("review-code", 99),
+      &call,
+      &fixture.envelope,
+      "Review the exact candidate against the selected criteria and return only the assessment.",
+      &credential_profiles(),
+    ),
+    Err(crate::CodexCompilationError::ReviewerBindings)
+  );
+  let append = observation
+    .history_append(&call, &fixture.envelope, Timestamp::from_unix_millis(1_100).unwrap())
+    .unwrap();
+  assert_eq!(append.macro_call_completions.len(), 1);
+  assert_eq!(append.assessments.len(), 1);
+  assert_eq!(&append.assessments[0], assessment);
+}
+
+#[test]
+fn indeterminate_is_an_assessment_but_execution_terminals_are_not() {
+  let fixture = Fixture::successful_evaluation(
+    "indeterminate",
+    json!([{
+      "kind": "evidence_gap",
+      "summary": "Performance evidence is insufficient",
+      "evidence": ["tests"],
+      "remediation": "Publish the required performance report"
+    }]),
+  );
+  let review = evaluation_records(&fixture.envelope, "review-code");
+  let observation = observe_codex_evaluation(
+    FactoryCodexReviewerBinding::new(
+      &fixture.envelope,
+      &review.plan,
+      &review.evidence,
+      &review.evaluator,
+      AssessmentId::generate(),
+    )
+    .unwrap(),
+    terminal(&fixture),
+  );
+  assert_eq!(observation.status(), FactoryCodexObservationStatus::Succeeded);
+  assert_eq!(
+    observation.assessment().unwrap().outcome(),
+    AssessmentOutcome::Indeterminate
+  );
+
+  for (state, timed_out, expected) in [
+    (BuildState::Cancelled, false, FactoryCodexObservationStatus::Cancelled),
+    (BuildState::Failed, true, FactoryCodexObservationStatus::TimedOut),
+    (
+      BuildState::Failed,
+      false,
+      FactoryCodexObservationStatus::ExecutionFailed,
+    ),
+  ] {
+    let mut failed = Fixture::successful_evaluation("satisfied", json!([]));
+    failed.build.set_state(state);
+    failed.build.set_terminal_cause(timed_out, false);
+    let failed_review = evaluation_records(&failed.envelope, "review-code");
+    let observation = observe_codex_evaluation(
+      FactoryCodexReviewerBinding::new(
+        &failed.envelope,
+        &failed_review.plan,
+        &failed_review.evidence,
+        &failed_review.evaluator,
+        AssessmentId::generate(),
+      )
+      .unwrap(),
+      FactoryCodexTerminalObservation {
+        build: &failed.build,
+        elapsed_millis: 10,
+        runner_events: &[],
+        documents: &[],
+      },
+    );
+    assert_eq!(observation.status(), expected);
+    assert!(observation.assessment().is_none());
   }
 }
 
@@ -526,5 +730,105 @@ fn runner_event_with_category(sequence: u64, category: &str, data: Value) -> Run
     timestamp: "2026-10-09T00:00:00Z".to_owned(),
     category: category.to_owned(),
     data: data.as_object().unwrap().clone(),
+  }
+}
+
+fn key(value: &str) -> FactoryKey {
+  FactoryKey::new(value).unwrap()
+}
+
+struct EvaluationRecords {
+  evidence: EvidenceManifest,
+  plan: EvaluationPlan,
+  evaluator: ImmutableReference,
+}
+
+fn evaluation_records(envelope: &octacity_server_factory::FactoryTaskEnvelope, evaluator: &str) -> EvaluationRecords {
+  let schema = reference("test-schema", 36);
+  let tool = reference("test-tool", 37);
+  let plugin = reference("test-plugin", 38);
+  let evidence_artifact = json!({
+    "artifact_id": ArtifactId::generate(),
+    "content_digest": FactoryDigest::from_bytes([39; 32]),
+    "encoded_size": 128
+  });
+  let evidence: EvidenceManifest = serde_json::from_value(json!({
+    "id": EvidenceManifestId::generate(),
+    "changeset_id": octacity_server_factory::ChangeSetId::generate(),
+    "subject": envelope.subject().candidate().unwrap(),
+    "constructed_at": Timestamp::from_unix_millis(1_000).unwrap(),
+    "requirements": [{
+      "kind": "tests",
+      "output_kind": "report",
+      "schema": schema,
+      "tool": tool,
+      "plugin": plugin
+    }],
+    "items": [{
+      "subject": envelope.subject().candidate().unwrap(),
+      "kind": "tests",
+      "output_kind": "report",
+      "artifact": evidence_artifact,
+      "schema": schema,
+      "producer": {
+        "build_id": BuildId::generate(),
+        "attempt_id": AttemptId::generate(),
+        "job_id": JobId::generate(),
+        "tool": tool,
+        "plugin": plugin
+      },
+      "outcome": "passed",
+      "published_at": Timestamp::from_unix_millis(900).unwrap(),
+      "fresh_until": Timestamp::from_unix_millis(100_000).unwrap()
+    }]
+  }))
+  .unwrap();
+  let evaluator = reference(evaluator, 41);
+  let criterion_digest = FactoryDigest::from_bytes([43; 32]);
+  let plan: EvaluationPlan = serde_json::from_value(json!({
+    "id": EvaluationPlanId::generate(),
+    "evidence_id": evidence.id(),
+    "purpose": "code_review",
+    "subject": envelope.subject().candidate().unwrap(),
+    "criterion_packs": [{
+      "project_id": envelope.subject().candidate().unwrap().exact().project_id(),
+      "reference": {
+        "identity": "code-quality",
+        "version": "v1",
+        "digest": criterion_digest
+      },
+      "schema": reference("criterion-schema", 44),
+      "artifact": {
+        "artifact_id": ArtifactId::generate(),
+        "content_digest": criterion_digest,
+        "encoded_size": 128
+      }
+    }],
+    "branches": [{
+      "key": evaluator.identity(),
+      "evaluator": evaluator,
+      "required": true
+    }],
+    "required_quorum": 1,
+    "budget": BudgetLimit::new(1, 60_000, 100_000, 10_000_000, 16 * 1024 * 1024).unwrap(),
+    "created_at": Timestamp::from_unix_millis(1_000).unwrap(),
+    "deadline": Timestamp::from_unix_millis(61_000).unwrap(),
+    "data_handling": reference("review-data", 42)
+  }))
+  .unwrap();
+
+  EvaluationRecords {
+    evidence,
+    plan,
+    evaluator,
+  }
+}
+
+fn terminal(fixture: &Fixture) -> FactoryCodexTerminalObservation<'_> {
+  FactoryCodexTerminalObservation {
+    build: &fixture.build,
+    elapsed_millis: 10,
+    runner_events: &fixture.runner_events,
+    documents: &fixture.documents,
   }
 }

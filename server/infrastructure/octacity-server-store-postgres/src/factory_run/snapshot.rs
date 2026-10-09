@@ -220,13 +220,13 @@ fn validate_history(
   let evidence = history
     .evidence
     .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
+    .map(|record| (record.id(), record))
+    .collect::<HashMap<_, _>>();
   let plans = history
     .evaluation_plans
     .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
+    .map(|record| (record.id(), record))
+    .collect::<HashMap<_, _>>();
   let assessments = history
     .assessments
     .iter()
@@ -308,13 +308,16 @@ fn validate_history(
     || history
       .evaluation_plans
       .iter()
-      .any(|record| !evidence.contains(&record.evidence_id()))
-    || history
-      .assessments
-      .iter()
-      .any(|record| !plans.contains(&record.plan_id()))
+      .any(|record| !evidence.contains_key(&record.evidence_id()))
+    || history.assessments.iter().any(|record| {
+      plans.get(&record.plan_id()).is_none_or(|plan| {
+        evidence
+          .get(&plan.evidence_id())
+          .is_none_or(|manifest| record.validate_bindings(plan, manifest).is_err())
+      })
+    })
     || history.decisions.iter().any(|record| {
-      !plans.contains(&record.plan_id())
+      !plans.contains_key(&record.plan_id())
         || record.assessment_ids().iter().any(|id| {
           assessments
             .get(id)

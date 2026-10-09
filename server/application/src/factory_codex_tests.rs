@@ -137,11 +137,16 @@ fn compiler_selects_only_the_envelope_stage_schema_and_exact_revision() {
   ] {
     let plugin = reference("codex", 10);
     let executable = reference("codex-cli", 11);
+    let deliverables = if mode == FactoryTaskMode::Evaluate {
+      Vec::new()
+    } else {
+      standard_deliverables()
+    };
     let envelope = task_envelope(
       mode,
       PROMPT,
       permissions(mode, plugin.clone(), executable.clone(), true),
-      standard_deliverables(),
+      deliverables,
       plugin,
       executable,
     );
@@ -158,6 +163,10 @@ fn compiler_selects_only_the_envelope_stage_schema_and_exact_revision() {
       codex["result_schema"]["properties"]["outcome"]["enum"],
       expected_outcomes
     );
+    if mode == FactoryTaskMode::Evaluate {
+      assert_eq!(codex["deliverables"], serde_json::json!([]));
+      assert_eq!(compiled.credential_profile(), &key("model-evaluation"));
+    }
   }
 }
 
@@ -397,31 +406,34 @@ fn permissions_with_scope(
   secret_profile: Option<FactoryKey>,
   source_mode: MountMode,
 ) -> FactoryPermissionSet {
+  let mut mounts = vec![MountPermission::new(
+    FactoryPath::new("/workspace/source").unwrap(),
+    source_mode,
+  )];
+  if source_mode == MountMode::ReadOnly {
+    mounts.extend([
+      MountPermission::new(FactoryPath::new("/octacity/protected").unwrap(), MountMode::ReadOnly),
+      MountPermission::new(FactoryPath::new("/workspace/output").unwrap(), MountMode::ReadWrite),
+      MountPermission::new(FactoryPath::new("/workspace/scratch").unwrap(), MountMode::ReadWrite),
+    ]);
+  }
+  let mut output_kinds = vec![
+    key("codex-run-provenance"),
+    key("codex-run-result"),
+    key("codex-run-trace"),
+  ];
+  if source_mode == MountMode::ReadWrite {
+    output_kinds.extend([key("changeset"), key("stage-summary")]);
+  }
   FactoryPermissionSet::try_new(FactoryPermissionDraft {
     plugins: vec![plugin],
     executables: vec![executable.clone()],
     commands: vec![CommandPermission::try_new(executable, vec![CommandArgumentPattern::Any]).unwrap()],
     max_descendants: 8,
-    mounts: vec![MountPermission::new(
-      FactoryPath::new("/workspace/source").unwrap(),
-      source_mode,
-    )],
+    mounts,
     secret_profiles: secret_profile.into_iter().collect(),
     resources: FactoryResourceLimits::new(2_000, 2 * 1024 * 1024 * 1024, 4 * 1024 * 1024 * 1024, 16, 60_000).unwrap(),
-    outputs: FactoryOutputPermissions::try_new(
-      vec![
-        key("changeset"),
-        key("codex-run-provenance"),
-        key("codex-run-result"),
-        key("codex-run-trace"),
-        key("stage-summary"),
-      ],
-      16,
-      16 * 1024 * 1024,
-      4,
-      4 * 1024 * 1024,
-    )
-    .unwrap(),
+    outputs: FactoryOutputPermissions::try_new(output_kinds, 16, 16 * 1024 * 1024, 4, 4 * 1024 * 1024).unwrap(),
     ..FactoryPermissionDraft::default()
   })
   .unwrap()

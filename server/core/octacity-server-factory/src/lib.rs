@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod assessment;
 mod budget;
 mod configuration;
 #[cfg(test)]
@@ -23,6 +24,9 @@ mod decision_signal_tests;
 mod enum_value;
 mod error;
 mod evaluation;
+mod evidence;
+#[cfg(test)]
+mod evidence_tests;
 mod execution;
 mod identity;
 mod lifecycle;
@@ -32,12 +36,19 @@ mod lifecycle_decision_tests;
 mod permission;
 #[cfg(test)]
 mod permission_tests;
+mod review_plan;
+#[cfg(test)]
+mod review_plan_tests;
 mod subject;
 mod task_contract;
 #[cfg(test)]
 mod task_contract_tests;
 mod value;
 
+pub use assessment::{
+  Assessment, AssessmentEvidenceReference, AssessmentFinding, AssessmentFindingKind, AssessmentInput,
+  AssessmentProvenance, MAX_ASSESSMENT_EVIDENCE_REFERENCES, MAX_ASSESSMENT_FINDINGS,
+};
 pub use budget::{
   BudgetLimit, BudgetResource, BudgetUsage, MAX_FACTORY_ATTEMPTS, MAX_FACTORY_COST_MICRO_UNITS,
   MAX_FACTORY_ELAPSED_MILLIS, MAX_FACTORY_OUTPUT_BYTES, MAX_FACTORY_TOKENS,
@@ -53,9 +64,7 @@ pub use configuration::{
 pub use credential::{
   AuthorizedFactoryCredentialProfile, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryCredentialPurpose,
 };
-pub use decision_engine::{
-  DecisionEngineInput, DecisionPolicy, DecisionPolicyDefinition, DeterministicGate, evaluate_decision,
-};
+pub use decision_engine::{DecisionEngineInput, DecisionPolicy, DecisionPolicyDefinition, evaluate_decision};
 pub use decision_signal::{
   DECISION_SIGNAL_PROBABILITY_SCALE, DecisionSignalAnswer, DecisionSignalAnswerValue, DecisionSignalChoiceCriterion,
   DecisionSignalChoices, DecisionSignalConsumption, DecisionSignalConsumptionKind, DecisionSignalDisposition,
@@ -73,10 +82,10 @@ pub use enum_value::{
   IndeterminatePolicy, MacroCallKind, MountMode, PermissionCategory, ReportingState, RiskClass,
 };
 pub use error::{FactoryChoiceKind, FactoryEntityKind, FactoryEnumKind, FactoryError, FactoryTextKind, TextRejection};
-pub use evaluation::{
-  Assessment, AssessmentFinding, ChangeSet, Decision, DecisionReason, EvaluationPlan, EvidenceItem, EvidenceManifest,
-  MAX_ASSESSMENT_FINDINGS, MAX_CRITERION_PACKS, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_EVALUATORS,
-  MAX_EVIDENCE_ITEMS,
+pub use evaluation::{Decision, DecisionReason, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS};
+pub use evidence::{
+  ChangeSet, EvidenceItem, EvidenceItemInput, EvidenceManifest, EvidenceOutputKind, EvidenceProducer,
+  EvidenceRequirement, MAX_EVIDENCE_ITEMS,
 };
 pub use execution::{
   DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership, MAX_MACRO_CALL_DEPENDENCIES,
@@ -104,6 +113,10 @@ pub use permission::{
   MAX_COMMAND_ARGUMENTS, MAX_FACTORY_CPU_MILLIS, MAX_FACTORY_DISK_BYTES, MAX_FACTORY_MEMORY_BYTES,
   MAX_FACTORY_OUTPUT_COUNT, MAX_FACTORY_PROCESS_COUNT, MAX_PERMISSION_ENTRIES_PER_CATEGORY, MAX_PERMISSION_HOST_BYTES,
   MAX_PERMISSION_PATH_BYTES, MountPermission, NetworkHost, resolve_factory_permissions,
+};
+pub use review_plan::{
+  CriterionPack, EvaluationPlan, EvaluationPlanDefinition, MAX_CRITERION_PACKS, MAX_EVALUATORS, ReviewBranch,
+  ReviewEvaluatorCapability, ReviewPlanEscalation, ReviewPlanPreparation, ReviewPurpose, prepare_evaluation_plan,
 };
 pub use subject::{CandidateSubject, ExactSubject};
 pub use task_contract::{

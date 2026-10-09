@@ -428,7 +428,7 @@ mod tests {
     );
   }
 
-  #[tokio::test]
+  #[tokio::test(start_paused = true)]
   async fn evaluation_attributes_the_aggregate_deadline_to_the_active_check() {
     let checks = ReadinessChecks::new(
       controlled("migrations", true),

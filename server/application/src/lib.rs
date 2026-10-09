@@ -64,6 +64,7 @@ mod factory_credentials_tests;
 mod factory_decision_signal;
 #[cfg(test)]
 mod factory_decision_signal_tests;
+mod factory_evidence;
 mod factory_job_spec;
 #[cfg(test)]
 mod factory_job_spec_tests;
@@ -211,11 +212,12 @@ pub use factory_changeset::{
 };
 pub use factory_codex::{
   CodexCompilationError, CompiledCodexTask, FactoryProtectedDocument, FactoryProtectedDocumentKind,
-  codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_task,
+  codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_reviewer, compile_codex_task,
 };
 pub use factory_codex_observation::{
-  CodexHarnessOutcome, FactoryCodexImplementationObservation, FactoryCodexObservationStatus,
-  FactoryCodexOutputDocument, FactoryImplementationReport, observe_codex_implementation,
+  CodexHarnessOutcome, FactoryCodexEvaluationObservation, FactoryCodexImplementationObservation,
+  FactoryCodexObservationStatus, FactoryCodexOutputDocument, FactoryCodexReviewerBinding,
+  FactoryCodexTerminalObservation, FactoryImplementationReport, observe_codex_evaluation, observe_codex_implementation,
 };
 pub use factory_configuration_cqrs::{
   CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
@@ -234,6 +236,9 @@ pub use factory_credentials::{FactoryCredentialResolutionError, ScopedFactoryCre
 pub use factory_decision_signal::{
   DecisionSignalApplicationError, DecisionSignalCapabilityDiscovery, DecisionSignalDispatch, DecisionSignalPortError,
   DecisionSignalReceiptPublication, DecisionSignalRequestObservation, DecisionSignalService,
+};
+pub use factory_evidence::{
+  FactoryEvidenceAttestation, FactoryEvidenceError, VerifiedFactoryEvidence, construct_factory_evidence_manifest,
 };
 pub use factory_job_spec::{
   FactoryManagedJobSpecInput, FactoryManagedJobSpecTemplateError, derive_factory_managed_job_spec_template,

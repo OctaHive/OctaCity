@@ -528,10 +528,12 @@ impl StoredFactoryRun {
     for assessment in self.assessments.values() {
       require(
         assessment.subject().exact() == subject
-          && self
-            .evaluation_plans
-            .get(&assessment.plan_id())
-            .is_some_and(|plan| plan.subject() == assessment.subject()),
+          && self.evaluation_plans.get(&assessment.plan_id()).is_some_and(|plan| {
+            self
+              .evidence
+              .get(&plan.evidence_id())
+              .is_some_and(|evidence| assessment.validate_bindings(plan, evidence).is_ok())
+          }),
       )?;
     }
     for decision in self.decisions.values() {
@@ -1683,15 +1685,17 @@ mod tests {
     ArtifactId, BuildConfigurationId, BuildConfigurationVersion, ImmutableRevision, ProjectId, RepositoryId,
   };
   use octacity_server_factory::{
-    AssessmentOutcome, BoundedSummary, BudgetLimit, BudgetUsage, BuildConfigurationRef, CandidateSubject,
-    ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind, DecisionEngineInput, DecisionOutcome,
-    DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryAttemptNumber, DeliveryState,
-    DeterministicGate, DeterministicGateOutcome, EvidenceItem, ExternalWorkIdentity, FactoryArtifactReference,
-    FactoryClaim, FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
-    FactoryContextReference, FactoryMetadata, FactoryRunState, FactorySafeText, FactoryTaskSubject, FindingSeverity,
-    IndeterminatePolicy, MacroCallDeclaration, MacroCallKind, ReportingAttemptNumber, ReportingState, RiskClass,
-    StageAttemptNumber, StageHandoffOutcome, WorkArtifacts, WorkClassification, WorkEnvelopeId, WorkPriority,
-    evaluate_decision,
+    AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, BudgetUsage, BuildConfigurationRef,
+    CandidateSubject, ContextManifest, ContextManifestEntry, ContextManifestId, ContextSourceKind, CriterionPack,
+    DecisionEngineInput, DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion,
+    DeliveryAttemptNumber, DeliveryState, DeterministicGateOutcome, EvaluationPlanDefinition, EvaluationPolicy,
+    EvidenceItem, EvidenceItemInput, EvidenceOutputKind, EvidenceProducer, EvidenceRequirement, ExternalWorkIdentity,
+    FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryConfigurationId, FactoryConfigurationRef,
+    FactoryConfigurationVersion, FactoryContextReference, FactoryMetadata, FactoryRunState, FactorySafeText,
+    FactoryTaskSubject, FindingSeverity, ImmutableReference, IndeterminatePolicy, MacroCallDeclaration, MacroCallKind,
+    ReportingAttemptNumber, ReportingState, ReviewBranch, ReviewEvaluatorCapability, ReviewPlanPreparation,
+    ReviewPurpose, RiskClass, StageAttemptNumber, StageHandoffOutcome, WorkArtifacts, WorkClassification,
+    WorkEnvelopeId, WorkPriority, evaluate_decision, prepare_evaluation_plan,
   };
 
   use crate::test_support::{id, run_ready, time};
@@ -1718,6 +1722,10 @@ mod tests {
 
   fn artifact(identity: u64, digest_byte: u8) -> FactoryArtifactReference {
     FactoryArtifactReference::new(id::<ArtifactId>(identity), digest(digest_byte), 1).unwrap()
+  }
+
+  fn reference(identity: &str, byte: u8) -> ImmutableReference {
+    ImmutableReference::new(key(identity), key("v1"), digest(byte))
   }
 
   fn fixture() -> Fixture {
@@ -1912,24 +1920,86 @@ mod tests {
       id::<EvidenceManifestId>(26),
       &candidate,
       candidate_subject.clone(),
-      vec![EvidenceItem::new(key("tests"), artifact(27, 27))],
+      time(25),
+      vec![EvidenceRequirement::new(
+        key("tests"),
+        EvidenceOutputKind::Report,
+        reference("test-schema", 24),
+        reference("test-tool", 25),
+        reference("test-plugin", 26),
+      )],
+      vec![EvidenceItem::new(EvidenceItemInput {
+        subject: candidate_subject.clone(),
+        kind: key("tests"),
+        output_kind: EvidenceOutputKind::Report,
+        artifact: artifact(27, 27),
+        schema: reference("test-schema", 24),
+        producer: EvidenceProducer::new(
+          build.build_id,
+          build.attempt_id,
+          build.job_ids[0],
+          reference("test-tool", 25),
+          reference("test-plugin", 26),
+        ),
+        outcome: DeterministicGateOutcome::Passed,
+        published_at: time(24),
+        fresh_until: time(26),
+      })],
     )
     .unwrap();
-    let plan = EvaluationPlan::new(
-      id::<EvaluationPlanId>(28),
-      &evidence,
-      candidate_subject,
-      vec![key("quality")],
-      vec![key("reviewer")],
+    let review_budget = budget();
+    let pack_reference = reference("quality", 28);
+    let pack = CriterionPack::new(
+      candidate_subject.exact().project_id(),
+      pack_reference.clone(),
+      reference("criterion-schema", 29),
+      artifact(28, 28),
     )
     .unwrap();
+    let evaluator = reference("reviewer", 30);
+    let data_handling = reference("restricted-source", 31);
+    let evaluation_policy =
+      EvaluationPolicy::try_new(vec![pack_reference], vec![evaluator.clone()], 1, review_budget).unwrap();
+    let definition = EvaluationPlanDefinition {
+      id: id::<EvaluationPlanId>(28),
+      purpose: ReviewPurpose::Implementation,
+      subject: candidate_subject,
+      criterion_packs: vec![pack],
+      branches: vec![ReviewBranch::new(key("reviewer"), evaluator.clone(), true)],
+      budget: review_budget,
+      created_at: time(25),
+      deadline: time(26),
+      data_handling: data_handling.clone(),
+    };
+    let capabilities = [ReviewEvaluatorCapability::try_new(
+      evaluator.clone(),
+      vec![ReviewPurpose::Implementation],
+      vec![data_handling],
+      review_budget,
+    )
+    .unwrap()];
+    let plan = match prepare_evaluation_plan(definition, &evidence, &evaluation_policy, &capabilities).unwrap() {
+      ReviewPlanPreparation::Ready(plan) => *plan,
+      ReviewPlanPreparation::Escalate(reason) => panic!("fixture review plan escalated: {reason:?}"),
+    };
     let assessment = Assessment::new(
       id::<AssessmentId>(29),
       &plan,
-      plan.subject().clone(),
-      key("reviewer"),
-      AssessmentOutcome::Satisfied,
-      Vec::new(),
+      AssessmentInput {
+        subject: plan.subject().clone(),
+        evaluator,
+        outcome: AssessmentOutcome::Satisfied,
+        summary: BoundedSummary::new(
+          FactoryTaskSubject::Candidate(plan.subject().clone()),
+          FactorySafeText::new("Independent review satisfied the selected criteria").unwrap(),
+          digest(32),
+        ),
+        findings: Vec::new(),
+        model: reference("review-model", 33),
+        prompt_digest: digest(34),
+        result: artifact(35, 35),
+        provenance: artifact(36, 36),
+      },
     )
     .unwrap();
     let policy = DecisionPolicy::try_new(
@@ -1944,15 +2014,10 @@ mod tests {
       },
     )
     .unwrap();
-    let gates = [DeterministicGate::new(
-      key("tests"),
-      digest(27),
-      DeterministicGateOutcome::Passed,
-    )];
     let assessments = [assessment.clone()];
     let decision = evaluate_decision(
       id::<DecisionId>(30),
-      DecisionEngineInput::new(&evidence, &plan, &policy, &gates, &assessments),
+      DecisionEngineInput::new(&evidence, &plan, &policy, &assessments),
     )
     .unwrap();
     let escalation = Escalation::new(

@@ -235,12 +235,38 @@ pub enum EvaluationResultFinding {
     severity: FindingSeverity,
     /// Bounded secret-checked observation.
     summary: FactorySafeText,
+    /// Canonical evidence kinds supporting the finding.
+    evidence: Vec<crate::FactoryKey>,
+    /// Bounded secret-checked corrective guidance.
+    remediation: FactorySafeText,
   },
   /// Missing evidence prevented a determination.
   EvidenceGap {
     /// Bounded secret-checked evidence requirement.
     summary: FactorySafeText,
+    /// Canonical evidence kinds that were insufficient for a determination.
+    evidence: Vec<crate::FactoryKey>,
+    /// Bounded secret-checked guidance for obtaining a determination.
+    remediation: FactorySafeText,
   },
+}
+
+impl EvaluationResultFinding {
+  /// Returns the canonical evidence kinds cited by the evaluator.
+  #[must_use]
+  pub fn evidence(&self) -> &[crate::FactoryKey] {
+    match self {
+      Self::Violation { evidence, .. } | Self::EvidenceGap { evidence, .. } => evidence,
+    }
+  }
+
+  /// Returns the bounded remediation supplied by the evaluator.
+  #[must_use]
+  pub const fn remediation(&self) -> &FactorySafeText {
+    match self {
+      Self::Violation { remediation, .. } | Self::EvidenceGap { remediation, .. } => remediation,
+    }
+  }
 }
 
 /// Typed versioned result from one independent evaluation task.
@@ -418,10 +444,16 @@ fn validate_evaluation_findings(
       .iter()
       .all(|finding| matches!(finding, EvaluationResultFinding::EvidenceGap { .. })),
   };
-  if valid {
-    Ok(())
-  } else {
+  if !valid {
     Err(invalid("evaluation outcome findings"))
+  } else if findings.iter().any(|finding| {
+    finding.evidence().is_empty()
+      || finding.evidence().len() > crate::MAX_ASSESSMENT_EVIDENCE_REFERENCES
+      || finding.evidence().windows(2).any(|pair| pair[0] >= pair[1])
+  }) {
+    Err(invalid("evaluation finding evidence"))
+  } else {
+    Ok(())
   }
 }
 

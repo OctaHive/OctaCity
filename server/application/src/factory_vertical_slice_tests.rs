@@ -17,13 +17,16 @@ use octacity_server_domain::{
   TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_factory::{
-  Assessment, AssessmentId, AssessmentOutcome, DecisionEngineInput, DecisionId, DecisionOutcome, DecisionPolicy,
-  DecisionPolicyDefinition, DecisionPolicyVersion, DeliveryIntent, DeterministicGate, DeterministicGateOutcome,
-  EvaluationBranch, EvaluationBranchState, EvaluationPlan, EvaluationPlanId, EvaluationProgress, EvaluationState,
-  EvidenceItem, EvidenceManifest, EvidenceManifestId, FactoryArtifactReference, FactoryDigest,
-  FactoryLifecycleProgress, FactoryOutputPermissions, FactoryPermissionDraft, FactoryPermissionSet,
-  FactoryResourceLimits, FactoryRun, FactoryRunState, FactoryRunVersion, FactoryStageProgress, FactoryStageTarget,
-  FindingSeverity, IndeterminatePolicy, LocalPermissionCeiling, evaluate_decision,
+  Assessment, AssessmentId, AssessmentInput, AssessmentOutcome, BoundedSummary, BudgetLimit, CriterionPack,
+  DecisionEngineInput, DecisionId, DecisionOutcome, DecisionPolicy, DecisionPolicyDefinition, DecisionPolicyVersion,
+  DeliveryIntent, DeterministicGateOutcome, EvaluationBranch, EvaluationBranchState, EvaluationPlanDefinition,
+  EvaluationPlanId, EvaluationPolicy, EvaluationProgress, EvaluationState, EvidenceItem, EvidenceItemInput,
+  EvidenceManifest, EvidenceManifestId, EvidenceOutputKind, EvidenceProducer, EvidenceRequirement,
+  FactoryArtifactReference, FactoryDigest, FactoryLifecycleProgress, FactoryOutputPermissions, FactoryPermissionDraft,
+  FactoryPermissionSet, FactoryResourceLimits, FactoryRun, FactoryRunState, FactoryRunVersion, FactorySafeText,
+  FactoryStageProgress, FactoryStageTarget, FactoryTaskSubject, FindingSeverity, ImmutableReference,
+  IndeterminatePolicy, LocalPermissionCeiling, ReviewBranch, ReviewEvaluatorCapability, ReviewPlanPreparation,
+  ReviewPurpose, evaluate_decision, prepare_evaluation_plan,
 };
 use octacity_server_job::JobFailureClass;
 use octacity_server_job::JobRequirements;
@@ -793,14 +796,38 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
 
     reconcile(&worker, &shutdown).await;
     let evidence_outbox = claim_outbox(&store, "evidence.construct").await;
-    let evidence_item = EvidenceItem::new(
-      key("tests"),
-      FactoryArtifactReference::new(ArtifactId::generate(), digest(2), 1).unwrap(),
-    );
+    let schema = ImmutableReference::new(key("test-schema"), key("v1"), digest(20));
+    let tool = ImmutableReference::new(key("test-tool"), key("v1"), digest(21));
+    let plugin = ImmutableReference::new(key("test-plugin"), key("v1"), digest(22));
+    let evidence_item = EvidenceItem::new(EvidenceItemInput {
+      subject: candidate.subject().clone(),
+      kind: key("tests"),
+      output_kind: EvidenceOutputKind::Report,
+      artifact: FactoryArtifactReference::new(ArtifactId::generate(), digest(2), 1).unwrap(),
+      schema: schema.clone(),
+      producer: EvidenceProducer::new(
+        BuildId::generate(),
+        AttemptId::generate(),
+        JobId::generate(),
+        tool.clone(),
+        plugin.clone(),
+      ),
+      outcome: DeterministicGateOutcome::Passed,
+      published_at: time(9),
+      fresh_until: time(11),
+    });
     let evidence = EvidenceManifest::new(
       EvidenceManifestId::generate(),
       &candidate,
       candidate.subject().clone(),
+      time(10),
+      vec![EvidenceRequirement::new(
+        key("tests"),
+        EvidenceOutputKind::Report,
+        schema,
+        tool,
+        plugin,
+      )],
       vec![evidence_item.clone()],
     )
     .unwrap();
@@ -822,14 +849,41 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
 
     reconcile(&worker, &shutdown).await;
     let plan_outbox = claim_outbox(&store, "evaluation.plan").await;
-    let plan = EvaluationPlan::new(
-      EvaluationPlanId::generate(),
-      &evidence,
-      evidence.subject().clone(),
-      vec![key("quality")],
-      vec![key("review")],
+    let budget = BudgetLimit::new(1, 1, 1, 1, 1).unwrap();
+    let pack_reference = ImmutableReference::new(key("quality"), key("v1"), digest(23));
+    let pack = CriterionPack::new(
+      evidence.subject().exact().project_id(),
+      pack_reference.clone(),
+      ImmutableReference::new(key("criterion-schema"), key("v1"), digest(24)),
+      FactoryArtifactReference::new(ArtifactId::generate(), digest(23), 1).unwrap(),
     )
     .unwrap();
+    let evaluator = ImmutableReference::new(key("review"), key("v1"), digest(25));
+    let data_handling = ImmutableReference::new(key("restricted-source"), key("v1"), digest(26));
+    let evaluation_policy =
+      EvaluationPolicy::try_new(vec![pack_reference], vec![evaluator.clone()], 1, budget).unwrap();
+    let definition = EvaluationPlanDefinition {
+      id: EvaluationPlanId::generate(),
+      purpose: ReviewPurpose::Implementation,
+      subject: evidence.subject().clone(),
+      criterion_packs: vec![pack],
+      branches: vec![ReviewBranch::new(key("review"), evaluator.clone(), true)],
+      budget,
+      created_at: time(10),
+      deadline: time(11),
+      data_handling: data_handling.clone(),
+    };
+    let capabilities = [ReviewEvaluatorCapability::try_new(
+      evaluator.clone(),
+      vec![ReviewPurpose::Implementation],
+      vec![data_handling],
+      budget,
+    )
+    .unwrap()];
+    let plan = match prepare_evaluation_plan(definition, &evidence, &evaluation_policy, &capabilities).unwrap() {
+      ReviewPlanPreparation::Ready(plan) => *plan,
+      ReviewPlanPreparation::Escalate(reason) => panic!("fixture review plan escalated: {reason:?}"),
+    };
     let branches = EvaluationProgress::try_new(
       vec![EvaluationBranch::new(
         key("review"),
@@ -861,10 +915,21 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
     let assessment = Assessment::new(
       AssessmentId::generate(),
       &plan,
-      plan.subject().clone(),
-      key("review"),
-      AssessmentOutcome::Satisfied,
-      Vec::new(),
+      AssessmentInput {
+        subject: plan.subject().clone(),
+        evaluator,
+        outcome: AssessmentOutcome::Satisfied,
+        summary: BoundedSummary::new(
+          FactoryTaskSubject::Candidate(plan.subject().clone()),
+          FactorySafeText::new("Independent review satisfied the selected criteria").unwrap(),
+          digest(27),
+        ),
+        findings: Vec::new(),
+        model: ImmutableReference::new(key("review-model"), key("v1"), digest(28)),
+        prompt_digest: digest(29),
+        result: FactoryArtifactReference::new(ArtifactId::generate(), digest(30), 1).unwrap(),
+        provenance: FactoryArtifactReference::new(ArtifactId::generate(), digest(31), 1).unwrap(),
+      },
     )
     .unwrap();
     let policy = DecisionPolicy::try_new(
@@ -879,15 +944,10 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
       },
     )
     .unwrap();
-    let gates = [DeterministicGate::new(
-      key("tests"),
-      evidence_item.digest(),
-      DeterministicGateOutcome::Passed,
-    )];
     let assessments = [assessment.clone()];
     let decision = evaluate_decision(
       DecisionId::generate(),
-      DecisionEngineInput::new(&evidence, &plan, &policy, &gates, &assessments),
+      DecisionEngineInput::new(&evidence, &plan, &policy, &assessments),
     )
     .unwrap();
     assert_eq!(decision.outcome(), DecisionOutcome::Accept);

@@ -11,6 +11,7 @@ description = "Backend-neutral execution ports for OctaCity"
 async-trait.workspace = true
 libc.workspace = true
 octa-cache-protocol.workspace = true
+octacity-protocol = { path = "../../shared/octacity-protocol" }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true

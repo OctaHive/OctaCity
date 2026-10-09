@@ -102,6 +102,14 @@ fn envelope_with_permissions(
     FactoryTaskMode::Evaluate => FactoryTaskResultSchema::EvaluationV1,
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryTaskResultSchema::ImplementationV1,
   };
+  let deliverables = match mode {
+    FactoryTaskMode::Evaluate => Vec::new(),
+    FactoryTaskMode::Implement | FactoryTaskMode::Rework => vec![FactoryTaskDeliverable::new(
+      key("result"),
+      FactoryRepositoryPath::new("outputs/result.json").expect("fixture path"),
+      true,
+    )],
+  };
   FactoryTaskEnvelope::new(
     FactoryTaskDeclaration {
       id: TaskEnvelopeId::generate(),
@@ -116,11 +124,7 @@ fn envelope_with_permissions(
       permissions,
       budget: BudgetLimit::new(1, 1_000, 10_000, 1_000, 1_000_000).expect("fixture budget"),
       result_schema,
-      deliverables: vec![FactoryTaskDeliverable::new(
-        key("result"),
-        FactoryRepositoryPath::new("outputs/result.json").expect("fixture path"),
-        true,
-      )],
+      deliverables,
     },
     &context,
     FactoryTaskToolchain {
@@ -288,6 +292,8 @@ fn implementation_and_evaluation_results_enforce_subject_and_outcome_contracts()
     vec![EvaluationResultFinding::Violation {
       severity: FindingSeverity::High,
       summary: text("Dependency direction is invalid"),
+      evidence: vec![key("tests")],
+      remediation: text("Depend on the declared application port"),
     }],
     digest(34),
   )
@@ -302,6 +308,8 @@ fn implementation_and_evaluation_results_enforce_subject_and_outcome_contracts()
       BoundedSummary::new(candidate_task_subject, text("No blocking findings"), digest(35)),
       vec![EvaluationResultFinding::EvidenceGap {
         summary: text("Tests are absent"),
+        evidence: vec![key("tests")],
+        remediation: text("Publish the required test report"),
       }],
       digest(36),
     )

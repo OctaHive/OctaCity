@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::{
   Assessment, AssessmentOutcome, Decision, DecisionId, DecisionOutcome, DecisionPolicyVersion, DecisionReason,
-  DeterministicGateOutcome, EvaluationPlan, EvidenceManifest, FactoryDigest, FactoryError, FactoryKey, FindingSeverity,
-  IndeterminatePolicy, MAX_CRITERION_PACKS, MAX_DECISION_ASSESSMENTS, MAX_EVALUATORS, evaluation::DecisionBindings,
+  DeterministicGateOutcome, EvaluationPlan, EvidenceItem, EvidenceManifest, FactoryDigest, FactoryError, FactoryKey,
+  FindingSeverity, IndeterminatePolicy, MAX_CRITERION_PACKS, MAX_DECISION_ASSESSMENTS, MAX_EVALUATORS,
+  evaluation::DecisionBindings,
 };
 
 /// Unvalidated rules used to publish one immutable Decision policy.
@@ -80,37 +81,12 @@ impl DecisionPolicy {
   }
 }
 
-/// Authoritative outcome projected from one exact Evidence Manifest item.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DeterministicGate {
-  evidence_kind: FactoryKey,
-  evidence_digest: FactoryDigest,
-  outcome: DeterministicGateOutcome,
-}
-
-impl DeterministicGate {
-  /// Binds a typed gate outcome to one exact evidence item.
-  #[must_use]
-  pub const fn new(
-    evidence_kind: FactoryKey,
-    evidence_digest: FactoryDigest,
-    outcome: DeterministicGateOutcome,
-  ) -> Self {
-    Self {
-      evidence_kind,
-      evidence_digest,
-      outcome,
-    }
-  }
-}
-
 /// Complete immutable inputs to one deterministic Decision evaluation.
 #[derive(Clone, Copy, Debug)]
 pub struct DecisionEngineInput<'a> {
   evidence: &'a EvidenceManifest,
   plan: &'a EvaluationPlan,
   policy: &'a DecisionPolicy,
-  gates: &'a [DeterministicGate],
   assessments: &'a [Assessment],
 }
 
@@ -121,14 +97,12 @@ impl<'a> DecisionEngineInput<'a> {
     evidence: &'a EvidenceManifest,
     plan: &'a EvaluationPlan,
     policy: &'a DecisionPolicy,
-    gates: &'a [DeterministicGate],
     assessments: &'a [Assessment],
   ) -> Self {
     Self {
       evidence,
       plan,
       policy,
-      gates,
       assessments,
     }
   }
@@ -137,11 +111,12 @@ impl<'a> DecisionEngineInput<'a> {
 /// Applies immutable policy to exact evidence and Assessments without side effects.
 pub fn evaluate_decision(id: DecisionId, input: DecisionEngineInput<'_>) -> Result<Decision, FactoryError> {
   validate_input(&input)?;
-  let input_digest = digest_decision_input(&input);
+  let input_digest = digest_decision_input(&input)?;
   let gates = input
-    .gates
+    .evidence
+    .items()
     .iter()
-    .map(|gate| (&gate.evidence_kind, gate))
+    .map(|item| (item.kind(), item))
     .collect::<BTreeMap<_, _>>();
   let assessments = input
     .assessments
@@ -203,7 +178,7 @@ fn digest_policy(definition: &DecisionPolicyDefinition) -> FactoryDigest {
   FactoryDigest::sha256("octacity.decision-policy.v1", &fields)
 }
 
-fn digest_decision_input(input: &DecisionEngineInput<'_>) -> FactoryDigest {
+fn digest_decision_input(input: &DecisionEngineInput<'_>) -> Result<FactoryDigest, FactoryError> {
   let evidence_id = input.evidence.id().as_uuid();
   let plan_id = input.plan.id().as_uuid();
   let candidate_digest = input.evidence.subject().changeset_digest().as_bytes();
@@ -212,37 +187,9 @@ fn digest_decision_input(input: &DecisionEngineInput<'_>) -> FactoryDigest {
     .evidence
     .items()
     .iter()
-    .map(|item| format!("evidence\0{}\0{}\0{}", item.kind(), item.artifact_id(), item.digest()).into_bytes())
+    .map(encode_evidence_item)
     .collect::<Vec<_>>();
-  owned_fields.extend(
-    input
-      .plan
-      .criterion_packs()
-      .iter()
-      .map(|key| format!("criterion\0{key}").into_bytes()),
-  );
-  owned_fields.extend(
-    input
-      .plan
-      .evaluators()
-      .iter()
-      .map(|key| format!("evaluator\0{key}").into_bytes()),
-  );
-  let mut gates = input
-    .gates
-    .iter()
-    .map(|gate| {
-      format!(
-        "gate\0{}\0{}\0{}",
-        gate.evidence_kind,
-        gate.evidence_digest,
-        gate.outcome.as_str()
-      )
-      .into_bytes()
-    })
-    .collect::<Vec<_>>();
-  gates.sort();
-  owned_fields.extend(gates);
+  let plan_digest = input.plan.digest()?.as_bytes();
   let mut assessments = input.assessments.iter().map(encode_assessment).collect::<Vec<_>>();
   assessments.sort();
   owned_fields.extend(assessments);
@@ -251,50 +198,60 @@ fn digest_decision_input(input: &DecisionEngineInput<'_>) -> FactoryDigest {
     plan_id.as_bytes().as_slice(),
     candidate_digest.as_slice(),
     policy_digest.as_slice(),
+    plan_digest.as_slice(),
   ];
   fields.extend(owned_fields.iter().map(Vec::as_slice));
-  FactoryDigest::sha256("octacity.decision-engine.input.v1", &fields)
+  Ok(FactoryDigest::sha256("octacity.decision-engine.input.v2", &fields))
+}
+
+fn encode_evidence_item(item: &EvidenceItem) -> Vec<u8> {
+  let producer = item.producer();
+  let schema = item.schema();
+  let tool = producer.tool();
+  let plugin = producer.plugin();
+  format!(
+    "evidence\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+    item.kind(),
+    item.output_kind().as_str(),
+    item.artifact_id(),
+    item.digest(),
+    schema.identity(),
+    schema.version(),
+    schema.digest(),
+    producer.build_id(),
+    producer.attempt_id(),
+    producer.job_id(),
+    tool.identity(),
+    tool.version(),
+    tool.digest(),
+    plugin.identity(),
+    plugin.version(),
+    plugin.digest(),
+    item.published_at().unix_millis(),
+    item.fresh_until().unix_millis(),
+    item.outcome().as_str(),
+  )
+  .into_bytes()
 }
 
 fn encode_assessment(assessment: &Assessment) -> Vec<u8> {
-  let mut value = format!(
-    "assessment\0{}\0{}\0{}",
-    assessment.id(),
-    assessment.evaluator(),
-    assessment.outcome().as_str()
-  )
-  .into_bytes();
-  for finding in assessment.findings() {
-    value.push(0);
-    if let Some(severity) = finding.severity() {
-      value.extend_from_slice(severity.as_str().as_bytes());
-    } else {
-      value.extend_from_slice(b"evidence_gap");
-    }
-    value.push(0);
-    value.extend_from_slice(finding.summary().as_str().as_bytes());
-  }
-  value
+  serde_json::to_vec(assessment).expect("validated Assessment serializes")
 }
 
 fn validate_input(input: &DecisionEngineInput<'_>) -> Result<(), FactoryError> {
   if input.plan.evidence_id() != input.evidence.id() || input.plan.subject() != input.evidence.subject() {
     return Err(FactoryError::InconsistentSubject);
   }
-  if usize::from(input.policy.quorum) > input.plan.evaluators().len()
+  if input.policy.quorum != input.plan.required_quorum()
+    || usize::from(input.policy.quorum) > input.plan.evaluator_count()
     || input
       .policy
       .required_evaluators
       .iter()
-      .any(|evaluator| !input.plan.evaluators().contains(evaluator))
+      .any(|evaluator| !input.plan.has_evaluator_identity(evaluator))
   {
     return Err(FactoryError::InvalidDecisionPolicy {
       field: "evaluation_plan",
-    });
-  }
-  if input.gates.len() > MAX_CRITERION_PACKS {
-    return Err(FactoryError::CollectionLimitExceeded {
-      collection: "decision gates",
     });
   }
   if input.assessments.len() > MAX_DECISION_ASSESSMENTS {
@@ -302,36 +259,14 @@ fn validate_input(input: &DecisionEngineInput<'_>) -> Result<(), FactoryError> {
       collection: "decision assessments",
     });
   }
-  validate_gates(input.evidence, input.gates)?;
-  validate_assessments(input.plan, input.assessments)
+  validate_assessments(input.plan, input.evidence, input.assessments)
 }
 
-fn validate_gates(evidence: &EvidenceManifest, gates: &[DeterministicGate]) -> Result<(), FactoryError> {
-  if gates
-    .iter()
-    .map(|gate| &gate.evidence_kind)
-    .collect::<HashSet<_>>()
-    .len()
-    != gates.len()
-  {
-    return Err(FactoryError::InvalidReference {
-      relationship: "decision gate",
-    });
-  }
-  if gates.iter().any(|gate| {
-    !evidence
-      .items()
-      .iter()
-      .any(|item| item.kind() == &gate.evidence_kind && item.digest() == gate.evidence_digest)
-  }) {
-    return Err(FactoryError::InvalidReference {
-      relationship: "decision gate evidence",
-    });
-  }
-  Ok(())
-}
-
-fn validate_assessments(plan: &EvaluationPlan, assessments: &[Assessment]) -> Result<(), FactoryError> {
+fn validate_assessments(
+  plan: &EvaluationPlan,
+  evidence: &EvidenceManifest,
+  assessments: &[Assessment],
+) -> Result<(), FactoryError> {
   if assessments
     .iter()
     .any(|assessment| assessment.plan_id() != plan.id() || assessment.subject() != plan.subject())
@@ -350,17 +285,20 @@ fn validate_assessments(plan: &EvaluationPlan, assessments: &[Assessment]) -> Re
       relationship: "decision assessment",
     });
   }
+  for assessment in assessments {
+    assessment.validate_bindings(plan, evidence)?;
+  }
   Ok(())
 }
 
 fn evaluate_required_evidence(
   policy: &DecisionPolicy,
-  gates: &BTreeMap<&FactoryKey, &DeterministicGate>,
+  gates: &BTreeMap<&FactoryKey, &EvidenceItem>,
 ) -> Vec<DecisionReason> {
   policy
     .required_evidence
     .iter()
-    .filter_map(|key| match gates.get(key).map(|gate| gate.outcome) {
+    .filter_map(|key| match gates.get(key).map(|item| item.outcome()) {
       None => Some(DecisionReason::RequiredEvidenceMissing(key.clone())),
       Some(DeterministicGateOutcome::Failed) => Some(DecisionReason::RequiredEvidenceFailed(key.clone())),
       Some(DeterministicGateOutcome::Indeterminate) => Some(DecisionReason::RequiredEvidenceIndeterminate(key.clone())),

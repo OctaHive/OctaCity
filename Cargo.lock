@@ -4025,6 +4025,7 @@ dependencies = [
  "async-trait",
  "libc",
  "octa-cache-protocol",
+ "octacity-protocol",
  "tempfile",
  "thiserror",
  "tokio",

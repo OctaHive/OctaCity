@@ -436,6 +436,32 @@ pub struct EvaluationPolicy {
 }
 
 impl EvaluationPolicy {
+  /// Constructs a canonical immutable evaluation selection.
+  pub fn try_new(
+    mut criterion_packs: Vec<ImmutableReference>,
+    mut evaluators: Vec<ImmutableReference>,
+    required_quorum: u16,
+    budget: BudgetLimit,
+  ) -> Result<Self, FactoryError> {
+    validate_unique_references(&criterion_packs, MAX_CRITERION_PACKS, "criterion packs")?;
+    validate_unique_references(&evaluators, MAX_EVALUATORS, "evaluators")?;
+    validate_unique_reference_identities(&criterion_packs, "criterion pack identities")?;
+    validate_unique_reference_identities(&evaluators, "evaluator identities")?;
+    if required_quorum == 0 || usize::from(required_quorum) > evaluators.len() {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "evaluator quorum",
+      });
+    }
+    criterion_packs.sort();
+    evaluators.sort();
+    Ok(Self {
+      criterion_packs,
+      evaluators,
+      required_quorum,
+      budget,
+    })
+  }
+
   /// Returns the exact selected criterion packs.
   #[must_use]
   pub fn criterion_packs(&self) -> &[ImmutableReference] {
@@ -823,16 +849,16 @@ fn resolve_evaluation(
       field: "evaluation budget",
     });
   }
-  Ok(EvaluationPolicy {
-    criterion_packs: resolve_references(
+  EvaluationPolicy::try_new(
+    resolve_references(
       choices,
       FactoryChoiceKind::CriterionPack,
       &draft.evaluation.criterion_packs,
     )?,
-    evaluators: resolve_references(choices, FactoryChoiceKind::Evaluator, &draft.evaluation.evaluators)?,
-    required_quorum: draft.evaluation.required_quorum,
-    budget: draft.evaluation.budget,
-  })
+    resolve_references(choices, FactoryChoiceKind::Evaluator, &draft.evaluation.evaluators)?,
+    draft.evaluation.required_quorum,
+    draft.evaluation.budget,
+  )
 }
 
 fn resolve_rework(draft: &ReworkPolicyDraft, stages: &[FactoryStageDefinition]) -> Result<ReworkPolicy, FactoryError> {
@@ -930,6 +956,34 @@ fn validate_unique_aliases(
 ) -> Result<(), FactoryError> {
   validate_count(aliases, 1, maximum, collection)?;
   if aliases.iter().collect::<HashSet<_>>().len() != aliases.len() {
+    return Err(FactoryError::InvalidConfiguration { field: collection });
+  }
+  Ok(())
+}
+
+fn validate_unique_references(
+  references: &[ImmutableReference],
+  maximum: usize,
+  collection: &'static str,
+) -> Result<(), FactoryError> {
+  validate_count(references, 1, maximum, collection)?;
+  if references.iter().collect::<HashSet<_>>().len() != references.len() {
+    return Err(FactoryError::InvalidConfiguration { field: collection });
+  }
+  Ok(())
+}
+
+fn validate_unique_reference_identities(
+  references: &[ImmutableReference],
+  collection: &'static str,
+) -> Result<(), FactoryError> {
+  if references
+    .iter()
+    .map(ImmutableReference::identity)
+    .collect::<HashSet<_>>()
+    .len()
+    != references.len()
+  {
     return Err(FactoryError::InvalidConfiguration { field: collection });
   }
   Ok(())

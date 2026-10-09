@@ -73,9 +73,9 @@ pub(super) fn artifact_reference(identity: &ArtifactIdentity) -> Option<FactoryA
   .ok()
 }
 
-pub(super) fn valid_provenance(
+pub(super) fn valid_provenance<T>(
   envelope: &FactoryTaskEnvelope,
-  result: &CodexResultRecord,
+  result: &CodexResultRecord<T>,
   provenance: &CodexProvenanceRecord,
 ) -> bool {
   provenance.format_version == 1

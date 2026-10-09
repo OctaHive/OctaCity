@@ -440,7 +440,7 @@ async fn insert_evidence(
 ) -> Result<(), StoreError> {
   sqlx::query("INSERT INTO factory_evidence_manifests (id, run_id, changeset_id, manifest_digest, manifest, created_at) VALUES ($1,$2,$3,$4,$5,to_timestamp($6::double precision / 1000.0))")
     .bind(record.id().as_uuid()).bind(run_id.as_uuid()).bind(record.changeset_id().as_uuid())
-    .bind(document_digest("octacity.factory.evidence-manifest.v1", record)?.as_bytes().as_slice()).bind(Json(record))
+    .bind(record.digest().map_err(|_| StoreError::Unavailable)?.as_bytes().as_slice()).bind(Json(record))
     .bind(recorded_at.unix_millis()).execute(&mut **tx).await.map_err(unavailable)?;
   for item in record.items() {
     insert_artifact_reference(
@@ -464,7 +464,7 @@ async fn insert_plan(
 ) -> Result<(), StoreError> {
   let result = sqlx::query("INSERT INTO factory_evaluation_plans (id, run_id, changeset_id, evidence_manifest_id, plan_digest, plan, created_at) SELECT $1,$2,e.changeset_id,$3,$4,$5,to_timestamp($6::double precision / 1000.0) FROM factory_evidence_manifests e WHERE e.id = $3 AND e.run_id = $2")
     .bind(record.id().as_uuid()).bind(run_id.as_uuid()).bind(record.evidence_id().as_uuid())
-    .bind(document_digest("octacity.factory.evaluation-plan.v1", record)?.as_bytes().as_slice()).bind(Json(record))
+    .bind(record.digest().map_err(|_| StoreError::Unavailable)?.as_bytes().as_slice()).bind(Json(record))
     .bind(recorded_at.unix_millis()).execute(&mut **tx).await.map_err(unavailable)?;
   exactly_one(result.rows_affected())
 }
@@ -477,7 +477,7 @@ async fn insert_assessment(
 ) -> Result<(), StoreError> {
   sqlx::query("INSERT INTO factory_assessments (id, run_id, evaluation_plan_id, evaluator, assessment_digest, assessment, created_at) VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7::double precision / 1000.0))")
     .bind(record.id().as_uuid()).bind(run_id.as_uuid()).bind(record.plan_id().as_uuid()).bind(record.evaluator().as_str())
-    .bind(document_digest("octacity.factory.assessment.v1", record)?.as_bytes().as_slice()).bind(Json(record))
+    .bind(record.digest().map_err(|_| StoreError::Unavailable)?.as_bytes().as_slice()).bind(Json(record))
     .bind(recorded_at.unix_millis()).execute(&mut **tx).await.map_err(unavailable)?;
   Ok(())
 }

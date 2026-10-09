@@ -117,7 +117,7 @@ impl MacroCallCompletion {
         field: "macro call completion usage",
       });
     }
-    validate_outputs(terminal, call.subject(), &outputs)?;
+    validate_outputs(terminal, call.subject(), envelope.result_schema(), &outputs)?;
     Ok(Self {
       schema_version: FACTORY_TASK_CONTRACT_VERSION,
       call_id: call.id(),
@@ -302,7 +302,7 @@ impl<'de> Deserialize<'de> for MacroCallCompletion {
       trace: wire.trace,
       provenance: wire.provenance,
     };
-    validate_outputs(wire.terminal, &wire.subject, &outputs).map_err(D::Error::custom)?;
+    validate_outputs(wire.terminal, &wire.subject, wire.result_schema, &outputs).map_err(D::Error::custom)?;
     Ok(Self {
       schema_version: FACTORY_TASK_CONTRACT_VERSION,
       call_id: wire.call_id,
@@ -329,6 +329,7 @@ impl<'de> Deserialize<'de> for MacroCallCompletion {
 fn validate_outputs(
   terminal: MacroCallTerminal,
   subject: &FactoryTaskSubject,
+  result_schema: FactoryTaskResultSchema,
   outputs: &MacroCallCompletionOutputs,
 ) -> Result<(), FactoryError> {
   if terminal != MacroCallTerminal::Succeeded {
@@ -337,10 +338,9 @@ fn validate_outputs(
     }
     return Ok(());
   }
-  let (Some(_result), Some(summary), Some(summary_artifact), Some(_trace), Some(_provenance)) = (
+  let (Some(_result), Some(summary), Some(_trace), Some(_provenance)) = (
     outputs.result.as_ref(),
     outputs.summary.as_ref(),
-    outputs.summary_artifact.as_ref(),
     outputs.trace.as_ref(),
     outputs.provenance.as_ref(),
   ) else {
@@ -349,11 +349,17 @@ fn validate_outputs(
   if summary.subject() != subject {
     return Err(FactoryError::InconsistentSubject);
   }
-  let bytes = summary.canonical_bytes()?;
-  if summary_artifact.content_digest() != FactoryDigest::content_sha256(&bytes)
-    || summary_artifact.encoded_size() != u64::try_from(bytes.len()).map_err(|_| invalid("macro call summary bytes"))?
-  {
-    return Err(invalid("macro call summary artifact"));
+  if result_schema == FactoryTaskResultSchema::ImplementationV1 && outputs.summary_artifact.is_none() {
+    return Err(invalid("successful macro call output"));
+  }
+  if let Some(summary_artifact) = &outputs.summary_artifact {
+    let bytes = summary.canonical_bytes()?;
+    if summary_artifact.content_digest() != FactoryDigest::content_sha256(&bytes)
+      || summary_artifact.encoded_size()
+        != u64::try_from(bytes.len()).map_err(|_| invalid("macro call summary bytes"))?
+    {
+      return Err(invalid("macro call summary artifact"));
+    }
   }
   Ok(())
 }

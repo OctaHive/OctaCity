@@ -25,6 +25,10 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::sync::CancellationToken;
 
+pub use octacity_protocol::{
+  FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURCE_ROOT, PROTECTED_INPUT_ROOT as FACTORY_PROTECTED_INPUT_ROOT,
+};
+
 /// Owned asynchronous stdout or stderr stream from an execution backend.
 pub type ExecutionReader = Pin<Box<dyn AsyncRead + Send>>;
 /// Owned asynchronous stdin stream into an execution backend.
@@ -38,14 +42,6 @@ pub const CACHE_DIRECTORY_PATH: &str = "/var/cache/octa";
 pub const CACHE_TOKEN_PATH: &str = "/run/octa-cache/token";
 /// Stable read-only path for an optional private cache CA certificate.
 pub const CACHE_CA_CERTIFICATE_PATH: &str = "/run/octa-cache/ca.pem";
-/// Stable read-only root containing server-owned Factory inputs.
-pub const FACTORY_PROTECTED_INPUT_ROOT: &str = "/octacity/protected";
-/// Stable writable root containing the exact materialized source revision.
-pub const FACTORY_SOURCE_ROOT: &str = "/workspace/source";
-/// Stable writable root for disposable Factory task state.
-pub const FACTORY_SCRATCH_ROOT: &str = "/workspace/scratch";
-/// Stable writable root reserved for declared Factory outputs.
-pub const FACTORY_OUTPUT_ROOT: &str = "/workspace/output";
 /// Stable filename prefix for operator-selected executables projected by isolated backends.
 pub const EXTERNAL_EXECUTABLE_FILE_PREFIX: &str = "tool-";
 

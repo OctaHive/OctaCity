@@ -192,7 +192,7 @@ impl FactoryTaskEnvelope {
     )?;
     definition.prior_findings.sort_unstable();
     reject_duplicates(&definition.prior_findings, "task prior findings")?;
-    validate_count(&definition.deliverables, 1, MAX_TASK_DELIVERABLES, "task deliverables")?;
+    validate_deliverable_count(declaration.mode, &definition.deliverables)?;
     definition.deliverables.sort();
     reject_duplicates(&definition.deliverables, "task deliverables")?;
 
@@ -438,7 +438,7 @@ fn validate_envelope_wire(wire: &FactoryTaskEnvelopeWire) -> Result<(), FactoryE
   validate_permission_content(&wire.permissions)?;
   validate_count(&wire.specifications, 0, MAX_TASK_ARTIFACTS, "task specifications")?;
   validate_count(&wire.prior_findings, 0, MAX_TASK_PRIOR_FINDINGS, "task prior findings")?;
-  validate_count(&wire.deliverables, 1, MAX_TASK_DELIVERABLES, "task deliverables")?;
+  validate_deliverable_count(wire.mode, &wire.deliverables)?;
   if !strictly_sorted(&wire.specifications)
     || !strictly_sorted(&wire.prior_findings)
     || !strictly_sorted(&wire.deliverables)
@@ -479,6 +479,14 @@ fn validate_permission_content(permissions: &FactoryPermissionSet) -> Result<(),
     }
   }
   Ok(())
+}
+
+fn validate_deliverable_count(
+  mode: FactoryTaskMode,
+  deliverables: &[FactoryTaskDeliverable],
+) -> Result<(), FactoryError> {
+  let minimum = usize::from(mode != FactoryTaskMode::Evaluate);
+  validate_count(deliverables, minimum, MAX_TASK_DELIVERABLES, "task deliverables")
 }
 
 fn task_input_digest(
