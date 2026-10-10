@@ -87,6 +87,14 @@ pub struct FlowNodeDefinition {
   action: Option<crate::FlowActionBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   phase_pool: Option<FactoryKey>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  gate: Option<crate::FlowGateBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  input_binding: Option<crate::FlowInputBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  build: Option<crate::FlowBuildBinding>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  accepted_work_outcomes: Vec<FactoryKey>,
 }
 
 impl FlowNodeDefinition {
@@ -115,7 +123,89 @@ impl FlowNodeDefinition {
       stage_projection: None,
       action: None,
       phase_pool: None,
+      gate: None,
+      input_binding: None,
+      build: None,
+      accepted_work_outcomes: vec![],
     })
+  }
+
+  /// Declares finite deterministic outcomes that freeze the admitted Work contract.
+  /// The record and its complete input ancestry remain in the common journal.
+  pub fn with_accepted_work_outcomes(mut self, mut outcomes: Vec<FactoryKey>) -> Result<Self, FactoryError> {
+    outcomes.sort();
+    self.accepted_work_outcomes = outcomes;
+    self.validate_work_acceptance()?;
+    Ok(self)
+  }
+  /// Returns the configured accepting outcomes; logical node names are irrelevant.
+  #[must_use]
+  pub fn accepted_work_outcomes(&self) -> &[FactoryKey] {
+    &self.accepted_work_outcomes
+  }
+  fn validate_work_acceptance(&self) -> Result<(), FactoryError> {
+    if !self.accepted_work_outcomes.is_empty()
+      && (self.kind != FlowNodeKind::DeterministicGate
+        || super::predicate::configured_program(self)?.is_none()
+        || self.accepted_work_outcomes.len() > self.outcomes.len()
+        || self.accepted_work_outcomes.windows(2).any(|pair| pair[0] >= pair[1])
+        || self
+          .accepted_work_outcomes
+          .iter()
+          .any(|key| self.outcome(key).is_none()))
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Flow Work acceptance outcomes",
+      });
+    }
+    Ok(())
+  }
+
+  /// Freezes one ordinary Build profile inside this exact node declaration.
+  pub fn with_build(mut self, binding: crate::FlowBuildBinding) -> Result<Self, FactoryError> {
+    binding.validate_node(&self)?;
+    self.build = Some(binding);
+    Ok(self)
+  }
+  /// Returns the exact profile independent of logical stage naming.
+  #[must_use]
+  pub const fn build(&self) -> Option<&crate::FlowBuildBinding> {
+    self.build.as_ref()
+  }
+
+  /// Freezes explicit source selections and mapping into this node's declared input contract.
+  pub fn with_input_binding(mut self, binding: crate::FlowInputBinding) -> Result<Self, FactoryError> {
+    if self.input_schema.is_none() {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Flow input binding schema",
+      });
+    }
+    self.input_binding = Some(binding);
+    Ok(self)
+  }
+  /// Returns the operator-owned input selection, independent of logical stage names.
+  #[must_use]
+  pub const fn input_binding(&self) -> Option<&crate::FlowInputBinding> {
+    self.input_binding.as_ref()
+  }
+
+  /// Binds a configured pure policy to the ordinary deterministic-gate primitive.
+  pub fn with_gate(mut self, binding: crate::FlowGateBinding) -> Result<Self, FactoryError> {
+    if self.kind != FlowNodeKind::DeterministicGate {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Flow gate node kind",
+      });
+    }
+    self.gate = Some(binding);
+    // Cross-node sources are validated by the containing definition; one node
+    // cannot determine whether its declared predecessors exist.
+    super::predicate::validate_binding(&self)?;
+    Ok(self)
+  }
+  /// Returns the exact configured policy and parameters, independent of the node's name.
+  #[must_use]
+  pub const fn gate(&self) -> Option<&crate::FlowGateBinding> {
+    self.gate.as_ref()
   }
 
   /// Binds a plugin action without adding a new Flow primitive or implicit route.
@@ -218,6 +308,10 @@ impl FlowNodeDefinition {
       stage_projection: Some(kind),
       action: None,
       phase_pool: None,
+      gate: None,
+      input_binding: None,
+      build: None,
+      accepted_work_outcomes: vec![],
     }
   }
 }
@@ -280,7 +374,7 @@ impl FlowDefinition {
   /// Canonicalizes and structurally validates one immutable definition.
   pub fn new(mut input: FlowDefinitionInput) -> Result<Self, FactoryError> {
     validate_size(input.nodes.len(), input.transitions.len())?;
-    validate_actions(&input.nodes)?;
+    validate_bindings(&input.nodes)?;
     input.nodes.sort_by(|left, right| left.key.cmp(&right.key));
     input.transitions.sort();
     input.terminals.sort_by(|left, right| left.key().cmp(right.key()));
@@ -534,7 +628,7 @@ impl FlowDefinition {
   }
 
   pub(crate) fn validate_canonical_form(&self) -> Result<(), FactoryError> {
-    validate_actions(&self.nodes)?;
+    validate_bindings(&self.nodes)?;
     let content = FlowDefinitionContent {
       id: self.reference.id(),
       version: self.reference.version(),
@@ -584,7 +678,34 @@ fn definition_digest(content: &FlowDefinitionContent<'_>) -> Result<FactoryDiges
   Ok(FactoryDigest::sha256("octacity.factory.flow-definition.v2", &[&bytes]))
 }
 
-fn validate_actions(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
+fn validate_bindings(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
+  if nodes
+    .iter()
+    .any(|node| node.input_binding.is_some() && node.input_schema.is_none())
+  {
+    return Err(FactoryError::InvalidConfiguration {
+      field: "Flow input binding schema",
+    });
+  }
+  for node in nodes {
+    if let Some(binding) = node.build() {
+      binding.validate_node(node)?;
+    }
+    if let Some(binding) = node.input_binding() {
+      binding.validate_sources(nodes)?;
+    }
+    super::predicate::validate_binding(node)?;
+    node.validate_work_acceptance()?;
+  }
+  if nodes
+    .iter()
+    .any(|node| node.gate.is_some() && node.kind != FlowNodeKind::DeterministicGate)
+  {
+    return Err(FactoryError::InvalidConfiguration {
+      field: "Flow gate node kind",
+    });
+  }
+
   if nodes
     .iter()
     .any(|node| node.action.is_some() && node.kind != FlowNodeKind::TrustedAction)

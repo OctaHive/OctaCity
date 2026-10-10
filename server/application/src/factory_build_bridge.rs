@@ -257,6 +257,13 @@ pub enum OrdinaryBuildApplicationError {
 /// replay may return an existing Build but must never start a new expired one.
 #[async_trait]
 pub trait OrdinaryBuildApplication: Send + Sync {
+  /// Reads an already accepted operation without creating, retrying or starting execution.
+  /// Recovery may call this after the original execution deadline; absence must not dispatch work.
+  async fn factory_build_for_operation(
+    &self,
+    operation_id: FactoryDigest,
+  ) -> Result<Option<FactoryBuildAcceptance>, OrdinaryBuildApplicationError>;
+
   /// Creates or observes the one ordinary Build for a stable operation.
   async fn create_factory_build(
     &self,

@@ -196,6 +196,24 @@ impl RecordingBuildApplication {
 
 #[async_trait]
 impl OrdinaryBuildApplication for RecordingBuildApplication {
+  async fn factory_build_for_operation(
+    &self,
+    operation_id: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<FactoryBuildAcceptance>, OrdinaryBuildApplicationError> {
+    Ok(
+      self
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|row| row.operation_id == operation_id)
+        .map(|row| {
+          let mut acceptance = self.acceptance.clone();
+          acceptance.effective_policy_digest = row.effective_permissions.digest();
+          acceptance
+        }),
+    )
+  }
   async fn create_factory_build(
     &self,
     request: CreateFactoryBuild,

@@ -53,6 +53,15 @@ pub fn validate_flow_runtime_history(
       return Err(invalid("Flow Run Factory Run"));
     }
     if let Some(parent) = flow_run.parent() {
+      if history
+        .flow_runs
+        .iter()
+        .filter(|row| row.parent() == Some(parent))
+        .count()
+        != 1
+      {
+        return Err(invalid("unique nested Flow call"));
+      }
       let parent_run = flow_runs
         .get(&parent.flow_run_id())
         .ok_or_else(|| invalid("nested Flow parent Run"))?;
@@ -90,7 +99,12 @@ pub fn validate_flow_runtime_history(
   let active = history
     .attempts
     .iter()
-    .filter(|attempt| attempt.stage_projection_id().is_none() && !completed.contains(&attempt.id()))
+    // A subflow call is a suspended control frame; its child owns executable WIP.
+    .filter(|attempt| {
+      attempt.stage_projection_id().is_none()
+        && attempt.node_kind() != FlowNodeKind::SubflowCall
+        && !completed.contains(&attempt.id())
+    })
     .count();
   if active > usize::from(limits.max_wip()) {
     return Err(invalid("Flow aggregate WIP"));

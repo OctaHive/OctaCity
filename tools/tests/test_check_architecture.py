@@ -54,6 +54,18 @@ def package_fixture(
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
+    def test_configured_factory_runtime_rejects_phase_contracts_and_name_dispatch(self):
+        for source in ["use crate::TriagePolicy;", "match node.as_str() { \"research\" => run_research(), _ => wait() }"]:
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                workspace=Path(directory)
+                path=workspace/"server/application/src/factory_node.rs"
+                path.parent.mkdir(parents=True)
+                path.write_text(source,encoding="utf-8")
+                self.assertEqual([v.code for v in ARCHITECTURE.check_factory_configurable_sources(workspace)], ["ARCH021_FACTORY_PHASE_DISPATCH"])
+
+    def test_configured_factory_has_no_legacy_phase_execution_paths(self):
+        self.assertEqual(ARCHITECTURE.check_factory_configurable_sources(REPOSITORY), [])
+
     def test_current_workspace_satisfies_the_policy(self):
         graph = ARCHITECTURE.graph_from_metadata(ARCHITECTURE.cargo_metadata(REPOSITORY))
         self.assertEqual(

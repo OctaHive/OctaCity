@@ -284,7 +284,7 @@ fn validate_projections(definition: &FlowDefinition) -> Result<(), FactoryError>
     }
   }
   for node in definition.nodes() {
-    if node.input_schema().is_some() && node.key() != definition.entry() {
+    if node.input_schema().is_some() && node.key() != definition.entry() && node.input_binding().is_none() {
       let incoming = transitions
         .iter()
         .filter(|(_, _, successor)| *successor == node.key())

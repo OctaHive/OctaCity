@@ -46,9 +46,9 @@ pub(crate) async fn publish_phase_ready(
     transaction.commit().await.map_err(unavailable)?;
     return Ok(existing);
   }
-  let occupied: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM factory_phase_pool_entries WHERE policy_id = $1 AND run_id = $2 AND run_version = $3 AND flow_run_id = $4 AND cycle_id = $5 AND node_key = $6)")
+  let occupied: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM factory_phase_pool_entries WHERE policy_id = $1 AND run_id = $2 AND run_version = $3 AND flow_run_id = $4 AND cycle_id = $5 AND node_key = $6 AND generation = $7)")
     .bind(entry.policy_digest.as_bytes().as_slice()).bind(entry.input.run_id.as_uuid()).bind(i64::try_from(entry.input.run_version.get()).map_err(|_| invalid())?)
-    .bind(entry.input.flow_run_id.as_uuid()).bind(entry.input.cycle_id.as_uuid()).bind(entry.input.node.as_str()).fetch_one(&mut *transaction).await.map_err(unavailable)?;
+    .bind(entry.input.flow_run_id.as_uuid()).bind(entry.input.cycle_id.as_uuid()).bind(entry.input.node.as_str()).bind(i64::from(entry.input.generation)).fetch_one(&mut *transaction).await.map_err(unavailable)?;
   if occupied {
     return Err(conflict());
   }
@@ -59,11 +59,11 @@ pub(crate) async fn publish_phase_ready(
     .await
     .map_err(unavailable)?;
   let rank = rank(&policy, &entry);
-  sqlx::query("INSERT INTO factory_phase_pool_entries (id, policy_id, run_id, run_version, flow_run_id, cycle_id, node_key, entry, rank_one, rank_two, rank_three, work_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
+  sqlx::query("INSERT INTO factory_phase_pool_entries (id, policy_id, run_id, run_version, flow_run_id, cycle_id, node_key, entry, rank_one, rank_two, rank_three, work_id, generation) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)")
     .bind(entry.id.as_bytes().as_slice()).bind(entry.policy_digest.as_bytes().as_slice()).bind(entry.input.run_id.as_uuid())
     .bind(i64::try_from(entry.input.run_version.get()).map_err(|_| invalid())?).bind(entry.input.flow_run_id.as_uuid())
     .bind(entry.input.cycle_id.as_uuid()).bind(entry.input.node.as_str()).bind(Json(&entry))
-    .bind(rank[0]).bind(rank[1]).bind(rank[2]).bind(entry.work_id.as_uuid())
+    .bind(rank[0]).bind(rank[1]).bind(rank[2]).bind(entry.work_id.as_uuid()).bind(i64::from(entry.input.generation))
     .execute(&mut *transaction).await.map_err(unavailable)?;
   transaction.commit().await.map_err(unavailable)?;
   Ok(entry)
@@ -156,9 +156,9 @@ pub(crate) async fn select_phase_ready(
     "SELECT selected.selection FROM factory_phase_pool_selections selected \
      JOIN factory_runs run ON run.id = selected.run_id \
      WHERE selected.policy_id = $1 AND run.visible AND run.state NOT IN ('rejected','cancelled','completed') \
-       AND ((NOT EXISTS (SELECT 1 FROM factory_node_attempts node WHERE node.run_id = selected.run_id AND node.workflow_cycle_id = selected.cycle_id AND node.node_key = selected.node_key) AND selected.cycle_id = (SELECT id FROM factory_workflow_cycles WHERE flow_run_id = selected.flow_run_id ORDER BY cycle_number DESC LIMIT 1)) OR EXISTS ( \
-         SELECT 1 FROM factory_node_attempts node WHERE node.run_id = selected.run_id \
-           AND node.workflow_cycle_id = selected.cycle_id AND node.node_key = selected.node_key \
+       AND ((NOT EXISTS (SELECT 1 FROM factory_node_attempts node LEFT JOIN factory_flow_inputs frozen ON frozen.run_id = node.run_id AND frozen.id = node.input_digest WHERE node.run_id = selected.run_id AND node.workflow_cycle_id = selected.cycle_id AND node.node_key = selected.node_key AND (frozen.generation = selected.generation OR frozen.id IS NULL)) AND selected.cycle_id = (SELECT id FROM factory_workflow_cycles WHERE flow_run_id = selected.flow_run_id ORDER BY cycle_number DESC LIMIT 1)) OR EXISTS ( \
+         SELECT 1 FROM factory_node_attempts node LEFT JOIN factory_flow_inputs frozen ON frozen.run_id = node.run_id AND frozen.id = node.input_digest WHERE node.run_id = selected.run_id \
+           AND node.workflow_cycle_id = selected.cycle_id AND node.node_key = selected.node_key AND (frozen.generation = selected.generation OR frozen.id IS NULL) \
            AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions result WHERE result.node_attempt_id = node.id))) \
      ORDER BY selected.entry_id LIMIT $2")
     .bind(policy.digest().as_bytes().as_slice()).bind(i64::from(MAX_PHASE_POOL_WIP) + 1).fetch_all(&mut *transaction).await.map_err(unavailable)?;
@@ -272,10 +272,10 @@ pub(crate) async fn select_phase_ready(
       .execute(&mut *transaction)
       .await
       .map_err(unavailable)?;
-    sqlx::query("INSERT INTO factory_phase_pool_selections (entry_id,pass_id,policy_id,run_id,flow_run_id,cycle_id,node_key,claim_id,selection) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+    sqlx::query("INSERT INTO factory_phase_pool_selections (entry_id,pass_id,policy_id,run_id,flow_run_id,cycle_id,node_key,claim_id,selection,generation) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
       .bind(entry.id.as_bytes().as_slice()).bind(request.request_id.as_bytes().as_slice()).bind(request.policy_digest.as_bytes().as_slice())
       .bind(entry.input.run_id.as_uuid()).bind(entry.input.flow_run_id.as_uuid()).bind(entry.input.cycle_id.as_uuid()).bind(entry.input.node.as_str())
-      .bind(claim.id.as_bytes().as_slice()).bind(Json(selection)).execute(&mut *transaction).await.map_err(unavailable)?;
+      .bind(claim.id.as_bytes().as_slice()).bind(Json(selection)).bind(i64::from(entry.input.generation)).execute(&mut *transaction).await.map_err(unavailable)?;
   }
   transaction.commit().await.map_err(unavailable)?;
   Ok(selected)
@@ -353,8 +353,8 @@ async fn ordered_entries(
      WHERE entry.policy_id = $1 AND run.visible AND run.version = entry.run_version \
        AND run.state NOT IN ('rejected','cancelled','completed') \
        AND NOT EXISTS (SELECT 1 FROM factory_phase_pool_selections selected WHERE selected.run_id = entry.run_id \
-         AND selected.flow_run_id = entry.flow_run_id AND selected.cycle_id = entry.cycle_id AND selected.node_key = entry.node_key) \
-       AND NOT EXISTS (SELECT 1 FROM factory_node_attempts node WHERE node.run_id = entry.run_id \
+         AND selected.flow_run_id = entry.flow_run_id AND selected.cycle_id = entry.cycle_id AND selected.node_key = entry.node_key AND selected.generation = entry.generation) \
+       AND entry.generation = (SELECT count(*) FROM factory_node_attempts node WHERE node.run_id = entry.run_id \
          AND node.workflow_cycle_id = entry.cycle_id AND node.node_key = entry.node_key) \
        AND ($2::bytea IS NULL OR (entry.rank_one,entry.rank_two,entry.rank_three,entry.work_id,entry.run_id,entry.flow_run_id,entry.cycle_id,entry.node_key,entry.id) > \
          (cursor.rank_one,cursor.rank_two,cursor.rank_three,cursor.work_id,cursor.run_id,cursor.flow_run_id,cursor.cycle_id,cursor.node_key,cursor.id)) \
@@ -377,4 +377,28 @@ fn invalid() -> StoreError {
     operation: StoreOperation::SelectFactoryPhasePool,
     source: StoreInputError::InvalidFactoryPhasePool,
   }
+}
+
+/// Reads a retained selection by the exact authoritative claim, without current-policy lookup.
+pub(crate) async fn selection_for_claim(
+  connection: &mut sqlx::PgConnection,
+  run: FactoryRunId,
+  claim: FactoryDigest,
+) -> Result<Option<PhasePoolSelection>, StoreError> {
+  let selection: Option<Json<PhasePoolSelection>> =
+    sqlx::query_scalar("SELECT selection FROM factory_phase_pool_selections WHERE run_id=$1 AND claim_id=$2")
+      .bind(run.as_uuid())
+      .bind(claim.as_bytes().as_slice())
+      .fetch_optional(connection)
+      .await
+      .map_err(unavailable)?;
+  selection
+    .map(|Json(selection)| {
+      if selection.entry.input.run_id == run && selection.run_claim().id == claim {
+        Ok(selection)
+      } else {
+        Err(StoreError::Unavailable)
+      }
+    })
+    .transpose()
 }

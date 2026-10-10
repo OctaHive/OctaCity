@@ -1,0 +1,4212 @@
+{
+  "input_schema": "work",
+  "entry": "eligibility",
+  "schemas": {
+    "work": {
+      "identity": "factory.base.work",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "priority": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "eligibility_observations": {
+      "identity": "factory.base.eligibility_observations",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "fit": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "fits",
+                "out_of_scope",
+                "inconclusive"
+              ]
+            }
+          },
+          "duplicate": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "eligibility_facts": {
+      "identity": "factory.base.eligibility_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "fit": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "fits",
+                "out_of_scope",
+                "inconclusive"
+              ]
+            }
+          },
+          "duplicate": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "eligibility_gate_input": {
+      "identity": "factory.base.eligibility_gate_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "fit": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "fits",
+                "out_of_scope",
+                "inconclusive"
+              ]
+            }
+          },
+          "duplicate": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "trusted_fit": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "fits",
+                "out_of_scope",
+                "inconclusive"
+              ]
+            }
+          },
+          "trusted_duplicate": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "expected_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "evidence_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          }
+        }
+      }
+    },
+    "eligibility_accepted": {
+      "identity": "factory.base.eligibility_accepted",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "classification_input": {
+      "identity": "factory.base.classification_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "priority": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "eligible": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "classification_observations": {
+      "identity": "factory.base.classification_observations",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "recommended_route": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "reproducibility": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "not_reproduced",
+                "needs_human_input",
+                "not_applicable"
+              ]
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "classification_facts": {
+      "identity": "factory.base.classification_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "reproduced": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "already_fixed": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "verification_only": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "classification_gate_input": {
+      "identity": "factory.base.classification_gate_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "recommended_route": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "reproducibility": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "not_reproduced",
+                "needs_human_input",
+                "not_applicable"
+              ]
+            }
+          },
+          "reproduced_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "already_fixed_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "verification_only_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "expected_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "evidence_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "identity": "factory.base.summary",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "recommended_route": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "research_required": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "research_accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "defect_observations": {
+      "identity": "factory.base.defect_observations",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "cannot_reproduce",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "summary": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          }
+        }
+      }
+    },
+    "defect_facts": {
+      "identity": "factory.base.defect_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "not_reproducible",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "defect_gate_input": {
+      "identity": "factory.base.defect_gate_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "recommended_route": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "cannot_reproduce",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "verified_outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "not_reproducible",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "expected_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "evidence_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "terminal_accepted": {
+            "required": false,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "terminal_outcome": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "terminal_input": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "terminal_fresh_until": {
+            "required": false,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          }
+        }
+      }
+    },
+    "feature_observations": {
+      "identity": "factory.base.feature_observations",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "proposed",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "problem": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          },
+          "acceptance_boundary": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          },
+          "out_of_scope": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          }
+        }
+      }
+    },
+    "feature_facts": {
+      "identity": "factory.base.feature_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "proposal_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "already_fixed": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "feature_gate_input": {
+      "identity": "factory.base.feature_gate_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "recommended_route": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "proposed",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "proposal_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "already_fixed_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "proposal_bytes": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1048576
+            }
+          },
+          "expected_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "evidence_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "terminal_accepted": {
+            "required": false,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "terminal_outcome": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "terminal_input": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "terminal_fresh_until": {
+            "required": false,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          }
+        }
+      }
+    },
+    "terminal_facts": {
+      "identity": "factory.base.terminal_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  },
+  "nodes": [
+    {
+      "key": "eligibility",
+      "kind": "reasoning",
+      "input_schema": "work",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "eligibility_observations"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "priority": {
+                "mapping": "pointer",
+                "path": "/priority"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "eligibility"
+    },
+    {
+      "key": "eligibility_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "eligibility_gate_input",
+      "outcomes": [
+        {
+          "key": "classify",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "rejection",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "escalation",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observations": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/data/payload/value"
+          },
+          "identity": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/input_digest"
+          },
+          "freshness": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/fresh_until"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "fit": {
+                "mapping": "pointer",
+                "path": "/observations/fit"
+              },
+              "duplicate": {
+                "mapping": "pointer",
+                "path": "/observations/duplicate"
+              },
+              "trusted_fit": {
+                "mapping": "pointer",
+                "path": "/proof/fit"
+              },
+              "trusted_duplicate": {
+                "mapping": "pointer",
+                "path": "/proof/duplicate"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "evidence_input": {
+                "mapping": "pointer",
+                "path": "/proof/input_digest"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/trusted_duplicate"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": true
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/trusted_fit"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "out_of_scope"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "rejection"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/trusted_fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "fits"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "fits"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/trusted_duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": false
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": false
+                  }
+                }
+              ]
+            },
+            "outcome": "classify"
+          }
+        ],
+        "fallback": "escalation",
+        "outputs": {
+          "classify": {
+            "value": {
+              "mapping": "constant",
+              "value": {
+                "accepted": true
+              }
+            }
+          },
+          "rejection": {
+            "value": {
+              "mapping": "constant",
+              "value": {
+                "accepted": false
+              }
+            }
+          },
+          "escalation": {
+            "value": {
+              "mapping": "constant",
+              "value": {
+                "accepted": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "key": "classification",
+      "kind": "reasoning",
+      "input_schema": "classification_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "classification_observations"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          },
+          "eligibility": {
+            "source": "record",
+            "node": "eligibility_gate",
+            "outcome": "classify",
+            "path": "/accepted"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "priority": {
+                "mapping": "pointer",
+                "path": "/priority"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              },
+              "eligible": {
+                "mapping": "pointer",
+                "path": "/eligibility"
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "classification"
+    },
+    {
+      "key": "classification_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "classification_gate_input",
+      "outcomes": [
+        {
+          "key": "escalation",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "rejection",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "already_fixed",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "verification_only",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "defect_research",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "feature_research",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "requirements",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observations": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/data/payload/value"
+          },
+          "identity": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/input_digest"
+          },
+          "freshness": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/fresh_until"
+          },
+          "admission": {
+            "source": "work",
+            "path": "/risk"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/proof/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/proof/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/proof/risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/observations/recommended_route"
+              },
+              "reproducibility": {
+                "mapping": "pointer",
+                "path": "/observations/reproducibility"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/admission"
+              },
+              "reproduced_verified": {
+                "mapping": "pointer",
+                "path": "/proof/reproduced"
+              },
+              "already_fixed_verified": {
+                "mapping": "pointer",
+                "path": "/proof/already_fixed"
+              },
+              "verification_only_verified": {
+                "mapping": "pointer",
+                "path": "/proof/verification_only"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "evidence_input": {
+                "mapping": "pointer",
+                "path": "/proof/input_digest"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/proof/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/proof/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/proof/dependencies"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "not",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": "/expected_input"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "path",
+                          "path": "/evidence_input"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": "/fresh_until"
+                        },
+                        "comparison": "greater",
+                        "right": {
+                          "source": "observation_time"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "high"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "critical"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/admission_risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "high"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/admission_risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "critical"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "escalation"
+                  }
+                }
+              ]
+            },
+            "outcome": "escalation"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/recommended_route"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "rejection"
+              }
+            },
+            "outcome": "rejection"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/already_fixed_verified"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "outcome": "already_fixed"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "verification_only"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/verification_only_verified"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "outcome": "verification_only"
+          },
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "verification_only"
+                  }
+                },
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/work_kind"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "defect"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/reproducibility"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "needs_human_input"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "escalation"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "defect"
+                  }
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/recommended_route"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "research"
+                      }
+                    },
+                    {
+                      "operation": "not",
+                      "predicate": {
+                        "operation": "all",
+                        "predicates": [
+                          {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/reproducibility"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": "reproduced"
+                            }
+                          },
+                          {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/reproduced_verified"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": true
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "defect_research"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "feature_request"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "research"
+                  }
+                }
+              ]
+            },
+            "outcome": "feature_research"
+          },
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "requirements"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "development"
+                  }
+                }
+              ]
+            },
+            "outcome": "requirements"
+          }
+        ],
+        "fallback": "escalation",
+        "outputs": {
+          "defect_research": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "research_accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/dependencies"
+                }
+              }
+            }
+          },
+          "feature_research": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "research_accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/dependencies"
+                }
+              }
+            }
+          }
+        },
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/admission_risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/recommended_route"
+              },
+              "research_required": {
+                "mapping": "constant",
+                "value": false
+              },
+              "research_accepted": {
+                "mapping": "constant",
+                "value": false
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/dependencies"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "key": "defect_research",
+      "kind": "reasoning",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "defect_observations"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "defect_research"
+    },
+    {
+      "key": "defect_research_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "defect_gate_input",
+      "outcomes": [
+        {
+          "key": "accepted",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "cannot_reproduce",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "already_fixed",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "needs_human_input",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "escalation",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observations": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/data/payload/value"
+          },
+          "identity": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/input_digest"
+          },
+          "freshness": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/fresh_until"
+          },
+          "accepted_classification": {
+            "source": "record",
+            "node": "classification_gate",
+            "outcome": "defect_research",
+            "path": ""
+          },
+          "terminal_proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/terminal_resolution"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/risk"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/admission_risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/recommended_route"
+              },
+              "outcome": {
+                "mapping": "pointer",
+                "path": "/observations/outcome"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "evidence_input": {
+                "mapping": "pointer",
+                "path": "/proof/input_digest"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              },
+              "verified_outcome": {
+                "mapping": "pointer",
+                "path": "/proof/outcome"
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/dependencies"
+              },
+              "terminal_accepted": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/data/payload/value/accepted"
+              },
+              "terminal_outcome": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/data/payload/value/outcome"
+              },
+              "terminal_input": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/data/payload/value/input_digest"
+              },
+              "terminal_fresh_until": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/fresh_until"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "all",
+                      "predicates": [
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/outcome"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "reproduced"
+                          }
+                        },
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/verified_outcome"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "reproduced"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "operation": "all",
+                      "predicates": [
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/outcome"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "intermittent"
+                          }
+                        },
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/verified_outcome"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "intermittent"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "operation": "all",
+                      "predicates": [
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/outcome"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "environment_specific"
+                          }
+                        },
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/verified_outcome"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "environment_specific"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "accepted"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "cannot_reproduce"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/verified_outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "not_reproducible"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_accepted"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/outcome"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_input"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/expected_input"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_fresh_until"
+                  },
+                  "comparison": "greater",
+                  "right": {
+                    "source": "observation_time"
+                  }
+                }
+              ]
+            },
+            "outcome": "cannot_reproduce"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/verified_outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_accepted"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/outcome"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_input"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/expected_input"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_fresh_until"
+                  },
+                  "comparison": "greater",
+                  "right": {
+                    "source": "observation_time"
+                  }
+                }
+              ]
+            },
+            "outcome": "already_fixed"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "needs_human_input"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/verified_outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "needs_human_input"
+                  }
+                }
+              ]
+            },
+            "outcome": "needs_human_input"
+          }
+        ],
+        "fallback": "escalation",
+        "outputs": {
+          "accepted": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "research_accepted": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/dependencies"
+                }
+              }
+            }
+          }
+        },
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/admission_risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/recommended_route"
+              },
+              "research_required": {
+                "mapping": "constant",
+                "value": true
+              },
+              "research_accepted": {
+                "mapping": "constant",
+                "value": false
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/dependencies"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "key": "feature_research",
+      "kind": "reasoning",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "feature_observations"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "feature_research"
+    },
+    {
+      "key": "feature_research_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "feature_gate_input",
+      "outcomes": [
+        {
+          "key": "accepted",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "already_fixed",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "escalation",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observations": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/data/payload/value"
+          },
+          "identity": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/input_digest"
+          },
+          "freshness": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/fresh_until"
+          },
+          "accepted_classification": {
+            "source": "record",
+            "node": "classification_gate",
+            "outcome": "feature_research",
+            "path": ""
+          },
+          "proposal_size": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/proposal/artifact/encoded_size"
+          },
+          "terminal_proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/terminal_resolution"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/risk"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/admission_risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/recommended_route"
+              },
+              "outcome": {
+                "mapping": "pointer",
+                "path": "/observations/outcome"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "evidence_input": {
+                "mapping": "pointer",
+                "path": "/proof/input_digest"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              },
+              "proposal_verified": {
+                "mapping": "pointer",
+                "path": "/proof/proposal_verified"
+              },
+              "already_fixed_verified": {
+                "mapping": "pointer",
+                "path": "/proof/already_fixed"
+              },
+              "proposal_bytes": {
+                "mapping": "pointer",
+                "path": "/proposal_size"
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/accepted_classification/dependencies"
+              },
+              "terminal_accepted": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/data/payload/value/accepted"
+              },
+              "terminal_outcome": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/data/payload/value/outcome"
+              },
+              "terminal_input": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/data/payload/value/input_digest"
+              },
+              "terminal_fresh_until": {
+                "mapping": "pointer",
+                "path": "/terminal_proof/fresh_until"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "proposed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/proposal_verified"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/proposal_bytes"
+                  },
+                  "comparison": "less_or_equal",
+                  "right": {
+                    "source": "literal",
+                    "value": 2048
+                  }
+                }
+              ]
+            },
+            "outcome": "accepted"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/already_fixed_verified"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_accepted"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/outcome"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_input"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/expected_input"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/terminal_fresh_until"
+                  },
+                  "comparison": "greater",
+                  "right": {
+                    "source": "observation_time"
+                  }
+                }
+              ]
+            },
+            "outcome": "already_fixed"
+          }
+        ],
+        "fallback": "escalation",
+        "outputs": {
+          "accepted": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "research_accepted": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/dependencies"
+                }
+              }
+            }
+          }
+        },
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/admission_risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/recommended_route"
+              },
+              "research_required": {
+                "mapping": "constant",
+                "value": true
+              },
+              "research_accepted": {
+                "mapping": "constant",
+                "value": false
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/dependencies"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "key": "requirements_needed",
+      "kind": "deterministic_gate",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "bypass",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "specification",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/size"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "small"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "low"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/admission_risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "low"
+                  }
+                },
+                {
+                  "operation": "not",
+                  "predicate": {
+                    "operation": "compare",
+                    "left": {
+                      "source": "path",
+                      "path": "/recommended_route"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": "requirements"
+                    }
+                  }
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/research_required"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": false
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/research_accepted"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": true
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "bypass"
+          }
+        ],
+        "fallback": "specification",
+        "outputs": {
+          "bypass": {
+            "value": {
+              "mapping": "pointer",
+              "path": ""
+            }
+          },
+          "specification": {
+            "value": {
+              "mapping": "pointer",
+              "path": ""
+            }
+          }
+        }
+      },
+      "accepted_work_outcomes": [
+        "bypass"
+      ]
+    },
+    {
+      "key": "protected_tests",
+      "kind": "reasoning",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "protected_tests",
+      "pool": "development.ready"
+    },
+    {
+      "key": "implementation",
+      "kind": "reasoning",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "implementation"
+    },
+    {
+      "key": "review",
+      "kind": "reasoning",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "review"
+    },
+    {
+      "key": "verification",
+      "kind": "reasoning",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "verification"
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "eligibility",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "eligibility_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "classify",
+      "target": {
+        "kind": "node",
+        "key": "classification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "rejection",
+      "target": {
+        "kind": "terminal",
+        "key": "eligibility_rejection"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "eligibility_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "classification_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "classification_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "rejection",
+      "target": {
+        "kind": "terminal",
+        "key": "classification_rejection"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "classification_already_fixed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "verification_only",
+      "target": {
+        "kind": "node",
+        "key": "verification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "defect_research",
+      "target": {
+        "kind": "node",
+        "key": "defect_research"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "feature_research",
+      "target": {
+        "kind": "node",
+        "key": "feature_research"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "requirements",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "defect_research_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "accepted",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "cannot_reproduce",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_cannot_reproduce"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_already_fixed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "needs_human_input",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_needs_human_input"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "feature_research_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research_gate",
+      "outcome": "accepted",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "feature_research_already_fixed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "feature_research_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_needed",
+      "outcome": "bypass",
+      "target": {
+        "kind": "node",
+        "key": "protected_tests"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_needed",
+      "outcome": "specification",
+      "target": {
+        "kind": "terminal",
+        "key": "specification_required"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "protected_tests",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "implementation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "implementation",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "review",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "verification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "verification",
+      "outcome": "observed",
+      "target": {
+        "kind": "terminal",
+        "key": "verified_candidate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {
+    "eligibility_rejection": "eligibility_accepted",
+    "eligibility_escalation": "eligibility_accepted",
+    "classification_escalation": "summary",
+    "classification_rejection": "summary",
+    "classification_already_fixed": "summary",
+    "defect_research_cannot_reproduce": "summary",
+    "defect_research_already_fixed": "summary",
+    "defect_research_needs_human_input": "summary",
+    "defect_research_escalation": "summary",
+    "feature_research_already_fixed": "summary",
+    "feature_research_escalation": "summary",
+    "specification_required": "summary",
+    "verified_candidate": "summary"
+  },
+  "execution": {
+    "budget": {
+      "max_attempts": 32,
+      "max_elapsed_millis": 3600000,
+      "max_tokens": 1000000,
+      "max_cost_micro_units": 100000000,
+      "max_output_bytes": 33554432
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 4
+  }
+}

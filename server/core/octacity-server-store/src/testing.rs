@@ -612,6 +612,10 @@ impl ManagementEvidenceIdentity<'_> {
   }
 }
 
+pub use crate::factory_node_journal_testing::{
+  FactoryNodeJournalContractFixture, factory_node_journal_contract_fixture, verify_factory_node_journal_contract,
+};
+
 #[cfg(test)]
 mod evidence_identity_tests {
   use super::*;

@@ -130,6 +130,25 @@ impl SucceedingBuildApplication {
 
 #[async_trait]
 impl OrdinaryBuildApplication for SucceedingBuildApplication {
+  async fn factory_build_for_operation(
+    &self,
+    operation_id: FactoryDigest,
+  ) -> Result<Option<FactoryBuildAcceptance>, OrdinaryBuildApplicationError> {
+    Ok(
+      self
+        .builds
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, row)| row.request.operation_id == operation_id)
+        .map(|(id, row)| FactoryBuildAcceptance {
+          build_id: *id,
+          attempt_id: row.attempt_id,
+          job_ids: row.job_ids.clone(),
+          effective_policy_digest: row.request.effective_permissions.digest(),
+        }),
+    )
+  }
   async fn create_factory_build(
     &self,
     request: CreateFactoryBuild,

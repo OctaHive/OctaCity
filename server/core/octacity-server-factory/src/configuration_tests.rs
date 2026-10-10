@@ -212,23 +212,6 @@ fn credential_profiles() -> FactoryCredentialProfiles {
   .unwrap()
 }
 
-pub(crate) fn publish_flow_fixture(
-  reference: &crate::FactoryConfigurationRef,
-  flow: crate::FactoryFlowConfiguration,
-) -> FactoryConfiguration {
-  let mut fixture = valid_fixture_for_project(reference.project_id());
-  fixture.draft.flow = Some(flow);
-  FactoryConfiguration::publish(
-    reference.id(),
-    reference.version(),
-    reference.project_id(),
-    reference.definition_digest(),
-    fixture.draft,
-    &fixture.choices,
-  )
-  .unwrap()
-}
-
 fn publish(fixture: &Fixture) -> FactoryConfiguration {
   FactoryConfiguration::publish(
     FactoryConfigurationId::generate(),

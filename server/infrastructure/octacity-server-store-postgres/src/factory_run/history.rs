@@ -45,34 +45,9 @@ pub(crate) async fn append_history(
       source: octacity_server_store::StoreInputError::InvalidFactoryRunTransition,
     });
   }
-  for record in &append.flow.triage {
-    sqlx::query("INSERT INTO factory_triage_records (run_id, phase, id, record) VALUES ($1,$2,$3,$4)")
-      .bind(run_id.as_uuid())
-      .bind(i16::from(record.phase()))
-      .bind(
-        record
-          .digest()
-          .map_err(|_| StoreError::Unavailable)?
-          .as_bytes()
-          .as_slice(),
-      )
-      .bind(Json(record))
-      .execute(&mut **transaction)
-      .await
-      .map_err(unavailable)?;
-    for artifact in record.artifacts() {
-      insert_shared_artifact_reference(
-        transaction,
-        run_id,
-        artifact.artifact_id(),
-        octacity_server_store::FactoryArtifactRole::CallContext,
-        artifact.content_digest(),
-        recorded_at,
-      )
-      .await?;
-    }
-  }
+
   insert_flow_history(transaction, run_id, recorded_at, &append.flow).await?;
+  super::data::append(transaction, run_id, &append.flow.data, recorded_at).await?;
   for record in &append.flow.completions {
     insert_node_completion(transaction, run_id, record).await?;
   }
@@ -357,7 +332,7 @@ async fn insert_context_manifest(
 /// Multiple handoffs or calls may legitimately select the same bytes at
 /// different times. The first reference owns `created_at`; later references
 /// must prove the exact same digest without rewriting that retention fact.
-async fn insert_shared_artifact_reference(
+pub(super) async fn insert_shared_artifact_reference(
   tx: &mut Transaction<'_, Postgres>,
   run_id: FactoryRunId,
   artifact_id: octacity_server_domain::ArtifactId,
@@ -684,6 +659,7 @@ pub(crate) async fn history_rows(
   admitted_flow: &AdmittedFlow,
   flow_runs: &[FlowRun],
   cycles: &[WorkflowCycle],
+  work: &octacity_server_factory::WorkEnvelope,
 ) -> Result<FactoryRunHistoryAppend, StoreError> {
   let stage_attempts = json_rows(
     tx,
@@ -694,18 +670,31 @@ pub(crate) async fn history_rows(
   )
   .await?;
   let node_attempts = node_attempt_rows(tx, run_id, admitted_flow, flow_runs, cycles, &stage_attempts).await?;
+  let completions = json_rows(
+    tx,
+    "SELECT completion FROM factory_node_attempt_completions WHERE run_id = $1 ORDER BY completed_at, id",
+    run_id,
+  )
+  .await?;
+  let data = super::data::read(
+    tx,
+    work,
+    admitted_flow,
+    octacity_server_factory::FlowRuntimeHistory {
+      flow_runs,
+      cycles,
+      attempts: &node_attempts,
+      completions: &completions,
+    },
+  )
+  .await?;
   Ok(FactoryRunHistoryAppend {
     flow: FactoryFlowHistory {
       runs: Vec::new(),
       cycles: Vec::new(),
       attempts: node_attempts,
-      triage: triage_history(tx, run_id).await?,
-      completions: json_rows(
-        tx,
-        "SELECT completion FROM factory_node_attempt_completions WHERE run_id = $1 ORDER BY completed_at, id",
-        run_id,
-      )
-      .await?,
+      completions,
+      data,
     },
     stage_attempts,
     stage_attempt_completions: json_rows(
@@ -1032,18 +1021,6 @@ const fn reporting_state(value: octacity_server_factory::ReportingState) -> &'st
     octacity_server_factory::ReportingState::Failed => "failed",
     octacity_server_factory::ReportingState::Unknown => "unknown",
   }
-}
-
-pub(super) async fn triage_history(
-  tx: &mut Transaction<'_, Postgres>,
-  run_id: FactoryRunId,
-) -> Result<Vec<octacity_server_factory::TriageJournalRecord>, StoreError> {
-  json_rows(
-    tx,
-    "SELECT record FROM factory_triage_records WHERE run_id = $1 ORDER BY phase",
-    run_id,
-  )
-  .await
 }
 
 async fn insert_flow_history(

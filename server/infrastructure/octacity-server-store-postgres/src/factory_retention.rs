@@ -86,7 +86,7 @@ async fn claim(
          AND (work.claim_owner IS NULL \
               OR work.claim_expires_at <= to_timestamp($1::double precision / 1000.0)) \
          AND NOT EXISTS (\
-           SELECT 1 FROM factory_build_links AS link \
+           SELECT 1 FROM factory_run_builds AS link \
            JOIN LATERAL (\
              SELECT released_at, expired_at, expires_at \
              FROM build_result_retention_holds WHERE build_id = link.build_id \
@@ -138,7 +138,7 @@ async fn advance(
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   sqlx::query_scalar::<_, uuid::Uuid>(
     "SELECT build.id FROM builds AS build \
-     JOIN factory_build_links AS link ON link.build_id = build.id \
+     JOIN factory_run_builds AS link ON link.build_id = build.id \
      WHERE link.run_id = $1 ORDER BY build.id FOR UPDATE OF build",
   )
   .bind(request.run_id.as_uuid())
@@ -244,7 +244,11 @@ async fn delete_metadata_page(
   limit: u16,
 ) -> Result<u16, StoreError> {
   const DELETE_STEPS: &[&str] = &[
-    "WITH selected AS (SELECT ctid FROM factory_triage_records WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_triage_records WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_flow_build_executions WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_executions WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_flow_build_intents WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_intents WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_flow_records WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_records WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_flow_inputs WHERE run_id = $1 AND NOT EXISTS (SELECT 1 FROM factory_flow_records WHERE factory_flow_records.run_id = factory_flow_inputs.run_id AND factory_flow_records.input_digest = factory_flow_inputs.id) AND NOT EXISTS (SELECT 1 FROM factory_flow_build_intents WHERE factory_flow_build_intents.run_id = factory_flow_inputs.run_id AND factory_flow_build_intents.input_digest = factory_flow_inputs.id) ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_inputs WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_flow_incoming WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_incoming WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_phase_pool_selections WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_phase_pool_selections WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_phase_pool_entries WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_phase_pool_entries WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_run_current WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
@@ -358,7 +362,7 @@ async fn lock_eligible_work(
 ) -> Result<(), StoreError> {
   let eligible: Option<bool> = sqlx::query_scalar(
     "SELECT run.state IN ('rejected', 'cancelled', 'completed') AND NOT EXISTS (\
-       SELECT 1 FROM factory_build_links AS link \
+       SELECT 1 FROM factory_run_builds AS link \
        JOIN LATERAL (\
          SELECT released_at, expired_at, expires_at FROM build_result_retention_holds \
          WHERE build_id = link.build_id ORDER BY version DESC LIMIT 1\

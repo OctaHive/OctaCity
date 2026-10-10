@@ -39,11 +39,13 @@ pub struct PhasePoolInput {
   pub cycle_id: WorkflowCycleId,
   /// Declared node made ready by persisted control outcomes.
   pub node: FactoryKey,
+  /// Exact zero-based node execution within this workflow cycle.
+  pub generation: u32,
   /// Accepted severity observation, never a model-selected queue position.
   pub severity: FindingSeverity,
   /// Frozen operator-owned Project priority.
   pub project_priority: i32,
-  /// Exact retained triage, handoff, or phase-policy input digest.
+  /// Full content identity of the frozen configured node input.
   pub phase_input_digest: FactoryDigest,
   /// Exact capability identities required by this phase.
   pub capabilities: BTreeSet<ImmutableReference>,
@@ -134,6 +136,12 @@ impl SelectPhasePool {
 /// Operation-shaped durable pool contract, separate from Agent placement and run reconciliation.
 #[async_trait]
 pub trait FactoryPhasePoolStore: Send + Sync {
+  /// Returns the exact retained selection granting this current Run claim.
+  async fn phase_pool_selection_for_claim(
+    &self,
+    run: FactoryRunId,
+    claim: FactoryDigest,
+  ) -> Result<Option<PhasePoolSelection>, StoreError>;
   /// Publishes a current ready projection after reconstructing authoritative Flow readiness.
   async fn publish_phase_ready(
     &self,
@@ -151,6 +159,51 @@ pub trait FactoryPhasePoolStore: Send + Sync {
   async fn select_phase_ready(&self, request: SelectPhasePool) -> Result<Vec<PhasePoolSelection>, StoreError>;
 }
 
+/// Derives all configured queue selection facts from one frozen input and admission.
+/// Callers cannot supply severity, dependencies, priority or a smaller reservation.
+pub fn configured_phase_pool_input(
+  snapshot: &FactoryRunSnapshot,
+  input: &octacity_server_factory::FlowNodeInput,
+) -> Result<PhasePoolInput, StoreError> {
+  let node = snapshot
+    .admitted_flow
+    .closure()
+    .definition(input.definition())
+    .and_then(|definition| definition.node(input.node()))
+    .ok_or_else(pool_invalid)?;
+  let settings = node
+    .phase_pool()
+    .and_then(|name| snapshot.admitted_flow.pool_settings().get(name))
+    .ok_or_else(pool_invalid)?;
+  let selected = settings
+    .selection
+    .project(input.payload(), &pool_selection_schema()?)
+    .map_err(|_| pool_invalid())?;
+  let mut facts: PoolSelectionFacts = serde_json::from_value(selected.value().clone()).map_err(|_| pool_invalid())?;
+  facts.dependencies.sort_by_key(|row| row.run_id);
+  let budget = node.budget();
+  Ok(PhasePoolInput {
+    run_id: snapshot.run.id(),
+    run_version: snapshot.run.version(),
+    flow_run_id: input.flow_run_id(),
+    cycle_id: input.cycle_id(),
+    node: input.node().clone(),
+    generation: input.generation(),
+    severity: facts.severity,
+    project_priority: settings.project_priority,
+    phase_input_digest: input.digest().map_err(|_| pool_invalid())?,
+    capabilities: settings.capabilities.clone(),
+    dependencies: facts.dependencies,
+    reservation: BudgetUsage {
+      attempts: budget.max_attempts(),
+      elapsed_millis: budget.max_elapsed_millis(),
+      tokens: budget.max_tokens(),
+      cost_micro_units: budget.max_cost_micro_units(),
+      output_bytes: budget.max_output_bytes(),
+    },
+  })
+}
+
 /// Reconstructs one pool entry from immutable policy and current authoritative Flow facts.
 pub fn derive_phase_pool_entry(
   policy: &PhasePoolPolicy,
@@ -158,59 +211,55 @@ pub fn derive_phase_pool_entry(
   snapshot: &FactoryRunSnapshot,
 ) -> Result<PhasePoolEntry, StoreError> {
   policy.validate().map_err(|_| pool_invalid())?;
-  let mut require_projected_input = false;
-  if let Some(triage) = snapshot.admitted_flow.triage() {
-    let Some(octacity_server_factory::TriageJournalRecord::Classification(row)) = snapshot.flow.triage.last() else {
-      return Err(pool_invalid());
-    };
-    let route = row.decision.route;
-    let (&pool_route, _) = triage
-      .pools
-      .iter()
-      .find(|(_, declared)| *declared == policy)
+  if !snapshot.admitted_flow.data_schemas().is_empty() {
+    let settings = snapshot
+      .admitted_flow
+      .pool_settings()
+      .get(&policy.phase)
       .ok_or_else(pool_invalid)?;
-    let root = snapshot
+    let frozen = snapshot
+      .flow
+      .data
+      .inputs
+      .iter()
+      .find(|frozen| {
+        frozen.flow_run_id() == input.flow_run_id
+          && frozen.cycle_id() == input.cycle_id
+          && frozen.node() == &input.node
+          && frozen.digest().ok() == Some(input.phase_input_digest)
+      })
+      .ok_or_else(pool_invalid)?;
+    let selection = settings
+      .selection
+      .project(frozen.payload(), &pool_selection_schema()?)
+      .map_err(|_| pool_invalid())?;
+    let mut facts: PoolSelectionFacts =
+      serde_json::from_value(selection.value().clone()).map_err(|_| pool_invalid())?;
+    facts.dependencies.sort_by_key(|dependency| dependency.run_id);
+    let budget = snapshot
       .admitted_flow
       .closure()
-      .definition(snapshot.admitted_flow.closure().root())
-      .ok_or_else(pool_invalid)?;
-    let target = root
-      .transitions()
-      .iter()
-      .find(|edge| edge.predecessor() == root.entry() && edge.outcome().as_str() == route.as_str())
-      .map(|edge| edge.target());
-    let mut observed_dependencies = row
-      .result
-      .classification()
-      .dependencies
-      .iter()
-      .map(|row| (row.value().work_id, row.value().work_digest))
-      .collect::<Vec<_>>();
-    let mut ready_dependencies = input
-      .dependencies
-      .iter()
-      .map(|row| (row.work_id, row.work_digest))
-      .collect::<Vec<_>>();
-    observed_dependencies.sort();
-    ready_dependencies.sort();
-    // Intake's first successor consumes the accepted triage disposition. Later
-    // phases consume an exact completion through a declared typed projection.
-    let first_successor = target == Some(&octacity_server_factory::FlowTransitionTarget::Node(input.node.clone()));
-    if input.flow_run_id != snapshot.admitted_flow.root_run().id()
-      || first_successor && pool_route != route
-      || first_successor
-        && input.phase_input_digest
-          != octacity_server_factory::TriageDisposition::Classification(row.decision.clone())
-            .digest()
-            .map_err(|_| pool_invalid())?
-      || input.severity != *row.result.classification().severity.value()
-      || input.project_priority != triage.project_priority
-      || input.capabilities != triage.capabilities.get(&pool_route).cloned().unwrap_or_default()
-      || observed_dependencies != ready_dependencies
+      .definition(frozen.definition())
+      .and_then(|definition| definition.node(frozen.node()))
+      .ok_or_else(pool_invalid)?
+      .budget();
+    let reservation = BudgetUsage {
+      attempts: budget.max_attempts(),
+      elapsed_millis: budget.max_elapsed_millis(),
+      tokens: budget.max_tokens(),
+      cost_micro_units: budget.max_cost_micro_units(),
+      output_bytes: budget.max_output_bytes(),
+    };
+    if &settings.policy != policy
+      || input.project_priority != settings.project_priority
+      || input.capabilities != settings.capabilities
+      || input.severity != facts.severity
+      || input.dependencies != facts.dependencies
+      || input.reservation != reservation
+      || input.generation != frozen.generation()
     {
       return Err(pool_invalid());
     }
-    require_projected_input = !first_successor;
   }
   let checkpoint = snapshot
     .lifecycle_checkpoints
@@ -253,7 +302,9 @@ pub fn derive_phase_pool_entry(
       .flow
       .attempts
       .iter()
-      .any(|attempt| attempt.workflow_cycle_id() == cycle.id() && attempt.node_key() == &input.node)
+      .filter(|attempt| attempt.workflow_cycle_id() == cycle.id() && attempt.node_key() == &input.node)
+      .count()
+      != input.generation as usize
   {
     return Err(pool_invalid());
   }
@@ -264,7 +315,7 @@ pub fn derive_phase_pool_entry(
     .ok_or_else(pool_invalid)?;
   let node = definition.node(&input.node).ok_or_else(pool_invalid)?;
   if node.phase_pool().is_some_and(|phase| phase != &policy.phase)
-    || require_projected_input && node.phase_pool().is_none()
+    || !snapshot.admitted_flow.data_schemas().is_empty() && node.phase_pool() != Some(&policy.phase)
   {
     return Err(pool_invalid());
   }
@@ -304,20 +355,7 @@ pub fn derive_phase_pool_entry(
         if !matches(directive) {
           return false;
         }
-        if !require_projected_input {
-          return true;
-        }
-        let inputs = match directive {
-          FlowDirective::ExecuteNode { inputs, .. } | FlowDirective::EnterSubflow { inputs, .. } => inputs,
-          FlowDirective::Complete { .. } => return false,
-        };
-        completion.output_digest() == input.phase_input_digest
-          && inputs.data.iter().any(|projection| {
-            projection.predecessor() == attempt.node_key()
-              && projection.outcome() == completion.outcome()
-              && projection.successor() == &input.node
-              && projection.schema() == completion.output_schema()
-          })
+        true
       });
     }
     ready
@@ -355,6 +393,50 @@ pub fn derive_phase_pool_entry(
   };
   entry.id = digest("phase-pool-entry", &entry);
   Ok(entry)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PoolSelectionFacts {
+  severity: FindingSeverity,
+  dependencies: Vec<PhasePoolDependency>,
+}
+fn pool_selection_schema() -> Result<octacity_server_factory::FlowDataSchema, StoreError> {
+  use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};
+  let key = |value| FactoryKey::new(value).map_err(|_| pool_invalid());
+  let text = |minimum, maximum| FlowValueSchema::String {
+    min_bytes: minimum,
+    max_bytes: maximum,
+  };
+  let dependency = FlowValueSchema::Object {
+    fields: [
+      ("run_id", text(36, 36)),
+      ("work_id", text(36, 36)),
+      ("work_digest", text(64, 64)),
+      ("terminal", text(1, 128)),
+    ]
+    .into_iter()
+    .map(|(name, shape)| Ok((key(name)?, FlowFieldSchema::required(shape))))
+    .collect::<Result<_, StoreError>>()?,
+  };
+  FlowDataSchema::new(
+    key("factory.pool-selection")?,
+    key("v1")?,
+    FlowValueSchema::Object {
+      fields: std::collections::BTreeMap::from([
+        (key("severity")?, FlowFieldSchema::required(text(1, 128))),
+        (
+          key("dependencies")?,
+          FlowFieldSchema::required(FlowValueSchema::Array {
+            item: Box::new(dependency),
+            min_items: 0,
+            max_items: 64,
+          }),
+        ),
+      ]),
+    },
+  )
+  .map_err(|_| pool_invalid())
 }
 
 /// Shared ordering used by both persistence adapters; refresh never supplies a queue position.
@@ -623,7 +705,13 @@ pub fn phase_pool_selection_active(
     .attempts
     .iter()
     .filter(|attempt| {
-      attempt.workflow_cycle_id() == selection.entry.input.cycle_id && attempt.node_key() == &selection.entry.input.node
+      attempt.workflow_cycle_id() == selection.entry.input.cycle_id
+        && attempt.node_key() == &selection.entry.input.node
+        && (snapshot.admitted_flow.data_schemas().is_empty()
+          || snapshot.flow.data.inputs.iter().any(|input| {
+            input.digest().ok() == Some(attempt.input_digest())
+              && input.generation() == selection.entry.input.generation
+          }))
     })
     .collect::<Vec<_>>();
   if targets.is_empty() {

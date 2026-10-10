@@ -15,13 +15,29 @@ use crate::{
 pub(super) struct PhasePoolMemoryState {
   policies: BTreeMap<FactoryDigest, PhasePoolPolicy>,
   entries: BTreeMap<FactoryDigest, PhasePoolEntry>,
-  selections: BTreeMap<FactoryDigest, PhasePoolSelection>,
+  pub(super) selections: BTreeMap<FactoryDigest, PhasePoolSelection>,
   passes: BTreeMap<FactoryDigest, (SelectPhasePool, Vec<PhasePoolSelection>)>,
   scan_after: BTreeMap<FactoryDigest, (FactoryDigest, FactoryDigest)>,
 }
 
 #[async_trait]
 impl FactoryPhasePoolStore for InMemoryFactoryConfigurationStore {
+  async fn phase_pool_selection_for_claim(
+    &self,
+    run: octacity_server_factory::FactoryRunId,
+    claim: FactoryDigest,
+  ) -> Result<Option<PhasePoolSelection>, StoreError> {
+    let state = self.lock()?;
+    Ok(
+      state
+        .phase_pools
+        .selections
+        .values()
+        .find(|selection| selection.entry.input.run_id == run && selection.run_claim().id == claim)
+        .cloned(),
+    )
+  }
+
   async fn publish_phase_ready(
     &self,
     policy: PhasePoolPolicy,
@@ -287,10 +303,12 @@ fn same_target(left: &PhasePoolEntry, right: &PhasePoolEntry) -> bool {
     left.input.flow_run_id,
     left.input.cycle_id,
     &left.input.node,
+    left.input.generation,
   ) == (
     right.input.run_id,
     right.input.flow_run_id,
     right.input.cycle_id,
     &right.input.node,
+    right.input.generation,
   )
 }

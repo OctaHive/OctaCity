@@ -1037,6 +1037,24 @@ def check_postgres_management_actor_sources(workspace: Path) -> list[Violation]:
     return violations
 
 
+def check_factory_configurable_sources(workspace: Path) -> list[Violation]:
+    """Business stages belong to supplied configurations, never execution dispatch."""
+    roots = [workspace / "server/core/octacity-server-factory/src", workspace / "server/core/octacity-server-store/src", workspace / "server/application/src", workspace / "server/infrastructure/octacity-server-store-postgres/src"]
+    phase_contract = re.compile(r"\b(?:FactoryTriage\w*|TriagePolicy|TriageJournalRecord|TriageRoute|ResearchBuildIntent|ResearchPolicy|ResearchResult|RequirementsPolicy)\b")
+    phase_dispatch = re.compile(r'(?:as_str\(\)|node_key\(\))\s*\{[^}]*"(?:triage|research|requirements|eligibility|classification)"', re.DOTALL)
+    violations=[]
+    for root in roots:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*.rs")):
+            if "tests" in path.stem or "tests" in path.parts or "test_support" in path.stem:
+                continue
+            source=path.read_text(encoding="utf-8")
+            if phase_contract.search(source) or phase_dispatch.search(source):
+                violations.append(Violation("ARCH021_FACTORY_PHASE_DISPATCH", f"configured Factory execution must use common node contracts: {path.relative_to(workspace)}"))
+    return violations
+
+
 def cargo_metadata(workspace: Path) -> dict[str, Any]:
     """Read locked workspace-only Cargo metadata without building packages."""
 
@@ -1093,6 +1111,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             + check_factory_graph(graph)
             + check_shared_sources(graph)
             + check_factory_core_sources(graph)
+            + check_factory_configurable_sources(options.workspace)
             + check_management_route_sources(options.workspace)
             + check_management_security_sources(options.workspace)
             + check_postgres_management_actor_sources(options.workspace)

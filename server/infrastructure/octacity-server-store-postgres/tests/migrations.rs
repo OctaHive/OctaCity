@@ -17,7 +17,7 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 44] = [
+const FACTORY_TABLES: [&str; 48] = [
   "factory_assessments",
   "factory_audit_links",
   "factory_build_link_jobs",
@@ -42,11 +42,15 @@ const FACTORY_TABLES: [&str; 44] = [
   "factory_evidence_manifests",
   "factory_flow_definition_versions",
   "factory_flow_runs",
+  "factory_flow_incoming",
+  "factory_flow_inputs",
+  "factory_flow_records",
+  "factory_flow_build_intents",
+  "factory_flow_build_executions",
   "factory_lifecycle_checkpoints",
   "factory_node_attempts",
   "factory_node_attempt_completions",
   "factory_outbox_records",
-  "factory_triage_records",
   "factory_phase_pool_policies",
   "factory_phase_pool_entries",
   "factory_phase_pool_passes",
@@ -432,11 +436,15 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_evidence_manifests",
     "factory_flow_definition_versions",
     "factory_flow_runs",
+    "factory_flow_incoming",
+    "factory_flow_inputs",
+    "factory_flow_records",
+    "factory_flow_build_intents",
+    "factory_flow_build_executions",
     "factory_lifecycle_checkpoints",
     "factory_node_attempts",
     "factory_node_attempt_completions",
     "factory_outbox_records",
-    "factory_triage_records",
     "factory_phase_pool_policies",
     "factory_phase_pool_entries",
     "factory_phase_pool_passes",

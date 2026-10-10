@@ -70,3 +70,8 @@ fn base_options() -> PgConnectOptions {
 fn database_name(kind: &str) -> String {
   format!("octacity_{kind}_{}", uuid::Uuid::new_v4().simple())
 }
+
+#[allow(dead_code)]
+pub mod factory_build;
+#[allow(dead_code)]
+pub mod factory_configuration;

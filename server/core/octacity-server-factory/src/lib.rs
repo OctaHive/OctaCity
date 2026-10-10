@@ -12,6 +12,8 @@ mod budget;
 mod configuration;
 #[cfg(test)]
 mod configuration_tests;
+#[cfg(test)]
+mod configured_flow_tests;
 mod credential;
 #[cfg(test)]
 mod credential_tests;
@@ -32,15 +34,34 @@ mod execution;
 mod flow;
 #[cfg(test)]
 mod flow_action_tests;
+#[cfg(test)]
+mod flow_build_tests;
+#[cfg(test)]
+mod flow_data_tests;
+#[cfg(test)]
+mod flow_gate_program_tests;
+#[cfg(test)]
+mod flow_gate_tests;
+#[cfg(test)]
+mod flow_journal_tests;
+#[cfg(test)]
+mod flow_template_tests;
+#[cfg(test)]
+mod flow_test_support;
+#[cfg(test)]
+use crate as factory;
 mod flow_graph;
 #[cfg(test)]
 mod flow_graph_tests;
 #[cfg(test)]
 mod flow_interpreter_tests;
+#[cfg(test)]
+mod flow_mapping_tests;
 mod graph;
 #[cfg(test)]
 mod graph_tests;
 mod identity;
+mod journey;
 mod lifecycle;
 mod lifecycle_decision;
 #[cfg(test)]
@@ -49,7 +70,6 @@ mod permission;
 #[cfg(test)]
 mod permission_tests;
 mod phase_pool;
-mod research;
 mod review_plan;
 #[cfg(test)]
 mod review_plan_tests;
@@ -57,7 +77,6 @@ mod subject;
 mod task_contract;
 #[cfg(test)]
 mod task_contract_tests;
-mod triage;
 mod value;
 
 pub use assessment::{
@@ -110,14 +129,23 @@ pub use execution::{
   MAX_MACRO_CALL_DEPTH, MacroCall, MacroCallDeclaration, StageAttempt, StageAttemptCompletion, StageAttemptOutcome,
 };
 pub use flow::{
-  AdmittedFlow, FlowActionBinding, FlowAdmissionLimits, FlowBuildProfile, FlowContextProjection, FlowDataProjection,
-  FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDirective, FlowDirectiveInputs, FlowExecutionPolicy,
-  FlowInterpreter, FlowNodeDefinition, FlowNodeDefinitionInput, FlowOutcomeDefinition, FlowOutcomeKind, FlowRun,
-  FlowRunParent, FlowRuntimeHistory, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget,
-  MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES,
-  MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT,
-  NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
-  PinnedFlowDefinitionClosure, ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
+  AdmittedFlow, FlowActionBinding, FlowAdmissionLimits, FlowBuildBinding, FlowBuildExecution, FlowBuildIntent,
+  FlowBuildProfile, FlowBuildProvenance, FlowComparison, FlowContextProjection, FlowDataHistory, FlowDataMapping,
+  FlowDataProjection, FlowDataSchema, FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate,
+  FlowDirective, FlowDirectiveInputs, FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding, FlowGateProgram,
+  FlowGateRule, FlowIncomingData, FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter,
+  FlowNodeDefinition, FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowOperand, FlowOutcomeDefinition,
+  FlowOutcomeKind, FlowPayload, FlowPredicate, FlowProgress, FlowQuantifier, FlowRecordObservation,
+  FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory, FlowTemplateNode,
+  FlowTemplateOutcome, FlowTemplateSchema, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget,
+  FlowValueMapping, FlowValueSchema, FlowVerifiedBuildData, FlowVerifiedBuildOutput, MAX_FLOW_ACTION_PARAMETER_BYTES,
+  MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES,
+  MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_GATE_PARAMETER_BYTES,
+  MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT,
+  MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, NodeAttempt,
+  NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
+  PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure, WorkflowCycle,
+  validate_flow_runtime_history,
 };
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
@@ -126,6 +154,7 @@ pub use identity::{
   FlowDefinitionId, FlowRunId, MacroCallId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, StageAttemptId,
   StageHandoffId, TaskEnvelopeId, WorkEnvelopeId, WorkflowCycleId,
 };
+pub use journey::FactoryFlowConfiguration;
 pub use lifecycle::{
   DeliveryAttempt, Escalation, FactoryConfigurationRef, FactoryRun, MAX_WORK_SPECIFICATION_REFERENCES,
   ReportingAttempt, WorkArtifacts, WorkClassification, WorkEnvelope,
@@ -144,15 +173,8 @@ pub use permission::{
   MAX_FACTORY_OUTPUT_COUNT, MAX_FACTORY_PROCESS_COUNT, MAX_PERMISSION_ENTRIES_PER_CATEGORY, MAX_PERMISSION_HOST_BYTES,
   MAX_PERMISSION_PATH_BYTES, MountPermission, NetworkHost, resolve_factory_permissions,
 };
-pub use phase_pool::{MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, reserve_phase_budget};
-pub use research::{
-  AcceptedResearchEvidence, DefectReproductionCheck, DefectReproductionObservation, DefectReproductionReport,
-  DefectResearchOutcome, DefectResearchResult, FeatureResearchProposal, FeatureResearchResult, MAX_RESEARCH_ATTEMPTS,
-  MAX_RESEARCH_CONTRACT_BYTES, MAX_RESEARCH_ITEMS, MAX_RESEARCH_PROPOSAL_BYTES, RESEARCH_CONTRACT_VERSION,
-  ResearchAcceptance, ResearchAttemptDisposition, ResearchBuildIntent, ResearchDecision, ResearchDetails,
-  ResearchEvidenceFact, ResearchEvidenceKind, ResearchEvidenceRecord, ResearchInput, ResearchObservations,
-  ResearchOutcome, ResearchPolicy, ResearchPolicySettings, ResearchProvenance, ResearchReason, ResearchResult,
-  ResearchRoute, ResearchSchema, ResearchSourceReference, ResearchStageHandoff,
+pub use phase_pool::{
+  FlowPoolSettings, MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, reserve_phase_budget,
 };
 pub use review_plan::{
   CriterionPack, EvaluationPlan, EvaluationPlanDefinition, MAX_CRITERION_PACKS, MAX_EVALUATORS, ReviewBranch,
@@ -171,15 +193,6 @@ pub use task_contract::{
   MacroCallCompletionOutputs, MacroCallTerminal, RETRIEVAL_RECEIPT_VERSION, RepositoryFragment, RetrievalReceipt,
   StageHandoff, StageHandoffContent, StageHandoffDeclaration, StageHandoffOutcome, StageHandoffReferences,
 };
-pub use triage::{
-  AcceptedTriageEvidence, ClassificationInput, ClassificationReceipt, DuplicateAssessment, DuplicateCandidate,
-  DuplicateStatus, EligibilityDecision, EligibilityInput, EligibilityOutcome, EligibilityReceipt, EligibilityResult,
-  FactoryFlowConfiguration, FactoryTriageConfiguration, FactoryTriageExecutionProfile, MAX_TRIAGE_OBSERVATIONS,
-  PreliminaryReproducibility, ProjectFit, TRIAGE_CONTRACT_VERSION, TriageClassification, TriageDecision,
-  TriageDependency, TriageDisposition, TriageEvidenceFact, TriageJournalRecord, TriageNode, TriageObservation,
-  TriagePolicy, TriagePolicySettings, TriageProvenance, TriageReason, TriageResult, TriageRoute, TriageSchema,
-  WorkKind, WorkSize, compose_triage_flow, validate_triage_phase_observation,
-};
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
   FactoryKey, FactoryMetadata, FactoryRunVersion, FactorySafeText, FactoryText, FlowDefinitionVersion,
@@ -188,3 +201,9 @@ pub use value::{
   MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, StageAttemptNumber,
   WorkPriority, WorkflowCycleNumber,
 };
+
+#[cfg(test)]
+mod accepted_work_tests;
+
+mod accepted_work;
+pub use accepted_work::AcceptedWorkContract;

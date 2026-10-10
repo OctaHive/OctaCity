@@ -3,8 +3,7 @@ use std::collections::{HashMap, HashSet};
 use octacity_server_factory::{
   AdmittedFlow, BudgetUsage, EvaluationState, FactoryConfiguration, FactoryLifecycleProgress, FactoryRunId,
   FactoryRunVersion, FlowDefinition, FlowDefinitionId, FlowDefinitionVersion, FlowRun, FlowRunId, FlowRunParent,
-  FlowRuntimeHistory, MacroCall, NodeAttemptId, PinnedFlowDefinitionClosure, WorkflowCycle, WorkflowCycleId,
-  WorkflowCycleNumber, validate_flow_runtime_history,
+  MacroCall, NodeAttemptId, PinnedFlowDefinitionClosure, WorkflowCycle, WorkflowCycleId, WorkflowCycleNumber,
 };
 use octacity_server_store::{
   FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunHistoryAppend, FactoryRunSnapshot,
@@ -115,29 +114,16 @@ pub(super) async fn read_snapshot_in_transaction(
         .ok_or(StoreError::Unavailable)
     })
     .transpose()?;
-  let history = history_rows(transaction, run_id, &admitted_flow, &flow_runs, &workflow_cycles).await?;
-  validate_history(run_id, &admitted_flow, &history)?;
-  octacity_server_store::validate_factory_triage_history(
+  let history = history_rows(
+    transaction,
+    run_id,
+    &admitted_flow,
+    &flow_runs,
+    &workflow_cycles,
     &locked.work,
-    &admitted_flow,
-    &history.flow.triage,
-    FlowRuntimeHistory {
-      flow_runs: &flow_runs,
-      cycles: &workflow_cycles,
-      attempts: &history.flow.attempts,
-      completions: &history.flow.completions,
-    },
-  )?;
-  validate_flow_runtime_history(
-    &admitted_flow,
-    FlowRuntimeHistory {
-      flow_runs: &flow_runs,
-      cycles: &workflow_cycles,
-      attempts: &history.flow.attempts,
-      completions: &history.flow.completions,
-    },
   )
-  .map_err(|_| StoreError::Unavailable)?;
+  .await?;
+  validate_history(run_id, &admitted_flow, &history)?;
   validate_evaluation_progress(&locked.lifecycle, &locked.current, &history)?;
   Ok(FactoryRunSnapshot {
     work: locked.work,
@@ -147,7 +133,7 @@ pub(super) async fn read_snapshot_in_transaction(
       cycles: workflow_cycles,
       attempts: history.flow.attempts,
       completions: history.flow.completions,
-      triage: history.flow.triage,
+      data: history.flow.data,
     },
     admitted_flow,
     current_claim,
@@ -417,7 +403,11 @@ pub(super) async fn snapshot_record_counts(
        (SELECT COUNT(*) FROM factory_flow_runs WHERE factory_run_id = $1) + \
        (SELECT COUNT(*) FROM factory_workflow_cycles WHERE factory_run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempts WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_triage_records WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_flow_build_executions WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_flow_build_intents WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_flow_incoming WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_flow_inputs WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_flow_records WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempt_completions WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_stage_attempts WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_stage_attempt_completions WHERE run_id = $1) + \
@@ -546,8 +536,12 @@ fn validate_history(
         || node.flow_run_id() != completion.flow_run_id()
         || node.workflow_cycle_id() != completion.workflow_cycle_id()
         || node.node_key() != completion.node_key()
-        || node.owner() != completion.owner()
-        || node.claim() != completion.claim()
+        || node
+          .verify_observer(
+            &octacity_server_factory::FactoryClaimOwnership::new(completion.owner().clone(), completion.claim()),
+            completion.observed_at(),
+          )
+          .is_err()
         || completion.usage().validate(node.budget()).is_err()
     })
   }) || history

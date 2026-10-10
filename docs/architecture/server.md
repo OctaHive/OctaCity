@@ -56,213 +56,136 @@ module also owns the narrow provider-neutral Decision Signal port and its pure
 routing/tool-risk consumption policy; provider discovery, credentials, wire
 formats, retries, and concrete adapters remain outside the core.
 
-### Typed two-phase triage
+### Configured node contracts and graph ownership
 
-`octacity-server-factory` owns the versioned `EligibilityInput`,
-`EligibilityResult`, `ClassificationInput`, and `TriageResult` contracts.
-Eligibility freezes the admitted Work identity and digest, exact Project,
-Repository and base revision, Factory Configuration version, task and
-acceptance Artifacts, Project goals, and a bounded canonical list of duplicate
-candidates. Every candidate must belong to the same Project. Classification
-retains the accepted eligibility input and observations, then records Work
-kind (`defect` or `feature_request`), component, severity, size, risk,
-dependencies, preliminary reproducibility, and a finite recommended route.
-Every observation retains an exact evidence Artifact; each result also binds
-its input digest, nested Flow Definition, Node Attempt, producer, model or
-tool, task digest, retained result Artifact, and observation time.
+`FlowDefinitionTemplate` is the editable representation shared by supplied
+examples and a future Flow editor. It declares arbitrary node keys, schema
+choices, primitive capabilities, input sources and mappings, exact Build
+profile choices or plugin actions, finite typed outcomes, deterministic gate
+programs, transitions, bounded repeats and terminals. Publication resolves
+choices to immutable references and validates the complete definition closure.
+`FactoryFlowConfiguration` holds that closure, execution limits, the exact data
+schema catalogue and arbitrary named pool settings. Replacing configuration
+affects future admissions; an admitted Work retains its complete closure.
 
-`compose_triage_flow` composes replaceable eligibility and classification
-subflows with separate deterministic eligibility and routing gates. Each
-observation subflow exports only `observed`. Explicit data projections carry
-its typed result to the consuming gate; control order grants no implicit
-context. Eligibility rejection or escalation completes triage without
-dispatching classification. The composition uses ordinary `subflow_call` and
-`deterministic_gate` primitives and can itself be nested in a larger root.
+`FlowDataSchema` describes closed objects, bounded strings, integers, booleans,
+arrays and scalar enums. Unknown fields, deep or oversized values and schema
+substitution fail closed. `FlowNodeInput` binds the complete Work identity,
+subject, configuration, definition, Flow Run, Workflow Cycle, projected payload,
+explicit Context Manifest, retrieval receipts and source-record digests.
+Sources can be immutable Work, schema-bound incoming data, an exact accepted
+record or the latest declared predecessor's payload or verified metadata.
+Control edges grant no implicit context or data access. A newer pending or
+incorrectly routed producer blocks preparation from an older result.
 
-`TriagePolicy` binds exact configuration and Flow versions to risk, budget,
-and small-Work routing settings. Trusted validation reconstructs
-`AcceptedTriageEvidence` from passed deterministic gates; provider results
-cannot deserialize accepted evidence or policy decisions. Policy checks the
-evidence against the exact subject, input, fact, and Artifact before consuming
-it. An accepted duplicate or out-of-scope result rejects Work, while missing
-or inconclusive evidence escalates. Classification cannot lower admitted risk.
-Unconfirmed defect reproduction routes to research, large Work requires
-requirements, and small Work enters only the configured protected-test or
-development path. Already-fixed and verification-only resolutions require
-accepted deterministic evidence. Risk and budget exhaustion take precedence
-over recommendations, and a required route absent from the pinned Flow
-escalates through its mandatory declared fallback.
+`FlowNodeRecord` retains the exact frozen input, finite outcome, schema-checked
+payload, trusted producer and observation time. Providers cannot deserialize
+these authority-bearing records. The journal restores historical inputs
+against their original source snapshot; appending a new input checks current
+history. Schema or execution metadata cannot replace independently verified
+facts. Node names have no runtime semantics, and architecture checks reject
+phase-specific execution types and phase-name dispatch.
 
-The exported routes are `research`, `requirements`, `protected_test`,
-`development`, `verification_only`, `already_fixed`, `escalation`, and
-`rejection`. They are typed nested-flow outcomes, not new Factory lifecycle
-states or permission grants. Policy decisions retain input, result, policy,
-and canonical accepted-evidence digests. Application code remains responsible
-for committing the selected outcome under the current fence and publishing
-outbox work; these pure triage contracts do not dispatch Builds.
+`FactoryNodeRunner` performs one fenced append per pass. It commits input and
+execution intent before dispatch, observes only that persisted operation on
+restart, charges attempts once and atomically retains result, completion,
+usage and provenance. `FactoryFlowRunner` selects the next configured node or
+terminal through the pure interpreter. Each pass starts, observes or publishes
+readiness for one node. Bounded repeats create new attempts and preserve prior
+records. Each node generation freezes a distinct input and acquires its own
+pool selection and capacity reservation, even for identical payloads.
 
-### Configured manual intake
+The pure interpreter also validates nested definition closures and explicit
+subflow return contracts. A call attempt and one child Flow/cycle are committed
+atomically; the call suspends while the child owns executable WIP. Child nodes
+explicitly select frozen caller data, and the parent returns only the exact
+retained child terminal result. The journal validates both caller-input and
+child-result provenance after restart. Production supervision and adapters for additional
+primitive capabilities remain separate composition tasks; the supplied
+manual-intake owner exercises ordinary Builds, built-in gates and named pools.
 
-An immutable Factory Configuration can select a pinned root Flow closure,
-admission limits, Project goals, two phase execution profiles, triage policy,
-and route-specific pool policies and capability requirements. Admission stores
-that exact closure rather than rebuilding the legacy stage projection. Later
-configuration publication cannot change an admitted Run's root or either
-triage phase.
+### Ordinary Build nodes and extensible actions
 
-`FactoryTriageRunner` connects provider-neutral manual admission to the root's
-triage call and both policy gates. Trusted discovery freezes authorized
-duplicate candidates once. A server execution port observes or dispatches the
-replaceable phase through ordinary Flow/Build execution, binding its result to
-the exact producing Node Attempt, completion, input, model or tool, and task
-digest. Observation producers can precede deterministic validation nodes or run
-inside nested child Flows. Application and Store share the same core check:
-the producer belongs to the selected phase, every enclosing current cycle
-exports the exact typed result, and the phase completes as `observed`.
-A separate evidence validator supplies accepted deterministic facts.
-The runner accepts observations through these ports; routing remains owned by
-the core policy. `FactoryReconciler::with_intake` enables this coordinator for
-configured roots without changing ordinary Build triggers or legacy Factory
-reconciliation.
+`FlowBuildIntent` freezes a command or reasoning node's selected prompt/task,
+model or executable, plugin, Build Configuration, result schema/output,
+evidence requirements, effective permissions, budget, deadline, complete input,
+context and immutable Work priority. Its stable operation identity includes
+the Node Attempt; a restart cannot rediscover or replace those choices.
+`FactoryNodeBuildAdapter` implements the same execution port for both kinds.
+It dispatches through `OrdinaryBuildApplication`, queries existing Build and
+Attempt state and requires retained published outputs from
+`FactoryNodeBuildOutputSource`. Ordinary retries stay inside the original Node
+Attempt; provenance uses their actual latest Attempt and Jobs.
 
-Prepared input, accepted eligibility, and accepted classification are retained
-as three append-only typed journal records. Each gate and parent completion
-commits atomically with its receipt, budget, lifecycle, audit, and phase outbox
-records under the current claim fence. Both stores reconstruct policy decisions
-from the retained evidence and reject altered routes or phase histories.
-PostgreSQL schema 51 retains the journal and its Artifact references. Shared
-Artifact references preserve their actual first-retention time and exact digest;
-later use does not backdate or rewrite that fact. Recovery
-observes existing phase completions before advancing a gate, so a lost response
-or ownership takeover does not require rediscovering Work or rerunning an
-accepted phase.
+The adapter rechecks actual execution choices, exact schemas, tool/plugin
+identities, output digests, publication state, retention, measured usage and
+the original deadline. Failed or cancelled Builds retain execution diagnostics
+and do not become semantic outcomes. Ownership takeover cannot extend the
+execution deadline. After expiry, recovery uses a side-effect-free lookup of the
+already created operation; it can retain outputs published before the original
+deadline without dispatching or retrying execution. Retained evidence may outlive its semantic freshness; a
+configured gate decides freshness using the trusted observation clock.
+`FlowBuildExecution` retains actual Build/Attempt/Job identities even while an
+execution is pending. PostgreSQL retention protects these Builds and removes
+execution links before cleaning referenced ordinary metadata.
 
-Duplicate and out-of-scope Work terminate with typed rejection evidence;
-inconclusive defects publish research, large Work publishes requirements, and
-small Work reaches the configured Accepted Work Contract gate that bypasses
-specification. Verification-only publishes its own ready phase and already-fixed
-completes the Run; neither dispatches implementation. Nonterminal decisions
-publish the selected root successor to its phase-ready pool with frozen inputs.
-The successor owns its subsequent execution. This boundary adds no concrete
-external-ticket poller.
+`FlowActionBinding` selects an exact installed plugin, its action key and
+bounded parameters. `FactoryFlowActionAdapter` implements the common node
+executor; plugins receive the frozen projected input, exact grants, ceilings,
+deadline and stable operation identity. They must observe ambiguous responses
+before repeating effects and return a schema-valid payload, declared outcome
+and measured usage. The owner commits their record and completion through the
+same journal as Build results. New technical actions require a plugin; new
+logical stages using installed actions need only configuration.
 
-### Immutable Research Flow contracts
+`FactoryWorkStatusAction` accepts an arbitrary configured status. A connector
+projects that value onto its own representation: GitHub uses a label and Jira
+uses a native status. A research observation never automatically changes an
+external status. Operators insert a status action, notification or another
+plugin action on the desired outcome path. Connector credentials and SDK
+objects stay outside Flow contracts; exact host and credential grants are
+checked before effects. Projection failure cannot produce a successful node
+completion, and an external status cannot authorize a Factory transition.
 
-`ResearchInput` freezes the exact admitted Work, admission resource and
-permission ceilings, the selected immutable research-policy digest, accepted eligibility and
-classification receipts, original revision, Context Manifest, and applicable
-Retrieval Receipts. Defect inputs require retained symptoms, a frozen environment
-contract, and bounded prior observations. Feature inputs require the accepted
-Project goals and non-empty exact sources from the Context Manifest. Restoring
-an input reruns admission and context validation; an altered source, environment,
-triage decision, policy, or retrieval identity cannot silently change replay.
+### Supplied base Flow and Accepted Work
 
-Versioned `ResearchResult` observations distinguish `reproduced`, `intermittent`,
-`environment_specific`, `cannot_reproduce`, and `needs_human_input`. Feature
-results retain a bounded proposal Artifact, complete frozen sources,
-assumptions, alternatives, and unresolved questions. Both bind the exact
-definition, Flow Run, Workflow Cycle, Node Attempt, ordinary Build/Attempt/Job,
-tool/plugin/model profile, task digest, input, context, and retained result.
-Provider schemas contain no route, permission, candidate, or readiness field.
+[`base-intake.json`](../../config/factory/flows/base-intake.json) supplies the
+baseline eligibility, classification, optional defect/feature investigation,
+requirements-needed decision and downstream path. All logical names, result
+shapes, policy thresholds and transitions are configuration. The template
+compiler contains no special path for this example. Eligibility and routing
+gates consume retained verifier facts bound to the actual producing input;
+model prose cannot grant eligibility, prove reproduction or choose small-Work
+bypass. Missing, contradictory, stale or mismatched evidence selects the
+configured fallback. A feature proposal remains evidence until the declared
+gates accept it.
 
-`ResearchPolicy` binds a validated research closure to finite outcome mappings,
-per-node execution profiles, aggregate and per-attempt budgets, a permission
-ceiling, and exact trusted evidence requirements. Further attempts reserve all
-five budget categories and reject wider requested authority. The policy also
-fits within the ceilings retained by admission. Only a
-deterministic gate may export a Research successor: requirements, protected test
-authoring through the Accepted Work Contract, verification, escalation,
-rejection, or terminal resolution. Missing or stale required evidence escalates;
-verification and terminal resolution require separate accepted facts. Larger or
-higher-risk Work cannot use the small-Work protected-test path, and exhausted
-non-reproduction never proceeds silently to implementation.
+`FlowGateProgram` is a bounded declarative evaluator with ordered finite rules,
+explicit fallback, existence and typed scalar comparisons, boolean operations,
+bounded array quantifiers and explicit output mappings. A shared default output
+mapping avoids repeated projections; an exact outcome mapping overrides it. It has hard nesting,
+rule, schema, byte and evaluation-step ceilings. Missing observations remain
+unknown, including under negation. Owner observation time is a dedicated
+operand; providers cannot supply that clock. The journal recomputes configured
+gate records before accepting them.
 
-`ResearchStageHandoff` uses a Stage Handoff identity for a generic Node Attempt
-without creating a fixed Stage Attempt projection. It retains the bounded typed
-observations, exact context, policy and evidence digests, and referenced
-Artifacts. Its separate code-owned decision selects a declared successor; the
-handoff grants no implementation readiness or execution authority.
+A deterministic gate can declare `accepted_work_outcomes`. For such a retained
+completion, `AcceptedWorkContract` is a canonical frozen projection of the full
+immutable Work, accepting gate policy including parameters, exact configuration
+and definition, and complete accepted input ancestry with incoming envelopes.
+The journal validates its size before committing the accepting completion.
+Restoration recomputes the same bytes and digest against the authoritative
+journal. There is one retained authority: the atomic gate record and source
+records, rather than a parallel requirements journal or mutable snapshot row.
+Acceptance criteria and the exact base remain the original Work artifacts and
+subject. A policy replacement cannot change an admitted contract.
 
-`FactoryResearchBuildAdapter` consumes a persisted `ResearchBuildIntent`
-through the same `OrdinaryBuildApplication::create_factory_build` operation as
-other Flow nodes. `FactoryBuildCausality::Node` carries generic Flow, cycle and
-Node Attempt identities, the complete frozen input and Context Manifest, and
-the exact `FlowBuildProfile`. The shared request carries narrowed permissions,
-resource ceilings and an execution deadline. The intent also freezes Build queue
-priority; dispatch takes it only from persisted intent, and observation checks
-the immutable Build priority. Research has no separate Build
-creation API or fixed-stage identity. A reasoning or command node can run an
-ordinary Build; further research uses new bounded Node Attempts, while ordinary
-Build retries remain inside their original Node Attempt budget. Generic attempt
-numbers include orchestration nodes. Research consumption and result provenance
-use a separate external execution ordinal derived from retained usage; gates
-and other control nodes do not consume a Research Build attempt.
-Research contracts use version 2 for this provenance shape. Schema references
-bind that version; older contract bytes fail restoration without reinterpretation.
-
-The adapter observes the latest ordinary Attempt and its actual Jobs. It accepts
-only published, retained, content-verified outputs with exact input, environment,
-schema and executed tool/plugin provenance. The retained-output source supplies
-the full schema version and digest attested by a trusted schema-specific verifier
-of the exact bytes. The adapter compares that reference with the requirement;
-an Artifact report format alone is not schema attestation. A deterministic reproduction report
-derives the observation independently of model prose. Execution failure or
-cancellation does not imply negative reproduction. Results published after the
-Node Attempt deadline are rejected; a later fenced owner can still observe
-timely retained results without changing their provenance or Build identity.
-The Flow owner must persist the intent before dispatch and commit the returned
-generic completion, usage and handoff atomically. The manual-intake slice now
-verifies admitted nested defect and feature research through this boundary,
-including provider failure, ordinary Build retry, persisted intent restoration,
-claim takeover and exact handoff publication. Research terminal outcomes remain
-declared Flow resolutions; they neither dispatch implementation nor create a
-research-specific Factory Run state. Supervised worker composition remains
-part of task 16.1.
-
-Feature Builds publish a strict `FeatureResearchProposal` document and a
-`FeatureResearchResult` referencing its exact Artifact identity, digest and size.
-The proposal contains the frozen input digest, complete source references,
-assumptions, non-empty alternatives, unresolved questions and a subject-bound
-summary. The adapter compares every field with the retained result, revalidates
-sources against the frozen input and checks the configured proposal byte ceiling.
-The complete Context Manifest and applicable Retrieval Receipts remain in the
-persisted input and ordinary Build causality; their exact input/context digests
-bind the retained result and handoff. Replay consumes these retained identities,
-never mutable rediscovery. The evidence policy selects a report or an Artifact
-output with the exact logical name and tool/plugin profile. Missing sources,
-contradictory content, undeclared JSON fields, corrupt bytes and absent bounds
-cannot produce an accepted completion. Proposal prose cannot select a route,
-publish a candidate or authorize implementation; requirements and acceptance
-gates remain separate declared nodes.
-
-### Extensible Flow actions and source status projections
-
-Any Flow, including Research, may finish through ordinary `trusted_action`
-nodes. `FlowActionBinding` pins an exact plugin, a plugin-defined action key and
-bounded structured parameters inside the immutable definition digest. Adding
-an action implements `FactoryFlowActionPlugin`; it does not add a node kind or
-change Research. The composition root resolves the installed plugin, and
-`FactoryFlowActionAdapter` checks its exact identity, node ownership, execution
-deadline, plugin permission grant and parameter/result contract before invoking it. Plugins receive only
-the Work source identity, exact subject, projected input digest, configured
-parameters and execution ceilings. They must enforce those ceilings, retain an
-idempotent receipt and return only a declared outcome. The owning Flow retains
-readiness, fencing, accounting, routing and persistence authority.
-
-`FactoryWorkStatusAction` is one such plugin. Its `set_status` parameters contain
-an arbitrary bounded status value. Research observations such as
-`cannot_reproduce` are experiment facts, not an automatic external status or
-label. Operator-defined Flow transitions may select a status action, another
-action, or several successive actions. `FactoryWorkStatusProjector` translates
-the requested value in the selected connector: a GitHub adapter uses a label,
-and a Jira adapter uses a native status. Connector SDK objects and credentials
-stay outside Flow contracts. The status request retains the exact scoped
-permissions. Each connector checks required hosts, secret and workload-identity
-profiles and other applicable grants before effects and rejects authority it
-cannot enforce. Projection errors do not produce a successful
-action completion and cannot undo an accepted research observation or authorize
-an internal transition. Durable reporter outbox integration remains task 13.4;
-concrete external Work connectors remain a separate follow-up.
+The supplied bypass route still traverses `protected_tests`, `implementation`,
+`review` and `verification`. The current slice verifies this configured control
+path through the common owner and PostgreSQL restart; dedicated protected-test
+isolation, requirements authoring/review and production worker supervision
+remain tasks 11, 10.2/10.3 and 16.1. They can bind technical capabilities and
+profiles to these nodes without introducing stage-name dispatch.
 
 ### Durable phase-ready pools
 
@@ -278,16 +201,14 @@ Publication reconstructs the ready node from the pinned closure and current
 Flow history rather than accepting a provider's readiness claim. Entries bind
 the exact Run version, Flow Run, latest cycle, node, Work and Project, phase
 input digest, accepted severity, frozen Project priority, exact capabilities,
-bounded dependencies and resource reservation. In configured intake, the first
-successor consumes the accepted triage disposition and uses its accepted route's
-pool. A subsequent root phase declares its pool key through the immutable
-node's `phase_pool` binding. Admission rejects unknown pool keys and conflicting
-initial route bindings; publication rejects missing or substituted bindings.
-The selected key resolves to the frozen policy and capabilities, independently
-of the node's name or kind. Readiness also requires an actual completed
-predecessor, its exact output digest and the matching schema-bound data projection.
-A research result cannot substitute for the accepted handoff, and an undeclared
-or terminal target cannot enter a pool. Dependencies require the exact
+bounded dependencies and full per-node resource reservation. Each queued node
+selects an arbitrary named pool through its immutable `phase_pool` binding.
+Publication reconstructs severity and dependencies from the frozen input using
+the configured mapping, and rechecks admitted Project priority and capabilities.
+It rejects undersized reservations, substituted inputs and undeclared pools.
+The selected key resolves to frozen policy independently of the node name or
+kind. Dispatch requires the durable selection's exact Run claim, Flow, cycle,
+node and complete input digest. Dependencies require the exact
 retained Work digest and declared completed root-Flow resolution in the same
 Project. Pool membership conveys no execution permission.
 

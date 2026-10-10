@@ -265,9 +265,9 @@ pub use factory_discovery_model::{
 pub use factory_discovery_port::FactoryDiscoveryStore;
 pub use factory_phase_pool::{
   FactoryPhasePoolStore, PhasePoolCandidate, PhasePoolDependency, PhasePoolEntry, PhasePoolInput, PhasePoolSelection,
-  SelectPhasePool, compare_phase_pool_entries, derive_phase_pool_entry, observe_phase_pool_candidate,
-  phase_pool_dependency_ready, phase_pool_run_budget_ready, phase_pool_selection, phase_pool_selection_active,
-  phase_pool_work_digest, plan_phase_pool_selection,
+  SelectPhasePool, compare_phase_pool_entries, configured_phase_pool_input, derive_phase_pool_entry,
+  observe_phase_pool_candidate, phase_pool_dependency_ready, phase_pool_run_budget_ready, phase_pool_selection,
+  phase_pool_selection_active, phase_pool_work_digest, plan_phase_pool_selection,
 };
 pub use factory_retention_model::{
   AdvanceFactoryRetentionWork, ClaimFactoryRetentionWork, FactoryArtifactRole, FactoryRetentionPassOutcome,
@@ -716,5 +716,5 @@ mod tests {
   }
 }
 
-mod factory_triage;
-pub use factory_triage::validate_factory_triage_history;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_node_journal_testing;

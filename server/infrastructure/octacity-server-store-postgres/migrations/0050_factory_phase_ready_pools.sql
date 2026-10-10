@@ -13,12 +13,13 @@ CREATE TABLE factory_phase_pool_entries (
   flow_run_id UUID NOT NULL,
   cycle_id UUID NOT NULL,
   node_key TEXT NOT NULL CHECK (octet_length(node_key) BETWEEN 1 AND 128 AND node_key ~ '^[a-z0-9][a-z0-9._-]*$'),
+  generation BIGINT NOT NULL CHECK (generation BETWEEN 0 AND 4294967295),
   rank_one BIGINT NOT NULL,
   rank_two BIGINT NOT NULL,
   rank_three BIGINT NOT NULL,
   work_id UUID NOT NULL REFERENCES factory_work_envelopes(id),
   entry JSONB NOT NULL CHECK (jsonb_typeof(entry) = 'object' AND octet_length(entry::text) BETWEEN 2 AND 65536),
-  UNIQUE (policy_id, run_id, run_version, flow_run_id, cycle_id, node_key),
+  UNIQUE (policy_id, run_id, run_version, flow_run_id, cycle_id, node_key, generation),
   FOREIGN KEY (flow_run_id, run_id) REFERENCES factory_flow_runs(id, factory_run_id),
   FOREIGN KEY (cycle_id, run_id) REFERENCES factory_workflow_cycles(id, factory_run_id)
 );
@@ -47,9 +48,10 @@ CREATE TABLE factory_phase_pool_selections (
   flow_run_id UUID NOT NULL REFERENCES factory_flow_runs(id),
   cycle_id UUID NOT NULL REFERENCES factory_workflow_cycles(id),
   node_key TEXT NOT NULL,
+  generation BIGINT NOT NULL CHECK (generation BETWEEN 0 AND 4294967295),
   claim_id BYTEA NOT NULL REFERENCES factory_run_claims(id),
   selection JSONB NOT NULL CHECK (jsonb_typeof(selection) = 'object' AND octet_length(selection::text) BETWEEN 2 AND 98304),
-  UNIQUE (run_id, flow_run_id, cycle_id, node_key)
+  UNIQUE (run_id, flow_run_id, cycle_id, node_key, generation)
 );
 
 CREATE INDEX factory_phase_pool_entries_scope_idx ON factory_phase_pool_entries (policy_id, run_id, run_version);

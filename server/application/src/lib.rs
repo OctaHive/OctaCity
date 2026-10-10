@@ -36,13 +36,6 @@ mod diagnostic;
 mod error;
 mod external_trigger;
 mod factory_admission;
-mod factory_triage;
-#[cfg(test)]
-mod factory_triage_tests;
-pub use factory_triage::{
-  FactoryTriageCoordinator, FactoryTriageDiscovery, FactoryTriageEvidenceValidator, FactoryTriagePhaseExecutor,
-  FactoryTriagePhaseInput, FactoryTriagePhaseRequest, FactoryTriagePhaseResult, FactoryTriageRunner, FactoryTriageStep,
-};
 #[cfg(test)]
 mod factory_admission_tests;
 mod factory_build_bridge;
@@ -76,23 +69,33 @@ mod factory_evidence;
 mod factory_flow_action;
 #[cfg(test)]
 mod factory_flow_action_tests;
+pub use factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
 pub use factory_flow_action::{
-  FactoryFlowActionAdapter, FactoryFlowActionContext, FactoryFlowActionObservation, FactoryFlowActionPlugin,
-  FactoryFlowActionRequest, FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
+  FactoryFlowActionAdapter, FactoryFlowActionObservation, FactoryFlowActionPlugin, FactoryFlowActionRequest,
+  FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
 };
 mod factory_job_spec;
 #[cfg(test)]
 mod factory_job_spec_tests;
+mod factory_node;
+mod factory_node_build;
+pub use factory_node::{
+  FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor,
+  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget,
+};
+#[cfg(test)]
+mod factory_node_test_support;
+#[cfg(test)]
+mod factory_node_tests;
 mod factory_reconciliation;
 #[cfg(test)]
 mod factory_reconciliation_tests;
-mod factory_research;
-#[cfg(test)]
-mod factory_research_tests;
-pub use factory_research::{
-  FactoryResearchBuildAdapter, FactoryResearchBuildOutputs, FactoryResearchCompletion, FactoryResearchOutputDocument,
-  FactoryResearchOutputSource, FactoryResearchStep,
+pub use factory_node_build::{
+  FactoryNodeBuildAdapter, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts, FactoryNodeBuildOutputDocument,
+  FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, FactoryNodeBuildStep,
 };
+#[cfg(test)]
+mod factory_node_build_tests;
 mod factory_tool_action;
 #[cfg(test)]
 mod factory_tool_action_tests;
@@ -429,3 +432,8 @@ pub const MAX_WEBHOOK_DELIVERY_BYTES: usize = octacity_server_store::MAX_STORED_
 pub const MAX_WEBHOOK_HEADER_NAME_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_NAME_BYTES;
 /// Maximum retained bytes in one allowlisted webhook header value.
 pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_VALUE_BYTES;
+
+#[cfg(test)]
+mod factory_flow_tests;
+
+mod factory_flow;

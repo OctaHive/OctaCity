@@ -16,8 +16,10 @@ pub struct AdmittedFlow {
   limits: FlowAdmissionLimits,
   root_run: FlowRun,
   initial_cycle: WorkflowCycle,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  triage: Option<crate::FactoryTriageConfiguration>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  data_schemas: Vec<crate::FlowDataSchema>,
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pools: std::collections::BTreeMap<FactoryKey, crate::FlowPoolSettings>,
 }
 
 impl AdmittedFlow {
@@ -44,7 +46,8 @@ impl AdmittedFlow {
       limits,
       root_run,
       initial_cycle,
-      triage: None,
+      data_schemas: vec![],
+      pools: Default::default(),
     })
   }
 
@@ -87,14 +90,13 @@ impl AdmittedFlow {
     let root = FlowRun::root(run, flow.closure.root())?;
     let cycle = WorkflowCycle::initial(&root)?;
     let mut admitted = Self::new(flow.closure.clone(), flow.limits.clone(), root, cycle)?;
-    admitted.triage = Some(flow.triage.clone());
+    if !flow.pools.is_empty() {
+      admitted = admitted.with_pool_settings(flow.pools.clone())?;
+    }
+    if !flow.data_schemas.is_empty() {
+      admitted = admitted.with_data_schemas(flow.data_schemas.clone())?;
+    }
     Ok(admitted)
-  }
-
-  /// Returns the pinned two-phase intake contract for a configured journey.
-  #[must_use]
-  pub const fn triage(&self) -> Option<&crate::FactoryTriageConfiguration> {
-    self.triage.as_ref()
   }
 
   /// Returns the exact reachable definition closure.
@@ -111,7 +113,46 @@ impl AdmittedFlow {
 
   /// Revalidates the persisted closure against its original admission limits.
   pub fn validated(&self) -> Result<crate::ValidatedFlowDefinitionClosure, FactoryError> {
+    if !self.data_schemas.is_empty() {
+      self.validate_data_schemas()?;
+      crate::phase_pool::validate_pool_settings(&self.closure, &self.limits, &self.pools)?;
+    }
     self.closure.clone().validate(self.limits.clone())
+  }
+
+  /// Freezes the complete configured data catalogue before publishing admission.
+  pub fn with_data_schemas(mut self, mut schemas: Vec<crate::FlowDataSchema>) -> Result<Self, FactoryError> {
+    schemas.sort_by(|left, right| left.reference().cmp(right.reference()));
+    self.data_schemas = schemas;
+    self.validate_data_schemas()?;
+    Ok(self)
+  }
+  /// Looks up an exact data contract without schema-name or version fallbacks.
+  #[must_use]
+  pub fn data_schema(&self, reference: &ImmutableReference) -> Option<&crate::FlowDataSchema> {
+    self.data_schemas.iter().find(|schema| schema.reference() == reference)
+  }
+  /// Returns the immutable data catalogue selected before admission publication.
+  #[must_use]
+  pub fn data_schemas(&self) -> &[crate::FlowDataSchema] {
+    &self.data_schemas
+  }
+  /// Freezes arbitrary pool policies and input mappings before admission publication.
+  pub fn with_pool_settings(
+    mut self,
+    pools: std::collections::BTreeMap<FactoryKey, crate::FlowPoolSettings>,
+  ) -> Result<Self, FactoryError> {
+    crate::phase_pool::validate_pool_settings(&self.closure, &self.limits, &pools)?;
+    self.pools = pools;
+    Ok(self)
+  }
+  /// Returns exact configured pools without business-route dispatch.
+  #[must_use]
+  pub fn pool_settings(&self) -> &std::collections::BTreeMap<FactoryKey, crate::FlowPoolSettings> {
+    &self.pools
+  }
+  fn validate_data_schemas(&self) -> Result<(), FactoryError> {
+    validate_data_catalogue(&self.closure, &self.data_schemas)
   }
 
   /// Returns the root Flow Run.
@@ -746,4 +787,39 @@ impl NodeAttemptCompletion {
   pub const fn observed_at(&self) -> Timestamp {
     self.observed_at
   }
+}
+
+pub(crate) fn validate_data_catalogue(
+  closure: &PinnedFlowDefinitionClosure,
+  schemas: &[crate::FlowDataSchema],
+) -> Result<(), FactoryError> {
+  let invalid = || FactoryError::InvalidConfiguration {
+    field: "admitted Flow data schemas",
+  };
+  if schemas.is_empty()
+    || schemas.len() > crate::MAX_FLOW_SCHEMA_ENTRIES
+    || schemas
+      .windows(2)
+      .any(|pair| pair[0].reference() >= pair[1].reference())
+  {
+    return Err(invalid());
+  }
+  for definition in closure.definitions() {
+    for reference in definition
+      .input_schema()
+      .into_iter()
+      .chain(definition.nodes().iter().flat_map(|node| {
+        node
+          .input_schema()
+          .into_iter()
+          .chain(node.outcomes().iter().map(|outcome| outcome.schema()))
+      }))
+      .chain(definition.terminals().iter().map(|terminal| terminal.schema()))
+    {
+      if !schemas.iter().any(|schema| schema.reference() == reference) {
+        return Err(invalid());
+      }
+    }
+  }
+  Ok(())
 }

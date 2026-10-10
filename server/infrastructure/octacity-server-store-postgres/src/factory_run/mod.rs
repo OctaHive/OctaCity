@@ -1,6 +1,7 @@
 //! Atomic PostgreSQL persistence for fenced Factory reconciliation.
 
 mod claim;
+mod data;
 mod diagnostics;
 mod history;
 mod outbox;
@@ -34,7 +35,7 @@ pub(crate) use claim::{claim, claim_batch};
 pub(crate) use diagnostics::list_diagnostics;
 pub(crate) use history::{append_history, history_rows};
 pub(crate) use outbox::{claim_outbox, settle_outbox};
-pub(crate) use phase_pool::{phase_ready_entries, publish_phase_ready, select_phase_ready};
+pub(crate) use phase_pool::{phase_ready_entries, publish_phase_ready, select_phase_ready, selection_for_claim};
 pub(crate) use recovery::recover_restored_ownership;
 pub(crate) use snapshot::read_snapshot;
 pub(crate) use transition::commit_transition;

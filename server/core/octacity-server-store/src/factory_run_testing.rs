@@ -42,7 +42,11 @@ pub(super) struct StoredFactoryRun {
   workflow_cycles: BTreeMap<WorkflowCycleId, WorkflowCycle>,
   node_attempts: BTreeMap<NodeAttemptId, NodeAttempt>,
   node_attempt_completions: BTreeMap<NodeAttemptId, NodeAttemptCompletion>,
-  triage: BTreeMap<u8, octacity_server_factory::TriageJournalRecord>,
+  node_inputs: BTreeMap<FactoryDigest, octacity_server_factory::FlowNodeInput>,
+  node_build_intents: BTreeMap<NodeAttemptId, octacity_server_factory::FlowBuildIntent>,
+  node_build_executions: BTreeMap<FactoryDigest, octacity_server_factory::FlowBuildExecution>,
+  node_records: BTreeMap<NodeAttemptId, octacity_server_factory::FlowNodeRecord>,
+  incoming_data: BTreeMap<FactoryDigest, octacity_server_factory::FlowIncomingData>,
   admitted_at: octacity_server_domain::Timestamp,
   pub(super) current_claim_id: Option<FactoryDigest>,
   pub(super) claims: BTreeMap<FactoryDigest, FactoryRunClaimRecord>,
@@ -199,7 +203,11 @@ impl StoredFactoryRun {
       )]),
       node_attempts: BTreeMap::new(),
       node_attempt_completions: BTreeMap::new(),
-      triage: BTreeMap::new(),
+      node_inputs: BTreeMap::new(),
+      node_build_intents: BTreeMap::new(),
+      node_build_executions: BTreeMap::new(),
+      node_records: BTreeMap::new(),
+      incoming_data: BTreeMap::new(),
       admitted_at: admission.admitted_at,
       current_claim_id: None,
       claims: BTreeMap::new(),
@@ -246,7 +254,7 @@ impl StoredFactoryRun {
         cycles: values(&self.workflow_cycles),
         attempts: values(&self.node_attempts),
         completions: values(&self.node_attempt_completions),
-        triage: values(&self.triage),
+        data: self.data_history(),
       },
       current_claim: self
         .current_claim_id
@@ -362,18 +370,21 @@ impl StoredFactoryRun {
     let cycles = values(&self.workflow_cycles);
     let attempts = values(&self.node_attempts);
     let completions = values(&self.node_attempt_completions);
-    crate::validate_factory_triage_history(
-      &self.work,
-      &self.admitted_flow,
-      &values(&self.triage),
-      FlowRuntimeHistory {
-        flow_runs: &flow_runs,
-        cycles: &cycles,
-        attempts: &attempts,
-        completions: &completions,
-      },
-    )
-    .map_err(|_| invalid_transition(StoreOperation::ReadFactoryRunSnapshot))?;
+    if !self.admitted_flow.data_schemas().is_empty() {
+      self
+        .data_history()
+        .validate(
+          &self.work,
+          &self.admitted_flow,
+          FlowRuntimeHistory {
+            flow_runs: &flow_runs,
+            cycles: &cycles,
+            attempts: &attempts,
+            completions: &completions,
+          },
+        )
+        .map_err(|_| invalid_transition(StoreOperation::ReadFactoryRunSnapshot))?;
+    }
     validate_flow_runtime_history(
       &self.admitted_flow,
       FlowRuntimeHistory {
@@ -730,7 +741,11 @@ impl StoredFactoryRun {
       + self.workflow_cycles.len()
       + self.node_attempts.len()
       + self.node_attempt_completions.len()
-      + self.triage.len()
+      + self.node_inputs.len()
+      + self.node_build_intents.len()
+      + self.node_build_executions.len()
+      + self.node_records.len()
+      + self.incoming_data.len()
       + self.stage_attempts.len()
       + self.stage_attempt_completions.len()
       + self.stage_handoffs.len()
@@ -752,6 +767,15 @@ impl StoredFactoryRun {
       + self.audit.len()
       + self.controls.len()
       + self.outbox.len()
+  }
+  fn data_history(&self) -> octacity_server_factory::FlowDataHistory {
+    octacity_server_factory::FlowDataHistory {
+      incoming: values(&self.incoming_data),
+      inputs: values(&self.node_inputs),
+      build_intents: values(&self.node_build_intents),
+      build_executions: values(&self.node_build_executions),
+      records: values(&self.node_records),
+    }
   }
 }
 
@@ -976,13 +1000,19 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     request: CommitFactoryRunTransition,
   ) -> Result<CommitFactoryRunTransitionOutcome, StoreError> {
     let mut state = self.lock()?;
+    let selection = state
+      .phase_pools
+      .selections
+      .values()
+      .find(|selection| selection.entry.input.run_id == request.run_id && selection.run_claim().id == request.claim_id)
+      .cloned();
     let stored = state
       .factory_runs
       .get_mut(&request.run_id)
       .ok_or(StoreError::NotFound {
         entity: EntityKind::FactoryRun,
       })?;
-    validate_transition(stored, &request)?;
+    validate_transition(stored, &request, selection.as_ref())?;
     let mut next = stored.clone();
     next.append_transition(&request)?;
     let outcome = CommitFactoryRunTransitionOutcome {
@@ -1560,7 +1590,11 @@ fn validate_claim(stored: &StoredFactoryRun, request: &ClaimFactoryRun) -> Resul
   )
 }
 
-fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTransition) -> Result<(), StoreError> {
+fn validate_transition(
+  stored: &StoredFactoryRun,
+  request: &CommitFactoryRunTransition,
+  selection: Option<&crate::PhasePoolSelection>,
+) -> Result<(), StoreError> {
   let claim = stored
     .current_claim_id
     .filter(|id| *id == request.claim_id)
@@ -1577,13 +1611,14 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
   crate::validate_factory_transition(
     &crate::FactoryTransitionBaseline {
       run: &stored.run,
+      pool_selection: selection,
       budget: current_budget,
       lifecycle: current_checkpoint,
       current: &stored.current,
       claim,
       admitted_flow: &stored.admitted_flow,
       work: &stored.work,
-      triage: &values(&stored.triage),
+      data: &stored.data_history(),
       stage_attempts: &stored.stage_attempts,
       node_attempts: &stored.node_attempts,
       node_completions: &stored.node_attempt_completions,
@@ -1601,8 +1636,32 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
 }
 
 fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppend) -> Result<(), StoreError> {
-  for record in &append.flow.triage {
-    append_unique(&mut stored.triage, record.phase(), record.clone())?;
+  for execution in &append.flow.data.build_executions {
+    append_unique(
+      &mut stored.node_build_executions,
+      execution.digest().map_err(|_| StoreError::Unavailable)?,
+      execution.clone(),
+    )?;
+  }
+  for intent in &append.flow.data.build_intents {
+    append_unique(&mut stored.node_build_intents, intent.node().id(), intent.clone())?;
+  }
+  for input in &append.flow.data.inputs {
+    append_unique(
+      &mut stored.node_inputs,
+      input.digest().map_err(|_| StoreError::Unavailable)?,
+      input.clone(),
+    )?;
+  }
+  for record in &append.flow.data.records {
+    append_unique(&mut stored.node_records, record.node_attempt_id(), record.clone())?;
+  }
+  for incoming in &append.flow.data.incoming {
+    append_unique(
+      &mut stored.incoming_data,
+      incoming.digest().map_err(|_| StoreError::Unavailable)?,
+      incoming.clone(),
+    )?;
   }
   for record in &append.flow.runs {
     append_unique(&mut stored.flow_runs, record.id(), record.clone())?;

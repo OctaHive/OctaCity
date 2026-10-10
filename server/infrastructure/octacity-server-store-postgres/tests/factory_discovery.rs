@@ -7,13 +7,10 @@ use octacity_server_domain::{
   JobId, ProjectId, RepositoryId, RepositoryLocator, RepositoryName, RepositoryVersion, SourceReference, Timestamp,
 };
 use octacity_server_factory::{
-  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DeliveryPolicyDraft, EvaluationPolicyDraft, ExactSubject,
-  ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration,
-  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
-  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata,
-  FactoryReferenceChoice, FactoryRun, FactoryRunId, FactoryStageDraft, FactoryStageKind, FactoryWipLimits,
-  ImmutableReference, ReworkPolicyDraft, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
-  WorkPriority,
+  BudgetLimit, BuildConfigurationRef, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference,
+  FactoryConfiguration, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey,
+  FactoryMetadata, FactoryRun, FactoryRunId, FactoryWipLimits, RiskClass, WorkArtifacts, WorkClassification,
+  WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 use octacity_server_store::{
   AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionProbe, FactoryAdmissionStore as _,
@@ -27,6 +24,208 @@ use octacity_server_store_postgres::PostgresStore;
 use serde_json::Value;
 use sqlx::{Executor as _, types::Json};
 use support::TestDatabase;
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn configured_unknown_node_journal_matches_memory_and_survives_restart() {
+  use octacity_server_factory::FactoryFlowConfiguration;
+  use octacity_server_store::testing::{factory_node_journal_contract_fixture, verify_factory_node_journal_contract};
+  let database = TestDatabase::migrated().await;
+  let postgres = PostgresStore::new(database.pool.clone());
+  let node_fixture = factory_node_journal_contract_fixture();
+  let work = &node_fixture.admission.work;
+  let project = work.subject().project_id();
+  seed_projects(&database.pool, project, ProjectId::generate()).await;
+  let repository = repository(project, work.subject().repository_id());
+  seed_repository(&database.pool, &repository).await;
+  let mut configured = fixture(project);
+  configured.draft.flow = Some(
+    FactoryFlowConfiguration::new(
+      node_fixture.admission.flow.closure().clone(),
+      node_fixture.admission.flow.limits().clone(),
+      vec![node_fixture.schema.clone()],
+      Default::default(),
+    )
+    .unwrap(),
+  );
+  let configuration = FactoryConfiguration::publish(
+    work.configuration().id(),
+    work.configuration().version(),
+    project,
+    work.configuration().definition_digest(),
+    configured.draft.clone(),
+    &configured.choices,
+  )
+  .unwrap();
+  postgres
+    .create_factory_configuration(management_mutation_with_request(
+      CreateFactoryConfiguration {
+        idempotency_key: idempotency("generic-node-configuration"),
+        published_at: time(0),
+        intent: FactoryConfigurationMutationIntent::Create {
+          id: configuration.reference().id(),
+          project_id: project,
+          definition_digest: configuration.reference().definition_digest(),
+          draft: configured.draft,
+        },
+        configuration,
+      },
+      "generic-node-configuration",
+    ))
+    .await
+    .unwrap();
+  postgres
+    .admit_factory_work(management_mutation_with_request(
+      AdmitFactoryWork {
+        probe: FactoryAdmissionProbe {
+          source_scope: FactoryWorkSourceScope {
+            source: key("manual"),
+            security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+          },
+          external_identity: work.external_identity().clone(),
+          intent_digest: digest(1),
+          idempotency_key: idempotency("generic-node-intake"),
+        },
+        repository_version: repository.version,
+        work: work.clone(),
+        run: node_fixture.admission.run.clone(),
+        flow: node_fixture.admission.flow.clone(),
+        admitted_at: time(1),
+      },
+      "generic-node-intake",
+    ))
+    .await
+    .unwrap();
+  let definition = node_fixture
+    .admission
+    .flow
+    .closure()
+    .definition(node_fixture.admission.flow.closure().root())
+    .unwrap();
+  let build_configuration = definition
+    .node(node_fixture.input.node())
+    .unwrap()
+    .build()
+    .unwrap()
+    .build_configuration
+    .id();
+  seed_factory_build(
+    &database.pool,
+    work.subject(),
+    repository.version,
+    build_configuration,
+    node_fixture.execution.build_id(),
+    node_fixture.execution.attempt_id(),
+    node_fixture.execution.jobs()[0],
+  )
+  .await;
+  let restarted = PostgresStore::new(database.pool.clone());
+  verify_factory_node_journal_contract(&postgres, &restarted, &node_fixture).await;
+  cleanup_generic_node_journal(
+    &restarted,
+    node_fixture.admission.run.id(),
+    node_fixture.execution.build_id(),
+  )
+  .await;
+  database.cleanup().await;
+}
+
+async fn cleanup_generic_node_journal(store: &PostgresStore, run_id: FactoryRunId, build_id: BuildId) {
+  use octacity_server_factory::*;
+  use octacity_server_store::{FactoryRetentionStore as _, FactoryRunStore as _, *};
+  let snapshot = store.factory_run_snapshot(run_id).await.unwrap();
+  let claim = snapshot.current_claim.as_ref().unwrap();
+  let version = FactoryRunVersion::new(snapshot.run.version().get() + 1).unwrap();
+  let usage = snapshot
+    .budgets
+    .iter()
+    .find(|budget| budget.id == snapshot.current.budget_id)
+    .unwrap()
+    .usage;
+  let budget = FactoryBudgetRecord::new(run_id, version, usage, time(22));
+  let lifecycle = FactoryLifecycleCheckpoint::new(
+    run_id,
+    version,
+    FactoryLifecycleProgress::Cancelled(ReportingProgress::Ready),
+    DecisionSignalProgress::Disabled,
+    true,
+    time(22),
+  );
+  let mut current = snapshot.current.clone();
+  current.budget_id = budget.id;
+  current.lifecycle_checkpoint_id = lifecycle.id;
+  store
+    .commit_factory_run_transition(CommitFactoryRunTransition {
+      run_id,
+      expected_version: snapshot.run.version(),
+      claim_id: claim.id,
+      owner: claim.owner.clone(),
+      fence: claim.claim.fence(),
+      committed_at: time(22),
+      next_run: FactoryRun::restore(
+        run_id,
+        snapshot.run.configuration().clone(),
+        &snapshot.work,
+        snapshot.run.subject().clone(),
+        FactoryRunState::Cancelled,
+        version,
+      )
+      .unwrap(),
+      budget,
+      lifecycle_checkpoint: lifecycle,
+      current,
+      append: FactoryRunHistoryAppend::default(),
+      outbox: vec![],
+      audit: FactoryAuditFact::new(
+        run_id,
+        AuditActorKind::Worker,
+        None,
+        key("factory.cancelled"),
+        digest(1),
+        key("accepted"),
+        time(22),
+      ),
+    })
+    .await
+    .unwrap();
+  let owner = WorkerOwner::new("flow-contract-retention").unwrap();
+  store
+    .place_build_result_hold(management_mutation_with_request(
+      PlaceBuildResultHold {
+        build_id,
+        reason: RetentionHoldReason::new("Retain verified node evidence").unwrap(),
+        expires_at: Some(time(29)),
+        idempotency_key: idempotency("generic-node-hold"),
+        placed_at: time(23),
+      },
+      "generic-node-hold",
+    ))
+    .await
+    .unwrap();
+  assert!(
+    store
+      .claim_factory_retention_work(ClaimFactoryRetentionWork::new(owner.clone(), time(24), time(28), 1).unwrap())
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  for at in 30..100 {
+    let claims = store
+      .claim_factory_retention_work(ClaimFactoryRetentionWork::new(owner.clone(), time(at), time(at + 10), 1).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(claims.len(), 1);
+    let pass = store
+      .advance_factory_retention_work(AdvanceFactoryRetentionWork::new(run_id, owner.clone(), time(at), 2).unwrap())
+      .await
+      .unwrap();
+    assert!(pass.deleted_records <= 2);
+    if pass.completed {
+      return;
+    }
+  }
+  panic!("bounded cleanup of generic node records must complete");
+}
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
@@ -364,89 +563,7 @@ async fn assert_run_parity(
   actual
 }
 
-struct Fixture {
-  choices: FactoryConfigurationChoices,
-  draft: FactoryConfigurationDraft,
-}
-
-fn fixture(project_id: ProjectId) -> Fixture {
-  let references = [
-    (FactoryChoiceKind::AdmissionPolicy, "admission", "manual.medium", 1),
-    (FactoryChoiceKind::PermissionCeiling, "permissions", "restricted", 2),
-    (FactoryChoiceKind::CriterionPack, "criteria", "quality", 3),
-    (FactoryChoiceKind::Evaluator, "evaluator", "review", 4),
-    (FactoryChoiceKind::DeliveryAdapter, "delivery-adapter", "github", 5),
-    (FactoryChoiceKind::DeliveryPolicy, "delivery-policy", "human-review", 6),
-  ]
-  .into_iter()
-  .map(|(kind, alias, identity, value)| FactoryReferenceChoice {
-    kind,
-    alias: key(alias),
-    reference: ImmutableReference::new(key(identity), key("v1"), digest(value)),
-  })
-  .collect();
-  let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
-    references,
-    build_configurations: vec![(
-      key("build"),
-      BuildConfigurationRef::new(
-        BuildConfigurationId::generate(),
-        BuildConfigurationVersion::INITIAL,
-        project_id,
-        digest(7),
-      ),
-    )],
-  })
-  .unwrap();
-  let budget = || BudgetLimit::new(20, 10_000, 1_000, 10_000, 10_000).unwrap();
-  let stage = |name, kind| FactoryStageDraft {
-    key: key(name),
-    kind,
-    build_configuration: key("build"),
-    budget: budget(),
-  };
-  let draft = FactoryConfigurationDraft {
-    flow: None,
-    admission_policy: key("admission"),
-    stages: vec![
-      stage("implement", FactoryStageKind::Implementation),
-      stage("validate", FactoryStageKind::Validation),
-      stage("evaluate", FactoryStageKind::Evaluation),
-    ],
-    wip_limits: FactoryWipLimits::new(20, 20).unwrap(),
-    hard_budget: budget(),
-    permission_ceiling: key("permissions"),
-    credential_profiles: credential_profiles(),
-    decision_signals: Vec::new(),
-    evaluation: EvaluationPolicyDraft {
-      criterion_packs: vec![key("criteria")],
-      evaluators: vec![key("evaluator")],
-      required_quorum: 1,
-      budget: budget(),
-    },
-    rework: ReworkPolicyDraft {
-      max_cycles: 0,
-      stage: None,
-      exhausted_outcome: DecisionOutcome::Escalate,
-    },
-    delivery: DeliveryPolicyDraft {
-      adapter: key("delivery-adapter"),
-      policy: key("delivery-policy"),
-    },
-    enabled: true,
-  };
-  Fixture { choices, draft }
-}
-
-fn credential_profiles() -> FactoryCredentialProfiles {
-  FactoryCredentialProfiles::new(
-    key("model-coding"),
-    key("model-evaluation"),
-    key("source-read"),
-    key("delivery-write"),
-  )
-  .unwrap()
-}
+use support::factory_configuration::fixture;
 
 fn admission(
   run: u128,
@@ -1575,124 +1692,21 @@ mod run_contract {
     }
 
     async fn linked_build(&self, stage: &StageAttempt) -> FactoryBuildLink {
-      let pipeline_id = uuid::Uuid::new_v4();
       let build_configuration_id = BuildConfigurationId::generate();
-      let trigger_id = uuid::Uuid::new_v4();
-      let occurrence_id = uuid::Uuid::new_v4();
       let build_id = BuildId::generate();
       let attempt_id = AttemptId::generate();
       let job_id = JobId::generate();
-      let pool_id = uuid::Uuid::new_v4();
       let subject = self.admission.run.subject();
-      let mut transaction = self.database.pool.begin().await.unwrap();
-
-      sqlx::query("INSERT INTO pipelines (id, project_id, name, created_at) VALUES ($1, $2, $3, now())")
-        .bind(pipeline_id)
-        .bind(subject.project_id().as_uuid())
-        .bind(format!("factory-linked-{build_id}"))
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-      sqlx::query(
-        "INSERT INTO pipeline_versions (pipeline_id, version, dag_snapshot, published_at) \
-         VALUES ($1, 1, '{}', now())",
+      seed_factory_build(
+        &self.database.pool,
+        subject,
+        self.admission.repository_version,
+        build_configuration_id,
+        build_id,
+        attempt_id,
+        job_id,
       )
-      .bind(pipeline_id)
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      sqlx::query("INSERT INTO build_configurations (id, project_id, name, created_at) VALUES ($1, $2, $3, now())")
-        .bind(build_configuration_id.as_uuid())
-        .bind(subject.project_id().as_uuid())
-        .bind(format!("factory-linked-{build_id}"))
-        .execute(&mut *transaction)
-        .await
-        .unwrap();
-      sqlx::query(
-        "INSERT INTO build_configuration_versions \
-           (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
-            pipeline_version, configuration_snapshot, job_concurrency_limit, allowed_pool_ids, retry_max_attempts, \
-            retries_infrastructure, published_at) \
-         VALUES ($1, 1, true, $2, $3, $4, 1, '{}', 1, ARRAY[$5::uuid], 1, false, now())",
-      )
-      .bind(build_configuration_id.as_uuid())
-      .bind(subject.repository_id().as_uuid())
-      .bind(i64::try_from(self.admission.repository_version.get()).unwrap())
-      .bind(pipeline_id)
-      .bind(pool_id)
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      sqlx::query(
-        "INSERT INTO triggers \
-           (id, version, build_configuration_id, build_configuration_version, kind, enabled, definition, created_at) \
-         VALUES ($1, 1, $2, 1, 'manual', true, '{}', now())",
-      )
-      .bind(trigger_id)
-      .bind(build_configuration_id.as_uuid())
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      sqlx::query(
-        "INSERT INTO trigger_occurrences \
-           (id, trigger_id, trigger_version, build_configuration_id, build_configuration_version, kind, \
-            deduplication_identity, cause, causality, provider_metadata, source_time, state, request_digest, \
-            created_at, updated_at) \
-         VALUES ($1, $2, 1, $3, 1, 'manual', $4, '{\"kind\":\"manual\"}', \
-                 jsonb_build_object('root_occurrence_id', $1::text, 'parent_occurrence_id', NULL, 'depth', 0), '{}', \
-                 now(), 'accepted', decode(repeat('02', 32), 'hex'), now(), now())",
-      )
-      .bind(occurrence_id)
-      .bind(trigger_id)
-      .bind(build_configuration_id.as_uuid())
-      .bind(format!("factory-linked-{build_id}"))
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      sqlx::query(
-        "INSERT INTO builds \
-           (id, project_id, build_configuration_id, build_configuration_version, pipeline_id, pipeline_version, \
-            repository_id, repository_version, trigger_occurrence_id, immutable_revision, input_snapshot, \
-            effective_policy_snapshot, project_job_concurrency_limit, priority, state, version, created_at, updated_at, \
-            metadata_retention_until, log_retention_until, artifact_retention_until, report_retention_until) \
-         VALUES ($1, $2, $3, 1, $4, 1, $5, $6, $7, $8, '{}', '{}', 1, 0, 'running', 1, now(), now(), \
-                 now() + interval '100 years', now() + interval '100 years', now() + interval '100 years', \
-                 now() + interval '100 years')",
-      )
-      .bind(build_id.as_uuid())
-      .bind(subject.project_id().as_uuid())
-      .bind(build_configuration_id.as_uuid())
-      .bind(pipeline_id)
-      .bind(subject.repository_id().as_uuid())
-      .bind(i64::try_from(self.admission.repository_version.get()).unwrap())
-      .bind(occurrence_id)
-      .bind(subject.base_revision().as_str())
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      sqlx::query(
-        "INSERT INTO attempts (id, build_id, attempt_number, state, version, created_at, updated_at) \
-         VALUES ($1, $2, 1, 'running', 1, now(), now())",
-      )
-      .bind(attempt_id.as_uuid())
-      .bind(build_id.as_uuid())
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      sqlx::query(
-        "INSERT INTO jobs \
-           (id, attempt_id, pipeline_node_id, state, allowed_pool_ids, requirements, job_spec_template, \
-            dependency_policy, signed_job_spec, version, created_at, updated_at) \
-         VALUES ($1, $2, 'factory-linked', 'ready', ARRAY[$3]::uuid[], '{}', '{}', \
-                 '\"all_succeeded\"', '{}', 1, now(), now())",
-      )
-      .bind(job_id.as_uuid())
-      .bind(attempt_id.as_uuid())
-      .bind(pool_id)
-      .execute(&mut *transaction)
-      .await
-      .unwrap();
-      transaction.commit().await.unwrap();
+      .await;
 
       FactoryBuildLink::new(
         stage,
@@ -1831,462 +1845,4 @@ mod run_contract {
   }
 }
 
-use octacity_server_factory as factory;
-#[path = "../../../core/octacity-server-factory/src/triage/tests/journey.rs"]
-mod triage_journey;
-
-#[tokio::test]
-#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
-async fn configured_root_and_typed_eligibility_resolution_round_trip_after_restart() {
-  use octacity_server_factory::*;
-  use octacity_server_store::*;
-  let database = TestDatabase::migrated().await;
-  let postgres = PostgresStore::new(database.pool.clone());
-  let project = ProjectId::generate();
-  seed_projects(&database.pool, project, ProjectId::generate()).await;
-  let mut fixture = fixture(project);
-  let journey = triage_journey::journey(
-    false,
-    false,
-    BudgetLimit::new(10, 10_000, 1_000, 10_000, 10_000).unwrap(),
-  );
-  fixture.draft.flow = Some(journey.clone());
-  let config_id = FactoryConfigurationId::generate();
-  let config = FactoryConfiguration::publish(
-    config_id,
-    FactoryConfigurationVersion::INITIAL,
-    project,
-    digest(20),
-    fixture.draft.clone(),
-    &fixture.choices,
-  )
-  .unwrap();
-  postgres
-    .create_factory_configuration(management_mutation_with_request(
-      CreateFactoryConfiguration {
-        configuration: config.clone(),
-        idempotency_key: idempotency("triage.configuration"),
-        published_at: time(1),
-        intent: FactoryConfigurationMutationIntent::Create {
-          id: config_id,
-          project_id: project,
-          definition_digest: digest(20),
-          draft: fixture.draft,
-        },
-      },
-      "triage.configuration",
-    ))
-    .await
-    .unwrap();
-  let repo = repository(project, RepositoryId::generate());
-  seed_repository(&database.pool, &repo).await;
-  let mut admission = admission(
-    uuid::Uuid::new_v4().as_u128(),
-    uuid::Uuid::new_v4().as_u128(),
-    "configured-triage",
-    2,
-    project,
-    config_id,
-    &repo,
-  );
-  let forged = admission.clone();
-  assert!(
-    postgres
-      .admit_factory_work(management_mutation_with_request(forged, "forged-stage-projection"))
-      .await
-      .is_err()
-  );
-  admission.flow = AdmittedFlow::from_configuration(&config, &admission.run).unwrap();
-  let published = postgres
-    .admit_factory_work(management_mutation_with_request(admission.clone(), "triage.admission"))
-    .await
-    .unwrap();
-  let replayed = postgres
-    .admit_factory_work(management_mutation_with_request(admission.clone(), "triage.replay"))
-    .await
-    .unwrap();
-  assert_eq!(published.admission, replayed.admission);
-  let claim = postgres
-    .claim_factory_runs(ClaimFactoryRuns::new(key("triage.worker"), time(3), time(100), 1).unwrap())
-    .await
-    .unwrap()
-    .remove(0)
-    .record;
-  let run_id = admission.run.id();
-  let snapshot = postgres.factory_run_snapshot(run_id).await.unwrap();
-  assert_eq!(snapshot.admitted_flow.closure(), &journey.closure);
-  let input = EligibilityInput::new(&snapshot.work, journey.triage.project_goals.clone(), vec![]).unwrap();
-  let ownership = FactoryClaimOwnership::new(claim.owner.clone(), claim.claim);
-  let make = |flow: &FlowRun,
-              cycle: &WorkflowCycle,
-              node: &str,
-              number: u64,
-              input: FactoryDigest,
-              execution: NodeExecutionIdentity| {
-    let definition = journey.closure.definition(flow.definition()).unwrap();
-    let declaration = definition.node(&key(node)).unwrap();
-    NodeAttempt::new(
-      flow,
-      cycle,
-      definition,
-      NodeAttemptInput {
-        id: NodeAttemptId::generate(),
-        node_key: key(node),
-        node_kind: declaration.kind(),
-        number: NodeAttemptNumber::new(number).unwrap(),
-        input_digest: input,
-        budget: declaration.budget(),
-        deadline: time(100),
-        execution,
-        ownership: ownership.clone(),
-      },
-    )
-    .unwrap()
-  };
-  let root = snapshot.admitted_flow.root_run().clone();
-  let root_cycle = snapshot.admitted_flow.initial_cycle().clone();
-  let root_call = make(
-    &root,
-    &root_cycle,
-    "triage",
-    1,
-    input.digest().unwrap(),
-    NodeExecutionIdentity::BuiltIn,
-  );
-  let triage = FlowRun::nested(
-    FlowRunId::generate(),
-    run_id,
-    journey.triage.definition,
-    FlowRunParent::new(root.id(), root_call.id()),
-  );
-  let triage_cycle = WorkflowCycle::initial(&triage).unwrap();
-  let eligibility_call = make(
-    &triage,
-    &triage_cycle,
-    "eligibility",
-    1,
-    input.digest().unwrap(),
-    NodeExecutionIdentity::BuiltIn,
-  );
-  let eligibility_definition = journey
-    .closure
-    .definition(triage.definition())
-    .unwrap()
-    .node(&key("eligibility"))
-    .unwrap()
-    .subflow_definition()
-    .unwrap();
-  let eligibility = FlowRun::nested(
-    FlowRunId::generate(),
-    run_id,
-    eligibility_definition,
-    FlowRunParent::new(triage.id(), eligibility_call.id()),
-  );
-  let eligibility_cycle = WorkflowCycle::initial(&eligibility).unwrap();
-  let append = FactoryRunHistoryAppend {
-    flow: FactoryFlowHistory {
-      runs: vec![triage.clone(), eligibility.clone()],
-      cycles: vec![triage_cycle.clone(), eligibility_cycle.clone()],
-      attempts: vec![root_call.clone(), eligibility_call.clone()],
-      triage: vec![TriageJournalRecord::Prepared(Box::new(input.clone()))],
-      ..Default::default()
-    },
-    ..Default::default()
-  };
-  pg_triage_transition(
-    &postgres,
-    &snapshot,
-    &claim,
-    append,
-    FactoryRunState::Admitted,
-    FactoryLifecycleProgress::Admitted,
-    BudgetUsage {
-      attempts: 2,
-      ..Default::default()
-    },
-  )
-  .await
-  .unwrap();
-  let snapshot = postgres.factory_run_snapshot(run_id).await.unwrap();
-  let profile = &journey.triage.eligibility;
-  let leaf = make(
-    &eligibility,
-    &eligibility_cycle,
-    "observe",
-    1,
-    input.digest().unwrap(),
-    NodeExecutionIdentity::External(profile.producer.clone()),
-  );
-  let result = EligibilityResult::new(
-    &input,
-    TriageProvenance {
-      input_digest: input.digest().unwrap(),
-      definition: eligibility.definition(),
-      node_attempt_id: leaf.id(),
-      producer: profile.producer.clone(),
-      model_or_tool: profile.model_or_tool.clone(),
-      task_digest: profile.task_digest,
-      result: artifact(93),
-      observed_at: time(10),
-    },
-    TriageObservation::new(ProjectFit::OutOfScope, artifact(94)),
-    vec![],
-  )
-  .unwrap();
-  // The execution port may already have retained the same result bytes.
-  sqlx::query("INSERT INTO factory_artifact_references (run_id, artifact_id, role, expected_sha256, created_at) VALUES ($1,$2,'call_context',$3,to_timestamp(0.009))")
-    .bind(run_id.as_uuid()).bind(result.provenance().result.artifact_id().as_uuid())
-    .bind(result.provenance().result.content_digest().as_bytes().as_slice())
-    .execute(&database.pool).await.unwrap();
-  let evidence = vec![
-    AcceptedTriageEvidence::new(
-      input.subject().clone(),
-      input.digest().unwrap(),
-      TriageEvidenceFact::ProjectFit(ProjectFit::OutOfScope),
-      result.project_fit().evidence().clone(),
-      DeterministicGateOutcome::Passed,
-    )
-    .unwrap(),
-  ];
-  let usage = BudgetUsage {
-    attempts: 3,
-    tokens: 1,
-    ..Default::default()
-  };
-  let policy = TriagePolicy::for_flow(
-    config.reference().clone(),
-    &snapshot.admitted_flow.validated().unwrap(),
-    journey.triage.definition,
-    journey.triage.policy.clone(),
-  )
-  .unwrap();
-  let decision = policy.eligibility(&input, &result, &evidence, usage).unwrap();
-  assert_eq!(decision.reason, TriageReason::OutOfScope);
-  let disposition = TriageDisposition::Eligibility(decision.clone());
-  let disposition_digest = disposition.digest().unwrap();
-  let gate = make(
-    &triage,
-    &triage_cycle,
-    "eligibility_policy",
-    2,
-    result.digest().unwrap(),
-    NodeExecutionIdentity::BuiltIn,
-  );
-  let complete = |flow: &FlowRun,
-                  node: &NodeAttempt,
-                  outcome: &str,
-                  schema: TriageSchema,
-                  digest: FactoryDigest,
-                  usage: BudgetUsage| {
-    NodeAttemptCompletion::new(
-      node,
-      journey.closure.definition(flow.definition()).unwrap(),
-      NodeAttemptCompletionInput {
-        outcome: key(outcome),
-        output_schema: schema.reference().unwrap(),
-        output_digest: digest,
-        ownership: ownership.clone(),
-        usage,
-        observed_at: time(10),
-      },
-    )
-    .unwrap()
-  };
-  let receipt = TriageJournalRecord::Eligibility(Box::new(EligibilityReceipt {
-    input,
-    result: result.clone(),
-    evidence,
-    usage,
-    decision,
-  }));
-  let append = FactoryRunHistoryAppend {
-    flow: FactoryFlowHistory {
-      attempts: vec![leaf.clone(), gate.clone()],
-      completions: vec![
-        complete(
-          &eligibility,
-          &leaf,
-          "observed",
-          TriageSchema::EligibilityResult,
-          result.digest().unwrap(),
-          BudgetUsage {
-            attempts: 1,
-            tokens: 1,
-            ..Default::default()
-          },
-        ),
-        complete(
-          &triage,
-          &eligibility_call,
-          "observed",
-          TriageSchema::EligibilityResult,
-          result.digest().unwrap(),
-          BudgetUsage::default(),
-        ),
-        complete(
-          &triage,
-          &gate,
-          "rejection",
-          TriageSchema::Decision,
-          disposition_digest,
-          BudgetUsage::default(),
-        ),
-        complete(
-          &root,
-          &root_call,
-          "rejection",
-          TriageSchema::Decision,
-          disposition_digest,
-          BudgetUsage::default(),
-        ),
-      ],
-      triage: vec![receipt.clone()],
-      ..Default::default()
-    },
-    ..Default::default()
-  };
-  pg_triage_transition(
-    &postgres,
-    &snapshot,
-    &claim,
-    append,
-    FactoryRunState::Rejected,
-    FactoryLifecycleProgress::Rejected(ReportingProgress::Disabled),
-    BudgetUsage {
-      attempts: 4,
-      tokens: 1,
-      ..Default::default()
-    },
-  )
-  .await
-  .unwrap();
-  let restarted = PostgresStore::new(database.pool.clone());
-  let restored = restarted.factory_run_snapshot(run_id).await.unwrap();
-  assert_eq!(restored.flow.triage.last(), Some(&receipt));
-  assert_eq!(restored.run.state(), FactoryRunState::Rejected);
-  assert!(restored.stage_attempts.is_empty());
-  assert!(
-    restored
-      .flow
-      .runs
-      .iter()
-      .all(|flow| journey.closure.definition(flow.definition()).is_some())
-  );
-  assert!(restored.flow.runs.iter().all(|flow| {
-    flow.definition()
-      != journey
-        .closure
-        .definition(triage.definition())
-        .unwrap()
-        .node(&key("classification"))
-        .unwrap()
-        .subflow_definition()
-        .unwrap()
-  }));
-  for (artifact, expected) in [
-    (&result.provenance().result, 9_i64),
-    (result.project_fit().evidence(), 10_i64),
-  ] {
-    let first_retained: i64 = sqlx::query_scalar("SELECT (extract(epoch FROM created_at) * 1000)::bigint FROM factory_artifact_references WHERE run_id=$1 AND artifact_id=$2 AND role='call_context'")
-      .bind(run_id.as_uuid()).bind(artifact.artifact_id().as_uuid()).fetch_one(&database.pool).await.unwrap();
-    assert_eq!(first_retained, expected);
-  }
-  let references: i64 =
-    sqlx::query_scalar("SELECT count(*) FROM factory_artifact_references WHERE run_id=$1 AND role='call_context'")
-      .bind(run_id.as_uuid())
-      .fetch_one(&database.pool)
-      .await
-      .unwrap();
-  assert_eq!(references, 3);
-  let owner = WorkerOwner::new("triage.retention").unwrap();
-  let mut cleaned = false;
-  for at in 20..120 {
-    let claims = restarted
-      .claim_factory_retention_work(ClaimFactoryRetentionWork::new(owner.clone(), time(at), time(at + 10), 1).unwrap())
-      .await
-      .unwrap();
-    assert_eq!(claims.len(), 1);
-    let progress = restarted
-      .advance_factory_retention_work(AdvanceFactoryRetentionWork::new(run_id, owner.clone(), time(at), 2).unwrap())
-      .await
-      .unwrap();
-    if progress.completed {
-      cleaned = true;
-      break;
-    }
-  }
-  assert!(
-    cleaned,
-    "typed journal and nested Flow metadata must be removable in bounded pages"
-  );
-  let retained: i64 = sqlx::query_scalar("SELECT count(*) FROM factory_triage_records WHERE run_id=$1")
-    .bind(run_id.as_uuid())
-    .fetch_one(&database.pool)
-    .await
-    .unwrap();
-  assert_eq!(retained, 0);
-  database.cleanup().await;
-}
-
-async fn pg_triage_transition(
-  postgres: &PostgresStore,
-  snapshot: &octacity_server_store::FactoryRunSnapshot,
-  claim: &octacity_server_store::FactoryRunClaimRecord,
-  append: octacity_server_store::FactoryRunHistoryAppend,
-  state: octacity_server_factory::FactoryRunState,
-  progress: octacity_server_factory::FactoryLifecycleProgress,
-  usage: octacity_server_factory::BudgetUsage,
-) -> Result<(), octacity_server_store::StoreError> {
-  use octacity_server_factory::*;
-  use octacity_server_store::*;
-  let version = FactoryRunVersion::new(snapshot.run.version().get() + 1).unwrap();
-  let at = time(10);
-  let budget = FactoryBudgetRecord::new(snapshot.run.id(), version, usage, at);
-  let lifecycle = FactoryLifecycleCheckpoint::new(
-    snapshot.run.id(),
-    version,
-    progress,
-    DecisionSignalProgress::Disabled,
-    false,
-    at,
-  );
-  let mut current = snapshot.current.clone();
-  current.budget_id = budget.id;
-  current.lifecycle_checkpoint_id = lifecycle.id;
-  let run = FactoryRun::restore(
-    snapshot.run.id(),
-    snapshot.run.configuration().clone(),
-    &snapshot.work,
-    snapshot.run.subject().clone(),
-    state,
-    version,
-  )
-  .unwrap();
-  let audit = FactoryAuditFact::new(
-    run.id(),
-    AuditActorKind::Worker,
-    None,
-    key("factory.triage.advance"),
-    digest(30),
-    key(state.as_str()),
-    at,
-  );
-  postgres
-    .commit_factory_run_transition(CommitFactoryRunTransition {
-      run_id: run.id(),
-      expected_version: snapshot.run.version(),
-      claim_id: claim.id,
-      owner: claim.owner.clone(),
-      fence: claim.claim.fence(),
-      committed_at: at,
-      next_run: run,
-      budget,
-      lifecycle_checkpoint: lifecycle,
-      append,
-      audit,
-      outbox: vec![],
-      current,
-    })
-    .await?;
-  Ok(())
-}
+use support::factory_build::seed_factory_build;

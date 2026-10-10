@@ -86,7 +86,7 @@ pub(crate) async fn claim(pool: &PgPool, request: ClaimRetentionWork) -> Result<
            WHERE hold.released_at IS NULL AND hold.expired_at IS NULL AND (hold.expires_at IS NULL \
              OR hold.expires_at > to_timestamp($1::double precision / 1000.0))) \
          AND NOT EXISTS (\
-           SELECT 1 FROM factory_build_links AS link \
+           SELECT 1 FROM factory_run_builds AS link \
            JOIN factory_runs AS run ON run.id = link.run_id \
            LEFT JOIN factory_retention_work AS factory_work ON factory_work.run_id = run.id \
            WHERE link.build_id = retention_work.build_id \
@@ -285,7 +285,7 @@ async fn lock_build_and_check_retention(
   }
   sqlx::query_scalar(
     "SELECT EXISTS(\
-       SELECT 1 FROM factory_build_links AS link \
+       SELECT 1 FROM factory_run_builds AS link \
        JOIN factory_runs AS run ON run.id = link.run_id \
        LEFT JOIN factory_retention_work AS factory_work ON factory_work.run_id = run.id \
        WHERE link.build_id = $1 AND (run.visible OR factory_work.phase = 'hidden') \

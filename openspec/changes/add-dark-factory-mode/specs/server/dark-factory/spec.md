@@ -31,11 +31,29 @@ The server SHALL represent factory behavior as immutable versioned Flow Definiti
 
 Definition validation SHALL reject unknown or provider-created node kinds or edges, incompatible schemas, unreachable required nodes, missing terminal outcomes, cycles without explicit bounded repeat semantics, recursive subflow closures, and any graph whose maximum depth, node count, fan-out, repeat count, budget, or WIP cannot be proven within configured bounds. Admission SHALL persist those exact bounds with the immutable reachable closure. A running Flow Run and every restart SHALL revalidate against the persisted bounds and SHALL NOT substitute defaults or discover newer subflow versions.
 
+Logical steps SHALL use operator-defined node keys rather than a closed enumeration of business stages. A deterministic-gate binding SHALL pin an exact policy identity and bounded structured parameters inside the definition digest; the selected policy adapter SHALL validate its parameter and output contracts. An operator SHALL be able to add a logical step using an existing primitive and installed execution capability by configuring its name, profile or policy, parameters, typed outcomes and transitions without modifying the interpreter. Requirements settings SHALL belong to the selected gate rather than a global requirements phase field.
+
+Triage, research, requirements and subsequent logical stages SHALL be supplied node/flow configurations rather than dedicated execution implementations. One generic node input/result envelope, bounded configured data-contract validator, declarative gate evaluator, retained-result journal and ordinary Build adapter SHALL serve those configurations. Runtime dispatch, admission and persistence SHALL NOT contain phase-name switches, phase-specific journals or required phase fields. New logical steps SHALL NOT require a new Rust input/result type or runtime registration. Technical adapters MAY implement capabilities, while permissions, provenance, fencing, context protection and hard execution bounds SHALL remain unconditional runtime checks.
+
+Configured gate predicates SHALL be limited to typed comparisons, existence, bounded boolean composition and bounded array quantification over explicitly projected schema-validated observations and independently accepted facts. Missing required facts SHALL fail closed. An ordered rule set SHALL select only declared finite outcomes and SHALL declare a fallback. No configuration SHALL execute arbitrary code or allow provider-authored rules, accepted-evidence flags or transitions. Admission SHALL freeze schemas, profiles, parameters, predicates, projections and named pool policies as exact immutable identities.
+
 Provider-neutral Flow graph structure and algorithms SHALL initially be implemented as a deterministic pure module private to the OctaCity Factory core. The module SHALL be limited to canonical node and edge structure, structural validation, traversal, reachability, component and cycle facts, topological ordering of acyclic projections, and bounded structural measurements. It SHALL NOT own plugins, commands, Builds, Flow node kinds, schemas, context or data authority, permissions, budgets, retries, persistence, fencing, side effects, or transition decisions. Octa SHALL remain unchanged and continue to reject cyclic task DAGs, while the Factory adapter MAY accept only cycles whose explicit bounded-repeat semantics satisfy Factory policy and SHALL record their realized execution as append-only attempts and cycles. Any later shared-kernel extraction SHALL require a separately reviewed change based on at least two working consumers and SHALL NOT be a dependency or release commitment of this change.
 
 #### Scenario: Nested Flow Definition is replaced
 - **WHEN** an operator publishes a replacement for a subflow used by an admitted Factory Run
 - **THEN** the admitted run continues with its pinned subflow version while later runs may use the replacement
+
+#### Scenario: Operator adds a named logical gate
+- **WHEN** an operator declares a new node name with an installed deterministic policy, bounded parameters and transitions for its typed outcomes
+- **THEN** the immutable definition retains that binding and the interpreter routes by the declared outcomes without inferring business behavior from the node name
+
+#### Scenario: Operator introduces a logical stage through configuration alone
+- **WHEN** an operator adds an `accessibility_audit` node using an existing reasoning Build capability, a new bounded result schema, configured prompt and parameters, and declarative transitions
+- **THEN** the same execution adapter and generic result journal run and restore the node without a Rust stage type, a phase-specific adapter or changes to the runtime
+
+#### Scenario: Configured business stages use the common runtime
+- **WHEN** supplied triage, defect/feature research and requirements decision configurations execute through the generic node interface
+- **THEN** their eligibility, reproduction, accepted-contract and terminal outcomes preserve evidence and provenance checks without dedicated triage/research/requirements runtime or storage paths
 
 #### Scenario: Provider proposes an undeclared transition
 - **WHEN** a reasoning or Decision Signal result names a node or edge absent from the current Flow Definition
@@ -96,9 +114,9 @@ A Factory Configuration SHALL be able to route an accepted Triage Result into an
 
 Research output SHALL remain a non-authoritative Stage Handoff. Deterministic policy SHALL map it only to declared requirements, protected test-authoring, verification, escalation, rejection, or terminal-resolution routes. Research prose SHALL NOT make Work implementation-ready, replace required reproduction evidence, widen authority, or create an undeclared transition. Mutable external and repository discovery included in research SHALL be frozen into the Context Manifest and applicable Retrieval Receipts.
 
-Research SHALL use the same ordinary Build creation boundary and generic Flow/Node Attempt identities as other Flows. Per-node profiles SHALL pin the model or command, task, plugin, Build Configuration and result output. Build priority SHALL be frozen in persisted intent and checked against the observed immutable Build. External research execution ordinals and budget usage SHALL remain distinct from generic Flow node numbers, including intervening deterministic gates. Trusted output verification SHALL attest the full schema version and digest of exact bytes; neither a report format name nor a requested schema SHALL constitute evidence of schema validation. Restart SHALL replay the same operation; ordinary Build retries SHALL preserve the owning Node Attempt's aggregate resource ceiling and deadline. Execution failure or cancellation SHALL NOT be interpreted as a negative reproduction observation.
+Research SHALL use the same ordinary Build creation boundary and generic Flow/Node Attempt identities as other Flows. Per-node profiles SHALL pin the model or command, task, plugin, Build Configuration and result output. Build priority SHALL be frozen in persisted intent and checked against the observed immutable Build. Configured node generations SHALL identify repeated executions independently of their payload contents. Ordinary Build dispatch and retry provenance and measured usage SHALL remain distinct from logical Flow node numbers, including intervening deterministic gates. Trusted output verification SHALL attest the full schema version and digest of exact bytes; neither a report format name nor a requested schema SHALL constitute evidence of schema validation. Restart SHALL replay the same operation; ordinary Build retries SHALL preserve the owning Node Attempt's aggregate resource ceiling and deadline. Execution failure or cancellation SHALL NOT be interpreted as a negative reproduction observation.
 
-Research wire contracts SHALL use version 2 for the separate external execution ordinal, SHALL bind that version in immutable schema references, and SHALL reject older bytes without interpreting them under the changed provenance shape.
+Research SHALL use the common bounded node input/result envelopes and exact immutable schema references. Restoration SHALL reject substituted generation, subject, source identities or output provenance without a research-specific wire contract.
 
 #### Scenario: Stronger defect research reproduces the failure
 - **WHEN** a defect research node using its pinned model and budget publishes valid reproduction evidence for the exact subject
@@ -243,6 +261,14 @@ An implementation, review, or verification node MAY return a typed Requirements 
 #### Scenario: Small Work bypasses specification authoring but not test-first gates
 - **WHEN** deterministic policy accepts Work within the configured specification-bypass bounds
 - **THEN** the server freezes one Accepted Work Contract and routes it to the declared protected test-authoring or later gates without treating model prose as requirements
+
+#### Scenario: Requirements policy changes after admission
+- **WHEN** an operator replaces the gate policy or its bypass parameters after a Work admission
+- **THEN** the admitted run evaluates and restores its contract using the frozen binding and cannot substitute the replacement
+
+#### Scenario: Rejected Work reaches the requirements policy
+- **WHEN** requirements acceptance is requested with an accepted terminal or verification-only triage decision
+- **THEN** the policy rejects the request without creating an Accepted Work Contract or requirements-authoring request
 
 #### Scenario: Defect requirements preserve regression intent
 - **WHEN** a defect requires a specification correction

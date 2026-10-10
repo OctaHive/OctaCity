@@ -1,32 +1,10 @@
-//! Plugin extensions of ordinary trusted-action nodes, independent of Research.
+//! Plugin extensions of configured trusted-action nodes over the common node journal.
 
 use crate::ApplicationError;
 use async_trait::async_trait;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
 use std::sync::Arc;
-
-/// Already-admitted, durably recorded execution selected by the owning Flow.
-///
-/// The caller validates retained Flow history, readiness and the current stored
-/// claim, persists the Node Attempt before dispatch, and atomically commits the
-/// returned completion. This adapter grants none of those authorities.
-pub struct FactoryFlowActionContext<'a> {
-  /// Owning Factory Run.
-  pub run: &'a FactoryRun,
-  /// Immutable admitted Work.
-  pub work: &'a WorkEnvelope,
-  /// Exact definition pinned by the Flow Run.
-  pub definition: &'a FlowDefinition,
-  /// Durable generic Flow Run.
-  pub flow: &'a FlowRun,
-  /// Durable generic attempt selected for execution.
-  pub node: &'a NodeAttempt,
-  /// Current fenced owner from the authoritative store.
-  pub ownership: FactoryClaimOwnership,
-  /// Server observation time.
-  pub at: Timestamp,
-}
 
 /// Scoped plugin input with no parent transcript, credentials or routing authority.
 pub struct FactoryFlowActionRequest<'a> {
@@ -40,8 +18,10 @@ pub struct FactoryFlowActionRequest<'a> {
   pub subject: &'a ExactSubject,
   /// Exact action and operator-published parameters.
   pub binding: &'a FlowActionBinding,
-  /// Digest of the explicitly projected predecessor input.
-  pub input_digest: FactoryDigest,
+  /// Exact explicitly projected input; plugins receive no other node data.
+  pub input: &'a FlowNodeInput,
+  /// Published contracts for the finite declared outputs.
+  pub schemas: &'a [FlowDataSchema],
   /// Maximum authority; the plugin must enforce it before any effect.
   pub permissions: &'a FactoryPermissionSet,
   /// Hard resource ceiling; the plugin must enforce it during execution.
@@ -54,10 +34,8 @@ pub struct FactoryFlowActionRequest<'a> {
 pub struct FactoryFlowActionObservation {
   /// One outcome declared by the immutable node.
   pub outcome: FactoryKey,
-  /// Exact declared result schema.
-  pub output_schema: ImmutableReference,
-  /// Digest of the plugin's retained, idempotent execution receipt.
-  pub output_digest: FactoryDigest,
+  /// Bounded result including the plugin's idempotent receipt, under a published contract.
+  pub payload: FlowPayload,
   /// Measured resources; attempt creation is charged by the Flow owner.
   pub usage: BudgetUsage,
 }
@@ -86,81 +64,100 @@ impl FactoryFlowActionAdapter {
   pub fn new(plugin: Arc<dyn FactoryFlowActionPlugin>) -> Self {
     Self { plugin }
   }
+}
 
-  /// Produces a fenced completion without selecting a successor or changing Work state.
-  pub async fn execute(
+#[async_trait]
+impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
+  async fn observe(
     &self,
-    context: FactoryFlowActionContext<'_>,
-  ) -> Result<NodeAttemptCompletion, ApplicationError> {
-    let node = context
-      .definition
-      .node(context.node.node_key())
+    request: crate::FactoryNodeExecutionRequest<'_>,
+  ) -> Result<crate::FactoryNodeExecutionStep, ApplicationError> {
+    let definition = request
+      .snapshot
+      .admitted_flow
+      .closure()
+      .definition(request.input.definition())
+      .ok_or_else(ApplicationError::invalid)?;
+    let node = definition
+      .node(request.attempt.node_key())
       .ok_or_else(ApplicationError::invalid)?;
     let binding = node.action().ok_or_else(ApplicationError::invalid)?;
-    if context.run.id() != context.flow.factory_run_id()
-      || context.run.id() != context.node.factory_run_id()
-      || context.run.work_id() != context.work.id()
-      || context.run.subject() != context.work.subject()
-      || context.node.flow_run_id() != context.flow.id()
-      || context.flow.definition() != context.definition.reference()
+    if request.input.factory_run_id() != request.snapshot.run.id()
+      || request.input.node() != request.attempt.node_key()
+      || request.input.digest().map_err(|_| ApplicationError::invalid())? != request.attempt.input_digest()
       || node.kind() != FlowNodeKind::TrustedAction
-      || context.node.node_kind() != node.kind()
-      || context.node.budget() != node.budget()
-      || context.at >= context.node.deadline()
+      || request.attempt.node_kind() != node.kind()
+      || request.attempt.budget() != node.budget()
+      || request.observed_at >= request.attempt.deadline()
       || binding.plugin() != &self.plugin.identity()
       || !node.permissions().plugins().any(|allowed| allowed == binding.plugin())
-      || context.node.execution() != &NodeExecutionIdentity::External(binding.plugin().clone())
+      || request.attempt.execution() != &NodeExecutionIdentity::External(binding.plugin().clone())
     {
       return Err(ApplicationError::invalid());
     }
-    context
-      .node
-      .verify_observer(&context.ownership, context.at)
+    request
+      .attempt
+      .verify_observer(&request.ownership, request.observed_at)
       .map_err(|_| ApplicationError::invalid())?;
     self.plugin.validate(binding, node.outcomes())?;
     let bytes = serde_json::to_vec(&(
-      context.work.id(),
-      context.work.external_identity(),
-      context.work.subject(),
+      request.snapshot.work.id(),
+      request.snapshot.work.external_identity(),
+      request.snapshot.work.subject(),
       binding,
-      context.flow.definition(),
-      context.node.input_digest(),
+      definition.reference(),
+      request.attempt.input_digest(),
     ))
     .map_err(|_| ApplicationError::invalid())?;
     let operation_id = FactoryDigest::sha256(
       "octacity.factory.flow-action.v1",
-      &[context.node.id().as_uuid().as_bytes(), &bytes],
+      &[request.attempt.id().as_uuid().as_bytes(), &bytes],
     );
     let result = self
       .plugin
       .execute(FactoryFlowActionRequest {
         operation_id,
-        work_id: context.work.id(),
-        external_identity: context.work.external_identity(),
-        subject: context.work.subject(),
+        work_id: request.snapshot.work.id(),
+        external_identity: request.snapshot.work.external_identity(),
+        subject: request.snapshot.work.subject(),
         binding,
-        input_digest: context.node.input_digest(),
+        input: request.input,
+        schemas: request.snapshot.admitted_flow.data_schemas(),
         permissions: node.permissions(),
         budget: node.budget(),
-        deadline: context.node.deadline(),
+        deadline: request.attempt.deadline(),
       })
       .await?;
     if result.usage.attempts != 0 {
       return Err(ApplicationError::invalid());
     }
-    NodeAttemptCompletion::new(
-      context.node,
-      context.definition,
-      NodeAttemptCompletionInput {
+    let schema = request
+      .snapshot
+      .admitted_flow
+      .data_schema(result.payload.schema())
+      .ok_or_else(ApplicationError::invalid)?;
+    FlowPayload::restore(
+      &serde_json::to_vec(&result.payload).map_err(|_| ApplicationError::invalid())?,
+      schema,
+    )
+    .map_err(|_| ApplicationError::invalid())?;
+    let record = FlowNodeRecord::new(
+      request.input,
+      request.attempt,
+      definition,
+      FlowRecordObservation {
         outcome: result.outcome,
-        output_schema: result.output_schema,
-        output_digest: result.output_digest,
-        ownership: context.ownership,
-        usage: result.usage,
-        observed_at: context.at,
+        payload: result.payload,
+        producer: request.attempt.execution().clone(),
+        observed_at: request.observed_at,
       },
     )
-    .map_err(|_| ApplicationError::invalid())
+    .map_err(|_| ApplicationError::invalid())?;
+    Ok(crate::FactoryNodeExecutionStep::Completed {
+      execution: None,
+      record: Box::new(record),
+      usage: result.usage,
+    })
   }
 }
 
@@ -191,7 +188,7 @@ pub struct FactoryWorkStatusRequest {
 /// the supplied permissions and execution bounds before protected operations,
 /// and return its digest plus measured resource usage. Unknown or unenforceable
 /// authority fails closed; credentials come only from allowed profiles.
-/// Projection failure cannot undo an accepted research result or grant authority.
+/// Projection failure cannot undo an accepted node result or grant authority.
 #[async_trait]
 pub trait FactoryWorkStatusProjector: Send + Sync {
   /// Projects the arbitrary configured value using trusted connector credentials.
@@ -257,8 +254,15 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
       .await?;
     Ok(FactoryFlowActionObservation {
       outcome: self.outcome.key().clone(),
-      output_schema: self.outcome.schema().clone(),
-      output_digest: digest,
+      payload: FlowPayload::new(
+        request
+          .schemas
+          .iter()
+          .find(|schema| schema.reference() == self.outcome.schema())
+          .ok_or_else(ApplicationError::invalid)?,
+        serde_json::json!({"receipt":digest}),
+      )
+      .map_err(|_| ApplicationError::invalid())?,
       usage,
     })
   }

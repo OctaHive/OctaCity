@@ -49,6 +49,11 @@ zeroize.workspace = true
 rustix.workspace = true
 
 [dev-dependencies]
+octacity-server-pipeline = { path = "../core/octacity-server-pipeline" }
+octacity-server-factory = { path = "../core/octacity-server-factory" }
+octacity-server-orchestrator = { path = "../core/octacity-server-orchestrator" }
+octacity-server-artifacts = { path = "../core/octacity-server-artifacts" }
+octacity-server-store = { path = "../core/octacity-server-store", features = ["test-support"] }
 reqwest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }

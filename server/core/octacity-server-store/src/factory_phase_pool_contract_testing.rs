@@ -25,6 +25,7 @@ fn time(value: i64) -> Timestamp {
 #[must_use]
 pub fn phase_pool_contract_input(snapshot: &FactoryRunSnapshot, severity: FindingSeverity) -> PhasePoolInput {
   PhasePoolInput {
+    generation: 0,
     run_id: snapshot.run.id(),
     run_version: snapshot.run.version(),
     flow_run_id: snapshot.admitted_flow.root_run().id(),

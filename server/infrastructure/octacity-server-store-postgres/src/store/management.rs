@@ -469,6 +469,14 @@ impl AgentCredentialStore for PostgresStore {
 
 #[async_trait]
 impl FactoryPhasePoolStore for PostgresStore {
+  async fn phase_pool_selection_for_claim(
+    &self,
+    run: octacity_server_factory::FactoryRunId,
+    claim: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<PhasePoolSelection>, StoreError> {
+    let mut connection = self.pool.acquire().await.map_err(crate::database::unavailable)?;
+    crate::factory_run::selection_for_claim(&mut connection, run, claim).await
+  }
   async fn publish_phase_ready(
     &self,
     policy: octacity_server_factory::PhasePoolPolicy,

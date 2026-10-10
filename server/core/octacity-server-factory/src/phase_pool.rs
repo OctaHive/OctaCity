@@ -2,6 +2,52 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BudgetLimit, BudgetUsage, FactoryDigest, FactoryError, FactoryKey};
 
+/// Frozen selection inputs for an arbitrary named node pool.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowPoolSettings {
+  /// Exact resource, ordering and concurrency policy.
+  pub policy: PhasePoolPolicy,
+  /// Operator-owned immutable Project priority.
+  pub project_priority: i32,
+  /// Exact installed execution capabilities required for selection.
+  pub capabilities: std::collections::BTreeSet<crate::ImmutableReference>,
+  /// Explicit mapping of frozen node input into severity and Work dependencies.
+  pub selection: crate::FlowDataMapping,
+}
+pub(crate) fn validate_pool_settings(
+  closure: &crate::PinnedFlowDefinitionClosure,
+  limits: &crate::FlowAdmissionLimits,
+  settings: &std::collections::BTreeMap<FactoryKey, FlowPoolSettings>,
+) -> Result<(), FactoryError> {
+  let invalid = || FactoryError::InvalidConfiguration {
+    field: "configured Flow pools",
+  };
+  if settings.len() > crate::MAX_FLOW_SCHEMA_ENTRIES {
+    return Err(invalid());
+  }
+  for (name, pool) in settings {
+    pool.policy.validate()?;
+    if name != &pool.policy.phase
+      || !pool.policy.budget.fits_within(limits.budget())
+      || pool.policy.max_wip > limits.max_wip()
+      || pool.capabilities.len() > 16
+    {
+      return Err(invalid());
+    }
+  }
+  if closure
+    .definitions()
+    .iter()
+    .flat_map(|definition| definition.nodes())
+    .filter_map(|node| node.phase_pool())
+    .any(|pool| !settings.contains_key(pool))
+  {
+    return Err(invalid());
+  }
+  Ok(())
+}
+
 /// Maximum items inspected or selected by a single phase-pool pass.
 pub const MAX_PHASE_POOL_BATCH: u16 = 100;
 
