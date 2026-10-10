@@ -341,7 +341,7 @@ fn capture_outputs_with_candidate(
   candidate_revision: &str,
 ) -> (Vec<ArtifactIdentity>, Vec<crate::VerifiedFactoryArtifact>) {
   if !matches!(
-    request.causality.target,
+    request.causality.stage().unwrap().target,
     FactoryStageTarget::Implementation | FactoryStageTarget::Rework
   ) {
     return (Vec::new(), Vec::new());
@@ -355,6 +355,8 @@ fn capture_outputs_with_candidate(
   };
   let capture_base_revision = request
     .causality
+    .stage()
+    .unwrap()
     .candidate
     .as_ref()
     .map_or(request.immutable_revision.as_str(), |candidate| {
@@ -364,7 +366,7 @@ fn capture_outputs_with_candidate(
     format_version: 1,
     base_revision: capture_base_revision.to_owned(),
     candidate_revision: candidate_revision.to_owned(),
-    stage_attempt_id: request.causality.stage_attempt_id.to_string(),
+    stage_attempt_id: request.causality.stage().unwrap().stage_attempt_id.to_string(),
     capture_tool: FactoryImmutableReferenceV3 {
       identity: "git".to_owned(),
       version: "2.0.0".to_owned(),
@@ -569,11 +571,17 @@ fn partial_capture_retry_restarts_from_the_exact_base_and_accepted_candidate_sur
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].immutable_revision, admitted.base_revision);
     assert_eq!(requests[1].immutable_revision, admitted.base_revision);
-    assert_eq!(requests[0].causality.target, FactoryStageTarget::Implementation);
-    assert_eq!(requests[1].causality.target, FactoryStageTarget::Implementation);
+    assert_eq!(
+      requests[0].causality.stage().unwrap().target,
+      FactoryStageTarget::Implementation
+    );
+    assert_eq!(
+      requests[1].causality.stage().unwrap().target,
+      FactoryStageTarget::Implementation
+    );
     assert_ne!(
-      requests[0].causality.stage_attempt_id,
-      requests[1].causality.stage_attempt_id
+      requests[0].causality.stage().unwrap().stage_attempt_id,
+      requests[1].causality.stage().unwrap().stage_attempt_id
     );
 
     reconcile_named(&first_worker, &shutdown, "request successful candidate capture").await;
@@ -615,9 +623,12 @@ fn partial_capture_retry_restarts_from_the_exact_base_and_accepted_candidate_sur
     assert!(recovered.candidates.contains(&accepted));
     let requests = builds.requests();
     assert_eq!(requests.len(), 3, "recovery must not rerun implementation");
-    assert_eq!(requests[2].causality.target, FactoryStageTarget::Validation);
+    assert_eq!(
+      requests[2].causality.stage().unwrap().target,
+      FactoryStageTarget::Validation
+    );
     assert_eq!(requests[2].immutable_revision, admitted.base_revision);
-    let materialization = requests[2].causality.candidate.as_ref().unwrap();
+    let materialization = requests[2].causality.stage().unwrap().candidate.as_ref().unwrap();
     assert_eq!(materialization.change_set_id, accepted.id());
     assert_eq!(materialization.base_revision, admitted.base_revision);
     assert_eq!(
@@ -779,7 +790,13 @@ fn manual_admission_reaches_delivery_approval_without_a_provider_or_delivery_dis
       validation_request.immutable_revision,
       *candidate.subject().exact().base_revision()
     );
-    let materialization = validation_request.causality.candidate.as_ref().unwrap();
+    let materialization = validation_request
+      .causality
+      .stage()
+      .unwrap()
+      .candidate
+      .as_ref()
+      .unwrap();
     assert_eq!(materialization.change_set_id, candidate.id());
     assert_eq!(
       materialization.candidate_revision,

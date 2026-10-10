@@ -5,29 +5,12 @@ use super::{
 };
 use crate::{
   BudgetLimit, BudgetUsage, EvidenceRequirement, FactoryConfigurationRef, FactoryDigest, FactoryError, FactoryKey,
-  FactoryPermissionSet, FlowDefinitionRef, FlowNodeKind, FlowTransitionTarget, ImmutableReference,
+  FactoryPermissionSet, FlowBuildProfile, FlowDefinitionRef, FlowNodeKind, FlowTransitionTarget,
   PinnedFlowDefinitionClosure, RiskClass, ValidatedFlowDefinitionClosure, WorkKind, WorkSize, reserve_phase_budget,
 };
 use octacity_server_domain::Timestamp;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-
-/// Exact tool/model/task selection for one externally executed research node.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ResearchNodeProfile {
-  /// Exact definition containing the node.
-  pub definition: FlowDefinitionRef,
-  /// Stable node key in that definition.
-  pub node: FactoryKey,
-  /// Exact selected harness or deterministic tool.
-  pub tool: ImmutableReference,
-  /// Exact runner plugin.
-  pub plugin: ImmutableReference,
-  /// Exact model or command configuration.
-  pub model_or_tool: ImmutableReference,
-  /// Exact task/prompt contract.
-  pub task_digest: FactoryDigest,
-}
 
 /// Operator-owned bounded research settings; constructing policy validates every field.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -58,7 +41,7 @@ pub struct ResearchPolicy {
   closure: PinnedFlowDefinitionClosure,
   kind: WorkKind,
   settings: ResearchPolicySettings,
-  profiles: Vec<ResearchNodeProfile>,
+  profiles: Vec<FlowBuildProfile>,
   declared_routes: BTreeSet<ResearchRoute>,
 }
 
@@ -120,7 +103,7 @@ impl ResearchPolicy {
     closure: &ValidatedFlowDefinitionClosure,
     kind: WorkKind,
     settings: ResearchPolicySettings,
-    mut profiles: Vec<ResearchNodeProfile>,
+    mut profiles: Vec<FlowBuildProfile>,
   ) -> Result<Self, FactoryError> {
     validate_budget(settings.budget)?;
     validate_budget(settings.attempt_budget)?;
@@ -220,6 +203,12 @@ impl ResearchPolicy {
         }
       }
     }
+    if profiles
+      .iter()
+      .any(|profile| profile.build_configuration.project_id() != configuration.project_id())
+    {
+      return Err(invalid("research Build configuration Project"));
+    }
     if required.is_empty() || required != selected || selected.len() != profiles.len() {
       return Err(invalid("research exact node profiles"));
     }
@@ -304,8 +293,8 @@ impl ResearchPolicy {
       || provenance.producer.plugin() != &profile.plugin
       || provenance.model_or_tool != profile.model_or_tool
       || provenance.task_digest != profile.task_digest
-      || provenance.attempt.get() > u64::from(self.settings.budget.max_attempts())
-      || provenance.attempt.get() > u64::from(usage.attempts)
+      || provenance.execution_attempt > self.settings.budget.max_attempts()
+      || provenance.execution_attempt > usage.attempts
       || at < provenance.observed_at
       || evidence.len() > super::MAX_RESEARCH_ITEMS
     {
@@ -411,6 +400,21 @@ impl ResearchPolicy {
   #[must_use]
   pub const fn settings(&self) -> &ResearchPolicySettings {
     &self.settings
+  }
+
+  /// Returns the complete immutable research definition closure.
+  #[must_use]
+  pub const fn closure(&self) -> &PinnedFlowDefinitionClosure {
+    &self.closure
+  }
+
+  /// Returns the exact operator-selected profile for one executable node.
+  #[must_use]
+  pub fn execution_profile(&self, definition: FlowDefinitionRef, node: &FactoryKey) -> Option<&FlowBuildProfile> {
+    self
+      .profiles
+      .iter()
+      .find(|profile| profile.definition == definition && &profile.node == node)
   }
 
   fn validate_admission(&self, input: &ResearchInput) -> Result<(), FactoryError> {

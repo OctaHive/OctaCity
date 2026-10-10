@@ -1,93 +1,96 @@
+use crate as factory;
 use crate::*;
-use octacity_server_domain::{ArtifactId, AttemptId, BuildId, JobId, Timestamp};
-use uuid::Uuid;
+mod fixtures;
+use fixtures::*;
+use octacity_server_domain::{AttemptId, BuildConfigurationId, BuildConfigurationVersion, BuildId, JobId};
 
-fn key(value: &str) -> FactoryKey {
-  FactoryKey::new(value).unwrap()
-}
-fn digest(value: u8) -> FactoryDigest {
-  FactoryDigest::from_bytes([value; 32])
-}
-fn artifact(value: u8) -> FactoryArtifactReference {
-  FactoryArtifactReference::new(ArtifactId::generate(), digest(value), 10).unwrap()
-}
-fn time(value: i64) -> Timestamp {
-  Timestamp::from_unix_millis(value).unwrap()
-}
-fn reference(name: &str) -> ImmutableReference {
-  ImmutableReference::new(key(name), key("v1"), digest(1))
+#[test]
+fn research_execution_provenance_uses_a_new_schema_contract_version() {
+  assert_eq!(RESEARCH_CONTRACT_VERSION, 2);
+  for schema in [
+    ResearchSchema::Input,
+    ResearchSchema::DefectResult,
+    ResearchSchema::FeatureResult,
+    ResearchSchema::Handoff,
+    ResearchSchema::Decision,
+  ] {
+    assert_eq!(schema.reference().unwrap().version().as_str(), "v2");
+  }
+  let (work, admitted, input) = input_fixture(WorkKind::Defect, WorkSize::Small);
+  let mut wire = serde_json::to_value(&input).unwrap();
+  assert_eq!(wire["schema_version"], serde_json::json!(2));
+  wire["schema_version"] = serde_json::json!(1);
+  assert!(
+    ResearchInput::restore(
+      &serde_json::to_vec(&wire).unwrap(),
+      &work,
+      &admitted,
+      input.policy_digest()
+    )
+    .is_err()
+  );
 }
 
 fn input_fixture(kind: WorkKind, size: WorkSize) -> (WorkEnvelope, AdmittedFlow, ResearchInput) {
   let (work, admitted, accepted) = crate::triage::tests::research_fixture(kind, size);
-  let subject = FactoryTaskSubject::Exact(work.subject().clone());
-  let symptoms = artifact(50);
-  let environment = artifact(51);
-  let source = artifact(52);
-  let eligibility = &accepted.eligibility.input;
-  let artifacts = [
-    eligibility.task().clone(),
-    eligibility.acceptance().clone(),
-    accepted.result.provenance().result.clone(),
-    eligibility.project_goals().clone(),
-    symptoms.clone(),
-    environment.clone(),
-    source.clone(),
-  ];
-  let entries = artifacts
-    .into_iter()
-    .enumerate()
-    .map(|(index, artifact)| {
-      ContextManifestEntry::new(
-        ContextSourceKind::Task,
-        key(&format!("input.{index}")),
-        subject.clone(),
-        FactoryContextReference::Artifact(artifact.clone()),
-        artifact.content_digest(),
-        artifact.encoded_size(),
-        FactorySafeText::new("Declared research input").unwrap(),
-        digest(60),
-      )
-      .unwrap()
-    })
-    .collect();
-  let context = ContextManifest::new(ContextManifestId::generate(), subject, digest(61), entries).unwrap();
-  let details = if kind == WorkKind::Defect {
-    ResearchDetails::Defect {
-      symptoms,
-      environment,
-      prior_observations: vec![],
-    }
-  } else {
-    ResearchDetails::Feature {
-      project_goals: eligibility.project_goals().clone(),
-      sources: vec![ResearchSourceReference {
-        source_kind: ContextSourceKind::Task,
-        logical_identity: key("input.6"),
-        content_digest: source.content_digest(),
-      }],
-    }
-  };
-  let closure = research_closure(kind, &ResearchRoute::ALL);
-  let selected = ResearchPolicy::new(
-    work.configuration().clone(),
-    &closure,
-    kind,
-    settings(kind),
-    profiles(&closure),
-  )
-  .unwrap();
-  let input = ResearchInput::new(
-    &work,
-    &admitted,
-    accepted,
-    context,
-    vec![],
-    details,
-    selected.digest().unwrap(),
-  )
-  .unwrap();
+  let input = fixtures::input(&work, &admitted, accepted, kind);
   (work, admitted, input)
+}
+
+#[test]
+fn reproduction_report_derives_reproduced_from_checks_of_the_frozen_environment() {
+  let (_, _, input) = input_fixture(WorkKind::Defect, WorkSize::Small);
+  let ResearchDetails::Defect { environment, .. } = input.details() else {
+    unreachable!()
+  };
+  let report = DefectReproductionReport::new(
+    input.subject().clone(),
+    input.digest().unwrap(),
+    environment.content_digest(),
+    vec![DefectReproductionCheck {
+      environment_digest: environment.content_digest(),
+      observation: DefectReproductionObservation::Reproduced,
+    }],
+  )
+  .unwrap();
+  assert_eq!(report.classify(&input).unwrap(), DefectResearchOutcome::Reproduced);
+}
+
+#[test]
+fn reproduction_report_keeps_intermittent_environment_specific_and_missing_input_distinct() {
+  let (_, _, input) = input_fixture(WorkKind::Defect, WorkSize::Small);
+  let ResearchDetails::Defect { environment, .. } = input.details() else {
+    unreachable!()
+  };
+  let baseline = environment.content_digest();
+  use DefectReproductionObservation::{MissingInput, NotReproduced, Reproduced};
+  for (checks, expected) in [
+    (
+      vec![(baseline, Reproduced), (baseline, NotReproduced)],
+      DefectResearchOutcome::Intermittent,
+    ),
+    (
+      vec![(baseline, NotReproduced), (digest(99), Reproduced)],
+      DefectResearchOutcome::EnvironmentSpecific,
+    ),
+    (vec![(baseline, NotReproduced)], DefectResearchOutcome::CannotReproduce),
+    (vec![(baseline, MissingInput)], DefectResearchOutcome::NeedsHumanInput),
+  ] {
+    let report = DefectReproductionReport::new(
+      input.subject().clone(),
+      input.digest().unwrap(),
+      baseline,
+      checks
+        .into_iter()
+        .map(|(environment_digest, observation)| DefectReproductionCheck {
+          environment_digest,
+          observation,
+        })
+        .collect(),
+    )
+    .unwrap();
+    assert_eq!(report.classify(&input).unwrap(), expected);
+  }
 }
 
 #[test]
@@ -112,7 +115,7 @@ fn frozen_research_inputs_restore_only_with_the_exact_accepted_work_and_policy()
       .is_err()
     );
     let mut wire = serde_json::to_value(&input).unwrap();
-    wire["schema_version"] = serde_json::json!(2);
+    wire["schema_version"] = serde_json::json!(0);
     assert!(
       ResearchInput::restore(
         &serde_json::to_vec(&wire).unwrap(),
@@ -165,12 +168,6 @@ fn missing_context_changed_environment_and_unfrozen_sources_fail_input_construct
   assert!(serde_json::from_str::<ResearchRoute>("\"implementation_ready\"").is_err());
 }
 
-fn research_budget() -> BudgetLimit {
-  BudgetLimit::new(3, 3000, 300, 3000, 3000).unwrap()
-}
-fn attempt_budget() -> BudgetLimit {
-  BudgetLimit::new(1, 1000, 100, 1000, 1000).unwrap()
-}
 fn producer(tool: &str) -> EvidenceProducer {
   EvidenceProducer::new(
     BuildId::generate(),
@@ -180,136 +177,7 @@ fn producer(tool: &str) -> EvidenceProducer {
     reference("runner"),
   )
 }
-fn research_closure(kind: WorkKind, routes: &[ResearchRoute]) -> ValidatedFlowDefinitionClosure {
-  let result_schema = ResearchSchema::result(kind).reference().unwrap();
-  let decision_schema = ResearchSchema::Decision.reference().unwrap();
-  let definition = FlowDefinition::new(FlowDefinitionInput {
-    id: FlowDefinitionId::from_uuid(Uuid::from_u128(if kind == WorkKind::Defect { 200 } else { 201 })).unwrap(),
-    version: FlowDefinitionVersion::new(1).unwrap(),
-    input_schema: Some(ResearchSchema::Input.reference().unwrap()),
-    entry: key("research"),
-    nodes: vec![
-      FlowNodeDefinition::new(FlowNodeDefinitionInput {
-        key: key("research"),
-        kind: FlowNodeKind::Reasoning,
-        input_schema: Some(ResearchSchema::Input.reference().unwrap()),
-        outcomes: vec![FlowOutcomeDefinition::new(
-          key("observed"),
-          FlowOutcomeKind::Success,
-          result_schema.clone(),
-        )],
-        budget: attempt_budget(),
-        permissions: FactoryPermissionSet::deny_all(),
-        required: true,
-        subflow: None,
-      })
-      .unwrap(),
-      FlowNodeDefinition::new(FlowNodeDefinitionInput {
-        key: key("research_policy"),
-        kind: FlowNodeKind::DeterministicGate,
-        input_schema: Some(result_schema.clone()),
-        outcomes: routes
-          .iter()
-          .map(|route| {
-            FlowOutcomeDefinition::new(key(route.as_str()), FlowOutcomeKind::Success, decision_schema.clone())
-          })
-          .collect(),
-        budget: attempt_budget(),
-        permissions: FactoryPermissionSet::deny_all(),
-        required: true,
-        subflow: None,
-      })
-      .unwrap(),
-    ],
-    transitions: std::iter::once(FlowTransition::new(
-      key("research"),
-      key("observed"),
-      FlowTransitionTarget::Node(key("research_policy")),
-    ))
-    .chain(routes.iter().map(|route| {
-      FlowTransition::new(
-        key("research_policy"),
-        key(route.as_str()),
-        FlowTransitionTarget::Terminal(key(route.as_str())),
-      )
-    }))
-    .collect(),
-    terminals: routes
-      .iter()
-      .map(|route| FlowTerminalDefinition::new(key(route.as_str()), decision_schema.clone()))
-      .collect(),
-    context_projections: vec![],
-    data_projections: vec![FlowDataProjection::new(
-      key("research"),
-      key("observed"),
-      key("research_policy"),
-      result_schema,
-    )],
-    execution: FlowExecutionPolicy::new(research_budget(), FactoryPermissionSet::deny_all(), 1).unwrap(),
-  })
-  .unwrap();
-  PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition])
-    .unwrap()
-    .validate(FlowAdmissionLimits::product_defaults(1, research_budget(), FactoryPermissionSet::deny_all()).unwrap())
-    .unwrap()
-}
-fn profiles(closure: &ValidatedFlowDefinitionClosure) -> Vec<ResearchNodeProfile> {
-  vec![ResearchNodeProfile {
-    definition: closure.closure().root(),
-    node: key("research"),
-    tool: reference("research-tool"),
-    plugin: reference("runner"),
-    model_or_tool: reference("research-model"),
-    task_digest: digest(70),
-  }]
-}
-fn settings(kind: WorkKind) -> ResearchPolicySettings {
-  let outcomes = if kind == WorkKind::Defect {
-    [
-      (DefectResearchOutcome::Reproduced, ResearchRoute::ProtectedTest),
-      (DefectResearchOutcome::Intermittent, ResearchRoute::Requirements),
-      (DefectResearchOutcome::EnvironmentSpecific, ResearchRoute::Verification),
-      (DefectResearchOutcome::CannotReproduce, ResearchRoute::Rejection),
-      (DefectResearchOutcome::NeedsHumanInput, ResearchRoute::Escalation),
-    ]
-    .into_iter()
-    .map(|(outcome, route)| (ResearchOutcome::Defect(outcome), route))
-    .collect()
-  } else {
-    [(ResearchOutcome::FeatureProposal, ResearchRoute::Requirements)]
-      .into_iter()
-      .collect()
-  };
-  ResearchPolicySettings {
-    budget: research_budget(),
-    attempt_budget: attempt_budget(),
-    permissions: FactoryPermissionSet::deny_all(),
-    small_work_max_risk: RiskClass::Low,
-    max_proposal_bytes: 128,
-    outcomes,
-    exhausted_route: ResearchRoute::Escalation,
-    evidence: [
-      ResearchEvidenceKind::Reproduction,
-      ResearchEvidenceKind::Proposal,
-      ResearchEvidenceKind::Verification,
-      ResearchEvidenceKind::TerminalResolution,
-    ]
-    .into_iter()
-    .map(|kind| {
-      (
-        kind,
-        EvidenceRequirement::new(
-          key("research-evidence"),
-          EvidenceOutputKind::Report,
-          reference("research-report"),
-          reference("validator"),
-          reference("runner"),
-        ),
-      )
-    })
-    .collect(),
-  }
-}
+
 fn policy(input: &ResearchInput) -> (ResearchPolicy, ValidatedFlowDefinitionClosure) {
   let closure = research_closure(input.kind(), &ResearchRoute::ALL);
   (
@@ -318,7 +186,7 @@ fn policy(input: &ResearchInput) -> (ResearchPolicy, ValidatedFlowDefinitionClos
       &closure,
       input.kind(),
       settings(input.kind()),
-      profiles(&closure),
+      profiles(&closure, input.subject().project_id()),
     )
     .unwrap(),
     closure,
@@ -353,6 +221,7 @@ fn result(
     node: key("research"),
     node_attempt_id: NodeAttemptId::generate(),
     attempt: NodeAttemptNumber::new(1).unwrap(),
+    execution_attempt: 1,
     producer: producer("research-tool"),
     model_or_tool: reference("research-model"),
     task_digest: digest(70),
@@ -588,7 +457,7 @@ fn attempts_reserve_every_budget_category_and_reject_broader_authority() {
     &enlarged,
     input.kind(),
     settings,
-    profiles(&enlarged),
+    profiles(&enlarged, input.subject().project_id()),
   )
   .unwrap();
   let enlarged_input = select_policy(&input, &enlarged_policy);
@@ -669,7 +538,7 @@ fn large_work_needs_requirements_and_exhaustion_never_silently_continues() {
     &narrow,
     input.kind(),
     settings,
-    profiles(&narrow),
+    profiles(&narrow, input.subject().project_id()),
   )
   .unwrap();
   let selected_input = select_policy(&input, &missing_requirements);
@@ -709,7 +578,7 @@ fn feature_proposals_preserve_sources_bounds_and_independent_resolution_evidence
     &closure,
     input.kind(),
     settings,
-    profiles(&closure),
+    profiles(&closure, input.subject().project_id()),
   )
   .unwrap();
   let terminal_input = select_policy(&input, &terminal);
@@ -755,7 +624,7 @@ fn feature_proposals_preserve_sources_bounds_and_independent_resolution_evidence
     &closure,
     input.kind(),
     settings,
-    profiles(&closure),
+    profiles(&closure, input.subject().project_id()),
   )
   .unwrap();
   let verification_input = select_policy(&input, &verification);
@@ -807,7 +676,7 @@ fn feature_proposals_preserve_sources_bounds_and_independent_resolution_evidence
     &closure,
     input.kind(),
     settings,
-    profiles(&closure),
+    profiles(&closure, input.subject().project_id()),
   )
   .unwrap();
   let bounded_input = select_policy(&input, &bounded);
@@ -856,7 +725,7 @@ fn provider_authority_fields_model_substitution_and_undeclared_policy_routes_are
       &narrow,
       input.kind(),
       settings(input.kind()),
-      profiles(&narrow)
+      profiles(&narrow, input.subject().project_id())
     )
     .is_err()
   );
@@ -870,7 +739,7 @@ fn provider_authority_fields_model_substitution_and_undeclared_policy_routes_are
       &closure,
       input.kind(),
       invalid,
-      profiles(&closure)
+      profiles(&closure, input.subject().project_id())
     )
     .is_err()
   );
@@ -895,7 +764,7 @@ fn provider_authority_fields_model_substitution_and_undeclared_policy_routes_are
       &closure,
       input.kind(),
       invalid,
-      profiles(&closure)
+      profiles(&closure, input.subject().project_id())
     )
     .is_err()
   );
@@ -907,7 +776,7 @@ fn provider_authority_fields_model_substitution_and_undeclared_policy_routes_are
     &closure,
     input.kind(),
     replacement,
-    profiles(&closure),
+    profiles(&closure, input.subject().project_id()),
   )
   .unwrap();
   assert_ne!(replacement.digest().unwrap(), original);
@@ -1059,7 +928,7 @@ fn reasoning_cannot_export_policy_successors_and_node_budgets_cannot_bypass_rese
       &changed,
       input.kind(),
       settings(input.kind()),
-      profiles(&changed)
+      profiles(&changed, input.subject().project_id())
     )
     .is_err()
   );
@@ -1070,7 +939,7 @@ fn reasoning_cannot_export_policy_successors_and_node_budgets_cannot_bypass_rese
       &changed,
       input.kind(),
       settings(input.kind()),
-      profiles(&changed)
+      profiles(&changed, input.subject().project_id())
     )
     .is_err()
   );
@@ -1082,8 +951,130 @@ fn reasoning_cannot_export_policy_successors_and_node_budgets_cannot_bypass_rese
       &closure,
       input.kind(),
       invalid,
-      profiles(&closure)
+      profiles(&closure, input.subject().project_id())
     )
     .is_err()
   );
+}
+
+#[test]
+fn defect_build_intent_freezes_the_input_profile_budget_and_stable_operation() {
+  let (work, admitted, input) = input_fixture(WorkKind::Defect, WorkSize::Small);
+  let (policy, closure) = policy(&input);
+  let run = FactoryRun::admitted(admitted.root_run().factory_run_id(), &work);
+  let flow = FlowRun::root(&run, closure.closure().root()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let ownership = FactoryClaimOwnership::new(
+    key("research.worker"),
+    FactoryClaim::new(FactoryClaimFence::new(digest(90)), time(10), time(100)).unwrap(),
+  );
+  let node = NodeAttempt::new(
+    &flow,
+    &cycle,
+    closure.closure().definition(flow.definition()).unwrap(),
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: key("research"),
+      node_kind: FlowNodeKind::Reasoning,
+      number: NodeAttemptNumber::new(1).unwrap(),
+      input_digest: input.digest().unwrap(),
+      budget: attempt_budget(),
+      deadline: time(99),
+      execution: NodeExecutionIdentity::External(reference("research-tool")),
+      ownership,
+    },
+  )
+  .unwrap();
+  let intent = ResearchBuildIntent::new(
+    input.clone(),
+    &policy,
+    flow.clone(),
+    node.clone(),
+    BudgetUsage::default(),
+    7,
+  )
+  .unwrap();
+  assert_eq!(intent.input(), &input);
+  assert_eq!(intent.profile().model_or_tool, reference("research-model"));
+  assert_eq!(intent.budget(), attempt_budget());
+  assert_eq!(intent.permissions(), &FactoryPermissionSet::deny_all());
+  let bytes = serde_json::to_vec(&intent).unwrap();
+  let restored = ResearchBuildIntent::restore(&bytes, &work, &admitted, &policy, &flow, &node).unwrap();
+  assert_eq!(restored.operation_id().unwrap(), intent.operation_id().unwrap());
+  assert_eq!(restored, intent);
+}
+
+#[test]
+fn research_profiles_pin_build_configuration_and_reject_cross_project_execution() {
+  let (_, _, input) = input_fixture(WorkKind::Defect, WorkSize::Small);
+  let closure = research_closure(WorkKind::Defect, &ResearchRoute::ALL);
+  let mut selected = profiles(&closure, input.subject().project_id());
+  selected[0].build_configuration = BuildConfigurationRef::new(
+    BuildConfigurationId::generate(),
+    BuildConfigurationVersion::new(2).unwrap(),
+    input.subject().project_id(),
+    digest(93),
+  );
+  selected[0].result_output = key("defect.observations");
+  let policy = ResearchPolicy::new(
+    input.configuration().clone(),
+    &closure,
+    WorkKind::Defect,
+    settings(WorkKind::Defect),
+    selected.clone(),
+  )
+  .unwrap();
+  assert_eq!(
+    policy
+      .execution_profile(closure.closure().root(), &key("research"))
+      .unwrap()
+      .build_configuration,
+    selected[0].build_configuration
+  );
+  selected[0].build_configuration = BuildConfigurationRef::new(
+    BuildConfigurationId::generate(),
+    BuildConfigurationVersion::new(2).unwrap(),
+    octacity_server_domain::ProjectId::generate(),
+    digest(93),
+  );
+  assert!(
+    ResearchPolicy::new(
+      input.configuration().clone(),
+      &closure,
+      WorkKind::Defect,
+      settings(WorkKind::Defect),
+      selected
+    )
+    .is_err()
+  );
+}
+
+#[test]
+fn research_intent_cannot_attach_the_frozen_work_to_another_run() {
+  let (work, _, input) = input_fixture(WorkKind::Defect, WorkSize::Small);
+  let (policy, closure) = policy(&input);
+  let other = FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let flow = FlowRun::root(&other, closure.closure().root()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let node = NodeAttempt::new(
+    &flow,
+    &cycle,
+    closure.closure().definition(flow.definition()).unwrap(),
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: key("research"),
+      node_kind: FlowNodeKind::Reasoning,
+      number: NodeAttemptNumber::new(1).unwrap(),
+      input_digest: input.digest().unwrap(),
+      budget: attempt_budget(),
+      deadline: time(99),
+      execution: NodeExecutionIdentity::External(reference("research-tool")),
+      ownership: FactoryClaimOwnership::new(
+        key("research.worker"),
+        FactoryClaim::new(FactoryClaimFence::new(digest(90)), time(10), time(100)).unwrap(),
+      ),
+    },
+  )
+  .unwrap();
+  assert!(ResearchBuildIntent::new(input, &policy, flow, node, BudgetUsage::default(), 7).is_err());
 }

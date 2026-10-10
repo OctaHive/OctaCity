@@ -18,6 +18,9 @@ use std::{
   },
 };
 
+#[path = "factory_triage_tests/intake_journey.rs"]
+mod intake_journey;
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
@@ -869,4 +872,32 @@ fn replaceable_phases_accept_gated_and_nested_producers_but_require_completed_ex
       FactoryTriageStep::Ready(_)
     ));
   });
+}
+
+/// Shared accepted intake fixture for isolated downstream research execution tests.
+pub(crate) async fn accepted_research_work() -> FactoryRunSnapshot {
+  accepted_research_work_for(WorkKind::Defect).await
+}
+
+pub(crate) async fn accepted_research_work_for(kind: WorkKind) -> FactoryRunSnapshot {
+  let f = fixture(
+    ProjectFit::InScope,
+    DuplicateStatus::Distinct,
+    classified(
+      kind,
+      WorkSize::Small,
+      if kind == WorkKind::Defect {
+        PreliminaryReproducibility::Inconclusive
+      } else {
+        PreliminaryReproducibility::NotApplicable
+      },
+      TriageRoute::Research,
+    ),
+    None,
+  )
+  .await;
+  for at in [4, 21, 22] {
+    f.runner.run_once(f.run, f.claim.id, fixtures::time(at)).await.unwrap();
+  }
+  f.store.factory_run_snapshot(f.run).await.unwrap()
 }

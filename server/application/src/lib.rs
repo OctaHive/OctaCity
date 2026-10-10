@@ -73,12 +73,26 @@ mod factory_decision_signal;
 mod factory_decision_signal_tests;
 mod factory_evaluation;
 mod factory_evidence;
+mod factory_flow_action;
+#[cfg(test)]
+mod factory_flow_action_tests;
+pub use factory_flow_action::{
+  FactoryFlowActionAdapter, FactoryFlowActionContext, FactoryFlowActionObservation, FactoryFlowActionPlugin,
+  FactoryFlowActionRequest, FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
+};
 mod factory_job_spec;
 #[cfg(test)]
 mod factory_job_spec_tests;
 mod factory_reconciliation;
 #[cfg(test)]
 mod factory_reconciliation_tests;
+mod factory_research;
+#[cfg(test)]
+mod factory_research_tests;
+pub use factory_research::{
+  FactoryResearchBuildAdapter, FactoryResearchBuildOutputs, FactoryResearchCompletion, FactoryResearchOutputDocument,
+  FactoryResearchOutputSource, FactoryResearchStep,
+};
 mod factory_tool_action;
 #[cfg(test)]
 mod factory_tool_action_tests;
@@ -213,7 +227,7 @@ pub use factory_build_bridge::{
   CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildBridge, FactoryBuildBridgeError, FactoryBuildCausality,
   FactoryBuildDispatchOutcome, FactoryBuildObservation, FactoryBuildOutputSource, FactoryBuildPolicyLayers,
   FactoryBuildPolicyRequest, FactoryBuildPolicySource, FactoryBuildPolicySourceError, FactoryCandidateMaterialization,
-  OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+  FactoryNodeBuildCausality, FactoryStageBuildCausality, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
 };
 pub use factory_changeset::{
   FactoryChangeSetAcceptance, FactoryChangeSetError, VerifiedFactoryArtifact, accept_factory_change_set,

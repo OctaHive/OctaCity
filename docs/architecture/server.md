@@ -181,9 +181,88 @@ non-reproduction never proceeds silently to implementation.
 without creating a fixed Stage Attempt projection. It retains the bounded typed
 observations, exact context, policy and evidence digests, and referenced
 Artifacts. Its separate code-owned decision selects a declared successor; the
-handoff grants no implementation readiness or execution authority. These pure
-contracts do not dispatch research Builds; isolated defect and feature research
-execution consumes them through the ordinary application execution boundary.
+handoff grants no implementation readiness or execution authority.
+
+`FactoryResearchBuildAdapter` consumes a persisted `ResearchBuildIntent`
+through the same `OrdinaryBuildApplication::create_factory_build` operation as
+other Flow nodes. `FactoryBuildCausality::Node` carries generic Flow, cycle and
+Node Attempt identities, the complete frozen input and Context Manifest, and
+the exact `FlowBuildProfile`. The shared request carries narrowed permissions,
+resource ceilings and an execution deadline. The intent also freezes Build queue
+priority; dispatch takes it only from persisted intent, and observation checks
+the immutable Build priority. Research has no separate Build
+creation API or fixed-stage identity. A reasoning or command node can run an
+ordinary Build; further research uses new bounded Node Attempts, while ordinary
+Build retries remain inside their original Node Attempt budget. Generic attempt
+numbers include orchestration nodes. Research consumption and result provenance
+use a separate external execution ordinal derived from retained usage; gates
+and other control nodes do not consume a Research Build attempt.
+Research contracts use version 2 for this provenance shape. Schema references
+bind that version; older contract bytes fail restoration without reinterpretation.
+
+The adapter observes the latest ordinary Attempt and its actual Jobs. It accepts
+only published, retained, content-verified outputs with exact input, environment,
+schema and executed tool/plugin provenance. The retained-output source supplies
+the full schema version and digest attested by a trusted schema-specific verifier
+of the exact bytes. The adapter compares that reference with the requirement;
+an Artifact report format alone is not schema attestation. A deterministic reproduction report
+derives the observation independently of model prose. Execution failure or
+cancellation does not imply negative reproduction. Results published after the
+Node Attempt deadline are rejected; a later fenced owner can still observe
+timely retained results without changing their provenance or Build identity.
+The Flow owner must persist the intent before dispatch and commit the returned
+generic completion, usage and handoff atomically. The manual-intake slice now
+verifies admitted nested defect and feature research through this boundary,
+including provider failure, ordinary Build retry, persisted intent restoration,
+claim takeover and exact handoff publication. Research terminal outcomes remain
+declared Flow resolutions; they neither dispatch implementation nor create a
+research-specific Factory Run state. Supervised worker composition remains
+part of task 16.1.
+
+Feature Builds publish a strict `FeatureResearchProposal` document and a
+`FeatureResearchResult` referencing its exact Artifact identity, digest and size.
+The proposal contains the frozen input digest, complete source references,
+assumptions, non-empty alternatives, unresolved questions and a subject-bound
+summary. The adapter compares every field with the retained result, revalidates
+sources against the frozen input and checks the configured proposal byte ceiling.
+The complete Context Manifest and applicable Retrieval Receipts remain in the
+persisted input and ordinary Build causality; their exact input/context digests
+bind the retained result and handoff. Replay consumes these retained identities,
+never mutable rediscovery. The evidence policy selects a report or an Artifact
+output with the exact logical name and tool/plugin profile. Missing sources,
+contradictory content, undeclared JSON fields, corrupt bytes and absent bounds
+cannot produce an accepted completion. Proposal prose cannot select a route,
+publish a candidate or authorize implementation; requirements and acceptance
+gates remain separate declared nodes.
+
+### Extensible Flow actions and source status projections
+
+Any Flow, including Research, may finish through ordinary `trusted_action`
+nodes. `FlowActionBinding` pins an exact plugin, a plugin-defined action key and
+bounded structured parameters inside the immutable definition digest. Adding
+an action implements `FactoryFlowActionPlugin`; it does not add a node kind or
+change Research. The composition root resolves the installed plugin, and
+`FactoryFlowActionAdapter` checks its exact identity, node ownership, execution
+deadline, plugin permission grant and parameter/result contract before invoking it. Plugins receive only
+the Work source identity, exact subject, projected input digest, configured
+parameters and execution ceilings. They must enforce those ceilings, retain an
+idempotent receipt and return only a declared outcome. The owning Flow retains
+readiness, fencing, accounting, routing and persistence authority.
+
+`FactoryWorkStatusAction` is one such plugin. Its `set_status` parameters contain
+an arbitrary bounded status value. Research observations such as
+`cannot_reproduce` are experiment facts, not an automatic external status or
+label. Operator-defined Flow transitions may select a status action, another
+action, or several successive actions. `FactoryWorkStatusProjector` translates
+the requested value in the selected connector: a GitHub adapter uses a label,
+and a Jira adapter uses a native status. Connector SDK objects and credentials
+stay outside Flow contracts. The status request retains the exact scoped
+permissions. Each connector checks required hosts, secret and workload-identity
+profiles and other applicable grants before effects and rejects authority it
+cannot enforce. Projection errors do not produce a successful
+action completion and cannot undo an accepted research observation or authorize
+an internal transition. Durable reporter outbox integration remains task 13.4;
+concrete external Work connectors remain a separate follow-up.
 
 ### Durable phase-ready pools
 
@@ -199,7 +278,16 @@ Publication reconstructs the ready node from the pinned closure and current
 Flow history rather than accepting a provider's readiness claim. Entries bind
 the exact Run version, Flow Run, latest cycle, node, Work and Project, phase
 input digest, accepted severity, frozen Project priority, exact capabilities,
-bounded dependencies and resource reservation. Dependencies require the exact
+bounded dependencies and resource reservation. In configured intake, the first
+successor consumes the accepted triage disposition and uses its accepted route's
+pool. A subsequent root phase declares its pool key through the immutable
+node's `phase_pool` binding. Admission rejects unknown pool keys and conflicting
+initial route bindings; publication rejects missing or substituted bindings.
+The selected key resolves to the frozen policy and capabilities, independently
+of the node's name or kind. Readiness also requires an actual completed
+predecessor, its exact output digest and the matching schema-bound data projection.
+A research result cannot substitute for the accepted handoff, and an undeclared
+or terminal target cannot enter a pool. Dependencies require the exact
 retained Work digest and declared completed root-Flow resolution in the same
 Project. Pool membership conveys no execution permission.
 

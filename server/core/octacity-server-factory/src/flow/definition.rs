@@ -83,6 +83,10 @@ pub struct FlowNodeDefinition {
   required: bool,
   subflow: Option<FlowDefinitionRef>,
   stage_projection: Option<FactoryStageKind>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  action: Option<crate::FlowActionBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  phase_pool: Option<FactoryKey>,
 }
 
 impl FlowNodeDefinition {
@@ -109,7 +113,40 @@ impl FlowNodeDefinition {
       required: input.required,
       subflow: input.subflow,
       stage_projection: None,
+      action: None,
+      phase_pool: None,
     })
+  }
+
+  /// Binds a plugin action without adding a new Flow primitive or implicit route.
+  pub fn with_action(mut self, binding: crate::FlowActionBinding) -> Result<Self, FactoryError> {
+    if self.kind != FlowNodeKind::TrustedAction {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Flow action node kind",
+      });
+    }
+    self.action = Some(binding);
+    Ok(self)
+  }
+
+  /// Returns an exact plugin binding for an externally executed trusted action.
+  #[must_use]
+  pub const fn action(&self) -> Option<&crate::FlowActionBinding> {
+    self.action.as_ref()
+  }
+
+  /// Assigns the configured phase queue for this node without deriving it from its name or kind.
+  /// The admitted configuration binds this key to an exact frozen pool policy.
+  #[must_use]
+  pub fn with_phase_pool(mut self, phase: FactoryKey) -> Self {
+    self.phase_pool = Some(phase);
+    self
+  }
+
+  /// Returns the immutable configured phase queue, if this node declares one.
+  #[must_use]
+  pub const fn phase_pool(&self) -> Option<&FactoryKey> {
+    self.phase_pool.as_ref()
   }
 
   /// Returns the stable node key within its definition.
@@ -179,6 +216,8 @@ impl FlowNodeDefinition {
       required: true,
       subflow: None,
       stage_projection: Some(kind),
+      action: None,
+      phase_pool: None,
     }
   }
 }
@@ -241,6 +280,7 @@ impl FlowDefinition {
   /// Canonicalizes and structurally validates one immutable definition.
   pub fn new(mut input: FlowDefinitionInput) -> Result<Self, FactoryError> {
     validate_size(input.nodes.len(), input.transitions.len())?;
+    validate_actions(&input.nodes)?;
     input.nodes.sort_by(|left, right| left.key.cmp(&right.key));
     input.transitions.sort();
     input.terminals.sort_by(|left, right| left.key().cmp(right.key()));
@@ -494,6 +534,7 @@ impl FlowDefinition {
   }
 
   pub(crate) fn validate_canonical_form(&self) -> Result<(), FactoryError> {
+    validate_actions(&self.nodes)?;
     let content = FlowDefinitionContent {
       id: self.reference.id(),
       version: self.reference.version(),
@@ -541,6 +582,18 @@ fn definition_digest(content: &FlowDefinitionContent<'_>) -> Result<FactoryDiges
     relationship: "Flow Definition serialization",
   })?;
   Ok(FactoryDigest::sha256("octacity.factory.flow-definition.v2", &[&bytes]))
+}
+
+fn validate_actions(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
+  if nodes
+    .iter()
+    .any(|node| node.action.is_some() && node.kind != FlowNodeKind::TrustedAction)
+  {
+    return Err(FactoryError::InvalidConfiguration {
+      field: "Flow action node kind",
+    });
+  }
+  Ok(())
 }
 
 fn validate_size(nodes: usize, transitions: usize) -> Result<(), FactoryError> {

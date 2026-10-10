@@ -336,15 +336,21 @@ fn dispatch_links_one_ordinary_build_with_narrowed_external_causality() {
     assert_eq!(request.effective_permissions.resources().cpu_millis(), 200);
     assert_eq!(policies.requests.lock().unwrap().len(), 1);
 
-    let run_id = request.causality.run_id;
+    let run_id = request.causality.stage().unwrap().run_id;
     let snapshot = store.factory_run_snapshot(run_id).await.unwrap();
     assert_eq!(snapshot.linked_builds.len(), 1);
     let link = &snapshot.linked_builds[0];
     assert_eq!(link.build_id, outcome.build_id);
     assert_eq!(link.attempt_id, builds.acceptance.attempt_id);
     assert_eq!(link.job_ids, builds.acceptance.job_ids);
-    assert_eq!(link.stage_attempt_id, request.causality.stage_attempt_id);
-    assert_eq!(link.task_envelope_digest, request.causality.task_envelope_digest);
+    assert_eq!(
+      link.stage_attempt_id,
+      request.causality.stage().unwrap().stage_attempt_id
+    );
+    assert_eq!(
+      link.task_envelope_digest,
+      request.causality.stage().unwrap().task_envelope_digest
+    );
     assert_eq!(link.effective_policy_digest, request.effective_permissions.digest());
     assert_eq!(snapshot.current.build_id, Some(outcome.build_id));
     assert!(

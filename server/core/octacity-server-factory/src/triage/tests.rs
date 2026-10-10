@@ -5,6 +5,57 @@ use crate as factory;
 use crate::*;
 mod journey;
 
+#[test]
+fn configured_node_pool_binding_must_exist_and_match_its_triage_route() {
+  let budget = BudgetLimit::new(24, 30000, 3000, 30000, 30000).unwrap();
+  for (phase, valid) in [
+    ("requirements", true),
+    ("unconfigured", false),
+    ("protected_test", false),
+  ] {
+    let mut flow = journey::journey(false, false, budget);
+    let old_root = flow.closure.root();
+    let root = flow.closure.definition(old_root).unwrap();
+    let mut nodes = root.nodes().to_vec();
+    let target = nodes
+      .iter_mut()
+      .find(|node| node.key() == &key("requirements"))
+      .unwrap();
+    *target = target.clone().with_phase_pool(key(phase));
+    let root = FlowDefinition::new(FlowDefinitionInput {
+      id: old_root.id(),
+      version: old_root.version(),
+      input_schema: root.input_schema().cloned(),
+      entry: root.entry().clone(),
+      nodes,
+      transitions: root.transitions().to_vec(),
+      terminals: root.terminals().to_vec(),
+      context_projections: root.context_projections().to_vec(),
+      data_projections: root.data_projections().to_vec(),
+      execution: root.execution().clone(),
+    })
+    .unwrap();
+    let definitions = std::iter::once(root.clone())
+      .chain(
+        flow
+          .closure
+          .definitions()
+          .iter()
+          .filter(|definition| definition.reference() != old_root)
+          .cloned(),
+      )
+      .collect();
+    flow.closure = PinnedFlowDefinitionClosure::new(root.reference(), definitions).unwrap();
+    assert_eq!(
+      flow
+        .validate(&configuration(), budget, FactoryWipLimits::new(100, 100).unwrap())
+        .is_ok(),
+      valid,
+      "{phase}"
+    );
+  }
+}
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }

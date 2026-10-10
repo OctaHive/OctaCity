@@ -69,7 +69,7 @@ A Factory Configuration SHALL be able to select a two-phase nested triage flow. 
 
 Declared route outcomes SHALL be able to include research, requirements, protected test authoring, development, verification-only, already-fixed resolution, escalation, and rejection. Deterministic policy SHALL validate the recommendation against Work kind, risk, accepted evidence, budgets, and the pinned configuration before committing a route. A reasoning or Decision Signal result SHALL NOT commit eligibility, resolution, pool membership, or routing itself.
 
-The server SHALL expose durable phase-ready pools derived from authoritative Flow Run state. Selection from a pool SHALL be deterministic under configured severity, Project priority, age, dependency readiness, required capability, WIP, and budget rules and SHALL preserve the selected policy and input digests.
+The server SHALL expose durable phase-ready pools derived from authoritative Flow Run state. Selection from a pool SHALL be deterministic under configured severity, Project priority, age, dependency readiness, required capability, WIP, and budget rules and SHALL preserve the selected policy and input digests. The first root successor SHALL use its accepted triage route's pool; subsequent queued nodes SHALL declare an immutable pool key resolving to the admitted configuration's exact policy and capabilities. Unknown or conflicting bindings SHALL fail admission, and missing or substituted bindings SHALL fail publication without inferring a pool from a node name or kind.
 
 #### Scenario: Duplicate is rejected before classification
 - **WHEN** the eligibility phase identifies an accepted duplicate candidate under the configured duplicate policy
@@ -96,17 +96,44 @@ A Factory Configuration SHALL be able to route an accepted Triage Result into an
 
 Research output SHALL remain a non-authoritative Stage Handoff. Deterministic policy SHALL map it only to declared requirements, protected test-authoring, verification, escalation, rejection, or terminal-resolution routes. Research prose SHALL NOT make Work implementation-ready, replace required reproduction evidence, widen authority, or create an undeclared transition. Mutable external and repository discovery included in research SHALL be frozen into the Context Manifest and applicable Retrieval Receipts.
 
+Research SHALL use the same ordinary Build creation boundary and generic Flow/Node Attempt identities as other Flows. Per-node profiles SHALL pin the model or command, task, plugin, Build Configuration and result output. Build priority SHALL be frozen in persisted intent and checked against the observed immutable Build. External research execution ordinals and budget usage SHALL remain distinct from generic Flow node numbers, including intervening deterministic gates. Trusted output verification SHALL attest the full schema version and digest of exact bytes; neither a report format name nor a requested schema SHALL constitute evidence of schema validation. Restart SHALL replay the same operation; ordinary Build retries SHALL preserve the owning Node Attempt's aggregate resource ceiling and deadline. Execution failure or cancellation SHALL NOT be interpreted as a negative reproduction observation.
+
+Research wire contracts SHALL use version 2 for the separate external execution ordinal, SHALL bind that version in immutable schema references, and SHALL reject older bytes without interpreting them under the changed provenance shape.
+
 #### Scenario: Stronger defect research reproduces the failure
 - **WHEN** a defect research node using its pinned model and budget publishes valid reproduction evidence for the exact subject
 - **THEN** deterministic policy records the typed `reproduced` outcome and follows only the declared successor route
 
 #### Scenario: Defect cannot be reproduced within bounds
-- **WHEN** every declared reproduction attempt is exhausted without sufficient evidence
-- **THEN** deterministic policy records `cannot_reproduce` or escalates according to the pinned policy and does not silently continue to implementation
+- **WHEN** completed deterministic checks retain a negative reproduction observation and the finite research budget is exhausted
+- **THEN** the observation remains distinct from execution failure, missing inputs and human escalation, while pinned policy selects the declared exhaustion route without silently continuing to implementation or assigning an external status
 
 #### Scenario: Feature research produces a proposal
 - **WHEN** a feature research node completes with a schema-valid proposal, sources, assumptions, and unresolved questions
 - **THEN** the proposal is retained as an exact bounded Artifact and cannot authorize implementation until the declared requirements or acceptance gates complete
+
+#### Scenario: Research returns Work to a configured phase-ready pool
+- **WHEN** manually admitted Work completes eligibility, classification and an optional pinned defect or feature Research Flow, and deterministic gates project its accepted handoff to a declared root successor
+- **THEN** the server publishes and selects that exact node under its immutable declared pool binding and frozen configured policy with the predecessor output digest, schema, accepted severity, capabilities and dependencies, while rejecting substituted pools, inputs and terminal targets
+
+#### Scenario: Research resolution survives execution recovery
+- **WHEN** a research Build response is lost or an ordinary Build retries, and a replacement fenced owner restores the frozen intent against durable Flow history
+- **THEN** the same bounded Node Attempt and Build operation identity are preserved, accepted verification or terminal evidence remains separately required, and a declared root terminal resolves dependency readiness without an implementation dispatch or a research-specific lifecycle state
+
+### Requirement: Flow actions are configurable plugin extensions
+Any Flow SHALL be able to compose ordinary `trusted_action` nodes with exact immutable plugin identities, plugin-defined action keys, bounded structured parameters and finite declared results. Adding a plugin action SHALL NOT require a new primitive kind, a Research-specific executor or connector-specific Flow logic. Plugin validation SHALL precede effects; plugins SHALL enforce the scoped permissions, budgets and deadline and deduplicate repeated execution by stable operation identity. Only the owning Flow SHALL authorize readiness, persist attempts and commit completion/routing.
+
+Setting a Work source status SHALL be one reusable action whose status value is operator-configurable, independent of the research observation vocabulary. The selected connector SHALL translate that arbitrary value into its source representation, such as a GitHub label or a Jira native status. External source state SHALL remain non-authoritative, and projection failure SHALL NOT roll back accepted research or authorize an internal transition.
+
+The action adapter SHALL reject an absent exact plugin permission before dispatch. Status requests SHALL preserve the frozen permission set through the connector boundary; the connector SHALL enforce applicable hosts, credential profiles and other grants before external effects and SHALL fail closed on unenforceable authority.
+
+#### Scenario: Research completes with a configured source status
+- **WHEN** declared Flow transitions select a status action with an operator-chosen value after accepted Build observations
+- **THEN** the exact selected connector receives that value with stable idempotency and source identity, without a hardcoded mapping from `cannot_reproduce` or another research observation
+
+#### Scenario: Another plugin adds a completion action
+- **WHEN** an operator publishes a trusted-action binding for another installed plugin and its declared result contract
+- **THEN** the same Flow action boundary executes it without changing Research or adding a primitive kind, and rejects substituted plugin versions or undeclared results
 
 ### Requirement: Durable code-owned Factory lifecycle
 The server SHALL drive Factory Runs by interpreting their pinned Flow Definition closure into explicit persisted Flow Runs and Node Attempts. Program code SHALL own every node creation, nested-flow call and return, loop, branch, join, retry, timeout, budget check, and stop condition. A model result SHALL be treated only as a schema-validated typed value and SHALL NOT create a node, follow an undeclared edge, skip a required gate, or directly complete a Factory transition.

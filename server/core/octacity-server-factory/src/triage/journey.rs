@@ -75,6 +75,16 @@ impl FactoryFlowConfiguration {
       .closure
       .definition(self.triage.definition)
       .ok_or_else(|| invalid("triage definition"))?;
+    if self
+      .closure
+      .definitions()
+      .iter()
+      .flat_map(|definition| definition.nodes())
+      .filter_map(|node| node.phase_pool())
+      .any(|phase| !self.triage.pools.values().any(|policy| &policy.phase == phase))
+    {
+      return Err(invalid("configured node phase pool"));
+    }
     super::composition::validate_composition(triage)?;
     if entry.subflow_definition() != Some(triage.reference())
       || root.input_schema() != Some(&TriageSchema::EligibilityInput.reference()?)
@@ -127,7 +137,9 @@ impl FactoryFlowConfiguration {
             return Err(invalid("phase pool bounds"));
           }
           let target = root.node(node).ok_or_else(|| invalid("phase successor"))?;
-          if target.input_schema() != Some(&TriageSchema::Decision.reference()?) {
+          if target.input_schema() != Some(&TriageSchema::Decision.reference()?)
+            || target.phase_pool().is_some_and(|phase| phase != &policy.phase)
+          {
             return Err(invalid("phase decision input"));
           }
           routes.insert(route, policy.clone());

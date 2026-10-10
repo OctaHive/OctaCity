@@ -85,7 +85,7 @@ pub enum FactoryBuildPolicySourceError {
 
 /// Bounded Factory causality supplied beside an ordinary Build command.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FactoryBuildCausality {
+pub struct FactoryStageBuildCausality {
   /// Factory Run owning the Stage Attempt.
   pub run_id: octacity_server_factory::FactoryRunId,
   /// Append-only Stage Attempt identity.
@@ -98,6 +98,56 @@ pub struct FactoryBuildCausality {
   pub candidate: Option<FactoryCandidateMaterialization>,
   /// Digest of the immutable Task Envelope input.
   pub task_envelope_digest: FactoryDigest,
+}
+
+/// Causality of any Factory-owned ordinary Build.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactoryBuildCausality {
+  /// Lossless fixed-stage projection used by existing Factory consumers.
+  Stage(Box<FactoryStageBuildCausality>),
+  /// Generic Flow node with no synthetic fixed-stage identity.
+  Node(Box<FactoryNodeBuildCausality>),
+}
+impl FactoryBuildCausality {
+  /// Returns fixed-stage causality when this Build projects a fixed stage.
+  #[must_use]
+  pub fn stage(&self) -> Option<&FactoryStageBuildCausality> {
+    match self {
+      Self::Stage(stage) => Some(stage),
+      Self::Node(_) => None,
+    }
+  }
+  /// Returns generic node causality for ordinary Flow execution.
+  #[must_use]
+  pub fn node(&self) -> Option<&FactoryNodeBuildCausality> {
+    match self {
+      Self::Node(node) => Some(node),
+      Self::Stage(_) => None,
+    }
+  }
+}
+
+/// Frozen inputs and profile for a generic Build or reasoning node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryNodeBuildCausality {
+  /// Owning Factory Run.
+  pub run_id: octacity_server_factory::FactoryRunId,
+  /// Exact immutable Flow execution.
+  pub flow_run_id: octacity_server_factory::FlowRunId,
+  /// Append-only workflow cycle.
+  pub cycle_id: octacity_server_factory::WorkflowCycleId,
+  /// Persisted Node Attempt owning this operation.
+  pub node_attempt_id: octacity_server_factory::NodeAttemptId,
+  /// Exact operator-selected model, command, task and Build configuration.
+  pub profile: octacity_server_factory::FlowBuildProfile,
+  /// Exact typed task input schema.
+  pub input_schema: octacity_server_factory::ImmutableReference,
+  /// Complete frozen task document, bounded by its schema before dispatch.
+  pub input: Vec<u8>,
+  /// Validated semantic digest of that exact task input.
+  pub input_digest: FactoryDigest,
+  /// Exact frozen context with retained source identities.
+  pub context: octacity_server_factory::ContextManifest,
 }
 
 /// Exact accepted ChangeSet inputs supplied to a later ordinary Build.
@@ -163,6 +213,10 @@ pub struct CreateFactoryBuild {
   pub priority: i64,
   /// Effective Factory permissions after pure narrowing.
   pub effective_permissions: FactoryPermissionSet,
+  /// Hard execution ceiling of the owning Stage or Node Attempt.
+  pub budget: octacity_server_factory::BudgetLimit,
+  /// Authoritative stop deadline inherited from the persisted execution intent.
+  pub deadline: Timestamp,
   /// Factory causality retained outside the ordinary Build aggregate.
   pub causality: FactoryBuildCausality,
 }
@@ -199,6 +253,8 @@ pub enum OrdinaryBuildApplicationError {
 /// Implementations must preserve the regular immutable Build, Attempt, Job,
 /// cancellation, retry, output, and terminal-state contracts. Factory
 /// causality is returned to this bridge and is not added to Build state.
+/// Enforce the supplied budget/deadline across ordinary retries; an idempotent
+/// replay may return an existing Build but must never start a new expired one.
 #[async_trait]
 pub trait OrdinaryBuildApplication: Send + Sync {
   /// Creates or observes the one ordinary Build for a stable operation.
@@ -455,16 +511,18 @@ where
       immutable_revision: immutable_revision.clone(),
       priority: i64::from(snapshot.work.priority().get()),
       effective_permissions,
-      causality: FactoryBuildCausality {
+      budget: context.stage.budget(),
+      deadline: context.stage.claim().expires_at(),
+      causality: FactoryBuildCausality::Stage(Box::new(FactoryStageBuildCausality {
         run_id: snapshot.run.id(),
         stage_attempt_id: context.stage.id(),
         target: context.target.clone(),
         parent,
         candidate,
         task_envelope_digest: context.stage.input_digest(),
-      },
+      })),
     };
-    let input_digest = build_input_digest(&request);
+    let input_digest = build_input_digest(&request)?;
     let accepted = self.builds.create_factory_build(request).await?;
     let mut accepted_job_ids = accepted.job_ids.clone();
     accepted_job_ids.sort_unstable();
@@ -784,30 +842,31 @@ fn current_candidate(
     .ok_or(FactoryBuildBridgeError::InvalidSnapshot)
 }
 
-fn build_input_digest(request: &CreateFactoryBuild) -> FactoryDigest {
-  let parent = match request.causality.parent {
+fn build_input_digest(request: &CreateFactoryBuild) -> Result<FactoryDigest, FactoryBuildBridgeError> {
+  let stage = request
+    .causality
+    .stage()
+    .ok_or(FactoryBuildBridgeError::InvalidSnapshot)?;
+  let parent = match stage.parent {
     Some(FactoryBuildParent::ChangeSet(id)) => id.as_uuid(),
     Some(FactoryBuildParent::Decision(id)) => id.as_uuid(),
     None => uuid::Uuid::nil(),
   };
-  let candidate_revision = request
-    .causality
+  let candidate_revision = stage
     .candidate
     .as_ref()
     .map_or(&[][..], |candidate| candidate.candidate_revision.as_str().as_bytes());
-  let bundle_digest = request
-    .causality
+  let bundle_digest = stage
     .candidate
     .as_ref()
     .map(|candidate| candidate.bundle.digest.as_bytes().to_vec())
     .unwrap_or_default();
-  let manifest_digest = request
-    .causality
+  let manifest_digest = stage
     .candidate
     .as_ref()
     .map(|candidate| candidate.manifest.digest.as_bytes().to_vec())
     .unwrap_or_default();
-  FactoryDigest::sha256(
+  Ok(FactoryDigest::sha256(
     "octacity.factory.build-input.v1",
     &[
       &request.operation_id.as_bytes(),
@@ -817,16 +876,16 @@ fn build_input_digest(request: &CreateFactoryBuild) -> FactoryDigest {
       &request.build_configuration.version().get().to_be_bytes(),
       request.immutable_revision.as_str().as_bytes(),
       &request.effective_permissions.digest().as_bytes(),
-      request.causality.run_id.as_uuid().as_bytes(),
-      request.causality.stage_attempt_id.as_uuid().as_bytes(),
-      request.causality.target.canonical_key().as_bytes(),
+      stage.run_id.as_uuid().as_bytes(),
+      stage.stage_attempt_id.as_uuid().as_bytes(),
+      stage.target.canonical_key().as_bytes(),
       parent.as_bytes(),
       candidate_revision,
       &bundle_digest,
       &manifest_digest,
-      &request.causality.task_envelope_digest.as_bytes(),
+      &stage.task_envelope_digest.as_bytes(),
     ],
-  )
+  ))
 }
 
 async fn commit_link<S: FactoryRunStore>(

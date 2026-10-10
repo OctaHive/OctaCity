@@ -2,7 +2,7 @@ use crate::{FactoryDigest, FactoryError, FactoryKey, ImmutableReference, WorkKin
 use serde::{Deserialize, Serialize};
 
 /// Version of the provider-neutral Research Flow contracts.
-pub const RESEARCH_CONTRACT_VERSION: u16 = 1;
+pub const RESEARCH_CONTRACT_VERSION: u16 = 2;
 /// Maximum sources, observations, or narrative items in one research collection.
 pub const MAX_RESEARCH_ITEMS: usize = 64;
 /// Maximum bounded research attempts in one immutable plan.
@@ -97,7 +97,7 @@ pub enum ResearchSchema {
 }
 
 impl ResearchSchema {
-  /// Returns the version-one schema identity and content digest.
+  /// Returns the supported schema version and its immutable contract identity.
   pub fn reference(self) -> Result<ImmutableReference, FactoryError> {
     let name = match self {
       Self::Input => "research.input",
@@ -106,10 +106,14 @@ impl ResearchSchema {
       Self::Handoff => "research.handoff",
       Self::Decision => "research.decision",
     };
+    let version = format!("v{RESEARCH_CONTRACT_VERSION}");
     Ok(ImmutableReference::new(
       FactoryKey::new(name)?,
-      FactoryKey::new("v1")?,
-      FactoryDigest::sha256("octacity.factory.research-schema.v1", &[name.as_bytes()]),
+      FactoryKey::new(&version)?,
+      FactoryDigest::sha256(
+        "octacity.factory.research-schema.v1",
+        &[name.as_bytes(), version.as_bytes()],
+      ),
     ))
   }
 

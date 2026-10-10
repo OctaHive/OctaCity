@@ -1,8 +1,9 @@
 use super::{RESEARCH_CONTRACT_VERSION, canonicalize, digest, invalid};
 use crate::{
   AdmittedFlow, ClassificationReceipt, ContextManifest, ContextSourceKind, ExactSubject, FactoryArtifactReference,
-  FactoryConfigurationRef, FactoryContextReference, FactoryDigest, FactoryError, FactoryKey, FactoryTaskSubject,
-  FlowAdmissionLimits, RetrievalReceipt, TriageJournalRecord, TriageRoute, WorkEnvelope, WorkEnvelopeId, WorkKind,
+  FactoryConfigurationRef, FactoryContextReference, FactoryDigest, FactoryError, FactoryKey, FactoryRunId,
+  FactoryTaskSubject, FlowAdmissionLimits, RetrievalReceipt, TriageJournalRecord, TriageRoute, WorkEnvelope,
+  WorkEnvelopeId, WorkKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -47,6 +48,7 @@ pub enum ResearchDetails {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ResearchInput {
   schema_version: u16,
+  factory_run_id: FactoryRunId,
   admission_limits: FlowAdmissionLimits,
   policy_digest: FactoryDigest,
   accepted_triage: ClassificationReceipt,
@@ -139,6 +141,7 @@ impl ResearchInput {
     }
     let input = Self {
       schema_version: RESEARCH_CONTRACT_VERSION,
+      factory_run_id: admitted.root_run().factory_run_id(),
       admission_limits: admitted.limits().clone(),
       policy_digest,
       accepted_triage,
@@ -170,6 +173,7 @@ impl ResearchInput {
     #[serde(deny_unknown_fields)]
     struct Wire {
       schema_version: u16,
+      factory_run_id: FactoryRunId,
       admission_limits: FlowAdmissionLimits,
       policy_digest: FactoryDigest,
       accepted_triage: ClassificationReceipt,
@@ -179,6 +183,7 @@ impl ResearchInput {
     }
     let wire: Wire = serde_json::from_slice(bytes).map_err(|_| invalid("research input schema"))?;
     if wire.schema_version != RESEARCH_CONTRACT_VERSION
+      || wire.factory_run_id != admitted.root_run().factory_run_id()
       || &wire.admission_limits != admitted.limits()
       || wire.policy_digest != policy_digest
     {
@@ -193,6 +198,12 @@ impl ResearchInput {
       wire.details,
       policy_digest,
     )
+  }
+
+  /// Returns the exact Factory Run that admitted this frozen Work and context.
+  #[must_use]
+  pub const fn factory_run_id(&self) -> FactoryRunId {
+    self.factory_run_id
   }
 
   /// Returns the immutable Work identity.

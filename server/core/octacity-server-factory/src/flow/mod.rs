@@ -1,3 +1,7 @@
+mod action;
+mod build;
+pub use action::{FlowActionBinding, MAX_FLOW_ACTION_PARAMETER_BYTES};
+pub use build::FlowBuildProfile;
 mod contract;
 mod definition;
 mod history;

@@ -30,6 +30,8 @@ mod evidence;
 mod evidence_tests;
 mod execution;
 mod flow;
+#[cfg(test)]
+mod flow_action_tests;
 mod flow_graph;
 #[cfg(test)]
 mod flow_graph_tests;
@@ -108,14 +110,14 @@ pub use execution::{
   MAX_MACRO_CALL_DEPTH, MacroCall, MacroCallDeclaration, StageAttempt, StageAttemptCompletion, StageAttemptOutcome,
 };
 pub use flow::{
-  AdmittedFlow, FlowAdmissionLimits, FlowContextProjection, FlowDataProjection, FlowDefinition, FlowDefinitionInput,
-  FlowDefinitionRef, FlowDirective, FlowDirectiveInputs, FlowExecutionPolicy, FlowInterpreter, FlowNodeDefinition,
-  FlowNodeDefinitionInput, FlowOutcomeDefinition, FlowOutcomeKind, FlowRun, FlowRunParent, FlowRuntimeHistory,
-  FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, MAX_FLOW_CONTEXT_SELECTIONS,
-  MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES,
-  MAX_FLOW_FAN_OUT, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT, NodeAttempt, NodeAttemptCompletion,
-  NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity, PinnedFlowDefinitionClosure,
-  ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
+  AdmittedFlow, FlowActionBinding, FlowAdmissionLimits, FlowBuildProfile, FlowContextProjection, FlowDataProjection,
+  FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDirective, FlowDirectiveInputs, FlowExecutionPolicy,
+  FlowInterpreter, FlowNodeDefinition, FlowNodeDefinitionInput, FlowOutcomeDefinition, FlowOutcomeKind, FlowRun,
+  FlowRunParent, FlowRuntimeHistory, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget,
+  MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES,
+  MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT,
+  NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
+  PinnedFlowDefinitionClosure, ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
 };
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
@@ -144,10 +146,11 @@ pub use permission::{
 };
 pub use phase_pool::{MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, reserve_phase_budget};
 pub use research::{
-  AcceptedResearchEvidence, DefectResearchOutcome, DefectResearchResult, FeatureResearchResult, MAX_RESEARCH_ATTEMPTS,
+  AcceptedResearchEvidence, DefectReproductionCheck, DefectReproductionObservation, DefectReproductionReport,
+  DefectResearchOutcome, DefectResearchResult, FeatureResearchProposal, FeatureResearchResult, MAX_RESEARCH_ATTEMPTS,
   MAX_RESEARCH_CONTRACT_BYTES, MAX_RESEARCH_ITEMS, MAX_RESEARCH_PROPOSAL_BYTES, RESEARCH_CONTRACT_VERSION,
-  ResearchAcceptance, ResearchAttemptDisposition, ResearchDecision, ResearchDetails, ResearchEvidenceFact,
-  ResearchEvidenceKind, ResearchEvidenceRecord, ResearchInput, ResearchNodeProfile, ResearchObservations,
+  ResearchAcceptance, ResearchAttemptDisposition, ResearchBuildIntent, ResearchDecision, ResearchDetails,
+  ResearchEvidenceFact, ResearchEvidenceKind, ResearchEvidenceRecord, ResearchInput, ResearchObservations,
   ResearchOutcome, ResearchPolicy, ResearchPolicySettings, ResearchProvenance, ResearchReason, ResearchResult,
   ResearchRoute, ResearchSchema, ResearchSourceReference, ResearchStageHandoff,
 };

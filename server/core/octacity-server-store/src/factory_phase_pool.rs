@@ -158,11 +158,17 @@ pub fn derive_phase_pool_entry(
   snapshot: &FactoryRunSnapshot,
 ) -> Result<PhasePoolEntry, StoreError> {
   policy.validate().map_err(|_| pool_invalid())?;
+  let mut require_projected_input = false;
   if let Some(triage) = snapshot.admitted_flow.triage() {
     let Some(octacity_server_factory::TriageJournalRecord::Classification(row)) = snapshot.flow.triage.last() else {
       return Err(pool_invalid());
     };
     let route = row.decision.route;
+    let (&pool_route, _) = triage
+      .pools
+      .iter()
+      .find(|(_, declared)| *declared == policy)
+      .ok_or_else(pool_invalid)?;
     let root = snapshot
       .admitted_flow
       .closure()
@@ -187,20 +193,24 @@ pub fn derive_phase_pool_entry(
       .collect::<Vec<_>>();
     observed_dependencies.sort();
     ready_dependencies.sort();
-    if triage.pools.get(&route) != Some(policy)
-      || target != Some(&octacity_server_factory::FlowTransitionTarget::Node(input.node.clone()))
-      || input.flow_run_id != snapshot.admitted_flow.root_run().id()
-      || input.phase_input_digest
-        != octacity_server_factory::TriageDisposition::Classification(row.decision.clone())
-          .digest()
-          .map_err(|_| pool_invalid())?
+    // Intake's first successor consumes the accepted triage disposition. Later
+    // phases consume an exact completion through a declared typed projection.
+    let first_successor = target == Some(&octacity_server_factory::FlowTransitionTarget::Node(input.node.clone()));
+    if input.flow_run_id != snapshot.admitted_flow.root_run().id()
+      || first_successor && pool_route != route
+      || first_successor
+        && input.phase_input_digest
+          != octacity_server_factory::TriageDisposition::Classification(row.decision.clone())
+            .digest()
+            .map_err(|_| pool_invalid())?
       || input.severity != *row.result.classification().severity.value()
       || input.project_priority != triage.project_priority
-      || input.capabilities != triage.capabilities.get(&route).cloned().unwrap_or_default()
+      || input.capabilities != triage.capabilities.get(&pool_route).cloned().unwrap_or_default()
       || observed_dependencies != ready_dependencies
     {
       return Err(pool_invalid());
     }
+    require_projected_input = !first_successor;
   }
   let checkpoint = snapshot
     .lifecycle_checkpoints
@@ -253,6 +263,11 @@ pub fn derive_phase_pool_entry(
     .definition(flow.definition())
     .ok_or_else(pool_invalid)?;
   let node = definition.node(&input.node).ok_or_else(pool_invalid)?;
+  if node.phase_pool().is_some_and(|phase| phase != &policy.phase)
+    || require_projected_input && node.phase_pool().is_none()
+  {
+    return Err(pool_invalid());
+  }
   input.reservation.validate(node.budget()).map_err(|_| pool_invalid())?;
   let interpreter = FlowInterpreter::new(&validated);
   let matches = |directive: &FlowDirective| match directive {
@@ -285,7 +300,25 @@ pub fn derive_phase_pool_entry(
           &snapshot.flow.completions,
         )
         .map_err(|_| pool_invalid())?;
-      ready |= directives.iter().any(matches);
+      ready |= directives.iter().any(|directive| {
+        if !matches(directive) {
+          return false;
+        }
+        if !require_projected_input {
+          return true;
+        }
+        let inputs = match directive {
+          FlowDirective::ExecuteNode { inputs, .. } | FlowDirective::EnterSubflow { inputs, .. } => inputs,
+          FlowDirective::Complete { .. } => return false,
+        };
+        completion.output_digest() == input.phase_input_digest
+          && inputs.data.iter().any(|projection| {
+            projection.predecessor() == attempt.node_key()
+              && projection.outcome() == completion.outcome()
+              && projection.successor() == &input.node
+              && projection.schema() == completion.output_schema()
+          })
+      });
     }
     ready
   };

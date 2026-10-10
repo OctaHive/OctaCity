@@ -452,6 +452,20 @@ impl NodeAttempt {
       || (self.stage_projection_id().is_none() && owner.claim().claimed_at() >= self.claim().expires_at())
   }
 
+  /// Verifies a live original owner or a claim acquired after the old lease expired.
+  ///
+  /// The durable Flow owner must also compare this claim with the current stored
+  /// claim. This check prevents an unrelated overlapping lease from dispatching
+  /// or observing this attempt; it does not grant readiness or renew its deadline.
+  pub fn verify_observer(&self, owner: &FactoryClaimOwnership, at: Timestamp) -> Result<(), FactoryError> {
+    if !self.accepts_completion_owner(owner) {
+      return Err(FactoryError::InvalidReference {
+        relationship: "Node Attempt observer",
+      });
+    }
+    owner.claim().verify_fence(owner.claim().fence(), at)
+  }
+
   /// Returns the losslessly preserved Node Attempt identity.
   #[must_use]
   pub const fn id(&self) -> NodeAttemptId {

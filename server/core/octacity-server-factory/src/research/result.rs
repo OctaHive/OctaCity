@@ -27,8 +27,10 @@ pub struct ResearchProvenance {
   pub node: FactoryKey,
   /// Immutable producing Node Attempt.
   pub node_attempt_id: NodeAttemptId,
-  /// Bounded producing attempt number.
+  /// Producing attempt's global number in this Flow Run, including orchestration nodes.
   pub attempt: NodeAttemptNumber,
+  /// One-based external Research execution ordinal, excluding orchestration nodes.
+  pub execution_attempt: u32,
   /// Exact ordinary Build, Attempt, Job, tool, and plugin.
   pub producer: EvidenceProducer,
   /// Exact selected model or deterministic command profile.
@@ -73,6 +75,46 @@ pub struct FeatureResearchResult {
   pub summary: BoundedSummary,
 }
 
+/// Retained proposal content, independent of its content-addressed Artifact reference.
+///
+/// A Build publishes this document and a `FeatureResearchResult` referring to it.
+/// Trusted validation binds their metadata before accepting proposal evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FeatureResearchProposal {
+  /// Exact frozen research input used to produce this proposal.
+  pub input_digest: FactoryDigest,
+  /// Complete frozen source references.
+  pub sources: Vec<ResearchSourceReference>,
+  /// Explicit bounded assumptions.
+  pub assumptions: Vec<FactorySafeText>,
+  /// Non-empty bounded alternatives.
+  pub alternatives: Vec<FactorySafeText>,
+  /// Questions requiring later requirements or human review.
+  pub unresolved_questions: Vec<FactorySafeText>,
+  /// Subject-bound proposal prose, carrying no routing authority.
+  pub summary: BoundedSummary,
+}
+
+impl FeatureResearchProposal {
+  /// Checks that retained content matches the frozen input and its typed observations.
+  ///
+  /// The caller must also validate `ResearchResult`, actual Artifact bytes,
+  /// provenance, retention and the pinned policy's proposal byte ceiling.
+  pub fn validate_result(&self, input: &ResearchInput, result: &FeatureResearchResult) -> Result<(), FactoryError> {
+    if self.input_digest != input.digest()?
+      || self.sources != result.sources
+      || self.assumptions != result.assumptions
+      || self.alternatives != result.alternatives
+      || self.unresolved_questions != result.unresolved_questions
+      || self.summary != result.summary
+    {
+      return Err(invalid("research proposal content binding"));
+    }
+    Ok(())
+  }
+}
+
 /// Closed provider observation vocabulary with no route, permission, or readiness field.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind", content = "result", deny_unknown_fields)]
@@ -103,7 +145,10 @@ struct ResearchResultWire {
 impl TryFrom<ResearchResultWire> for ResearchResult {
   type Error = FactoryError;
   fn try_from(mut wire: ResearchResultWire) -> Result<Self, Self::Error> {
-    if wire.schema_version != RESEARCH_CONTRACT_VERSION {
+    if wire.schema_version != RESEARCH_CONTRACT_VERSION
+      || wire.provenance.execution_attempt == 0
+      || wire.provenance.execution_attempt > super::MAX_RESEARCH_ATTEMPTS
+    {
       return Err(invalid("research result version"));
     }
     match &mut wire.observations {

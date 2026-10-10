@@ -100,7 +100,11 @@ pub(super) fn configuration_with_flow(
     build_configurations: vec![(key("build"), build)],
   })
   .unwrap();
-  let budget = || BudgetLimit::new(10, 10_000, 1_000, 10_000, 10_000).unwrap();
+  let limit = flow.as_ref().map_or_else(
+    || BudgetLimit::new(10, 10_000, 1_000, 10_000, 10_000).unwrap(),
+    |configuration| configuration.limits.budget(),
+  );
+  let budget = || limit;
   let stage = |name, kind| FactoryStageDraft {
     key: key(name),
     kind,
