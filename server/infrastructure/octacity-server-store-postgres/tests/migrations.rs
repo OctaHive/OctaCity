@@ -17,7 +17,7 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 39] = [
+const FACTORY_TABLES: [&str; 44] = [
   "factory_assessments",
   "factory_audit_links",
   "factory_build_link_jobs",
@@ -46,6 +46,11 @@ const FACTORY_TABLES: [&str; 39] = [
   "factory_node_attempts",
   "factory_node_attempt_completions",
   "factory_outbox_records",
+  "factory_triage_records",
+  "factory_phase_pool_policies",
+  "factory_phase_pool_entries",
+  "factory_phase_pool_passes",
+  "factory_phase_pool_selections",
   "factory_reporting_attempts",
   "factory_run_budgets",
   "factory_run_claims",
@@ -431,6 +436,11 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_node_attempts",
     "factory_node_attempt_completions",
     "factory_outbox_records",
+    "factory_triage_records",
+    "factory_phase_pool_policies",
+    "factory_phase_pool_entries",
+    "factory_phase_pool_passes",
+    "factory_phase_pool_selections",
     "factory_reporting_attempts",
     "factory_retention_work",
     "factory_run_budgets",

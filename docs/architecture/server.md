@@ -56,6 +56,190 @@ module also owns the narrow provider-neutral Decision Signal port and its pure
 routing/tool-risk consumption policy; provider discovery, credentials, wire
 formats, retries, and concrete adapters remain outside the core.
 
+### Typed two-phase triage
+
+`octacity-server-factory` owns the versioned `EligibilityInput`,
+`EligibilityResult`, `ClassificationInput`, and `TriageResult` contracts.
+Eligibility freezes the admitted Work identity and digest, exact Project,
+Repository and base revision, Factory Configuration version, task and
+acceptance Artifacts, Project goals, and a bounded canonical list of duplicate
+candidates. Every candidate must belong to the same Project. Classification
+retains the accepted eligibility input and observations, then records Work
+kind (`defect` or `feature_request`), component, severity, size, risk,
+dependencies, preliminary reproducibility, and a finite recommended route.
+Every observation retains an exact evidence Artifact; each result also binds
+its input digest, nested Flow Definition, Node Attempt, producer, model or
+tool, task digest, retained result Artifact, and observation time.
+
+`compose_triage_flow` composes replaceable eligibility and classification
+subflows with separate deterministic eligibility and routing gates. Each
+observation subflow exports only `observed`. Explicit data projections carry
+its typed result to the consuming gate; control order grants no implicit
+context. Eligibility rejection or escalation completes triage without
+dispatching classification. The composition uses ordinary `subflow_call` and
+`deterministic_gate` primitives and can itself be nested in a larger root.
+
+`TriagePolicy` binds exact configuration and Flow versions to risk, budget,
+and small-Work routing settings. Trusted validation reconstructs
+`AcceptedTriageEvidence` from passed deterministic gates; provider results
+cannot deserialize accepted evidence or policy decisions. Policy checks the
+evidence against the exact subject, input, fact, and Artifact before consuming
+it. An accepted duplicate or out-of-scope result rejects Work, while missing
+or inconclusive evidence escalates. Classification cannot lower admitted risk.
+Unconfirmed defect reproduction routes to research, large Work requires
+requirements, and small Work enters only the configured protected-test or
+development path. Already-fixed and verification-only resolutions require
+accepted deterministic evidence. Risk and budget exhaustion take precedence
+over recommendations, and a required route absent from the pinned Flow
+escalates through its mandatory declared fallback.
+
+The exported routes are `research`, `requirements`, `protected_test`,
+`development`, `verification_only`, `already_fixed`, `escalation`, and
+`rejection`. They are typed nested-flow outcomes, not new Factory lifecycle
+states or permission grants. Policy decisions retain input, result, policy,
+and canonical accepted-evidence digests. Application code remains responsible
+for committing the selected outcome under the current fence and publishing
+outbox work; these pure triage contracts do not dispatch Builds.
+
+### Configured manual intake
+
+An immutable Factory Configuration can select a pinned root Flow closure,
+admission limits, Project goals, two phase execution profiles, triage policy,
+and route-specific pool policies and capability requirements. Admission stores
+that exact closure rather than rebuilding the legacy stage projection. Later
+configuration publication cannot change an admitted Run's root or either
+triage phase.
+
+`FactoryTriageRunner` connects provider-neutral manual admission to the root's
+triage call and both policy gates. Trusted discovery freezes authorized
+duplicate candidates once. A server execution port observes or dispatches the
+replaceable phase through ordinary Flow/Build execution, binding its result to
+the exact producing Node Attempt, completion, input, model or tool, and task
+digest. Observation producers can precede deterministic validation nodes or run
+inside nested child Flows. Application and Store share the same core check:
+the producer belongs to the selected phase, every enclosing current cycle
+exports the exact typed result, and the phase completes as `observed`.
+A separate evidence validator supplies accepted deterministic facts.
+The runner accepts observations through these ports; routing remains owned by
+the core policy. `FactoryReconciler::with_intake` enables this coordinator for
+configured roots without changing ordinary Build triggers or legacy Factory
+reconciliation.
+
+Prepared input, accepted eligibility, and accepted classification are retained
+as three append-only typed journal records. Each gate and parent completion
+commits atomically with its receipt, budget, lifecycle, audit, and phase outbox
+records under the current claim fence. Both stores reconstruct policy decisions
+from the retained evidence and reject altered routes or phase histories.
+PostgreSQL schema 51 retains the journal and its Artifact references. Shared
+Artifact references preserve their actual first-retention time and exact digest;
+later use does not backdate or rewrite that fact. Recovery
+observes existing phase completions before advancing a gate, so a lost response
+or ownership takeover does not require rediscovering Work or rerunning an
+accepted phase.
+
+Duplicate and out-of-scope Work terminate with typed rejection evidence;
+inconclusive defects publish research, large Work publishes requirements, and
+small Work reaches the configured Accepted Work Contract gate that bypasses
+specification. Verification-only publishes its own ready phase and already-fixed
+completes the Run; neither dispatches implementation. Nonterminal decisions
+publish the selected root successor to its phase-ready pool with frozen inputs.
+The successor owns its subsequent execution. This boundary adds no concrete
+external-ticket poller.
+
+### Immutable Research Flow contracts
+
+`ResearchInput` freezes the exact admitted Work, admission resource and
+permission ceilings, the selected immutable research-policy digest, accepted eligibility and
+classification receipts, original revision, Context Manifest, and applicable
+Retrieval Receipts. Defect inputs require retained symptoms, a frozen environment
+contract, and bounded prior observations. Feature inputs require the accepted
+Project goals and non-empty exact sources from the Context Manifest. Restoring
+an input reruns admission and context validation; an altered source, environment,
+triage decision, policy, or retrieval identity cannot silently change replay.
+
+Versioned `ResearchResult` observations distinguish `reproduced`, `intermittent`,
+`environment_specific`, `cannot_reproduce`, and `needs_human_input`. Feature
+results retain a bounded proposal Artifact, complete frozen sources,
+assumptions, alternatives, and unresolved questions. Both bind the exact
+definition, Flow Run, Workflow Cycle, Node Attempt, ordinary Build/Attempt/Job,
+tool/plugin/model profile, task digest, input, context, and retained result.
+Provider schemas contain no route, permission, candidate, or readiness field.
+
+`ResearchPolicy` binds a validated research closure to finite outcome mappings,
+per-node execution profiles, aggregate and per-attempt budgets, a permission
+ceiling, and exact trusted evidence requirements. Further attempts reserve all
+five budget categories and reject wider requested authority. The policy also
+fits within the ceilings retained by admission. Only a
+deterministic gate may export a Research successor: requirements, protected test
+authoring through the Accepted Work Contract, verification, escalation,
+rejection, or terminal resolution. Missing or stale required evidence escalates;
+verification and terminal resolution require separate accepted facts. Larger or
+higher-risk Work cannot use the small-Work protected-test path, and exhausted
+non-reproduction never proceeds silently to implementation.
+
+`ResearchStageHandoff` uses a Stage Handoff identity for a generic Node Attempt
+without creating a fixed Stage Attempt projection. It retains the bounded typed
+observations, exact context, policy and evidence digests, and referenced
+Artifacts. Its separate code-owned decision selects a declared successor; the
+handoff grants no implementation readiness or execution authority. These pure
+contracts do not dispatch research Builds; isolated defect and feature research
+execution consumes them through the ordinary application execution boundary.
+
+### Durable phase-ready pools
+
+`PhasePoolPolicy` fixes the logical phase, a permutation of severity, Project
+priority and age, concurrent pool and Project WIP ceilings, and a resource
+reservation budget. Highest severity and Project priority sort first; age uses
+the original Work admission time. Equal priorities use Work, Factory Run,
+Flow Run, cycle, node, and content identities as stable tie breakers. A refresh
+cannot replace the priority inputs of the same Run version and ready target.
+
+`FactoryPhasePoolStore` publishes, reads and selects bounded ready projections.
+Publication reconstructs the ready node from the pinned closure and current
+Flow history rather than accepting a provider's readiness claim. Entries bind
+the exact Run version, Flow Run, latest cycle, node, Work and Project, phase
+input digest, accepted severity, frozen Project priority, exact capabilities,
+bounded dependencies and resource reservation. Dependencies require the exact
+retained Work digest and declared completed root-Flow resolution in the same
+Project. Pool membership conveys no execution permission.
+
+Each selection pass reconstructs at most 100 candidate histories in policy order and selects
+at most 100 Work items. It rechecks current Flow history, cancellation, Run and
+candidate identity, current claim, dependency resolution, exact capabilities,
+remaining Run budget, Flow WIP, pool WIP, Project WIP and aggregate reservations.
+Both adapters use the same ordering and decision functions. A full window that
+selects nothing while pool WIP remains available retains its last inspected
+entry as a scan continuation. It also fingerprints the exact capabilities,
+the skipped prefix and lightweight current metadata for its Runs, their exact
+dependencies and reserved capacity, including live claims and admission-time
+readiness. New lower-ranked entries do not invalidate continuation. The next fresh
+pass resumes after that entry only while this eligibility scope is unchanged;
+otherwise it restarts at the highest-ranked entry. PostgreSQL locks inspected
+Runs and dependencies, then rechecks the skipped prefix guard before committing;
+a concurrent change to that prefix rejects the pass for a fresh retry. The metadata scan
+covers this prefix without loading all retained histories;
+exact replay never advances the scan. A successful selection, a full pool, or
+the end of the ordered scan resets continuation to the highest-ranked entries.
+This keeps each pass bounded without permanently hiding eligible Work behind
+100 dependency or capability blockers. Continuation is mutable scheduling
+progress, separate from immutable policy bytes and retained selection facts.
+PostgreSQL stores
+immutable policies, ready entries, passes and selections in schema 50, uses
+an indexed composite ordering, and serializes pool reservations before taking
+Run locks in identity order. This lock belongs only to Factory pool operations.
+
+The selection, ordinary fenced Run claim and secret-safe audit fact commit in
+one transaction. Selections retain the policy, snapshot and complete selection
+input digests. Lost responses replay the original batch, including empty
+batches, without reordering or reclaiming Work. A target can be selected only
+once across pools and Run-version refreshes; a new workflow cycle has a new
+target identity. Claim expiry preserves the logical capacity reservation;
+completion, cancellation or superseding the cycle releases it. Recovery takes
+over the ordinary Run claim and preserves the original logical selection. Dispatch still requires the current Run version and claim fence.
+Retention removes selections and entries before their referenced claims and
+Flow history. Manual-intake wiring and worker supervision use these operations
+through the application boundary.
+
 ### Browser console boundary
 
 The standalone application under `ui/` is a separately built and deployed

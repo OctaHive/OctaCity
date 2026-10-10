@@ -154,7 +154,7 @@ where
     )
     .map_err(|_| ApplicationError::invalid())?;
     let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
-    let flow = octacity_server_factory::AdmittedFlow::from_stage_projection(configuration, &run)
+    let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run)
       .map_err(|_| ApplicationError::invalid())?;
     self
       .store

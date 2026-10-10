@@ -92,6 +92,8 @@ pub enum StoreOperation {
   ClaimFactoryRun,
   /// Claim one bounded batch of eligible Factory Runs.
   ClaimFactoryRuns,
+  /// Atomically select durable phase-ready Work under immutable capacity policy.
+  SelectFactoryPhasePool,
   /// Append one fenced Factory transition and advance its current projection.
   CommitFactoryRunTransition,
   /// Apply one closed management control intent to a Factory Run.
@@ -368,6 +370,9 @@ pub enum StoreInputError {
   /// A Factory claim is malformed, overlaps current ownership, or lacks matching audit evidence.
   #[error("a Factory Run claim is invalid")]
   InvalidFactoryRunClaim,
+  /// Phase-pool policy, readiness, or exact selection inputs are invalid.
+  #[error("a Factory phase pool input is invalid")]
+  InvalidFactoryPhasePool,
   /// A Factory transition is malformed or references absent immutable history.
   #[error("a Factory Run transition is invalid")]
   InvalidFactoryRunTransition,

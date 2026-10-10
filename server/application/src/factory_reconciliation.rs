@@ -78,6 +78,9 @@ pub enum FactoryReconciliationError {
   /// The authoritative wall clock could not be represented by the domain timestamp.
   #[error("Factory reconciliation clock is unavailable")]
   ClockUnavailable,
+  /// A configured intake executor or validation port failed without changing ordinary CI/CD.
+  #[error("Factory intake failed")]
+  Intake(#[from] crate::ApplicationError),
   /// The pure Factory decision rejected inconsistent authoritative facts.
   #[error("Factory lifecycle decision failed")]
   Decision(#[from] FactoryError),
@@ -93,6 +96,7 @@ pub struct FactoryReconciler<S> {
   batch_size: NonZeroU16,
   concurrency: NonZeroU16,
   clock: Arc<dyn FactoryReconciliationClock>,
+  intake: Option<Arc<dyn crate::FactoryTriageCoordinator>>,
 }
 
 impl<S> FactoryReconciler<S>
@@ -118,7 +122,15 @@ where
       batch_size,
       concurrency,
       clock: Arc::new(SystemFactoryReconciliationClock),
+      intake: None,
     })
+  }
+
+  /// Connects two-phase intake for configurations that select a nested root Flow.
+  #[must_use]
+  pub fn with_intake(mut self, intake: Arc<dyn crate::FactoryTriageCoordinator>) -> Self {
+    self.intake = Some(intake);
+    self
   }
 
   #[cfg(test)]
@@ -167,6 +179,7 @@ where
       claims,
       Arc::clone(&self.clock),
       self.concurrency,
+      self.intake.clone(),
     );
     outcome.shutdown_skipped += queue.fill(shutdown);
     let mut first_error = None;
@@ -202,6 +215,7 @@ struct ReconciliationQueue<S> {
   in_flight: Vec<ReconciliationFuture>,
   clock: Arc<dyn FactoryReconciliationClock>,
   concurrency: usize,
+  intake: Option<Arc<dyn crate::FactoryTriageCoordinator>>,
 }
 
 impl<S> ReconciliationQueue<S>
@@ -213,6 +227,7 @@ where
     claims: Vec<ClaimedFactoryRun>,
     clock: Arc<dyn FactoryReconciliationClock>,
     concurrency: NonZeroU16,
+    intake: Option<Arc<dyn crate::FactoryTriageCoordinator>>,
   ) -> Self {
     Self {
       store,
@@ -220,6 +235,7 @@ where
       in_flight: Vec::with_capacity(usize::from(concurrency.get())),
       clock,
       concurrency: usize::from(concurrency.get()),
+      intake,
     }
   }
 
@@ -233,8 +249,9 @@ where
       };
       let store = Arc::clone(&self.store);
       let clock = Arc::clone(&self.clock);
+      let intake = self.intake.clone();
       self.in_flight.push(Box::pin(async move {
-        reconcile_one(store.as_ref(), claim, clock.as_ref()).await
+        reconcile_one(store.as_ref(), claim, clock.as_ref(), intake.as_deref()).await
       }));
     }
     if shutdown.is_requested() {
@@ -266,6 +283,7 @@ async fn reconcile_one<S>(
   store: &S,
   claimed: ClaimedFactoryRun,
   clock: &dyn FactoryReconciliationClock,
+  intake: Option<&dyn crate::FactoryTriageCoordinator>,
 ) -> Result<ReconcileOne, FactoryReconciliationError>
 where
   S: FactoryRunStore + FactoryConfigurationStore,
@@ -280,6 +298,26 @@ where
     .await?;
   if configuration.configuration.reference() != snapshot.run.configuration() {
     return Err(FactoryReconciliationError::InvalidSnapshot);
+  }
+  if snapshot.admitted_flow.triage().is_some() {
+    let Some(intake) = intake else {
+      return Ok(ReconcileOne::Waiting);
+    };
+    return match intake
+      .reconcile_intake(snapshot.run.id(), claimed.record.id, clock.now()?)
+      .await?
+    {
+      crate::FactoryTriageStep::Advanced => Ok(ReconcileOne::Committed),
+      crate::FactoryTriageStep::Ready(_) | crate::FactoryTriageStep::Resolved(_) => {
+        let after = store.factory_run_snapshot(snapshot.run.id()).await?;
+        Ok(if after.run.version() > snapshot.run.version() {
+          ReconcileOne::Committed
+        } else {
+          ReconcileOne::Replayed
+        })
+      }
+      crate::FactoryTriageStep::Waiting => Ok(ReconcileOne::Waiting),
+    };
   }
   let checkpoint = snapshot
     .lifecycle_checkpoints

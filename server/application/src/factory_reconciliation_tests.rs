@@ -137,6 +137,7 @@ fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryCo
     project_id,
     digest(20),
     FactoryConfigurationDraft {
+      flow: None,
       admission_policy: key("admission"),
       stages: vec![
         stage("implement", FactoryStageKind::Implementation),

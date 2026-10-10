@@ -288,28 +288,7 @@ fn validate_runtime_limits(
 }
 
 fn add_usage(left: BudgetUsage, right: BudgetUsage) -> Result<BudgetUsage, FactoryError> {
-  Ok(BudgetUsage {
-    attempts: left
-      .attempts
-      .checked_add(right.attempts)
-      .ok_or_else(|| invalid("Flow budget usage"))?,
-    elapsed_millis: left
-      .elapsed_millis
-      .checked_add(right.elapsed_millis)
-      .ok_or_else(|| invalid("Flow budget usage"))?,
-    tokens: left
-      .tokens
-      .checked_add(right.tokens)
-      .ok_or_else(|| invalid("Flow budget usage"))?,
-    cost_micro_units: left
-      .cost_micro_units
-      .checked_add(right.cost_micro_units)
-      .ok_or_else(|| invalid("Flow budget usage"))?,
-    output_bytes: left
-      .output_bytes
-      .checked_add(right.output_bytes)
-      .ok_or_else(|| invalid("Flow budget usage"))?,
-  })
+  left.checked_add(right).ok_or_else(|| invalid("Flow budget usage"))
 }
 
 fn invalid(field: &'static str) -> FactoryError {

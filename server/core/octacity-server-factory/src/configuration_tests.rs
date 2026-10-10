@@ -145,10 +145,13 @@ fn reference_choice(kind: FactoryChoiceKind, alias: &str, reference: ImmutableRe
 }
 
 fn valid_fixture() -> Fixture {
-  let project_id = ProjectId::generate();
+  valid_fixture_for_project(ProjectId::generate())
+}
+fn valid_fixture_for_project(project_id: ProjectId) -> Fixture {
   let choices = FactoryConfigurationChoices::try_new(choice_entries(project_id, "jev", "2026-10"))
     .expect("fixture choices are valid");
   let draft = FactoryConfigurationDraft {
+    flow: None,
     admission_policy: key("admission-default"),
     stages: vec![
       stage("implement", FactoryStageKind::Implementation, "build-default"),
@@ -205,6 +208,23 @@ fn credential_profiles() -> FactoryCredentialProfiles {
     key("model-evaluation"),
     key("source-read"),
     key("delivery-write"),
+  )
+  .unwrap()
+}
+
+pub(crate) fn publish_flow_fixture(
+  reference: &crate::FactoryConfigurationRef,
+  flow: crate::FactoryFlowConfiguration,
+) -> FactoryConfiguration {
+  let mut fixture = valid_fixture_for_project(reference.project_id());
+  fixture.draft.flow = Some(flow);
+  FactoryConfiguration::publish(
+    reference.id(),
+    reference.version(),
+    reference.project_id(),
+    reference.definition_digest(),
+    fixture.draft,
+    &fixture.choices,
   )
   .unwrap()
 }

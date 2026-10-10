@@ -406,6 +406,7 @@ fn fixture(project_id: ProjectId) -> Fixture {
     budget: budget(),
   };
   let draft = FactoryConfigurationDraft {
+    flow: None,
     admission_policy: key("admission"),
     stages: vec![
       stage("implement", FactoryStageKind::Implementation),
@@ -722,6 +723,311 @@ mod run_contract {
   };
 
   use super::*;
+
+  fn pool_policy() -> octacity_server_factory::PhasePoolPolicy {
+    octacity_server_factory::PhasePoolPolicy {
+      phase: key("development.v1"),
+      order: vec![
+        octacity_server_factory::PhasePoolOrder::Severity,
+        octacity_server_factory::PhasePoolOrder::ProjectPriority,
+        octacity_server_factory::PhasePoolOrder::Age,
+      ],
+      max_wip: 1,
+      max_project_wip: 1,
+      budget: BudgetLimit::new(10, 1_000, 1_000, 1_000, 1_000).unwrap(),
+    }
+  }
+
+  fn pool_request(byte: u8) -> octacity_server_store::SelectPhasePool {
+    octacity_server_store::SelectPhasePool {
+      policy_digest: pool_policy().digest(),
+      request_id: digest(byte),
+      owner: key(&format!("pool.worker.{byte}")),
+      observed_at: time(100),
+      expires_at: time(200),
+      capabilities: BTreeSet::new(),
+      limit: 1,
+    }
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn phase_pool_concurrent_admission_and_capacity_contention_preserve_the_total_order() {
+    use octacity_server_factory::FindingSeverity;
+    use octacity_server_store::{FactoryPhasePoolStore as _, testing::phase_pool_contract_input};
+    let setup = Setup::new().await;
+    let owner = setup.admission.run.subject().project_id();
+    let repo = repository(owner, setup.admission.run.subject().repository_id());
+    let first = admission(
+      801,
+      901,
+      "concurrent-pool-one",
+      2,
+      owner,
+      setup.admission.run.configuration().id(),
+      &repo,
+    );
+    let second = admission(
+      802,
+      902,
+      "concurrent-pool-two",
+      2,
+      owner,
+      setup.admission.run.configuration().id(),
+      &repo,
+    );
+    let (one, two) = tokio::join!(
+      setup
+        .postgres
+        .admit_factory_work(management_mutation_with_request(first.clone(), "pool-admit-one")),
+      setup
+        .postgres
+        .admit_factory_work(management_mutation_with_request(second.clone(), "pool-admit-two")),
+    );
+    one.unwrap();
+    two.unwrap();
+    for run in [second.run.id(), first.run.id()] {
+      let snapshot = setup.postgres.factory_run_snapshot(run).await.unwrap();
+      let input = phase_pool_contract_input(&snapshot, FindingSeverity::Medium);
+      setup.postgres.publish_phase_ready(pool_policy(), input).await.unwrap();
+    }
+    let entries = setup
+      .postgres
+      .phase_ready_entries(pool_policy().digest(), None, 100)
+      .await
+      .unwrap();
+    assert_eq!(
+      entries.iter().map(|entry| entry.input.run_id).collect::<Vec<_>>(),
+      [first.run.id(), second.run.id()]
+    );
+    let (one, two) = tokio::join!(
+      setup.postgres.select_phase_ready(pool_request(110)),
+      setup.postgres.select_phase_ready(pool_request(111))
+    );
+    let selected = [one.unwrap(), two.unwrap()].concat();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].entry.input.run_id, first.run.id());
+    let restarted = PostgresStore::new(
+      sqlx::PgPool::connect_with((*setup.database.pool.connect_options()).clone())
+        .await
+        .unwrap(),
+    );
+    let selected_request = if selected[0].request_id == digest(110) {
+      pool_request(110)
+    } else {
+      pool_request(111)
+    };
+    assert_eq!(restarted.select_phase_ready(selected_request).await.unwrap(), selected);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM factory_phase_pool_selections")
+      .fetch_one(&setup.database.pool)
+      .await
+      .unwrap();
+    assert_eq!(count, 1);
+    setup.cleanup().await;
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn phase_pool_discards_stale_version_and_candidate_inputs_before_claiming() {
+    use octacity_server_store::{FactoryPhasePoolStore as _, testing::phase_pool_contract_input};
+    let setup = Setup::new().await;
+    let snapshot = setup
+      .postgres
+      .factory_run_snapshot(setup.admission.run.id())
+      .await
+      .unwrap();
+    let input = phase_pool_contract_input(&snapshot, octacity_server_factory::FindingSeverity::High);
+    let entry = setup
+      .postgres
+      .publish_phase_ready(pool_policy(), input.clone())
+      .await
+      .unwrap();
+    let mut changed = input.clone();
+    changed.project_priority += 1;
+    assert!(matches!(
+      setup.postgres.publish_phase_ready(pool_policy(), changed).await,
+      Err(StoreError::Conflict { .. })
+    ));
+    let claim = claim(&setup.admission.run, "stale-pool.worker", 20, 10, 100);
+    setup.postgres.claim_factory_run(claim.clone()).await.unwrap();
+    let change = transition(
+      &setup.admission,
+      &claim.record,
+      20,
+      "factory.transition",
+      "pool.stale.dispatch",
+    );
+    setup.postgres.commit_factory_run_transition(change).await.unwrap();
+    assert!(setup.postgres.publish_phase_ready(pool_policy(), input).await.is_err());
+    assert!(
+      setup
+        .postgres
+        .phase_ready_entries(pool_policy().digest(), None, 100)
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    assert!(
+      setup
+        .postgres
+        .select_phase_ready(pool_request(120))
+        .await
+        .unwrap()
+        .is_empty()
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM factory_phase_pool_selections WHERE entry_id = $1")
+      .bind(entry.id.as_bytes().as_slice())
+      .fetch_one(&setup.database.pool)
+      .await
+      .unwrap();
+    assert_eq!(count, 0);
+    setup.cleanup().await;
+  }
+
+  async fn phase_pool_runs(setup: &Setup) -> Vec<octacity_server_factory::FactoryRunId> {
+    let owner = setup.admission.run.subject().project_id();
+    let repo = repository(owner, setup.admission.run.subject().repository_id());
+    let mut runs = vec![setup.admission.run.id()];
+    for index in 1..101_u128 {
+      let input = admission(
+        800 + index,
+        900 + index,
+        &format!("progress-{index}"),
+        i64::try_from(index + 2).unwrap(),
+        owner,
+        setup.admission.run.configuration().id(),
+        &repo,
+      );
+      setup
+        .postgres
+        .admit_factory_work(management_mutation_with_request(
+          input.clone(),
+          format!("progress-{index}"),
+        ))
+        .await
+        .unwrap();
+      runs.push(input.run.id());
+    }
+    runs
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn phase_pool_rechecks_priority_after_capability_or_lease_changes() {
+    for lease_blocked in [false, true] {
+      let setup = Setup::with_capacity(101).await;
+      let runs = phase_pool_runs(&setup).await;
+      let restarted = PostgresStore::new(setup.database.pool.clone());
+      octacity_server_store::testing::verify_factory_phase_pool_scan_invalidation(
+        &setup.postgres,
+        &restarted,
+        &runs,
+        lease_blocked,
+      )
+      .await;
+      setup.cleanup().await;
+    }
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn phase_pool_progress_survives_restart_after_a_blocked_window() {
+    let setup = Setup::with_capacity(101).await;
+    let runs = phase_pool_runs(&setup).await;
+    let restarted = PostgresStore::new(setup.database.pool.clone());
+    octacity_server_store::testing::verify_factory_phase_pool_progress(&setup.postgres, &restarted, &runs).await;
+    setup.cleanup().await;
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn durable_phase_pool_contract_matches_memory_and_survives_client_restart() {
+    use octacity_server_store::{FactoryPhasePoolStore as _, testing::verify_factory_phase_pool_contract};
+    let setup = Setup::new().await;
+    let owner = setup.admission.run.subject().project_id();
+    let repo = repository(owner, setup.admission.run.subject().repository_id());
+    let mut runs = vec![setup.admission.run.id()];
+    for index in 1..5_u128 {
+      let input = admission(
+        800 + index,
+        900 + index,
+        &format!("pool-work-{index}"),
+        i64::try_from(index + 2).unwrap(),
+        owner,
+        setup.admission.run.configuration().id(),
+        &repo,
+      );
+      setup
+        .postgres
+        .admit_factory_work(management_mutation_with_request(
+          input.clone(),
+          format!("pool-admission-{index}"),
+        ))
+        .await
+        .unwrap();
+      runs.push(input.run.id());
+    }
+    verify_factory_phase_pool_contract(&setup.postgres, &runs).await;
+    let restarted = PostgresStore::new(setup.database.pool.clone());
+    let policy = octacity_server_factory::PhasePoolPolicy {
+      phase: key("research.v1"),
+      order: vec![
+        octacity_server_factory::PhasePoolOrder::Severity,
+        octacity_server_factory::PhasePoolOrder::ProjectPriority,
+        octacity_server_factory::PhasePoolOrder::Age,
+      ],
+      max_wip: 2,
+      max_project_wip: 2,
+      budget: BudgetLimit::new(10, 1_000, 10, 1_000, 1_000).unwrap(),
+    };
+    let request = octacity_server_store::SelectPhasePool {
+      policy_digest: policy.digest(),
+      request_id: digest(10),
+      owner: key("worker.one"),
+      observed_at: time(100),
+      expires_at: time(200),
+      capabilities: BTreeSet::new(),
+      limit: 2,
+    };
+    let replay = restarted.select_phase_ready(request).await.unwrap();
+    assert_eq!(
+      replay.iter().map(|row| row.entry.input.run_id).collect::<Vec<_>>(),
+      [runs[2], runs[4]]
+    );
+    use octacity_server_store::{
+      AdvanceFactoryRetentionWork, ClaimFactoryRetentionWork, FactoryRetentionStore as _, WorkerOwner,
+    };
+    let owner = WorkerOwner::new("pool.retention").unwrap();
+    for observed in 410..460 {
+      let claims = setup
+        .postgres
+        .claim_factory_retention_work(
+          ClaimFactoryRetentionWork::new(owner.clone(), time(observed), time(observed + 1), 10).unwrap(),
+        )
+        .await
+        .unwrap();
+      if claims.is_empty() {
+        break;
+      }
+      for claim in claims {
+        setup
+          .postgres
+          .advance_factory_retention_work(
+            AdvanceFactoryRetentionWork::new(claim.run_id, owner.clone(), time(observed), 4).unwrap(),
+          )
+          .await
+          .unwrap();
+      }
+    }
+    for run in [runs[2], runs[4]] {
+      let retained: i64 = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM factory_phase_pool_entries WHERE run_id = $1) + (SELECT COUNT(*) FROM factory_phase_pool_selections WHERE run_id = $1) + (SELECT COUNT(*) FROM factory_run_claims WHERE run_id = $1)").bind(run.as_uuid()).fetch_one(&setup.database.pool).await.unwrap();
+      assert_eq!(
+        retained, 0,
+        "retention must remove pool rows before their referenced Flow history and claims"
+      );
+    }
+    setup.cleanup().await;
+  }
 
   #[tokio::test]
   #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
@@ -1205,12 +1511,17 @@ mod run_contract {
 
   impl Setup {
     async fn new() -> Self {
+      Self::with_capacity(20).await
+    }
+
+    async fn with_capacity(max_runs: u32) -> Self {
       let database = TestDatabase::migrated().await;
       let postgres = PostgresStore::new(database.pool.clone());
       let owner_project_id = project_id(uuid::Uuid::new_v4().as_u128());
       let foreign_project_id = project_id(uuid::Uuid::new_v4().as_u128());
       seed_projects(&database.pool, owner_project_id, foreign_project_id).await;
-      let fixture = fixture(owner_project_id);
+      let mut fixture = fixture(owner_project_id);
+      fixture.draft.wip_limits = FactoryWipLimits::new(max_runs, 20).unwrap();
       let configuration_id = configuration_id(uuid::Uuid::new_v4().as_u128());
       let configuration = FactoryConfiguration::publish(
         configuration_id,
@@ -1518,4 +1829,464 @@ mod run_contract {
       time(recorded_at),
     )
   }
+}
+
+use octacity_server_factory as factory;
+#[path = "../../../core/octacity-server-factory/src/triage/tests/journey.rs"]
+mod triage_journey;
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn configured_root_and_typed_eligibility_resolution_round_trip_after_restart() {
+  use octacity_server_factory::*;
+  use octacity_server_store::*;
+  let database = TestDatabase::migrated().await;
+  let postgres = PostgresStore::new(database.pool.clone());
+  let project = ProjectId::generate();
+  seed_projects(&database.pool, project, ProjectId::generate()).await;
+  let mut fixture = fixture(project);
+  let journey = triage_journey::journey(
+    false,
+    false,
+    BudgetLimit::new(10, 10_000, 1_000, 10_000, 10_000).unwrap(),
+  );
+  fixture.draft.flow = Some(journey.clone());
+  let config_id = FactoryConfigurationId::generate();
+  let config = FactoryConfiguration::publish(
+    config_id,
+    FactoryConfigurationVersion::INITIAL,
+    project,
+    digest(20),
+    fixture.draft.clone(),
+    &fixture.choices,
+  )
+  .unwrap();
+  postgres
+    .create_factory_configuration(management_mutation_with_request(
+      CreateFactoryConfiguration {
+        configuration: config.clone(),
+        idempotency_key: idempotency("triage.configuration"),
+        published_at: time(1),
+        intent: FactoryConfigurationMutationIntent::Create {
+          id: config_id,
+          project_id: project,
+          definition_digest: digest(20),
+          draft: fixture.draft,
+        },
+      },
+      "triage.configuration",
+    ))
+    .await
+    .unwrap();
+  let repo = repository(project, RepositoryId::generate());
+  seed_repository(&database.pool, &repo).await;
+  let mut admission = admission(
+    uuid::Uuid::new_v4().as_u128(),
+    uuid::Uuid::new_v4().as_u128(),
+    "configured-triage",
+    2,
+    project,
+    config_id,
+    &repo,
+  );
+  let forged = admission.clone();
+  assert!(
+    postgres
+      .admit_factory_work(management_mutation_with_request(forged, "forged-stage-projection"))
+      .await
+      .is_err()
+  );
+  admission.flow = AdmittedFlow::from_configuration(&config, &admission.run).unwrap();
+  let published = postgres
+    .admit_factory_work(management_mutation_with_request(admission.clone(), "triage.admission"))
+    .await
+    .unwrap();
+  let replayed = postgres
+    .admit_factory_work(management_mutation_with_request(admission.clone(), "triage.replay"))
+    .await
+    .unwrap();
+  assert_eq!(published.admission, replayed.admission);
+  let claim = postgres
+    .claim_factory_runs(ClaimFactoryRuns::new(key("triage.worker"), time(3), time(100), 1).unwrap())
+    .await
+    .unwrap()
+    .remove(0)
+    .record;
+  let run_id = admission.run.id();
+  let snapshot = postgres.factory_run_snapshot(run_id).await.unwrap();
+  assert_eq!(snapshot.admitted_flow.closure(), &journey.closure);
+  let input = EligibilityInput::new(&snapshot.work, journey.triage.project_goals.clone(), vec![]).unwrap();
+  let ownership = FactoryClaimOwnership::new(claim.owner.clone(), claim.claim);
+  let make = |flow: &FlowRun,
+              cycle: &WorkflowCycle,
+              node: &str,
+              number: u64,
+              input: FactoryDigest,
+              execution: NodeExecutionIdentity| {
+    let definition = journey.closure.definition(flow.definition()).unwrap();
+    let declaration = definition.node(&key(node)).unwrap();
+    NodeAttempt::new(
+      flow,
+      cycle,
+      definition,
+      NodeAttemptInput {
+        id: NodeAttemptId::generate(),
+        node_key: key(node),
+        node_kind: declaration.kind(),
+        number: NodeAttemptNumber::new(number).unwrap(),
+        input_digest: input,
+        budget: declaration.budget(),
+        deadline: time(100),
+        execution,
+        ownership: ownership.clone(),
+      },
+    )
+    .unwrap()
+  };
+  let root = snapshot.admitted_flow.root_run().clone();
+  let root_cycle = snapshot.admitted_flow.initial_cycle().clone();
+  let root_call = make(
+    &root,
+    &root_cycle,
+    "triage",
+    1,
+    input.digest().unwrap(),
+    NodeExecutionIdentity::BuiltIn,
+  );
+  let triage = FlowRun::nested(
+    FlowRunId::generate(),
+    run_id,
+    journey.triage.definition,
+    FlowRunParent::new(root.id(), root_call.id()),
+  );
+  let triage_cycle = WorkflowCycle::initial(&triage).unwrap();
+  let eligibility_call = make(
+    &triage,
+    &triage_cycle,
+    "eligibility",
+    1,
+    input.digest().unwrap(),
+    NodeExecutionIdentity::BuiltIn,
+  );
+  let eligibility_definition = journey
+    .closure
+    .definition(triage.definition())
+    .unwrap()
+    .node(&key("eligibility"))
+    .unwrap()
+    .subflow_definition()
+    .unwrap();
+  let eligibility = FlowRun::nested(
+    FlowRunId::generate(),
+    run_id,
+    eligibility_definition,
+    FlowRunParent::new(triage.id(), eligibility_call.id()),
+  );
+  let eligibility_cycle = WorkflowCycle::initial(&eligibility).unwrap();
+  let append = FactoryRunHistoryAppend {
+    flow: FactoryFlowHistory {
+      runs: vec![triage.clone(), eligibility.clone()],
+      cycles: vec![triage_cycle.clone(), eligibility_cycle.clone()],
+      attempts: vec![root_call.clone(), eligibility_call.clone()],
+      triage: vec![TriageJournalRecord::Prepared(Box::new(input.clone()))],
+      ..Default::default()
+    },
+    ..Default::default()
+  };
+  pg_triage_transition(
+    &postgres,
+    &snapshot,
+    &claim,
+    append,
+    FactoryRunState::Admitted,
+    FactoryLifecycleProgress::Admitted,
+    BudgetUsage {
+      attempts: 2,
+      ..Default::default()
+    },
+  )
+  .await
+  .unwrap();
+  let snapshot = postgres.factory_run_snapshot(run_id).await.unwrap();
+  let profile = &journey.triage.eligibility;
+  let leaf = make(
+    &eligibility,
+    &eligibility_cycle,
+    "observe",
+    1,
+    input.digest().unwrap(),
+    NodeExecutionIdentity::External(profile.producer.clone()),
+  );
+  let result = EligibilityResult::new(
+    &input,
+    TriageProvenance {
+      input_digest: input.digest().unwrap(),
+      definition: eligibility.definition(),
+      node_attempt_id: leaf.id(),
+      producer: profile.producer.clone(),
+      model_or_tool: profile.model_or_tool.clone(),
+      task_digest: profile.task_digest,
+      result: artifact(93),
+      observed_at: time(10),
+    },
+    TriageObservation::new(ProjectFit::OutOfScope, artifact(94)),
+    vec![],
+  )
+  .unwrap();
+  // The execution port may already have retained the same result bytes.
+  sqlx::query("INSERT INTO factory_artifact_references (run_id, artifact_id, role, expected_sha256, created_at) VALUES ($1,$2,'call_context',$3,to_timestamp(0.009))")
+    .bind(run_id.as_uuid()).bind(result.provenance().result.artifact_id().as_uuid())
+    .bind(result.provenance().result.content_digest().as_bytes().as_slice())
+    .execute(&database.pool).await.unwrap();
+  let evidence = vec![
+    AcceptedTriageEvidence::new(
+      input.subject().clone(),
+      input.digest().unwrap(),
+      TriageEvidenceFact::ProjectFit(ProjectFit::OutOfScope),
+      result.project_fit().evidence().clone(),
+      DeterministicGateOutcome::Passed,
+    )
+    .unwrap(),
+  ];
+  let usage = BudgetUsage {
+    attempts: 3,
+    tokens: 1,
+    ..Default::default()
+  };
+  let policy = TriagePolicy::for_flow(
+    config.reference().clone(),
+    &snapshot.admitted_flow.validated().unwrap(),
+    journey.triage.definition,
+    journey.triage.policy.clone(),
+  )
+  .unwrap();
+  let decision = policy.eligibility(&input, &result, &evidence, usage).unwrap();
+  assert_eq!(decision.reason, TriageReason::OutOfScope);
+  let disposition = TriageDisposition::Eligibility(decision.clone());
+  let disposition_digest = disposition.digest().unwrap();
+  let gate = make(
+    &triage,
+    &triage_cycle,
+    "eligibility_policy",
+    2,
+    result.digest().unwrap(),
+    NodeExecutionIdentity::BuiltIn,
+  );
+  let complete = |flow: &FlowRun,
+                  node: &NodeAttempt,
+                  outcome: &str,
+                  schema: TriageSchema,
+                  digest: FactoryDigest,
+                  usage: BudgetUsage| {
+    NodeAttemptCompletion::new(
+      node,
+      journey.closure.definition(flow.definition()).unwrap(),
+      NodeAttemptCompletionInput {
+        outcome: key(outcome),
+        output_schema: schema.reference().unwrap(),
+        output_digest: digest,
+        ownership: ownership.clone(),
+        usage,
+        observed_at: time(10),
+      },
+    )
+    .unwrap()
+  };
+  let receipt = TriageJournalRecord::Eligibility(Box::new(EligibilityReceipt {
+    input,
+    result: result.clone(),
+    evidence,
+    usage,
+    decision,
+  }));
+  let append = FactoryRunHistoryAppend {
+    flow: FactoryFlowHistory {
+      attempts: vec![leaf.clone(), gate.clone()],
+      completions: vec![
+        complete(
+          &eligibility,
+          &leaf,
+          "observed",
+          TriageSchema::EligibilityResult,
+          result.digest().unwrap(),
+          BudgetUsage {
+            attempts: 1,
+            tokens: 1,
+            ..Default::default()
+          },
+        ),
+        complete(
+          &triage,
+          &eligibility_call,
+          "observed",
+          TriageSchema::EligibilityResult,
+          result.digest().unwrap(),
+          BudgetUsage::default(),
+        ),
+        complete(
+          &triage,
+          &gate,
+          "rejection",
+          TriageSchema::Decision,
+          disposition_digest,
+          BudgetUsage::default(),
+        ),
+        complete(
+          &root,
+          &root_call,
+          "rejection",
+          TriageSchema::Decision,
+          disposition_digest,
+          BudgetUsage::default(),
+        ),
+      ],
+      triage: vec![receipt.clone()],
+      ..Default::default()
+    },
+    ..Default::default()
+  };
+  pg_triage_transition(
+    &postgres,
+    &snapshot,
+    &claim,
+    append,
+    FactoryRunState::Rejected,
+    FactoryLifecycleProgress::Rejected(ReportingProgress::Disabled),
+    BudgetUsage {
+      attempts: 4,
+      tokens: 1,
+      ..Default::default()
+    },
+  )
+  .await
+  .unwrap();
+  let restarted = PostgresStore::new(database.pool.clone());
+  let restored = restarted.factory_run_snapshot(run_id).await.unwrap();
+  assert_eq!(restored.flow.triage.last(), Some(&receipt));
+  assert_eq!(restored.run.state(), FactoryRunState::Rejected);
+  assert!(restored.stage_attempts.is_empty());
+  assert!(
+    restored
+      .flow
+      .runs
+      .iter()
+      .all(|flow| journey.closure.definition(flow.definition()).is_some())
+  );
+  assert!(restored.flow.runs.iter().all(|flow| {
+    flow.definition()
+      != journey
+        .closure
+        .definition(triage.definition())
+        .unwrap()
+        .node(&key("classification"))
+        .unwrap()
+        .subflow_definition()
+        .unwrap()
+  }));
+  for (artifact, expected) in [
+    (&result.provenance().result, 9_i64),
+    (result.project_fit().evidence(), 10_i64),
+  ] {
+    let first_retained: i64 = sqlx::query_scalar("SELECT (extract(epoch FROM created_at) * 1000)::bigint FROM factory_artifact_references WHERE run_id=$1 AND artifact_id=$2 AND role='call_context'")
+      .bind(run_id.as_uuid()).bind(artifact.artifact_id().as_uuid()).fetch_one(&database.pool).await.unwrap();
+    assert_eq!(first_retained, expected);
+  }
+  let references: i64 =
+    sqlx::query_scalar("SELECT count(*) FROM factory_artifact_references WHERE run_id=$1 AND role='call_context'")
+      .bind(run_id.as_uuid())
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+  assert_eq!(references, 3);
+  let owner = WorkerOwner::new("triage.retention").unwrap();
+  let mut cleaned = false;
+  for at in 20..120 {
+    let claims = restarted
+      .claim_factory_retention_work(ClaimFactoryRetentionWork::new(owner.clone(), time(at), time(at + 10), 1).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(claims.len(), 1);
+    let progress = restarted
+      .advance_factory_retention_work(AdvanceFactoryRetentionWork::new(run_id, owner.clone(), time(at), 2).unwrap())
+      .await
+      .unwrap();
+    if progress.completed {
+      cleaned = true;
+      break;
+    }
+  }
+  assert!(
+    cleaned,
+    "typed journal and nested Flow metadata must be removable in bounded pages"
+  );
+  let retained: i64 = sqlx::query_scalar("SELECT count(*) FROM factory_triage_records WHERE run_id=$1")
+    .bind(run_id.as_uuid())
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+  assert_eq!(retained, 0);
+  database.cleanup().await;
+}
+
+async fn pg_triage_transition(
+  postgres: &PostgresStore,
+  snapshot: &octacity_server_store::FactoryRunSnapshot,
+  claim: &octacity_server_store::FactoryRunClaimRecord,
+  append: octacity_server_store::FactoryRunHistoryAppend,
+  state: octacity_server_factory::FactoryRunState,
+  progress: octacity_server_factory::FactoryLifecycleProgress,
+  usage: octacity_server_factory::BudgetUsage,
+) -> Result<(), octacity_server_store::StoreError> {
+  use octacity_server_factory::*;
+  use octacity_server_store::*;
+  let version = FactoryRunVersion::new(snapshot.run.version().get() + 1).unwrap();
+  let at = time(10);
+  let budget = FactoryBudgetRecord::new(snapshot.run.id(), version, usage, at);
+  let lifecycle = FactoryLifecycleCheckpoint::new(
+    snapshot.run.id(),
+    version,
+    progress,
+    DecisionSignalProgress::Disabled,
+    false,
+    at,
+  );
+  let mut current = snapshot.current.clone();
+  current.budget_id = budget.id;
+  current.lifecycle_checkpoint_id = lifecycle.id;
+  let run = FactoryRun::restore(
+    snapshot.run.id(),
+    snapshot.run.configuration().clone(),
+    &snapshot.work,
+    snapshot.run.subject().clone(),
+    state,
+    version,
+  )
+  .unwrap();
+  let audit = FactoryAuditFact::new(
+    run.id(),
+    AuditActorKind::Worker,
+    None,
+    key("factory.triage.advance"),
+    digest(30),
+    key(state.as_str()),
+    at,
+  );
+  postgres
+    .commit_factory_run_transition(CommitFactoryRunTransition {
+      run_id: run.id(),
+      expected_version: snapshot.run.version(),
+      claim_id: claim.id,
+      owner: claim.owner.clone(),
+      fence: claim.claim.fence(),
+      committed_at: at,
+      next_run: run,
+      budget,
+      lifecycle_checkpoint: lifecycle,
+      append,
+      audit,
+      outbox: vec![],
+      current,
+    })
+    .await?;
+  Ok(())
 }

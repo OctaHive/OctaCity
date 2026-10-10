@@ -16,6 +16,8 @@ pub struct AdmittedFlow {
   limits: FlowAdmissionLimits,
   root_run: FlowRun,
   initial_cycle: WorkflowCycle,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  triage: Option<crate::FactoryTriageConfiguration>,
 }
 
 impl AdmittedFlow {
@@ -42,6 +44,7 @@ impl AdmittedFlow {
       limits,
       root_run,
       initial_cycle,
+      triage: None,
     })
   }
 
@@ -66,6 +69,32 @@ impl AdmittedFlow {
     let root_run = FlowRun::root(run, closure.root())?;
     let initial_cycle = WorkflowCycle::initial(&root_run)?;
     Self::new(closure, limits, root_run, initial_cycle)
+  }
+
+  /// Admits the exact journey selected by the immutable configuration.
+  pub fn from_configuration(configuration: &FactoryConfiguration, run: &FactoryRun) -> Result<Self, FactoryError> {
+    if configuration.reference() != run.configuration() {
+      return Err(FactoryError::InconsistentSubject);
+    }
+    let Some(flow) = configuration.flow() else {
+      return Self::from_stage_projection(configuration, run);
+    };
+    flow.validate(
+      configuration.reference(),
+      configuration.hard_budget(),
+      configuration.wip_limits(),
+    )?;
+    let root = FlowRun::root(run, flow.closure.root())?;
+    let cycle = WorkflowCycle::initial(&root)?;
+    let mut admitted = Self::new(flow.closure.clone(), flow.limits.clone(), root, cycle)?;
+    admitted.triage = Some(flow.triage.clone());
+    Ok(admitted)
+  }
+
+  /// Returns the pinned two-phase intake contract for a configured journey.
+  #[must_use]
+  pub const fn triage(&self) -> Option<&crate::FactoryTriageConfiguration> {
+    self.triage.as_ref()
   }
 
   /// Returns the exact reachable definition closure.
@@ -418,6 +447,11 @@ impl NodeAttempt {
     })
   }
 
+  pub(super) fn accepts_completion_owner(&self, owner: &FactoryClaimOwnership) -> bool {
+    (owner.owner() == self.owner() && owner.claim() == self.claim())
+      || (self.stage_projection_id().is_none() && owner.claim().claimed_at() >= self.claim().expires_at())
+  }
+
   /// Returns the losslessly preserved Node Attempt identity.
   #[must_use]
   pub const fn id(&self) -> NodeAttemptId {
@@ -561,8 +595,7 @@ impl NodeAttemptCompletion {
       || node
         .outcome(&outcome)
         .is_none_or(|declared| declared.schema() != &output_schema)
-      || ownership.owner() != attempt.owner()
-      || ownership.claim() != attempt.claim()
+      || !attempt.accepts_completion_owner(&ownership)
     {
       return Err(FactoryError::InvalidReference {
         relationship: "Node Attempt completion outcome",

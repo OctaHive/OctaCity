@@ -42,9 +42,10 @@ pub(super) struct StoredFactoryRun {
   workflow_cycles: BTreeMap<WorkflowCycleId, WorkflowCycle>,
   node_attempts: BTreeMap<NodeAttemptId, NodeAttempt>,
   node_attempt_completions: BTreeMap<NodeAttemptId, NodeAttemptCompletion>,
+  triage: BTreeMap<u8, octacity_server_factory::TriageJournalRecord>,
   admitted_at: octacity_server_domain::Timestamp,
-  current_claim_id: Option<FactoryDigest>,
-  claims: BTreeMap<FactoryDigest, FactoryRunClaimRecord>,
+  pub(super) current_claim_id: Option<FactoryDigest>,
+  pub(super) claims: BTreeMap<FactoryDigest, FactoryRunClaimRecord>,
   budgets: BTreeMap<FactoryDigest, FactoryBudgetRecord>,
   lifecycle_checkpoints: BTreeMap<FactoryDigest, FactoryLifecycleCheckpoint>,
   stage_attempts: BTreeMap<StageAttemptId, StageAttempt>,
@@ -65,7 +66,7 @@ pub(super) struct StoredFactoryRun {
   escalations: BTreeMap<EscalationId, Escalation>,
   delivery_attempts: BTreeMap<DeliveryAttemptId, DeliveryAttempt>,
   reporting_attempts: BTreeMap<ReportingAttemptId, ReportingAttempt>,
-  audit: BTreeMap<FactoryDigest, FactoryAuditFact>,
+  pub(super) audit: BTreeMap<FactoryDigest, FactoryAuditFact>,
   controls: BTreeMap<FactoryDigest, crate::FactoryRunControlRecord>,
   outbox: BTreeMap<FactoryDigest, FactoryOutboxRecord>,
   current: FactoryRunCurrentProjection,
@@ -82,6 +83,26 @@ impl StoredFactoryRun {
 
   pub(super) const fn admitted_at(&self) -> octacity_server_domain::Timestamp {
     self.admitted_at
+  }
+
+  // Version/current pointers cover committed history, budget and cancellation;
+  // claims and time-based readiness can change without a Run version change.
+  pub(super) fn phase_pool_scan_digest(&self, at: octacity_server_domain::Timestamp) -> FactoryDigest {
+    crate::factory_phase_pool::digest(
+      "phase-pool-scan-run",
+      &(
+        &self.run,
+        self.current.budget_id,
+        self.current.lifecycle_checkpoint_id,
+        self.current.candidate_id,
+        self.current_claim_id,
+        self
+          .current_claim_id
+          .and_then(|id| self.claims.get(&id))
+          .map(|row| row.claim.expires_at() > at),
+        self.admitted_at <= at,
+      ),
+    )
   }
 
   pub(super) fn updated_at(&self) -> Result<octacity_server_domain::Timestamp, StoreError> {
@@ -178,6 +199,7 @@ impl StoredFactoryRun {
       )]),
       node_attempts: BTreeMap::new(),
       node_attempt_completions: BTreeMap::new(),
+      triage: BTreeMap::new(),
       admitted_at: admission.admitted_at,
       current_claim_id: None,
       claims: BTreeMap::new(),
@@ -208,7 +230,7 @@ impl StoredFactoryRun {
     })
   }
 
-  fn snapshot(&self) -> Result<FactoryRunSnapshot, StoreError> {
+  pub(super) fn snapshot(&self) -> Result<FactoryRunSnapshot, StoreError> {
     self.validate_integrity()?;
     require_with(
       self.record_count() <= MAX_FACTORY_RUN_SNAPSHOT_RECORDS,
@@ -224,6 +246,7 @@ impl StoredFactoryRun {
         cycles: values(&self.workflow_cycles),
         attempts: values(&self.node_attempts),
         completions: values(&self.node_attempt_completions),
+        triage: values(&self.triage),
       },
       current_claim: self
         .current_claim_id
@@ -339,6 +362,18 @@ impl StoredFactoryRun {
     let cycles = values(&self.workflow_cycles);
     let attempts = values(&self.node_attempts);
     let completions = values(&self.node_attempt_completions);
+    crate::validate_factory_triage_history(
+      &self.work,
+      &self.admitted_flow,
+      &values(&self.triage),
+      FlowRuntimeHistory {
+        flow_runs: &flow_runs,
+        cycles: &cycles,
+        attempts: &attempts,
+        completions: &completions,
+      },
+    )
+    .map_err(|_| invalid_transition(StoreOperation::ReadFactoryRunSnapshot))?;
     validate_flow_runtime_history(
       &self.admitted_flow,
       FlowRuntimeHistory {
@@ -695,6 +730,7 @@ impl StoredFactoryRun {
       + self.workflow_cycles.len()
       + self.node_attempts.len()
       + self.node_attempt_completions.len()
+      + self.triage.len()
       + self.stage_attempts.len()
       + self.stage_attempt_completions.len()
       + self.stage_handoffs.len()
@@ -1546,6 +1582,8 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
       current: &stored.current,
       claim,
       admitted_flow: &stored.admitted_flow,
+      work: &stored.work,
+      triage: &values(&stored.triage),
       stage_attempts: &stored.stage_attempts,
       node_attempts: &stored.node_attempts,
       node_completions: &stored.node_attempt_completions,
@@ -1563,6 +1601,9 @@ fn validate_transition(stored: &StoredFactoryRun, request: &CommitFactoryRunTran
 }
 
 fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppend) -> Result<(), StoreError> {
+  for record in &append.flow.triage {
+    append_unique(&mut stored.triage, record.phase(), record.clone())?;
+  }
   for record in &append.flow.runs {
     append_unique(&mut stored.flow_runs, record.id(), record.clone())?;
   }
@@ -1894,6 +1935,7 @@ mod tests {
       project_id,
       digest(97),
       FactoryConfigurationDraft {
+        flow: None,
         admission_policy: key("admission"),
         stages: vec![
           stage("implement", FactoryStageKind::Implementation),
@@ -1980,6 +2022,447 @@ mod tests {
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     store.lock().unwrap().factory_runs.insert(run.id(), stored);
     Fixture { store, work, run }
+  }
+
+  fn seed_pool_runs(fixture: &Fixture, count: u64) -> Vec<FactoryRunId> {
+    let mut runs = vec![fixture.run.id()];
+    for index in 1..count {
+      let work = WorkEnvelope::new(
+        id::<WorkEnvelopeId>(400 + index),
+        fixture.work.configuration().clone(),
+        ExternalWorkIdentity::new(format!("manual/pool-{index}")).unwrap(),
+        fixture.work.subject().clone(),
+        fixture.work.artifacts().clone(),
+        WorkClassification::new(fixture.work.priority(), fixture.work.risk(), FactoryMetadata::default()),
+      )
+      .unwrap();
+      let run = FactoryRun::admitted(id::<FactoryRunId>(500 + index), &work);
+      let admission = PublishedFactoryAdmission {
+        work,
+        run: run.clone(),
+        flow: admitted_flow(&run),
+        admitted_at: time(1),
+      };
+      let context = crate::testing::management_mutation_with_request((), format!("pool-admission-{index}"))
+        .audit()
+        .clone();
+      fixture
+        .store
+        .seed_factory_run(admission, digest(u8::try_from(index + 20).unwrap()), &context)
+        .unwrap();
+      runs.push(run.id());
+    }
+    runs
+  }
+
+  #[test]
+  fn durable_phase_pool_contract() {
+    let fixture = fixture();
+    let runs = seed_pool_runs(&fixture, 5);
+    run_ready(
+      crate::testing::verify_factory_phase_pool_contract(fixture.store.as_ref(), &runs),
+      "pool contract yielded",
+    );
+  }
+
+  #[test]
+  fn phase_pool_progresses_past_blocked_window_without_changing_replay() {
+    let fixture = fixture();
+    let runs = seed_pool_runs(&fixture, 101);
+    run_ready(
+      crate::testing::verify_factory_phase_pool_progress(fixture.store.as_ref(), fixture.store.as_ref(), &runs),
+      "pool progress yielded",
+    );
+  }
+
+  #[test]
+  fn phase_pool_rechecks_priority_after_capability_or_lease_changes() {
+    for lease_blocked in [false, true] {
+      let fixture = fixture();
+      let runs = seed_pool_runs(&fixture, 101);
+      run_ready(
+        crate::testing::verify_factory_phase_pool_scan_invalidation(
+          fixture.store.as_ref(),
+          fixture.store.as_ref(),
+          &runs,
+          lease_blocked,
+        ),
+        "pool invalidation contract yielded",
+      );
+    }
+  }
+
+  fn pool_policy() -> octacity_server_factory::PhasePoolPolicy {
+    octacity_server_factory::PhasePoolPolicy {
+      phase: key("development.v1"),
+      order: vec![
+        octacity_server_factory::PhasePoolOrder::Severity,
+        octacity_server_factory::PhasePoolOrder::ProjectPriority,
+        octacity_server_factory::PhasePoolOrder::Age,
+      ],
+      max_wip: 1,
+      max_project_wip: 1,
+      budget: budget(),
+    }
+  }
+
+  fn pool_request(policy: &octacity_server_factory::PhasePoolPolicy, byte: u8) -> crate::SelectPhasePool {
+    crate::SelectPhasePool {
+      policy_digest: policy.digest(),
+      request_id: digest(byte),
+      owner: key(&format!("pool.worker.{byte}")),
+      observed_at: time(10),
+      expires_at: time(100),
+      capabilities: BTreeSet::new(),
+      limit: 1,
+    }
+  }
+
+  #[test]
+  fn phase_pool_concurrent_publications_preserve_ties_and_workers_cannot_overbook() {
+    use crate::FactoryPhasePoolStore;
+    let fixture = fixture();
+    let runs = seed_pool_runs(&fixture, 5);
+    std::thread::scope(|scope| {
+      for run in runs.iter().rev() {
+        let store = fixture.store.clone();
+        let run = *run;
+        scope.spawn(move || {
+          run_ready(
+            async {
+              let snapshot = store.factory_run_snapshot(run).await.unwrap();
+              let input = crate::testing::phase_pool_contract_input(&snapshot, FindingSeverity::Medium);
+              store.publish_phase_ready(pool_policy(), input).await.unwrap();
+            },
+            "concurrent publication yielded",
+          )
+        });
+      }
+    });
+    run_ready(
+      async {
+        let entries = fixture
+          .store
+          .phase_ready_entries(pool_policy().digest(), None, 100)
+          .await
+          .unwrap();
+        let mut expected = runs.clone();
+        expected.sort_by_key(|run| run.as_uuid().as_u128());
+        assert_eq!(
+          entries.iter().map(|entry| entry.input.run_id).collect::<Vec<_>>(),
+          expected
+        );
+      },
+      "ordered pool read yielded",
+    );
+    let selected = std::thread::scope(|scope| {
+      let workers = (110..112)
+        .map(|byte| {
+          let store = fixture.store.clone();
+          scope.spawn(move || {
+            let mut selected = Vec::new();
+            run_ready(
+              async {
+                selected = store
+                  .select_phase_ready(pool_request(&pool_policy(), byte))
+                  .await
+                  .unwrap();
+              },
+              "selection yielded",
+            );
+            selected
+          })
+        })
+        .collect::<Vec<_>>();
+      workers
+        .into_iter()
+        .flat_map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>()
+    });
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].entry.input.run_id, runs[0]);
+  }
+
+  #[test]
+  fn phase_pool_rejects_unreachable_rewritten_and_stale_candidates() {
+    use crate::FactoryPhasePoolStore;
+    let fixture = fixture();
+    run_ready(
+      async {
+        let snapshot = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let input = crate::testing::phase_pool_contract_input(&snapshot, FindingSeverity::Medium);
+        let entry = fixture
+          .store
+          .publish_phase_ready(pool_policy(), input.clone())
+          .await
+          .unwrap();
+        let mut unreachable = input.clone();
+        unreachable.node = key("evaluate");
+        assert!(
+          fixture
+            .store
+            .publish_phase_ready(pool_policy(), unreachable)
+            .await
+            .is_err()
+        );
+        let mut rewritten = input.clone();
+        rewritten.project_priority += 1;
+        assert!(
+          fixture
+            .store
+            .publish_phase_ready(pool_policy(), rewritten)
+            .await
+            .is_err()
+        );
+        let mut forged = input.clone();
+        forged.dependencies.push(crate::PhasePoolDependency {
+          run_id: input.run_id,
+          work_id: snapshot.work.id(),
+          work_digest: crate::phase_pool_work_digest(&snapshot),
+          terminal: key("succeeded"),
+        });
+        assert!(fixture.store.publish_phase_ready(pool_policy(), forged).await.is_err());
+        seed_full_history(&fixture).await;
+        assert!(fixture.store.publish_phase_ready(pool_policy(), input).await.is_err());
+        assert!(
+          fixture
+            .store
+            .phase_ready_entries(pool_policy().digest(), None, 100)
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+          fixture
+            .store
+            .select_phase_ready(pool_request(&pool_policy(), 120))
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert_eq!(entry.input.run_version, FactoryRunVersion::INITIAL);
+      },
+      "stale pool test yielded",
+    );
+  }
+
+  #[test]
+  fn phase_pool_checks_every_remaining_budget_and_preserves_running_reservations_after_expiry() {
+    use crate::FactoryPhasePoolStore;
+    use octacity_server_factory::{NodeAttemptInput, NodeAttemptNumber, NodeExecutionIdentity};
+    let fixture = fixture();
+    run_ready(
+      async {
+        let snapshot = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let input = crate::testing::phase_pool_contract_input(&snapshot, FindingSeverity::Medium);
+        let entry = fixture.store.publish_phase_ready(pool_policy(), input).await.unwrap();
+        let limit = snapshot.admitted_flow.limits().budget();
+        for reserve in [
+          BudgetUsage {
+            attempts: limit.max_attempts(),
+            ..entry.input.reservation
+          },
+          BudgetUsage {
+            elapsed_millis: limit.max_elapsed_millis(),
+            ..entry.input.reservation
+          },
+          BudgetUsage {
+            tokens: limit.max_tokens(),
+            ..entry.input.reservation
+          },
+          BudgetUsage {
+            cost_micro_units: limit.max_cost_micro_units(),
+            ..entry.input.reservation
+          },
+          BudgetUsage {
+            output_bytes: limit.max_output_bytes(),
+            ..entry.input.reservation
+          },
+        ] {
+          let mut exhausted = snapshot.clone();
+          exhausted
+            .budgets
+            .iter_mut()
+            .find(|row| row.id == exhausted.current.budget_id)
+            .unwrap()
+            .usage = reserve;
+          assert!(!crate::phase_pool_run_budget_ready(&entry, &exhausted));
+        }
+        let selection = fixture
+          .store
+          .select_phase_ready(pool_request(&pool_policy(), 130))
+          .await
+          .unwrap()
+          .pop()
+          .unwrap();
+        let definition = snapshot
+          .admitted_flow
+          .closure()
+          .definition(snapshot.admitted_flow.closure().root())
+          .unwrap();
+        let node = definition.node(&entry.input.node).unwrap();
+        let attempt = NodeAttempt::new(
+          snapshot.admitted_flow.root_run(),
+          snapshot.admitted_flow.initial_cycle(),
+          definition,
+          NodeAttemptInput {
+            id: id(700),
+            node_key: entry.input.node.clone(),
+            node_kind: node.kind(),
+            number: NodeAttemptNumber::INITIAL,
+            input_digest: digest(131),
+            budget: node.budget(),
+            deadline: time(100),
+            execution: NodeExecutionIdentity::External(reference("pool.executor", 132)),
+            ownership: octacity_server_factory::FactoryClaimOwnership::new(selection.owner.clone(), selection.claim),
+          },
+        )
+        .unwrap();
+        let mut running = snapshot.clone();
+        running.flow.attempts.push(attempt.clone());
+        assert!(crate::phase_pool_selection_active(&selection, &running, time(101)));
+        assert!(crate::phase_pool_selection_active(&selection, &snapshot, time(101)));
+        let completion = NodeAttemptCompletion::new(
+          &attempt,
+          definition,
+          NodeAttemptCompletionInput {
+            outcome: key("succeeded"),
+            output_schema: node.outcome(&key("succeeded")).unwrap().schema().clone(),
+            output_digest: digest(133),
+            ownership: octacity_server_factory::FactoryClaimOwnership::new(selection.owner.clone(), selection.claim),
+            usage: BudgetUsage::default(),
+            observed_at: time(20),
+          },
+        )
+        .unwrap();
+        running.flow.completions.push(completion);
+        assert!(!crate::phase_pool_selection_active(&selection, &running, time(30)));
+      },
+      "budget pool test yielded",
+    );
+  }
+
+  #[test]
+  fn phase_pool_enforces_project_wip_independently_of_pool_capacity() {
+    use crate::FactoryPhasePoolStore;
+    let fixture = fixture();
+    let runs = seed_pool_runs(&fixture, 2);
+    run_ready(
+      async {
+        let mut policy = pool_policy();
+        policy.max_wip = 2;
+        for run in &runs {
+          let snapshot = fixture.store.factory_run_snapshot(*run).await.unwrap();
+          fixture
+            .store
+            .publish_phase_ready(
+              policy.clone(),
+              crate::testing::phase_pool_contract_input(&snapshot, FindingSeverity::Medium),
+            )
+            .await
+            .unwrap();
+        }
+        let mut request = pool_request(&policy, 140);
+        request.limit = 2;
+        assert_eq!(fixture.store.select_phase_ready(request).await.unwrap().len(), 1);
+      },
+      "project WIP test yielded",
+    );
+  }
+
+  #[test]
+  fn phase_pool_dependencies_require_the_exact_completed_root_resolution() {
+    use octacity_server_factory::{NodeAttemptInput, NodeAttemptNumber, NodeExecutionIdentity};
+    let fixture = fixture();
+    run_ready(
+      async {
+        let mut snapshot = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let mut dependency = crate::PhasePoolDependency {
+          run_id: fixture.run.id(),
+          work_id: fixture.work.id(),
+          work_digest: crate::phase_pool_work_digest(&snapshot),
+          terminal: key("succeeded"),
+        };
+        let project = fixture.run.subject().project_id();
+        assert!(!crate::phase_pool_dependency_ready(&dependency, project, &snapshot));
+        let definition = snapshot
+          .admitted_flow
+          .closure()
+          .definition(snapshot.admitted_flow.closure().root())
+          .unwrap()
+          .clone();
+        let ownership = octacity_server_factory::FactoryClaimOwnership::new(
+          key("dependency.worker"),
+          FactoryClaim::new(FactoryClaimFence::new(digest(150)), time(10), time(100)).unwrap(),
+        );
+        for (index, node_key) in ["implement", "validate", "evaluate"].into_iter().enumerate() {
+          let node = definition.node(&key(node_key)).unwrap();
+          let attempt = NodeAttempt::new(
+            snapshot.admitted_flow.root_run(),
+            snapshot.admitted_flow.initial_cycle(),
+            &definition,
+            NodeAttemptInput {
+              id: id(800 + u64::try_from(index).unwrap()),
+              node_key: key(node_key),
+              node_kind: node.kind(),
+              number: NodeAttemptNumber::new(u64::try_from(index + 1).unwrap()).unwrap(),
+              input_digest: digest(151),
+              budget: node.budget(),
+              deadline: time(100),
+              execution: NodeExecutionIdentity::External(reference("dependency.executor", 152)),
+              ownership: ownership.clone(),
+            },
+          )
+          .unwrap();
+          let completion = NodeAttemptCompletion::new(
+            &attempt,
+            &definition,
+            NodeAttemptCompletionInput {
+              outcome: key("succeeded"),
+              output_schema: node.outcome(&key("succeeded")).unwrap().schema().clone(),
+              output_digest: digest(153),
+              ownership: ownership.clone(),
+              usage: BudgetUsage::default(),
+              observed_at: time(20 + i64::try_from(index).unwrap()),
+            },
+          )
+          .unwrap();
+          snapshot.flow.attempts.push(attempt);
+          snapshot.flow.completions.push(completion);
+          validate_flow_runtime_history(
+            &snapshot.admitted_flow,
+            FlowRuntimeHistory {
+              flow_runs: &snapshot.flow.runs,
+              cycles: &snapshot.flow.cycles,
+              attempts: &snapshot.flow.attempts,
+              completions: &snapshot.flow.completions,
+            },
+          )
+          .unwrap();
+          assert_eq!(
+            crate::phase_pool_dependency_ready(&dependency, project, &snapshot),
+            node_key == "evaluate"
+          );
+          if node_key == "implement" {
+            let mut successor = crate::testing::phase_pool_contract_input(&snapshot, FindingSeverity::Low);
+            successor.node = key("validate");
+            assert!(crate::derive_phase_pool_entry(&pool_policy(), successor, &snapshot).is_ok());
+          }
+        }
+        dependency.work_digest = digest(154);
+        assert!(!crate::phase_pool_dependency_ready(&dependency, project, &snapshot));
+        dependency.work_digest = crate::phase_pool_work_digest(&snapshot);
+        dependency.terminal = key("failed");
+        assert!(!crate::phase_pool_dependency_ready(&dependency, project, &snapshot));
+        dependency.terminal = key("succeeded");
+        assert!(!crate::phase_pool_dependency_ready(
+          &dependency,
+          id::<ProjectId>(999),
+          &snapshot
+        ));
+      },
+      "dependency resolution test yielded",
+    );
   }
 
   fn audit(run_id: FactoryRunId, operation: &str, byte: u8, recorded_at: i64) -> FactoryAuditFact {

@@ -566,6 +566,9 @@ impl DeliveryPolicy {
 pub struct FactoryConfigurationDraft {
   /// Alias of the immutable admission policy governing later Work selection.
   pub admission_policy: FactoryKey,
+  /// Optional pinned nested Flow journey; absent retains the fixed-stage journey.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub flow: Option<crate::FactoryFlowConfiguration>,
   /// Stage definitions and Build Configuration aliases.
   pub stages: Vec<FactoryStageDraft>,
   /// Per-configuration work-in-progress limits.
@@ -594,6 +597,8 @@ pub struct FactoryConfigurationDraft {
 pub struct FactoryConfiguration {
   reference: FactoryConfigurationRef,
   admission_policy: ImmutableReference,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  flow: Option<crate::FactoryFlowConfiguration>,
   stages: Vec<FactoryStageDefinition>,
   wip_limits: FactoryWipLimits,
   hard_budget: BudgetLimit,
@@ -628,9 +633,17 @@ impl FactoryConfiguration {
     let permission_ceiling =
       choices.resolve_reference(FactoryChoiceKind::PermissionCeiling, &draft.permission_ceiling)?;
 
+    if let Some(flow) = &draft.flow {
+      flow.validate(
+        &FactoryConfigurationRef::new(id, version, project_id, definition_digest),
+        draft.hard_budget,
+        draft.wip_limits,
+      )?;
+    }
     Ok(Self {
       reference: FactoryConfigurationRef::new(id, version, project_id, definition_digest),
       admission_policy,
+      flow: draft.flow,
       stages,
       wip_limits: draft.wip_limits,
       hard_budget: draft.hard_budget,
@@ -677,6 +690,12 @@ impl FactoryConfiguration {
   #[must_use]
   pub const fn admission_policy(&self) -> &ImmutableReference {
     &self.admission_policy
+  }
+
+  /// Returns the optional immutable nested Flow journey.
+  #[must_use]
+  pub const fn flow(&self) -> Option<&crate::FactoryFlowConfiguration> {
+    self.flow.as_ref()
   }
 
   /// Returns the immutable stage definitions.

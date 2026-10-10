@@ -46,6 +46,8 @@ mod lifecycle_decision_tests;
 mod permission;
 #[cfg(test)]
 mod permission_tests;
+mod phase_pool;
+mod research;
 mod review_plan;
 #[cfg(test)]
 mod review_plan_tests;
@@ -53,6 +55,7 @@ mod subject;
 mod task_contract;
 #[cfg(test)]
 mod task_contract_tests;
+mod triage;
 mod value;
 
 pub use assessment::{
@@ -139,6 +142,15 @@ pub use permission::{
   MAX_FACTORY_OUTPUT_COUNT, MAX_FACTORY_PROCESS_COUNT, MAX_PERMISSION_ENTRIES_PER_CATEGORY, MAX_PERMISSION_HOST_BYTES,
   MAX_PERMISSION_PATH_BYTES, MountPermission, NetworkHost, resolve_factory_permissions,
 };
+pub use phase_pool::{MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, reserve_phase_budget};
+pub use research::{
+  AcceptedResearchEvidence, DefectResearchOutcome, DefectResearchResult, FeatureResearchResult, MAX_RESEARCH_ATTEMPTS,
+  MAX_RESEARCH_CONTRACT_BYTES, MAX_RESEARCH_ITEMS, MAX_RESEARCH_PROPOSAL_BYTES, RESEARCH_CONTRACT_VERSION,
+  ResearchAcceptance, ResearchAttemptDisposition, ResearchDecision, ResearchDetails, ResearchEvidenceFact,
+  ResearchEvidenceKind, ResearchEvidenceRecord, ResearchInput, ResearchNodeProfile, ResearchObservations,
+  ResearchOutcome, ResearchPolicy, ResearchPolicySettings, ResearchProvenance, ResearchReason, ResearchResult,
+  ResearchRoute, ResearchSchema, ResearchSourceReference, ResearchStageHandoff,
+};
 pub use review_plan::{
   CriterionPack, EvaluationPlan, EvaluationPlanDefinition, MAX_CRITERION_PACKS, MAX_EVALUATORS, ReviewBranch,
   ReviewEvaluatorCapability, ReviewPlanEscalation, ReviewPlanPreparation, ReviewPurpose, prepare_evaluation_plan,
@@ -155,6 +167,15 @@ pub use task_contract::{
   MAX_TASK_DELIVERABLES, MAX_TASK_EVALUATION_FINDINGS, MAX_TASK_PRIOR_FINDINGS, MacroCallCompletion,
   MacroCallCompletionOutputs, MacroCallTerminal, RETRIEVAL_RECEIPT_VERSION, RepositoryFragment, RetrievalReceipt,
   StageHandoff, StageHandoffContent, StageHandoffDeclaration, StageHandoffOutcome, StageHandoffReferences,
+};
+pub use triage::{
+  AcceptedTriageEvidence, ClassificationInput, ClassificationReceipt, DuplicateAssessment, DuplicateCandidate,
+  DuplicateStatus, EligibilityDecision, EligibilityInput, EligibilityOutcome, EligibilityReceipt, EligibilityResult,
+  FactoryFlowConfiguration, FactoryTriageConfiguration, FactoryTriageExecutionProfile, MAX_TRIAGE_OBSERVATIONS,
+  PreliminaryReproducibility, ProjectFit, TRIAGE_CONTRACT_VERSION, TriageClassification, TriageDecision,
+  TriageDependency, TriageDisposition, TriageEvidenceFact, TriageJournalRecord, TriageNode, TriageObservation,
+  TriagePolicy, TriagePolicySettings, TriageProvenance, TriageReason, TriageResult, TriageRoute, TriageSchema,
+  WorkKind, WorkSize, compose_triage_flow, validate_triage_phase_observation,
 };
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,

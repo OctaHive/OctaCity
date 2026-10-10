@@ -183,7 +183,8 @@ fn validate_definition(
           successor.clone(),
         )),
         (_, FlowTransitionTarget::Node(_) | FlowTransitionTarget::Terminal(_)) => None,
-      }),
+      })
+      .collect::<std::collections::BTreeSet<_>>(),
     [definition.entry().clone()],
   )
   .map_err(|_| invalid("Flow unbounded control graph"))?;

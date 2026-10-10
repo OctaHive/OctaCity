@@ -35,6 +35,7 @@ mod factory_configuration_model;
 mod factory_configuration_port;
 mod factory_discovery_model;
 mod factory_discovery_port;
+mod factory_phase_pool;
 mod factory_retention_model;
 mod factory_retention_port;
 mod factory_run_control;
@@ -94,6 +95,10 @@ mod configuration_testing;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_configuration_testing;
 
+#[cfg(any(test, feature = "test-support"))]
+mod factory_phase_pool_contract_testing;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_phase_pool_testing;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_run_testing;
 
@@ -258,6 +263,12 @@ pub use factory_discovery_model::{
   ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE, MAX_FACTORY_RUN_PAGE_SIZE,
 };
 pub use factory_discovery_port::FactoryDiscoveryStore;
+pub use factory_phase_pool::{
+  FactoryPhasePoolStore, PhasePoolCandidate, PhasePoolDependency, PhasePoolEntry, PhasePoolInput, PhasePoolSelection,
+  SelectPhasePool, compare_phase_pool_entries, derive_phase_pool_entry, observe_phase_pool_candidate,
+  phase_pool_dependency_ready, phase_pool_run_budget_ready, phase_pool_selection, phase_pool_selection_active,
+  phase_pool_work_digest, plan_phase_pool_selection,
+};
 pub use factory_retention_model::{
   AdvanceFactoryRetentionWork, ClaimFactoryRetentionWork, FactoryArtifactRole, FactoryRetentionPassOutcome,
   FactoryRetentionPhase, FactoryRetentionWorkClaim, FailFactoryRetentionWork, MAX_FACTORY_RETENTION_CLEANUP_BATCH_SIZE,
@@ -704,3 +715,6 @@ mod tests {
     assert_eq!(definition.validate(), Err(StoreInputError::InvalidWebhookDefinition));
   }
 }
+
+mod factory_triage;
+pub use factory_triage::validate_factory_triage_history;

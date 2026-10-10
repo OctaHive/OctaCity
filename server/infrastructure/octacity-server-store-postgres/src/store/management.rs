@@ -466,3 +466,25 @@ impl AgentCredentialStore for PostgresStore {
     crate::agent_credential_revocation::execute(&self.pool, request, &audit).await
   }
 }
+
+#[async_trait]
+impl FactoryPhasePoolStore for PostgresStore {
+  async fn publish_phase_ready(
+    &self,
+    policy: octacity_server_factory::PhasePoolPolicy,
+    input: PhasePoolInput,
+  ) -> Result<PhasePoolEntry, StoreError> {
+    crate::factory_run::publish_phase_ready(&self.pool, policy, input).await
+  }
+  async fn phase_ready_entries(
+    &self,
+    policy: octacity_server_factory::FactoryDigest,
+    after: Option<octacity_server_factory::FactoryDigest>,
+    limit: u16,
+  ) -> Result<Vec<PhasePoolEntry>, StoreError> {
+    crate::factory_run::phase_ready_entries(&self.pool, policy, after, limit).await
+  }
+  async fn select_phase_ready(&self, request: SelectPhasePool) -> Result<Vec<PhasePoolSelection>, StoreError> {
+    crate::factory_run::select_phase_ready(&self.pool, request).await
+  }
+}

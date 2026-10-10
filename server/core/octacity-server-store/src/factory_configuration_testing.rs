@@ -159,6 +159,7 @@ pub(super) struct FactoryConfigurationMemoryState {
   evidence: BTreeSet<String>,
   audit: BTreeSet<RecordedManagementAuditFact>,
   pub(super) factory_runs: BTreeMap<octacity_server_factory::FactoryRunId, StoredFactoryRun>,
+  pub(super) phase_pools: crate::factory_phase_pool_testing::PhasePoolMemoryState,
   pub(super) factory_run_controls: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredFactoryRunControl>,
 }
 

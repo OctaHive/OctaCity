@@ -23,11 +23,20 @@ use crate::{
 
 pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result<FactoryRunSnapshot, StoreError> {
   let mut transaction = pool.begin().await.map_err(unavailable)?;
-  let locked = lock_run(&mut transaction, run_id).await?;
-  let admitted_flow = read_admitted_flow(&mut transaction, &locked).await?;
-  let flow_runs = read_flow_runs(&mut transaction, run_id, &admitted_flow).await?;
-  let workflow_cycles = read_workflow_cycles(&mut transaction, run_id, &flow_runs).await?;
-  let (record_count, control_count) = snapshot_record_counts(&mut transaction, run_id).await?;
+  let snapshot = read_snapshot_in_transaction(&mut transaction, run_id).await?;
+  transaction.commit().await.map_err(unavailable)?;
+  Ok(snapshot)
+}
+
+pub(super) async fn read_snapshot_in_transaction(
+  transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+  run_id: FactoryRunId,
+) -> Result<FactoryRunSnapshot, StoreError> {
+  let locked = lock_run(transaction, run_id).await?;
+  let admitted_flow = read_admitted_flow(transaction, &locked).await?;
+  let flow_runs = read_flow_runs(transaction, run_id, &admitted_flow).await?;
+  let workflow_cycles = read_workflow_cycles(transaction, run_id, &flow_runs).await?;
+  let (record_count, control_count) = snapshot_record_counts(transaction, run_id).await?;
   if record_count > MAX_FACTORY_RUN_SNAPSHOT_RECORDS || control_count != 0 {
     return Err(StoreError::Unavailable);
   }
@@ -37,7 +46,7 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
      FROM factory_run_claims WHERE run_id = $1 ORDER BY id",
   )
   .bind(run_id.as_uuid())
-  .fetch_all(&mut *transaction)
+  .fetch_all(&mut **transaction)
   .await
   .map_err(unavailable)?
   .into_iter()
@@ -48,7 +57,7 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
      FROM factory_run_budgets WHERE run_id = $1 ORDER BY id",
   )
   .bind(run_id.as_uuid())
-  .fetch_all(&mut *transaction)
+  .fetch_all(&mut **transaction)
   .await
   .map_err(unavailable)?
   .into_iter()
@@ -67,7 +76,7 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
      FROM factory_lifecycle_checkpoints WHERE run_id = $1 ORDER BY id",
   )
   .bind(run_id.as_uuid())
-  .fetch_all(&mut *transaction)
+  .fetch_all(&mut **transaction)
   .await
   .map_err(unavailable)?
   .into_iter()
@@ -89,13 +98,13 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
      FROM factory_audit_links WHERE run_id = $1 ORDER BY id",
   )
   .bind(run_id.as_uuid())
-  .fetch_all(&mut *transaction)
+  .fetch_all(&mut **transaction)
   .await
   .map_err(unavailable)?
   .into_iter()
   .map(decode_audit_row)
   .collect::<Result<Vec<_>, _>>()?;
-  let outbox = outbox_rows(&mut transaction, run_id).await?;
+  let outbox = outbox_rows(transaction, run_id).await?;
   let current_claim = locked
     .claim_id
     .map(|id| {
@@ -106,8 +115,19 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
         .ok_or(StoreError::Unavailable)
     })
     .transpose()?;
-  let history = history_rows(&mut transaction, run_id, &admitted_flow, &flow_runs, &workflow_cycles).await?;
+  let history = history_rows(transaction, run_id, &admitted_flow, &flow_runs, &workflow_cycles).await?;
   validate_history(run_id, &admitted_flow, &history)?;
+  octacity_server_store::validate_factory_triage_history(
+    &locked.work,
+    &admitted_flow,
+    &history.flow.triage,
+    FlowRuntimeHistory {
+      flow_runs: &flow_runs,
+      cycles: &workflow_cycles,
+      attempts: &history.flow.attempts,
+      completions: &history.flow.completions,
+    },
+  )?;
   validate_flow_runtime_history(
     &admitted_flow,
     FlowRuntimeHistory {
@@ -119,7 +139,6 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
   )
   .map_err(|_| StoreError::Unavailable)?;
   validate_evaluation_progress(&locked.lifecycle, &locked.current, &history)?;
-  transaction.commit().await.map_err(unavailable)?;
   Ok(FactoryRunSnapshot {
     work: locked.work,
     run: locked.run,
@@ -128,6 +147,7 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
       cycles: workflow_cycles,
       attempts: history.flow.attempts,
       completions: history.flow.completions,
+      triage: history.flow.triage,
     },
     admitted_flow,
     current_claim,
@@ -198,8 +218,10 @@ pub(super) async fn read_admitted_flow(
     rows.into_iter().map(|(Json(definition), _)| definition).collect(),
   )
   .map_err(|_| StoreError::Unavailable)?;
-  let expected =
-    PinnedFlowDefinitionClosure::from_stage_projection(&configuration).map_err(|_| StoreError::Unavailable)?;
+  let expected = match configuration.flow() {
+    Some(flow) => flow.closure.clone(),
+    None => PinnedFlowDefinitionClosure::from_stage_projection(&configuration).map_err(|_| StoreError::Unavailable)?,
+  };
   if closure != expected {
     return Err(StoreError::Unavailable);
   }
@@ -211,8 +233,14 @@ pub(super) async fn read_admitted_flow(
       .map_err(unavailable)?;
   let admitted_root = FlowRun::root(&locked.run, closure.root()).map_err(|_| StoreError::Unavailable)?;
   let admitted_cycle = WorkflowCycle::initial(&admitted_root).map_err(|_| StoreError::Unavailable)?;
-  let admitted =
-    AdmittedFlow::new(closure, limits, admitted_root, admitted_cycle).map_err(|_| StoreError::Unavailable)?;
+  let admitted = AdmittedFlow::from_configuration(&configuration, &locked.run).map_err(|_| StoreError::Unavailable)?;
+  if admitted.closure() != &closure
+    || admitted.limits() != &limits
+    || admitted.root_run() != &admitted_root
+    || admitted.initial_cycle() != &admitted_cycle
+  {
+    return Err(StoreError::Unavailable);
+  }
   let root = admitted.root_run();
   let definition = root.definition();
   let cycle = admitted.initial_cycle();
@@ -389,6 +417,7 @@ pub(super) async fn snapshot_record_counts(
        (SELECT COUNT(*) FROM factory_flow_runs WHERE factory_run_id = $1) + \
        (SELECT COUNT(*) FROM factory_workflow_cycles WHERE factory_run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempts WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_triage_records WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempt_completions WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_stage_attempts WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_stage_attempt_completions WHERE run_id = $1) + \

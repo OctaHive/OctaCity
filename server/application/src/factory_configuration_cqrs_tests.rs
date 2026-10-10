@@ -84,6 +84,7 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
     budget: budget(2),
   };
   let draft = FactoryConfigurationDraft {
+    flow: None,
     admission_policy: key("admission"),
     stages: vec![
       stage("implement", FactoryStageKind::Implementation),

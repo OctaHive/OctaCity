@@ -70,6 +70,8 @@ async fn validate_transition(
       current: &locked.current,
       claim: &claim,
       admitted_flow: &admitted_flow,
+      work: &locked.work,
+      triage: &super::history::triage_history(transaction, request.run_id).await?,
       stage_attempts: &stage_attempts,
       node_attempts: &node_attempts,
       node_completions: &node_completions,

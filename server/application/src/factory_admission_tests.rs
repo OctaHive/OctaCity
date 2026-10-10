@@ -50,6 +50,14 @@ fn exact(identity: &str, value: u8) -> ImmutableReference {
 }
 
 pub(super) fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -> FactoryConfiguration {
+  configuration_with_flow(project_id, id, None)
+}
+
+pub(super) fn configuration_with_flow(
+  project_id: ProjectId,
+  id: FactoryConfigurationId,
+  flow: Option<octacity_server_factory::FactoryFlowConfiguration>,
+) -> FactoryConfiguration {
   let build = BuildConfigurationRef::new(
     BuildConfigurationId::generate(),
     BuildConfigurationVersion::INITIAL,
@@ -105,6 +113,7 @@ pub(super) fn configuration(project_id: ProjectId, id: FactoryConfigurationId) -
     project_id,
     digest(20),
     FactoryConfigurationDraft {
+      flow,
       admission_policy: key("admission"),
       stages: vec![
         stage("implement", FactoryStageKind::Implementation),
@@ -449,7 +458,7 @@ fn work_metadata_is_bounded_and_rejects_sensitive_keys_before_admission() {
   );
 }
 
-fn run_ready<T>(future: impl Future<Output = T>) -> T {
+pub(super) fn run_ready<T>(future: impl Future<Output = T>) -> T {
   let waker = Waker::noop();
   let mut context = Context::from_waker(waker);
   let mut future = std::pin::pin!(future);

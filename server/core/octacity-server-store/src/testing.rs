@@ -82,6 +82,10 @@ pub use crate::definition_discovery_contract_testing::{
 };
 pub use crate::definition_discovery_testing::InMemoryTriggerDefinitionDiscoveryStore;
 pub use crate::factory_configuration_testing::InMemoryFactoryConfigurationStore;
+pub use crate::factory_phase_pool_contract_testing::{
+  phase_pool_contract_input, verify_factory_phase_pool_contract, verify_factory_phase_pool_progress,
+  verify_factory_phase_pool_scan_invalidation,
+};
 pub use crate::log_search_contract_testing::{
   verify_in_memory_log_search_index_contract, verify_log_search_index_contract,
 };

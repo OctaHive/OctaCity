@@ -184,6 +184,7 @@ fn fixture() -> Fixture {
       cycles: vec![cycle],
       attempts: vec![node],
       completions: vec![],
+      triage: Vec::new(),
     },
     current_claim: None,
     claims: vec![],

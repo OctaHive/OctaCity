@@ -36,6 +36,13 @@ mod diagnostic;
 mod error;
 mod external_trigger;
 mod factory_admission;
+mod factory_triage;
+#[cfg(test)]
+mod factory_triage_tests;
+pub use factory_triage::{
+  FactoryTriageCoordinator, FactoryTriageDiscovery, FactoryTriageEvidenceValidator, FactoryTriagePhaseExecutor,
+  FactoryTriagePhaseInput, FactoryTriagePhaseRequest, FactoryTriagePhaseResult, FactoryTriageRunner, FactoryTriageStep,
+};
 #[cfg(test)]
 mod factory_admission_tests;
 mod factory_build_bridge;

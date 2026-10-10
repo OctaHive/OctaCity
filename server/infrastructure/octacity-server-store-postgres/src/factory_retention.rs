@@ -244,6 +244,9 @@ async fn delete_metadata_page(
   limit: u16,
 ) -> Result<u16, StoreError> {
   const DELETE_STEPS: &[&str] = &[
+    "WITH selected AS (SELECT ctid FROM factory_triage_records WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_triage_records WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_phase_pool_selections WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_phase_pool_selections WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_phase_pool_entries WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_phase_pool_entries WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_run_current WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_run_current WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT relation.ctid FROM factory_decision_assessments AS relation \

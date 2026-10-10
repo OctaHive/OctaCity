@@ -142,6 +142,18 @@ pub struct BudgetUsage {
 }
 
 impl BudgetUsage {
+  /// Adds all resource counters, rejecting overflow before any budget check.
+  #[must_use]
+  pub fn checked_add(self, other: Self) -> Option<Self> {
+    Some(Self {
+      attempts: self.attempts.checked_add(other.attempts)?,
+      elapsed_millis: self.elapsed_millis.checked_add(other.elapsed_millis)?,
+      tokens: self.tokens.checked_add(other.tokens)?,
+      cost_micro_units: self.cost_micro_units.checked_add(other.cost_micro_units)?,
+      output_bytes: self.output_bytes.checked_add(other.output_bytes)?,
+    })
+  }
+
   /// Validates usage against every hard limit.
   pub fn validate(self, limit: BudgetLimit) -> Result<Self, FactoryError> {
     for (exceeded, resource) in [
@@ -215,6 +227,41 @@ mod tests {
         resource: BudgetResource::Attempts,
       })
     );
+  }
+
+  #[test]
+  fn overflowing_usage_is_rejected_for_every_resource() {
+    let increment = BudgetUsage {
+      attempts: 1,
+      elapsed_millis: 1,
+      tokens: 1,
+      cost_micro_units: 1,
+      output_bytes: 1,
+    };
+    for saturated in [
+      BudgetUsage {
+        attempts: u32::MAX,
+        ..BudgetUsage::default()
+      },
+      BudgetUsage {
+        elapsed_millis: u64::MAX,
+        ..BudgetUsage::default()
+      },
+      BudgetUsage {
+        tokens: u64::MAX,
+        ..BudgetUsage::default()
+      },
+      BudgetUsage {
+        cost_micro_units: u64::MAX,
+        ..BudgetUsage::default()
+      },
+      BudgetUsage {
+        output_bytes: u64::MAX,
+        ..BudgetUsage::default()
+      },
+    ] {
+      assert!(saturated.checked_add(increment).is_none());
+    }
   }
 
   #[test]

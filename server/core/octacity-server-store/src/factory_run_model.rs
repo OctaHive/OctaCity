@@ -792,11 +792,13 @@ pub struct FactoryFlowHistory {
   pub attempts: Vec<NodeAttempt>,
   /// Append-only typed generic Node Attempt results.
   pub completions: Vec<NodeAttemptCompletion>,
+  /// Frozen intake inputs, observations, evidence, and deterministic dispositions.
+  pub triage: Vec<octacity_server_factory::TriageJournalRecord>,
 }
 
 impl FactoryFlowHistory {
   fn record_count(&self) -> usize {
-    self.runs.len() + self.cycles.len() + self.attempts.len() + self.completions.len()
+    self.runs.len() + self.cycles.len() + self.attempts.len() + self.completions.len() + self.triage.len()
   }
 }
 

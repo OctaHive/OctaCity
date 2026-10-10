@@ -558,7 +558,7 @@ fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, Stor
     version,
   )
   .map_err(|_| StoreError::Unavailable)?;
-  let flow = AdmittedFlow::from_stage_projection(&configuration, &run).map_err(|_| StoreError::Unavailable)?;
+  let flow = AdmittedFlow::from_configuration(&configuration, &run).map_err(|_| StoreError::Unavailable)?;
   Ok(PublishedFactoryAdmission {
     work,
     run,

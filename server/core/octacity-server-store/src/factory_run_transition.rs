@@ -30,6 +30,10 @@ pub struct FactoryTransitionBaseline<'a> {
   pub claim: &'a FactoryRunClaimRecord,
   /// Exact immutable Flow closure admitted with the Run.
   pub admitted_flow: &'a AdmittedFlow,
+  /// Immutable admitted Work for typed intake validation.
+  pub work: &'a octacity_server_factory::WorkEnvelope,
+  /// Existing append-only typed intake records.
+  pub triage: &'a [octacity_server_factory::TriageJournalRecord],
   /// Existing Stage Attempts keyed by immutable identity.
   pub stage_attempts: &'a BTreeMap<StageAttemptId, StageAttempt>,
   /// Existing generic Node Attempts keyed by immutable identity.
@@ -153,6 +157,23 @@ pub fn validate_factory_transition(
     .cloned()
     .chain(request.append.flow.completions.iter().cloned())
     .collect::<Vec<_>>();
+  let triage = baseline
+    .triage
+    .iter()
+    .cloned()
+    .chain(request.append.flow.triage.iter().cloned())
+    .collect::<Vec<_>>();
+  crate::validate_factory_triage_history(
+    baseline.work,
+    baseline.admitted_flow,
+    &triage,
+    FlowRuntimeHistory {
+      flow_runs: &flow_runs,
+      cycles: &workflow_cycles,
+      attempts: &node_attempts,
+      completions: &node_completions,
+    },
+  )?;
   let flow_runtime_is_valid = validate_flow_runtime_history(
     baseline.admitted_flow,
     FlowRuntimeHistory {
@@ -250,7 +271,13 @@ pub fn validate_factory_transition(
       && record.attempt == 0
       && record.is_canonical()
   });
-  let appended_attempt_count = u32::try_from(request.append.stage_attempts.len()).ok();
+  let configured_intake = baseline.admitted_flow.triage().is_some();
+  let appended_attempt_count = u32::try_from(if configured_intake {
+    request.append.flow.attempts.len()
+  } else {
+    request.append.stage_attempts.len()
+  })
+  .ok();
   let attempts_are_covered = appended_attempt_count.is_some_and(|count| {
     baseline
       .budget
@@ -270,8 +297,28 @@ pub fn validate_factory_transition(
     || !completion_budget_is_covered(
       baseline.budget.usage,
       request.budget.usage,
-      &request.append.stage_attempt_completions,
+      request
+        .append
+        .stage_attempt_completions
+        .iter()
+        .filter(|_| !configured_intake)
+        .map(StageAttemptCompletion::usage)
+        .chain(
+          request
+            .append
+            .flow
+            .completions
+            .iter()
+            .filter(|_| configured_intake)
+            .map(NodeAttemptCompletion::usage),
+        ),
     )
+    || configured_intake
+      && request
+        .budget
+        .usage
+        .validate(baseline.admitted_flow.limits().budget())
+        .is_err()
     || request.current.budget_id != request.budget.id
     || request.lifecycle_checkpoint != canonical_lifecycle
     || validate_lifecycle_progress(request.next_run.state(), &request.lifecycle_checkpoint.progress).is_err()
@@ -282,6 +329,12 @@ pub fn validate_factory_transition(
       &request.lifecycle_checkpoint.progress,
     )
     .is_err()
+      && !crate::factory_triage::triage_terminal_transition(
+        baseline.admitted_flow,
+        &triage,
+        baseline.run.state(),
+        request.next_run.state(),
+      )
     || !appended_attempts_are_valid
     || !flow_runtime_is_valid
     || !appended_nodes_have_current_owner
@@ -463,28 +516,19 @@ const fn budget_is_monotonic(current: BudgetUsage, next: BudgetUsage) -> bool {
 fn completion_budget_is_covered(
   current: BudgetUsage,
   next: BudgetUsage,
-  completions: &[StageAttemptCompletion],
+  mut completions: impl Iterator<Item = BudgetUsage>,
 ) -> bool {
-  let totals = completions.iter().try_fold(
-    (
-      current.elapsed_millis,
-      current.tokens,
-      current.cost_micro_units,
-      current.output_bytes,
-    ),
-    |(elapsed, tokens, cost, output), completion| {
-      Some((
-        elapsed.checked_add(completion.usage().elapsed_millis)?,
-        tokens.checked_add(completion.usage().tokens)?,
-        cost.checked_add(completion.usage().cost_micro_units)?,
-        output.checked_add(completion.usage().output_bytes)?,
-      ))
-    },
-  );
-  totals.is_some_and(|(elapsed, tokens, cost, output)| {
-    next.elapsed_millis >= elapsed
-      && next.tokens >= tokens
-      && next.cost_micro_units >= cost
-      && next.output_bytes >= output
+  // Attempt creation is covered separately; completions contribute measured resources.
+  let totals = completions.try_fold(current, |usage, completion| {
+    usage.checked_add(BudgetUsage {
+      attempts: 0,
+      ..completion
+    })
+  });
+  totals.is_some_and(|total| {
+    next.elapsed_millis >= total.elapsed_millis
+      && next.tokens >= total.tokens
+      && next.cost_micro_units >= total.cost_micro_units
+      && next.output_bytes >= total.output_bytes
   })
 }

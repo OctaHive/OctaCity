@@ -267,8 +267,10 @@ fn validate_completions(
       || attempt.flow_run_id() != completion.flow_run_id()
       || attempt.workflow_cycle_id() != completion.workflow_cycle_id()
       || attempt.node_key() != completion.node_key()
-      || attempt.owner() != completion.owner()
-      || attempt.claim() != completion.claim()
+      || !attempt.accepts_completion_owner(&crate::FactoryClaimOwnership::new(
+        completion.owner().clone(),
+        completion.claim(),
+      ))
       || completion
         .claim()
         .verify_fence(completion.claim().fence(), completion.observed_at())
@@ -301,28 +303,7 @@ fn unique_by<'a, T, K: Ord + Copy>(
 
 fn sum_usage(mut usage: impl Iterator<Item = BudgetUsage>) -> Result<BudgetUsage, FactoryError> {
   usage.try_fold(BudgetUsage::default(), |left, right| {
-    Ok(BudgetUsage {
-      attempts: left
-        .attempts
-        .checked_add(right.attempts)
-        .ok_or_else(|| invalid("Flow budget usage"))?,
-      elapsed_millis: left
-        .elapsed_millis
-        .checked_add(right.elapsed_millis)
-        .ok_or_else(|| invalid("Flow budget usage"))?,
-      tokens: left
-        .tokens
-        .checked_add(right.tokens)
-        .ok_or_else(|| invalid("Flow budget usage"))?,
-      cost_micro_units: left
-        .cost_micro_units
-        .checked_add(right.cost_micro_units)
-        .ok_or_else(|| invalid("Flow budget usage"))?,
-      output_bytes: left
-        .output_bytes
-        .checked_add(right.output_bytes)
-        .ok_or_else(|| invalid("Flow budget usage"))?,
-    })
+    left.checked_add(right).ok_or_else(|| invalid("Flow budget usage"))
   })
 }
 
