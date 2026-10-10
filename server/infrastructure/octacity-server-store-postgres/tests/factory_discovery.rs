@@ -931,12 +931,19 @@ mod run_contract {
       transition_claim.record.owner.clone(),
       transition_claim.record.claim,
     );
+    let root_definition = setup
+      .admission
+      .flow
+      .closure()
+      .definition(setup.admission.flow.root_run().definition())
+      .unwrap();
+    let stage_budget = root_definition.node(&key("implement")).unwrap().budget();
     let stage = StageAttempt::new(
       StageAttemptId::from_uuid(uuid::Uuid::new_v4()).unwrap(),
       &setup.admission.run,
       StageAttemptNumber::INITIAL,
       FactoryStageTarget::Implementation,
-      BudgetLimit::new(2, 100, 100, 100, 100).unwrap(),
+      stage_budget,
       digest(80),
       ownership.clone(),
     );
@@ -1068,12 +1075,6 @@ mod run_contract {
     request.current.build_id = Some(build.build_id);
     request.current.candidate_id = Some(candidate.id());
     let node = setup.admission.flow.project_stage(stage.clone()).unwrap();
-    let root_definition = setup
-      .admission
-      .flow
-      .closure()
-      .definition(setup.admission.flow.root_run().definition())
-      .unwrap();
     let accepted = root_definition
       .node(node.node_key())
       .unwrap()
@@ -1102,6 +1103,16 @@ mod run_contract {
     request.append.macro_calls.push(call.clone());
     request.append.linked_builds.push(build.clone());
     request.append.candidates.push(candidate.clone());
+    octacity_server_factory::validate_flow_runtime_history(
+      &setup.admission.flow,
+      octacity_server_factory::FlowRuntimeHistory {
+        flow_runs: &[setup.admission.flow.root_run().clone()],
+        cycles: &[setup.admission.flow.initial_cycle().clone()],
+        attempts: &request.append.flow.attempts,
+        completions: &request.append.flow.completions,
+      },
+    )
+    .expect("appended Flow history matches the admitted definition");
     setup.postgres.commit_factory_run_transition(request).await.unwrap();
 
     let restarted = PostgresStore::new(setup.database.pool.clone());
