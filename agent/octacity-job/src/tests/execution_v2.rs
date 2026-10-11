@@ -751,6 +751,7 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
           sha256: DIGEST.to_owned(),
         },
         changed_paths: Vec::new(),
+        cumulative_changes: None,
         bundle,
         patch: None,
       },
