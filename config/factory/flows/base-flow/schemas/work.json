@@ -1,0 +1,33 @@
+{
+  "schemas": {
+    "work": {
+      "identity": "factory.base.work",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "priority": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

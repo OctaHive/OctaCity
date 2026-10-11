@@ -954,6 +954,75 @@ fn a_context_contract_requires_a_typed_input_at_publication() {
 }
 
 #[test]
+fn optional_context_selections_require_explicit_presence_and_keep_exact_candidate_identity() {
+  let artifact = FactoryArtifactReference::new(
+    octacity_server_domain::ArtifactId::generate(),
+    FactoryDigest::from_bytes([17; 32]),
+    100,
+  )
+  .unwrap();
+  let wire = serde_json::json!({
+    "candidate_revision":{"value":{"mapping":"pointer","path":"/selected"}},
+    "candidate_when_present":"/selected",
+    "entries":{
+      "request":{"source_kind":"task","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}},
+      "attachment":{"when_present":"/selected","source_kind":"specification","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}}
+    }
+  });
+  let binding: FlowContextBinding = serde_json::from_value(wire.clone()).unwrap();
+  let schema = FlowDataSchema::new(
+    key("optional.selection"),
+    key("v1"),
+    serde_json::from_value(serde_json::json!({
+      "type":"object","fields":{
+        "selected":{"required":false,"value":{"type":"string","min_bytes":1,"max_bytes":100}}
+      }
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  let absent = FlowPayload::new(&schema, serde_json::json!({})).unwrap();
+  assert_eq!(
+    binding
+      .selected_sources(&absent)
+      .unwrap()
+      .keys()
+      .cloned()
+      .collect::<Vec<_>>(),
+    vec![key("request")]
+  );
+  assert_eq!(binding.candidate_revision(&absent).unwrap(), None);
+  let present = FlowPayload::new(&schema, serde_json::json!({"selected":"accepted-candidate"})).unwrap();
+  assert_eq!(binding.selected_sources(&present).unwrap().len(), 2);
+  assert_eq!(
+    binding.candidate_revision(&present).unwrap().unwrap().as_str(),
+    "accepted-candidate"
+  );
+  let mut missing = wire.clone();
+  missing["entries"]["attachment"]["source"]["value"] = serde_json::json!({"mapping":"pointer","path":"/missing"});
+  let missing: FlowContextBinding = serde_json::from_value(missing).unwrap();
+  assert!(missing.selected_sources(&absent).is_ok());
+  assert!(
+    missing.selected_sources(&present).is_err(),
+    "a present guard cannot conceal a missing required source"
+  );
+  let mut collection = wire.clone();
+  collection["artifact_collections"] = serde_json::json!({"attachments":{
+    "when_present":"/selected","source_kind":"evidence",
+    "source":{"value":{"mapping":"constant","value":[artifact]}}
+  }});
+  let collection: FlowContextBinding = serde_json::from_value(collection).unwrap();
+  assert_eq!(collection.selected_sources(&absent).unwrap().len(), 1);
+  assert_eq!(collection.selected_sources(&present).unwrap().len(), 3);
+  let mut missing_candidate = wire.clone();
+  missing_candidate["candidate_revision"] = serde_json::Value::Null;
+  assert!(serde_json::from_value::<FlowContextBinding>(missing_candidate).is_err());
+  let mut invalid = wire;
+  invalid["entries"]["attachment"]["when_present"] = serde_json::json!("/broken~2escape");
+  assert!(serde_json::from_value::<FlowContextBinding>(invalid).is_err());
+}
+
+#[test]
 fn declared_artifact_collections_select_every_exact_requirement_without_extra_context() {
   let artifacts = (1..=6)
     .map(|number| {

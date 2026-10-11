@@ -1,0 +1,79 @@
+{
+  "schemas": {
+    "protected_validation_facts": {
+      "identity": "factory.base.protected_validation_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "report_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "candidate_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "protected_inventory": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "covered_classes": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "string",
+                "min_bytes": 1,
+                "max_bytes": 96
+              },
+              "min_items": 1,
+              "max_items": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      }
+    }
+  }
+}

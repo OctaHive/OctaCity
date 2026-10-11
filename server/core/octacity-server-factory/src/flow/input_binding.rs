@@ -10,13 +10,14 @@ use std::collections::BTreeMap;
 pub const MAX_FLOW_INPUT_BINDING_BYTES: usize = 16 * 1024;
 
 /// Explicit projection view of one accepted predecessor result.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowRecordView {
   /// Only the producing attempt's frozen input payload, explicitly selected.
   /// Neither its Context nor model-authored replacements are forwarded.
   InputPayload,
   /// Only the schema-validated output payload.
+  #[default]
   Payload,
   /// Only owner metadata and independently verified output facts.
   Metadata,
@@ -63,7 +64,10 @@ pub enum FlowInputSource {
     node: FactoryKey,
     /// Required finite producer outcome; newer differing outcomes block selection.
     outcome: FactoryKey,
-    /// RFC 6901 selection in the producing result payload.
+    /// Explicit view; omitted declarations select the public payload.
+    #[serde(default)]
+    view: FlowRecordView,
+    /// RFC 6901 selection in the producing result view.
     path: String,
   },
 }
@@ -176,19 +180,7 @@ impl FlowInputBinding {
             let record = record_for_attempt(context, attempt)?;
             let reference = FlowRecordReference::from_record(record)?;
             references.insert(reference.node_attempt_id(), reference);
-            let selected = match view {
-              FlowRecordView::InputPayload => copy_bounded(
-                record.input().payload().value().pointer(path).ok_or_else(invalid)?,
-                &mut remaining,
-              )?,
-              FlowRecordView::Payload => copy_bounded(
-                record.payload().value().pointer(path).ok_or_else(invalid)?,
-                &mut remaining,
-              )?,
-              FlowRecordView::Metadata => {
-                copy_bounded(record.metadata()?.pointer(path).ok_or_else(invalid)?, &mut remaining)?
-              }
-            };
+            let selected = project_record(record, *view, path, &mut remaining)?;
             return Ok((alias.as_str().to_owned(), selected));
           }
           FlowInputSource::Incoming { schema, path } => {
@@ -201,11 +193,17 @@ impl FlowInputBinding {
             incoming.payload().value().pointer(path).ok_or_else(invalid)?
           }
           FlowInputSource::Work { path } => work.pointer(path).ok_or_else(invalid)?,
-          FlowInputSource::Record { node, outcome, path } => {
+          FlowInputSource::Record {
+            node,
+            outcome,
+            view,
+            path,
+          } => {
             let record = select_record(context, node, outcome)?;
             let reference = FlowRecordReference::from_record(record)?;
             references.insert(reference.node_attempt_id(), reference);
-            record.payload().value().pointer(path).ok_or_else(invalid)?
+            let selected = project_record(record, *view, path, &mut remaining)?;
+            return Ok((alias.as_str().to_owned(), selected));
           }
         };
         Ok((alias.as_str().to_owned(), copy_bounded(value, &mut remaining)?))
@@ -339,6 +337,21 @@ fn record_for_attempt<'a>(
     return Err(invalid());
   }
   Ok(record)
+}
+fn project_record(
+  record: &FlowNodeRecord,
+  view: FlowRecordView,
+  path: &str,
+  remaining: &mut usize,
+) -> Result<serde_json::Value, FactoryError> {
+  match view {
+    FlowRecordView::InputPayload => copy_bounded(
+      record.input().payload().value().pointer(path).ok_or_else(invalid)?,
+      remaining,
+    ),
+    FlowRecordView::Payload => copy_bounded(record.payload().value().pointer(path).ok_or_else(invalid)?, remaining),
+    FlowRecordView::Metadata => copy_bounded(record.metadata()?.pointer(path).ok_or_else(invalid)?, remaining),
+  }
 }
 fn invalid() -> FactoryError {
   FactoryError::InvalidConfiguration {

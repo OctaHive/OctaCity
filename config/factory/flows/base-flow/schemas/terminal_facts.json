@@ -1,0 +1,35 @@
+{
+  "schemas": {
+    "terminal_facts": {
+      "identity": "factory.base.terminal_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

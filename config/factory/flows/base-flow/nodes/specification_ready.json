@@ -1,0 +1,189 @@
+{
+  "nodes": [
+    {
+      "key": "specification_ready",
+      "kind": "deterministic_gate",
+      "input_schema": "spec_ready_input",
+      "outcomes": [
+        {
+          "key": "implementation_ready",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "invalid",
+          "kind": "failure",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "publication": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "accepted": {
+            "source": "record",
+            "node": "specification_gate",
+            "outcome": "review_pending",
+            "path": ""
+          },
+          "decision": {
+            "source": "record",
+            "node": "requirements_needed",
+            "outcome": "specification",
+            "path": ""
+          },
+          "review": {
+            "source": "record",
+            "node": "specification_review_gate",
+            "outcome": "publication_pending",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "publication": {
+                "mapping": "pointer",
+                "path": "/publication"
+              },
+              "expected_candidate": {
+                "mapping": "pointer",
+                "path": "/accepted/manifest/candidate_revision"
+              },
+              "expected_digest": {
+                "mapping": "pointer",
+                "path": "/accepted/artifacts/manifest/content_digest"
+              },
+              "review_deadline": {
+                "mapping": "pointer",
+                "path": "/review/fresh_until"
+              },
+              "summary": {
+                "mapping": "pointer",
+                "path": "/decision"
+              },
+              "specification": {
+                "mapping": "pointer",
+                "path": "/accepted"
+              }
+            }
+          }
+        }
+      },
+      "accepted_work_outcomes": [
+        "implementation_ready"
+      ],
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/publication/candidate_revision"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/expected_candidate"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/publication/changeset_digest"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/expected_digest"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review_deadline"
+                  },
+                  "comparison": "greater",
+                  "right": {
+                    "source": "observation_time"
+                  }
+                }
+              ]
+            },
+            "outcome": "implementation_ready"
+          }
+        ],
+        "fallback": "invalid",
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/summary/work_kind"
+              },
+              "size": {
+                "mapping": "pointer",
+                "path": "/summary/size"
+              },
+              "risk": {
+                "mapping": "pointer",
+                "path": "/summary/risk"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/summary/admission_risk"
+              },
+              "recommended_route": {
+                "mapping": "pointer",
+                "path": "/summary/recommended_route"
+              },
+              "research_required": {
+                "mapping": "pointer",
+                "path": "/summary/research_required"
+              },
+              "research_accepted": {
+                "mapping": "pointer",
+                "path": "/summary/research_accepted"
+              },
+              "component": {
+                "mapping": "pointer",
+                "path": "/summary/component"
+              },
+              "severity": {
+                "mapping": "pointer",
+                "path": "/summary/severity"
+              },
+              "dependencies": {
+                "mapping": "pointer",
+                "path": "/summary/dependencies"
+              },
+              "specification": {
+                "mapping": "pointer",
+                "path": "/specification"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

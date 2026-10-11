@@ -201,14 +201,82 @@ pub fn factory_node_change_set(
   execution: &FlowBuildExecution,
   capture_tool: &ImmutableReference,
 ) -> Result<ChangeSet, FactoryChangeSetError> {
+  if intent.profile().result_tool() != capture_tool
+    || intent.profile().result_output.as_str() != CHANGE_SET_MANIFEST_OUTPUT
+    || intent.profile().result_output_kind != EvidenceOutputKind::Artifact
+  {
+    return Err(FactoryChangeSetError::InvalidEvidence);
+  }
+  let manifest: CapturedChangeSetManifestV1 =
+    serde_json::from_value(record.payload().value().clone()).map_err(|_| FactoryChangeSetError::InvalidEvidence)?;
+  let mut bytes = serde_json::to_vec(&manifest).map_err(|_| FactoryChangeSetError::InvalidEvidence)?;
+  bytes.push(b'\n');
+  recover_candidate(
+    record,
+    intent,
+    execution,
+    capture_tool,
+    &bytes,
+    record.payload().schema(),
+  )
+}
+
+/// Restores capture selected as additional private evidence beside a public result.
+/// Actual fetched bytes must match the owner-retained provenance; no result prose
+/// or mutable lifecycle pointer can provide a replacement candidate.
+pub fn restore_factory_node_change_set(
+  record: &FlowNodeRecord,
+  intent: &FlowBuildIntent,
+  execution: &FlowBuildExecution,
+  manifest: &crate::FactoryNodeBuildOutputDocument,
+  capture_tool: &ImmutableReference,
+) -> Result<ChangeSet, FactoryChangeSetError> {
+  let invalid = || FactoryChangeSetError::InvalidEvidence;
+  let proof = record
+    .build_provenance()
+    .and_then(|proof| {
+      proof
+        .outputs()
+        .iter()
+        .find(|output| output.name.as_str() == CHANGE_SET_MANIFEST_OUTPUT)
+    })
+    .ok_or_else(invalid)?;
+  if manifest.record.state() != ArtifactState::Published
+    || manifest.record.published_at().is_none_or(|at| at > proof.verified_at)
+    || manifest.record.identity().logical_name.as_str() != CHANGE_SET_MANIFEST_OUTPUT
+    || !artifact_type(manifest.record.identity(), CHANGE_SET_MANIFEST_MEDIA_TYPE)
+    || crate::factory_node_build::artifact_reference(manifest).map_err(|_| invalid())? != proof.artifact
+    || crate::factory_node_build::document_producer(manifest) != proof.producer
+    || manifest.tool != *capture_tool
+    || manifest.plugin != intent.profile().plugin
+    || manifest.schema != proof.schema
+  {
+    return Err(invalid());
+  }
+  VerifiedFactoryArtifact::new(manifest.record.identity().clone(), manifest.bytes.clone())?;
+  recover_candidate(
+    record,
+    intent,
+    execution,
+    capture_tool,
+    &manifest.bytes,
+    &manifest.schema,
+  )
+}
+
+fn recover_candidate(
+  record: &FlowNodeRecord,
+  intent: &FlowBuildIntent,
+  execution: &FlowBuildExecution,
+  capture_tool: &ImmutableReference,
+  bytes: &[u8],
+  schema: &ImmutableReference,
+) -> Result<ChangeSet, FactoryChangeSetError> {
   let invalid = || FactoryChangeSetError::InvalidEvidence;
   let provenance = record.build_provenance().ok_or_else(invalid)?;
   if record.input() != intent.input()
     || record.node_attempt_id() != intent.node().id()
     || provenance.profile() != intent.profile()
-    || intent.profile().result_tool() != capture_tool
-    || intent.profile().result_output.as_str() != CHANGE_SET_MANIFEST_OUTPUT
-    || intent.profile().result_output_kind != EvidenceOutputKind::Artifact
     || FlowBuildExecution::new(
       intent,
       execution.build_id(),
@@ -229,11 +297,8 @@ pub fn factory_node_change_set(
   };
   let manifest_output = output(CHANGE_SET_MANIFEST_OUTPUT)?;
   let bundle = output(CHANGE_SET_BUNDLE_OUTPUT)?;
-  let manifest: CapturedChangeSetManifestV1 =
-    serde_json::from_value(record.payload().value().clone()).map_err(|_| invalid())?;
+  let manifest: CapturedChangeSetManifestV1 = serde_json::from_slice(bytes).map_err(|_| invalid())?;
   manifest.validate().map_err(|_| invalid())?;
-  let mut bytes = serde_json::to_vec(&manifest).map_err(|_| invalid())?;
-  bytes.push(b'\n');
   let subject = intent.input().context().ok_or_else(invalid)?.subject();
   let base = subject
     .candidate()
@@ -251,8 +316,8 @@ pub fn factory_node_change_set(
     || manifest.capture_tool.version != capture_tool.version().as_str()
     || manifest.capture_tool.sha256 != capture_tool.digest().to_string()
     || manifest_output.artifact.encoded_size() != bytes.len() as u64
-    || manifest_output.artifact.content_digest() != FactoryDigest::content_sha256(&bytes)
-    || manifest_output.schema != *record.payload().schema()
+    || manifest_output.artifact.content_digest() != FactoryDigest::content_sha256(bytes)
+    || manifest_output.schema != *schema
     || !file_matches(&manifest.bundle)
     || match &manifest.patch {
       Some(patch) => !file_matches(patch),

@@ -1,0 +1,164 @@
+{
+  "nodes": [
+    {
+      "key": "requirements_needed",
+      "kind": "deterministic_gate",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "bypass",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "specification",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "exists",
+              "operand": {
+                "source": "path",
+                "path": "/requirements_defect"
+              }
+            },
+            "outcome": "specification"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/size"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "small"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "low"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/admission_risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "low"
+                  }
+                },
+                {
+                  "operation": "not",
+                  "predicate": {
+                    "operation": "compare",
+                    "left": {
+                      "source": "path",
+                      "path": "/recommended_route"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": "requirements"
+                    }
+                  }
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/research_required"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": false
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/research_accepted"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": true
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "bypass"
+          }
+        ],
+        "fallback": "specification",
+        "outputs": {
+          "bypass": {
+            "value": {
+              "mapping": "pointer",
+              "path": ""
+            }
+          },
+          "specification": {
+            "value": {
+              "mapping": "pointer",
+              "path": ""
+            }
+          }
+        }
+      },
+      "accepted_work_outcomes": [
+        "bypass"
+      ]
+    }
+  ]
+}

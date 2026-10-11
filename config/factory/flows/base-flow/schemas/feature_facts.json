@@ -1,0 +1,33 @@
+{
+  "schemas": {
+    "feature_facts": {
+      "identity": "factory.base.feature_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "proposal_verified": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "already_fixed": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "nodes": [
+    {
+      "key": "specification_publication",
+      "kind": "trusted_action",
+      "input_schema": "candidate_publication_input",
+      "outcomes": [
+        {
+          "key": "published",
+          "kind": "success",
+          "schema": "candidate_receipt"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "accepted": {
+            "source": "record",
+            "node": "specification_gate",
+            "outcome": "review_pending",
+            "path": ""
+          },
+          "review": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "accepted": {
+                "mapping": "pointer",
+                "path": "/accepted"
+              },
+              "review": {
+                "mapping": "pointer",
+                "path": "/review"
+              }
+            }
+          }
+        }
+      },
+      "action": {
+        "plugin": {
+          "identity": "candidate.publisher",
+          "version": "v1",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "action": "publish_candidate",
+        "parameters": {
+          "bundle": "candidate_bundle",
+          "manifest": "candidate_manifest",
+          "target": "specification.review",
+          "valid_until": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/review/fresh_until"
+            }
+          }
+        }
+      },
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/accepted/manifest/candidate_revision"
+          }
+        },
+        "entries": {
+          "candidate_bundle": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/accepted/artifacts/bundle"
+                  }
+                }
+              }
+            }
+          },
+          "candidate_manifest": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/accepted/artifacts/manifest"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+{
+  "schemas": {
+    "classification_facts": {
+      "identity": "factory.base.classification_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "reproduced": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "already_fixed": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "verification_only": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

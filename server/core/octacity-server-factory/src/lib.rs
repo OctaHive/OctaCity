@@ -71,6 +71,9 @@ mod permission;
 #[cfg(test)]
 mod permission_tests;
 mod phase_pool;
+mod protected_test;
+#[cfg(test)]
+mod protected_test_tests;
 mod review_plan;
 #[cfg(test)]
 mod review_plan_tests;
@@ -169,6 +172,9 @@ pub use permission::{
 };
 pub use phase_pool::{
   FlowPoolSettings, MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, reserve_phase_budget,
+};
+pub use protected_test::{
+  ProtectedTestBundle, ProtectedTestCoverage, ProtectedTestFile, ProtectedTestHandoff, ProtectedTestPlan,
 };
 pub use review_plan::{
   CriterionPack, EvaluationPlan, EvaluationPlanDefinition, MAX_CRITERION_PACKS, MAX_EVALUATORS, ReviewBranch,

@@ -1,0 +1,75 @@
+{
+  "schemas": {
+    "protected_validation_report": {
+      "identity": "factory.base.protected_validation_report",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "changeset_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 36,
+              "max_bytes": 36
+            }
+          },
+          "candidate": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "candidate_subject"
+            }
+          },
+          "tests": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "classes": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "object",
+                "fields": {
+                  "class": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 96
+                    }
+                  },
+                  "outcome": {
+                    "required": true,
+                    "value": {
+                      "type": "enum",
+                      "values": [
+                        "passed",
+                        "failed",
+                        "indeterminate"
+                      ]
+                    }
+                  }
+                }
+              },
+              "min_items": 1,
+              "max_items": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

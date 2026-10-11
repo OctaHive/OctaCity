@@ -1,8 +1,22 @@
 # Configurable Factory Flows
 
-`base-intake.json` is a supplied `FlowDefinitionTemplate`, not a runtime-owned
-business flow. Edit or clone it to create another flow. Node keys and outcome
-keys are operator-defined. Their names never select Rust execution behavior.
+`base-flow.json` is the supplied base Factory flow manifest. Edit or clone it
+to create another flow. Node keys and outcome keys are operator-defined. Their
+names never select Rust execution behavior.
+
+The main file declares incoming schema, entry, execution ceilings and an ordered
+list of relative configuration parts. `base-flow/schemas/` contains one editable
+contract per file; `base-flow/nodes/` contains one node per file. Transitions and
+terminal contracts have their own files in `base-flow/`. Parts may group any
+number of contracts or nodes; these directories are an editing convention.
+
+Call `FlowDefinitionTemplate::from_manifest` with a resolver rooted in the selected
+configuration directory, then publish through the existing `instantiate` boundary.
+The resolver supplies document bytes; the domain performs no filesystem/network
+access. Paths must be portable and relative. Composition is flat, bounded, rejects
+duplicate imports/definitions and never applies silent overrides. All parts are
+resolved before publication. Admitted runs retain the resulting immutable
+definition and schemas, so later edits to files cannot change an active run.
 
 Local schema choices may use `{"type":"reference","schema":"choice"}` to reuse
 a bounded shape. Publication expands these choices into concrete content-addressed
@@ -66,9 +80,10 @@ select qualified profile and authority choices for real execution.
 `requirements_needed.accepted_work_outcomes` marks the configured bypass result
 as an accepting gate. Accepted Work freezes the original Work and complete
 accepted ancestry. The configured bypass still enters every declared downstream
-protected-test, implementation, review and verification node. These example
-nodes provide control-path bindings; their production capability, protected-test
-isolation and independent review work is completed in later plan tasks.
+protected-test, implementation, review and verification node. Installed technical
+capabilities bind to exact published tool/profile identities; the composition
+root wires them independently of these example node names. Independent review
+and delivery contracts have their own plan tasks.
 
 ## Supplied specification authoring
 
@@ -287,3 +302,78 @@ If several branches request a restart, the lowest attempt number determines
 the retained cause, independently of restored row order. Historical boundaries
 reconstruct that cause from the preceding execution prefix; later cycles cannot
 change it.
+
+## Protected acceptance checks
+
+`../profiles/protected-tests.json` is an editable coverage/retention example,
+loaded as parameters of a verified immutable tool profile. Class keys are open
+strings: add a Project-specific check without a Rust enum or graph change. The
+profile declares file/byte ceilings, retention and `reserved_inputs` for the
+inventory, candidate and compiler-managed documents. Policy and frozen Plan use
+the same validated coverage contract. The compiler passes its actual managed
+documents to `wire_inputs` before signing; the complete manifest must fit both
+the reserved slots and protocol count/byte/path limits. Ordinary Job output and
+permission ceilings continue to narrow execution.
+
+An author capability resolves its explicitly selected accepted gate record through
+`FactoryStoredProtectedTestPlanSource`. `AcceptedWorkContract` retains the complete
+accepted ancestry, including an accepted specification when present. The plan binds
+that contract digest, exact authoring subject, classes and original attempt-based
+retention deadline. Restart reconstructs it from the persisted intent/history and
+pinned profile, rather than extending retention or selecting a later contract.
+The supplied author and implementation Contexts select the accepted specification
+candidate and its exact manifest/bundle, together with the Work task. Their closed
+`protected_author_input` retains accepted data and the task reference. The generic
+`candidate_when_present` and selection `when_present` pointers make specification
+context conditional on its presence in that frozen input. Absent optional data
+selects the original Work base and task; present but invalid references fail.
+These guards apply to any configured node and artifact collection, without stage
+names or implicit grants. The same plan/capture contract verifies either subject.
+
+Publish the author profile with a closed `protected_test_handoff` primary Report
+from the installed capture tool and exactly one required private inventory Artifact
+(`protected_inventory` in this example). The inventory binds plan/input/attempt
+identities and per-file Artifact references. Capture checks actual published bytes,
+Job/Lease ownership, exact required-class coverage, unique paths/Artifact identities,
+aggregate inventory-plus-source bytes and minimum retention before common completion.
+The public result contains only accepted-contract identity and coverage classes.
+Raw sources are extra private output documents, not Report facts or handoff data.
+
+The supplied implementation input selects the author's **input payload**. Its
+control edge therefore sequences authoring while preserving the original accepted
+contract. It does not copy the author's result, Context, private inventory, file
+references or transcript. Build output Artifact metadata contains no Artifact bytes.
+Managed Job downloads mint grants only for explicitly signed input references;
+Agent staging uses a private Job root, verifies each downloaded size/digest and
+seals inputs read-only. Another Job receives only its own inputs and credentials.
+Author logs and trace outputs stay with the producing ordinary Build and are not
+part of successor input projection.
+
+The validation example is an ordinary `build_command` with explicit selections for
+the implementation bundle, capture manifest and private test inventory. The trusted
+compiler restores both verified contracts and resolves retained per-file records;
+`factory_protected_validation_materialization` checks exact Context selections,
+Artifact identities, retention and read-only candidate/test authority. Candidate
+instructions and protected files go only into this signed validation Job. The compiler
+adds its configured command/managed Octafile; no test framework or command is selected
+by a node name. Production composition uses the same verified materialization source
+for Job signing and `FactoryProtectedValidationAdapter` result acceptance.
+
+Publish a closed validation Report under `protected_validation_report`, plus the
+independently verified `validation_facts` Report under `protected_validation_facts`.
+The installed adapter checks the materialized candidate, complete private inventory
+and every declared class before accepting common completion; facts bind the ordinary
+input and actual report bytes. The supplied deterministic gate then chooses only its
+declared transitions. The report's materialization digest binds the candidate, frozen
+test plan and all downloaded inputs; it is distinct from the ordinary node-input digest.
+`construct_factory_protected_validation_evidence_manifest` requires the exact
+configured facts output, rechecks its retained proof and freshness, retains all
+exact Artifact input identities and caps freshness by both qualification and source
+deadlines. Evidence cannot extend the independent verifier's validity period.
+Repeated materialization reconstructs identical input bytes/digests; changed candidate,
+file, inventory, coverage or report identities cannot reuse the previous result.
+
+These are technical capabilities selected through immutable bindings. Nodes can be
+renamed, moved or reused in other graphs. Failure classification/rework, independent
+code review and deliverable completeness belong to subsequent plan tasks; live
+provider qualification and full composition wiring remain separate tasks.

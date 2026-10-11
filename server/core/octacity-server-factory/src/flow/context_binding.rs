@@ -9,6 +9,10 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowContextSelection {
+  /// RFC 6901 pointer whose presence requires this source. Absent guards omit
+  /// the selection; present but invalid source values still reject the input.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub when_present: Option<String>,
   /// Declared semantic category, independent of node names.
   pub source_kind: ContextSourceKind,
   /// Explicit mapping from frozen input to an exact context reference.
@@ -22,6 +26,8 @@ pub struct FlowContextSelection {
 #[serde(try_from = "BindingWire")]
 pub struct FlowContextBinding {
   candidate_revision: Option<FlowDataMapping>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  candidate_when_present: Option<String>,
   entries: BTreeMap<FactoryKey, FlowContextSelection>,
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
   artifact_collections: BTreeMap<FactoryKey, FlowContextSelection>,
@@ -31,6 +37,8 @@ pub struct FlowContextBinding {
 struct BindingWire {
   #[serde(default)]
   candidate_revision: Option<FlowDataMapping>,
+  #[serde(default)]
+  candidate_when_present: Option<String>,
   entries: BTreeMap<FactoryKey, FlowContextSelection>,
   #[serde(default)]
   artifact_collections: BTreeMap<FactoryKey, FlowContextSelection>,
@@ -40,6 +48,7 @@ impl TryFrom<BindingWire> for FlowContextBinding {
   fn try_from(wire: BindingWire) -> Result<Self, Self::Error> {
     let binding = Self {
       candidate_revision: wire.candidate_revision,
+      candidate_when_present: wire.candidate_when_present,
       entries: wire.entries,
       artifact_collections: wire.artifact_collections,
     };
@@ -56,6 +65,7 @@ impl FlowContextBinding {
   ) -> Result<Self, FactoryError> {
     let binding = Self {
       candidate_revision,
+      candidate_when_present: None,
       entries,
       artifact_collections: BTreeMap::new(),
     };
@@ -63,6 +73,18 @@ impl FlowContextBinding {
     Ok(binding)
   }
   fn validate(&self) -> Result<(), FactoryError> {
+    if self.candidate_when_present.is_some() && self.candidate_revision.is_none() {
+      return Err(invalid());
+    }
+    for path in self.candidate_when_present.iter().chain(
+      self
+        .entries
+        .values()
+        .chain(self.artifact_collections.values())
+        .filter_map(|selection| selection.when_present.as_ref()),
+    ) {
+      super::predicate::validate_pointer(path).map_err(|_| invalid())?;
+    }
     if (self.entries.is_empty() && self.artifact_collections.is_empty())
       || self.entries.len() + self.artifact_collections.len() > MAX_CONTEXT_MANIFEST_ENTRIES
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_INPUT_BINDING_BYTES
@@ -81,12 +103,16 @@ impl FlowContextBinding {
     let mut selected = self
       .entries
       .iter()
+      .filter(|(_, selection)| applies(selection.when_present.as_deref(), input))
       .map(|(name, selection)| {
         let source = serde_json::from_value(selection.source.project_raw(input.value())?).map_err(|_| invalid())?;
         Ok((name.clone(), (selection.source_kind, source)))
       })
       .collect::<Result<BTreeMap<_, _>, FactoryError>>()?;
     for (prefix, collection) in &self.artifact_collections {
+      if !applies(collection.when_present.as_deref(), input) {
+        continue;
+      }
       // Collections select only immutable Artifact references. Repository access
       // and discovery still require separately declared receipt-bound selections.
       let artifacts: Vec<crate::FactoryArtifactReference> =
@@ -117,6 +143,9 @@ impl FlowContextBinding {
     &self,
     input: &FlowPayload,
   ) -> Result<Option<octacity_server_domain::ImmutableRevision>, FactoryError> {
+    if !applies(self.candidate_when_present.as_deref(), input) {
+      return Ok(None);
+    }
     self
       .candidate_revision
       .as_ref()
@@ -148,6 +177,9 @@ impl FlowContextBinding {
     }
     Ok(())
   }
+}
+fn applies(when_present: Option<&str>, input: &FlowPayload) -> bool {
+  when_present.is_none_or(|path| input.value().pointer(path).is_some())
 }
 fn invalid() -> FactoryError {
   FactoryError::InvalidConfiguration {

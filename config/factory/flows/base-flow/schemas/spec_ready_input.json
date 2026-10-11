@@ -1,0 +1,58 @@
+{
+  "schemas": {
+    "spec_ready_input": {
+      "identity": "factory.base.spec_ready_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "summary": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "summary"
+            }
+          },
+          "publication": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "candidate_receipt"
+            }
+          },
+          "expected_candidate": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "expected_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "review_deadline": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "specification": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "spec_result"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,21 @@
 use super::factory::*;
 
+#[allow(dead_code)] // Shared core/application contracts load the supplied editable example.
+pub(crate) fn supplied_base_flow_template() -> FlowDefinitionTemplate {
+  let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    .ancestors()
+    .find(|path| path.join("config/factory/flows").is_dir())
+    .unwrap()
+    .join("config/factory/flows");
+  let manifest = std::fs::read(root.join("base-flow.json")).unwrap();
+  FlowDefinitionTemplate::from_manifest(&manifest, |path| {
+    std::fs::read(root.join(path.as_str())).map_err(|_| FactoryError::InvalidConfiguration {
+      field: "supplied configuration part",
+    })
+  })
+  .unwrap()
+}
+
 pub(crate) fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
@@ -143,10 +159,39 @@ pub(crate) fn execution_fixture_with_retry_policy(
   output_schema: Option<FlowDataSchema>,
   maximum: u16,
 ) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_authority(
+    kind,
+    work,
+    selection,
+    pool,
+    output_schema,
+    maximum,
+    FactoryPermissionSet::deny_all(),
+  )
+}
+#[allow(dead_code)] // Application capability contracts vary admitted filesystem authority.
+pub(crate) fn execution_fixture_with_permissions(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  output_schema: Option<FlowDataSchema>,
+  permissions: FactoryPermissionSet,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_authority(kind, work, selection, None, output_schema, 0, permissions)
+}
+fn execution_fixture_with_authority(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  pool: Option<FactoryKey>,
+  output_schema: Option<FlowDataSchema>,
+  maximum: u16,
+  permissions: FactoryPermissionSet,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
   let limits = FlowAdmissionLimits::product_defaults(
     4,
     BudgetLimit::new(16, 10000, 1000, 10000, 10000 * (1 + u64::from(maximum))).unwrap(),
-    FactoryPermissionSet::deny_all(),
+    permissions.clone(),
   )
   .unwrap();
   let schema = FlowDataSchema::new(
@@ -175,7 +220,7 @@ pub(crate) fn execution_fixture_with_retry_policy(
       output_schema.reference().clone(),
     )],
     budget,
-    permissions: FactoryPermissionSet::deny_all(),
+    permissions: permissions.clone(),
     required: true,
     subflow: None,
   })
@@ -203,7 +248,7 @@ pub(crate) fn execution_fixture_with_retry_policy(
     )],
     context_projections: vec![],
     data_projections: vec![],
-    execution: FlowExecutionPolicy::new(limits.budget(), FactoryPermissionSet::deny_all(), 1).unwrap(),
+    execution: FlowExecutionPolicy::new(limits.budget(), permissions, 1).unwrap(),
   })
   .unwrap();
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);

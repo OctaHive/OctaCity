@@ -1,0 +1,112 @@
+{
+  "schemas": {
+    "spec_handoff": {
+      "identity": "factory.base.spec_handoff",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "original_base": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "predecessor_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "feature_request",
+                "defect"
+              ]
+            }
+          },
+          "contract_path": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 1024
+            }
+          },
+          "change_path": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 1024
+            }
+          },
+          "acceptance_criteria": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "string",
+                "min_bytes": 1,
+                "max_bytes": 2048
+              },
+              "min_items": 1,
+              "max_items": 32
+            }
+          },
+          "regression_criteria": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "string",
+                "min_bytes": 1,
+                "max_bytes": 2048
+              },
+              "min_items": 0,
+              "max_items": 32
+            }
+          },
+          "declared_requirements": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "declared_requirements"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,190 @@
+{
+  "schemas": {
+    "spec_manifest": {
+      "identity": "factory.base.spec_manifest",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "format_version": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                1
+              ]
+            }
+          },
+          "base_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "node_attempt_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "capture_tool": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "identity": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "version": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "sha256": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 64
+                  }
+                }
+              }
+            }
+          },
+          "changed_paths": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "object",
+                "fields": {
+                  "status": {
+                    "required": true,
+                    "value": {
+                      "type": "enum",
+                      "values": [
+                        "A",
+                        "M",
+                        "D"
+                      ]
+                    }
+                  },
+                  "path": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 1024
+                    }
+                  },
+                  "old_mode": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 6
+                    }
+                  },
+                  "new_mode": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 6
+                    }
+                  }
+                }
+              },
+              "min_items": 1,
+              "max_items": 64
+            }
+          },
+          "bundle": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "name": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "size_bytes": {
+                  "required": true,
+                  "value": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  }
+                },
+                "sha256": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 64
+                  }
+                }
+              }
+            }
+          },
+          "patch": {
+            "required": false,
+            "value": {
+              "type": "object",
+              "fields": {
+                "name": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "size_bytes": {
+                  "required": true,
+                  "value": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1048576
+                  }
+                },
+                "sha256": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 64
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

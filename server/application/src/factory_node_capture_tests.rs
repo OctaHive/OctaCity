@@ -7,7 +7,7 @@ use octacity_server_factory::*;
 fn time(value: i64) -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(value).unwrap()
 }
-fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &str) -> FactoryNodeBuildOutputs {
+pub(crate) fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &str) -> FactoryNodeBuildOutputs {
   let tool = reference("git.capture");
   let bundle = b"trusted fixture bundle\n".to_vec();
   let manifest = CapturedChangeSetManifestV1 {
@@ -82,6 +82,76 @@ fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &str) -> Fac
     verified_at: builds.created_at,
     fresh_until: time(1000),
   }
+}
+
+#[test]
+fn capture_can_keep_a_public_primary_report_and_restore_its_private_candidate_artifacts() {
+  crate::factory_admission_tests::run_ready(async {
+    let work = work();
+    let mut binding = binding(work.subject().project_id());
+    let tool = reference("git.capture");
+    let artifact_schema = reference("capture.artifacts");
+    binding.evidence = vec![CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT]
+      .into_iter()
+      .map(|name| {
+        EvidenceRequirement::new(
+          key(name),
+          EvidenceOutputKind::Artifact,
+          artifact_schema.clone(),
+          tool.clone(),
+          binding.plugin.clone(),
+        )
+      })
+      .collect();
+    let (work, admitted, schema, input, node) =
+      execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, None);
+    let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
+    let builds = std::sync::Arc::new(Builds::new());
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let mut outputs = capture_outputs(&intent, &builds, "base");
+    let manifest = outputs.documents[1].clone();
+    let public = crate::factory_node_test_support::document(
+      &builds,
+      &intent.profile().result_output,
+      schema.reference(),
+      br#"{"count":9}"#.to_vec(),
+      intent.profile().tool.clone(),
+    );
+    outputs.usage.output_bytes += public.bytes.len() as u64;
+    outputs.documents.push(public);
+    let adapter = FactoryNodeCaptureBuildAdapter::new(
+      builds.clone(),
+      std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs))),
+      tool.clone(),
+    );
+    let step = adapter
+      .observe(FactoryNodeExecutionRequest {
+        run_id: input.factory_run_id(),
+        admitted: &admitted,
+        work: &work,
+        input: &input,
+        attempt: &node,
+        build: Some(&intent),
+        ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+        observed_at: time(31),
+      })
+      .await
+      .unwrap();
+    let FactoryNodeExecutionStep::Completed {
+      record,
+      execution: Some(execution),
+      ..
+    } = step
+    else {
+      panic!("expected verified completion")
+    };
+    assert_eq!(record.payload().value(), &serde_json::json!({"count":9}));
+    let candidate = restore_factory_node_change_set(&record, &intent, &execution, &manifest, &tool).unwrap();
+    assert_eq!(candidate.subject().candidate_revision().as_str(), "captured-revision");
+    let mut changed = manifest;
+    changed.bytes[0] ^= 1;
+    assert!(restore_factory_node_change_set(&record, &intent, &execution, &changed, &tool).is_err());
+  });
 }
 #[test]
 fn capture_accepts_an_arbitrary_node_through_its_frozen_input_and_actual_execution() {
@@ -332,8 +402,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
         capture_tool.clone(),
         binding.plugin.clone(),
       )];
-      let template: FlowDefinitionTemplate =
-        serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+      let template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
       let handoff_schema = template.data_schemas().unwrap().remove(&key("spec_handoff")).unwrap();
       if kind == FlowNodeKind::Reasoning {
         binding.evidence.push(EvidenceRequirement::new(

@@ -1,0 +1,62 @@
+{
+  "nodes": [
+    {
+      "key": "classification",
+      "kind": "reasoning",
+      "input_schema": "classification_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "classification_observations"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          },
+          "eligibility": {
+            "source": "record",
+            "node": "eligibility_gate",
+            "outcome": "classify",
+            "path": "/accepted"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "priority": {
+                "mapping": "pointer",
+                "path": "/priority"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              },
+              "eligible": {
+                "mapping": "pointer",
+                "path": "/eligibility"
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "classification"
+    }
+  ]
+}

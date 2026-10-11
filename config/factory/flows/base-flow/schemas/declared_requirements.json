@@ -1,0 +1,17 @@
+{
+  "schemas": {
+    "declared_requirements": {
+      "identity": "factory.base.declared_requirements",
+      "version": "v1",
+      "shape": {
+        "type": "array",
+        "min_items": 0,
+        "max_items": 64,
+        "item": {
+          "type": "reference",
+          "schema": "artifact_reference"
+        }
+      }
+    }
+  }
+}

@@ -621,6 +621,53 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn hidden_inputs_are_job_private_and_reconstruct_identically_after_restart() {
+    let hidden = b"SECRET_EXPECTED_VALUE".as_slice();
+    let public = br#"{"task":"implement the accepted contract"}"#.as_slice();
+    let mut retained = Vec::new();
+    for (body, destination) in [
+      (hidden, "/octacity/protected/tests/acceptance.rs"),
+      (public, "/octacity/protected/context/task.json"),
+      (hidden, "/octacity/protected/tests/acceptance.rs"),
+    ] {
+      // Each fresh stager represents a restarted Agent receiving only its signed
+      // Job inputs; the earlier job remains on disk throughout the experiment.
+      let (origin, response) = server(body, "application/json").await;
+      let (temporary, job_root) = private_job_root();
+      let selected = input(body, destination);
+      let staged = stager(&origin)
+        .stage(
+          &[transfer(
+            selected,
+            format!("{origin}/artifact?signature=private-transfer"),
+          )],
+          &job_root,
+          &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+      response.await.unwrap();
+      let root = staged.revalidate_for_runner().unwrap();
+      if body == public {
+        assert_eq!(fs::read(root.join("context/task.json")).unwrap(), public);
+        assert!(
+          !root.join("tests").exists(),
+          "implementation cannot see another Job's protected inputs"
+        );
+      } else {
+        let path = root.join("tests/acceptance.rs");
+        assert_eq!(fs::read(&path).unwrap(), hidden);
+        assert!(fs::metadata(path).unwrap().permissions().readonly());
+        assert!(!root.join("context").exists());
+      }
+      retained.push((temporary, staged));
+    }
+    for (_, staged) in retained {
+      staged.cleanup().unwrap();
+    }
+  }
+
+  #[tokio::test]
   async fn stages_exact_read_only_bytes_and_detects_replacement_before_runner_start() {
     let body = br#"{"task":"implement"}"#;
     let (origin, server) = server(body, "application/json").await;

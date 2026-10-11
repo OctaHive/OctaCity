@@ -72,8 +72,32 @@ pub use factory_candidate_publication::{
 mod factory_flow_action_tests;
 mod factory_node_capture;
 mod factory_node_capture_build;
+mod factory_protected_test_authoring;
+mod factory_protected_test_plan;
+mod factory_protected_tests;
+mod factory_protected_validation;
+mod factory_protected_validation_build;
+mod factory_verified_build_outputs;
+pub use factory_protected_test_authoring::{FactoryProtectedTestAuthoringAdapter, FactoryProtectedTestPlanSource};
+pub use factory_protected_test_plan::{
+  FactoryProtectedTestPolicy, FactoryStoredProtectedTestPlanSource, freeze_factory_protected_test_plan,
+};
+pub use factory_protected_tests::{
+  FactoryProtectedTestInventory, factory_protected_test_materialization, restore_factory_protected_test_bundle,
+  verify_factory_protected_test_bundle,
+};
+pub use factory_protected_validation::construct_factory_protected_validation_evidence_manifest;
+pub use factory_protected_validation::{
+  FactoryProtectedValidationClassResult, FactoryProtectedValidationMaterialization, FactoryProtectedValidationReport,
+  FactoryProtectedValidationRequest, factory_protected_validation_materialization,
+};
+pub use factory_protected_validation_build::{
+  FactoryProtectedValidationAdapter, FactoryProtectedValidationInputSource,
+};
 #[cfg(test)]
 mod factory_node_capture_tests;
+#[cfg(test)]
+mod factory_protected_test_tests;
 pub use factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
 pub use factory_flow_action::{
   FactoryFlowActionAdapter, FactoryFlowActionObservation, FactoryFlowActionPlugin, FactoryFlowActionRequest,
@@ -276,7 +300,7 @@ pub use factory_job_spec::{
 };
 pub use factory_node_capture::{
   FactoryChangeSetError, VerifiedFactoryArtifact, factory_node_candidate_materialization, factory_node_change_set,
-  verify_factory_node_change_set,
+  restore_factory_node_change_set, verify_factory_node_change_set,
 };
 pub use factory_node_capture_build::FactoryNodeCaptureBuildAdapter;
 pub use factory_reconciliation::{

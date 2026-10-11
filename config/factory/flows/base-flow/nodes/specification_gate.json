@@ -1,0 +1,678 @@
+{
+  "nodes": [
+    {
+      "key": "specification_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "spec_gate_input",
+      "outcomes": [
+        {
+          "key": "review_pending",
+          "kind": "success",
+          "schema": "spec_result"
+        },
+        {
+          "key": "invalid",
+          "kind": "failure",
+          "schema": "spec_result"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "manifest": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "metadata": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": ""
+          },
+          "decision": {
+            "source": "record",
+            "node": "requirements_needed",
+            "outcome": "specification",
+            "path": ""
+          },
+          "work_id": {
+            "source": "work",
+            "path": "/id"
+          },
+          "original_base": {
+            "source": "work",
+            "path": "/subject/base_revision"
+          },
+          "declared_requirements": {
+            "source": "work",
+            "path": "/artifacts/specifications"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "allowed_paths": {
+                "mapping": "pointer",
+                "path": "/metadata/build/profile/capture_write_paths"
+              },
+              "work_id": {
+                "mapping": "pointer",
+                "path": "/work_id"
+              },
+              "original_base": {
+                "mapping": "pointer",
+                "path": "/original_base"
+              },
+              "work_kind": {
+                "mapping": "pointer",
+                "path": "/decision/work_kind"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/metadata/input_digest"
+              },
+              "handoff_digest": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/specification_handoff/artifact/content_digest"
+              },
+              "manifest": {
+                "mapping": "pointer",
+                "path": "/manifest"
+              },
+              "handoff": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/specification_handoff/data/payload/value"
+              },
+              "facts": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/specification_facts/data/payload/value"
+              },
+              "output_deadlines": {
+                "mapping": "object",
+                "fields": {
+                  "capture": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/change-set-manifest.json/fresh_until"
+                  },
+                  "handoff": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/specification_handoff/fresh_until"
+                  },
+                  "facts": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/specification_facts/fresh_until"
+                  }
+                }
+              },
+              "artifacts": {
+                "mapping": "object",
+                "fields": {
+                  "manifest": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/change-set-manifest.json/artifact"
+                  },
+                  "bundle": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/change-set.bundle/artifact"
+                  }
+                }
+              },
+              "declared_requirements": {
+                "mapping": "pointer",
+                "path": "/declared_requirements"
+              },
+              "expected_predecessor": {
+                "mapping": "pointer",
+                "path": "/metadata/execution_revision"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "feature_request"
+                  }
+                },
+                {
+                  "operation": "not",
+                  "predicate": {
+                    "operation": "compare",
+                    "left": {
+                      "source": "path",
+                      "path": "/handoff/predecessor_revision"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "path",
+                      "path": "/original_base"
+                    }
+                  }
+                },
+                {
+                  "operation": "for_each",
+                  "collection": {
+                    "source": "path",
+                    "path": "/manifest/changed_paths"
+                  },
+                  "quantifier": "any",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/path"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "path",
+                          "path": "/handoff/contract_path"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/status"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "M"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "operation": "for_each",
+                  "collection": {
+                    "source": "path",
+                    "path": "/manifest/changed_paths"
+                  },
+                  "quantifier": "any",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/path"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "path",
+                          "path": "/handoff/change_path"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/status"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "M"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "outcome": "review_pending"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "feature_request"
+                  }
+                },
+                {
+                  "operation": "for_each",
+                  "collection": {
+                    "source": "path",
+                    "path": "/manifest/changed_paths"
+                  },
+                  "quantifier": "any",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/path"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "path",
+                          "path": "/handoff/contract_path"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/status"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "A"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "operation": "for_each",
+                  "collection": {
+                    "source": "path",
+                    "path": "/manifest/changed_paths"
+                  },
+                  "quantifier": "any",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/path"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "path",
+                          "path": "/handoff/change_path"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/status"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "A"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "outcome": "review_pending"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "defect"
+                  }
+                },
+                {
+                  "operation": "exists",
+                  "operand": {
+                    "source": "path",
+                    "path": "/handoff/regression_criteria/0"
+                  }
+                },
+                {
+                  "operation": "for_each",
+                  "collection": {
+                    "source": "path",
+                    "path": "/manifest/changed_paths"
+                  },
+                  "quantifier": "any",
+                  "predicate": {
+                    "operation": "compare",
+                    "left": {
+                      "source": "item",
+                      "path": "/path"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "path",
+                      "path": "/handoff/change_path"
+                    }
+                  }
+                }
+              ]
+            },
+            "outcome": "review_pending"
+          }
+        ],
+        "fallback": "invalid",
+        "outputs": {},
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_id": {
+                "mapping": "pointer",
+                "path": "/work_id"
+              },
+              "original_base": {
+                "mapping": "pointer",
+                "path": "/original_base"
+              },
+              "manifest": {
+                "mapping": "pointer",
+                "path": "/manifest"
+              },
+              "handoff": {
+                "mapping": "pointer",
+                "path": "/handoff"
+              },
+              "readiness": {
+                "mapping": "constant",
+                "value": "review_pending"
+              },
+              "artifacts": {
+                "mapping": "pointer",
+                "path": "/artifacts"
+              }
+            }
+          }
+        },
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/work_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/work_id"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/original_base"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/original_base"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/work_kind"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/work_kind"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/input_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_input"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/input_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_input"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/predecessor_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/manifest/base_revision"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/candidate_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/manifest/candidate_revision"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/handoff_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/handoff_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/accepted"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": true
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/contract_exists"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": true
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "for_each",
+              "collection": {
+                "source": "path",
+                "path": "/manifest/changed_paths"
+              },
+              "quantifier": "every",
+              "predicate": {
+                "operation": "compare",
+                "left": {
+                  "source": "item",
+                  "path": "/path"
+                },
+                "comparison": "repository_path_within_any",
+                "right": {
+                  "source": "path",
+                  "path": "/allowed_paths"
+                }
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/contract_path"
+              },
+              "comparison": "repository_path_within_any",
+              "right": {
+                "source": "path",
+                "path": "/allowed_paths"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/change_path"
+              },
+              "comparison": "repository_path_within_any",
+              "right": {
+                "source": "path",
+                "path": "/allowed_paths"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/capture"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/handoff"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/facts"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/declared_requirements"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/declared_requirements"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/requirements_preserved"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": true
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/handoff/predecessor_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_predecessor"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

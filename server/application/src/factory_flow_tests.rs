@@ -53,7 +53,13 @@ impl FactoryFlowInputPreparer for Inputs {
           FactoryTaskSubject::Candidate(CandidateSubject::new(
             snapshot.work.subject().clone(),
             revision,
-            manifest.content_digest(),
+            input
+              .payload()
+              .value()
+              .get("candidate_digest")
+              .and_then(|digest| digest.as_str())
+              .map(|digest| digest.parse().unwrap())
+              .unwrap_or_else(|| manifest.content_digest()),
           ))
         }
       };
@@ -251,22 +257,36 @@ impl FactoryNodeBuildOutputSource for Execution {
       return Ok(outputs);
     }
     let wire: serde_json::Value = serde_json::from_slice(&causality.input).unwrap();
-    let report = self
-      .reports
-      .get(&profile.node)
-      .cloned()
-      .unwrap_or_else(|| wire["payload"]["value"].clone());
+    let schema = self.result_schema(profile.node.clone());
+    let report = self.reports.get(&profile.node).cloned().unwrap_or_else(|| {
+      let input = &wire["payload"]["value"];
+      match schema.identity().as_str() {
+        "factory.base.protected_test_handoff" => {
+          serde_json::json!({"accepted_contract":causality.input_digest,"classes":["project.custom"]})
+        }
+        "factory.base.protected_validation_report" => serde_json::json!({"changeset_id":ChangeSetId::generate(),
+            "candidate":causality.context.subject().candidate().unwrap(),"tests":input["protected_inventory"],
+            "input_digest":causality.input_digest,"classes":[{"class":"project.custom","outcome":"passed"}]}),
+        _ => input.get("accepted").unwrap_or(input).clone(),
+      }
+    });
     let mut observed = document(
       &builds,
       &profile.result_output,
-      &self.result_schema(profile.node.clone()),
+      &schema,
       serde_json::to_vec(&report).unwrap(),
-      profile.tool.clone(),
+      profile.result_tool().clone(),
     );
     observed.plugin = profile.plugin.clone();
     let mut documents = vec![observed];
     for requirement in &self.requirements[&profile.node] {
-      let mut value = if requirement.output_kind() == EvidenceOutputKind::Artifact {
+      let mut value = if let Some(value) = fixture_capture_or_validation_value(
+        &request,
+        requirement,
+        FactoryDigest::content_sha256(&documents[0].bytes),
+      ) {
+        value
+      } else if requirement.output_kind() == EvidenceOutputKind::Artifact {
         serde_json::json!({"problem":"bounded feature proposal","sources":["admitted.task"],"assumptions":[],"alternatives":["existing contract"],"unresolved_questions":[]})
       } else if requirement.kind() == &key("terminal_resolution") {
         serde_json::json!({"accepted":false,"outcome":"unresolved"})
@@ -308,6 +328,30 @@ impl FactoryNodeBuildOutputSource for Execution {
     })
   }
 }
+/// Metadata-only fixtures for the configured owner contract. Byte/capture trust
+/// is exercised separately through the installed capture and validation ports.
+pub(crate) fn fixture_capture_or_validation_value(
+  request: &CreateFactoryBuild,
+  requirement: &EvidenceRequirement,
+  report_digest: FactoryDigest,
+) -> Option<serde_json::Value> {
+  let c = request.causality.as_ref();
+  let wire: serde_json::Value = serde_json::from_slice(&c.input).unwrap();
+  let input = &wire["payload"]["value"];
+  match requirement.kind().as_str() {
+    "candidate_facts" => Some(serde_json::json!({"candidate_revision":request.immutable_revision,
+      "candidate_digest":FactoryDigest::from_bytes([11;32]),"input_digest":c.input_digest,"fresh_until":10000})),
+    "validation_facts" => Some(
+      serde_json::json!({"accepted":true,"input_digest":c.input_digest,"report_digest":report_digest,
+      "candidate_revision":input["candidate_revision"],"candidate_digest":input["candidate_digest"],
+      "protected_inventory":input["protected_inventory"],"covered_classes":input["classes"],"fresh_until":10000}),
+    ),
+    "change-set.bundle" | "change-set-manifest.json" => {
+      Some(serde_json::json!({"fixture":"opaque immutable candidate Artifact"}))
+    }
+    _ => None,
+  }
+}
 impl Execution {
   fn result_schema(&self, node: FactoryKey) -> ImmutableReference {
     self.result_schemas[&node].clone()
@@ -315,8 +359,7 @@ impl Execution {
 }
 
 pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>) {
-  let mut template: FlowDefinitionTemplate =
-    serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+  let mut template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
   let mut audit = template
     .nodes
     .iter()
@@ -324,6 +367,7 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
     .unwrap()
     .clone();
   audit.key = key("accessibility_audit");
+  audit.outcomes[0].schema = key("summary");
   audit.pool = None;
   audit.build_profile = Some(key("accessibility.profile"));
   template.nodes.push(audit);
@@ -347,18 +391,26 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
     key("observed"),
     FlowTransitionTarget::Node(key("protected_tests")),
   ));
-  configured_fixture_from_template(template)
+  configured_fixture_from_template(template, "/accepted")
 }
 
 pub(crate) fn configured_fixture_from_template(
   template: FlowDefinitionTemplate,
+  pool_payload_root: &str,
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
   let work = store_testing::factory_node_journal_contract_fixture().admission.work;
-  configured_fixture_with_work(template, work)
+  fixture_with_work_and_pool_root(template, work, pool_payload_root)
 }
 pub(crate) fn configured_fixture_with_work(
   template: FlowDefinitionTemplate,
   work: WorkEnvelope,
+) -> (PublishedFactoryAdmission, Arc<Execution>) {
+  fixture_with_work_and_pool_root(template, work, "/accepted")
+}
+fn fixture_with_work_and_pool_root(
+  template: FlowDefinitionTemplate,
+  work: WorkEnvelope,
+  pool_payload_root: &str,
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
   let schemas = template.data_schemas().unwrap();
   let fact_schemas = BTreeMap::from([
@@ -389,6 +441,24 @@ pub(crate) fn configured_fixture_with_work(
           reference("verifier.plugin"),
         )];
       }
+      if node.key == key("implementation") {
+        for name in ["change-set.bundle", "change-set-manifest.json"] {
+          profile.evidence.push(EvidenceRequirement::new(
+            key(name),
+            EvidenceOutputKind::Artifact,
+            reference("capture.artifacts"),
+            reference("git.capture"),
+            profile.plugin.clone(),
+          ));
+        }
+        profile.evidence.push(EvidenceRequirement::new(
+          key("candidate_facts"),
+          EvidenceOutputKind::Report,
+          schemas[&key("candidate_capture_facts")].reference().clone(),
+          reference("git.capture"),
+          profile.plugin.clone(),
+        ));
+      }
       if node.key == key("feature_research") {
         profile.evidence.push(EvidenceRequirement::new(
           key("proposal"),
@@ -408,6 +478,27 @@ pub(crate) fn configured_fixture_with_work(
         ));
       }
       match node.outcomes[0].schema.as_str() {
+        "protected_test_handoff" => {
+          profile.result_output = key("public.coverage");
+          profile.result_tool = Some(reference("tests.capture"));
+          profile.evidence = vec![EvidenceRequirement::new(
+            key("protected_inventory"),
+            EvidenceOutputKind::Artifact,
+            reference("tests.inventory"),
+            reference("tests.capture"),
+            profile.plugin.clone(),
+          )];
+        }
+        "protected_validation_report" => {
+          profile.result_output = key("validation_report");
+          profile.evidence = vec![EvidenceRequirement::new(
+            key("validation_facts"),
+            EvidenceOutputKind::Report,
+            schemas[&key("protected_validation_facts")].reference().clone(),
+            profile.tool.clone(),
+            profile.plugin.clone(),
+          )];
+        }
         "spec_manifest" => {
           profile.result_output = key("change-set-manifest.json");
           profile.result_output_kind = EvidenceOutputKind::Artifact;
@@ -484,13 +575,13 @@ pub(crate) fn configured_fixture_with_work(
           (
             key("severity"),
             FlowValueMapping::Pointer {
-              path: "/severity".into(),
+              path: format!("{pool_payload_root}/severity"),
             },
           ),
           (
             key("dependencies"),
             FlowValueMapping::Pointer {
-              path: "/dependencies".into(),
+              path: format!("{pool_payload_root}/dependencies"),
             },
           ),
         ]),
@@ -690,6 +781,56 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
     admission.work.artifacts().acceptance()
   );
   assert_eq!(contract.records().len(), 7);
+  let author = snapshot
+    .flow
+    .data
+    .build_intents
+    .iter()
+    .find(|intent| intent.input().node() == &key("accessibility_audit"))
+    .unwrap();
+  let policy = crate::FactoryProtectedTestPolicy::new(
+    ProtectedTestCoverage::new(vec![key("integration"), key("project.custom")], 8, 9000, 7).unwrap(),
+    1000,
+  )
+  .unwrap();
+  let plan = crate::freeze_factory_protected_test_plan(author, &contract, &policy).unwrap();
+  assert_eq!(plan.accepted_contract(), contract.digest().unwrap());
+  assert_eq!(plan.classes(), &[key("integration"), key("project.custom")]);
+  assert_eq!(
+    crate::freeze_factory_protected_test_plan(author, &contract, &policy).unwrap(),
+    plan
+  );
+  use crate::FactoryProtectedTestPlanSource as _;
+  let plans = crate::FactoryStoredProtectedTestPlanSource::new(
+    store.clone(),
+    author.profile().model_or_tool.clone(),
+    policy.clone(),
+  );
+  assert_eq!(plans.frozen_plan(author).await.unwrap(), plan);
+  let recovered = crate::FactoryStoredProtectedTestPlanSource::new(
+    restarted.clone(),
+    author.profile().model_or_tool.clone(),
+    policy.clone(),
+  );
+  assert_eq!(
+    recovered.frozen_plan(author).await.unwrap(),
+    plan,
+    "plan authority must reconstruct from persisted accepted ancestry after restart"
+  );
+  let wrong =
+    crate::FactoryStoredProtectedTestPlanSource::new(store.clone(), reference("unselected.policy"), policy.clone());
+  assert!(wrong.frozen_plan(author).await.is_err());
+  let earlier = snapshot
+    .flow
+    .data
+    .build_intents
+    .iter()
+    .find(|intent| intent.input().node() == &key("classification"))
+    .unwrap();
+  assert!(
+    crate::freeze_factory_protected_test_plan(earlier, &contract, &policy).is_err(),
+    "only explicit accepted-contract ancestry can authorize authoring"
+  );
   assert!(
     !snapshot
       .flow
@@ -748,6 +889,37 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
     FactoryRunState::Completed,
     "the configured root terminal must durably finish its Run"
   );
+  let author = snapshot
+    .flow
+    .data
+    .records
+    .iter()
+    .find(|row| row.input().node() == &key("protected_tests"))
+    .unwrap();
+  let private = author
+    .build_provenance()
+    .unwrap()
+    .outputs()
+    .iter()
+    .find(|output| output.output_kind == EvidenceOutputKind::Artifact)
+    .unwrap();
+  let implementation = snapshot
+    .flow
+    .data
+    .build_intents
+    .iter()
+    .find(|intent| intent.input().node() == &key("implementation"))
+    .unwrap();
+  assert_eq!(
+    implementation.input().payload(),
+    author.input().payload(),
+    "the control edge forwards the accepted contract, not author outputs"
+  );
+  let exposed = serde_json::to_string(implementation.input()).unwrap();
+  assert!(!exposed.contains(&private.artifact.artifact_id().to_string()));
+  assert!(implementation.input().context().unwrap().entries().iter().all(|entry|
+    matches!(entry.source(),FactoryContextReference::Artifact(reference) if reference==snapshot.work.artifacts().task())),
+    "the implementation's frozen Context cannot grant the private inventory or author files");
   let replay = FactoryFlowRunner::new(
     store.clone(),
     Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
@@ -795,12 +967,14 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       "protected_tests",
       "implementation",
       "implementation_result_gate",
+      "protected_validation",
+      "protected_validation_gate",
       "review",
       "verification",
       "verification_result_gate"
     ]
   );
-  assert_eq!(snapshot.flow.data.build_intents.len(), 8);
+  assert_eq!(snapshot.flow.data.build_intents.len(), 9);
   ready
 }
 #[test]
@@ -1593,11 +1767,10 @@ fn configured_feature_research_retains_an_actual_proposal_artifact_before_bypass
 }
 
 pub(crate) fn correction_fixture() -> (PublishedFactoryAdmission, Arc<Execution>) {
-  configured_fixture_from_template(correction_template())
+  configured_fixture_from_template(correction_template(), "")
 }
 fn correction_template() -> FlowDefinitionTemplate {
-  let mut template: FlowDefinitionTemplate =
-    serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+  let mut template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
   let prototype = template
     .nodes
     .iter()
@@ -1610,6 +1783,8 @@ fn correction_template() -> FlowDefinitionTemplate {
   template.nodes = ["seed_input", "write_policy", "inspect_policy"].into_iter().map(|name| {
     let mut node = prototype.clone();
     node.key = key(name);
+    node.input_schema = key("summary");
+    node.context_binding = None;
     node.pool = None;
     node.required = true;
     node.build_profile = Some(key(name));
@@ -1891,7 +2066,7 @@ fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
   ]))
   .unwrap();
   template.terminals = BTreeMap::from([(key("done"), key("summary"))]);
-  let (admission, _) = configured_fixture_from_template(template);
+  let (admission, _) = configured_fixture_from_template(template, "");
   let store = Arc::new(store_testing::InMemoryFactoryConfigurationStore::new());
   let audit = store_testing::management_mutation_with_request((), "fanout-pool")
     .audit()
@@ -1998,7 +2173,7 @@ fn a_correction_cycle_can_publish_its_non_root_entry_to_a_configured_pool() {
     .find(|node| node.key == key("write_policy"))
     .unwrap()
     .pool = Some(key("development.ready"));
-  let (admission, execution) = configured_fixture_from_template(template);
+  let (admission, execution) = configured_fixture_from_template(template, "");
   let store = Arc::new(store_testing::InMemoryFactoryConfigurationStore::new());
   let audit = store_testing::management_mutation_with_request((), "correction-pool")
     .audit()

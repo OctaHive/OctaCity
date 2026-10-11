@@ -1,0 +1,27 @@
+{
+  "schemas": {
+    "candidate_publication_input": {
+      "identity": "factory.base.candidate_publication_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "spec_result"
+            }
+          },
+          "review": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "spec_review"
+            }
+          }
+        }
+      }
+    }
+  }
+}

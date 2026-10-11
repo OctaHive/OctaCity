@@ -118,6 +118,7 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
       review["findings"] = json!([]);
       review
     } else if requirements.iter().any(|r| r.kind() == &key("execution_facts")) {
+      let input = input.get("accepted").unwrap_or(input);
       let mut result = input.clone();
       if self.feedback.as_ref() == Some(&p.node) && c.cycle_id.as_uuid() == c.flow_run_id.as_uuid() {
         result["requirements_defect"] = json!({"reason":"Acceptance omitted a required contract case","candidate_revision":input["specification"]["manifest"]["candidate_revision"],"evidence":[input["specification"]["artifacts"]["manifest"].clone()]});
@@ -141,7 +142,11 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
       let doc = if let Some(doc) = extra.remove(requirement.kind()) {
         doc
       } else {
-        let facts = if requirement.kind() == &key("specification_review_facts") {
+        let facts = if let Some(value) =
+          crate::factory_flow_tests::fixture_capture_or_validation_value(request, requirement, report_digest)
+        {
+          value
+        } else if requirement.kind() == &key("specification_review_facts") {
           json!({"accepted":true,"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":500})
         } else {
           json!({"outcome":if report.get("requirements_defect").is_some(){"requirements_defect"}else{"observed"},"candidate_revision":report["specification"]["manifest"]["candidate_revision"],"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":10000,"requirements_evidence":report["requirements_defect"].get("evidence").cloned().unwrap_or_else(||json!([]))})
@@ -159,8 +164,7 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
       };
       documents.push(doc);
     }
-    let template: FlowDefinitionTemplate =
-      serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+    let template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
     let catalogue = template.data_schemas().unwrap();
     for doc in &documents {
       if let Some(contract) = catalogue.values().find(|contract| contract.reference() == &doc.schema) {
@@ -261,7 +265,8 @@ pub(crate) fn specified_fixture(
   feedback: Option<&str>,
   behavior: PublicationCase,
 ) -> (PublishedFactoryAdmission, Arc<Execution>) {
-  let mut wire: Value = serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+  let mut wire: Value =
+    serde_json::to_value(crate::factory_node_test_support::fixtures::supplied_base_flow_template()).unwrap();
   let plugin = reference("fixture.publisher");
   let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
     plugins: vec![plugin.clone()],
@@ -569,6 +574,51 @@ pub(crate) async fn verify_specified_owner<
         usize::from(behavior == PublicationCase::LostResponse)
       );
       for cycle in &snapshot.flow.cycles {
+        let accepted = snapshot
+          .flow
+          .data
+          .records
+          .iter()
+          .find(|row| row.input().cycle_id() == cycle.id() && row.input().node() == &key("specification_ready"))
+          .unwrap();
+        let specification = &accepted.payload().value()["specification"];
+        for name in ["protected_tests", "implementation"] {
+          let input = snapshot
+            .flow
+            .data
+            .inputs
+            .iter()
+            .find(|row| row.cycle_id() == cycle.id() && row.node() == &key(name))
+            .unwrap();
+          let context = input.context().unwrap();
+          assert_eq!(
+            context
+              .subject()
+              .candidate()
+              .expect("accepted specification must select the execution candidate")
+              .candidate_revision()
+              .as_str(),
+            specification["manifest"]["candidate_revision"].as_str().unwrap(),
+          );
+          assert_eq!(
+            context.entries().len(),
+            3,
+            "only task and the accepted specification artifacts are granted"
+          );
+          for artifact_name in ["manifest", "bundle"] {
+            let expected: FactoryArtifactReference =
+              serde_json::from_value(specification["artifacts"][artifact_name].clone()).unwrap();
+            assert!(
+              context
+                .entries()
+                .iter()
+                .any(|entry| entry.source() == &FactoryContextReference::Artifact(expected.clone()))
+            );
+          }
+          assert!(context.entries().iter().any(
+            |entry| entry.source() == &FactoryContextReference::Artifact(snapshot.work.artifacts().task().clone())
+          ));
+        }
         for name in [
           "specification_gate",
           "specification_review",
@@ -668,6 +718,32 @@ fn fixtures_build_tool(admission: &PublishedFactoryAdmission) -> ImmutableRefere
     .iter()
     .find_map(|node| node.build().map(|build| build.tool.clone()))
     .unwrap()
+}
+
+#[test]
+fn accepted_specification_selects_the_author_and_implementation_execution_context() {
+  let (admission, execution) = specified_fixture(
+    "feature_request",
+    "large",
+    "requirements",
+    None,
+    PublicationCase::Normal,
+  );
+  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+  let audit = testing::management_mutation_with_request((), "accepted-execution-context")
+    .audit()
+    .clone();
+  store
+    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+    .unwrap();
+  crate::factory_flow_tests::run_ready(verify_specified_owner(
+    store.clone(),
+    store,
+    &admission,
+    execution,
+    PublicationCase::Normal,
+    None,
+  ));
 }
 
 #[test]

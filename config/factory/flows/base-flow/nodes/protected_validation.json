@@ -1,0 +1,168 @@
+{
+  "nodes": [
+    {
+      "key": "protected_validation",
+      "kind": "build_command",
+      "input_schema": "protected_validation_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "protected_validation_report"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "summary": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "candidate": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/candidate_facts/data/payload/value"
+          },
+          "bundle": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set.bundle/artifact"
+          },
+          "manifest": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set-manifest.json/artifact"
+          },
+          "tests": {
+            "source": "record",
+            "node": "protected_tests",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/protected_inventory/artifact"
+          },
+          "coverage": {
+            "source": "record",
+            "node": "protected_tests",
+            "outcome": "observed",
+            "view": "payload",
+            "path": "/classes"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "summary": {
+                "mapping": "pointer",
+                "path": "/summary"
+              },
+              "candidate_bundle": {
+                "mapping": "pointer",
+                "path": "/bundle"
+              },
+              "candidate_manifest": {
+                "mapping": "pointer",
+                "path": "/manifest"
+              },
+              "candidate_revision": {
+                "mapping": "pointer",
+                "path": "/candidate/candidate_revision"
+              },
+              "candidate_digest": {
+                "mapping": "pointer",
+                "path": "/candidate/candidate_digest"
+              },
+              "protected_inventory": {
+                "mapping": "pointer",
+                "path": "/tests"
+              },
+              "classes": {
+                "mapping": "pointer",
+                "path": "/coverage"
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "protected.validation",
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/candidate_revision"
+          }
+        },
+        "entries": {
+          "candidate_bundle": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/candidate_bundle"
+                  }
+                }
+              }
+            }
+          },
+          "candidate_manifest": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/candidate_manifest"
+                  }
+                }
+              }
+            }
+          },
+          "protected_inventory": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/protected_inventory"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

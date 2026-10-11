@@ -3,7 +3,7 @@ use crate::*;
 use std::collections::BTreeMap;
 
 fn template() -> FlowDefinitionTemplate {
-  serde_json::from_str(include_str!("../../../../config/factory/flows/base-intake.json")).unwrap()
+  crate::flow_test_support::supplied_base_flow_template()
 }
 fn published() -> PublishedFlowTemplate {
   let template = template();
@@ -184,7 +184,9 @@ fn configured_requirements_bypass_preserves_every_protected_downstream_gate() {
     ("bypass", "protected_tests"),
     ("observed", "implementation"),
     ("observed", "implementation_result_gate"),
-    ("continue", "review"),
+    ("continue", "protected_validation"),
+    ("observed", "protected_validation_gate"),
+    ("passed", "review"),
     ("observed", "verification"),
   ] {
     let edge = definition
@@ -196,6 +198,87 @@ fn configured_requirements_bypass_preserves_every_protected_downstream_gate() {
     assert!(definition.node(&key(next)).unwrap().is_required());
     current = key(next);
   }
+}
+
+#[test]
+fn supplied_author_handoff_and_implementation_projection_exclude_private_outputs() {
+  let template = template();
+  let schemas = template.data_schemas().unwrap();
+  let author = template
+    .nodes
+    .iter()
+    .find(|node| node.key == key("protected_tests"))
+    .unwrap();
+  let handoff = &schemas[&author.outcomes[0].schema];
+  assert!(
+    FlowPayload::new(
+      handoff,
+      serde_json::json!({"accepted_contract":"a".repeat(64),"classes":["project.custom"]})
+    )
+    .is_ok()
+  );
+  assert!(
+    FlowPayload::new(
+      handoff,
+      serde_json::json!({"accepted_contract":"a".repeat(64),"classes":["project.custom"],"assertions":"PRIVATE"})
+    )
+    .is_err()
+  );
+  let implementation = template
+    .nodes
+    .iter()
+    .find(|node| node.key == key("implementation"))
+    .unwrap();
+  let binding = serde_json::to_value(&implementation.input_binding).unwrap();
+  assert_eq!(binding["sources"]["previous"]["view"], "input_payload");
+  let validator = template
+    .nodes
+    .iter()
+    .find(|node| node.key == key("protected_validation"))
+    .unwrap();
+  assert_eq!(validator.kind, FlowNodeKind::BuildCommand);
+  assert!(validator.context_binding.is_some());
+  let artifact = serde_json::json!({"artifact_id":"00000000-0000-0000-0000-000000000011","content_digest":"c".repeat(64),"encoded_size":100});
+  let summary = serde_json::json!({"work_kind":"feature_request","size":"small","risk":"low","admission_risk":"low","component":"api","severity":"low","dependencies":[],"recommended_route":"development","research_required":false,"research_accepted":false});
+  let input=FlowPayload::new(&schemas[&validator.input_schema],serde_json::json!({"summary":summary,"candidate_bundle":artifact,"candidate_manifest":artifact,"candidate_revision":"candidate","candidate_digest":"d".repeat(64),"protected_inventory":artifact,"classes":["project.custom"]})).unwrap();
+  assert_eq!(
+    validator
+      .context_binding
+      .as_ref()
+      .unwrap()
+      .selected_sources(&input)
+      .unwrap()
+      .len(),
+    3
+  );
+  assert!(
+    implementation
+      .context_binding
+      .as_ref()
+      .is_none_or(|binding| !serde_json::to_string(binding).unwrap().contains("protected_inventory"))
+  );
+}
+
+#[test]
+fn supplied_validation_gate_requires_exact_fresh_inputs_and_every_declared_class() {
+  let summary = serde_json::json!({"work_kind":"feature_request","size":"small","risk":"low","admission_risk":"low","component":"api","severity":"low","dependencies":[],"recommended_route":"development","research_required":false,"research_accepted":false});
+  let artifact = serde_json::json!({"artifact_id":"00000000-0000-0000-0000-000000000011","content_digest":"c".repeat(64),"encoded_size":100});
+  let report = serde_json::json!({"changeset_id":"00000000-0000-0000-0000-000000000012","candidate":{"exact":{"project_id":"00000000-0000-0000-0000-000000000001","repository_id":"00000000-0000-0000-0000-000000000002","base_revision":"base"},"candidate_revision":"candidate","changeset_digest":"d".repeat(64)},"tests":artifact,"input_digest":"e".repeat(64),"classes":[{"class":"project.custom","outcome":"passed"}]});
+  let input = serde_json::json!({"summary":summary,"report":report,"expected_input":"a".repeat(64),"expected_report":"b".repeat(64),"candidate_revision":"candidate","candidate_digest":"d".repeat(64),"protected_inventory":artifact,"classes":["project.custom"],"facts":{"accepted":true,"input_digest":"a".repeat(64),"report_digest":"b".repeat(64),"candidate_revision":"candidate","candidate_digest":"d".repeat(64),"protected_inventory":artifact,"covered_classes":["project.custom"],"fresh_until":100}});
+  assert_eq!(select("protected_validation_gate", input.clone()), "passed");
+  for (path, value) in [
+    ("/facts/input_digest", serde_json::json!("z".repeat(64))),
+    ("/report/tests/content_digest", serde_json::json!("z".repeat(64))),
+    ("/facts/covered_classes", serde_json::json!(["other"])),
+    ("/facts/fresh_until", serde_json::json!(20)),
+  ] {
+    let mut changed = input.clone();
+    *changed.pointer_mut(path).unwrap() = value;
+    assert_eq!(select("protected_validation_gate", changed), "invalid");
+  }
+  let mut failed = input;
+  failed["report"]["classes"][0]["outcome"] = serde_json::json!("failed");
+  assert_eq!(select("protected_validation_gate", failed), "failed");
 }
 
 #[test]

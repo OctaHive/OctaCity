@@ -1,0 +1,19 @@
+{
+  "schemas": {
+    "eligibility_accepted": {
+      "identity": "factory.base.eligibility_accepted",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

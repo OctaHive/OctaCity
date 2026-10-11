@@ -1,0 +1,35 @@
+{
+  "schemas": {
+    "defect_facts": {
+      "identity": "factory.base.defect_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "not_reproducible",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

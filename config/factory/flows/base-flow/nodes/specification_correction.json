@@ -1,0 +1,190 @@
+{
+  "nodes": [
+    {
+      "key": "specification_correction",
+      "kind": "reasoning",
+      "input_schema": "spec_author_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "spec_manifest"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "scope": {
+            "source": "node_configuration",
+            "path": "/build/capture_write_paths"
+          },
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "work_id": {
+            "source": "work",
+            "path": "/id"
+          },
+          "original_base": {
+            "source": "work",
+            "path": "/subject/base_revision"
+          },
+          "declared_requirements": {
+            "source": "work",
+            "path": "/artifacts/specifications"
+          },
+          "task": {
+            "source": "work",
+            "path": "/artifacts/task"
+          },
+          "original_acceptance": {
+            "source": "work",
+            "path": "/artifacts/acceptance"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "accepted_input": {
+                "mapping": "pointer",
+                "path": "/previous"
+              },
+              "work_id": {
+                "mapping": "pointer",
+                "path": "/work_id"
+              },
+              "original_base": {
+                "mapping": "pointer",
+                "path": "/original_base"
+              },
+              "allowed_paths": {
+                "mapping": "pointer",
+                "path": "/scope"
+              },
+              "declared_requirements": {
+                "mapping": "pointer",
+                "path": "/declared_requirements"
+              },
+              "task": {
+                "mapping": "pointer",
+                "path": "/task"
+              },
+              "original_acceptance": {
+                "mapping": "pointer",
+                "path": "/original_acceptance"
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "specification.correction",
+      "capture_write_paths": [
+        "openspec/changes",
+        "openspec/specs"
+      ],
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/accepted_input/specification/manifest/candidate_revision"
+          }
+        },
+        "entries": {
+          "manifest": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/accepted_input/specification/artifacts/manifest"
+                  }
+                }
+              }
+            }
+          },
+          "bundle": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/accepted_input/specification/artifacts/bundle"
+                  }
+                }
+              }
+            }
+          },
+          "task": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/task"
+                  }
+                }
+              }
+            }
+          },
+          "original_acceptance": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/original_acceptance"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "artifact_collections": {
+          "requirements": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "pointer",
+                "path": "/declared_requirements"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -974,6 +974,7 @@ fn configured_input_selects_only_committed_records_and_freezes_their_exact_refer
     FlowInputSource::Record {
       node: key("accessibility_audit"),
       outcome: key("observed"),
+      view: FlowRecordView::Payload,
       path: "/count".into(),
     },
     9,
@@ -999,6 +1000,20 @@ fn configured_predecessor_metadata_exposes_owner_facts_separately_from_provider_
     },
     10,
   );
+}
+#[test]
+fn configured_retained_record_can_select_metadata_without_copying_provider_payload() {
+  let source: FlowInputSource = serde_json::from_value(serde_json::json!({
+    "source":"record", "node":"custom_gate", "outcome":"observed", "view":"metadata", "path":"/observed_at"
+  }))
+  .unwrap();
+  let (_, prior, _) = node_fixture();
+  let name = prior.closure().definition(prior.closure().root()).unwrap().nodes()[0]
+    .key()
+    .clone();
+  let mut source = serde_json::to_value(source).unwrap();
+  source["node"] = serde_json::to_value(name).unwrap();
+  verify_record_source(serde_json::from_value(source).unwrap(), 10);
 }
 fn verify_record_source(source: FlowInputSource, expected: i64) {
   let (work, prior, schema) = node_fixture();
@@ -1143,6 +1158,10 @@ fn verify_record_source(source: FlowInputSource, expected: i64) {
   assert_eq!(input.payload().value(), &serde_json::json!({"count": expected}));
   assert!(records[0].metadata().unwrap().get("input").is_none());
   assert!(records[0].metadata().unwrap().get("payload").is_none());
+  assert_eq!(
+    records[0].metadata().unwrap()["record_digest"],
+    serde_json::to_value(records[0].digest().unwrap()).unwrap()
+  );
   assert_eq!(input.sources().len(), 1);
   assert_eq!(input.sources()[0].node_attempt_id(), attempts[0].id());
   assert_eq!(input.sources()[0].digest(), records[0].digest().unwrap());
@@ -1176,6 +1195,7 @@ fn configured_record_source_must_name_a_declared_node_and_outcome() {
         FlowInputSource::Record {
           node: key(node),
           outcome: key(outcome),
+          view: FlowRecordView::Payload,
           path: String::new(),
         },
       )]),

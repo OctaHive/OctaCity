@@ -1,0 +1,39 @@
+{
+  "schemas": {
+    "classification_input": {
+      "identity": "factory.base.classification_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "priority": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "eligible": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

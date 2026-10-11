@@ -360,6 +360,46 @@ mod tests {
   }
 
   #[test]
+  fn retained_evidence_binds_exact_candidate_and_arbitrary_immutable_validation_inputs() {
+    let fixture = fixture();
+    let output = VerifiedFactoryEvidence::new(fixture.record, &fixture.bytes, fixture.attestation).unwrap();
+    let manifest = construct_factory_evidence_manifest(
+      EvidenceManifestId::generate(),
+      &fixture.change_set,
+      &fixture.completed,
+      vec![fixture.requirement],
+      vec![output],
+      time(33),
+    )
+    .unwrap();
+    let candidate_bundle =
+      FactoryArtifactReference::new(fixture.change_set.bundle_artifact(), digest(51), 100).unwrap();
+    let protected = FactoryArtifactReference::new(ArtifactId::generate(), digest(52), 100).unwrap();
+    let inputs = vec![candidate_bundle.clone(), protected.clone()];
+    let bound = manifest.with_inputs(inputs.clone()).unwrap();
+    bound.verify_for(&fixture.change_set, &inputs).unwrap();
+    let restored: EvidenceManifest = serde_json::from_slice(&serde_json::to_vec(&bound).unwrap()).unwrap();
+    assert_eq!(restored.digest().unwrap(), bound.digest().unwrap());
+    restored.verify_for(&fixture.change_set, &inputs).unwrap();
+    let replaced = FactoryArtifactReference::new(protected.artifact_id(), digest(53), 100).unwrap();
+    assert!(
+      restored
+        .verify_for(&fixture.change_set, &[candidate_bundle.clone(), replaced])
+        .is_err()
+    );
+    assert!(
+      restored
+        .clone()
+        .with_inputs(vec![protected.clone(), protected])
+        .is_err()
+    );
+    let mut wire = serde_json::to_value(&fixture.change_set).unwrap();
+    wire["subject"]["candidate_revision"] = serde_json::json!("other-candidate");
+    let candidate: ChangeSet = serde_json::from_value(wire).unwrap();
+    assert!(restored.verify_for(&candidate, &inputs).is_err());
+  }
+
+  #[test]
   fn rejects_digest_drift_before_manifest_construction() {
     let fixture = fixture();
     assert!(matches!(

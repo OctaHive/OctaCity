@@ -1,0 +1,27 @@
+{
+  "schemas": {
+    "protected_author_input": {
+      "identity": "factory.base.protected_author_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "summary"
+            }
+          },
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          }
+        }
+      }
+    }
+  }
+}

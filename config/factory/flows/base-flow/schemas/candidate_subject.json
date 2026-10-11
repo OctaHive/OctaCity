@@ -1,0 +1,61 @@
+{
+  "schemas": {
+    "candidate_subject": {
+      "identity": "factory.base.candidate_subject",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "exact": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "project_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 36,
+                    "max_bytes": 36
+                  }
+                },
+                "repository_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 36,
+                    "max_bytes": 36
+                  }
+                },
+                "base_revision": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                }
+              }
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "changeset_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

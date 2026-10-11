@@ -1,0 +1,273 @@
+{
+  "nodes": [
+    {
+      "key": "eligibility_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "eligibility_gate_input",
+      "outcomes": [
+        {
+          "key": "classify",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "rejection",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "escalation",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observations": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/data/payload/value"
+          },
+          "identity": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/input_digest"
+          },
+          "freshness": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/facts/fresh_until"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "fit": {
+                "mapping": "pointer",
+                "path": "/observations/fit"
+              },
+              "duplicate": {
+                "mapping": "pointer",
+                "path": "/observations/duplicate"
+              },
+              "trusted_fit": {
+                "mapping": "pointer",
+                "path": "/proof/fit"
+              },
+              "trusted_duplicate": {
+                "mapping": "pointer",
+                "path": "/proof/duplicate"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "evidence_input": {
+                "mapping": "pointer",
+                "path": "/proof/input_digest"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/trusted_duplicate"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": true
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/trusted_fit"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "out_of_scope"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "rejection"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/expected_input"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/evidence_input"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/fresh_until"
+                      },
+                      "comparison": "greater",
+                      "right": {
+                        "source": "observation_time"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/trusted_fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "fits"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "fits"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/trusted_duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": false
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": false
+                  }
+                }
+              ]
+            },
+            "outcome": "classify"
+          }
+        ],
+        "fallback": "escalation",
+        "outputs": {
+          "classify": {
+            "value": {
+              "mapping": "constant",
+              "value": {
+                "accepted": true
+              }
+            }
+          },
+          "rejection": {
+            "value": {
+              "mapping": "constant",
+              "value": {
+                "accepted": false
+              }
+            }
+          },
+          "escalation": {
+            "value": {
+              "mapping": "constant",
+              "value": {
+                "accepted": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

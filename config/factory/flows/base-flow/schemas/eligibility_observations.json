@@ -1,0 +1,30 @@
+{
+  "schemas": {
+    "eligibility_observations": {
+      "identity": "factory.base.eligibility_observations",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "fit": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "fits",
+                "out_of_scope",
+                "inconclusive"
+              ]
+            }
+          },
+          "duplicate": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  }
+}

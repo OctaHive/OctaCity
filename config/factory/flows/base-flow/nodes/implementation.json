@@ -1,0 +1,107 @@
+{
+  "nodes": [
+    {
+      "key": "implementation",
+      "kind": "reasoning",
+      "input_schema": "protected_author_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "input_payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "build_profile": "implementation",
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/accepted/specification/manifest/candidate_revision"
+          }
+        },
+        "candidate_when_present": "/accepted/specification",
+        "entries": {
+          "task": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/task"
+                  }
+                }
+              }
+            }
+          },
+          "manifest": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/accepted/specification/artifacts/manifest"
+                  }
+                }
+              }
+            },
+            "when_present": "/accepted/specification"
+          },
+          "bundle": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/accepted/specification/artifacts/bundle"
+                  }
+                }
+              }
+            },
+            "when_present": "/accepted/specification"
+          }
+        }
+      }
+    }
+  ]
+}

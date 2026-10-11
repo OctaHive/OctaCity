@@ -1,0 +1,38 @@
+{
+  "schemas": {
+    "eligibility_facts": {
+      "identity": "factory.base.eligibility_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "fit": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "fits",
+                "out_of_scope",
+                "inconclusive"
+              ]
+            }
+          },
+          "duplicate": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

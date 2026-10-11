@@ -1,0 +1,16 @@
+{
+  "classes": [
+    "integration",
+    "end_to_end",
+    "performance",
+    "ui_visual",
+    "security_negative",
+    "migration",
+    "compatibility",
+    "project.custom"
+  ],
+  "max_files": 64,
+  "max_bytes": 16777216,
+  "retention_millis": 604800000,
+  "reserved_inputs": 7
+}

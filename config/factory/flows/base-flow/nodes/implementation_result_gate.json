@@ -1,0 +1,375 @@
+{
+  "nodes": [
+    {
+      "key": "implementation_result_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "execution_gate_input",
+      "outcomes": [
+        {
+          "key": "continue",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "requirements_defect",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "invalid",
+          "kind": "failure",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "result": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "metadata": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": ""
+          },
+          "trusted_input": {
+            "source": "predecessor",
+            "view": "input_payload",
+            "path": "/accepted"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "result": {
+                "mapping": "pointer",
+                "path": "/result"
+              },
+              "facts": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/execution_facts/data/payload/value"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/metadata/input_digest"
+              },
+              "expected_report": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/observations/artifact/content_digest"
+              },
+              "trusted_input": {
+                "mapping": "pointer",
+                "path": "/trusted_input"
+              },
+              "execution_revision": {
+                "mapping": "pointer",
+                "path": "/metadata/execution_revision"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/input_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_input"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/report_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_report"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            }
+          ]
+        },
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/facts/outcome"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "requirements_defect"
+                      }
+                    },
+                    {
+                      "operation": "exists",
+                      "operand": {
+                        "source": "path",
+                        "path": "/result/requirements_defect"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/facts/candidate_revision"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/result/requirements_defect/candidate_revision"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/result/requirements_defect/evidence"
+                      },
+                      "comparison": "exact_value",
+                      "right": {
+                        "source": "path",
+                        "path": "/facts/requirements_evidence"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/result/specification"
+                  },
+                  "comparison": "exact_value",
+                  "right": {
+                    "source": "path",
+                    "path": "/trusted_input/specification"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/facts/candidate_revision"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/trusted_input/specification/manifest/candidate_revision"
+                  }
+                }
+              ]
+            },
+            "outcome": "requirements_defect"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/facts/outcome"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "requirements_defect"
+                      }
+                    },
+                    {
+                      "operation": "exists",
+                      "operand": {
+                        "source": "path",
+                        "path": "/result/requirements_defect"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/facts/candidate_revision"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "path",
+                        "path": "/result/requirements_defect/candidate_revision"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/result/requirements_defect/evidence"
+                      },
+                      "comparison": "exact_value",
+                      "right": {
+                        "source": "path",
+                        "path": "/facts/requirements_evidence"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "absent",
+                  "path": "/trusted_input/specification"
+                },
+                {
+                  "operation": "absent",
+                  "path": "/result/specification"
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/facts/candidate_revision"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/execution_revision"
+                  }
+                }
+              ]
+            },
+            "outcome": "requirements_defect"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/facts/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "observed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/result/specification"
+                  },
+                  "comparison": "exact_value",
+                  "right": {
+                    "source": "path",
+                    "path": "/trusted_input/specification"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/facts/candidate_revision"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/trusted_input/specification/manifest/candidate_revision"
+                  }
+                }
+              ]
+            },
+            "outcome": "continue"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/facts/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "observed"
+                  }
+                },
+                {
+                  "operation": "absent",
+                  "path": "/trusted_input/specification"
+                },
+                {
+                  "operation": "absent",
+                  "path": "/result/specification"
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/facts/candidate_revision"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "path",
+                    "path": "/execution_revision"
+                  }
+                }
+              ]
+            },
+            "outcome": "continue"
+          }
+        ],
+        "fallback": "invalid",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/result"
+          }
+        }
+      }
+    }
+  ]
+}

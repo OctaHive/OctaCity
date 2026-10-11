@@ -233,11 +233,14 @@ authority remain outside this port.
 
 ### Supplied base Flow and Accepted Work
 
-[`base-intake.json`](../../config/factory/flows/base-intake.json) supplies the
+[`base-flow.json`](../../config/factory/flows/base-flow.json) supplies the
 baseline eligibility, classification, optional defect/feature investigation,
 requirements-needed decision and downstream path. All logical names, result
 shapes, policy thresholds and transitions are configuration. The template
-compiler contains no special path for this example. Eligibility and routing
+compiler contains no special path for this example. The manifest composes explicit
+relative parts through a caller-supplied resolver before immutable publication;
+per-contract schemas, per-node definitions and transitions can be edited separately.
+Imports never participate in execution or admission authority. Eligibility and routing
 gates consume retained verifier facts bound to the actual producing input;
 model prose cannot grant eligibility, prove reproduction or choose small-Work
 bypass. Missing, contradictory, stale or mismatched evidence selects the
@@ -268,10 +271,12 @@ The supplied bypass route still traverses `protected_tests`, `implementation`,
 `review` and `verification`. The current slice verifies this configured control
 path through the common owner and PostgreSQL restart. Configured specification
 authoring, independent review, exact candidate publication and readiness are
-implemented through generic node contracts and installed capabilities. Dedicated
-protected-test isolation, production deployment and live provider qualification
-remain tasks 11, 16.1 and 16.4. These integrations bind technical capabilities and
-profiles without introducing stage-name dispatch.
+implemented through generic node contracts and installed capabilities. Protected
+test authoring, isolated implementation inputs and exact candidate/test validation
+are implemented as technical capabilities. Failure classification/rework, code
+review and deliverable completeness remain tasks 11.4–11.6; full production wiring
+and live provider qualification remain 16.1 and 16.4. These integrations bind
+capabilities and profiles without introducing stage-name dispatch.
 
 ### Durable phase-ready pools
 

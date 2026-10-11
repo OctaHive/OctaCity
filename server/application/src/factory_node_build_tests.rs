@@ -944,8 +944,7 @@ fn configured_specification_review_dispatches_only_its_frozen_candidate_and_revi
   crate::factory_admission_tests::run_ready(async {
     use std::collections::BTreeMap;
     let work = work();
-    let template: FlowDefinitionTemplate =
-      serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+    let template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
     let mut selection = binding(work.subject().project_id());
     selection.model_or_tool = reference("reviewer.parameters");
     selection.task_digest = FactoryDigest::from_bytes([84; 32]);

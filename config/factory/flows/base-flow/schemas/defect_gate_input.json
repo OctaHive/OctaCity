@@ -1,0 +1,214 @@
+{
+  "schemas": {
+    "defect_gate_input": {
+      "identity": "factory.base.defect_gate_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "work_kind": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "defect",
+                "feature_request"
+              ]
+            }
+          },
+          "size": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          },
+          "risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "admission_risk": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "recommended_route": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "cannot_reproduce",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "verified_outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "reproduced",
+                "intermittent",
+                "environment_specific",
+                "not_reproducible",
+                "already_fixed",
+                "needs_human_input"
+              ]
+            }
+          },
+          "expected_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "evidence_input": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          },
+          "component": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "severity": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "advisory",
+                "low",
+                "medium",
+                "high",
+                "critical"
+              ]
+            }
+          },
+          "dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "terminal_accepted": {
+            "required": false,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "terminal_outcome": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "terminal_input": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "terminal_fresh_until": {
+            "required": false,
+            "value": {
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
+            }
+          }
+        }
+      }
+    }
+  }
+}

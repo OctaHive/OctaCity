@@ -365,6 +365,8 @@ pub struct EvidenceManifest {
   constructed_at: Timestamp,
   requirements: Vec<EvidenceRequirement>,
   items: Vec<EvidenceItem>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  inputs: Vec<FactoryArtifactReference>,
 }
 
 impl EvidenceManifest {
@@ -443,6 +445,7 @@ impl EvidenceManifest {
       constructed_at,
       requirements,
       items,
+      inputs: Vec::new(),
     })
   }
 
@@ -482,6 +485,41 @@ impl EvidenceManifest {
     &self.items
   }
 
+  /// Binds all exact immutable auxiliary inputs used by deterministic execution.
+  /// This is independent of Flow node names and supports any installed validator.
+  pub fn with_inputs(mut self, mut inputs: Vec<FactoryArtifactReference>) -> Result<Self, FactoryError> {
+    inputs.sort_by_key(FactoryArtifactReference::artifact_id);
+    if inputs.is_empty()
+      || inputs.len() > crate::MAX_CONTEXT_MANIFEST_ENTRIES
+      || inputs
+        .windows(2)
+        .any(|pair| pair[0].artifact_id() == pair[1].artifact_id())
+    {
+      return Err(FactoryError::InvalidReference {
+        relationship: "evidence inputs",
+      });
+    }
+    self.inputs = inputs;
+    Ok(self)
+  }
+
+  /// Returns the complete canonical immutable execution input inventory.
+  #[must_use]
+  pub fn inputs(&self) -> &[FactoryArtifactReference] {
+    &self.inputs
+  }
+
+  /// Rejects evidence reuse for another candidate or any changed bound input.
+  pub fn verify_for(&self, candidate: &ChangeSet, inputs: &[FactoryArtifactReference]) -> Result<(), FactoryError> {
+    let required = self.clone().with_inputs(inputs.to_vec())?;
+    if self.changeset_id != candidate.id() || &self.subject != candidate.subject() || self.inputs != required.inputs {
+      return Err(FactoryError::InvalidReference {
+        relationship: "evidence subject and inputs",
+      });
+    }
+    Ok(())
+  }
+
   /// Resolves one canonical evidence kind to its exact retained item.
   #[must_use]
   pub fn item(&self, kind: &FactoryKey) -> Option<&EvidenceItem> {
@@ -513,6 +551,8 @@ struct EvidenceManifestWire {
   constructed_at: Timestamp,
   requirements: Vec<EvidenceRequirement>,
   items: Vec<EvidenceItem>,
+  #[serde(default)]
+  inputs: Vec<FactoryArtifactReference>,
 }
 
 impl<'de> Deserialize<'de> for EvidenceManifest {
@@ -521,7 +561,7 @@ impl<'de> Deserialize<'de> for EvidenceManifest {
     D: Deserializer<'de>,
   {
     let wire = EvidenceManifestWire::deserialize(deserializer)?;
-    Self::from_parts(
+    let manifest = Self::from_parts(
       wire.id,
       wire.changeset_id,
       wire.subject,
@@ -529,7 +569,12 @@ impl<'de> Deserialize<'de> for EvidenceManifest {
       wire.requirements,
       wire.items,
     )
-    .map_err(D::Error::custom)
+    .map_err(D::Error::custom)?;
+    if wire.inputs.is_empty() {
+      Ok(manifest)
+    } else {
+      manifest.with_inputs(wire.inputs).map_err(D::Error::custom)
+    }
   }
 }
 

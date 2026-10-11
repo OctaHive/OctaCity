@@ -1,0 +1,37 @@
+{
+  "schemas": {
+    "candidate_receipt": {
+      "identity": "factory.base.candidate_receipt",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "receipt": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "changeset_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

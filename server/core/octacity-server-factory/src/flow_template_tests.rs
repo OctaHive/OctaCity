@@ -2,9 +2,93 @@ use crate::flow_test_support::*;
 use crate::*;
 
 #[test]
+fn modular_templates_publish_identically_without_interpreting_node_or_file_names() {
+  let original: FlowDefinitionTemplate = crate::flow_test_support::supplied_base_flow_template();
+  let mut root = serde_json::to_value(&original).unwrap();
+  let mut parts = BTreeMap::new();
+  for field in [
+    "schemas",
+    "nodes",
+    "transitions",
+    "terminals",
+    "context_projections",
+    "data_projections",
+  ] {
+    let value = root.as_object_mut().unwrap().remove(field).unwrap();
+    parts.insert(
+      format!("arbitrary/{field}.json"),
+      serde_json::to_vec(&serde_json::json!({field:value})).unwrap(),
+    );
+  }
+  root["parts"] = serde_json::json!(parts.keys().collect::<Vec<_>>());
+  let manifest = serde_json::to_vec(&root).unwrap();
+  let loaded = FlowDefinitionTemplate::from_manifest(&manifest, |path| Ok(parts[path.as_str()].clone())).unwrap();
+  assert_eq!(loaded, original);
+  let profiles = original
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|name| (name.clone(), binding(octacity_server_domain::ProjectId::generate())))
+    .collect();
+  let id = FlowDefinitionId::generate();
+  let before = original
+    .instantiate(id, FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  let after = loaded
+    .instantiate(id, FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  assert_eq!(after.definition, before.definition);
+  assert_eq!(after.schemas, before.schemas);
+}
+
+#[test]
+fn modular_templates_reject_ambiguous_imports_and_unbounded_or_missing_parts() {
+  let template = crate::flow_test_support::supplied_base_flow_template();
+  let manifest = |paths: serde_json::Value| {
+    serde_json::to_vec(&serde_json::json!({
+      "input_schema":template.input_schema,"entry":template.entry,"execution":template.execution,"parts":paths
+    }))
+    .unwrap()
+  };
+  let part = serde_json::to_vec(
+    &serde_json::json!({"schemas":template.schemas,"nodes":template.nodes,"terminals":template.terminals}),
+  )
+  .unwrap();
+  for paths in [
+    serde_json::json!(["a.json", "a.json"]),
+    serde_json::json!(["a.json", "b.json"]),
+    serde_json::json!(["../outside.json"]),
+    serde_json::json!(["/absolute.json"]),
+  ] {
+    assert!(
+      FlowDefinitionTemplate::from_manifest(&manifest(paths), |_| Ok(part.clone())).is_err(),
+      "duplicate declarations and non-relative imports must never override configuration"
+    );
+  }
+  assert!(
+    FlowDefinitionTemplate::from_manifest(&manifest(serde_json::json!(["missing.json"])), |_| Err(
+      FactoryError::InvalidConfiguration { field: "missing part" }
+    ))
+    .is_err()
+  );
+  assert!(
+    FlowDefinitionTemplate::from_manifest(&manifest(serde_json::json!(["nested.json"])), |_| Ok(
+      br#"{"parts":["other.json"]}"#.to_vec()
+    ))
+    .is_err()
+  );
+  assert!(
+    FlowDefinitionTemplate::from_manifest(&manifest(serde_json::json!(["large.json"])), |_| Ok(
+      vec![b' '; MAX_FLOW_DATA_BYTES]
+    ))
+    .is_err()
+  );
+}
+
+#[test]
 fn an_editable_template_publishes_the_exact_configured_retry_bound() {
   let mut wire: serde_json::Value =
-    serde_json::from_str(include_str!("../../../../config/factory/flows/base-intake.json")).unwrap();
+    serde_json::to_value(crate::flow_test_support::supplied_base_flow_template()).unwrap();
   let index = wire["nodes"]
     .as_array()
     .unwrap()
@@ -87,8 +171,7 @@ fn editable_templates_resolve_schema_and_profile_choices_into_immutable_arbitrar
 
 #[test]
 fn named_nested_schema_choices_expand_before_publication_and_reject_cycles_or_unknown_choices() {
-  let original: FlowDefinitionTemplate =
-    serde_json::from_str(include_str!("../../../../config/factory/flows/base-intake.json")).unwrap();
+  let original: FlowDefinitionTemplate = crate::flow_test_support::supplied_base_flow_template();
   let mut wire = serde_json::to_value(&original).unwrap();
   wire["schemas"]["deadline"] = serde_json::json!({"identity":"reused.deadline","version":"v1","shape":{"type":"integer","minimum":0,"maximum":86400000}});
   wire["schemas"]["execution_facts"]["shape"]["fields"]["fresh_until"]["value"] =

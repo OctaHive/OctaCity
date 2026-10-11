@@ -1,0 +1,66 @@
+{
+  "nodes": [
+    {
+      "key": "author_subject",
+      "kind": "deterministic_gate",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "original",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "correction",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/previous"
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "exists",
+              "operand": {
+                "source": "path",
+                "path": "/specification"
+              }
+            },
+            "outcome": "correction"
+          }
+        ],
+        "fallback": "original",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": ""
+          }
+        }
+      },
+      "accepted_work_outcomes": []
+    }
+  ]
+}

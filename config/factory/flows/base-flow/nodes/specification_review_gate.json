@@ -1,0 +1,518 @@
+{
+  "nodes": [
+    {
+      "key": "specification_review_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "spec_review_gate_input",
+      "outcomes": [
+        {
+          "key": "publication_pending",
+          "kind": "success",
+          "schema": "spec_review"
+        },
+        {
+          "key": "changes_required",
+          "kind": "failure",
+          "schema": "spec_review"
+        },
+        {
+          "key": "needs_human_input",
+          "kind": "failure",
+          "schema": "spec_review"
+        },
+        {
+          "key": "invalid",
+          "kind": "failure",
+          "schema": "spec_review"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "review": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "metadata": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": ""
+          },
+          "authored": {
+            "source": "record",
+            "node": "specification_gate",
+            "outcome": "review_pending",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "request": {
+                "mapping": "object",
+                "fields": {
+                  "work_id": {
+                    "mapping": "pointer",
+                    "path": "/authored/work_id"
+                  },
+                  "original_base": {
+                    "mapping": "pointer",
+                    "path": "/authored/original_base"
+                  },
+                  "candidate_revision": {
+                    "mapping": "pointer",
+                    "path": "/authored/manifest/candidate_revision"
+                  },
+                  "manifest_digest": {
+                    "mapping": "pointer",
+                    "path": "/authored/artifacts/manifest/content_digest"
+                  },
+                  "bundle_digest": {
+                    "mapping": "pointer",
+                    "path": "/authored/artifacts/bundle/content_digest"
+                  }
+                }
+              },
+              "review": {
+                "mapping": "pointer",
+                "path": "/review"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/metadata/input_digest"
+              },
+              "review_digest": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/specification_review/artifact/content_digest"
+              },
+              "facts": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/specification_review_facts/data/payload/value"
+              },
+              "output_deadlines": {
+                "mapping": "object",
+                "fields": {
+                  "review": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/specification_review/fresh_until"
+                  },
+                  "facts": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/specification_review_facts/fresh_until"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/review/work_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/request/work_id"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/review/original_base"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/request/original_base"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/review/candidate_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/request/candidate_revision"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/review/manifest_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/request/manifest_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/review/bundle_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/request/bundle_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/review/input_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_input"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/input_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/expected_input"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/report_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/review_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/accepted"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": true
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/review"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/facts"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            }
+          ]
+        },
+        "rules": [
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/complete"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "violated"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/consistent"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "violated"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/feasible"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "violated"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/testable"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "violated"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/in_scope"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "violated"
+                  }
+                }
+              ]
+            },
+            "outcome": "changes_required"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/complete"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "satisfied"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/consistent"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "satisfied"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/feasible"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "satisfied"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/testable"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "satisfied"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/in_scope"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "satisfied"
+                  }
+                }
+              ]
+            },
+            "outcome": "publication_pending"
+          },
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/complete"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "indeterminate"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/consistent"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "indeterminate"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/feasible"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "indeterminate"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/testable"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "indeterminate"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/review/quality/in_scope"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "indeterminate"
+                  }
+                }
+              ]
+            },
+            "outcome": "needs_human_input"
+          }
+        ],
+        "fallback": "invalid",
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "work_id": {
+                "mapping": "pointer",
+                "path": "/review/work_id"
+              },
+              "original_base": {
+                "mapping": "pointer",
+                "path": "/review/original_base"
+              },
+              "candidate_revision": {
+                "mapping": "pointer",
+                "path": "/review/candidate_revision"
+              },
+              "manifest_digest": {
+                "mapping": "pointer",
+                "path": "/review/manifest_digest"
+              },
+              "bundle_digest": {
+                "mapping": "pointer",
+                "path": "/review/bundle_digest"
+              },
+              "input_digest": {
+                "mapping": "pointer",
+                "path": "/review/input_digest"
+              },
+              "quality": {
+                "mapping": "pointer",
+                "path": "/review/quality"
+              },
+              "findings": {
+                "mapping": "pointer",
+                "path": "/review/findings"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/facts/fresh_until"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

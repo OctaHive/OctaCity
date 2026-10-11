@@ -1,0 +1,526 @@
+{
+  "transitions": [
+    {
+      "predecessor": "specification_publication",
+      "outcome": "published",
+      "target": {
+        "kind": "node",
+        "key": "specification_ready"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_ready",
+      "outcome": "implementation_ready",
+      "target": {
+        "kind": "node",
+        "key": "protected_tests"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_ready",
+      "outcome": "invalid",
+      "target": {
+        "kind": "terminal",
+        "key": "specification_publication_invalid"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "eligibility_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "classify",
+      "target": {
+        "kind": "node",
+        "key": "classification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "rejection",
+      "target": {
+        "kind": "terminal",
+        "key": "eligibility_rejection"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "eligibility_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "classification_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "classification_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "rejection",
+      "target": {
+        "kind": "terminal",
+        "key": "classification_rejection"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "classification_already_fixed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "verification_only",
+      "target": {
+        "kind": "node",
+        "key": "verification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "defect_research",
+      "target": {
+        "kind": "node",
+        "key": "defect_research"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "feature_research",
+      "target": {
+        "kind": "node",
+        "key": "feature_research"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "requirements",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "defect_research_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "accepted",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "cannot_reproduce",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_cannot_reproduce"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_already_fixed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "needs_human_input",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_needs_human_input"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "defect_research_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "defect_research_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "feature_research_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research_gate",
+      "outcome": "accepted",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "feature_research_already_fixed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "feature_research_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "feature_research_escalation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_needed",
+      "outcome": "bypass",
+      "target": {
+        "kind": "node",
+        "key": "protected_tests"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "requirements_needed",
+      "outcome": "specification",
+      "target": {
+        "kind": "node",
+        "key": "author_subject"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "protected_tests",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "implementation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "implementation",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "implementation_result_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "review",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "verification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "verification",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "verification_result_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_author",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "specification_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_gate",
+      "outcome": "review_pending",
+      "target": {
+        "kind": "node",
+        "key": "specification_review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_gate",
+      "outcome": "invalid",
+      "target": {
+        "kind": "terminal",
+        "key": "specification_invalid"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_review",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "specification_review_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_review_gate",
+      "outcome": "publication_pending",
+      "target": {
+        "kind": "node",
+        "key": "specification_publication"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_review_gate",
+      "outcome": "changes_required",
+      "target": {
+        "kind": "terminal",
+        "key": "specification_changes_required"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_review_gate",
+      "outcome": "needs_human_input",
+      "target": {
+        "kind": "terminal",
+        "key": "specification_review_uncertain"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_review_gate",
+      "outcome": "invalid",
+      "target": {
+        "kind": "terminal",
+        "key": "specification_review_invalid"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "implementation_result_gate",
+      "outcome": "continue",
+      "target": {
+        "kind": "node",
+        "key": "protected_validation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "implementation_result_gate",
+      "outcome": "requirements_defect",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 3,
+      "exhausted_terminal": "requirements_exhausted",
+      "starts_cycle": true
+    },
+    {
+      "predecessor": "implementation_result_gate",
+      "outcome": "invalid",
+      "target": {
+        "kind": "terminal",
+        "key": "implementation_invalid"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "verification_result_gate",
+      "outcome": "continue",
+      "target": {
+        "kind": "terminal",
+        "key": "verified_candidate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "verification_result_gate",
+      "outcome": "requirements_defect",
+      "target": {
+        "kind": "node",
+        "key": "requirements_needed"
+      },
+      "max_repeats": 3,
+      "exhausted_terminal": "requirements_exhausted",
+      "starts_cycle": true
+    },
+    {
+      "predecessor": "verification_result_gate",
+      "outcome": "invalid",
+      "target": {
+        "kind": "terminal",
+        "key": "verification_invalid"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "author_subject",
+      "outcome": "original",
+      "target": {
+        "kind": "node",
+        "key": "specification_author"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "author_subject",
+      "outcome": "correction",
+      "target": {
+        "kind": "node",
+        "key": "specification_correction"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "specification_correction",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "specification_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "protected_validation",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "protected_validation_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "protected_validation_gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "protected_validation_gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "protected_validation_failed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "protected_validation_gate",
+      "outcome": "invalid",
+      "target": {
+        "kind": "terminal",
+        "key": "protected_validation_invalid"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ]
+}

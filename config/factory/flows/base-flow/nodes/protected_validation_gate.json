@@ -1,0 +1,286 @@
+{
+  "nodes": [
+    {
+      "key": "protected_validation_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "protected_validation_gate_input",
+      "outcomes": [
+        {
+          "key": "passed",
+          "kind": "success",
+          "schema": "summary"
+        },
+        {
+          "key": "failed",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "invalid",
+          "kind": "failure",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "input": {
+            "source": "predecessor",
+            "view": "input_payload",
+            "path": ""
+          },
+          "report": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "proof": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/validation_facts/data/payload/value"
+          },
+          "identity": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/input_digest"
+          },
+          "report_digest": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/validation_report/artifact/content_digest"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "summary": {
+                "mapping": "pointer",
+                "path": "/input/summary"
+              },
+              "report": {
+                "mapping": "pointer",
+                "path": "/report"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "expected_report": {
+                "mapping": "pointer",
+                "path": "/report_digest"
+              },
+              "candidate_revision": {
+                "mapping": "pointer",
+                "path": "/input/candidate_revision"
+              },
+              "candidate_digest": {
+                "mapping": "pointer",
+                "path": "/input/candidate_digest"
+              },
+              "protected_inventory": {
+                "mapping": "pointer",
+                "path": "/input/protected_inventory"
+              },
+              "classes": {
+                "mapping": "pointer",
+                "path": "/input/classes"
+              },
+              "facts": {
+                "mapping": "pointer",
+                "path": "/proof"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/accepted"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": true
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_input"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/facts/input_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_report"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/facts/report_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/candidate_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/report/candidate/candidate_revision"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/candidate_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/facts/candidate_revision"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/candidate_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/report/candidate/changeset_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/candidate_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/facts/candidate_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/protected_inventory"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/report/tests"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/protected_inventory"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/facts/protected_inventory"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/classes"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/facts/covered_classes"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            }
+          ]
+        },
+        "rules": [
+          {
+            "when": {
+              "operation": "for_each",
+              "collection": {
+                "source": "path",
+                "path": "/report/classes"
+              },
+              "quantifier": "every",
+              "predicate": {
+                "operation": "compare",
+                "left": {
+                  "source": "item",
+                  "path": "/outcome"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "passed"
+                }
+              }
+            },
+            "outcome": "passed"
+          },
+          {
+            "when": {
+              "operation": "exists",
+              "operand": {
+                "source": "path",
+                "path": "/report/classes"
+              }
+            },
+            "outcome": "failed"
+          }
+        ],
+        "fallback": "invalid",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/summary"
+          }
+        }
+      }
+    }
+  ]
+}

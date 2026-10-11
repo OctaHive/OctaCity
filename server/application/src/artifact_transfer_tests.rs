@@ -228,6 +228,45 @@ fn protected_downloads_match_published_identity_and_never_outlive_the_lease() {
   );
 }
 
+#[test]
+fn protected_grants_do_not_include_an_unselected_published_author_artifact() {
+  let (store, service) = service(false);
+  let mut private = begin_input("private-upload");
+  private.request.upload_key = "author-assertions".into();
+  private.request.output.name = "hidden-assertions.xml".into();
+  let private = run_ready(service.begin_upload(private)).unwrap();
+  run_ready(service.complete_upload(complete_input("private-complete", &private.upload_id))).unwrap();
+  let private = run_ready(store.artifact_upload(private.upload_id.parse().unwrap())).unwrap();
+  let public = run_ready(service.begin_upload(begin_input("public-upload"))).unwrap();
+  run_ready(service.complete_upload(complete_input("public-complete", &public.upload_id))).unwrap();
+  let public = run_ready(store.artifact_upload(public.upload_id.parse().unwrap())).unwrap();
+  let identity = public.artifact.identity();
+  let transfers = run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+    manifest: ProtectedInputManifestV3 {
+      inputs: vec![ProtectedInputV3 {
+        artifact_id: identity.artifact_id.to_string(),
+        size_bytes: identity.size_bytes,
+        sha256: identity.digest.to_string(),
+        media_type: identity.media_type.as_str().into(),
+        destination: "/octacity/protected/context/task.xml".into(),
+      }],
+    },
+    observed_at_unix_ms: 3000,
+    lease_expires_at: time(8000),
+  }))
+  .unwrap();
+  assert_eq!(
+    transfers
+      .iter()
+      .map(|transfer| transfer.input.artifact_id.as_str())
+      .collect::<Vec<_>>(),
+    vec![identity.artifact_id.to_string()]
+  );
+  let logged = format!("{transfers:?}");
+  assert!(!logged.contains(&private.artifact.identity().artifact_id.to_string()));
+  assert!(!logged.contains("hidden-assertions") && !logged.contains("signature=secret"));
+}
+
 fn service(
   reject_completion: bool,
 ) -> (

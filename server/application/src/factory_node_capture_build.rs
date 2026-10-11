@@ -4,16 +4,13 @@
 use crate::{
   ApplicationError, FactoryNodeBuildAdapter, FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs,
   FactoryNodeCancellationStep, FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor,
-  OrdinaryBuildApplicationError, OrdinaryBuildCancellationApplication, verify_factory_node_change_set,
+  OrdinaryBuildCancellationApplication, verify_factory_node_change_set,
 };
 use async_trait::async_trait;
 use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT};
-use octacity_server_domain::{AttemptId, BuildId, Timestamp};
-use octacity_server_factory::{
-  BudgetUsage, EvidenceOutputKind, FlowBuildExecution, FlowBuildIntent, ImmutableReference,
-};
-use octacity_server_orchestrator::AttemptState;
-use octacity_server_store::{BuildQueryStore, StoreError};
+use octacity_server_domain::Timestamp;
+use octacity_server_factory::{EvidenceOutputKind, FlowBuildExecution, ImmutableReference};
+use octacity_server_store::BuildQueryStore;
 use std::sync::Arc;
 
 /// Installed capture executor: ordinary execution, verified capture, generic result.
@@ -52,9 +49,16 @@ impl<B: OrdinaryBuildCancellationApplication + BuildQueryStore, O: FactoryNodeBu
       .and_then(|node| node.build())
       .ok_or_else(ApplicationError::invalid)?;
     // Reject a substituted capability selection before creating an ordinary operation.
-    if intent.profile().result_tool() != &self.capture_tool
-      || binding.result_output.as_str() != CHANGE_SET_MANIFEST_OUTPUT
-      || binding.result_output_kind != EvidenceOutputKind::Artifact
+    let primary_manifest = intent.profile().result_tool() == &self.capture_tool
+      && binding.result_output.as_str() == CHANGE_SET_MANIFEST_OUTPUT
+      && binding.result_output_kind == EvidenceOutputKind::Artifact;
+    let retained_manifest = binding.evidence.iter().any(|output| {
+      output.kind().as_str() == CHANGE_SET_MANIFEST_OUTPUT
+        && output.output_kind() == EvidenceOutputKind::Artifact
+        && output.tool() == &self.capture_tool
+        && output.plugin() == &binding.plugin
+    });
+    if (!primary_manifest && !retained_manifest)
       || !binding.evidence.iter().any(|output| {
         output.kind().as_str() == CHANGE_SET_BUNDLE_OUTPUT
           && output.output_kind() == EvidenceOutputKind::Artifact
@@ -64,12 +68,16 @@ impl<B: OrdinaryBuildCancellationApplication + BuildQueryStore, O: FactoryNodeBu
     {
       return Err(ApplicationError::invalid());
     }
-    let outputs = Arc::new(VerifiedCaptureOutputs {
+    let observed_at = request.observed_at;
+    let outputs = Arc::new(crate::factory_verified_build_outputs::VerifiedNodeBuildOutputs {
       builds: self.builds.as_ref(),
       source: self.outputs.as_ref(),
       intent,
-      capture_tool: &self.capture_tool,
-      observed_at: request.observed_at,
+      verify: |execution: &FlowBuildExecution, outputs: &FactoryNodeBuildOutputs| {
+        verify_factory_node_change_set(intent, execution, outputs, &self.capture_tool, observed_at)
+          .map(|_| ())
+          .map_err(|_| ApplicationError::invalid())
+      },
     });
     FactoryNodeExecutor::observe(&FactoryNodeBuildAdapter::new(self.builds.clone(), outputs), request).await
   }
@@ -84,52 +92,5 @@ impl<B: OrdinaryBuildCancellationApplication + BuildQueryStore, O: FactoryNodeBu
       requested_at,
     )
     .await
-  }
-}
-
-/// Verification is performed before the common adapter can produce a completion.
-/// The same frozen intent and complete ordinary Job identities scope both verifiers.
-struct VerifiedCaptureOutputs<'a, B, O> {
-  builds: &'a B,
-  source: &'a O,
-  intent: &'a FlowBuildIntent,
-  capture_tool: &'a ImmutableReference,
-  observed_at: Timestamp,
-}
-#[async_trait]
-impl<B: BuildQueryStore, O: FactoryNodeBuildOutputSource> FactoryNodeBuildOutputSource
-  for VerifiedCaptureOutputs<'_, B, O>
-{
-  async fn terminal_usage(
-    &self,
-    build: BuildId,
-    attempt: AttemptId,
-  ) -> Result<BudgetUsage, OrdinaryBuildApplicationError> {
-    self.source.terminal_usage(build, attempt).await
-  }
-  async fn published_outputs(
-    &self,
-    build: BuildId,
-    attempt_id: AttemptId,
-    max_bytes: u64,
-  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
-    let outputs = self.source.published_outputs(build, attempt_id, max_bytes).await?;
-    let attempt = self.builds.attempt(attempt_id).await.map_err(|error| match error {
-      StoreError::Unavailable => OrdinaryBuildApplicationError::Unavailable,
-      _ => OrdinaryBuildApplicationError::Invalid,
-    })?;
-    if attempt.id != attempt_id || attempt.build_id != build || attempt.state != AttemptState::Succeeded {
-      return Err(OrdinaryBuildApplicationError::Invalid);
-    }
-    let execution = FlowBuildExecution::new(
-      self.intent,
-      build,
-      attempt_id,
-      attempt.jobs.iter().map(|job| job.id()).collect(),
-    )
-    .map_err(|_| OrdinaryBuildApplicationError::Invalid)?;
-    verify_factory_node_change_set(self.intent, &execution, &outputs, self.capture_tool, self.observed_at)
-      .map_err(|_| OrdinaryBuildApplicationError::Invalid)?;
-    Ok(outputs)
   }
 }

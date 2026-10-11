@@ -1,0 +1,70 @@
+{
+  "schemas": {
+    "protected_validation_input": {
+      "identity": "factory.base.protected_validation_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "summary": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "summary"
+            }
+          },
+          "candidate_bundle": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "candidate_manifest": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "candidate_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "protected_inventory": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "classes": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "string",
+                "min_bytes": 1,
+                "max_bytes": 96
+              },
+              "min_items": 1,
+              "max_items": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

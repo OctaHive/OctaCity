@@ -1,0 +1,67 @@
+{
+  "schemas": {
+    "execution_facts": {
+      "identity": "factory.base.execution_facts",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "observed",
+                "requirements_defect"
+              ]
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "report_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 86400000
+            }
+          },
+          "requirements_evidence": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 16,
+              "item": {
+                "type": "reference",
+                "schema": "artifact_reference"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

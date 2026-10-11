@@ -2,6 +2,7 @@ mod stop;
 pub use stop::{FlowNodeStop, FlowNodeStopReason};
 mod action;
 mod template;
+mod template_manifest;
 pub use template::{
   FlowDefinitionTemplate, FlowTemplateNode, FlowTemplateOutcome, FlowTemplateSchema, PublishedFlowTemplate,
 };

@@ -1,0 +1,26 @@
+{
+  "terminals": {
+    "specification_publication_invalid": "summary",
+    "specification_changes_required": "spec_review",
+    "specification_review_uncertain": "spec_review",
+    "specification_review_invalid": "spec_review",
+    "eligibility_rejection": "eligibility_accepted",
+    "eligibility_escalation": "eligibility_accepted",
+    "classification_escalation": "summary",
+    "classification_rejection": "summary",
+    "classification_already_fixed": "summary",
+    "defect_research_cannot_reproduce": "summary",
+    "defect_research_already_fixed": "summary",
+    "defect_research_needs_human_input": "summary",
+    "defect_research_escalation": "summary",
+    "feature_research_already_fixed": "summary",
+    "feature_research_escalation": "summary",
+    "specification_invalid": "spec_result",
+    "verified_candidate": "summary",
+    "implementation_invalid": "summary",
+    "verification_invalid": "summary",
+    "requirements_exhausted": "summary",
+    "protected_validation_failed": "summary",
+    "protected_validation_invalid": "summary"
+  }
+}
