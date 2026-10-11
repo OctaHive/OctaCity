@@ -1,0 +1,117 @@
+{
+  "nodes": [
+    {
+      "key": "implementation_rework_entry",
+      "kind": "deterministic_gate",
+      "input_schema": "implementation_input",
+      "outcomes": [
+        {
+          "key": "ready",
+          "kind": "success",
+          "schema": "implementation_input"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "original": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "input_payload",
+            "path": ""
+          },
+          "candidate": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/candidate_facts/data/payload/value"
+          },
+          "manifest": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set-manifest.json/artifact"
+          },
+          "bundle": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set.bundle/artifact"
+          },
+          "classification": {
+            "source": "record",
+            "node": "validation_classification",
+            "outcome": "observed",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "accepted": {
+                "mapping": "pointer",
+                "path": "/original/accepted"
+              },
+              "task": {
+                "mapping": "pointer",
+                "path": "/original/task"
+              },
+              "parent": {
+                "mapping": "object",
+                "fields": {
+                  "candidate_revision": {
+                    "mapping": "pointer",
+                    "path": "/candidate/candidate_revision"
+                  },
+                  "candidate_digest": {
+                    "mapping": "pointer",
+                    "path": "/candidate/candidate_digest"
+                  },
+                  "manifest": {
+                    "mapping": "pointer",
+                    "path": "/manifest"
+                  },
+                  "bundle": {
+                    "mapping": "pointer",
+                    "path": "/bundle"
+                  }
+                }
+              },
+              "remediation": {
+                "mapping": "pointer",
+                "path": "/classification/remediation"
+              },
+              "accepted_contract": {
+                "mapping": "pointer",
+                "path": "/original/accepted_contract"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "ready",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": ""
+          }
+        }
+      }
+    }
+  ]
+}

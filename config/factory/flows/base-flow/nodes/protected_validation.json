@@ -60,6 +60,13 @@
             "outcome": "observed",
             "view": "payload",
             "path": "/classes"
+          },
+          "accepted_contract": {
+            "source": "record",
+            "node": "protected_tests",
+            "outcome": "observed",
+            "view": "payload",
+            "path": "/accepted_contract"
           }
         },
         "mapping": {
@@ -93,6 +100,10 @@
               "classes": {
                 "mapping": "pointer",
                 "path": "/coverage"
+              },
+              "accepted_contract": {
+                "mapping": "pointer",
+                "path": "/accepted_contract"
               }
             }
           }
@@ -161,6 +172,17 @@
               }
             }
           }
+        }
+      },
+      "capture_deliverables": {
+        "accepted_contract": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/accepted_contract"
+          }
+        },
+        "policy": {
+          "reference": "public_changes"
         }
       }
     }

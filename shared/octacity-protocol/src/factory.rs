@@ -28,7 +28,7 @@ pub const MAX_CHANGE_SET_FILE_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_CHANGE_SET_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
 /// Maximum canonical JSON bytes in one captured ChangeSet manifest.
 pub const MAX_CHANGE_SET_MANIFEST_BYTES: u64 =
-  (MAX_CHANGE_SET_CHANGED_PATHS as u64 * (MAX_FACTORY_PATH_BYTES as u64 + 128)) + (16 * 1024);
+  (2 * MAX_CHANGE_SET_CHANGED_PATHS as u64 * (MAX_FACTORY_PATH_BYTES as u64 + 256)) + (16 * 1024);
 /// Maximum raw Git path-index bytes for every bounded changed path.
 pub const MAX_CHANGE_SET_PATH_INDEX_BYTES: u64 =
   (MAX_CHANGE_SET_CHANGED_PATHS as u64 * (MAX_FACTORY_PATH_BYTES as u64 + 128)) + 1024;
@@ -90,6 +90,21 @@ pub struct CapturedChangeSetPathV1 {
   pub old_mode: String,
   /// Six-digit mode in the candidate tree.
   pub new_mode: String,
+  /// Raw SHA-256 of exact candidate blob bytes; absent for deletions or older captures.
+  /// Contracts requiring deliverable validation reject missing non-deletion hashes.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub content_sha256: Option<String>,
+}
+
+/// Bounded cumulative changes from the original bundle prerequisite to the candidate.
+/// This index preserves earlier updates across rework and excludes reverted additions.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedChangeSetChangesV1 {
+  /// Original immutable source revision, independently checked during materialization.
+  pub base_revision: String,
+  /// Exact candidate transitions relative to that revision, ordered by portable path.
+  pub changed_paths: Vec<CapturedChangeSetPathV1>,
 }
 
 /// Canonical manifest produced outside the coding harness by trusted capture.
@@ -108,6 +123,9 @@ pub struct CapturedChangeSetManifestV1 {
   pub capture_tool: FactoryImmutableReferenceV3,
   /// Canonically ordered changed paths and modes.
   pub changed_paths: Vec<CapturedChangeSetPathV1>,
+  /// Cumulative Work observations; mandatory for public-deliverable qualification.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub cumulative_changes: Option<CapturedChangeSetChangesV1>,
   /// Required candidate bundle metadata.
   pub bundle: CapturedChangeSetFileV1,
   /// Optional bounded textual patch metadata.
@@ -146,16 +164,22 @@ impl CapturedChangeSetManifestV1 {
     if let Some(patch) = &self.patch {
       patch.validate(CHANGE_SET_PATCH_OUTPUT, Some(MAX_CHANGE_SET_PATCH_BYTES))?;
     }
-    if self.changed_paths.len() > MAX_CHANGE_SET_CHANGED_PATHS as usize
-      || !self.changed_paths.windows(2).all(|pair| pair[0].path < pair[1].path)
-    {
-      return Err("ChangeSet paths are not uniquely ordered within their bound".to_owned());
-    }
-    for path in &self.changed_paths {
-      path.validate()?;
+    validate_changed_paths(&self.changed_paths)?;
+    if let Some(changes) = &self.cumulative_changes {
+      validate_bounded_identity("cumulative base revision", &changes.base_revision)?;
+      validate_changed_paths(&changes.changed_paths)?;
     }
     Ok(())
   }
+}
+fn validate_changed_paths(paths: &[CapturedChangeSetPathV1]) -> Result<(), String> {
+  if paths.len() > MAX_CHANGE_SET_CHANGED_PATHS as usize || !paths.windows(2).all(|pair| pair[0].path < pair[1].path) {
+    return Err("ChangeSet paths are not uniquely ordered within their bound".to_owned());
+  }
+  for path in paths {
+    path.validate()?;
+  }
+  Ok(())
 }
 
 impl CapturedChangeSetFileV1 {
@@ -190,6 +214,13 @@ impl CapturedChangeSetPathV1 {
         .path
         .split('/')
         .any(|component| component.is_empty() || matches!(component, "." | ".."))
+      || self.content_sha256.as_ref().is_some_and(|digest| {
+        self.status == "D"
+          || digest.len() != 64
+          || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+      })
     {
       return Err("ChangeSet path transition is invalid".to_owned());
     }

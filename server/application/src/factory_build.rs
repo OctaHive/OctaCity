@@ -43,6 +43,9 @@ pub struct FactoryNodeBuildCausality {
   pub node_attempt_id: octacity_server_factory::NodeAttemptId,
   /// Exact operator-selected model, command, task and Build configuration.
   pub profile: octacity_server_factory::FlowBuildProfile,
+  /// Exact public deliverable requirements frozen for task compilation.
+  /// Contains acceptance and scope, never private test content or Artifact grants.
+  pub deliverable_contract: Option<octacity_server_factory::CandidateDeliverableContract>,
   /// Exact typed task input schema.
   pub input_schema: octacity_server_factory::ImmutableReference,
   /// Complete frozen task document, bounded by its schema before dispatch.

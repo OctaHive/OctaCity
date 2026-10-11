@@ -1,0 +1,66 @@
+{
+  "schemas": {
+    "validation_classification": {
+      "identity": "factory.base.validation_classification",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "candidate_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "validation_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "classification": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "implementation_defect",
+                "requirements_defect",
+                "test_defect",
+                "indeterminate",
+                "reject"
+              ]
+            }
+          },
+          "remediation": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          }
+        }
+      }
+    }
+  }
+}

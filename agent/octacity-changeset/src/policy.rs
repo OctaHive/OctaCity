@@ -5,6 +5,7 @@ use std::{fs, path::Path};
 use octacity_protocol::{
   ChangeSetBinaryPolicyV3, ChangeSetCapturePolicyV3, ChangeSetSecretPatternV3, MAX_FACTORY_PATH_BYTES,
 };
+use sha2::Digest as _;
 use tokio_util::sync::CancellationToken;
 
 use crate::{CaptureError, CapturePolicyViolation, ChangedPath, GitEnvironment, git_bytes, git_text};
@@ -58,12 +59,16 @@ pub(crate) struct CandidateValidation<'a> {
   pub candidate: &'a str,
   pub cancellation: &'a CancellationToken,
 }
+pub(crate) struct CandidateInspection {
+  pub contains_binary: bool,
+  pub file_sizes: std::collections::BTreeMap<String, u64>,
+}
 
 pub(crate) async fn validate_candidate(
   validation: CandidateValidation<'_>,
-  changed_paths: &[ChangedPath],
+  changed_paths: &mut [ChangedPath],
   policy: &ChangeSetCapturePolicyV3,
-) -> Result<bool, CaptureError> {
+) -> Result<CandidateInspection, CaptureError> {
   if changed_paths.is_empty() && !policy.allow_empty {
     return Err(CapturePolicyViolation::EmptyChange.into());
   }
@@ -95,7 +100,8 @@ pub(crate) async fn validate_candidate(
 
   let mut total_bytes = 0_u64;
   let mut contains_binary = false;
-  for changed in changed_paths {
+  let mut file_sizes = std::collections::BTreeMap::new();
+  for changed in changed_paths.iter_mut() {
     validate_changed_path(changed, policy)?;
     if changed.new_mode == "000000" {
       continue;
@@ -151,8 +157,13 @@ pub(crate) async fn validate_candidate(
     {
       return Err(CapturePolicyViolation::Secret.into());
     }
+    changed.content_sha256 = Some(hex::encode(sha2::Sha256::digest(&bytes)));
+    file_sizes.insert(changed.path.clone(), size);
   }
-  Ok(contains_binary)
+  Ok(CandidateInspection {
+    contains_binary,
+    file_sizes,
+  })
 }
 
 fn validate_changed_path(changed: &ChangedPath, policy: &ChangeSetCapturePolicyV3) -> Result<(), CaptureError> {
@@ -327,6 +338,7 @@ mod tests {
         path: path.to_owned(),
         old_mode: "000000".to_owned(),
         new_mode: "100644".to_owned(),
+        content_sha256: None,
       };
       assert!(matches!(
         validate_changed_path(&changed, &policy),

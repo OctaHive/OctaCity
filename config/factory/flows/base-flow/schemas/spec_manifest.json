@@ -76,44 +76,8 @@
             "value": {
               "type": "array",
               "item": {
-                "type": "object",
-                "fields": {
-                  "status": {
-                    "required": true,
-                    "value": {
-                      "type": "enum",
-                      "values": [
-                        "A",
-                        "M",
-                        "D"
-                      ]
-                    }
-                  },
-                  "path": {
-                    "required": true,
-                    "value": {
-                      "type": "string",
-                      "min_bytes": 1,
-                      "max_bytes": 1024
-                    }
-                  },
-                  "old_mode": {
-                    "required": true,
-                    "value": {
-                      "type": "string",
-                      "min_bytes": 1,
-                      "max_bytes": 6
-                    }
-                  },
-                  "new_mode": {
-                    "required": true,
-                    "value": {
-                      "type": "string",
-                      "min_bytes": 1,
-                      "max_bytes": 6
-                    }
-                  }
-                }
+                "type": "reference",
+                "schema": "captured_path"
               },
               "min_items": 1,
               "max_items": 64
@@ -181,6 +145,94 @@
                   }
                 }
               }
+            }
+          },
+          "cumulative_changes": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "cumulative_change_index"
+            }
+          }
+        }
+      }
+    },
+    "captured_path": {
+      "identity": "factory.base.captured_path",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "status": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "A",
+                "M",
+                "D"
+              ]
+            }
+          },
+          "path": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 1024
+            }
+          },
+          "old_mode": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 6
+            }
+          },
+          "new_mode": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 6
+            }
+          },
+          "content_sha256": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "cumulative_change_index": {
+      "identity": "factory.base.cumulative_change_index",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "base_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "changed_paths": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "reference",
+                "schema": "captured_path"
+              },
+              "min_items": 0,
+              "max_items": 64
             }
           }
         }

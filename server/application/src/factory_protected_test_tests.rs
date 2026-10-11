@@ -516,6 +516,14 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
 
 #[test]
 fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
+  verify_validation_materialization(false);
+}
+
+#[test]
+fn validation_requires_captured_public_deliverables_and_rejects_protected_file_copying() {
+  verify_validation_materialization(true);
+}
+fn verify_validation_materialization(require_deliverables: bool) {
   let template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
   let report_schema = template
     .data_schemas()
@@ -524,6 +532,9 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
     .unwrap();
   let work = work();
   let mut binding = binding(work.subject().project_id());
+  if require_deliverables {
+    binding = crate::factory_node_capture_tests::deliverable_binding(binding);
+  }
   let requirement = EvidenceRequirement::new(
     key("validation.report"),
     EvidenceOutputKind::Report,
@@ -559,7 +570,13 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
     builds.acceptance.job_ids.clone(),
   )
   .unwrap();
-  let captured = crate::factory_node_capture_tests::capture_outputs(&capture_intent, &builds, "base");
+  let mut captured = crate::factory_node_capture_tests::capture_outputs(&capture_intent, &builds, "base");
+  if require_deliverables {
+    crate::factory_node_capture_tests::complete_deliverable_outputs(
+      &mut captured,
+      FactoryDigest::content_sha256(b"public unit test"),
+    );
+  }
   let candidate = verify_factory_node_change_set(
     &capture_intent,
     &execution,
@@ -605,7 +622,11 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
     )
     .unwrap();
   let plan = ProtectedTestPlan::new(
-    input.digest().unwrap(),
+    if require_deliverables {
+      "a".repeat(64).parse().unwrap()
+    } else {
+      input.digest().unwrap()
+    },
     input.context().unwrap().subject().clone(),
     ProtectedTestCoverage::new(vec![key("project.custom")], 4, 9000, 4).unwrap(),
     time(900),
@@ -624,6 +645,37 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
     time(900),
   )
   .unwrap();
+  let deliverables = if require_deliverables {
+    let checked = verify_factory_node_candidate_deliverables(
+      &capture_intent,
+      &execution,
+      &captured,
+      &reference("git.capture"),
+      time(31),
+    )
+    .unwrap();
+    checked.verify_protected(&bundle).unwrap();
+    let mut copied = captured.clone();
+    crate::factory_node_capture_tests::complete_deliverable_outputs(
+      &mut copied,
+      FactoryDigest::content_sha256(b"PRIVATE_VALUE"),
+    );
+    let copied = verify_factory_node_candidate_deliverables(
+      &capture_intent,
+      &execution,
+      &copied,
+      &reference("git.capture"),
+      time(31),
+    )
+    .unwrap();
+    assert!(
+      copied.verify_protected(&bundle).is_err(),
+      "public-path disclosure must fail despite model success"
+    );
+    Some(checked)
+  } else {
+    None
+  };
   let subject = FactoryTaskSubject::Candidate(candidate.subject().clone());
   let entries = captured
     .documents
@@ -663,6 +715,7 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
   let node: NodeAttempt = serde_json::from_value(wire).unwrap();
   let intent = FlowBuildIntent::new(selected, &admitted, node, BudgetUsage::default(), 7).unwrap();
   let request = || FactoryProtectedValidationRequest {
+    deliverables: deliverables.as_ref(),
     intent: &intent,
     candidate: &candidate,
     candidate_bundle: &captured.documents[0].record,
@@ -673,6 +726,15 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
     observed_at: time(31),
   };
   let materialized = factory_protected_validation_materialization(request()).unwrap();
+  if require_deliverables {
+    assert!(
+      factory_protected_validation_materialization(FactoryProtectedValidationRequest {
+        deliverables: None,
+        ..request()
+      })
+      .is_err()
+    );
+  }
   for root in [octacity_protocol::FACTORY_SOURCE_ROOT, "/workspace", "/octacity", "/"] {
     let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
       mounts: vec![MountPermission::new(

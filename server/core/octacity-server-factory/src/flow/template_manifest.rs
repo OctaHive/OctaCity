@@ -19,6 +19,7 @@ struct Manifest {
 #[serde(default, deny_unknown_fields)]
 struct Part {
   schemas: BTreeMap<FactoryKey, FlowTemplateSchema>,
+  deliverable_policies: BTreeMap<FactoryKey, crate::CandidateDeliverablePolicy>,
   nodes: Vec<FlowTemplateNode>,
   transitions: Vec<FlowTransition>,
   terminals: BTreeMap<FactoryKey, FactoryKey>,
@@ -49,6 +50,7 @@ impl FlowDefinitionTemplate {
       entry: manifest.entry,
       execution: manifest.execution,
       schemas: BTreeMap::new(),
+      deliverable_policies: BTreeMap::new(),
       nodes: vec![],
       transitions: vec![],
       terminals: BTreeMap::new(),
@@ -72,6 +74,11 @@ impl FlowDefinitionTemplate {
           return Err(invalid());
         }
       }
+      for (key, policy) in part.deliverable_policies {
+        if template.deliverable_policies.insert(key, policy).is_some() {
+          return Err(invalid());
+        }
+      }
       for (key, schema) in part.terminals {
         if template.terminals.insert(key, schema).is_some() {
           return Err(invalid());
@@ -87,6 +94,7 @@ impl FlowDefinitionTemplate {
       template.context_projections.extend(part.context_projections);
       template.data_projections.extend(part.data_projections);
       if template.schemas.len() > MAX_FLOW_SCHEMA_ENTRIES
+        || template.deliverable_policies.len() > MAX_FLOW_SCHEMA_ENTRIES
         || template.nodes.len() > MAX_FLOW_DEFINITION_NODES
         || template.transitions.len() > MAX_FLOW_DEFINITION_EDGES
       {

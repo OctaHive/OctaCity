@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 
 /// Authoritative inputs selected by a trusted ordinary-Job compiler.
 pub struct FactoryProtectedValidationRequest<'a> {
+  /// Exact trusted-capture proof required whenever the pinned profile declares deliverables.
+  /// Absence is valid only for profiles without a public-deliverable contract.
+  pub deliverables: Option<&'a crate::VerifiedFactoryCandidateDeliverables>,
   /// Frozen command execution, including its exact selected Context.
   pub intent: &'a FlowBuildIntent,
   /// Previously verified implementation candidate.
@@ -39,6 +42,7 @@ pub struct FactoryProtectedValidationMaterialization {
   capture: FactoryCandidateMaterialization,
   tests: ProtectedTestBundle,
   inputs: Vec<ProtectedInputV3>,
+  deliverable_contract: Option<FactoryDigest>,
 }
 /// One bounded class outcome; diagnostic bodies and expected values stay private.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -82,6 +86,18 @@ pub fn factory_protected_validation_materialization(
   request: FactoryProtectedValidationRequest<'_>,
 ) -> Result<FactoryProtectedValidationMaterialization, ApplicationError> {
   let invalid = ApplicationError::invalid;
+  let deliverable_contract = match (
+    request.intent.profile().capture_deliverables.as_ref(),
+    request.deliverables,
+  ) {
+    (None, None) => None,
+    (Some(_), Some(proof)) => {
+      proof.verify_selection(request.intent, request.candidate, request.candidate_manifest)?;
+      proof.verify_protected(request.tests)?;
+      Some(proof.contract().digest().map_err(|_| invalid())?)
+    }
+    _ => return Err(invalid()),
+  };
   if request.intent.node().node_kind() != FlowNodeKind::BuildCommand
     || request.intent.permissions().mounts().any(|mount| {
       mount.mode() != MountMode::ReadOnly
@@ -127,6 +143,7 @@ pub fn factory_protected_validation_materialization(
     capture,
     tests: request.tests.clone(),
     inputs,
+    deliverable_contract,
   };
   materialized.wire_inputs(&[])?;
   Ok(materialized)
@@ -153,7 +170,7 @@ impl FactoryProtectedValidationMaterialization {
   /// Binds the candidate, complete immutable test plan and every downloaded file.
   /// Excludes transport capabilities, Job identities and observation clocks.
   pub fn input_digest(&self) -> Result<FactoryDigest, ApplicationError> {
-    let value = serde_json::json!({"candidate":self.candidate,"tests":self.tests.digest().map_err(|_|ApplicationError::invalid())?,"inputs":self.inputs});
+    let value = serde_json::json!({"candidate":self.candidate,"tests":self.tests.digest().map_err(|_|ApplicationError::invalid())?,"inputs":self.inputs,"deliverable_contract":self.deliverable_contract});
     Ok(FactoryDigest::content_sha256(
       &serde_json::to_vec(&value).map_err(|_| ApplicationError::invalid())?,
     ))

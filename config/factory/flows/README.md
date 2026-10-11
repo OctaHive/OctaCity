@@ -36,7 +36,10 @@ A node's `input_binding.sources` selects immutable Work fields, incoming data
 under an exact schema, accepted records or a declared predecessor. Choose the
 payload view for reported data or the metadata view for trusted identities and
 verified Build output facts. The mapping copies only selected values into the
-node's closed input schema. Context access is separately explicit. A nested node may select `caller_input` to project the exact frozen payload of its parent call; context is never inherited implicitly. The parent retains the exact child terminal result as provenance.
+node's closed input schema. `array` builds a bounded ordered list from declared
+items; `if_present` selects one declared projection by an RFC 6901 pointer.
+Both branches count against structural limits. Explicit null counts as present,
+and a failed selected branch never falls back. Context access is separately explicit. A nested node may select `caller_input` to project the exact frozen payload of its parent call; context is never inherited implicitly. The parent retains the exact child terminal result as provenance.
 
 `node_configuration` explicitly selects a field of this node's published
 definition, including its resolved Build binding. It reads the admitted version,
@@ -339,10 +342,11 @@ aggregate inventory-plus-source bytes and minimum retention before common comple
 The public result contains only accepted-contract identity and coverage classes.
 Raw sources are extra private output documents, not Report facts or handoff data.
 
-The supplied implementation input selects the author's **input payload**. Its
-control edge therefore sequences authoring while preserving the original accepted
-contract. It does not copy the author's result, Context, private inventory, file
-references or transcript. Build output Artifact metadata contains no Artifact bytes.
+The supplied implementation entry selects the author's **input payload** plus
+only the verified public accepted-contract digest. It normalizes task, acceptance
+and the optional exact candidate parent into a closed implementation input. The
+control edge sequences authoring without copying its Context, private inventory,
+file references or transcript. Build output Artifact metadata contains no Artifact bytes.
 Managed Job downloads mint grants only for explicitly signed input references;
 Agent staging uses a private Job root, verifies each downloaded size/digest and
 seals inputs read-only. Another Job receives only its own inputs and credentials.
@@ -374,6 +378,80 @@ Repeated materialization reconstructs identical input bytes/digests; changed can
 file, inventory, coverage or report identities cannot reuse the previous result.
 
 These are technical capabilities selected through immutable bindings. Nodes can be
-renamed, moved or reused in other graphs. Failure classification/rework, independent
-code review and deliverable completeness belong to subsequent plan tasks; live
-provider qualification and full composition wiring remain separate tasks.
+renamed, moved or reused in other graphs. Live provider qualification and full
+production composition wiring remain separate tasks.
+
+
+## Validation classification and independent code review
+
+The example's failed validation output projects only the accepted summary, exact
+candidate identities, validation-report digest and bounded class outcomes. The
+classifier gets that request and the Work task; its Context has no inventory,
+source assertions, expected values, implementation transcript or private Artifact
+grants. Its closed result offers five configured dispositions. The consuming gate
+requires independent facts bound to actual input/report bytes, candidate, original
+validation and freshness before following an edge. The classifier cannot supply
+a target node. Rework/test-correction edges have explicit repeat ceilings and an
+exhausted terminal; requirements correction starts a fresh append-only cycle.
+Rework keeps the accepted contract and selects the immediately preceding captured
+candidate. Correcting tests reruns authoring and all downstream checks. Correcting
+requirements reruns specification review/publication/readiness and downstream work.
+The test-correction entry preserves the original accepted summary and projects a
+bounded reason, exact failed candidate revision and validation-report digest into
+the author's optional `correction` input. It does not grant private test files.
+The implementation entry selects only acceptance, task and the public handoff;
+the author-only correction is excluded from implementation and review inputs.
+
+Code review selects only the exact current candidate bundle/manifest and Work task.
+Install its separately pinned task/skills/configuration profile through the existing
+`Evaluate` Task Envelope compiler with read-only source and the scoped evaluation
+credential profile. The compiler rejects writable evaluation source or coding/delivery
+credentials. No node name selects these capabilities. Independent review facts and
+the configured gate bind input, report, candidate and original deadlines. Violated
+quality criteria, indeterminate criteria and invalid proof have distinct declared
+outcomes; transport failure remains an ordinary execution stop.
+
+## Public candidate deliverables
+
+`capture_deliverables` is an optional immutable profile parameter. Its acceptance
+mapping explicitly selects the verified public accepted-contract digest. Its policy
+lists permitted/forbidden repository paths and applicable required categories,
+each with path alternatives and a minimum added/updated file count. Category names
+have no runtime semantics. Choose only applicable documentation or build/deployment
+script requirements for the Project; the supplied example deliberately requires all
+three developer-visible categories. The capture and validation nodes must use the
+same exact policy. The example defines that policy once in
+`base-flow/policies/public-deliverables.json` under `deliverable_policies`; both
+nodes select `{"reference":"public_changes"}`. Local references resolve at
+publication into concrete profile parameters; there is no runtime file lookup.
+Missing choices, duplicate definitions, unknown fields and policies broader than
+an installed ceiling fail closed. Inline policies remain available for independent
+nodes. Neither form grants access to hidden test sources.
+
+Before Build dispatch, the common intent verifies that acceptance can be frozen.
+The ordinary Build causality carries the complete frozen public deliverable contract
+for trusted task compilation, including the exact acceptance, parent, input and
+applicable policy. Templates can narrow an installed capture policy; they cannot
+broaden paths, remove exclusions or weaken required categories. Trusted Git capture hashes each changed non-deleted file from the candidate Git tree.
+Hashes of current changes reuse the bytes already inspected for capture policy.
+The manifest also includes bounded `cumulative_changes` from the original Work
+revision (the bundle prerequisite), separately from the current parent's delta.
+Materialization verifies both indices against Git and recomputes each unique
+candidate blob hash once. `verify_factory_node_candidate_deliverables`
+qualifies actual capture bytes and provenance, then checks required files and allowed
+paths: the current delta must stay within this node's scope, while required public
+updates are counted over the complete Work result. Previously accepted changes may
+lie outside this node's write scope. Rework need not touch earlier required files
+again; deleted or reverted additions no longer qualify. Profiles declaring
+deliverables reject an absent cumulative index or a different original base.
+A model's success report cannot substitute for these observations. Validation
+requires that exact proof whenever its pinned profile declares deliverables. It
+checks candidate/manifest selection, matching acceptance/policy and hashes of the
+selected private sources; copying a complete protected file into an allowed public
+path fails. The validation materialization digest also binds the frozen deliverable
+contract. This digest check addresses exact file copies; broader disclosure prevention
+comes from the existing absence of protected inputs/grants in implementation.
+
+Production composition and live external-provider qualification remain tasks 16.1
+and 16.4. Owner/store qualification uses deterministic external ports; real Git
+capture/materialization and actual-byte Artifact validation have separate contracts.

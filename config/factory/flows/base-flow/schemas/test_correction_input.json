@@ -1,0 +1,60 @@
+{
+  "schemas": {
+    "test_correction_reason": {
+      "identity": "factory.base.test_correction_reason",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "reason": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          },
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "validation_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "test_correction_input": {
+      "identity": "factory.base.test_correction_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "summary"
+            }
+          },
+          "correction": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "test_correction_reason"
+            }
+          }
+        }
+      }
+    }
+  }
+}

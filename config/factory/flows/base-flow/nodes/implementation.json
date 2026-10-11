@@ -3,7 +3,7 @@
     {
       "key": "implementation",
       "kind": "reasoning",
-      "input_schema": "protected_author_input",
+      "input_schema": "implementation_input",
       "outcomes": [
         {
           "key": "observed",
@@ -23,7 +23,7 @@
         "sources": {
           "previous": {
             "source": "predecessor",
-            "view": "input_payload",
+            "view": "payload",
             "path": ""
           }
         },
@@ -39,10 +39,10 @@
         "candidate_revision": {
           "value": {
             "mapping": "pointer",
-            "path": "/accepted/specification/manifest/candidate_revision"
+            "path": "/parent/candidate_revision"
           }
         },
-        "candidate_when_present": "/accepted/specification",
+        "candidate_when_present": "/parent",
         "entries": {
           "task": {
             "source_kind": "task",
@@ -63,7 +63,7 @@
             }
           },
           "manifest": {
-            "source_kind": "specification",
+            "source_kind": "evidence",
             "source": {
               "value": {
                 "mapping": "object",
@@ -74,12 +74,12 @@
                   },
                   "value": {
                     "mapping": "pointer",
-                    "path": "/accepted/specification/artifacts/manifest"
+                    "path": "/parent/manifest"
                   }
                 }
               }
             },
-            "when_present": "/accepted/specification"
+            "when_present": "/parent"
           },
           "bundle": {
             "source_kind": "evidence",
@@ -93,13 +93,24 @@
                   },
                   "value": {
                     "mapping": "pointer",
-                    "path": "/accepted/specification/artifacts/bundle"
+                    "path": "/parent/bundle"
                   }
                 }
               }
             },
-            "when_present": "/accepted/specification"
+            "when_present": "/parent"
           }
+        }
+      },
+      "capture_deliverables": {
+        "accepted_contract": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/accepted_contract"
+          }
+        },
+        "policy": {
+          "reference": "public_changes"
         }
       }
     }

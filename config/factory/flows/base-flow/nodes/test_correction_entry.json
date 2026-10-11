@@ -1,0 +1,83 @@
+{
+  "nodes": [
+    {
+      "key": "test_correction_entry",
+      "kind": "deterministic_gate",
+      "input_schema": "test_correction_input",
+      "outcomes": [
+        {
+          "key": "ready",
+          "kind": "success",
+          "schema": "test_correction_input"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "accepted": {
+            "source": "record",
+            "node": "protected_tests",
+            "outcome": "observed",
+            "view": "input_payload",
+            "path": "/accepted"
+          },
+          "classification": {
+            "source": "record",
+            "node": "validation_classification",
+            "outcome": "observed",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "accepted": {
+                "mapping": "pointer",
+                "path": "/accepted"
+              },
+              "correction": {
+                "mapping": "object",
+                "fields": {
+                  "reason": {
+                    "mapping": "pointer",
+                    "path": "/classification/remediation"
+                  },
+                  "candidate_revision": {
+                    "mapping": "pointer",
+                    "path": "/classification/candidate_revision"
+                  },
+                  "validation_digest": {
+                    "mapping": "pointer",
+                    "path": "/classification/validation_digest"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "ready",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": ""
+          }
+        }
+      },
+      "accepted_work_outcomes": [
+        "ready"
+      ]
+    }
+  ]
+}

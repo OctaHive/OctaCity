@@ -1184,3 +1184,33 @@ fn configured_specification_review_dispatches_only_its_frozen_candidate_and_revi
     assert!(reviewer.accepted_work_outcomes().is_empty());
   });
 }
+
+#[test]
+fn ordinary_build_receives_the_frozen_public_deliverable_contract() {
+  crate::factory_admission_tests::run_ready(async {
+    let work = work();
+    let binding = crate::factory_node_capture_tests::deliverable_binding(binding(work.subject().project_id()));
+    let (_, admitted, schema, input, node) =
+      execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, None);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    let requests = builds.requests.lock().unwrap();
+    let contract = requests[0]
+      .causality
+      .deliverable_contract
+      .as_ref()
+      .expect("task compilation must receive the exact public requirements, not only a policy selector");
+    assert_eq!(contract.accepted_contract(), "a".repeat(64).parse().unwrap());
+    assert_eq!(contract.subject(), intent.input().context().unwrap().subject());
+    assert_eq!(
+      contract.policy(),
+      &intent.profile().capture_deliverables.as_ref().unwrap().policy
+    );
+    let wire = serde_json::to_string(contract).unwrap();
+    assert!(!wire.contains("protected_inventory") && !wire.contains("author_transcript"));
+  });
+}

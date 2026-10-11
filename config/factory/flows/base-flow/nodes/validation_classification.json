@@ -1,0 +1,75 @@
+{
+  "nodes": [
+    {
+      "key": "validation_classification",
+      "kind": "reasoning",
+      "input_schema": "validation_classification_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "validation_classification"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "build_profile": "validation_classification",
+      "input_binding": {
+        "sources": {
+          "previous": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "task": {
+            "source": "work",
+            "path": "/artifacts/task"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "request": {
+                "mapping": "pointer",
+                "path": "/previous"
+              },
+              "task": {
+                "mapping": "pointer",
+                "path": "/task"
+              }
+            }
+          }
+        }
+      },
+      "context_binding": {
+        "entries": {
+          "task": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/task"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

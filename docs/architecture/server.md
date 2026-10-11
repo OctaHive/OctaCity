@@ -273,8 +273,15 @@ path through the common owner and PostgreSQL restart. Configured specification
 authoring, independent review, exact candidate publication and readiness are
 implemented through generic node contracts and installed capabilities. Protected
 test authoring, isolated implementation inputs and exact candidate/test validation
-are implemented as technical capabilities. Failure classification/rework, code
-review and deliverable completeness remain tasks 11.4–11.6; full production wiring
+are implemented as technical capabilities. Bounded validation classification,
+rework/correction routes and independent code-review gates are configuration.
+Immutable applicable deliverable policies are verified before dispatch, by trusted
+capture and against exact protected validation inputs.
+Policies can be selected by explicit local template references and are resolved
+into immutable parameters before admission. Current capture changes enforce the
+node's write scope; a separately qualified cumulative Work index preserves required
+updates across rework and detects removed deliverables. Test correction receives
+bounded author-only remediation, excluded from implementation input. Full production wiring
 and live provider qualification remain 16.1 and 16.4. These integrations bind
 capabilities and profiles without introducing stage-name dispatch.
 

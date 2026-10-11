@@ -1,0 +1,122 @@
+{
+  "nodes": [
+    {
+      "key": "implementation_entry",
+      "kind": "deterministic_gate",
+      "input_schema": "implementation_entry_input",
+      "outcomes": [
+        {
+          "key": "ready",
+          "kind": "success",
+          "schema": "implementation_input"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "original": {
+            "source": "predecessor",
+            "view": "input_payload",
+            "path": ""
+          },
+          "handoff": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "accepted": {
+                "mapping": "pointer",
+                "path": "/original/accepted"
+              },
+              "task": {
+                "mapping": "pointer",
+                "path": "/original/task"
+              },
+              "accepted_contract": {
+                "mapping": "pointer",
+                "path": "/handoff/accepted_contract"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "ready",
+        "default_output": {
+          "value": {
+            "mapping": "if_present",
+            "path": "/accepted/specification",
+            "then": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "pointer",
+                  "path": "/accepted"
+                },
+                "task": {
+                  "mapping": "pointer",
+                  "path": "/task"
+                },
+                "parent": {
+                  "mapping": "object",
+                  "fields": {
+                    "candidate_revision": {
+                      "mapping": "pointer",
+                      "path": "/accepted/specification/manifest/candidate_revision"
+                    },
+                    "candidate_digest": {
+                      "mapping": "pointer",
+                      "path": "/accepted/specification/artifacts/manifest/content_digest"
+                    },
+                    "manifest": {
+                      "mapping": "pointer",
+                      "path": "/accepted/specification/artifacts/manifest"
+                    },
+                    "bundle": {
+                      "mapping": "pointer",
+                      "path": "/accepted/specification/artifacts/bundle"
+                    }
+                  }
+                },
+                "accepted_contract": {
+                  "mapping": "pointer",
+                  "path": "/accepted_contract"
+                }
+              }
+            },
+            "otherwise": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "pointer",
+                  "path": "/accepted"
+                },
+                "task": {
+                  "mapping": "pointer",
+                  "path": "/task"
+                },
+                "accepted_contract": {
+                  "mapping": "pointer",
+                  "path": "/accepted_contract"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

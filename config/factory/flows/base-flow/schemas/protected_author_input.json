@@ -19,6 +19,13 @@
               "type": "reference",
               "schema": "artifact_reference"
             }
+          },
+          "correction": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "test_correction_reason"
+            }
           }
         }
       }

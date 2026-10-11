@@ -1,0 +1,35 @@
+{
+  "schemas": {
+    "implementation_entry_input": {
+      "identity": "factory.base.implementation_entry_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "summary"
+            }
+          },
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "accepted_contract": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

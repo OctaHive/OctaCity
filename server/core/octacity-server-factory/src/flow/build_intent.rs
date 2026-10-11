@@ -46,6 +46,9 @@ impl FlowBuildIntent {
     {
       return Err(invalid());
     }
+    if let Some(deliverables) = &binding.capture_deliverables {
+      deliverables.freeze(&input)?;
+    }
     let budget = node.budget();
     usage_before
       .checked_add(BudgetUsage {
@@ -63,6 +66,7 @@ impl FlowBuildIntent {
       tool: binding.tool.clone(),
       result_tool: binding.result_tool.clone(),
       capture_write_paths: binding.capture_write_paths.clone(),
+      capture_deliverables: binding.capture_deliverables.clone(),
       plugin: binding.plugin.clone(),
       model_or_tool: binding.model_or_tool.clone(),
       task_digest: binding.task_digest,

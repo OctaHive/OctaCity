@@ -19,6 +19,9 @@ pub struct FlowBuildBinding {
   /// Selection narrows source authority; absence retains the ordinary mount ceiling.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub capture_write_paths: Option<Vec<crate::FactoryRepositoryPath>>,
+  /// Optional immutable public-deliverable contract enforced by trusted capture.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub capture_deliverables: Option<crate::CandidateDeliverableBinding>,
   /// Exact runner plugin.
   pub plugin: ImmutableReference,
   /// Exact model or command configuration.
@@ -93,6 +96,9 @@ pub struct FlowBuildProfile {
   /// Selection narrows source authority; absence retains the ordinary mount ceiling.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub capture_write_paths: Option<Vec<crate::FactoryRepositoryPath>>,
+  /// Frozen public repository deliverable parameters for this exact execution.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub capture_deliverables: Option<crate::CandidateDeliverableBinding>,
   /// Exact runner plugin.
   pub plugin: ImmutableReference,
   /// Exact model or command configuration.

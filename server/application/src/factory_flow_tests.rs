@@ -157,7 +157,7 @@ pub(crate) trait FactoryTestOutputBuilder: Send + Sync {
   ) -> Option<FactoryNodeBuildOutputs>;
 }
 impl Execution {
-  fn by_build(&self, id: octacity_server_domain::BuildId) -> Arc<Builds> {
+  pub(crate) fn by_build(&self, id: octacity_server_domain::BuildId) -> Arc<Builds> {
     self
       .builds
       .lock()
@@ -213,17 +213,36 @@ impl BuildQueryStore for Execution {
   async fn latest_attempt(&self, id: octacity_server_domain::BuildId) -> Result<AttemptRecord, StoreError> {
     self.by_build(id).latest_attempt(id).await
   }
-  async fn attempt(&self, _: octacity_server_domain::AttemptId) -> Result<AttemptRecord, StoreError> {
-    Err(StoreError::Unavailable)
+  async fn attempt(&self, id: octacity_server_domain::AttemptId) -> Result<AttemptRecord, StoreError> {
+    let build = self
+      .builds
+      .lock()
+      .unwrap()
+      .values()
+      .find(|build| build.acceptance.attempt_id == id)
+      .cloned()
+      .ok_or(StoreError::Unavailable)?;
+    build.attempt(id).await
   }
-  async fn job(&self, _: octacity_server_domain::JobId) -> Result<JobRecord, StoreError> {
-    Err(StoreError::Unavailable)
+  async fn job(&self, id: octacity_server_domain::JobId) -> Result<JobRecord, StoreError> {
+    let build = self
+      .builds
+      .lock()
+      .unwrap()
+      .values()
+      .find(|build| build.acceptance.job_ids.contains(&id))
+      .cloned()
+      .ok_or(StoreError::Unavailable)?;
+    build.job(id).await
   }
 }
 #[async_trait]
 impl crate::OrdinaryBuildCancellationApplication for Execution {
-  async fn cancel_factory_build(&self, _: crate::CancelFactoryBuild) -> Result<(), OrdinaryBuildApplicationError> {
-    panic!("this success-only fixture must not receive cancellation")
+  async fn cancel_factory_build(
+    &self,
+    request: crate::CancelFactoryBuild,
+  ) -> Result<(), OrdinaryBuildApplicationError> {
+    self.by_build(request.build_id).cancel_factory_build(request).await
   }
 }
 #[async_trait]
@@ -233,7 +252,7 @@ impl FactoryNodeBuildOutputSource for Execution {
     _: octacity_server_domain::BuildId,
     _: octacity_server_domain::AttemptId,
   ) -> Result<BudgetUsage, OrdinaryBuildApplicationError> {
-    panic!("terminal consumption must be supplied explicitly by this fixture")
+    Ok(BudgetUsage::default())
   }
 
   async fn published_outputs(
@@ -267,6 +286,12 @@ impl FactoryNodeBuildOutputSource for Execution {
         "factory.base.protected_validation_report" => serde_json::json!({"changeset_id":ChangeSetId::generate(),
             "candidate":causality.context.subject().candidate().unwrap(),"tests":input["protected_inventory"],
             "input_digest":causality.input_digest,"classes":[{"class":"project.custom","outcome":"passed"}]}),
+        "factory.base.code_review" => serde_json::json!({"candidate_revision":input["candidate_revision"],
+          "candidate_digest":input["candidate_digest"],"input_digest":causality.input_digest,
+          "quality":{"correctness":"satisfied","maintainability":"satisfied","public_tests":"satisfied","security":"satisfied"},"findings":[]}),
+        "factory.base.validation_classification" => serde_json::json!({"candidate_revision":input["request"]["candidate_revision"],
+          "candidate_digest":input["request"]["candidate_digest"],"validation_digest":input["request"]["validation_digest"],
+          "input_digest":causality.input_digest,"classification":"implementation_defect","remediation":"Preserve the public contract"}),
         _ => input.get("accepted").unwrap_or(input).clone(),
       }
     });
@@ -339,8 +364,12 @@ pub(crate) fn fixture_capture_or_validation_value(
   let wire: serde_json::Value = serde_json::from_slice(&c.input).unwrap();
   let input = &wire["payload"]["value"];
   match requirement.kind().as_str() {
-    "candidate_facts" => Some(serde_json::json!({"candidate_revision":request.immutable_revision,
-      "candidate_digest":FactoryDigest::from_bytes([11;32]),"input_digest":c.input_digest,"fresh_until":10000})),
+    "candidate_facts" => Some(
+      serde_json::json!({"candidate_revision":format!("implementation-{}",c.node_attempt_id),
+      "candidate_digest":FactoryDigest::from_bytes([11;32]),"input_digest":c.input_digest,"fresh_until":10000}),
+    ),
+    "code_review_facts" | "classification_facts" => Some(serde_json::json!({"accepted":true,
+      "input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":10000})),
     "validation_facts" => Some(
       serde_json::json!({"accepted":true,"input_digest":c.input_digest,"report_digest":report_digest,
       "candidate_revision":input["candidate_revision"],"candidate_digest":input["candidate_digest"],
@@ -427,6 +456,8 @@ fn fixture_with_work_and_pool_root(
   for node in &template.nodes {
     if let Some(choice) = &node.build_profile {
       let mut profile = fixtures::binding(work.subject().project_id());
+      profile.task_digest = FactoryDigest::sha256("fixture.profile-task", &[choice.as_str().as_bytes()]);
+      profile.model_or_tool = reference(choice.as_str());
       profile.result_output = key("observations");
       if let Some(facts) = fact_schemas.get(&node.key) {
         profile.evidence = vec![EvidenceRequirement::new(
@@ -478,6 +509,21 @@ fn fixture_with_work_and_pool_root(
         ));
       }
       match node.outcomes[0].schema.as_str() {
+        "code_review" | "validation_classification" => {
+          let (report, facts) = if node.outcomes[0].schema.as_str() == "code_review" {
+            ("code_review", "code_review_facts")
+          } else {
+            ("classification_report", "classification_facts")
+          };
+          profile.result_output = key(report);
+          profile.evidence = vec![EvidenceRequirement::new(
+            key(facts),
+            EvidenceOutputKind::Report,
+            schemas[&key("spec_review_facts")].reference().clone(),
+            reference("independent.verifier"),
+            reference("verifier.plugin"),
+          )];
+        }
         "protected_test_handoff" => {
           profile.result_output = key("public.coverage");
           profile.result_tool = Some(reference("tests.capture"));
@@ -911,8 +957,8 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
     .find(|intent| intent.input().node() == &key("implementation"))
     .unwrap();
   assert_eq!(
-    implementation.input().payload(),
-    author.input().payload(),
+    implementation.input().payload().value()["accepted"],
+    author.input().payload().value()["accepted"],
     "the control edge forwards the accepted contract, not author outputs"
   );
   let exposed = serde_json::to_string(implementation.input()).unwrap();
@@ -965,11 +1011,13 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       "requirements_needed",
       "accessibility_audit",
       "protected_tests",
+      "implementation_entry",
       "implementation",
       "implementation_result_gate",
       "protected_validation",
       "protected_validation_gate",
       "review",
+      "code_review_gate",
       "verification",
       "verification_result_gate"
     ]
@@ -1785,6 +1833,7 @@ fn correction_template() -> FlowDefinitionTemplate {
     node.key = key(name);
     node.input_schema = key("summary");
     node.context_binding = None;
+    node.capture_deliverables = None;
     node.pool = None;
     node.required = true;
     node.build_profile = Some(key(name));

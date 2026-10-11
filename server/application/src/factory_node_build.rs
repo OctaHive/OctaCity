@@ -372,6 +372,13 @@ pub(crate) fn factory_build_request(
       cycle_id: input.cycle_id(),
       node_attempt_id: intent.node().id(),
       profile: intent.profile().clone(),
+      deliverable_contract: intent
+        .profile()
+        .capture_deliverables
+        .as_ref()
+        .map(|binding| binding.freeze(input))
+        .transpose()
+        .map_err(invalid)?,
       input_schema: input.payload().schema().clone(),
       input: serde_json::to_vec(input).map_err(|_| ApplicationError::invalid())?,
       input_digest: input.digest().map_err(invalid)?,

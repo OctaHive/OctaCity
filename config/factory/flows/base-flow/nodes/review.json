@@ -3,12 +3,12 @@
     {
       "key": "review",
       "kind": "reasoning",
-      "input_schema": "summary",
+      "input_schema": "code_review_input",
       "outcomes": [
         {
           "key": "observed",
           "kind": "success",
-          "schema": "summary"
+          "schema": "code_review"
         }
       ],
       "budget": {
@@ -21,20 +21,134 @@
       "required": true,
       "input_binding": {
         "sources": {
-          "previous": {
+          "summary": {
             "source": "predecessor",
             "view": "payload",
             "path": ""
+          },
+          "candidate": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/candidate_facts/data/payload/value"
+          },
+          "task": {
+            "source": "work",
+            "path": "/artifacts/task"
+          },
+          "manifest": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set-manifest.json/artifact"
+          },
+          "bundle": {
+            "source": "record",
+            "node": "implementation",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/change-set.bundle/artifact"
           }
         },
         "mapping": {
           "value": {
-            "mapping": "pointer",
-            "path": "/previous"
+            "mapping": "object",
+            "fields": {
+              "summary": {
+                "mapping": "pointer",
+                "path": "/summary"
+              },
+              "candidate_revision": {
+                "mapping": "pointer",
+                "path": "/candidate/candidate_revision"
+              },
+              "candidate_digest": {
+                "mapping": "pointer",
+                "path": "/candidate/candidate_digest"
+              },
+              "task": {
+                "mapping": "pointer",
+                "path": "/task"
+              },
+              "manifest": {
+                "mapping": "pointer",
+                "path": "/manifest"
+              },
+              "bundle": {
+                "mapping": "pointer",
+                "path": "/bundle"
+              }
+            }
           }
         }
       },
-      "build_profile": "review"
+      "build_profile": "review",
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/candidate_revision"
+          }
+        },
+        "entries": {
+          "task": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/task"
+                  }
+                }
+              }
+            }
+          },
+          "manifest": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/manifest"
+                  }
+                }
+              }
+            }
+          },
+          "bundle": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/bundle"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

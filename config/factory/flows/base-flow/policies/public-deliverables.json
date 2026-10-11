@@ -1,0 +1,38 @@
+{
+  "deliverable_policies": {
+    "public_changes": {
+      "permitted_paths": [
+        "docs",
+        "scripts",
+        "src",
+        "tests/unit"
+      ],
+      "forbidden_paths": [
+        "tests/protected"
+      ],
+      "required": [
+        {
+          "kind": "documentation",
+          "paths": [
+            "docs"
+          ],
+          "min_files": 1
+        },
+        {
+          "kind": "public_unit_tests",
+          "paths": [
+            "tests/unit"
+          ],
+          "min_files": 1
+        },
+        {
+          "kind": "scripts",
+          "paths": [
+            "scripts"
+          ],
+          "min_files": 1
+        }
+      ]
+    }
+  }
+}

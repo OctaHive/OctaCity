@@ -14,9 +14,9 @@ use std::{
 
 use async_trait::async_trait;
 use octacity_protocol::{
-  CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_PATCH_OUTPUT, CapturedChangeSetFileV1,
-  CapturedChangeSetManifestV1, CapturedChangeSetPathV1, ChangeSetCaptureV3, FactoryImmutableReferenceV3,
-  MAX_CHANGE_SET_PATH_INDEX_BYTES,
+  CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_PATCH_OUTPUT, CapturedChangeSetChangesV1,
+  CapturedChangeSetFileV1, CapturedChangeSetManifestV1, CapturedChangeSetPathV1, ChangeSetCaptureV3,
+  FactoryImmutableReferenceV3, MAX_CHANGE_SET_PATH_INDEX_BYTES,
 };
 use processkit::{Command, ErrorReason, OutputBufferPolicy, OverflowMode, Stdin};
 use sha2::{Digest as _, Sha256};
@@ -333,8 +333,8 @@ impl GitChangeSetCapturer {
       &cancellation,
     )
     .await?;
-    let changed_paths = parse_raw_diff(&changed)?;
-    let contains_binary = policy::validate_candidate(
+    let mut changed_paths = parse_raw_diff(&changed)?;
+    let inspected = policy::validate_candidate(
       policy::CandidateValidation {
         git: &self.tool.executable,
         workspace: &request.workspace,
@@ -343,10 +343,71 @@ impl GitChangeSetCapturer {
         candidate: &candidate,
         cancellation: &cancellation,
       },
-      &changed_paths,
+      &mut changed_paths,
       &request.instruction.policy,
     )
     .await?;
+
+    let cumulative_paths = if request.base_revision == request.bundle_base_revision {
+      changed_paths.clone()
+    } else {
+      let bytes = git_bytes(
+        &self.tool.executable,
+        &environment,
+        "cumulative changed-path manifest",
+        [
+          "diff-tree",
+          "--no-commit-id",
+          "-r",
+          "--raw",
+          "-z",
+          "--no-renames",
+          request.bundle_base_revision.as_str(),
+          candidate.as_str(),
+        ],
+        None,
+        MAX_CHANGE_SET_PATH_INDEX_BYTES as usize,
+        &cancellation,
+      )
+      .await?;
+      let mut paths = parse_raw_diff(&bytes)?;
+      if paths.len() > request.instruction.policy.max_changed_paths as usize {
+        return Err(CapturePolicyViolation::ChangedPathCount.into());
+      }
+      let mut total_bytes = 0_u64;
+      for path in &mut paths {
+        if path.status == "D" {
+          continue;
+        }
+        let known = changed_paths.iter().find(|changed| changed.path == path.path);
+        let object = format!("{candidate}:{}", path.path);
+        // New changes were already inspected; only inherited blobs need another read.
+        let size = if let Some(known) = known {
+          path.content_sha256 = known.content_sha256.clone();
+          inspected.file_sizes[&path.path]
+        } else {
+          let bytes = git_bytes(
+            &self.tool.executable,
+            &environment,
+            "cumulative blob inspection",
+            ["cat-file", "blob", object.as_str()],
+            None,
+            request.instruction.policy.max_file_bytes as usize,
+            &cancellation,
+          )
+          .await?;
+          path.content_sha256 = Some(hex::encode(Sha256::digest(&bytes)));
+          bytes.len() as u64
+        };
+        total_bytes = total_bytes
+          .checked_add(size)
+          .ok_or(CapturePolicyViolation::TotalBytes)?;
+        if total_bytes > request.instruction.policy.max_total_bytes {
+          return Err(CapturePolicyViolation::TotalBytes.into());
+        }
+      }
+      paths
+    };
 
     let capture_ref = format!("refs/octacity/capture/{}", request.node_attempt_id);
     git_text(
@@ -390,7 +451,7 @@ impl GitChangeSetCapturer {
     let bundle = captured_file(&bundle_path)?;
 
     let patch = if let Some(max_bytes) = request.instruction.patch_max_bytes {
-      let bytes = if contains_binary {
+      let bytes = if inspected.contains_binary {
         git_bytes(
           &self.tool.executable,
           &environment,
@@ -447,6 +508,10 @@ impl GitChangeSetCapturer {
       node_attempt_id: request.node_attempt_id,
       capture_tool: self.tool.identity.clone(),
       changed_paths,
+      cumulative_changes: Some(CapturedChangeSetChangesV1 {
+        base_revision: request.bundle_base_revision,
+        changed_paths: cumulative_paths,
+      }),
       bundle,
       patch,
     };
@@ -678,6 +743,7 @@ fn parse_raw_diff(bytes: &[u8]) -> Result<Vec<ChangedPath>, CaptureError> {
         .to_owned(),
       old_mode: old_mode.to_owned(),
       new_mode: new_mode.to_owned(),
+      content_sha256: None,
     });
   }
   paths.sort_by(|left, right| left.path.cmp(&right.path));

@@ -110,6 +110,15 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
   assert_eq!(first.manifest.changed_paths[0].path, "existing.txt");
   assert_eq!(first.manifest.changed_paths[0].new_mode, "100644");
   assert_eq!(first.manifest.changed_paths[1].path, "new.txt");
+  let manifest = serde_json::to_value(&first.manifest).unwrap();
+  assert_eq!(
+    manifest["changed_paths"][0]["content_sha256"],
+    hex::encode(Sha256::digest(b"candidate\n"))
+  );
+  assert_eq!(
+    manifest["changed_paths"][1]["content_sha256"],
+    hex::encode(Sha256::digest(b"new\n"))
+  );
   assert_eq!(first.manifest.capture_tool.identity, "git");
   assert!(first.manifest.bundle.size_bytes > 0);
   assert!(first.manifest.patch.as_ref().unwrap().size_bytes > 0);
@@ -202,7 +211,12 @@ async fn rematerializes_exact_candidate_lineage_from_original_base_without_remot
     identity: captured.manifest.capture_tool.clone(),
   })
   .unwrap();
-  for name in ["first-materialization", "second-materialization"] {
+  for name in [
+    "first-materialization",
+    "second-materialization",
+    "tampered-content",
+    "tampered-cumulative",
+  ] {
     let workspace = fixture._root.path().join(name);
     create_private_directory(&workspace).unwrap();
     git_run(
@@ -226,20 +240,43 @@ async fn rematerializes_exact_candidate_lineage_from_original_base_without_remot
     }
     let scratch = fixture._root.path().join(format!("{name}-scratch"));
     create_private_directory(&scratch).unwrap();
+    let selected_manifest = if name.starts_with("tampered-") {
+      let mut changed = captured.manifest.clone();
+      let paths = if name == "tampered-cumulative" {
+        &mut changed.cumulative_changes.as_mut().unwrap().changed_paths
+      } else {
+        &mut changed.changed_paths
+      };
+      paths.iter_mut().find(|file| file.status != "D").unwrap().content_sha256 = Some("0".repeat(64));
+      let path = captured.root.join("tampered-manifest.json");
+      let mut bytes = serde_json::to_vec(&changed).unwrap();
+      bytes.push(b'\n');
+      fs::write(&path, bytes).unwrap();
+      path
+    } else {
+      manifest.clone()
+    };
     let result = materializer
       .materialize(
         MaterializationRequest {
           workspace: workspace.clone(),
           bundle: bundle.clone(),
-          manifest: manifest.clone(),
+          manifest: selected_manifest,
           expected_base_revision: fixture.base.clone(),
           expected_candidate_revision: captured.manifest.candidate_revision.clone(),
           scratch,
         },
         CancellationToken::new(),
       )
-      .await
-      .unwrap();
+      .await;
+    if name.starts_with("tampered-") {
+      assert!(
+        result.is_err(),
+        "materialization must reject a content hash that differs from the candidate tree"
+      );
+      continue;
+    }
+    let result = result.unwrap();
     assert_eq!(result.base_revision, fixture.base);
     assert_eq!(result.candidate_revision, captured.manifest.candidate_revision);
     assert_eq!(
@@ -273,6 +310,63 @@ async fn rematerializes_exact_candidate_lineage_from_original_base_without_remot
     git_output(&fixture.git, &fixture.workspace, &["branch", "--list"]),
     "* main"
   );
+}
+
+#[tokio::test]
+async fn rework_retains_cumulative_work_changes_and_tracks_deleted_deliverables() {
+  let fixture = CaptureFixture::new();
+  fs::write(fixture.workspace.join("docs.txt"), "public documentation\n").unwrap();
+  let first = fixture.capture("initial", &fixture.base, policy()).await.unwrap();
+  git_run(
+    &fixture.git,
+    &fixture.workspace,
+    &[
+      "fetch",
+      first.root.join("change-set.bundle").to_str().unwrap(),
+      &first.manifest.candidate_revision,
+    ],
+  );
+  git_run(
+    &fixture.git,
+    &fixture.workspace,
+    &["reset", "--hard", &first.manifest.candidate_revision],
+  );
+  fs::write(fixture.workspace.join("existing.txt"), "corrected production code\n").unwrap();
+  let rework = fixture
+    .capture("rework", &first.manifest.candidate_revision, policy())
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(&rework.manifest).unwrap();
+  assert_eq!(wire["cumulative_changes"]["base_revision"], fixture.base);
+  assert_eq!(wire["changed_paths"].as_array().unwrap().len(), 1);
+  assert_eq!(wire["cumulative_changes"]["changed_paths"].as_array().unwrap().len(), 2);
+  assert_eq!(wire["cumulative_changes"]["changed_paths"][0]["path"], "docs.txt");
+  assert_eq!(
+    wire["cumulative_changes"]["changed_paths"][0]["content_sha256"],
+    hex::encode(Sha256::digest(b"public documentation\n"))
+  );
+  git_run(
+    &fixture.git,
+    &fixture.workspace,
+    &[
+      "fetch",
+      rework.root.join("change-set.bundle").to_str().unwrap(),
+      &rework.manifest.candidate_revision,
+    ],
+  );
+  git_run(
+    &fixture.git,
+    &fixture.workspace,
+    &["reset", "--hard", &rework.manifest.candidate_revision],
+  );
+  fs::remove_file(fixture.workspace.join("docs.txt")).unwrap();
+  let deleted = fixture
+    .capture("deleted", &rework.manifest.candidate_revision, policy())
+    .await
+    .unwrap();
+  let wire = serde_json::to_value(&deleted.manifest).unwrap();
+  assert_eq!(wire["cumulative_changes"]["changed_paths"].as_array().unwrap().len(), 1);
+  assert_eq!(wire["cumulative_changes"]["changed_paths"][0]["path"], "existing.txt");
 }
 
 fn policy() -> ChangeSetCapturePolicyV3 {

@@ -33,15 +33,36 @@
         },
         "mapping": {
           "value": {
-            "mapping": "object",
-            "fields": {
-              "accepted": {
-                "mapping": "pointer",
-                "path": "/previous"
-              },
-              "task": {
-                "mapping": "pointer",
-                "path": "/task"
+            "mapping": "if_present",
+            "path": "/previous/correction",
+            "then": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "pointer",
+                  "path": "/previous/accepted"
+                },
+                "task": {
+                  "mapping": "pointer",
+                  "path": "/task"
+                },
+                "correction": {
+                  "mapping": "pointer",
+                  "path": "/previous/correction"
+                }
+              }
+            },
+            "otherwise": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "pointer",
+                  "path": "/previous"
+                },
+                "task": {
+                  "mapping": "pointer",
+                  "path": "/task"
+                }
               }
             }
           }

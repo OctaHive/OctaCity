@@ -2,6 +2,7 @@
 //! This capability reads no lifecycle checkpoint and grants no Flow transition.
 
 use crate::FactoryNodeBuildOutputs;
+use crate::factory_candidate_deliverables::verify_deliverables;
 use octacity_protocol::{
   CHANGE_SET_BUNDLE_MEDIA_TYPE, CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE, CHANGE_SET_MANIFEST_OUTPUT,
   CHANGE_SET_PATCH_MEDIA_TYPE, CHANGE_SET_PATCH_OUTPUT, CapturedChangeSetFileV1, CapturedChangeSetManifestV1,
@@ -176,6 +177,7 @@ pub fn verify_factory_node_change_set(
       candidate.candidate_revision()
     });
   validate_manifest(&manifest, intent.node().id().to_string(), base.as_str(), &output)?;
+  verify_deliverables(intent, &manifest)?;
   captured_candidate(
     intent,
     execution,
@@ -339,6 +341,7 @@ fn recover_candidate(
   {
     return Err(invalid());
   }
+  verify_deliverables(intent, &manifest)?;
   captured_candidate(
     intent,
     execution,

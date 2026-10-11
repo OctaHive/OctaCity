@@ -314,6 +314,44 @@ async fn verify_candidate(
   if merge_base.trim() != request.expected_base_revision {
     return Err(MaterializationError::Integrity);
   }
+  let mut hashes = std::collections::BTreeMap::new();
+  verify_paths(
+    git,
+    request,
+    &manifest.base_revision,
+    &manifest.changed_paths,
+    environment,
+    cancellation,
+    &mut hashes,
+  )
+  .await?;
+  if let Some(cumulative) = &manifest.cumulative_changes {
+    if cumulative.base_revision != request.expected_base_revision {
+      return Err(MaterializationError::Integrity);
+    }
+    verify_paths(
+      git,
+      request,
+      &cumulative.base_revision,
+      &cumulative.changed_paths,
+      environment,
+      cancellation,
+      &mut hashes,
+    )
+    .await?;
+  }
+  Ok(())
+}
+
+async fn verify_paths(
+  git: &Path,
+  request: &MaterializationRequest,
+  base: &str,
+  paths: &[octacity_protocol::CapturedChangeSetPathV1],
+  environment: &MaterializationEnvironment<'_>,
+  cancellation: &CancellationToken,
+  hashes: &mut std::collections::BTreeMap<String, String>,
+) -> Result<(), MaterializationError> {
   let changed = git_bytes(
     git,
     &request.workspace,
@@ -326,14 +364,36 @@ async fn verify_candidate(
       "--raw",
       "-z",
       "--no-renames",
-      manifest.base_revision.as_str(),
+      base,
       request.expected_candidate_revision.as_str(),
     ],
     cancellation,
   )
   .await?;
-  let changed = parse_raw_diff(&changed).map_err(|_| MaterializationError::Integrity)?;
-  if changed != manifest.changed_paths {
+  let mut changed = parse_raw_diff(&changed).map_err(|_| MaterializationError::Integrity)?;
+  for (path, expected) in changed.iter_mut().zip(paths) {
+    if expected.content_sha256.is_some() {
+      if let Some(digest) = hashes.get(&path.path) {
+        path.content_sha256 = Some(digest.clone());
+        continue;
+      }
+      let object = format!("{}:{}", request.expected_candidate_revision, path.path);
+      let bytes = git_bytes(
+        git,
+        &request.workspace,
+        environment,
+        "candidate file digest",
+        ["cat-file", "blob", object.as_str()],
+        cancellation,
+      )
+      .await?;
+      use sha2::{Digest as _, Sha256};
+      let digest = hex::encode(Sha256::digest(&bytes));
+      hashes.insert(path.path.clone(), digest.clone());
+      path.content_sha256 = Some(digest);
+    }
+  }
+  if changed != paths {
     return Err(MaterializationError::Integrity);
   }
   Ok(())

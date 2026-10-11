@@ -198,6 +198,16 @@ trusted from mutable harness output. Selected secret detectors apply to the
 exact candidate blobs, while binary blobs require an explicit `allow` policy
 and remain subject to the same size ceilings.
 
+Each non-deleted path records the raw SHA-256 of its candidate blob, computed
+from the bytes already inspected by capture. The manifest separates `changed_paths`
+against the direct parent from `cumulative_changes`, an original-base revision and
+path index against the immutable bundle prerequisite. Both indices are ordered,
+unique and bounded; cumulative observations also obey the signed path-count,
+per-file and aggregate-byte ceilings. Inherited unchanged blobs are read only
+when their hashes are absent from the current inspection. Required public Work
+updates therefore survive rework without forcing unrelated edits; removing or
+reverting a previous addition removes it from the cumulative result.
+
 Only after all checks pass may capture create the temporary ref, bundle,
 optional patch, and manifest. Policy failures use stable typed diagnostics that
 do not echo paths or candidate contents. A rejected capture therefore supplies
@@ -219,10 +229,13 @@ Every validation, evaluation, and rework Job carries one strict
 `factory.change_set_materialization` instruction plus exactly identified bundle
 and manifest protected inputs. The source plugin still materializes the
 original exact base. Before runner start, the Agent verifies canonical manifest
-bytes, component sizes and digests, capture-tool identity, bundle prerequisites,
-the candidate's direct parent, and ancestry back to that original base. It then
-imports only the bundle's reserved capture ref with ambient Git configuration
-and hooks disabled, checks out the exact candidate, removes the temporary ref,
+bytes, component sizes and digests, capture-tool identity and bundle prerequisites.
+It imports only the bundle's reserved capture ref with ambient Git configuration
+and hooks disabled, verifies the candidate's direct parent and ancestry back to
+the original base, and checks both path indices against Git. A different cumulative
+base or candidate content hash is rejected. Public-deliverable qualification requires
+the cumulative index; its presence grants no writable scope or Artifact access.
+The Agent checks out the exact candidate, removes the temporary ref,
 and requires a clean worktree. No external branch or remote ref is consulted as
 candidate authority. Evaluation receives this reconstructed source through a
 read-only backend mount; validation and bounded rework receive only the mount

@@ -28,6 +28,27 @@ pub struct FlowTemplateOutcome {
   /// Schema choice resolved at publication.
   pub schema: FactoryKey,
 }
+/// An inline policy or explicit local choice resolved before immutable publication.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum FlowTemplateDeliverablePolicy {
+  /// Complete policy owned by this editable node.
+  Inline(CandidateDeliverablePolicy),
+  /// Shared operator-owned policy; never a runtime lookup or an implicit grant.
+  Reference {
+    /// Exact local key in the enclosing template's policy catalogue.
+    reference: FactoryKey,
+  },
+}
+/// Editable acceptance selection and public policy, compiled to one frozen binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowTemplateDeliverableBinding {
+  /// Explicit projection of the verified accepted Work identity.
+  pub accepted_contract: FlowDataMapping,
+  /// Inline policy or explicitly selected shared local policy.
+  pub policy: FlowTemplateDeliverablePolicy,
+}
 /// Editable node choices. Execution profiles are exact trusted choices supplied at publication.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -61,6 +82,9 @@ pub struct FlowTemplateNode {
   /// Optional disjoint writable directory scope for capture jobs; narrows the selected profile.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub capture_write_paths: Option<Vec<crate::FactoryRepositoryPath>>,
+  /// Optional configured public-deliverable policy, frozen into the selected profile.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub capture_deliverables: Option<FlowTemplateDeliverableBinding>,
   /// Declarative deterministic program.
   #[serde(default)]
   pub gate: Option<FlowGateProgram>,
@@ -87,6 +111,9 @@ pub struct FlowDefinitionTemplate {
   pub entry: FactoryKey,
   /// Local reusable schema choices.
   pub schemas: BTreeMap<FactoryKey, FlowTemplateSchema>,
+  /// Optional reusable policies; all references resolve before publication.
+  #[serde(default)]
+  pub deliverable_policies: BTreeMap<FactoryKey, CandidateDeliverablePolicy>,
   /// Declared nodes and their configured execution.
   pub nodes: Vec<FlowTemplateNode>,
   /// Finite conditional transitions selected only by accepted outcomes.
@@ -143,6 +170,7 @@ impl FlowDefinitionTemplate {
     if self.schemas.is_empty()
       || self.schemas.len() > MAX_FLOW_SCHEMA_ENTRIES
       || self.nodes.len() > MAX_FLOW_DEFINITION_NODES
+      || self.deliverable_policies.len() > MAX_FLOW_SCHEMA_ENTRIES
       || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_DATA_BYTES
     {
       return Err(invalid());
@@ -185,6 +213,25 @@ impl FlowDefinitionTemplate {
         }
         if let Some(profile) = &choice.build_profile {
           let mut binding = profiles.get(profile).ok_or_else(invalid)?.clone();
+          if let Some(contract) = &choice.capture_deliverables {
+            let policy = match &contract.policy {
+              FlowTemplateDeliverablePolicy::Inline(policy) => policy,
+              FlowTemplateDeliverablePolicy::Reference { reference } => {
+                self.deliverable_policies.get(reference).ok_or_else(invalid)?
+              }
+            };
+            if binding
+              .capture_deliverables
+              .as_ref()
+              .is_some_and(|ceiling| !policy.is_no_broader_than(&ceiling.policy))
+            {
+              return Err(invalid());
+            }
+            binding.capture_deliverables = Some(CandidateDeliverableBinding {
+              accepted_contract: contract.accepted_contract.clone(),
+              policy: policy.clone(),
+            });
+          }
           if let Some(paths) = &choice.capture_write_paths {
             if binding.capture_write_paths.as_ref().is_some_and(|ceiling| {
               paths
@@ -209,7 +256,9 @@ impl FlowDefinitionTemplate {
         if let Some(pool) = &choice.pool {
           node = node.with_phase_pool(pool.clone());
         }
-        if choice.capture_write_paths.is_some() && choice.build_profile.is_none() {
+        if (choice.capture_write_paths.is_some() || choice.capture_deliverables.is_some())
+          && choice.build_profile.is_none()
+        {
           return Err(invalid());
         }
         if matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning) && choice.build_profile.is_none()

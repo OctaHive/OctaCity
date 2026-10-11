@@ -314,7 +314,7 @@
                   "comparison": "equal",
                   "right": {
                     "source": "path",
-                    "path": "/trusted_input/specification/manifest/candidate_revision"
+                    "path": "/execution_revision"
                   }
                 }
               ]

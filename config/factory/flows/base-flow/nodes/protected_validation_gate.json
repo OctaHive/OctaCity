@@ -13,7 +13,7 @@
         {
           "key": "failed",
           "kind": "failure",
-          "schema": "summary"
+          "schema": "validation_diagnostic_input"
         },
         {
           "key": "invalid",
@@ -278,6 +278,35 @@
           "value": {
             "mapping": "pointer",
             "path": "/summary"
+          }
+        },
+        "outputs": {
+          "failed": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "summary": {
+                  "mapping": "pointer",
+                  "path": "/summary"
+                },
+                "candidate_revision": {
+                  "mapping": "pointer",
+                  "path": "/candidate_revision"
+                },
+                "candidate_digest": {
+                  "mapping": "pointer",
+                  "path": "/candidate_digest"
+                },
+                "validation_digest": {
+                  "mapping": "pointer",
+                  "path": "/expected_report"
+                },
+                "classes": {
+                  "mapping": "pointer",
+                  "path": "/report/classes"
+                }
+              }
+            }
           }
         }
       }

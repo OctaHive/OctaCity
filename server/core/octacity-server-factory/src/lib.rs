@@ -51,6 +51,7 @@ mod flow_template_tests;
 mod flow_test_support;
 #[cfg(any(test, feature = "test-support"))]
 use crate as factory;
+mod candidate_deliverable;
 mod flow_graph;
 #[cfg(test)]
 mod flow_graph_tests;
@@ -72,6 +73,12 @@ mod permission;
 mod permission_tests;
 mod phase_pool;
 mod protected_test;
+pub use candidate_deliverable::{
+  CandidateDeliverableBinding, CandidateDeliverableContract, CandidateDeliverablePolicy,
+  CandidateDeliverableRequirement, CandidateFileObservation,
+};
+#[cfg(test)]
+mod candidate_deliverable_tests;
 #[cfg(test)]
 mod protected_test_tests;
 mod review_plan;
@@ -137,15 +144,15 @@ pub use flow::{
   FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowNodeStop, FlowNodeStopReason, FlowOperand,
   FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload, FlowPredicate, FlowProgress, FlowQuantifier,
   FlowRecordObservation, FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory,
-  FlowTemplateNode, FlowTemplateOutcome, FlowTemplateSchema, FlowTerminalDefinition, FlowTransition,
-  FlowTransitionTarget, FlowValueMapping, FlowValueSchema, FlowVerifiedBuildData, FlowVerifiedBuildOutput,
-  MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE,
-  MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT,
-  MAX_FLOW_GATE_PARAMETER_BYTES, MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH,
-  MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS,
-  NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
-  PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure, WorkflowCycle,
-  validate_flow_runtime_history,
+  FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy, FlowTemplateNode, FlowTemplateOutcome,
+  FlowTemplateSchema, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, FlowValueMapping, FlowValueSchema,
+  FlowVerifiedBuildData, FlowVerifiedBuildOutput, MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS,
+  MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES,
+  MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_GATE_PARAMETER_BYTES, MAX_FLOW_INPUT_BINDING_BYTES,
+  MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH,
+  MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput,
+  NodeAttemptInput, NodeExecutionIdentity, PinnedFlowDefinitionClosure, PublishedFlowTemplate,
+  ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
 };
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{

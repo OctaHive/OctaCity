@@ -37,6 +37,7 @@
     "max_active_nodes": 4
   },
   "parts": [
+    "base-flow/policies/public-deliverables.json",
     "base-flow/schemas/candidate_receipt.json",
     "base-flow/schemas/candidate_publication_input.json",
     "base-flow/schemas/spec_ready_input.json",
@@ -104,6 +105,23 @@
     "base-flow/nodes/specification_correction.json",
     "base-flow/nodes/protected_validation.json",
     "base-flow/nodes/protected_validation_gate.json",
+    "base-flow/schemas/validation_diagnostic_input.json",
+    "base-flow/schemas/validation_classification.json",
+    "base-flow/schemas/validation_classification_gate_input.json",
+    "base-flow/nodes/validation_classification.json",
+    "base-flow/nodes/validation_classification_gate.json",
+    "base-flow/schemas/implementation_input.json",
+    "base-flow/nodes/implementation_entry.json",
+    "base-flow/nodes/implementation_rework_entry.json",
+    "base-flow/nodes/test_correction_entry.json",
+    "base-flow/nodes/requirements_correction_entry.json",
+    "base-flow/schemas/code_review_input.json",
+    "base-flow/schemas/code_review.json",
+    "base-flow/schemas/code_review_gate_input.json",
+    "base-flow/nodes/code_review_gate.json",
+    "base-flow/schemas/validation_classification_input.json",
+    "base-flow/schemas/implementation_entry_input.json",
+    "base-flow/schemas/test_correction_input.json",
     "base-flow/transitions.json",
     "base-flow/terminals.json"
   ]

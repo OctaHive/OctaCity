@@ -1,0 +1,316 @@
+{
+  "nodes": [
+    {
+      "key": "validation_classification_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "validation_classification_gate_input",
+      "outcomes": [
+        {
+          "key": "implementation_rework",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "requirements_correction",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "test_correction",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "escalation",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "rejection",
+          "kind": "failure",
+          "schema": "summary"
+        },
+        {
+          "key": "invalid",
+          "kind": "failure",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "request": {
+            "source": "predecessor",
+            "view": "input_payload",
+            "path": "/request"
+          },
+          "classification": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "metadata": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "request": {
+                "mapping": "pointer",
+                "path": "/request"
+              },
+              "classification": {
+                "mapping": "pointer",
+                "path": "/classification"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/metadata/input_digest"
+              },
+              "expected_report": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/classification_report/artifact/content_digest"
+              },
+              "facts": {
+                "mapping": "pointer",
+                "path": "/metadata/build/outputs/classification_facts/data/payload/value"
+              },
+              "output_deadlines": {
+                "mapping": "object",
+                "fields": {
+                  "report": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/classification_report/fresh_until"
+                  },
+                  "facts": {
+                    "mapping": "pointer",
+                    "path": "/metadata/build/outputs/classification_facts/fresh_until"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/accepted"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": true
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_input"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/facts/input_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_input"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/classification/input_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_report"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/facts/report_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/request/candidate_revision"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/classification/candidate_revision"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/request/candidate_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/classification/candidate_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/request/validation_digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/classification/validation_digest"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/facts/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/report"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/output_deadlines/facts"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            }
+          ]
+        },
+        "rules": [
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/classification/classification"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "implementation_defect"
+              }
+            },
+            "outcome": "implementation_rework"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/classification/classification"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "requirements_defect"
+              }
+            },
+            "outcome": "requirements_correction"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/classification/classification"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "test_defect"
+              }
+            },
+            "outcome": "test_correction"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/classification/classification"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "indeterminate"
+              }
+            },
+            "outcome": "escalation"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/classification/classification"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "reject"
+              }
+            },
+            "outcome": "rejection"
+          }
+        ],
+        "fallback": "invalid",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/request/summary"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -27,6 +27,7 @@ pub(crate) fn binding(project: octacity_server_domain::ProjectId) -> FlowBuildBi
     tool: reference("audit.command"),
     result_tool: None,
     capture_write_paths: None,
+    capture_deliverables: None,
     plugin: reference("runner"),
     model_or_tool: reference("audit.parameters"),
     task_digest: FactoryDigest::from_bytes([61; 32]),

@@ -20,7 +20,13 @@
     "implementation_invalid": "summary",
     "verification_invalid": "summary",
     "requirements_exhausted": "summary",
-    "protected_validation_failed": "summary",
-    "protected_validation_invalid": "summary"
+    "protected_validation_invalid": "summary",
+    "validation_rework_exhausted": "summary",
+    "validation_classification_escalation": "summary",
+    "validation_classification_rejection": "summary",
+    "validation_classification_invalid": "summary",
+    "code_review_changes_required": "summary",
+    "code_review_needs_human_input": "summary",
+    "code_review_invalid": "summary"
   }
 }

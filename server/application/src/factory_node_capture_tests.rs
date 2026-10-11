@@ -7,10 +7,33 @@ use octacity_server_factory::*;
 fn time(value: i64) -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(value).unwrap()
 }
+
+#[test]
+fn trusted_capture_rejects_missing_deliverables_despite_successful_execution() {
+  let work = work();
+  let binding = deliverable_binding(binding(work.subject().project_id()));
+  let (_, admitted, _, input, node) =
+    execution_fixture_for_work_with_binding(FlowNodeKind::BuildCommand, work, binding, None, None);
+  let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+  let builds = Builds::new();
+  let execution = FlowBuildExecution::new(
+    &intent,
+    builds.acceptance.build_id,
+    builds.acceptance.attempt_id,
+    builds.acceptance.job_ids.clone(),
+  )
+  .unwrap();
+  let outputs = capture_outputs(&intent, &builds, "base");
+  assert!(
+    verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(30)).is_err(),
+    "a successful model and capture cannot omit required public deliverables"
+  );
+}
 pub(crate) fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &str) -> FactoryNodeBuildOutputs {
   let tool = reference("git.capture");
   let bundle = b"trusted fixture bundle\n".to_vec();
   let manifest = CapturedChangeSetManifestV1 {
+    cumulative_changes: None,
     format_version: 1,
     base_revision: base.to_owned(),
     candidate_revision: "captured-revision".to_owned(),
@@ -82,6 +105,102 @@ pub(crate) fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &
     verified_at: builds.created_at,
     fresh_until: time(1000),
   }
+}
+
+pub(crate) fn deliverable_binding(mut binding: FlowBuildBinding) -> FlowBuildBinding {
+  let mut wire = serde_json::to_value(&binding).unwrap();
+  wire["capture_deliverables"] = serde_json::json!({"accepted_contract":{"value":{"mapping":"constant","value":"a".repeat(64)}},
+    "policy":{"permitted_paths":["docs","src","tests/public","tools"],"forbidden_paths":["tests/private"],
+      "required":[{"kind":"docs","paths":["docs"],"min_files":1},{"kind":"tests","paths":["tests/public"],"min_files":1},
+        {"kind":"tools","paths":["tools"],"min_files":1}]}});
+  binding = serde_json::from_value(wire).unwrap();
+  binding
+}
+pub(crate) fn complete_deliverable_outputs(outputs: &mut FactoryNodeBuildOutputs, public_test_digest: FactoryDigest) {
+  update_capture_manifest(outputs, |value| {
+    value["changed_paths"]=serde_json::json!(["docs/api.md","src/api.rs","tests/public/api.rs","tools/deploy.sh"].map(|path|
+      serde_json::json!({"status":"A","path":path,"old_mode":"000000","new_mode":"100644",
+        "content_sha256":if path=="tests/public/api.rs" {public_test_digest}else{FactoryDigest::content_sha256(path.as_bytes())}})));
+    value["cumulative_changes"] =
+      serde_json::json!({"base_revision":"base","changed_paths":value["changed_paths"].clone()});
+  });
+}
+fn update_capture_manifest(outputs: &mut FactoryNodeBuildOutputs, update: impl FnOnce(&mut serde_json::Value)) {
+  let doc = outputs
+    .documents
+    .iter_mut()
+    .find(|doc| doc.record.identity().logical_name.as_str() == CHANGE_SET_MANIFEST_OUTPUT)
+    .unwrap();
+  let mut value: serde_json::Value = serde_json::from_slice(&doc.bytes).unwrap();
+  update(&mut value);
+  let previous_size = doc.bytes.len() as u64;
+  let manifest: CapturedChangeSetManifestV1 = serde_json::from_value(value).unwrap();
+  doc.bytes = serde_json::to_vec(&manifest).unwrap();
+  doc.bytes.push(b'\n');
+  let mut identity = doc.record.identity().clone();
+  identity.size_bytes = doc.bytes.len() as u64;
+  identity.digest = ArtifactContentDigest::from_bytes(FactoryDigest::content_sha256(&doc.bytes).as_bytes());
+  let record = ArtifactRecord::pending(identity.clone(), time(30)).unwrap();
+  let record = record
+    .transition(&identity, record.version(), ArtifactEvent::BeginVerification, time(30))
+    .unwrap();
+  doc.record = record
+    .transition(&identity, record.version(), ArtifactEvent::Publish, time(30))
+    .unwrap();
+  outputs.usage.output_bytes = outputs.usage.output_bytes - previous_size + doc.bytes.len() as u64;
+}
+
+#[test]
+fn trusted_rework_preserves_cumulative_deliverables_without_requiring_repeated_updates() {
+  let work = work();
+  let binding = deliverable_binding(binding(work.subject().project_id()));
+  let (_, admitted, _, input, node) =
+    execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, None);
+  let selected = CandidateSubject::new(
+    input.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("previous-code").unwrap(),
+    FactoryDigest::from_bytes([42; 32]),
+  );
+  let (input, node) = crate::factory_node_test_support::input_with_candidate_context(&admitted, input, &node, selected);
+  let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+  let builds = Builds::new();
+  let execution = FlowBuildExecution::new(
+    &intent,
+    builds.acceptance.build_id,
+    builds.acceptance.attempt_id,
+    builds.acceptance.job_ids.clone(),
+  )
+  .unwrap();
+  let mut outputs = capture_outputs(&intent, &builds, "previous-code");
+  complete_deliverable_outputs(&mut outputs, FactoryDigest::content_sha256(b"public unit test"));
+  update_capture_manifest(&mut outputs, |value| {
+    value["cumulative_changes"] =
+      serde_json::json!({"base_revision":"base", "changed_paths": value["changed_paths"].clone()});
+    value["changed_paths"] = serde_json::json!([value["changed_paths"][1].clone()]);
+  });
+  let qualify = |outputs: &FactoryNodeBuildOutputs| {
+    verify_factory_node_candidate_deliverables(&intent, &execution, outputs, &reference("git.capture"), time(31))
+  };
+  qualify(&outputs).expect("a code-only rework retains already captured public deliverables");
+  let mut deleted = outputs.clone();
+  update_capture_manifest(&mut deleted, |value| {
+    value["cumulative_changes"]["changed_paths"]
+      .as_array_mut()
+      .unwrap()
+      .remove(2);
+  });
+  assert!(
+    qualify(&deleted).is_err(),
+    "deleted mandatory tests cannot be inherited"
+  );
+  let mut foreign = outputs.clone();
+  update_capture_manifest(&mut foreign, |value| {
+    value["cumulative_changes"]["base_revision"] = serde_json::json!("foreign-base");
+  });
+  assert!(
+    qualify(&foreign).is_err(),
+    "cumulative observations must use the original exact Work base"
+  );
 }
 
 #[test]

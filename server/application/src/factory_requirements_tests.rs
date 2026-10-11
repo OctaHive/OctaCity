@@ -29,6 +29,7 @@ fn at(value: i64) -> octacity_server_domain::Timestamp {
 
 struct QualifiedOutputs {
   feedback: Option<FactoryKey>,
+  validation: Option<Arc<ValidationCase>>,
 }
 impl FactoryTestOutputBuilder for QualifiedOutputs {
   fn outputs(
@@ -43,7 +44,30 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
     let wire: Value = serde_json::from_slice(&c.input).unwrap();
     let input = &wire["payload"]["value"];
     let mut extra = BTreeMap::new();
-    let report = if p.result_output == key("change-set-manifest.json") {
+    let report = if let Some(case) = self
+      .validation
+      .as_ref()
+      .filter(|_| schema.identity().as_str() == "factory.base.protected_validation_report")
+    {
+      let mut candidates = case.candidates.lock().unwrap();
+      if !candidates.contains(&input["candidate_revision"]) {
+        candidates.push(input["candidate_revision"].clone());
+      }
+      let outcome = if case.exhaust || candidates.len() == 1 {
+        "failed"
+      } else {
+        "passed"
+      };
+      json!({"changeset_id":ChangeSetId::generate(),"candidate":c.context.subject().candidate().unwrap(),"tests":input["protected_inventory"],
+        "input_digest":c.input_digest,"classes":[{"class":"project.custom","outcome":outcome}]})
+    } else if let Some(case) = self
+      .validation
+      .as_ref()
+      .filter(|_| schema.identity().as_str() == "factory.base.validation_classification")
+    {
+      json!({"candidate_revision":input["request"]["candidate_revision"],"candidate_digest":input["request"]["candidate_digest"],
+        "validation_digest":input["request"]["validation_digest"],"input_digest":c.input_digest,"classification":case.classification,"remediation":"Preserve the public contract"})
+    } else if p.result_output == key("change-set-manifest.json") {
       let bundle = json!({"fixture":"qualified immutable candidate bytes"});
       let requirement = requirements
         .iter()
@@ -149,7 +173,7 @@ impl FactoryTestOutputBuilder for QualifiedOutputs {
         } else if requirement.kind() == &key("specification_review_facts") {
           json!({"accepted":true,"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":500})
         } else {
-          json!({"outcome":if report.get("requirements_defect").is_some(){"requirements_defect"}else{"observed"},"candidate_revision":report["specification"]["manifest"]["candidate_revision"],"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":10000,"requirements_evidence":report["requirements_defect"].get("evidence").cloned().unwrap_or_else(||json!([]))})
+          json!({"outcome":if report.get("requirements_defect").is_some(){"requirements_defect"}else{"observed"},"candidate_revision":if p.node==key("implementation") || report.get("specification").is_none() {json!(c.context.subject().candidate().map_or(&request.immutable_revision,|candidate|candidate.candidate_revision()))} else {report["specification"]["manifest"]["candidate_revision"].clone()},"input_digest":c.input_digest,"report_digest":report_digest,"fresh_until":10000,"requirements_evidence":report["requirements_defect"].get("evidence").cloned().unwrap_or_else(||json!([]))})
         };
         let mut doc = document_kind(
           builds,
@@ -312,6 +336,7 @@ pub(crate) fn specified_fixture(
   let mut execution = Arc::try_unwrap(execution).ok().unwrap();
   execution.output_builder = Some(Arc::new(QualifiedOutputs {
     feedback: feedback.map(key),
+    validation: None,
   }));
   let classification = execution.reports.get_mut(&key("classification")).unwrap();
   classification["work_kind"] = json!(kind);
@@ -334,7 +359,7 @@ pub(crate) fn specified_fixture(
   (admission, Arc::new(execution))
 }
 
-async fn claim_run<S: FactoryRunStore>(store: &S, run: FactoryRunId, time: i64) -> FactoryRunClaimRecord {
+pub(crate) async fn claim_run<S: FactoryRunStore>(store: &S, run: FactoryRunId, time: i64) -> FactoryRunClaimRecord {
   let snapshot = store.factory_run_snapshot(run).await.unwrap();
   let claim = FactoryRunClaimRecord::new(
     run,
@@ -366,16 +391,11 @@ async fn claim_run<S: FactoryRunStore>(store: &S, run: FactoryRunId, time: i64) 
   claim
 }
 
-pub(crate) async fn verify_specified_owner<
-  S: FactoryRunStore + FactoryPhasePoolStore + FactoryRunControlStore + 'static,
->(
-  store: Arc<S>,
-  restarted: Arc<S>,
+fn publication_registry(
   admission: &PublishedFactoryAdmission,
   execution: Arc<Execution>,
   behavior: PublicationCase,
-  feedback: Option<&str>,
-) {
+) -> (Arc<FactoryNodeExecutorRegistry>, Arc<Publisher>) {
   let publisher = Arc::new(Publisher {
     behavior,
     lost: AtomicBool::new(false),
@@ -416,6 +436,20 @@ pub(crate) async fn verify_specified_owner<
     ])
     .unwrap(),
   );
+  (registry, publisher)
+}
+
+pub(crate) async fn verify_specified_owner<
+  S: FactoryRunStore + FactoryPhasePoolStore + FactoryRunControlStore + 'static,
+>(
+  store: Arc<S>,
+  restarted: Arc<S>,
+  admission: &PublishedFactoryAdmission,
+  execution: Arc<Execution>,
+  behavior: PublicationCase,
+  feedback: Option<&str>,
+) {
+  let (registry, publisher) = publication_registry(admission, execution.clone(), behavior);
   let mut claim = claim_run(store.as_ref(), admission.run.id(), 10).await;
   let mut terminal = None;
   let mut blocked = false;
@@ -826,4 +860,311 @@ fn implementation_and_verification_defects_rerun_requirements_without_reusing_pr
       Some(feedback),
     ));
   }
+}
+
+struct ValidationCase {
+  classification: &'static str,
+  exhaust: bool,
+  candidates: Mutex<Vec<Value>>,
+}
+
+async fn validation_case_snapshot(
+  kind: &str,
+  size: &str,
+  case: Arc<ValidationCase>,
+) -> (FactoryRunSnapshot, FactoryKey) {
+  let (admission, mut execution) = specified_fixture(
+    kind,
+    size,
+    if size == "small" { "development" } else { "requirements" },
+    None,
+    PublicationCase::Normal,
+  );
+  Arc::get_mut(&mut execution).unwrap().output_builder = Some(Arc::new(QualifiedOutputs {
+    feedback: None,
+    validation: Some(case),
+  }));
+  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+  let audit = testing::management_mutation_with_request((), "validation-routing")
+    .audit()
+    .clone();
+  store
+    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+    .unwrap();
+  let claim = claim_run(store.as_ref(), admission.run.id(), 10).await;
+  let (registry, _) = publication_registry(&admission, execution.clone(), PublicationCase::Normal);
+  let mut resolved = None;
+  for time in 31..220 {
+    execution.clock.store(time, Ordering::SeqCst);
+    // Recreate both owner and input preparer on every iteration: no model session or transient routing state survives.
+    let owner = FactoryFlowRunner::new(
+      store.clone(),
+      registry.clone(),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    match owner
+      .reconcile_flow(admission.run.id(), claim.id, at(time))
+      .await
+      .unwrap()
+    {
+      FactoryFlowStep::Advanced => {}
+      FactoryFlowStep::Resolved(outcome) => {
+        resolved = Some(outcome);
+        break;
+      }
+      other => panic!("unexpected validation progress {other:?}"),
+    }
+  }
+  (
+    store.factory_run_snapshot(admission.run.id()).await.unwrap(),
+    resolved.expect("the bounded configured route must resolve"),
+  )
+}
+
+#[test]
+fn validation_rework_retains_the_exact_candidate_and_closed_context_after_restart() {
+  crate::factory_flow_tests::run_ready(async {
+    let case = Arc::new(ValidationCase {
+      classification: "implementation_defect",
+      exhaust: false,
+      candidates: Mutex::new(vec![]),
+    });
+    let (snapshot, terminal) = validation_case_snapshot("defect", "small", case.clone()).await;
+    assert_eq!(terminal, key("verified_candidate"));
+    let implementations = snapshot
+      .flow
+      .data
+      .inputs
+      .iter()
+      .filter(|row| row.node() == &key("implementation"))
+      .collect::<Vec<_>>();
+    assert_eq!(implementations.len(), 2);
+    let initial = implementations
+      .iter()
+      .find(|input| input.payload().value().get("remediation").is_none())
+      .unwrap();
+    let rework = implementations
+      .iter()
+      .find(|input| input.payload().value().get("remediation").is_some())
+      .unwrap();
+    let candidates = case.candidates.lock().unwrap();
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(rework.payload().value()["parent"]["candidate_revision"], candidates[0]);
+    assert_eq!(
+      initial.payload().value()["accepted_contract"],
+      rework.payload().value()["accepted_contract"]
+    );
+    for input in &implementations {
+      let wire = serde_json::to_string(input).unwrap();
+      assert!(!wire.contains("protected_inventory") && !wire.contains("author_transcript"));
+      assert!(input.context().unwrap().entries().iter().all(|entry| matches!(
+        entry.source_kind(),
+        ContextSourceKind::Task | ContextSourceKind::Evidence
+      )));
+    }
+    let classifier = snapshot
+      .flow
+      .data
+      .inputs
+      .iter()
+      .find(|input| input.node() == &key("validation_classification"))
+      .unwrap();
+    assert_eq!(classifier.context().unwrap().entries().len(), 1);
+    assert_eq!(
+      classifier
+        .payload()
+        .value()
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      vec!["request", "task"]
+    );
+    assert!(
+      classifier.payload().value()["request"]
+        .get("protected_inventory")
+        .is_none()
+    );
+    let reviewer = snapshot
+      .flow
+      .data
+      .inputs
+      .iter()
+      .find(|input| input.node() == &key("review"))
+      .unwrap();
+    assert_eq!(reviewer.payload().value()["candidate_revision"], candidates[1]);
+    assert_eq!(reviewer.context().unwrap().entries().len(), 3);
+    let review = snapshot
+      .flow
+      .data
+      .build_intents
+      .iter()
+      .find(|intent| intent.input().node() == &key("review"))
+      .unwrap();
+    let implementation = snapshot
+      .flow
+      .data
+      .build_intents
+      .iter()
+      .find(|intent| intent.input().node() == &key("implementation"))
+      .unwrap();
+    assert_ne!(review.profile().task_digest, implementation.profile().task_digest);
+    assert_ne!(review.profile().model_or_tool, implementation.profile().model_or_tool);
+  });
+}
+
+#[test]
+fn validation_classification_owner_routes_are_finite_bounded_and_restartable() {
+  crate::factory_flow_tests::run_ready(async {
+    for (classification, exhaust, expected_terminal) in [
+      ("implementation_defect", true, "validation_rework_exhausted"),
+      ("test_defect", false, "verified_candidate"),
+      ("indeterminate", false, "validation_classification_escalation"),
+      ("reject", false, "validation_classification_rejection"),
+    ] {
+      let case = Arc::new(ValidationCase {
+        classification,
+        exhaust,
+        candidates: Mutex::new(vec![]),
+      });
+      let (snapshot, terminal) = validation_case_snapshot("defect", "small", case).await;
+      assert_eq!(terminal, key(expected_terminal), "{classification}");
+      let count = |name: &str| {
+        snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .filter(|input| input.node() == &key(name))
+          .count()
+      };
+      assert_eq!(
+        count("implementation"),
+        if classification == "implementation_defect" || classification == "test_defect" {
+          2
+        } else {
+          1
+        }
+      );
+      assert_eq!(
+        count("protected_tests"),
+        if classification == "test_defect" { 2 } else { 1 }
+      );
+      if classification == "test_defect" {
+        let authors = snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .filter(|input| input.node() == &key("protected_tests"))
+          .collect::<Vec<_>>();
+        let corrected = authors
+          .iter()
+          .find(|input| input.payload().value().get("correction").is_some())
+          .expect("test correction must receive the bounded defect reason");
+        assert_eq!(
+          corrected.payload().value()["correction"]["reason"],
+          "Preserve the public contract"
+        );
+        let classification = snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .find(|input| input.node() == &key("validation_classification"))
+          .unwrap();
+        assert_eq!(
+          corrected.payload().value()["correction"]["candidate_revision"],
+          classification.payload().value()["request"]["candidate_revision"]
+        );
+        assert_eq!(
+          corrected.payload().value()["correction"]["validation_digest"],
+          classification.payload().value()["request"]["validation_digest"]
+        );
+        let first = authors
+          .iter()
+          .find(|input| input.payload().value().get("correction").is_none())
+          .unwrap();
+        assert_eq!(
+          first.payload().value()["accepted"],
+          corrected.payload().value()["accepted"]
+        );
+        for implementation in snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .filter(|input| input.node() == &key("implementation"))
+        {
+          assert!(
+            !serde_json::to_string(implementation)
+              .unwrap()
+              .contains("Preserve the public contract"),
+            "author-only correction must not propagate to implementation"
+          );
+        }
+      }
+      assert_eq!(count("review"), usize::from(expected_terminal == "verified_candidate"));
+    }
+  });
+}
+
+#[test]
+fn classified_requirements_correction_restarts_every_accepted_gate_in_a_fresh_cycle() {
+  crate::factory_flow_tests::run_ready(async {
+    let case = Arc::new(ValidationCase {
+      classification: "requirements_defect",
+      exhaust: false,
+      candidates: Mutex::new(vec![]),
+    });
+    let (snapshot, terminal) = validation_case_snapshot("feature_request", "large", case).await;
+    assert_eq!(terminal, key("verified_candidate"));
+    assert_eq!(snapshot.flow.cycles.len(), 2);
+    for name in ["specification_author", "specification_correction"] {
+      assert_eq!(
+        snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .filter(|input| input.node() == &key(name))
+          .count(),
+        1,
+        "{name}"
+      );
+    }
+    for name in [
+      "specification_gate",
+      "specification_review",
+      "specification_publication",
+      "specification_ready",
+      "protected_tests",
+      "implementation",
+      "protected_validation",
+    ] {
+      assert_eq!(
+        snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .filter(|input| input.node() == &key(name))
+          .count(),
+        2,
+        "{name}"
+      );
+    }
+    assert_eq!(
+      snapshot
+        .flow
+        .data
+        .inputs
+        .iter()
+        .filter(|input| input.node() == &key("review"))
+        .count(),
+      1
+    );
+  });
 }

@@ -1,0 +1,81 @@
+{
+  "schemas": {
+    "implementation_input": {
+      "identity": "factory.base.implementation_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "summary"
+            }
+          },
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "parent": {
+            "required": false,
+            "value": {
+              "type": "object",
+              "fields": {
+                "candidate_revision": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "candidate_digest": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 64,
+                    "max_bytes": 64
+                  }
+                },
+                "manifest": {
+                  "required": true,
+                  "value": {
+                    "type": "reference",
+                    "schema": "artifact_reference"
+                  }
+                },
+                "bundle": {
+                  "required": true,
+                  "value": {
+                    "type": "reference",
+                    "schema": "artifact_reference"
+                  }
+                }
+              }
+            }
+          },
+          "remediation": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          },
+          "accepted_contract": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

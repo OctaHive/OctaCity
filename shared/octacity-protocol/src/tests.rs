@@ -365,6 +365,7 @@ fn signed_source_write_roots_are_explicit_disjoint_and_require_write_authority()
 #[test]
 fn captured_change_set_manifest_is_bounded_canonical_and_portable() {
   let manifest = CapturedChangeSetManifestV1 {
+    cumulative_changes: None,
     format_version: 1,
     base_revision: "base-revision".to_owned(),
     candidate_revision: "candidate-revision".to_owned(),
@@ -375,6 +376,7 @@ fn captured_change_set_manifest_is_bounded_canonical_and_portable() {
       sha256: DIGEST.to_owned(),
     },
     changed_paths: vec![CapturedChangeSetPathV1 {
+      content_sha256: None,
       status: "M".to_owned(),
       path: "src/main.rs".to_owned(),
       old_mode: "100644".to_owned(),

@@ -4,7 +4,8 @@ mod action;
 mod template;
 mod template_manifest;
 pub use template::{
-  FlowDefinitionTemplate, FlowTemplateNode, FlowTemplateOutcome, FlowTemplateSchema, PublishedFlowTemplate,
+  FlowDefinitionTemplate, FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy, FlowTemplateNode,
+  FlowTemplateOutcome, FlowTemplateSchema, PublishedFlowTemplate,
 };
 mod build;
 mod build_execution;

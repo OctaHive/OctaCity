@@ -1,0 +1,27 @@
+{
+  "schemas": {
+    "validation_classification_input": {
+      "identity": "factory.base.validation_classification_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "request": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "validation_diagnostic_input"
+            }
+          },
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          }
+        }
+      }
+    }
+  }
+}

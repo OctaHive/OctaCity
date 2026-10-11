@@ -1,0 +1,208 @@
+{
+  "nodes": [
+    {
+      "key": "requirements_correction_entry",
+      "kind": "deterministic_gate",
+      "input_schema": "summary",
+      "outcomes": [
+        {
+          "key": "ready",
+          "kind": "success",
+          "schema": "summary"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "summary": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "classification": {
+            "source": "record",
+            "node": "validation_classification",
+            "outcome": "observed",
+            "view": "payload",
+            "path": ""
+          },
+          "request": {
+            "source": "record",
+            "node": "validation_classification",
+            "outcome": "observed",
+            "view": "input_payload",
+            "path": "/request"
+          },
+          "evidence": {
+            "source": "record",
+            "node": "validation_classification",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/classification_report/artifact"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "if_present",
+            "path": "/summary/specification",
+            "then": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/summary/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/summary/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/summary/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/summary/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/summary/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "pointer",
+                  "path": "/summary/research_required"
+                },
+                "research_accepted": {
+                  "mapping": "pointer",
+                  "path": "/summary/research_accepted"
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/summary/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/summary/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/summary/dependencies"
+                },
+                "requirements_defect": {
+                  "mapping": "object",
+                  "fields": {
+                    "reason": {
+                      "mapping": "pointer",
+                      "path": "/classification/remediation"
+                    },
+                    "candidate_revision": {
+                      "mapping": "pointer",
+                      "path": "/request/candidate_revision"
+                    },
+                    "evidence": {
+                      "mapping": "array",
+                      "items": [
+                        {
+                          "mapping": "pointer",
+                          "path": "/evidence"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "specification": {
+                  "mapping": "pointer",
+                  "path": "/summary/specification"
+                }
+              }
+            },
+            "otherwise": {
+              "mapping": "object",
+              "fields": {
+                "work_kind": {
+                  "mapping": "pointer",
+                  "path": "/summary/work_kind"
+                },
+                "size": {
+                  "mapping": "pointer",
+                  "path": "/summary/size"
+                },
+                "risk": {
+                  "mapping": "pointer",
+                  "path": "/summary/risk"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/summary/admission_risk"
+                },
+                "recommended_route": {
+                  "mapping": "pointer",
+                  "path": "/summary/recommended_route"
+                },
+                "research_required": {
+                  "mapping": "pointer",
+                  "path": "/summary/research_required"
+                },
+                "research_accepted": {
+                  "mapping": "pointer",
+                  "path": "/summary/research_accepted"
+                },
+                "component": {
+                  "mapping": "pointer",
+                  "path": "/summary/component"
+                },
+                "severity": {
+                  "mapping": "pointer",
+                  "path": "/summary/severity"
+                },
+                "dependencies": {
+                  "mapping": "pointer",
+                  "path": "/summary/dependencies"
+                },
+                "requirements_defect": {
+                  "mapping": "object",
+                  "fields": {
+                    "reason": {
+                      "mapping": "pointer",
+                      "path": "/classification/remediation"
+                    },
+                    "candidate_revision": {
+                      "mapping": "pointer",
+                      "path": "/request/candidate_revision"
+                    },
+                    "evidence": {
+                      "mapping": "array",
+                      "items": [
+                        {
+                          "mapping": "pointer",
+                          "path": "/evidence"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "ready",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": ""
+          }
+        }
+      }
+    }
+  ]
+}

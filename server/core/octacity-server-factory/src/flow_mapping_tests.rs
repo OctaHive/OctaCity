@@ -6,6 +6,100 @@ fn key(name: &str) -> FactoryKey {
 }
 
 #[test]
+fn configured_presence_mapping_selects_explicit_branches_without_missing_data_fallback() {
+  let value = FlowValueSchema::String {
+    min_bytes: 1,
+    max_bytes: 50,
+  };
+  let schema = FlowDataSchema::new(
+    key("request"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::from([
+        (key("original"), FlowFieldSchema::required(value.clone())),
+        (key("parent"), FlowFieldSchema::optional(value.clone())),
+      ]),
+    },
+  )
+  .unwrap();
+  let target = FlowDataSchema::new(key("selected"), key("v1"), value).unwrap();
+  let wire = serde_json::json!({"value":{"mapping":"if_present","path":"/parent",
+    "then":{"mapping":"pointer","path":"/parent"},
+    "otherwise":{"mapping":"pointer","path":"/original"}}});
+  let mapping: FlowDataMapping = serde_json::from_value(wire.clone()).unwrap();
+  for (input, expected) in [
+    (serde_json::json!({"original":"base"}), "base"),
+    (
+      serde_json::json!({"original":"base","parent":"previous-candidate"}),
+      "previous-candidate",
+    ),
+  ] {
+    assert_eq!(
+      mapping
+        .project(&FlowPayload::new(&schema, input).unwrap(), &target)
+        .unwrap()
+        .value(),
+      expected
+    );
+  }
+  let mut missing = wire.clone();
+  missing["value"]["then"]["path"] = serde_json::json!("/undeclared");
+  let mapping: FlowDataMapping = serde_json::from_value(missing).unwrap();
+  assert!(
+    mapping
+      .project(
+        &FlowPayload::new(&schema, serde_json::json!({"original":"base","parent":"previous"})).unwrap(),
+        &target
+      )
+      .is_err()
+  );
+  let mut invalid = wire;
+  invalid["value"]["path"] = serde_json::json!("/bad~2pointer");
+  assert!(serde_json::from_value::<FlowDataMapping>(invalid).is_err());
+}
+
+#[test]
+fn configured_array_mapping_projects_only_declared_items() {
+  let text = FlowValueSchema::String {
+    min_bytes: 1,
+    max_bytes: 30,
+  };
+  let source_schema = FlowDataSchema::new(
+    key("input"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::from([
+        (key("public"), FlowFieldSchema::required(text.clone())),
+        (key("private"), FlowFieldSchema::required(text.clone())),
+      ]),
+    },
+  )
+  .unwrap();
+  let target = FlowDataSchema::new(
+    key("references"),
+    key("v1"),
+    FlowValueSchema::Array {
+      item: Box::new(text),
+      min_items: 1,
+      max_items: 2,
+    },
+  )
+  .unwrap();
+  let mapping: FlowDataMapping = serde_json::from_value(serde_json::json!({"value":{"mapping":"array",
+    "items":[{"mapping":"pointer","path":"/public"}]}}))
+  .unwrap();
+  let input = FlowPayload::new(
+    &source_schema,
+    serde_json::json!({"public":"safe-report","private":"hidden-test"}),
+  )
+  .unwrap();
+  assert_eq!(
+    mapping.project(&input, &target).unwrap().value(),
+    &serde_json::json!(["safe-report"])
+  );
+}
+
+#[test]
 fn configured_mapping_exposes_only_selected_fields_under_the_target_schema() {
   let source_schema = FlowDataSchema::new(
     key("team.raw"),

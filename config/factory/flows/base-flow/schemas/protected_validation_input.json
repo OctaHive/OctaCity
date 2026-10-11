@@ -62,6 +62,14 @@
               "min_items": 1,
               "max_items": 64
             }
+          },
+          "accepted_contract": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
           }
         }
       }

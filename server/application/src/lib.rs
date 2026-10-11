@@ -68,9 +68,13 @@ pub use factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,
   FactoryCandidatePublisher,
 };
+mod factory_candidate_deliverables;
 #[cfg(test)]
 mod factory_flow_action_tests;
 mod factory_node_capture;
+pub use factory_candidate_deliverables::{
+  VerifiedFactoryCandidateDeliverables, verify_factory_node_candidate_deliverables,
+};
 mod factory_node_capture_build;
 mod factory_protected_test_authoring;
 mod factory_protected_test_plan;
@@ -466,6 +470,8 @@ pub const MAX_WEBHOOK_HEADER_NAME_BYTES: usize = octacity_server_store::MAX_WEBH
 /// Maximum retained bytes in one allowlisted webhook header value.
 pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_VALUE_BYTES;
 
+#[cfg(test)]
+mod factory_development_control_tests;
 #[cfg(test)]
 mod factory_flow_control_tests;
 #[cfg(test)]

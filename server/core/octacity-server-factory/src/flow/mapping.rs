@@ -30,6 +30,21 @@ pub enum FlowValueMapping {
     /// Target names and selections; no undeclared input fields propagate.
     fields: BTreeMap<FactoryKey, FlowValueMapping>,
   },
+  /// Constructs a bounded ordered list from explicit selections.
+  Array {
+    /// Declared items; unselected data never propagates.
+    items: Vec<FlowValueMapping>,
+  },
+  /// Selects one explicit projection according to declared input presence.
+  /// A failed selected projection never falls back to the other branch.
+  IfPresent {
+    /// Validated RFC 6901 presence test; no discovery or authority is implied.
+    path: String,
+    /// Projection used when the selected field exists, including explicit null.
+    then: Box<FlowValueMapping>,
+    /// Projection used only when the selected field is absent.
+    otherwise: Box<FlowValueMapping>,
+  },
 }
 
 /// Frozen mapping reused for node inputs and declared output contracts.
@@ -83,6 +98,19 @@ impl FlowValueMapping {
     match self {
       Self::Pointer { path } => validate_pointer(path)?,
       Self::Constant { .. } => (),
+      Self::Array { items } => {
+        if items.len() > usize::from(crate::MAX_FLOW_SCHEMA_ITEMS) {
+          return Err(invalid());
+        }
+        for item in items {
+          item.validate(depth + 1, count)?;
+        }
+      }
+      Self::IfPresent { path, then, otherwise } => {
+        validate_pointer(path)?;
+        then.validate(depth + 1, count)?;
+        otherwise.validate(depth + 1, count)?;
+      }
       Self::Object { fields } => {
         if fields.len() > MAX_FLOW_SCHEMA_ENTRIES {
           return Err(invalid());
@@ -98,6 +126,17 @@ impl FlowValueMapping {
     match self {
       Self::Pointer { path } => copy_bounded(root.pointer(path).ok_or_else(invalid)?, remaining),
       Self::Constant { value } => copy_bounded(value, remaining),
+      Self::Array { items } => {
+        spend(remaining, 2 + items.len().saturating_sub(1))?;
+        items
+          .iter()
+          .map(|item| item.project(root, remaining))
+          .collect::<Result<Vec<_>, _>>()
+          .map(Value::Array)
+      }
+      Self::IfPresent { path, then, otherwise } => {
+        if root.pointer(path).is_some() { then } else { otherwise }.project(root, remaining)
+      }
       Self::Object { fields } => {
         spend(remaining, 2)?;
         fields

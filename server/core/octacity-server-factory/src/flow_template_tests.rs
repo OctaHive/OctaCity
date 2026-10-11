@@ -8,6 +8,7 @@ fn modular_templates_publish_identically_without_interpreting_node_or_file_names
   let mut parts = BTreeMap::new();
   for field in [
     "schemas",
+    "deliverable_policies",
     "nodes",
     "transitions",
     "terminals",
@@ -39,6 +40,88 @@ fn modular_templates_publish_identically_without_interpreting_node_or_file_names
     .unwrap();
   assert_eq!(after.definition, before.definition);
   assert_eq!(after.schemas, before.schemas);
+}
+
+#[test]
+fn named_deliverable_policy_is_resolved_once_for_all_selected_nodes() {
+  let original = crate::flow_test_support::supplied_base_flow_template();
+  let mut wire = serde_json::to_value(&original).unwrap();
+  let selected = &wire["nodes"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|node| node["key"] == "implementation")
+    .unwrap()["capture_deliverables"]["policy"];
+  let policy = selected
+    .get("reference")
+    .and_then(serde_json::Value::as_str)
+    .map_or_else(|| selected.clone(), |name| wire["deliverable_policies"][name].clone());
+  wire["deliverable_policies"] = serde_json::json!({"project.public_changes":policy});
+  for node in wire["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .filter(|node| node["capture_deliverables"].is_object())
+  {
+    node["capture_deliverables"]["policy"] = serde_json::json!({"reference":"project.public_changes"});
+  }
+  let project = octacity_server_domain::ProjectId::generate();
+  let profiles = original
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|choice| (choice.clone(), binding(project)))
+    .collect();
+  let publish = |wire: serde_json::Value| {
+    let template: FlowDefinitionTemplate =
+      serde_json::from_value(wire).expect("named policies are editable configuration");
+    template.instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+  };
+  let old = publish(wire.clone()).unwrap();
+  let mut extra = wire.clone();
+  extra["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .find(|node| node["key"] == "implementation")
+    .unwrap()["capture_deliverables"]["policy"]["unexpected"] = serde_json::json!(true);
+  assert!(
+    serde_json::from_value::<FlowDefinitionTemplate>(extra).is_err(),
+    "policy references must be closed configuration"
+  );
+  wire["deliverable_policies"]["project.public_changes"]["permitted_paths"]
+    .as_array_mut()
+    .unwrap()
+    .push(serde_json::json!("vendor"));
+  let changed = publish(wire.clone()).unwrap();
+  for name in ["implementation", "protected_validation"] {
+    let profile = changed.definition.node(&key(name)).unwrap().build().unwrap();
+    let policy = serde_json::to_value(&profile.capture_deliverables.as_ref().unwrap().policy).unwrap();
+    assert_eq!(
+      policy["permitted_paths"],
+      serde_json::json!(["docs", "scripts", "src", "tests/unit", "vendor"])
+    );
+    let old_policy = &old
+      .definition
+      .node(&key(name))
+      .unwrap()
+      .build()
+      .unwrap()
+      .capture_deliverables
+      .as_ref()
+      .unwrap()
+      .policy;
+    assert_ne!(
+      &profile.capture_deliverables.as_ref().unwrap().policy,
+      old_policy,
+      "existing published policy remains immutable"
+    );
+  }
+  wire["deliverable_policies"].as_object_mut().unwrap().clear();
+  assert!(
+    publish(wire).is_err(),
+    "a missing named policy must fail before publication"
+  );
 }
 
 #[test]
